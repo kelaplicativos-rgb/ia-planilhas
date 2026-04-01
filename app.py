@@ -1,28 +1,18 @@
 import streamlit as st
-import pandas as pd
-from utils import processar
+from openai import OpenAI
 
-st.set_page_config(page_title="IA Planilhas PRO", layout="wide")
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-st.title("🚀 Leitor Inteligente de Planilhas com IA")
+st.title("🤖 IA Planilhas PRO")
 
-arquivo = st.file_uploader("Envie sua planilha", type=["xlsx", "csv"])
+pergunta = st.text_input("Digite sua pergunta:")
 
-if arquivo:
-    if arquivo.name.endswith(".csv"):
-        df = pd.read_csv(arquivo)
-    else:
-        df = pd.read_excel(arquivo)
+if pergunta:
+    resposta = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "user", "content": pergunta}
+        ]
+    )
 
-    st.dataframe(df.head())
-
-    if st.button("Processar"):
-        df_final = processar(df)
-
-        st.dataframe(df_final)
-
-        st.download_button(
-            "Baixar CSV",
-            df_final.to_csv(index=False),
-            "saida.csv"
-        )
+    st.write(resposta.choices[0].message.content)
