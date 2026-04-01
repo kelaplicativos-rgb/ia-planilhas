@@ -1,13 +1,11 @@
 import streamlit as st
 import pandas as pd
-import os
 from openai import OpenAI
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="IA Planilhas PRO", layout="wide")
-
 st.title("🔥 IA Planilhas PRO")
 
 # =========================
@@ -20,7 +18,35 @@ except:
     st.stop()
 
 # =========================
-# UPLOAD DE ARQUIVO
+# FUNÇÃO DE LEITURA ROBUSTA
+# =========================
+def ler_arquivo(arquivo):
+    try:
+        # tentativa automática (melhor opção)
+        df = pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            encoding="utf-8",
+            on_bad_lines="skip"
+        )
+        return df, "utf-8 automático"
+    except:
+        try:
+            # fallback comum (Brasil)
+            df = pd.read_csv(
+                arquivo,
+                sep=";",
+                engine="python",
+                encoding="latin-1",
+                on_bad_lines="skip"
+            )
+            return df, "latin-1 com ;"
+        except Exception as e:
+            return None, str(e)
+
+# =========================
+# UPLOAD
 # =========================
 arquivo = st.file_uploader(
     "📂 Envie sua planilha (CSV ou Excel)",
@@ -32,30 +58,39 @@ df = None
 if arquivo is not None:
     try:
         if arquivo.name.endswith(".csv"):
-            df = pd.read_csv(arquivo)
+            df, info = ler_arquivo(arquivo)
+
+            if df is not None:
+                st.success(f"✅ CSV carregado com sucesso ({info})")
+                st.warning("⚠️ Linhas inválidas podem ter sido ignoradas automaticamente")
+            else:
+                st.error(f"Erro ao ler CSV: {info}")
+
         else:
             df = pd.read_excel(arquivo)
+            st.success("✅ Excel carregado com sucesso!")
 
-        st.success("✅ Arquivo carregado com sucesso!")
-        st.dataframe(df)
+        if df is not None:
+            st.dataframe(df)
 
     except Exception as e:
-        st.error(f"Erro ao ler arquivo: {e}")
+        st.error(f"Erro geral ao ler arquivo: {e}")
 
 # =========================
-# PROMPT IA
+# PERGUNTA IA
 # =========================
 if df is not None:
+    st.subheader("🤖 Análise com IA")
+
     pergunta = st.text_area("💬 Pergunte algo sobre sua planilha:")
 
     if st.button("🚀 Analisar com IA"):
         if pergunta.strip() == "":
             st.warning("Digite uma pergunta")
         else:
-            with st.spinner("Processando..."):
+            with st.spinner("Processando com IA..."):
 
                 try:
-                    # Limita tamanho (evita travar)
                     dados_texto = df.head(50).to_csv(index=False)
 
                     resposta = client.chat.completions.create(
@@ -63,12 +98,13 @@ if df is not None:
                         messages=[
                             {
                                 "role": "system",
-                                "content": "Você é um especialista em análise de planilhas."
+                                "content": "Você é um especialista em análise de planilhas e dados comerciais."
                             },
                             {
                                 "role": "user",
                                 "content": f"""
-                                Aqui está a planilha:
+                                Analise a planilha abaixo:
+
                                 {dados_texto}
 
                                 Pergunta:
@@ -78,7 +114,7 @@ if df is not None:
                         ]
                     )
 
-                    st.subheader("📊 Resposta da IA:")
+                    st.subheader("📊 Resultado:")
                     st.write(resposta.choices[0].message.content)
 
                 except Exception as e:
@@ -88,9 +124,11 @@ if df is not None:
 # DOWNLOAD
 # =========================
 if df is not None:
+    st.subheader("📥 Exportar")
+
     st.download_button(
-        "⬇️ Baixar CSV",
+        "⬇️ Baixar planilha tratada (CSV)",
         data=df.to_csv(index=False),
-        file_name="planilha_processada.csv",
+        file_name="planilha_tratada.csv",
         mime="text/csv"
     )
