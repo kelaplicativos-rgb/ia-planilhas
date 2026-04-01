@@ -2,12 +2,23 @@ import streamlit as st
 import pandas as pd
 import re
 import random
+import traceback
+import time
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="🔥 IA Planilhas PRO", layout="wide")
-st.title("🔥 IA Planilhas PRO - Bling Automação TOTAL")
+st.set_page_config(page_title="🔥 IA Planilhas PRO MAX", layout="wide")
+st.title("🔥 IA Planilhas PRO MAX (Ultra Performance)")
+
+# =========================
+# LOG
+# =========================
+def mostrar_erro(e):
+    erro = traceback.format_exc()
+    st.error("❌ Erro detectado!")
+    st.code(erro)
+    st.download_button("⬇️ Baixar log", erro, "erro.txt")
 
 # =========================
 # IA
@@ -20,7 +31,7 @@ try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     IA_DISPONIVEL = True
 except:
-    st.warning("⚠️ IA offline (modo automático ativado)")
+    st.warning("⚠️ IA offline (modo automático)")
 
 # =========================
 # LEITURA
@@ -29,7 +40,7 @@ def ler_arquivo(arquivo):
     try:
         return pd.read_csv(arquivo, sep=None, engine="python", encoding="utf-8", on_bad_lines="skip")
     except:
-        return pd.read_csv(arquivo, sep=";", engine="python", encoding="latin-1", on_bad_lines="skip")
+        return pd.read_csv(arquivo, sep=";", encoding="latin-1", on_bad_lines="skip")
 
 # =========================
 # GTIN
@@ -44,7 +55,7 @@ def validar_gtin(gtin):
     gtin = re.sub(r"\D", "", str(gtin))
     if len(gtin) != 13:
         return False
-    soma = sum(int(num) * (1 if i % 2 == 0 else 3) for i, num in enumerate(gtin[:-1]))
+    soma = sum(int(n) * (1 if i % 2 == 0 else 3) for i, n in enumerate(gtin[:-1]))
     digito = (10 - (soma % 10)) % 10
     return digito == int(gtin[-1])
 
@@ -55,11 +66,10 @@ def corrigir_gtin(df):
     return df
 
 # =========================
-# DETECÇÃO COLUNAS
+# DETECÇÃO
 # =========================
 def detectar_colunas(df):
     mapa = {}
-
     for col in df.columns:
         nome = col.lower()
 
@@ -83,14 +93,11 @@ def detectar_colunas(df):
     return mapa
 
 # =========================
-# FALLBACK DESCRIÇÃO
+# FALLBACKS
 # =========================
 def descricao_fallback(nome):
     return f"{nome} com alta qualidade, envio rápido e excelente custo-benefício. Aproveite agora!"
 
-# =========================
-# FALLBACK CATEGORIA
-# =========================
 def detectar_categoria(nome):
     nome = str(nome).lower()
 
@@ -108,21 +115,19 @@ def detectar_categoria(nome):
         return "Geral"
 
 # =========================
-# IA DESCRIÇÃO HARD
+# IA EM LOTE 🔥
 # =========================
-def gerar_descricao_ia(nome, descricao):
+def gerar_descricao_lote(produtos):
     try:
+        texto = "\n".join([f"{p[0]} | {p[1]}" for p in produtos])
+
         prompt = f"""
-        Crie uma descrição de venda PERSUASIVA nível HARD para e-commerce.
+        Crie descrições PERSUASIVAS nível HARD para cada produto.
 
-        Produto: {nome}
-        Base: {descricao}
+        Retorne uma lista na mesma ordem.
 
-        Regras:
-        - Texto vendedor forte
-        - Gatilhos mentais
-        - Foco em conversão
-        - Máx 3 linhas
+        Produtos:
+        {texto}
         """
 
         resposta = client.chat.completions.create(
@@ -130,15 +135,17 @@ def gerar_descricao_ia(nome, descricao):
             messages=[{"role": "user", "content": prompt}]
         )
 
-        return resposta.choices[0].message.content
+        return resposta.choices[0].message.content.split("\n")
 
     except:
-        return descricao_fallback(nome)
+        return [descricao_fallback(p[0]) for p in produtos]
 
 # =========================
-# MONTAR BLING
+# MONTAR BLING (ULTRA)
 # =========================
 def montar_bling(df):
+
+    inicio = time.time()
 
     mapa = detectar_colunas(df)
     novo = pd.DataFrame()
@@ -149,34 +156,52 @@ def montar_bling(df):
     novo["estoque"] = df.get(mapa.get("estoque"), 0)
     novo["marca"] = df.get(mapa.get("marca"), "")
 
+    total = len(df)
+    progresso = st.progress(0)
+    status = st.empty()
+
     descricoes = []
     categorias = []
 
-    for i in range(len(df)):
+    batch_size = 20
 
-        nome = str(novo["nome"][i])
-        desc_original = str(df.get(mapa.get("descricao"), "")[i])
+    for i in range(0, total, batch_size):
 
-        # 🔥 DESCRIÇÃO IA OU FALLBACK
+        lote = []
+        for j in range(i, min(i + batch_size, total)):
+            nome = str(novo["nome"][j])
+            desc = str(df.get(mapa.get("descricao"), "")[j])
+            lote.append((nome, desc))
+
+        # IA ou fallback
         if IA_DISPONIVEL:
-            desc = gerar_descricao_ia(nome, desc_original)
+            descs = gerar_descricao_lote(lote)
         else:
-            desc = descricao_fallback(nome)
+            descs = [descricao_fallback(p[0]) for p in lote]
 
-        descricoes.append(desc)
+        for idx, j in enumerate(range(i, min(i + batch_size, total))):
+            descricoes.append(descs[idx] if idx < len(descs) else descricao_fallback(lote[idx][0]))
 
-        # 🔥 CATEGORIA
-        cat = df.get(mapa.get("categoria"), "")
-        cat_val = str(cat[i]) if mapa.get("categoria") else ""
+            nome = str(novo["nome"][j])
+            cat = df.get(mapa.get("categoria"), "")
+            cat_val = str(cat[j]) if mapa.get("categoria") else ""
 
-        if cat_val.strip() == "":
-            cat_val = detectar_categoria(nome)
+            if cat_val.strip() == "":
+                cat_val = detectar_categoria(nome)
 
-        categorias.append(cat_val)
+            categorias.append(cat_val)
+
+        # progresso + tempo
+        progresso_atual = min(i + batch_size, total)
+        progresso.progress(progresso_atual / total)
+
+        tempo_decorrido = time.time() - inicio
+        tempo_estimado = (tempo_decorrido / progresso_atual) * total
+
+        status.text(f"Processando {progresso_atual}/{total} | ⏱ {int(tempo_estimado - tempo_decorrido)}s restantes")
 
     novo["descricao_curta"] = descricoes
     novo["categoria"] = categorias
-
     novo["gtin"] = df.get(mapa.get("gtin"), "")
     novo["situacao"] = "Ativo"
     novo["unidade"] = "UN"
@@ -197,17 +222,18 @@ if arquivo:
 
         df = corrigir_gtin(df)
 
+        st.info("🚀 Processamento inteligente iniciado...")
         df_final = montar_bling(df)
 
-        st.success("🔥 Planilha otimizada para vendas + Bling!")
+        st.success("🔥 Pronto! Planilha otimizada")
         st.dataframe(df_final.head())
 
         st.download_button(
-            "⬇️ Baixar planilha Bling",
+            "⬇️ Baixar",
             df_final.to_csv(index=False),
             "bling_import.csv",
             "text/csv"
         )
 
     except Exception as e:
-        st.error(f"Erro: {e}")
+        mostrar_erro(e)
