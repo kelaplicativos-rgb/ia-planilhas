@@ -1,134 +1,124 @@
 import streamlit as st
 import pandas as pd
+import io
 from openai import OpenAI
 
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="IA Planilhas PRO", layout="wide")
-st.title("🔥 IA Planilhas PRO")
+st.set_page_config(page_title="🔥 IA Planilhas PRO", layout="wide")
+st.title("🔥 IA Planilhas PRO - Automação Bling")
 
 # =========================
-# API KEY
+# API (OPCIONAL)
 # =========================
+client = None
 try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except:
-    st.error("⚠️ Configure sua OPENAI_API_KEY nos Secrets do Streamlit")
-    st.stop()
+    st.warning("⚠️ IA desativada (sem API key ou sem saldo)")
 
 # =========================
-# FUNÇÃO DE LEITURA ROBUSTA
+# FUNÇÃO: LER CSV SUJO
 # =========================
-def ler_arquivo(arquivo):
+def ler_csv_seguro(arquivo):
     try:
-        # tentativa automática (melhor opção)
-        df = pd.read_csv(
-            arquivo,
-            sep=None,
-            engine="python",
-            encoding="utf-8",
-            on_bad_lines="skip"
-        )
-        return df, "utf-8 automático"
+        return pd.read_csv(arquivo, sep=None, engine="python", encoding="utf-8", on_bad_lines="skip")
     except:
         try:
-            # fallback comum (Brasil)
-            df = pd.read_csv(
-                arquivo,
-                sep=";",
-                engine="python",
-                encoding="latin-1",
-                on_bad_lines="skip"
-            )
-            return df, "latin-1 com ;"
-        except Exception as e:
-            return None, str(e)
+            return pd.read_csv(arquivo, sep=";", encoding="latin-1", on_bad_lines="skip")
+        except:
+            return pd.read_csv(arquivo, sep=",", encoding="latin-1", on_bad_lines="skip")
+
+# =========================
+# FUNÇÃO: LIMPAR DADOS
+# =========================
+def limpar_dados(df):
+    df = df.copy()
+
+    # Remove espaços
+    df.columns = df.columns.str.strip()
+
+    # Remove colunas vazias
+    df = df.dropna(axis=1, how='all')
+
+    # Preenche vazios
+    df = df.fillna("")
+
+    return df
+
+# =========================
+# FUNÇÃO: PADRÃO BLING
+# =========================
+def padronizar_bling(df):
+    df = df.copy()
+
+    # Garante colunas básicas
+    colunas = {
+        "codigo": "CODIGO",
+        "sku": "SKU",
+        "nome": "NOME",
+        "preco": "PRECO",
+        "descricao": "DESCRICAO"
+    }
+
+    for col in colunas:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df
 
 # =========================
 # UPLOAD
 # =========================
-arquivo = st.file_uploader(
-    "📂 Envie sua planilha (CSV ou Excel)",
-    type=["csv", "xlsx"]
-)
+arquivo = st.file_uploader("📂 Envie CSV ou Excel", type=["csv", "xlsx"])
 
 df = None
 
-if arquivo is not None:
+if arquivo:
     try:
         if arquivo.name.endswith(".csv"):
-            df, info = ler_arquivo(arquivo)
-
-            if df is not None:
-                st.success(f"✅ CSV carregado com sucesso ({info})")
-                st.warning("⚠️ Linhas inválidas podem ter sido ignoradas automaticamente")
-            else:
-                st.error(f"Erro ao ler CSV: {info}")
-
+            df = ler_csv_seguro(arquivo)
         else:
             df = pd.read_excel(arquivo)
-            st.success("✅ Excel carregado com sucesso!")
 
-        if df is not None:
-            st.dataframe(df)
+        df = limpar_dados(df)
+        df = padronizar_bling(df)
+
+        st.success("✅ Planilha carregada e limpa!")
+        st.dataframe(df)
 
     except Exception as e:
-        st.error(f"Erro geral ao ler arquivo: {e}")
+        st.error(f"Erro ao ler: {e}")
 
 # =========================
-# PERGUNTA IA
+# IA (OPCIONAL)
 # =========================
-if df is not None:
-    st.subheader("🤖 Análise com IA")
-
-    pergunta = st.text_area("💬 Pergunte algo sobre sua planilha:")
+if df is not None and client:
+    pergunta = st.text_area("💬 Pergunte algo:")
 
     if st.button("🚀 Analisar com IA"):
-        if pergunta.strip() == "":
-            st.warning("Digite uma pergunta")
-        else:
-            with st.spinner("Processando com IA..."):
+        with st.spinner("Processando..."):
+            try:
+                dados = df.head(30).to_csv(index=False)
 
-                try:
-                    dados_texto = df.head(50).to_csv(index=False)
+                resposta = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "Especialista em Bling e planilhas"},
+                        {"role": "user", "content": f"{dados}\n\nPergunta: {pergunta}"}
+                    ]
+                )
 
-                    resposta = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "Você é um especialista em análise de planilhas e dados comerciais."
-                            },
-                            {
-                                "role": "user",
-                                "content": f"""
-                                Analise a planilha abaixo:
+                st.write(resposta.choices[0].message.content)
 
-                                {dados_texto}
-
-                                Pergunta:
-                                {pergunta}
-                                """
-                            }
-                        ]
-                    )
-
-                    st.subheader("📊 Resultado:")
-                    st.write(resposta.choices[0].message.content)
-
-                except Exception as e:
-                    st.error(f"Erro na IA: {e}")
+            except Exception as e:
+                st.error(f"Erro IA: {e}")
 
 # =========================
 # DOWNLOAD
 # =========================
 if df is not None:
-    st.subheader("📥 Exportar")
-
     st.download_button(
-        "⬇️ Baixar planilha tratada (CSV)",
+        "⬇️ Baixar planilha corrigida",
         data=df.to_csv(index=False),
-        file_name="planilha_tratada.csv",
+        file_name="bling_corrigido.csv",
         mime="text/csv"
     )
