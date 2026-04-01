@@ -2,23 +2,14 @@ import streamlit as st
 import pandas as pd
 import re
 import random
-import traceback
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="🔥 IA Planilhas PRO MAX", layout="wide")
-st.title("🔥 IA Planilhas PRO MAX (Ultra Performance)")
-
-# =========================
-# LOG
-# =========================
-def mostrar_erro(e):
-    erro = traceback.format_exc()
-    st.error("❌ Erro detectado!")
-    st.code(erro)
-    st.download_button("⬇️ Baixar log", erro, "erro.txt")
+st.set_page_config(page_title="🔥 IA Planilhas PRO", layout="wide")
+st.title("🔥 IA Planilhas PRO - Bling Automação")
 
 # =========================
 # IA
@@ -31,7 +22,15 @@ try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     IA_DISPONIVEL = True
 except:
-    st.warning("⚠️ IA offline (modo automático)")
+    st.warning("⚠️ IA offline ativada")
+
+# =========================
+# LOG
+# =========================
+logs = []
+
+def log(msg):
+    logs.append(msg)
 
 # =========================
 # LEITURA
@@ -40,7 +39,7 @@ def ler_arquivo(arquivo):
     try:
         return pd.read_csv(arquivo, sep=None, engine="python", encoding="utf-8", on_bad_lines="skip")
     except:
-        return pd.read_csv(arquivo, sep=";", encoding="latin-1", on_bad_lines="skip")
+        return pd.read_csv(arquivo, sep=";", engine="python", encoding="latin-1", on_bad_lines="skip")
 
 # =========================
 # GTIN
@@ -55,7 +54,7 @@ def validar_gtin(gtin):
     gtin = re.sub(r"\D", "", str(gtin))
     if len(gtin) != 13:
         return False
-    soma = sum(int(n) * (1 if i % 2 == 0 else 3) for i, n in enumerate(gtin[:-1]))
+    soma = sum(int(num) * (1 if i % 2 == 0 else 3) for i, num in enumerate(gtin[:-1]))
     digito = (10 - (soma % 10)) % 10
     return digito == int(gtin[-1])
 
@@ -79,7 +78,7 @@ def detectar_colunas(df):
             mapa["sku"] = col
         elif "preco" in nome:
             mapa["preco"] = col
-        elif "estoque" in nome or "quantidade" in nome:
+        elif "estoque" in nome:
             mapa["estoque"] = col
         elif "marca" in nome:
             mapa["marca"] = col
@@ -93,120 +92,110 @@ def detectar_colunas(df):
     return mapa
 
 # =========================
-# FALLBACKS
+# DESCRIÇÃO HARD (OFFLINE)
 # =========================
-def descricao_fallback(nome):
-    return f"{nome} com alta qualidade, envio rápido e excelente custo-benefício. Aproveite agora!"
+def gerar_descricao(nome):
+    return f"""
+🔥 {nome}
 
-def detectar_categoria(nome):
+Produto de alta qualidade com excelente custo-benefício.
+Ideal para quem busca desempenho, durabilidade e praticidade.
+
+💥 Garanta já o seu antes que acabe!
+"""
+
+# =========================
+# CATEGORIA AUTOMÁTICA
+# =========================
+def gerar_categoria(nome):
     nome = str(nome).lower()
 
-    if "câmera" in nome:
+    if "camera" in nome:
         return "Eletrônicos"
     elif "barbeador" in nome:
-        return "Beleza e Cuidados"
+        return "Beleza"
     elif "lanterna" in nome:
         return "Ferramentas"
-    elif "brinquedo" in nome:
-        return "Brinquedos"
-    elif "carro" in nome:
-        return "Automotivo"
     else:
         return "Geral"
 
 # =========================
-# IA EM LOTE 🔥
+# FUNÇÃO SEGURA (ANTI ERRO)
 # =========================
-def gerar_descricao_lote(produtos):
+def pegar_valor(df, coluna, i):
     try:
-        texto = "\n".join([f"{p[0]} | {p[1]}" for p in produtos])
-
-        prompt = f"""
-        Crie descrições PERSUASIVAS nível HARD para cada produto.
-
-        Retorne uma lista na mesma ordem.
-
-        Produtos:
-        {texto}
-        """
-
-        resposta = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        return resposta.choices[0].message.content.split("\n")
-
+        if coluna in df.columns:
+            return str(df.iloc[i][coluna])
+        return ""
     except:
-        return [descricao_fallback(p[0]) for p in produtos]
+        return ""
 
 # =========================
-# MONTAR BLING (ULTRA)
+# MONTAR BLING
 # =========================
 def montar_bling(df):
 
-    inicio = time.time()
-
     mapa = detectar_colunas(df)
-    novo = pd.DataFrame()
-
-    novo["nome"] = df.get(mapa.get("nome"), "")
-    novo["codigo"] = df.get(mapa.get("sku"), "")
-    novo["preco"] = df.get(mapa.get("preco"), 0)
-    novo["estoque"] = df.get(mapa.get("estoque"), 0)
-    novo["marca"] = df.get(mapa.get("marca"), "")
 
     total = len(df)
-    progresso = st.progress(0)
+    progress = st.progress(0)
     status = st.empty()
 
-    descricoes = []
-    categorias = []
+    resultado = []
 
-    batch_size = 20
+    inicio = time.time()
 
-    for i in range(0, total, batch_size):
+    def processar_linha(i):
+        nome = pegar_valor(df, mapa.get("nome", ""), i)
+        desc = pegar_valor(df, mapa.get("descricao", ""), i)
+        categoria = pegar_valor(df, mapa.get("categoria", ""), i)
 
-        lote = []
-        for j in range(i, min(i + batch_size, total)):
-            nome = str(novo["nome"][j])
-            desc = str(df.get(mapa.get("descricao"), "")[j])
-            lote.append((nome, desc))
-
-        # IA ou fallback
-        if IA_DISPONIVEL:
-            descs = gerar_descricao_lote(lote)
+        # descrição IA / fallback
+        if IA_DISPONIVEL and nome:
+            try:
+                r = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{
+                        "role": "user",
+                        "content": f"Crie descrição persuasiva para: {nome}"
+                    }]
+                )
+                desc_final = r.choices[0].message.content
+            except:
+                desc_final = gerar_descricao(nome)
         else:
-            descs = [descricao_fallback(p[0]) for p in lote]
+            desc_final = gerar_descricao(nome)
 
-        for idx, j in enumerate(range(i, min(i + batch_size, total))):
-            descricoes.append(descs[idx] if idx < len(descs) else descricao_fallback(lote[idx][0]))
+        # categoria automática
+        if not categoria:
+            categoria = gerar_categoria(nome)
 
-            nome = str(novo["nome"][j])
-            cat = df.get(mapa.get("categoria"), "")
-            cat_val = str(cat[j]) if mapa.get("categoria") else ""
+        return {
+            "nome": nome,
+            "codigo": pegar_valor(df, mapa.get("sku", ""), i),
+            "preco": pegar_valor(df, mapa.get("preco", ""), i),
+            "estoque": pegar_valor(df, mapa.get("estoque", ""), i),
+            "marca": pegar_valor(df, mapa.get("marca", ""), i),
+            "categoria": categoria,
+            "descricao_curta": desc_final,
+            "gtin": pegar_valor(df, mapa.get("gtin", ""), i),
+            "situacao": "Ativo",
+            "unidade": "UN"
+        }
 
-            if cat_val.strip() == "":
-                cat_val = detectar_categoria(nome)
+    # 🚀 PARALELISMO
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for i, res in enumerate(executor.map(processar_linha, range(total))):
+            resultado.append(res)
 
-            categorias.append(cat_val)
+            progresso = (i + 1) / total
+            tempo = time.time() - inicio
+            restante = (tempo / (i + 1)) * (total - (i + 1))
 
-        # progresso + tempo
-        progresso_atual = min(i + batch_size, total)
-        progresso.progress(progresso_atual / total)
+            progress.progress(progresso)
+            status.text(f"Processando {i+1}/{total} | ⏱️ {restante:.1f}s restantes")
 
-        tempo_decorrido = time.time() - inicio
-        tempo_estimado = (tempo_decorrido / progresso_atual) * total
-
-        status.text(f"Processando {progresso_atual}/{total} | ⏱ {int(tempo_estimado - tempo_decorrido)}s restantes")
-
-    novo["descricao_curta"] = descricoes
-    novo["categoria"] = categorias
-    novo["gtin"] = df.get(mapa.get("gtin"), "")
-    novo["situacao"] = "Ativo"
-    novo["unidade"] = "UN"
-
-    return novo
+    return pd.DataFrame(resultado)
 
 # =========================
 # UPLOAD
@@ -222,18 +211,21 @@ if arquivo:
 
         df = corrigir_gtin(df)
 
-        st.info("🚀 Processamento inteligente iniciado...")
         df_final = montar_bling(df)
 
-        st.success("🔥 Pronto! Planilha otimizada")
+        st.success("✅ Pronto para Bling!")
         st.dataframe(df_final.head())
 
         st.download_button(
-            "⬇️ Baixar",
+            "⬇️ Baixar CSV Bling",
             df_final.to_csv(index=False),
             "bling_import.csv",
             "text/csv"
         )
 
     except Exception as e:
-        mostrar_erro(e)
+        st.error("❌ Erro detectado!")
+        st.code(str(e))
+
+        if logs:
+            st.download_button("📥 Baixar log", "\n".join(logs), "log.txt")
