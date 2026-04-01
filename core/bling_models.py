@@ -7,32 +7,36 @@ def mapear_colunas_modelo(cols):
     for col in cols:
         c = str(col).strip().lower()
 
+        # =========================
         # ESTOQUE
-        if "código produto" in c:
+        # =========================
+        if "id produto" in c:
+            mapa["estoque_id_produto"] = col
+        elif "código produto" in c or "codigo produto" in c:
             mapa["estoque_codigo"] = col
-        elif "descrição produto" in c:
-            mapa["estoque_descricao"] = col
-        elif "deposito" in c or "depósito" in c:
-            mapa["deposito"] = col
-        elif "balanço" in c or c == "saldo" or c == "estoque":
-            mapa["estoque_qtd"] = col
-        elif "preço unitário" in c:
-            mapa["estoque_preco"] = col
         elif c == "gtin":
             mapa["estoque_gtin"] = col
-        elif "preço de custo" in c:
+        elif "descrição produto" in c or "descricao produto" in c:
+            mapa["estoque_descricao"] = col
+        elif "deposito" in c or "depósito" in c:
+            mapa["estoque_deposito"] = col
+        elif "balanço" in c or "balanco" in c or c == "saldo" or c == "estoque":
+            mapa["estoque_qtd"] = col
+        elif "preço unitário" in c or "preco unitario" in c or c == "valor":
+            mapa["estoque_preco"] = col
+        elif "preço de custo" in c or "preco de custo" in c:
             mapa["estoque_preco_custo"] = col
         elif "observação" in c or "observacao" in c:
             mapa["estoque_observacao"] = col
         elif c == "data":
             mapa["estoque_data"] = col
-        elif "id produto" in c:
-            mapa["estoque_id_produto"] = col
 
+        # =========================
         # CADASTRO
-        elif c == "código":
+        # =========================
+        elif c == "código" or c == "codigo":
             mapa["cadastro_codigo"] = col
-        elif c == "descrição":
+        elif c == "descrição" or c == "descricao":
             mapa["cadastro_descricao"] = col
         elif c == "tipo":
             mapa["cadastro_tipo"] = col
@@ -40,11 +44,11 @@ def mapear_colunas_modelo(cols):
             mapa["cadastro_situacao"] = col
         elif "unidade" in c:
             mapa["cadastro_unidade"] = col
-        elif c == "preço":
+        elif c == "preço" or c == "preco":
             mapa["cadastro_preco"] = col
-        elif "preço de custo" in c or "preço de custo" in c:
+        elif "preço de custo" in c or "preco de custo" in c:
             mapa["cadastro_preco_custo"] = col
-        elif "código de barras" in c or "gtin/ean" in c:
+        elif "código de barras" in c or "codigo de barras" in c or "gtin/ean" in c:
             mapa["cadastro_gtin"] = col
         elif c == "marca":
             mapa["cadastro_marca"] = col
@@ -92,8 +96,8 @@ def preencher_modelo_estoque(modelo, df, depositos):
             if "estoque_descricao" in mapa:
                 nova[mapa["estoque_descricao"]] = row.get("Produto", "")
 
-            if "deposito" in mapa:
-                nova[mapa["deposito"]] = deposito
+            if "estoque_deposito" in mapa:
+                nova[mapa["estoque_deposito"]] = deposito
 
             if "estoque_qtd" in mapa:
                 nova[mapa["estoque_qtd"]] = row.get("Estoque", 0)
@@ -122,12 +126,15 @@ def preencher_modelo_cadastro(modelo, df):
     for _, row in df.iterrows():
         nova = {col: "" for col in modelo.columns}
 
+        # CÓDIGO / SKU
         if "cadastro_codigo" in mapa:
             nova[mapa["cadastro_codigo"]] = row.get("Código", "")
 
+        # DESCRIÇÃO PRINCIPAL
         if "cadastro_descricao" in mapa:
             nova[mapa["cadastro_descricao"]] = row.get("Produto", "")
 
+        # CAMPOS PADRÃO
         if "cadastro_tipo" in mapa:
             nova[mapa["cadastro_tipo"]] = "Produto"
 
@@ -167,15 +174,19 @@ def preencher_modelo_cadastro(modelo, df):
         if "cadastro_estoque_maximo" in mapa:
             nova[mapa["cadastro_estoque_maximo"]] = ""
 
+        # DESCRIÇÃO CURTA
         if "cadastro_descricao_curta" in mapa:
             nova[mapa["cadastro_descricao_curta"]] = row.get("Descrição Curta", "")
 
+        # DESCRIÇÃO COMPLEMENTAR VAZIA
         if "cadastro_descricao_complementar" in mapa:
             nova[mapa["cadastro_descricao_complementar"]] = ""
 
+        # IMAGEM
         if "cadastro_url_imagens" in mapa:
             nova[mapa["cadastro_url_imagens"]] = row.get("Imagem", "")
 
+        # LINK EXTERNO
         if "cadastro_link_externo" in mapa:
             nova[mapa["cadastro_link_externo"]] = row.get("Link", "")
 
