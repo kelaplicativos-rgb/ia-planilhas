@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-import random
 
 # =========================
 # CONFIG
@@ -46,21 +45,7 @@ def ler_arquivo(arquivo):
             return None, str(e)
 
 # =========================
-# GERAR GTIN VÁLIDO (EAN-13)
-# =========================
-def gerar_gtin():
-    base = [random.randint(0, 9) for _ in range(12)]
-
-    soma = 0
-    for i, num in enumerate(base):
-        soma += num * (1 if i % 2 == 0 else 3)
-
-    digito = (10 - (soma % 10)) % 10
-
-    return "".join(map(str, base)) + str(digito)
-
-# =========================
-# VALIDAR GTIN
+# VALIDAR GTIN (EAN-13)
 # =========================
 def validar_gtin(gtin):
     gtin = str(gtin)
@@ -78,10 +63,12 @@ def validar_gtin(gtin):
     return digito == int(gtin[-1])
 
 # =========================
-# CORRIGIR GTIN (GERAR AUTOMÁTICO)
+# CORRIGIR GTIN (REMOVE INVÁLIDOS)
 # =========================
 def corrigir_gtin(df):
     colunas_possiveis = ["gtin", "ean", "codigo_barras", "GTIN", "EAN"]
+
+    total_corrigidos = 0
 
     for col in colunas_possiveis:
         if col in df.columns:
@@ -91,11 +78,12 @@ def corrigir_gtin(df):
                 if validar_gtin(valor):
                     novos.append(str(valor))
                 else:
-                    novos.append(gerar_gtin())  # 🔥 GERA AUTOMÁTICO
+                    novos.append("")  # 🔥 REMOVE (ESSA É A CORREÇÃO CERTA)
+                    total_corrigidos += 1
 
             df[col] = novos
 
-    return df
+    return df, total_corrigidos
 
 # =========================
 # UPLOAD
@@ -123,10 +111,13 @@ if arquivo is not None:
             st.success("✅ Excel carregado com sucesso!")
 
         if df is not None:
-            # 🔥 CORREÇÃO AUTOMÁTICA DE GTIN
-            df = corrigir_gtin(df)
+            df, corrigidos = corrigir_gtin(df)
 
-            st.success("✅ GTINs corrigidos automaticamente!")
+            if corrigidos > 0:
+                st.warning(f"⚠️ {corrigidos} GTIN(s) inválidos foram REMOVIDOS (padrão Bling)")
+            else:
+                st.success("✅ Todos os GTINs já estavam válidos!")
+
             st.dataframe(df)
 
     except Exception as e:
