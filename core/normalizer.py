@@ -1,5 +1,4 @@
 import pandas as pd
-import random
 
 from core.logger import log
 from core.utils import (
@@ -18,16 +17,21 @@ def detectar_colunas_inteligente(df: pd.DataFrame):
     for col in df.columns:
         c = limpar(col).lower()
 
+        # código / sku
         if (
-            "codigo produto" in c
-            or c == "codigo"
+            "código do produto" in c
+            or "codigo do produto" in c
             or c == "código"
+            or c == "codigo"
             or "sku" in c
+            or "referencia" in c
+            or "referência" in c
             or "cod" in c
             or c == "id"
         ):
             mapa.setdefault("codigo", col)
 
+        # nome / descrição principal
         elif (
             "nome" in c
             or "produto" in c
@@ -38,9 +42,11 @@ def detectar_colunas_inteligente(df: pd.DataFrame):
         ):
             mapa.setdefault("produto", col)
 
+        # preço
         elif "preço" in c or "preco" in c or "valor" in c or "price" in c:
             mapa.setdefault("preco", col)
 
+        # estoque
         elif (
             "estoque" in c
             or "saldo" in c
@@ -50,21 +56,37 @@ def detectar_colunas_inteligente(df: pd.DataFrame):
         ):
             mapa.setdefault("estoque", col)
 
+        # descrição curta
         elif (
             "descrição curta" in c
             or "descricao curta" in c
-            or "descrição" in c
-            or "descricao" in c
             or "resumo" in c
+            or "descrição curta do produto" in c
+            or "descricao curta do produto" in c
         ):
             mapa.setdefault("descricao_curta", col)
 
-        elif "imagem" in c or "foto" in c or "image" in c:
+        # imagem
+        elif (
+            "imagem" in c
+            or "foto" in c
+            or "image" in c
+            or "url imagem" in c
+            or "url imagens" in c
+        ):
             mapa.setdefault("imagem", col)
 
-        elif "link externo" in c or c == "link" or c == "url" or "site" in c:
+        # link
+        elif (
+            "link externo" in c
+            or c == "link"
+            or c == "url"
+            or "site" in c
+            or "produto url" in c
+        ):
             mapa.setdefault("link", col)
 
+        # marca
         elif "marca" in c:
             mapa.setdefault("marca", col)
 
@@ -73,7 +95,7 @@ def detectar_colunas_inteligente(df: pd.DataFrame):
 
 def valor_texto_seguro(x):
     txt = str(x).strip()
-    if txt.lower() in ["", "nan", "none", "nat"]:
+    if txt.lower() in ["", "nan", "none", "nat", "null"]:
         return ""
     return txt
 
@@ -84,11 +106,13 @@ def normalizar_planilha_entrada(df: pd.DataFrame, base_url: str, padrao_estoque:
 
     out = pd.DataFrame(index=df.index)
 
-    # CÓDIGO
+    # CÓDIGO / SKU
     if "codigo" in mapa:
         out["Código"] = df[mapa["codigo"]].apply(valor_texto_seguro)
+        log(f"Coluna de Código detectada: {mapa['codigo']}")
     else:
         out["Código"] = [""] * len(df)
+        log("Coluna de Código NÃO detectada")
 
     # PRODUTO
     if "produto" in mapa:
@@ -132,9 +156,7 @@ def normalizar_planilha_entrada(df: pd.DataFrame, base_url: str, padrao_estoque:
     else:
         out["Marca"] = [""] * len(df)
 
-    # =========================
     # CORREÇÕES FINAIS
-    # =========================
     out["Produto"] = out["Produto"].apply(
         lambda x: x if valor_texto_seguro(x) else "Produto sem nome"
     )
@@ -169,9 +191,8 @@ def normalizar_planilha_entrada(df: pd.DataFrame, base_url: str, padrao_estoque:
         )
     ].copy()
 
-    # remove duplicados principais
+    # remove duplicados
     out = out.drop_duplicates(subset=["Código", "Produto", "Link"], keep="first").reset_index(drop=True)
 
     log(f"Planilha normalizada final com {len(out)} linhas")
-
     return out
