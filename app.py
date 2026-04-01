@@ -90,11 +90,15 @@ def detectar_colunas(df):
             mapa["descricao"] = col
         elif "ean" in nome or "gtin" in nome:
             mapa["gtin"] = col
+        elif "imagem" in nome or "url" in nome:
+            mapa["imagem"] = col
+        elif "link" in nome:
+            mapa["link"] = col
 
     return mapa
 
 # =========================
-# IA DESCRIÇÃO (LOW COST)
+# IA DESCRIÇÃO
 # =========================
 def gerar_descricao_ia(nome, desc_base):
     if not IA_DISPONIVEL:
@@ -120,22 +124,7 @@ def gerar_descricao_ia(nome, desc_base):
         return f"{nome} de alta qualidade."
 
 # =========================
-# CATEGORIA INTELIGENTE
-# =========================
-def gerar_categoria(nome):
-    nome = str(nome).lower()
-
-    if "camera" in nome:
-        return "Eletrônicos"
-    if "barbeador" in nome:
-        return "Beleza"
-    if "brinquedo" in nome:
-        return "Brinquedos"
-
-    return "Geral"
-
-# =========================
-# MONTAR BLING
+# MONTAR BLING (CORRIGIDO)
 # =========================
 def montar_bling(df):
 
@@ -146,6 +135,13 @@ def montar_bling(df):
     status = st.empty()
 
     inicio = time.time()
+
+    # 🔥 MODELO PADRÃO BLING
+    colunas_bling = [
+        "Código", "Descrição", "Unidade", "Preço", "Situação",
+        "Marca", "Descrição Curta", "URL Imagens Externas",
+        "Link Externo", "GTIN/EAN"
+    ]
 
     resultado = []
 
@@ -158,34 +154,36 @@ def montar_bling(df):
         nome = str(row.get(mapa.get("nome", ""), ""))
         sku = row.get(mapa.get("sku", ""), "")
         preco = row.get(mapa.get("preco", ""), 0)
-        estoque = row.get(mapa.get("estoque", ""), 0)
         marca = row.get(mapa.get("marca", ""), "")
-        categoria = row.get(mapa.get("categoria", ""), "")
         desc = str(row.get(mapa.get("descricao", ""), ""))
         gtin = row.get(mapa.get("gtin", ""), "")
+        imagem = row.get(mapa.get("imagem", ""), "")
+        link = row.get(mapa.get("link", ""), "")
 
-        # 🔥 DESCRIÇÃO SOMENTE SE VAZIA
+        # descrição automática se vazio
         if not desc or desc == "nan":
             desc = gerar_descricao_ia(nome, "")
 
-        # 🔥 CATEGORIA SE VAZIA
-        if not categoria or categoria == "nan":
-            categoria = gerar_categoria(nome)
+        # imagens formato Bling
+        if isinstance(imagem, str):
+            imagem = imagem.replace(",", ";")
 
-        resultado.append({
-            "nome": nome,
-            "codigo": sku,
-            "preco": preco,
-            "estoque": estoque,
-            "marca": marca,
-            "categoria": categoria,
-            "descricao_curta": desc,
-            "gtin": gtin,
-            "situacao": "Ativo",
-            "unidade": "UN"
-        })
+        linha = {col: "" for col in colunas_bling}
 
-        # PROGRESSO
+        linha["Código"] = sku
+        linha["Descrição"] = nome
+        linha["Unidade"] = "UN"
+        linha["Preço"] = preco
+        linha["Situação"] = "Ativo"
+        linha["Marca"] = marca
+        linha["Descrição Curta"] = desc
+        linha["URL Imagens Externas"] = imagem
+        linha["Link Externo"] = link
+        linha["GTIN/EAN"] = gtin
+
+        resultado.append(linha)
+
+        # progresso
         pct = int((i+1)/total*100)
         tempo = time.time() - inicio
         restante = (tempo/(i+1))*(total-(i+1))
