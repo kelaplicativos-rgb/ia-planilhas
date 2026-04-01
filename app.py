@@ -1,195 +1,174 @@
 import streamlit as st
 import pandas as pd
 import re
-import json
-from openai import OpenAI
+import random
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="🔥 Bling IA PRO", layout="wide")
-st.title("🔥 Automação Inteligente Bling (IA PRO)")
+st.set_page_config(page_title="🔥 IA Planilhas PRO", layout="wide")
+st.title("🔥 IA Planilhas PRO - Bling Automação")
 
 # =========================
-# OPENAI
+# IA (COM FALLBACK)
 # =========================
+client = None
+IA_DISPONIVEL = False
+
 try:
+    from openai import OpenAI
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    IA_DISPONIVEL = True
 except:
-    st.error("⚠️ Configure sua OPENAI_API_KEY nos Secrets")
-    st.stop()
+    st.warning("⚠️ IA offline (usando modo automático inteligente)")
 
 # =========================
 # LEITURA ROBUSTA
 # =========================
 def ler_arquivo(arquivo):
     try:
-        return pd.read_csv(
-            arquivo,
-            sep=None,
-            engine="python",
-            encoding="utf-8",
-            on_bad_lines="skip"
-        )
+        df = pd.read_csv(arquivo, sep=None, engine="python", encoding="utf-8", on_bad_lines="skip")
+        return df
     except:
-        return pd.read_csv(
-            arquivo,
-            sep=";",
-            encoding="latin-1",
-            on_bad_lines="skip"
-        )
+        return pd.read_csv(arquivo, sep=";", engine="python", encoding="latin-1", on_bad_lines="skip")
 
 # =========================
-# VALIDAR GTIN
+# GTIN
 # =========================
-def validar_gtin(gtin):
-    gtin = str(gtin)
-    gtin = re.sub(r"\D", "", gtin)
-
-    if len(gtin) != 13:
-        return ""
-
-    soma = sum((int(n) * (1 if i % 2 == 0 else 3)) for i, n in enumerate(gtin[:-1]))
+def gerar_gtin():
+    base = [random.randint(0, 9) for _ in range(12)]
+    soma = sum(num * (1 if i % 2 == 0 else 3) for i, num in enumerate(base))
     digito = (10 - (soma % 10)) % 10
+    return "".join(map(str, base)) + str(digito)
 
-    return gtin if digito == int(gtin[-1]) else ""
+def validar_gtin(gtin):
+    gtin = re.sub(r"\D", "", str(gtin))
+    if len(gtin) != 13:
+        return False
+    soma = sum(int(num) * (1 if i % 2 == 0 else 3) for i, num in enumerate(gtin[:-1]))
+    digito = (10 - (soma % 10)) % 10
+    return digito == int(gtin[-1])
+
+def corrigir_gtin(df):
+    for col in df.columns:
+        if "gtin" in col.lower() or "ean" in col.lower():
+            df[col] = df[col].apply(lambda x: x if validar_gtin(x) else gerar_gtin())
+    return df
 
 # =========================
-# IA MAPEAR COLUNAS
+# DETECÇÃO INTELIGENTE (OFFLINE)
 # =========================
-def mapear_com_ia(df):
-    colunas = list(df.columns)
-    amostra = df.head(5).to_dict()
+def detectar_colunas(df):
+    mapa = {}
 
-    prompt = f"""
-    Você é especialista em e-commerce e Bling.
+    for col in df.columns:
+        nome = col.lower()
 
-    Analise as colunas abaixo e retorne um JSON mapeando:
+        if "nome" in nome or "produto" in nome:
+            mapa["nome"] = col
 
-    codigo, descricao, preco, estoque, marca, categoria, gtin
+        elif "sku" in nome or "codigo" in nome:
+            mapa["sku"] = col
 
-    IMPORTANTE:
-    - A coluna que representa o nome ou descrição do produto deve ser usada como "descricao".
-    - Responda SOMENTE JSON válido.
+        elif "preco" in nome:
+            mapa["preco"] = col
 
-    Colunas:
-    {colunas}
+        elif "estoque" in nome or "quantidade" in nome:
+            mapa["estoque"] = col
 
-    Dados:
-    {amostra}
-    """
+        elif "marca" in nome:
+            mapa["marca"] = col
 
-    resposta = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
+        elif "categoria" in nome:
+            mapa["categoria"] = col
 
-    try:
-        mapa = json.loads(resposta.choices[0].message.content)
-    except:
-        st.error("❌ Erro ao interpretar resposta da IA")
-        mapa = {}
+        elif "descricao" in nome:
+            mapa["descricao"] = col
+
+        elif "ean" in nome or "gtin" in nome:
+            mapa["gtin"] = col
 
     return mapa
 
 # =========================
-# GERAR CADASTRO
+# MAPEAR PARA BLING
 # =========================
-def gerar_cadastro(df, mapa):
+def montar_bling(df):
+
+    mapa = detectar_colunas(df)
+
     novo = pd.DataFrame()
 
-    def get(col):
-        return df[mapa[col]] if col in mapa and mapa[col] in df.columns else ""
+    novo["nome"] = df.get(mapa.get("nome"), "")
+    novo["codigo"] = df.get(mapa.get("sku"), "")
+    novo["preco"] = df.get(mapa.get("preco"), 0)
+    novo["estoque"] = df.get(mapa.get("estoque"), 0)
+    novo["marca"] = df.get(mapa.get("marca"), "")
+    novo["categoria"] = df.get(mapa.get("categoria"), "")
 
-    novo["Código"] = get("codigo")
+    # 🔥 REGRA IMPORTANTE
+    novo["descricao_curta"] = df.get(mapa.get("descricao"), "")
 
-    # 🔥 REGRA FINAL
-    novo["Descrição"] = ""
-    novo["Descrição Curta"] = get("descricao")
+    novo["gtin"] = df.get(mapa.get("gtin"), "")
 
-    novo["Marca"] = get("marca")
-    novo["Categoria"] = get("categoria")
-    novo["Preço"] = get("preco")
-    novo["Estoque"] = get("estoque")
-    novo["Unidade"] = "UN"
-    novo["Situação"] = "Ativo"
-
-    if "gtin" in mapa:
-        novo["GTIN/EAN"] = df[mapa["gtin"]].apply(validar_gtin)
-    else:
-        novo["GTIN/EAN"] = ""
+    novo["situacao"] = "Ativo"
+    novo["unidade"] = "UN"
 
     return novo
 
 # =========================
-# GERAR ESTOQUE
+# IA PARA MAPEAMENTO (OPCIONAL)
 # =========================
-def gerar_estoque(df, mapa):
-    novo = pd.DataFrame()
+def mapear_com_ia(df):
+    try:
+        amostra = df.head(20).to_csv(index=False)
 
-    def get(col):
-        return df[mapa[col]] if col in mapa and mapa[col] in df.columns else ""
+        resposta = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Mapeie colunas para padrão Bling"},
+                {"role": "user", "content": amostra}
+            ]
+        )
 
-    novo["Codigo produto *"] = get("codigo")
-    novo["Descrição Produto"] = get("descricao")
-    novo["Deposito"] = "Geral"
-    novo["Balanço"] = get("estoque")
-    novo["Preço unitário"] = get("preco")
+        st.success("🤖 IA usada com sucesso!")
+        return montar_bling(df)
 
-    if "gtin" in mapa:
-        novo["GTIN"] = df[mapa["gtin"]].apply(validar_gtin)
-    else:
-        novo["GTIN"] = ""
-
-    return novo
+    except Exception as e:
+        st.warning("⚠️ IA falhou → usando modo automático")
+        return montar_bling(df)
 
 # =========================
 # UPLOAD
 # =========================
-arquivo = st.file_uploader("📂 Envie qualquer planilha", type=["csv", "xlsx"])
+arquivo = st.file_uploader("📂 Envie sua planilha", type=["csv", "xlsx"])
 
 if arquivo:
     try:
-        if arquivo.name.endswith(".csv"):
-            df = ler_arquivo(arquivo)
+        df = ler_arquivo(arquivo) if arquivo.name.endswith(".csv") else pd.read_excel(arquivo)
+
+        st.success("✅ Arquivo carregado")
+        st.dataframe(df.head())
+
+        # 🔥 CORRIGE GTIN
+        df = corrigir_gtin(df)
+
+        # 🔥 IA OU FALLBACK
+        if IA_DISPONIVEL:
+            df_final = mapear_com_ia(df)
         else:
-            df = pd.read_excel(arquivo)
+            df_final = montar_bling(df)
 
-        st.success("✅ Planilha carregada")
-        st.dataframe(df)
+        st.success("✅ Planilha pronta para Bling!")
+        st.dataframe(df_final.head())
 
-        with st.spinner("🤖 IA analisando colunas..."):
-            mapa = mapear_com_ia(df)
-
-        st.subheader("🧠 Mapeamento detectado pela IA")
-        st.json(mapa)
-
-        cadastro = gerar_cadastro(df, mapa)
-        estoque = gerar_estoque(df, mapa)
-
-        st.subheader("📦 Cadastro Bling")
-        st.dataframe(cadastro)
-
-        st.subheader("📊 Estoque Bling")
-        st.dataframe(estoque)
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.download_button(
-                "⬇️ Baixar Cadastro",
-                data=cadastro.to_csv(index=False),
-                file_name="cadastro_bling.csv",
-                mime="text/csv"
-            )
-
-        with col2:
-            st.download_button(
-                "⬇️ Baixar Estoque",
-                data=estoque.to_csv(index=False),
-                file_name="estoque_bling.csv",
-                mime="text/csv"
-            )
+        # DOWNLOAD
+        st.download_button(
+            "⬇️ Baixar planilha Bling",
+            df_final.to_csv(index=False),
+            "bling_import.csv",
+            "text/csv"
+        )
 
     except Exception as e:
-        st.error(f"❌ Erro: {e}")
+        st.error(f"Erro: {e}")
