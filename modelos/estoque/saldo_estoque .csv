@@ -1,0 +1,1 @@
+ ID Produto,Codigo produto *,GTIN **,Descrição Produto,Deposito (OBRIGATÓRIO),Balanço (OBRIGATÓRIO),Preço unitário (OBRIGATÓRIO),Preço de Custo,Observação,Data
