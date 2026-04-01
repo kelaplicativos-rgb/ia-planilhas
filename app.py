@@ -3,13 +3,23 @@ import pandas as pd
 import re
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="🔥 IA Planilhas PRO", layout="wide")
 st.title("🔥 IA Planilhas PRO - Bling Automação")
+
+# =========================
+# CONTROLE STOP
+# =========================
+if "stop" not in st.session_state:
+    st.session_state.stop = False
+
+def parar():
+    st.session_state.stop = True
+
+st.button("🛑 PARAR PROCESSAMENTO", on_click=parar)
 
 # =========================
 # IA
@@ -22,15 +32,7 @@ try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     IA_DISPONIVEL = True
 except:
-    st.warning("⚠️ IA offline ativada")
-
-# =========================
-# LOG
-# =========================
-logs = []
-
-def log(msg):
-    logs.append(msg)
+    st.warning("⚠️ IA offline (modo automático ativado)")
 
 # =========================
 # LEITURA
@@ -65,7 +67,7 @@ def corrigir_gtin(df):
     return df
 
 # =========================
-# DETECÇÃO
+# DETECÇÃO INTELIGENTE
 # =========================
 def detectar_colunas(df):
     mapa = {}
@@ -78,7 +80,7 @@ def detectar_colunas(df):
             mapa["sku"] = col
         elif "preco" in nome:
             mapa["preco"] = col
-        elif "estoque" in nome:
+        elif "estoque" in nome or "quantidade" in nome:
             mapa["estoque"] = col
         elif "marca" in nome:
             mapa["marca"] = col
@@ -92,43 +94,45 @@ def detectar_colunas(df):
     return mapa
 
 # =========================
-# DESCRIÇÃO HARD (OFFLINE)
+# IA DESCRIÇÃO (LOW COST)
 # =========================
-def gerar_descricao(nome):
-    return f"""
-🔥 {nome}
+def gerar_descricao_ia(nome, desc_base):
+    if not IA_DISPONIVEL:
+        return f"{nome} de alta qualidade. Ideal para uso profissional."
 
-Produto de alta qualidade com excelente custo-benefício.
-Ideal para quem busca desempenho, durabilidade e praticidade.
+    try:
+        prompt = f"""
+        Produto: {nome}
+        Base: {desc_base}
 
-💥 Garanta já o seu antes que acabe!
-"""
+        Gere uma descrição curta altamente persuasiva para vendas.
+        """
+
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=80
+        )
+
+        return resp.choices[0].message.content.strip()
+
+    except:
+        return f"{nome} de alta qualidade."
 
 # =========================
-# CATEGORIA AUTOMÁTICA
+# CATEGORIA INTELIGENTE
 # =========================
 def gerar_categoria(nome):
     nome = str(nome).lower()
 
     if "camera" in nome:
         return "Eletrônicos"
-    elif "barbeador" in nome:
+    if "barbeador" in nome:
         return "Beleza"
-    elif "lanterna" in nome:
-        return "Ferramentas"
-    else:
-        return "Geral"
+    if "brinquedo" in nome:
+        return "Brinquedos"
 
-# =========================
-# FUNÇÃO SEGURA (ANTI ERRO)
-# =========================
-def pegar_valor(df, coluna, i):
-    try:
-        if coluna in df.columns:
-            return str(df.iloc[i][coluna])
-        return ""
-    except:
-        return ""
+    return "Geral"
 
 # =========================
 # MONTAR BLING
@@ -138,62 +142,56 @@ def montar_bling(df):
     mapa = detectar_colunas(df)
 
     total = len(df)
-    progress = st.progress(0)
+    progresso = st.progress(0)
     status = st.empty()
-
-    resultado = []
 
     inicio = time.time()
 
-    def processar_linha(i):
-        nome = pegar_valor(df, mapa.get("nome", ""), i)
-        desc = pegar_valor(df, mapa.get("descricao", ""), i)
-        categoria = pegar_valor(df, mapa.get("categoria", ""), i)
+    resultado = []
 
-        # descrição IA / fallback
-        if IA_DISPONIVEL and nome:
-            try:
-                r = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{
-                        "role": "user",
-                        "content": f"Crie descrição persuasiva para: {nome}"
-                    }]
-                )
-                desc_final = r.choices[0].message.content
-            except:
-                desc_final = gerar_descricao(nome)
-        else:
-            desc_final = gerar_descricao(nome)
+    for i, row in df.iterrows():
 
-        # categoria automática
-        if not categoria:
+        if st.session_state.stop:
+            st.error("⛔ Processamento interrompido")
+            return pd.DataFrame()
+
+        nome = str(row.get(mapa.get("nome", ""), ""))
+        sku = row.get(mapa.get("sku", ""), "")
+        preco = row.get(mapa.get("preco", ""), 0)
+        estoque = row.get(mapa.get("estoque", ""), 0)
+        marca = row.get(mapa.get("marca", ""), "")
+        categoria = row.get(mapa.get("categoria", ""), "")
+        desc = str(row.get(mapa.get("descricao", ""), ""))
+        gtin = row.get(mapa.get("gtin", ""), "")
+
+        # 🔥 DESCRIÇÃO SOMENTE SE VAZIA
+        if not desc or desc == "nan":
+            desc = gerar_descricao_ia(nome, "")
+
+        # 🔥 CATEGORIA SE VAZIA
+        if not categoria or categoria == "nan":
             categoria = gerar_categoria(nome)
 
-        return {
+        resultado.append({
             "nome": nome,
-            "codigo": pegar_valor(df, mapa.get("sku", ""), i),
-            "preco": pegar_valor(df, mapa.get("preco", ""), i),
-            "estoque": pegar_valor(df, mapa.get("estoque", ""), i),
-            "marca": pegar_valor(df, mapa.get("marca", ""), i),
+            "codigo": sku,
+            "preco": preco,
+            "estoque": estoque,
+            "marca": marca,
             "categoria": categoria,
-            "descricao_curta": desc_final,
-            "gtin": pegar_valor(df, mapa.get("gtin", ""), i),
+            "descricao_curta": desc,
+            "gtin": gtin,
             "situacao": "Ativo",
             "unidade": "UN"
-        }
+        })
 
-    # 🚀 PARALELISMO
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        for i, res in enumerate(executor.map(processar_linha, range(total))):
-            resultado.append(res)
+        # PROGRESSO
+        pct = int((i+1)/total*100)
+        tempo = time.time() - inicio
+        restante = (tempo/(i+1))*(total-(i+1))
 
-            progresso = (i + 1) / total
-            tempo = time.time() - inicio
-            restante = (tempo / (i + 1)) * (total - (i + 1))
-
-            progress.progress(progresso)
-            status.text(f"Processando {i+1}/{total} | ⏱️ {restante:.1f}s restantes")
+        progresso.progress(pct)
+        status.text(f"Processando {pct}% | ⏱ {int(restante)}s restantes")
 
     return pd.DataFrame(resultado)
 
@@ -213,19 +211,16 @@ if arquivo:
 
         df_final = montar_bling(df)
 
-        st.success("✅ Pronto para Bling!")
-        st.dataframe(df_final.head())
+        if not df_final.empty:
+            st.success("✅ Pronto para Bling")
+            st.dataframe(df_final.head())
 
-        st.download_button(
-            "⬇️ Baixar CSV Bling",
-            df_final.to_csv(index=False),
-            "bling_import.csv",
-            "text/csv"
-        )
+            st.download_button(
+                "⬇️ Baixar planilha Bling",
+                df_final.to_csv(index=False),
+                "bling_import.csv",
+                "text/csv"
+            )
 
     except Exception as e:
-        st.error("❌ Erro detectado!")
-        st.code(str(e))
-
-        if logs:
-            st.download_button("📥 Baixar log", "\n".join(logs), "log.txt")
+        st.error(f"Erro: {e}")
