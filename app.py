@@ -1,308 +1,128 @@
-import os
-import time
-import traceback
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import time
+from concurrent.futures import ThreadPoolExecutor
 
-# =========================
-# CONFIG
-# =========================
+from utils import identificar_colunas_com_ia, gerar_descricao_ia
+
 st.set_page_config(page_title="IA Planilhas Bling PRO", layout="wide")
-st.title("🔥 IA Planilhas Bling PRO")
+
+st.title("🚀 IA Planilhas Bling PRO")
 
 # =========================
-# ESTADO
+# MODO
 # =========================
-if "stop_process" not in st.session_state:
-    st.session_state.stop_process = False
-
-if "logs_execucao" not in st.session_state:
-    st.session_state.logs_execucao = []
-
-
-def log(msg: str) -> None:
-    st.session_state.logs_execucao.append(msg)
-
-
-def resetar_logs() -> None:
-    st.session_state.logs_execucao = []
-
-
-def parar_processamento() -> None:
-    st.session_state.stop_process = True
-
-
-def iniciar_processamento() -> None:
-    st.session_state.stop_process = False
-    resetar_logs()
-
+modo = st.radio("Escolha o tipo:", ["📦 Produtos", "📊 Estoque"])
 
 # =========================
-# MODELO BLING
+# STOP
 # =========================
-@st.cache_data
-def carregar_modelo_bling() -> pd.DataFrame:
-    caminho = "modelos/modelo_produtos.csv"
-    if not os.path.exists(caminho):
-        raise FileNotFoundError("Arquivo modelos/modelo_produtos.csv não encontrado.")
-    return pd.read_csv(caminho)
+if "stop" not in st.session_state:
+    st.session_state.stop = False
 
+def parar():
+    st.session_state.stop = True
+
+st.button("🛑 PARAR", on_click=parar)
 
 # =========================
-# LEITURA ROBUSTA
+# UPLOAD
 # =========================
-def ler_csv_seguro(arquivo) -> pd.DataFrame:
-    tentativas = [
-        {"sep": None, "engine": "python", "encoding": "utf-8", "on_bad_lines": "skip"},
-        {"sep": ";", "engine": "python", "encoding": "utf-8", "on_bad_lines": "skip"},
-        {"sep": ";", "engine": "python", "encoding": "latin1", "on_bad_lines": "skip"},
-        {"sep": ",", "engine": "python", "encoding": "latin1", "on_bad_lines": "skip"},
-    ]
+arquivo = st.file_uploader("Envie sua planilha", type=["csv", "xlsx", "xls"])
 
-    ultimo_erro = None
-    for kwargs in tentativas:
+if arquivo:
+
+    try:
+        # =========================
+        # LEITURA INTELIGENTE
+        # =========================
         try:
-            arquivo.seek(0)
-            df = pd.read_csv(arquivo, **kwargs)
-            if len(df.columns) > 0:
-                return df
-        except Exception as e:
-            ultimo_erro = e
+            df = pd.read_csv(arquivo, sep=None, engine='python', on_bad_lines='skip')
+        except:
+            df = pd.read_excel(arquivo)
 
-    raise ultimo_erro
+        st.success("✅ Planilha carregada")
 
+        # =========================
+        # MAPEAMENTO IA
+        # =========================
+        if modo == "📦 Produtos":
+            campos = [
+                "nome", "codigo", "preco", "estoque",
+                "marca", "categoria", "descricao_curta"
+            ]
+        else:
+            campos = [
+                "codigo", "estoque"
+            ]
 
-def ler_arquivo(arquivo) -> pd.DataFrame:
-    nome = arquivo.name.lower()
+        colunas_mapeadas = identificar_colunas_com_ia(df, campos)
 
-    if nome.endswith(".csv"):
-        return ler_csv_seguro(arquivo)
+        df_final = pd.DataFrame()
 
-    if nome.endswith(".xlsx") or nome.endswith(".xls"):
-        return pd.read_excel(arquivo)
+        for destino in campos:
+            origem = colunas_mapeadas.get(destino)
 
-    raise ValueError("Formato não suportado. Envie CSV, XLSX ou XLS.")
+            if origem in df.columns:
+                df_final[destino] = df[origem]
+            else:
+                df_final[destino] = ""
 
+        total = len(df_final)
 
-# =========================
-# NORMALIZAÇÃO
-# =========================
-def normalizar_nome_coluna(coluna: str) -> str:
-    return (
-        str(coluna)
-        .strip()
-        .lower()
-        .replace("ç", "c")
-        .replace("ã", "a")
-        .replace("á", "a")
-        .replace("à", "a")
-        .replace("â", "a")
-        .replace("é", "e")
-        .replace("ê", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ô", "o")
-        .replace("õ", "o")
-        .replace("ú", "u")
-        .replace(" ", "_")
-    )
+        barra = st.progress(0)
+        status = st.empty()
 
+        inicio = time.time()
 
-def detectar_colunas(df: pd.DataFrame) -> dict:
-    mapa = {}
+        # =========================
+        # PROCESSAMENTO
+        # =========================
+        def processar(i):
+            if st.session_state.stop:
+                return i
 
-    for col in df.columns:
-        nome = normalizar_nome_coluna(col)
+            # Só gera descrição se estiver vazia
+            if modo == "📦 Produtos":
+                if not df_final.loc[i, "descricao_curta"]:
+                    nome = df_final.loc[i, "nome"]
+                    df_final.loc[i, "descricao_curta"] = gerar_descricao_ia(nome)
 
-        if any(x in nome for x in ["nome", "produto", "titulo", "title"]):
-            mapa.setdefault("nome", col)
+            return i
 
-        elif any(x in nome for x in ["sku", "codigo", "cod", "referencia", "ref"]):
-            mapa.setdefault("codigo", col)
+        # =========================
+        # PARALELO
+        # =========================
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            for i, _ in enumerate(executor.map(processar, range(total))):
 
-        elif any(x in nome for x in ["preco", "valor", "price"]):
-            mapa.setdefault("preco", col)
+                if st.session_state.stop:
+                    st.warning("⛔ Parado")
+                    break
 
-        elif any(x in nome for x in ["estoque", "quantidade", "saldo", "qtd", "stock"]):
-            mapa.setdefault("estoque", col)
+                progresso = (i + 1) / total
+                barra.progress(progresso)
 
-        elif any(x in nome for x in ["marca", "brand", "fabricante"]):
-            mapa.setdefault("marca", col)
+                tempo_passado = time.time() - inicio
+                estimado = (tempo_passado / (i + 1)) * total
 
-        elif any(x in nome for x in ["categoria", "departamento", "category"]):
-            mapa.setdefault("categoria", col)
+                status.text(
+                    f"{i+1}/{total} | Tempo restante: {int(estimado - tempo_passado)}s"
+                )
 
-        elif any(x in nome for x in ["descricao", "descrição", "desc"]):
-            mapa.setdefault("descricao_curta", col)
+        # =========================
+        # DOWNLOAD
+        # =========================
+        nome_arquivo = "bling_produtos.csv" if modo == "📦 Produtos" else "bling_estoque.csv"
 
-        elif any(x in nome for x in ["gtin", "ean", "barra", "codigo_de_barras", "codigo_barras"]):
-            mapa.setdefault("gtin", col)
+        csv = df_final.to_csv(index=False).encode('utf-8')
 
-    return mapa
+        st.download_button(
+            "📥 Baixar",
+            csv,
+            nome_arquivo,
+            "text/csv"
+        )
 
-
-# =========================
-# HELPERS
-# =========================
-def valor_linha(row: pd.Series, coluna: str):
-    if not coluna:
-        return ""
-    try:
-        valor = row.get(coluna, "")
-        if pd.isna(valor):
-            return ""
-        return valor
-    except Exception:
-        return ""
-
-
-def normalizar_preco(valor):
-    valor = str(valor).strip()
-    if valor == "":
-        return ""
-    valor = valor.replace(".", "").replace(",", ".")
-    valor = "".join(ch for ch in valor if ch.isdigit() or ch == ".")
-    try:
-        return float(valor)
-    except Exception:
-        return ""
-
-
-def normalizar_estoque(valor):
-    valor = str(valor).strip().replace(",", ".")
-    valor = "".join(ch for ch in valor if ch.isdigit() or ch in [".", "-"])
-    try:
-        return float(valor)
-    except Exception:
-        return ""
-
-
-# =========================
-# MONTAR PLANILHA FINAL
-# =========================
-def montar_bling(df_origem: pd.DataFrame, modelo_bling: pd.DataFrame) -> pd.DataFrame:
-    mapa = detectar_colunas(df_origem)
-    log(f"Mapa detectado: {mapa}")
-
-    colunas_modelo = list(modelo_bling.columns)
-    resultado = []
-
-    total = len(df_origem)
-    progresso = st.progress(0)
-    status = st.empty()
-    inicio = time.time()
-
-    for idx, (_, row) in enumerate(df_origem.iterrows(), start=1):
-        if st.session_state.stop_process:
-            log("Processamento interrompido pelo usuário.")
-            st.warning("⛔ Processamento interrompido.")
-            break
-
-        nome = valor_linha(row, mapa.get("nome", ""))
-        codigo = valor_linha(row, mapa.get("codigo", ""))
-        preco = normalizar_preco(valor_linha(row, mapa.get("preco", "")))
-        estoque = normalizar_estoque(valor_linha(row, mapa.get("estoque", "")))
-        marca = valor_linha(row, mapa.get("marca", ""))
-        categoria = valor_linha(row, mapa.get("categoria", ""))
-        descricao_curta = valor_linha(row, mapa.get("descricao_curta", ""))
-        gtin = valor_linha(row, mapa.get("gtin", ""))
-
-        nova_linha = {col: "" for col in colunas_modelo}
-
-        for col in colunas_modelo:
-            col_lower = normalizar_nome_coluna(col)
-
-            if col_lower == "nome":
-                nova_linha[col] = nome
-
-            elif col_lower == "codigo":
-                nova_linha[col] = codigo
-
-            elif col_lower == "preco":
-                nova_linha[col] = preco
-
-            elif col_lower == "estoque":
-                nova_linha[col] = estoque
-
-            elif col_lower == "marca":
-                nova_linha[col] = marca
-
-            elif col_lower == "categoria":
-                nova_linha[col] = categoria
-
-            elif col_lower == "descricao_curta":
-                nova_linha[col] = descricao_curta
-
-            elif col_lower == "gtin":
-                nova_linha[col] = gtin
-
-            elif col_lower == "situacao":
-                nova_linha[col] = "Ativo"
-
-            elif col_lower == "unidade":
-                nova_linha[col] = "UN"
-
-        resultado.append(nova_linha)
-
-        pct = idx / total if total else 1
-        progresso.progress(pct)
-
-        decorrido = time.time() - inicio
-        restante = (decorrido / idx) * (total - idx) if idx else 0
-        status.text(f"Processando {idx}/{total} | ⏱ {int(restante)}s restantes")
-
-    return pd.DataFrame(resultado)
-
-
-# =========================
-# UI
-# =========================
-col1, col2 = st.columns(2)
-
-with col1:
-    st.button("▶️ Iniciar novo processamento", on_click=iniciar_processamento)
-
-with col2:
-    st.button("🛑 Parar processamento", on_click=parar_processamento)
-
-arquivo = st.file_uploader("📂 Envie sua planilha", type=["csv", "xlsx", "xls"])
-
-if arquivo is not None:
-    try:
-        iniciar_processamento()
-
-        log(f"Arquivo recebido: {arquivo.name}")
-
-        modelo = carregar_modelo_bling()
-        log(f"Modelo carregado com {len(modelo.columns)} coluna(s).")
-
-        df = ler_arquivo(arquivo)
-        log(f"Planilha carregada com {len(df)} linha(s) e {len(df.columns)} coluna(s).")
-
-        st.success("✅ Arquivo carregado")
-        st.subheader("Prévia da planilha recebida")
-        st.dataframe(df.head())
-
-        df_final = montar_bling(df, modelo)
-
-        if not df_final.empty:
-            st.success("✅ Planilha pronta para o Bling")
-            st.subheader("Prévia da planilha final")
-            st.dataframe(df_final.head())
-
-            st.download_button(
-                "⬇️ Baixar planilha Bling",
-                data=df_final.to_csv(index=False).encode("utf-8"),
-                file_name="bling_import.csv",
-                mime="text/csv",
-            )
-
-    except Exception:
-        erro = traceback.format_exc()
-        st.error("❌ Erro detectado")
-        st.code(erro)
-        log(erro)
-
-if st.session_state.logs_execucao:
-    st.subheader("Logs")
-    st.code("\n".join(st.session_state.logs_execucao))
+    except Exception as e:
+        st.error(f"Erro: {e}")
