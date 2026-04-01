@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import urllib3
 
-from core.logger import logs, log
+from core.logger import logs
 from core.reader import ler_planilha
 from core.scraper import coletar_links_site, extrair_site
 from core.normalizer import normalizar_planilha_entrada
@@ -18,16 +18,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="🔥 BLING AUTO INTELIGENTE", layout="wide")
 st.title("🔥 BLING AUTO INTELIGENTE")
 
-# =========================
-# INPUTS
-# =========================
 modo_coleta = st.radio(
     "📥 Fonte dos dados",
     ["Planilha + Site", "Só Planilha", "Só Site"],
     horizontal=True,
 )
 
-url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/")
+url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/").strip()
 
 arquivo_dados = st.file_uploader(
     "📄 Planilha de dados",
@@ -44,19 +41,24 @@ modelo_cadastro_file = st.file_uploader(
     type=["xlsx", "xls", "csv"],
 )
 
-estoque_padrao = st.number_input("📦 Estoque padrão", value=10)
+filtro = st.text_input("🔎 Filtrar produto:", "").strip()
+estoque_padrao = st.number_input("📦 Estoque padrão", value=10, min_value=0)
 
-depositos_input = st.text_input("🏬 Depósitos (vírgula)", "1")
+depositos_input = st.text_input(
+    "🏬 IDs dos depósitos (vírgula)",
+    "14888207145"
+)
 depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 
-# =========================
-# EXECUÇÃO
-# =========================
 if st.button("🚀 EXECUTAR"):
     logs.clear()
 
+    if not depositos:
+        st.error("Informe pelo menos um depósito.")
+        st.stop()
+
     if not modelo_estoque_file or not modelo_cadastro_file:
-        st.error("Envie os modelos do Bling")
+        st.error("Envie os modelos do Bling.")
         st.stop()
 
     modelo_est = ler_planilha(modelo_estoque_file)
@@ -70,10 +72,14 @@ if st.button("🚀 EXECUTAR"):
     df_planilha = pd.DataFrame()
     if modo_coleta in ["Planilha + Site", "Só Planilha"]:
         if not arquivo_dados:
-            st.error("Envie a planilha de dados")
+            st.error("Envie a planilha de dados.")
             st.stop()
 
         entrada = ler_planilha(arquivo_dados)
+        if entrada is None:
+            st.error("Não foi possível ler a planilha de dados.")
+            st.stop()
+
         df_planilha = normalizar_planilha_entrada(
             entrada, url_base, estoque_padrao
         )
@@ -82,26 +88,41 @@ if st.button("🚀 EXECUTAR"):
     if modo_coleta in ["Planilha + Site", "Só Site"]:
         links = coletar_links_site(url_base)
 
+        if not links:
+            st.error("Nenhum link encontrado no site.")
+            st.stop()
+
         produtos = []
         with ThreadPoolExecutor(max_workers=5) as ex:
             futures = [
-                ex.submit(extrair_site, l, "", estoque_padrao)
+                ex.submit(extrair_site, l, filtro, estoque_padrao)
                 for l in links
             ]
 
-            for i, f in enumerate(as_completed(futures)):
+            total = len(links)
+            for i, f in enumerate(as_completed(futures), start=1):
                 r = f.result()
                 if r:
                     produtos.append(r)
 
-                progress.progress((i + 1) / len(links))
+                progress.progress(i / total)
 
         df_site = pd.DataFrame(produtos)
 
     df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
 
     if df.empty:
-        st.error("Nenhum dado encontrado")
+        st.error("Nenhum dado encontrado.")
+        st.stop()
+
+    df["Código"] = df["Código"].fillna("").astype(str).str.strip()
+    df["Produto"] = df["Produto"].fillna("").astype(str).str.strip()
+    df["Preço"] = df["Preço"].fillna("0.01").astype(str).str.strip()
+
+    df = df[df["Produto"] != ""].copy()
+
+    if df.empty:
+        st.error("Nenhum produto válido restou após a validação.")
         st.stop()
 
     df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
@@ -115,15 +136,12 @@ if st.button("🚀 EXECUTAR"):
         z.writestr("estoque.csv", csv_estoque)
         z.writestr("cadastro.csv", csv_cadastro)
 
-    st.success("Arquivos prontos")
+    st.success("Arquivos prontos.")
 
-    st.download_button("📥 ESTOQUE", csv_estoque, "estoque.csv")
-    st.download_button("📥 CADASTRO", csv_cadastro, "cadastro.csv")
-    st.download_button("📦 ZIP", zip_buffer.getvalue(), "bling.zip")
+    st.download_button("📥 ESTOQUE", csv_estoque, "estoque.csv", mime="text/csv")
+    st.download_button("📥 CADASTRO", csv_cadastro, "cadastro.csv", mime="text/csv")
+    st.download_button("📦 ZIP", zip_buffer.getvalue(), "bling.zip", mime="application/zip")
 
-# =========================
-# LOG
-# =========================
 if logs:
     st.warning("LOG")
     st.text("\n".join(logs))
