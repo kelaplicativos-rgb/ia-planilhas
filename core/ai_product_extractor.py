@@ -5,6 +5,7 @@ from typing import Dict
 from openai import OpenAI
 
 from core.logger import log
+from core.normalizer.cleaners import validar_gtin
 
 
 def _obter_openai_api_key():
@@ -45,27 +46,10 @@ Sua tarefa:
 - se um campo não existir, retornar string vazia
 - não inventar valores
 
-Campos desejados:
-- codigo
-- gtin
-- produto
-- preco
-- preco_custo
-- descricao_curta
-- descricao_complementar
-- imagem
-- link
-- marca
-- estoque
-- ncm
-- origem
-- peso_liquido
-- peso_bruto
-- estoque_minimo
-- estoque_maximo
-- unidade
-- tipo
-- situacao
+Regras críticas:
+- "codigo" deve ser SKU/referência/código do produto, nunca "ID" genérico
+- "gtin" só deve ser preenchido se estiver claramente identificado como EAN, GTIN ou código de barras
+- se houver dúvida sobre GTIN, deixe vazio
 
 Formato obrigatório:
 {{
@@ -146,6 +130,11 @@ Texto bruto da página:
 
         if not final.get("link"):
             final["link"] = str(link).strip()
+
+        if str(final.get("codigo", "")).strip().lower() == "id":
+            final["codigo"] = ""
+
+        final["gtin"] = validar_gtin(final.get("gtin", ""))
 
         log(f"IA extractor final: {final}")
         return final
