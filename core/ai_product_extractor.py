@@ -5,8 +5,7 @@ from typing import Dict
 from openai import OpenAI
 
 from core.logger import log
-from core.normalizer.cleaners import validar_gtin
-from core.utils import limpar
+from core.utils import limpar, validar_gtin
 
 
 CAMPOS_PRODUTO = [
@@ -32,6 +31,33 @@ CAMPOS_PRODUTO = [
     "situacao",
 ]
 
+TERMOS_PROIBIDOS_LINK = [
+    "youtube.com",
+    "youtu.be",
+    "instagram.com",
+    "facebook.com",
+    "wa.me",
+    "whatsapp",
+    "telegram",
+    "tiktok",
+    "canal",
+    "inscreva-se",
+    "promo",
+    "cupom",
+]
+
+TERMOS_PROIBIDOS_COLUNA = [
+    "video",
+    "vídeo",
+    "youtube",
+    "canal",
+    "whatsapp",
+    "instagram",
+    "facebook",
+    "telegram",
+    "tiktok",
+]
+
 
 def _obter_openai_api_key():
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -40,7 +66,6 @@ def _obter_openai_api_key():
 
     try:
         import streamlit as st
-
         if "OPENAI_API_KEY" in st.secrets:
             api_key = str(st.secrets["OPENAI_API_KEY"]).strip()
             if api_key:
@@ -53,7 +78,6 @@ def _obter_openai_api_key():
 
 def _rejeitar_codigo_ruim(codigo: str) -> bool:
     cod = limpar(codigo).lower()
-
     if not cod:
         return True
 
@@ -67,16 +91,47 @@ def _rejeitar_codigo_ruim(codigo: str) -> bool:
         "código de barras",
         "gtin",
         "ean",
+        "produto",
+        "nome",
+        "descricao",
+        "descrição",
     }
 
-    if cod in rejeitados:
-        return True
+    return cod in rejeitados
 
-    # não deixa passar strings genéricas demais
-    if cod in {"produto", "nome", "descricao", "descrição"}:
-        return True
 
-    return False
+def _link_valido_produto(link: str) -> str:
+    link = limpar(link)
+    if not link:
+        return ""
+
+    lk = link.lower()
+
+    if any(t in lk for t in TERMOS_PROIBIDOS_LINK):
+        return ""
+
+    if not (
+        lk.startswith("http://")
+        or lk.startswith("https://")
+        or lk.startswith("www.")
+        or "/" in lk
+    ):
+        return ""
+
+    return link
+
+
+def _imagem_valida(imagem: str) -> str:
+    imagem = limpar(imagem)
+    if not imagem:
+        return ""
+
+    lk = imagem.lower()
+
+    if any(t in lk for t in TERMOS_PROIBIDOS_LINK):
+        return ""
+
+    return imagem
 
 
 def _normalizar_resposta(dados: dict, link: str = "") -> Dict[str, str]:
@@ -86,20 +141,13 @@ def _normalizar_resposta(dados: dict, link: str = "") -> Dict[str, str]:
         valor = dados.get(campo, "")
         final[campo] = limpar(valor)
 
-    # trava anti-ID / anti-código ruim
     if _rejeitar_codigo_ruim(final.get("codigo", "")):
         final["codigo"] = ""
 
-    # GTIN só entra se for válido
     final["gtin"] = validar_gtin(final.get("gtin", ""))
 
-    # link sempre pode cair para o link da página
-    if not final.get("link"):
-        final["link"] = limpar(link)
-
-    # defaults suaves
-    if not final.get("produto"):
-        final["produto"] = ""
+    final["link"] = _link_valido_produto(final.get("link", "")) or limpar(link)
+    final["imagem"] = _imagem_valida(final.get("imagem", ""))
 
     if not final.get("descricao_curta") and final.get("produto"):
         final["descricao_curta"] = final["produto"]
@@ -161,10 +209,11 @@ REGRAS CRÍTICAS:
 8. "descricao_complementar" é descrição longa
 9. "preco" é preço de venda
 10. "preco_custo" só se existir claramente
-11. "imagem" só se estiver explícita
-12. "link" deve usar o link informado abaixo, se nenhum outro aparecer
-13. "estoque" só se existir claramente
-14. "tipo" e "situacao" podem ficar vazios se não estiverem claros
+11. "imagem" só deve ser URL da imagem do produto
+12. "link" deve ser o link do próprio produto
+13. NUNCA use link de vídeo, canal, propaganda, YouTube, WhatsApp, Instagram ou rede social
+14. "estoque" só se existir claramente
+15. "tipo" e "situacao" podem ficar vazios se não estiverem claros
 
 FORMATO OBRIGATÓRIO:
 {{
@@ -221,7 +270,6 @@ TEXTO BRUTO DA PÁGINA:
 
         final = _normalizar_resposta(dados, link=link)
         log(f"IA extractor final: {final}")
-
         return final
 
     except Exception as e:
