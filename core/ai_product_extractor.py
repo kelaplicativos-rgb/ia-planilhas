@@ -18,20 +18,12 @@ CAMPOS_PRODUTO = [
     "estoque",
 ]
 
-TERMOS_PROIBIDOS_LINK = [
-    "youtube.com",
-    "youtu.be",
-    "instagram.com",
-    "facebook.com",
-    "wa.me",
-    "whatsapp",
-    "telegram",
-    "tiktok",
-    "canal",
-    "inscreva-se",
-    "promo",
-    "cupom",
-]
+MARCAS_INVALIDAS = {
+    "",
+    "mega center",
+    "mega center eletrônicos",
+    "mega center eletronicos",
+}
 
 
 def _obter_openai_api_key():
@@ -71,38 +63,37 @@ def _rejeitar_codigo_ruim(codigo: str) -> bool:
     }
 
 
-def _marca_ruim(marca: str) -> bool:
-    marca = limpar(marca).lower()
-    return marca in {
-        "",
-        "mega center",
-        "mega center eletrônicos",
-        "mega center eletronicos",
-    }
+def _limpar_json_markdown(texto: str) -> str:
+    texto = (texto or "").strip()
 
-
-def _link_valido_produto(link: str) -> str:
-    link = limpar(link)
-    if not link:
+    if not texto:
         return ""
 
-    lk = link.lower()
+    if texto.startswith("```"):
+        linhas = texto.splitlines()
 
-    if any(t in lk for t in TERMOS_PROIBIDOS_LINK):
+        if linhas and linhas[0].strip().startswith("```"):
+            linhas = linhas[1:]
+
+        if linhas and linhas[-1].strip() == "```":
+            linhas = linhas[:-1]
+
+        texto = "\n".join(linhas).strip()
+
+    if texto.lower().startswith("json"):
+        texto = texto[4:].strip()
+
+    return texto
+
+
+def _marca_valida(marca: str) -> str:
+    marca = limpar(marca)
+    if marca.lower() in MARCAS_INVALIDAS:
         return ""
-
-    if not (
-        lk.startswith("http://")
-        or lk.startswith("https://")
-        or lk.startswith("www.")
-        or "/" in lk
-    ):
-        return ""
-
-    return link
+    return marca
 
 
-def _normalizar_resposta(dados: dict, link: str = "") -> Dict[str, str]:
+def _normalizar_resposta(dados: dict) -> Dict[str, str]:
     final = {}
 
     for campo in CAMPOS_PRODUTO:
@@ -112,11 +103,7 @@ def _normalizar_resposta(dados: dict, link: str = "") -> Dict[str, str]:
         final["codigo"] = ""
 
     final["gtin"] = validar_gtin(final.get("gtin", ""))
-
-    if _marca_ruim(final.get("marca", "")):
-        final["marca"] = ""
-
-    final["link"] = _link_valido_produto(link)
+    final["marca"] = _marca_valida(final.get("marca", ""))
 
     if not final.get("descricao_curta") and final.get("produto"):
         final["descricao_curta"] = final["produto"]
@@ -135,12 +122,15 @@ def extrair_dados_produto_com_ia(texto_produto: str, link: str = "") -> Dict[str
         log("IA extractor: texto do produto vazio")
         return {}
 
-    texto_produto = texto_produto[:5000]
+    texto_produto = texto_produto[:4500]
 
     prompt = f"""
 Você extrai dados de páginas de produto para ERP/Bling.
 
 Retorne SOMENTE JSON válido.
+Sem markdown.
+Sem ```json.
+Sem texto antes ou depois.
 Se não existir, devolva string vazia.
 Não invente valores.
 
@@ -153,10 +143,10 @@ Regras:
 - nunca use GTIN/EAN como codigo
 - gtin só se estiver claramente presente
 - marca não pode ser o nome da loja
-- descricao_curta deve ser curta e objetiva
+- descricao_curta deve ser curta, objetiva e limpa
 - estoque pode vir como "0", "10", "Em estoque" ou vazio
 
-Formato:
+Formato obrigatório:
 {{
   "codigo": "",
   "gtin": "",
@@ -183,16 +173,18 @@ TEXTO:
         )
 
         texto = (response.output_text or "").strip()
-        log(f"IA extractor raw: {texto[:800]}")
+        log(f"IA extractor raw: {texto[:700]}")
 
+        texto = _limpar_json_markdown(texto)
         if not texto:
             return {}
 
         dados = json.loads(texto)
+
         if not isinstance(dados, dict):
             return {}
 
-        final = _normalizar_resposta(dados, link=link)
+        final = _normalizar_resposta(dados)
         log(f"IA extractor final: {final}")
         return final
 
