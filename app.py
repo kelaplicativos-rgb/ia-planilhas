@@ -1,165 +1,20 @@
-import io
-import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import pandas as pd
 import streamlit as st
 import urllib3
 
 from core.logger import logs
-from core.reader import ler_planilha
-from core.scraper import coletar_links_site, extrair_site
-from core.normalizer import normalizar_planilha_entrada
-from core.bling import preencher_modelo_estoque, preencher_modelo_cadastro
-from core.merger import merge_dados
+from ui import render_inputs, executar_fluxo, render_downloads
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="🔥 BLING AUTO INTELIGENTE", layout="wide")
 st.title("🔥 BLING AUTO INTELIGENTE")
 
-# =========================
-# INPUTS
-# =========================
-modo_coleta = st.radio(
-    "📥 Fonte dos dados",
-    ["Planilha + Site", "Só Planilha", "Só Site"],
-    horizontal=True,
-)
+params = render_inputs()
 
-url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/")
+if params["executar"]:
+    resultado = executar_fluxo(params)
+    render_downloads(resultado)
 
-arquivo_dados = st.file_uploader(
-    "📄 Planilha de dados",
-    type=["xlsx", "xls", "csv"],
-)
-
-modelo_estoque_file = st.file_uploader(
-    "📦 Modelo ESTOQUE",
-    type=["xlsx", "xls", "csv"],
-)
-
-modelo_cadastro_file = st.file_uploader(
-    "📋 Modelo CADASTRO",
-    type=["xlsx", "xls", "csv"],
-)
-
-estoque_padrao = st.number_input("📦 Estoque padrão", value=10)
-
-depositos_input = st.text_input("🏬 Depósitos (vírgula)", "1")
-depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
-
-# =========================
-# EXECUÇÃO
-# =========================
-if st.button("🚀 EXECUTAR"):
-    logs.clear()
-
-    # valida modelos
-    if not modelo_estoque_file or not modelo_cadastro_file:
-        st.error("Envie os modelos do Bling")
-        st.stop()
-
-    modelo_est = ler_planilha(modelo_estoque_file)
-    modelo_cad = ler_planilha(modelo_cadastro_file)
-
-    if modelo_est is None or modelo_cad is None:
-        st.error("Erro ao ler modelos")
-        st.stop()
-
-    progress = st.progress(0)
-
-    # =========================
-    # PLANILHA
-    # =========================
-    df_planilha = pd.DataFrame()
-
-    if modo_coleta in ["Planilha + Site", "Só Planilha"]:
-        if not arquivo_dados:
-            st.error("Envie a planilha de dados")
-            st.stop()
-
-        entrada = ler_planilha(arquivo_dados)
-
-        if entrada is None or entrada.empty:
-            st.error("Planilha inválida ou vazia")
-            st.stop()
-
-        df_planilha = normalizar_planilha_entrada(
-            entrada, url_base, estoque_padrao
-        )
-
-    # =========================
-    # SITE
-    # =========================
-    df_site = pd.DataFrame()
-
-    if modo_coleta in ["Planilha + Site", "Só Site"]:
-        links = coletar_links_site(url_base)
-
-        if not links:
-            st.warning("Nenhum link encontrado no site")
-        else:
-            produtos = []
-
-            with ThreadPoolExecutor(max_workers=5) as ex:
-                futures = [
-                    ex.submit(extrair_site, l, "", estoque_padrao)
-                    for l in links
-                ]
-
-                total = len(futures)
-
-                for i, f in enumerate(as_completed(futures)):
-                    try:
-                        r = f.result()
-                        if r:
-                            produtos.append(r)
-                    except:
-                        pass
-
-                    progress.progress((i + 1) / total)
-
-            df_site = pd.DataFrame(produtos)
-
-    # =========================
-    # MERGE
-    # =========================
-    df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
-
-    if df is None or df.empty:
-        st.error("Nenhum dado encontrado")
-        st.stop()
-
-    st.success(f"{len(df)} produtos processados")
-
-    # =========================
-    # BLING
-    # =========================
-    df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
-    df_cadastro = preencher_modelo_cadastro(modelo_cad, df)
-
-    # =========================
-    # EXPORTAÇÃO
-    # =========================
-    csv_estoque = df_estoque.to_csv(index=False, sep=";", encoding="utf-8-sig")
-    csv_cadastro = df_cadastro.to_csv(index=False, sep=";", encoding="utf-8-sig")
-
-    zip_buffer = io.BytesIO()
-
-    with zipfile.ZipFile(zip_buffer, "w") as z:
-        z.writestr("estoque.csv", csv_estoque)
-        z.writestr("cadastro.csv", csv_cadastro)
-
-    st.success("Arquivos prontos")
-
-    st.download_button("📥 ESTOQUE", csv_estoque, "estoque.csv")
-    st.download_button("📥 CADASTRO", csv_cadastro, "cadastro.csv")
-    st.download_button("📦 BAIXAR TUDO (ZIP)", zip_buffer.getvalue(), "bling.zip")
-
-# =========================
-# LOG
-# =========================
 if logs:
-    st.warning("LOG DO SISTEMA")
+    st.warning("📄 LOG")
     st.text("\n".join(logs))
