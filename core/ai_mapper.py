@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Dict
 
 import pandas as pd
@@ -31,12 +32,30 @@ CAMPOS_ALVO = [
 ]
 
 
-def _sample_dataframe(df: pd.DataFrame, max_rows: int = 5) -> list[dict]:
+def _obter_openai_api_key():
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if api_key:
+        return api_key
+
+    try:
+        import streamlit as st
+
+        if "OPENAI_API_KEY" in st.secrets:
+            api_key = str(st.secrets["OPENAI_API_KEY"]).strip()
+            if api_key:
+                return api_key
+    except Exception as e:
+        log(f"Secrets indisponível em ai_mapper: {e}")
+
+    return ""
+
+
+def _sample_dataframe(df: pd.DataFrame, max_rows: int = 8) -> list[dict]:
     amostra = df.head(max_rows).fillna("").astype(str)
     return amostra.to_dict(orient="records")
 
 
-def mapear_colunas_com_ia(df: pd.DataFrame, api_key: str) -> Dict[str, str]:
+def mapear_colunas_com_ia(df: pd.DataFrame) -> Dict[str, str]:
     """
     Retorna um dict no formato:
     {
@@ -48,35 +67,37 @@ def mapear_colunas_com_ia(df: pd.DataFrame, api_key: str) -> Dict[str, str]:
         log("IA mapper: dataframe vazio")
         return {}
 
+    api_key = _obter_openai_api_key()
     if not api_key:
         log("IA mapper: api_key vazia")
         return {}
 
     colunas = [str(c) for c in df.columns]
-    amostra = _sample_dataframe(df, max_rows=5)
+    amostra = _sample_dataframe(df, max_rows=8)
 
     prompt = f"""
 Você é um especialista em mapeamento de planilhas de produtos para ERP/Bling.
 
 Sua tarefa:
-1. analisar os nomes das colunas
+1. analisar nomes das colunas
 2. analisar a amostra de linhas
-3. descobrir qual coluna corresponde a cada campo alvo
+3. mapear as colunas para os campos alvo
 
 Campos alvo possíveis:
 {CAMPOS_ALVO}
 
-Regras:
+Regras críticas:
 - retorne SOMENTE JSON válido
-- não invente coluna que não exista
-- se não tiver certeza de um campo, não inclua
+- não invente colunas
+- se não tiver certeza, não inclua o campo
 - o valor deve ser exatamente o nome da coluna original
-- "codigo" é SKU/código interno do produto
-- "gtin" é EAN/código de barras
+- "codigo" deve ser SKU/código interno/referência do produto
+- NÃO use coluna genérica "ID" como "codigo" se existir alguma coluna melhor como SKU, Referência, Código, Código do Produto
+- "gtin" é EAN/GTIN/código de barras
 - "produto" é nome/título/descrição principal
 - "descricao_curta" é resumo curto
 - "descricao_complementar" é descrição longa/completa
-- "imagem" é url de imagem
+- "imagem" é URL de imagem
 - "link" é link externo/url do produto
 - "preco_custo" é custo/compra
 - "preco" é preço de venda
@@ -111,7 +132,7 @@ Amostra:
         )
 
         texto = response.output_text.strip()
-        log(f"IA mapper raw: {texto[:1000]}")
+        log(f"IA mapper raw: {texto[:1200]}")
 
         mapa = json.loads(texto)
 
