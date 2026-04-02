@@ -13,12 +13,12 @@ def preencher_modelo_estoque(modelo, df, depositos):
         return None
 
     col_id_produto = pegar_coluna("id produto")
-    col_codigo = pegar_coluna("código produto", "codigo produto")
+    col_codigo = pegar_coluna("código produto", "codigo produto", "código", "codigo")
     col_gtin = pegar_coluna("gtin")
-    col_descricao = pegar_coluna("descrição produto", "descricao produto")
+    col_descricao = pegar_coluna("descrição produto", "descricao produto", "descrição", "descricao")
     col_deposito = pegar_coluna("depósito", "deposito")
     col_qtd = pegar_coluna("balanço", "balanco", "saldo", "estoque")
-    col_preco = pegar_coluna("preço unitário", "preco unitario", "valor")
+    col_preco = pegar_coluna("preço unitário", "preco unitario", "valor", "preço", "preco")
     col_preco_custo = pegar_coluna("preço de custo", "preco de custo")
     col_observacao = pegar_coluna("observação", "observacao")
     col_data = pegar_coluna("data")
@@ -31,28 +31,28 @@ def preencher_modelo_estoque(modelo, df, depositos):
                 nova[col_id_produto] = ""
 
             if col_codigo:
-                nova[col_codigo] = row.get("Código") or row.get("codigo") or row.get("SKU") or ""
+                nova[col_codigo] = row.get("Código", "")
 
             if col_gtin:
                 nova[col_gtin] = ""
 
             if col_descricao:
-                nova[col_descricao] = row.get("Produto") or row.get("produto") or ""
+                nova[col_descricao] = row.get("Produto", "")
 
             if col_deposito:
                 nova[col_deposito] = deposito
 
             if col_qtd:
-                nova[col_qtd] = row.get("Estoque") or row.get("estoque") or 0
+                nova[col_qtd] = row.get("Estoque", 0)
 
             if col_preco:
-                nova[col_preco] = row.get("Preço") or row.get("preco") or "0.01"
+                nova[col_preco] = row.get("Preço", "0.01")
 
             if col_preco_custo:
                 nova[col_preco_custo] = ""
 
             if col_observacao:
-                nova[col_observacao] = ""
+                nova[col_observacao] = row.get("Descrição Curta", "")
 
             if col_data:
                 nova[col_data] = ""
