@@ -1,4 +1,5 @@
 import re
+
 from bs4 import BeautifulSoup
 
 from core.ai_product_extractor import extrair_dados_produto_com_ia
@@ -8,8 +9,8 @@ from core.utils import (
     detectar_marca,
     gerar_codigo_fallback,
     normalizar_url,
-    parse_preco,
     parse_estoque,
+    parse_preco,
 )
 
 
@@ -50,7 +51,6 @@ def extrair_codigo(texto: str, link: str) -> str:
         r"SKU[:\s#-]*([A-Z0-9\-_/]{4,40})",
         r"REF[:\s#-]*([A-Z0-9\-_/]{4,40})",
         r"REFER[ÊE]NCIA[:\s#-]*([A-Z0-9\-_/]{4,40})",
-        r"\b([0-9]{8,14})\b",
     ]
 
     for padrao in padroes:
@@ -66,7 +66,6 @@ def extrair_gtin(texto: str) -> str:
         r"GTIN[:\s#-]*([0-9]{8,14})",
         r"EAN[:\s#-]*([0-9]{8,14})",
         r"C[ÓO]DIGO DE BARRAS[:\s#-]*([0-9]{8,14})",
-        r"\b([0-9]{8,14})\b",
     ]
 
     for padrao in padroes:
@@ -92,8 +91,7 @@ def extrair_preco(texto: str) -> str:
     if not nums:
         return "0.01"
 
-    preco = min(nums)
-    return f"{preco:.2f}"
+    return f"{min(nums):.2f}"
 
 
 def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
@@ -113,9 +111,6 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     if filtro and filtro.lower() not in nome.lower():
         return None
 
-    # =========================
-    # BASE OFFLINE
-    # =========================
     imagem_site = extrair_imagem(soup, link)
     descricao_curta_site = extrair_descricao_curta_site(soup, nome)
 
@@ -142,9 +137,6 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         "Situação": "Ativo",
     }
 
-    # =========================
-    # IA
-    # =========================
     dados_ia = extrair_dados_produto_com_ia(texto_produto=texto, link=link)
 
     if not dados_ia:
