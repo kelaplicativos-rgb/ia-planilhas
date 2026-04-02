@@ -21,6 +21,9 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
         for _, row in df.iterrows():
             item = {}
 
+            # =========================
+            # CÓDIGO
+            # =========================
             codigo = ""
             if mapa.get("codigo"):
                 codigo = limpar_texto(row.get(mapa["codigo"]))
@@ -33,36 +36,62 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                     or limpar_texto(row.get("ID"))
                 )
 
+            # =========================
+            # PRODUTO
+            # =========================
             produto = ""
             if mapa.get("produto"):
                 produto = limpar_texto(row.get(mapa["produto"]))
 
+            # =========================
+            # PREÇO
+            # =========================
             preco = "0.01"
             if mapa.get("preco"):
                 preco = limpar_preco(row.get(mapa["preco"]))
 
+            # =========================
+            # DESCRIÇÃO CURTA
+            # =========================
             descricao_curta = ""
             if mapa.get("descricao_curta"):
                 descricao_curta = limpar_texto(row.get(mapa["descricao_curta"]))
 
+            # =========================
+            # IMAGEM
+            # =========================
             imagem = ""
             if mapa.get("imagem"):
                 imagem = limpar_texto(row.get(mapa["imagem"]))
 
+            # =========================
+            # LINK (🔥 CORREÇÃO AQUI)
+            # =========================
             link = ""
             if mapa.get("link"):
                 link = limpar_texto(row.get(mapa["link"]))
 
+            # 🔥 fallback automático (ESSENCIAL)
+            if not link and imagem:
+                link = imagem
+
+            # =========================
+            # MARCA
+            # =========================
             marca = ""
             if mapa.get("marca"):
                 marca = limpar_texto(row.get(mapa["marca"]))
 
+            # =========================
+            # ESTOQUE
+            # =========================
             estoque = estoque_padrao
             if mapa.get("estoque"):
                 estoque = limpar_estoque(row.get(mapa["estoque"]), estoque_padrao)
-            else:
-                estoque = int(estoque_padrao)
 
+            # =========================
+            # GARANTIAS
+            # =========================
             if not produto:
                 produto = "Produto sem nome"
 
@@ -76,9 +105,20 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if not marca:
                 marca = detectar_marca(produto, descricao_curta)
 
+            # =========================
+            # NORMALIZA URL
+            # =========================
             imagem = normalizar_url(imagem, url_base)
+
+            # 🔥 evita duplicar imagem como link
+            if link == imagem:
+                link = ""
+
             link = normalizar_url(link, url_base)
 
+            # =========================
+            # MONTAGEM FINAL
+            # =========================
             item["Código"] = codigo
             item["Produto"] = produto
             item["Preço"] = preco
@@ -95,19 +135,19 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
         if df_final.empty:
             return df_final
 
+        # remove linhas inválidas
         df_final = df_final[
             ~(
                 df_final["Código"].apply(valor_vazio)
                 & df_final["Produto"].apply(valor_vazio)
-                & df_final["Link"].apply(valor_vazio)
             )
         ].copy()
 
-        if not df_final.empty:
-            df_final = df_final.drop_duplicates(
-                subset=["Código", "Produto", "Link"],
-                keep="first"
-            ).reset_index(drop=True)
+        # remove duplicados
+        df_final = df_final.drop_duplicates(
+            subset=["Código", "Produto"],
+            keep="first"
+        ).reset_index(drop=True)
 
         log(f"TOTAL NORMALIZADO: {len(df_final)} linhas")
         return df_final
