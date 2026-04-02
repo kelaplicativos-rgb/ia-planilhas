@@ -1,4 +1,7 @@
+import io
 import time
+import zipfile
+
 import pandas as pd
 
 from core.logger import logs, log
@@ -159,7 +162,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Leitura modelo estoque", False, time.time() - t0, erro=str(e))
         avanca("Erro na leitura do modelo estoque")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Leitura modelo estoque OK")
 
     # 2. modelo cadastro
@@ -185,7 +191,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Leitura modelo cadastro", False, time.time() - t0, erro=str(e))
         avanca("Erro na leitura do modelo cadastro")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Leitura modelo cadastro OK")
 
     # 3. planilha de dados
@@ -210,7 +219,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Leitura planilha de dados", False, time.time() - t0, erro=str(e))
         avanca("Erro na leitura da planilha")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Leitura planilha OK")
 
     # 4. normalização
@@ -230,7 +242,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Normalização da planilha", False, time.time() - t0, erro=str(e))
         avanca("Erro na normalização")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Normalização OK")
 
     # 5. coleta links
@@ -246,7 +261,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Coleta de links", False, time.time() - t0, erro=str(e))
         avanca("Erro na coleta de links")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Coleta de links OK")
 
     # 6. extração do site
@@ -272,7 +290,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Extração de produtos do site", False, time.time() - t0, erro=str(e))
         avanca("Erro na extração do site")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Extração do site OK")
 
     # 7. merge
@@ -294,7 +315,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Merge final", False, time.time() - t0, erro=str(e))
         avanca("Erro no merge")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Merge OK")
 
     # 8. estoque
@@ -315,7 +339,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Geração planilha estoque", False, time.time() - t0, erro=str(e))
         avanca("Erro no estoque")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Estoque OK")
 
     # 9. cadastro
@@ -336,7 +363,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Geração planilha cadastro", False, time.time() - t0, erro=str(e))
         avanca("Erro no cadastro")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("Cadastro OK")
 
     # 10. zip
@@ -351,6 +381,7 @@ def executar_diagnostico(
             z.writestr("estoque.csv", csv_estoque)
             z.writestr("cadastro.csv", csv_cadastro)
             z.writestr("debug_log.txt", log_texto or "")
+
         zip_bytes = zip_buffer.getvalue()
 
         if not zip_bytes:
@@ -366,7 +397,10 @@ def executar_diagnostico(
     except Exception as e:
         registrar_etapa(relatorio, "Geração do ZIP", False, time.time() - t0, erro=str(e))
         avanca("Erro no ZIP")
-        return {"relatorio": pd.DataFrame(relatorio), "txt": relatorio_para_txt(relatorio)}
+        return {
+            "relatorio": pd.DataFrame(relatorio),
+            "txt": relatorio_para_txt(relatorio),
+        }
     avanca("ZIP OK")
 
     return {
@@ -375,4 +409,4 @@ def executar_diagnostico(
         "df_final": df_final,
         "df_estoque": df_estoque,
         "df_cadastro": df_cadastro,
-  }
+    }
