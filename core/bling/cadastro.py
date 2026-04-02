@@ -32,12 +32,13 @@ def preencher_modelo_cadastro(modelo, df):
     col_estoque_maximo = encontrar_coluna(["estoque máximo", "estoque maximo"])
     col_descricao_curta = encontrar_coluna(["descrição curta", "descricao curta"])
     col_descricao_complementar = encontrar_coluna(["descrição complementar", "descricao complementar"])
-    col_url_imagens = encontrar_coluna(["url imagens externas", "url imagem"])
-    col_link_externo = encontrar_coluna(["link externo"])
+    col_url_imagens = encontrar_coluna(["url imagens externas", "url imagem", "url imagens"])
+    col_link_externo = encontrar_coluna(["link externo", "url produto", "link produto"])
 
     for _, row in df.iterrows():
         nova = {col: "" for col in modelo.columns}
 
+        # ID sempre vazio
         if col_id:
             nova[col_id] = ""
 
@@ -48,16 +49,16 @@ def preencher_modelo_cadastro(modelo, df):
             nova[col_descricao] = row.get("Produto", "")
 
         if col_tipo:
-            nova[col_tipo] = row.get("Tipo", "Produto")
+            nova[col_tipo] = row.get("Tipo", "") or "Produto"
 
         if col_situacao:
-            nova[col_situacao] = row.get("Situação", "Ativo")
+            nova[col_situacao] = row.get("Situação", "") or "Ativo"
 
         if col_unidade:
-            nova[col_unidade] = row.get("Unidade", "UN")
+            nova[col_unidade] = row.get("Unidade", "") or "UN"
 
         if col_preco:
-            nova[col_preco] = row.get("Preço", "0.01")
+            nova[col_preco] = row.get("Preço", "") or "0.01"
 
         if col_preco_custo:
             nova[col_preco_custo] = row.get("Preço Custo", "")
@@ -72,7 +73,7 @@ def preencher_modelo_cadastro(modelo, df):
             nova[col_ncm] = row.get("NCM", "")
 
         if col_origem:
-            nova[col_origem] = row.get("Origem", "0")
+            nova[col_origem] = row.get("Origem", "") or "0"
 
         if col_peso_liquido:
             nova[col_peso_liquido] = row.get("Peso Líquido", "")
