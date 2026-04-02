@@ -2,10 +2,13 @@ MAPEAMENTO = {
     "codigo": [
         "codigo do produto",
         "código do produto",
+        "codigo interno",
+        "código interno",
+        "codigo sku",
+        "código sku",
+        "sku",
         "codigo",
         "código",
-        "sku",
-        "id",
         "cod produto",
         "cod_produto",
         "referencia",
@@ -21,14 +24,19 @@ MAPEAMENTO = {
         "barcode",
     ],
     "produto": [
+        "descricao do produto",
+        "descrição do produto",
         "descricao",
         "descrição",
+        "nome do produto",
         "nome",
         "produto",
         "titulo",
         "title",
     ],
     "preco": [
+        "preco de venda",
+        "preço de venda",
         "preco",
         "preço",
         "valor",
@@ -48,6 +56,7 @@ MAPEAMENTO = {
         "descricao curta",
         "descrição curta",
         "resumo",
+        "short description",
     ],
     "descricao_complementar": [
         "descricao complementar",
@@ -58,6 +67,7 @@ MAPEAMENTO = {
         "descrição completa",
         "informações adicionais",
         "informacoes adicionais",
+        "detalhes",
     ],
     "imagem": [
         "url imagens externas",
@@ -67,6 +77,7 @@ MAPEAMENTO = {
         "imagem",
         "image",
         "foto",
+        "foto principal",
     ],
     "link": [
         "link externo",
@@ -80,6 +91,7 @@ MAPEAMENTO = {
     "marca": [
         "marca",
         "brand",
+        "fabricante",
     ],
     "estoque": [
         "estoque",
