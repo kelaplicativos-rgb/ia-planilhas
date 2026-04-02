@@ -6,4 +6,4 @@ openpyxl
 xlrd
 urllib3
 lxml
-openai
+openai>=1.0.0
