@@ -15,9 +15,9 @@ MAPEAMENTO = {
     "gtin": [
         "gtin",
         "ean",
+        "gtin/ean",
         "codigo de barras",
         "código de barras",
-        "gtin/ean",
         "barcode",
     ],
     "produto": [
@@ -34,6 +34,16 @@ MAPEAMENTO = {
         "valor",
         "price",
     ],
+    "preco_custo": [
+        "preço de custo",
+        "preco de custo",
+        "preço compra",
+        "preco compra",
+        "preço de compra",
+        "preco de compra",
+        "custo",
+        "cost",
+    ],
     "descricao_curta": [
         "descricao curta",
         "descrição curta",
@@ -46,8 +56,8 @@ MAPEAMENTO = {
         "descrição longa",
         "descricao completa",
         "descrição completa",
-        "observacoes produto",
-        "observações produto",
+        "informações adicionais",
+        "informacoes adicionais",
     ],
     "imagem": [
         "url imagens externas",
@@ -87,36 +97,37 @@ MAPEAMENTO = {
         "origem",
     ],
     "peso_liquido": [
-        "peso liquido",
         "peso líquido",
+        "peso liquido",
+        "peso líquido (kg)",
+        "peso liquido (kg)",
     ],
     "peso_bruto": [
         "peso bruto",
+        "peso bruto (kg)",
     ],
     "estoque_minimo": [
-        "estoque minimo",
         "estoque mínimo",
+        "estoque minimo",
     ],
     "estoque_maximo": [
-        "estoque maximo",
         "estoque máximo",
+        "estoque maximo",
     ],
     "unidade": [
         "unidade",
         "un",
+        "unidade de medida",
     ],
     "tipo": [
         "tipo",
+        "tipo produção",
+        "tipo producao",
+        "tipo do item",
     ],
     "situacao": [
-        "situacao",
         "situação",
+        "situacao",
         "status",
-    ],
-    "preco_custo": [
-        "preco de custo",
-        "preço de custo",
-        "custo",
-        "cost",
     ],
 }
