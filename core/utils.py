@@ -29,8 +29,11 @@ def normalizar_url(url, base=""):
 
     url = str(url).strip()
 
-    if url.startswith("http"):
+    if url.startswith("http://") or url.startswith("https://"):
         return url
+
+    if url.startswith("//"):
+        return "https:" + url
 
     if base:
         return urljoin(base, url)
@@ -39,7 +42,7 @@ def normalizar_url(url, base=""):
 
 
 # =========================
-# SKU
+# SKU / CÓDIGO
 # =========================
 def gerar_codigo_fallback(seed=""):
     numeros = somente_numeros(seed)
@@ -53,24 +56,28 @@ def gerar_codigo_fallback(seed=""):
 # =========================
 # PREÇO
 # =========================
-def parse_preco(valor):
+def parse_preco(valor, fallback="0.01"):
     if valor is None:
-        return "0.01"
+        return fallback
 
     texto = limpar(valor)
 
-    match = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", texto)
+    if texto == "":
+        return fallback
 
+    match = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", texto)
     if match:
         texto = match[0]
+
+    texto = texto.replace("R$", "").replace("r$", "").strip()
 
     try:
         numero = float(texto.replace(".", "").replace(",", "."))
         if numero <= 0:
-            return "0.01"
+            return fallback
         return f"{numero:.2f}"
-    except:
-        return "0.01"
+    except Exception:
+        return fallback
 
 
 # =========================
@@ -78,9 +85,12 @@ def parse_preco(valor):
 # =========================
 def parse_estoque(valor, padrao=0):
     if valor is None:
-        return padrao
+        return int(padrao)
 
     texto = limpar(valor).lower()
+
+    if texto == "":
+        return int(padrao)
 
     if any(x in texto for x in [
         "esgotado",
@@ -95,14 +105,14 @@ def parse_estoque(valor, padrao=0):
     if match:
         try:
             return int(match.group())
-        except:
-            return padrao
+        except Exception:
+            return int(padrao)
 
-    return padrao
+    return int(padrao)
 
 
 # =========================
-# GTIN (🔥 FALTAVA ESSA)
+# GTIN
 # =========================
 def validar_gtin(valor):
     if valor is None:
@@ -110,10 +120,10 @@ def validar_gtin(valor):
 
     numeros = somente_numeros(valor)
 
-    if len(numeros) in [8, 12, 13, 14]:
-        return numeros
+    if len(numeros) not in [8, 12, 13, 14]:
+        return ""
 
-    return ""
+    return numeros
 
 
 # =========================
@@ -121,9 +131,25 @@ def validar_gtin(valor):
 # =========================
 def detectar_marca(nome="", descricao=""):
     marcas = [
-        "Samsung", "LG", "Philips", "Lenoxx", "Knup",
-        "Motorola", "Xiaomi", "Apple", "JBL",
-        "Sony", "Kaidi", "H'maston", "It-Blue", "Grasep"
+        "Samsung",
+        "LG",
+        "Philips",
+        "Lenoxx",
+        "Knup",
+        "Motorola",
+        "Xiaomi",
+        "Apple",
+        "JBL",
+        "Sony",
+        "Kaidi",
+        "H'maston",
+        "It-Blue",
+        "Grasep",
+        "Awei",
+        "Inova",
+        "Exbom",
+        "Tomate",
+        "Altomex",
     ]
 
     base = f"{nome} {descricao}".lower()
