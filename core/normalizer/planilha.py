@@ -13,16 +13,38 @@ from core.normalizer.cleaners import (
 )
 
 
+def _obter_openai_api_key():
+    # 1) tenta variável de ambiente
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if api_key:
+        return api_key
+
+    # 2) tenta Streamlit secrets
+    try:
+        import streamlit as st
+
+        if "OPENAI_API_KEY" in st.secrets:
+            api_key = str(st.secrets["OPENAI_API_KEY"]).strip()
+            if api_key:
+                return api_key
+    except Exception as e:
+        log(f"Secrets indisponível: {e}")
+
+    return ""
+
+
 def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
     try:
         # =========================
         # IA FIRST, OFFLINE SECOND
         # =========================
-        api_key = os.getenv("OPENAI_API_KEY", "")
+        api_key = _obter_openai_api_key()
         mapa_ia = {}
 
         if api_key:
             mapa_ia = mapear_colunas_com_ia(df, api_key)
+        else:
+            log("OPENAI_API_KEY não encontrada em env nem em st.secrets")
 
         mapa = detectar_colunas_inteligente(df, mapa_ia=mapa_ia)
         log(f"MAPEAMENTO DETECTADO FINAL: {mapa}")
@@ -120,7 +142,6 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("situacao"):
                 situacao = limpar_texto(row.get(mapa["situacao"]))
 
-            # garantias
             if not produto:
                 produto = "Produto sem nome"
 
