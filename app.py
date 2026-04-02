@@ -14,6 +14,11 @@ from core.normalizer import normalizar_planilha_entrada
 from core.bling.estoque import preencher_modelo_estoque
 from core.bling.cadastro import preencher_modelo_cadastro
 from core.merger import merge_dados
+from core.diagnostico import (
+    executar_diagnostico,
+    garantir_colunas_finais,
+    formatar_tempo,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -41,15 +46,6 @@ def upload_para_bytes(uploaded_file):
     return uploaded_file.getvalue(), uploaded_file.name
 
 
-def formatar_tempo(segundos: float) -> str:
-    segundos = int(max(0, segundos))
-    minutos = segundos // 60
-    resto = segundos % 60
-    if minutos > 0:
-        return f"{minutos}m {resto}s"
-    return f"{resto}s"
-
-
 def atualizar_progresso(progress_bar, progresso_box, valor: float, etapa: str, inicio: float, atual=None, total=None):
     valor = max(0.0, min(1.0, valor))
     progress_bar.progress(valor)
@@ -67,50 +63,6 @@ def atualizar_progresso(progress_bar, progresso_box, valor: float, etapa: str, i
             f"⏳ {etapa}\n"
             f"**{percentual}%** concluído — tempo: **{tempo_decorrido}**"
         )
-
-
-def garantir_colunas_finais(df: pd.DataFrame) -> pd.DataFrame:
-    colunas_necessarias = [
-        "Código",
-        "GTIN",
-        "Produto",
-        "Preço",
-        "Preço Custo",
-        "Descrição Curta",
-        "Descrição Complementar",
-        "Imagem",
-        "Link",
-        "Marca",
-        "Estoque",
-        "NCM",
-        "Origem",
-        "Peso Líquido",
-        "Peso Bruto",
-        "Estoque Mínimo",
-        "Estoque Máximo",
-        "Unidade",
-        "Tipo",
-        "Situação",
-    ]
-
-    if df is None or df.empty:
-        return pd.DataFrame(columns=colunas_necessarias)
-
-    df = df.copy()
-
-    for col in colunas_necessarias:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[colunas_necessarias].fillna("")
-
-    df["Descrição Curta"] = df.apply(
-        lambda r: r["Descrição Curta"] if str(r["Descrição Curta"]).strip() else str(r["Produto"]).strip(),
-        axis=1,
-    )
-
-    df = df[df["Produto"].astype(str).str.strip() != ""].copy()
-    return df.reset_index(drop=True)
 
 
 def montar_zip_profissional(csv_estoque: str, csv_cadastro: str, log_texto: str):
@@ -159,34 +111,6 @@ def calcular_metricas(df_base, df_estoque, df_cadastro):
         metricas["cadastro_linhas"] = len(df_cadastro)
 
     return metricas
-
-
-def registrar_etapa(relatorio, etapa, ok, tempo, detalhes="", erro=""):
-    relatorio.append({
-        "Etapa": etapa,
-        "Status": "OK" if ok else "ERRO",
-        "Tempo": formatar_tempo(tempo),
-        "Detalhes": detalhes,
-        "Erro": erro,
-    })
-
-
-def relatorio_para_txt(relatorio):
-    linhas = []
-    linhas.append("RELATÓRIO DE DIAGNÓSTICO")
-    linhas.append("=" * 50)
-
-    for item in relatorio:
-        linhas.append(f"Etapa: {item['Etapa']}")
-        linhas.append(f"Status: {item['Status']}")
-        if item.get("Detalhes"):
-            linhas.append(f"Detalhes: {item['Detalhes']}")
-        if item.get("Erro"):
-            linhas.append(f"Erro: {item['Erro']}")
-        linhas.append(f"Tempo: {item['Tempo']}")
-        linhas.append("-" * 50)
-
-    return "\n".join(linhas)
 
 
 if "resultado_execucao" not in st.session_state:
@@ -384,225 +308,109 @@ def executar_fluxo():
     }
 
 
-def executar_diagnostico():
-    logs.clear()
-    log("🧪 EXECUTANDO DIAGNÓSTICO POR BLOCOS 🧪")
+col_a, col_b = st.columns(2)
 
-    relatorio = []
-    inicio_global = time.time()
+with col_a:
+    if st.button("🚀 EXECUTAR PROCESSAMENTO", use_container_width=True):
+        st.session_state.resultado_execucao = executar_fluxo()
 
-    status = st.empty()
-    progress = st.progress(0)
-    progresso_info = st.empty()
+with col_b:
+    if st.button("🧪 RODAR DIAGNÓSTICO", use_container_width=True):
+        inicio_diag = time.time()
+        progress = st.progress(0)
+        progresso_info = st.empty()
 
-    modelo_est = None
-    modelo_cad = None
-    entrada = None
-    df_planilha = pd.DataFrame()
-    links = []
-    produtos = []
-    df_site = pd.DataFrame()
-    df_final = pd.DataFrame()
-    df_estoque = pd.DataFrame()
-    df_cadastro = pd.DataFrame()
-
-    etapas_total = 10
-    etapa_atual = 0
-
-    def avanca(etapa_nome):
-        nonlocal etapa_atual
-        etapa_atual += 1
-        atualizar_progresso(
-            progress,
-            progresso_info,
-            etapa_atual / etapas_total,
-            etapa_nome,
-            inicio_global,
+        st.session_state.resultado_diagnostico = executar_diagnostico(
+            modelo_estoque_file=modelo_estoque_file,
+            modelo_cadastro_file=modelo_cadastro_file,
+            arquivo_dados=arquivo_dados,
+            modo_coleta=modo_coleta,
+            url_base=url_base,
+            estoque_padrao=estoque_padrao,
+            depositos=depositos,
+            diagnostico_amostra_links=diagnostico_amostra_links,
+            uploaded_buffer_cls=UploadedBuffer,
+            atualizar_progresso_fn=atualizar_progresso,
+            progress=progress,
+            progresso_info=progresso_info,
+            inicio_global=inicio_diag,
         )
 
-    # 1. modelo estoque
-    t0 = time.time()
-    try:
-        status.info("Testando leitura do modelo estoque...")
-        if not modelo_estoque_file:
-            raise ValueError("Modelo ESTOQUE não enviado")
 
-        est_bytes, est_name = upload_para_bytes(modelo_estoque_file)
-        modelo_est = ler_planilha(UploadedBuffer(est_bytes, est_name))
+resultado = st.session_state.resultado_execucao
 
-        if modelo_est is None or modelo_est.empty:
-            raise ValueError("Modelo ESTOQUE vazio ou inválido")
+if resultado:
+    st.success("✅ Pacote pronto")
 
-        registrar_etapa(
-            relatorio,
-            "Leitura modelo estoque",
-            True,
-            time.time() - t0,
-            f"{len(modelo_est)} linhas | {len(modelo_est.columns)} colunas",
-        )
-    except Exception as e:
-        registrar_etapa(relatorio, "Leitura modelo estoque", False, time.time() - t0, erro=str(e))
-        avanca("Erro na leitura do modelo estoque")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Leitura modelo estoque OK")
+    m = resultado["metricas"]
 
-    # 2. modelo cadastro
-    t0 = time.time()
-    try:
-        status.info("Testando leitura do modelo cadastro...")
-        if not modelo_cadastro_file:
-            raise ValueError("Modelo CADASTRO não enviado")
+    with st.expander("📊 Resumo", expanded=True):
+        c1, c2 = st.columns(2)
+        c1.metric("Produtos finais", m["produtos_finais"])
+        c2.metric("Linhas estoque", m["estoque_linhas"])
 
-        cad_bytes, cad_name = upload_para_bytes(modelo_cadastro_file)
-        modelo_cad = ler_planilha(UploadedBuffer(cad_bytes, cad_name))
+        c3, c4 = st.columns(2)
+        c3.metric("Linhas cadastro", m["cadastro_linhas"])
+        c4.metric("Sem GTIN", m["sem_gtin"])
 
-        if modelo_cad is None or modelo_cad.empty:
-            raise ValueError("Modelo CADASTRO vazio ou inválido")
+        c5, c6 = st.columns(2)
+        c5.metric("Sem marca", m["sem_marca"])
+        c6.metric("Sem imagem", m["sem_imagem"])
 
-        registrar_etapa(
-            relatorio,
-            "Leitura modelo cadastro",
-            True,
-            time.time() - t0,
-            f"{len(modelo_cad)} linhas | {len(modelo_cad.columns)} colunas",
-        )
-    except Exception as e:
-        registrar_etapa(relatorio, "Leitura modelo cadastro", False, time.time() - t0, erro=str(e))
-        avanca("Erro na leitura do modelo cadastro")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Leitura modelo cadastro OK")
+        st.metric("Sem link", m["sem_link"])
 
-    # 3. leitura planilha dados
-    t0 = time.time()
-    try:
-        status.info("Testando leitura da planilha de dados...")
+    st.download_button(
+        "📦 BAIXAR PACOTE PROFISSIONAL",
+        resultado["zip_bytes"],
+        "bling.zip",
+        mime="application/zip",
+        use_container_width=True,
+    )
 
-        if modo_coleta in ["Planilha + Site", "Só Planilha"]:
-            if not arquivo_dados:
-                raise ValueError("Planilha de dados não enviada")
+    if mostrar_previews:
+        tab1, tab2, tab3 = st.tabs(["Base final", "Estoque", "Cadastro"])
 
-            dados_bytes, dados_name = upload_para_bytes(arquivo_dados)
-            entrada = ler_planilha(UploadedBuffer(dados_bytes, dados_name))
+        with tab1:
+            mostrar_preview(resultado["df"], "Base final", limite_preview)
 
-            if entrada is None or entrada.empty:
-                raise ValueError("Planilha de dados vazia ou inválida")
+        with tab2:
+            mostrar_preview(resultado["df_estoque"], "Estoque", limite_preview)
 
-            detalhe = f"{len(entrada)} linhas | {len(entrada.columns)} colunas"
-        else:
-            detalhe = "Etapa ignorada neste modo"
+        with tab3:
+            mostrar_preview(resultado["df_cadastro"], "Cadastro", limite_preview)
 
-        registrar_etapa(relatorio, "Leitura planilha de dados", True, time.time() - t0, detalhe)
-    except Exception as e:
-        registrar_etapa(relatorio, "Leitura planilha de dados", False, time.time() - t0, erro=str(e))
-        avanca("Erro na leitura da planilha")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Leitura planilha OK")
 
-    # 4. normalização
-    t0 = time.time()
-    try:
-        status.info("Testando normalização da planilha...")
+diag = st.session_state.resultado_diagnostico
 
-        if entrada is not None and not entrada.empty:
-            df_planilha = normalizar_planilha_entrada(
-                entrada,
-                url_base=url_base,
-                estoque_padrao=estoque_padrao,
-            )
-            detalhe = f"{len(df_planilha)} linhas após normalização"
-        else:
-            detalhe = "Etapa ignorada neste modo"
+if diag:
+    st.info("🧪 Resultado do diagnóstico por blocos")
 
-        registrar_etapa(relatorio, "Normalização da planilha", True, time.time() - t0, detalhe)
-    except Exception as e:
-        registrar_etapa(relatorio, "Normalização da planilha", False, time.time() - t0, erro=str(e))
-        avanca("Erro na normalização")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Normalização OK")
+    st.dataframe(diag["relatorio"], use_container_width=True, hide_index=True)
 
-    # 5. coleta links
-    t0 = time.time()
-    try:
-        status.info("Testando coleta de links...")
+    st.download_button(
+        "📥 BAIXAR RELATÓRIO DE DIAGNÓSTICO",
+        diag["txt"],
+        "relatorio_diagnostico.txt",
+        mime="text/plain",
+        use_container_width=True,
+    )
 
-        if modo_coleta in ["Planilha + Site", "Só Site"]:
-            links = coletar_links_site(url_base)
-            detalhe = f"{len(links)} links coletados"
-        else:
-            detalhe = "Etapa ignorada neste modo"
+    if "df_final" in diag:
+        with st.expander("📄 Prévia do diagnóstico", expanded=False):
+            if diag.get("df_final") is not None and not diag["df_final"].empty:
+                st.write("**Base final do diagnóstico**")
+                st.dataframe(diag["df_final"].head(20), use_container_width=True, hide_index=True)
 
-        registrar_etapa(relatorio, "Coleta de links", True, time.time() - t0, detalhe)
-    except Exception as e:
-        registrar_etapa(relatorio, "Coleta de links", False, time.time() - t0, erro=str(e))
-        avanca("Erro na coleta de links")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Coleta de links OK")
 
-    # 6. extração produtos site
-    t0 = time.time()
-    try:
-        status.info("Testando extração de produtos...")
+if logs and debug_mode:
+    with st.expander("📄 Log debug", expanded=False):
+        log_texto = "\n".join(logs)
+        st.text_area("Log completo", log_texto, height=260)
 
-        if modo_coleta in ["Planilha + Site", "Só Site"] and links:
-            amostra = links[:diagnostico_amostra_links]
-            for link in amostra:
-                try:
-                    r = extrair_site(link, "", estoque_padrao)
-                    if r:
-                        produtos.append(r)
-                except Exception as ex:
-                    log(f"Falha extração diagnóstico: {ex}")
-
-            df_site = pd.DataFrame(produtos)
-            detalhe = f"{len(produtos)} produtos extraídos em {len(amostra)} links testados"
-        else:
-            detalhe = "Etapa ignorada neste modo"
-
-        registrar_etapa(relatorio, "Extração de produtos do site", True, time.time() - t0, detalhe)
-    except Exception as e:
-        registrar_etapa(relatorio, "Extração de produtos do site", False, time.time() - t0, erro=str(e))
-        avanca("Erro na extração do site")
-        return {
-            "relatorio": pd.DataFrame(relatorio),
-            "txt": relatorio_para_txt(relatorio),
-        }
-    avanca("Extração do site OK")
-
-    # 7. merge
-    t0 = time.time()
-    try:
-        status.info("Testando merge final...")
-
-        df_final = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
-        df_final = garantir_colunas_finais(df_final)
-
-        if df_final is None or df_final.empty:
-            raise ValueError("Merge não gerou dados válidos")
-
-        registrar_etapa(
-            relatorio,
-            "Merge final",
-            True,
-            time.time() - t0,
-            f"{len(df_final)} linhas após merge",
-        )
-    except Exception as e:
-        registrar_etapa(relatorio, "Merge final", False, time.time() - t0, erro=str(e))
-        avanca("Erro no merge")
-        return {
-            "relatorio": pd.DataFrame(relatorio)
+        st.download_button(
+            label="📥 Baixar LOG (TXT)",
+            data=log_texto,
+            file_name="debug_log.txt",
+            mime="text/plain",
+            use_container_width=True,
+                    )
