@@ -27,12 +27,11 @@ modo_coleta = st.radio(
     horizontal=True,
 )
 
-url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/").strip()
+url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/")
 
 arquivo_dados = st.file_uploader(
     "📄 Planilha de dados",
     type=["xlsx", "xls", "csv"],
-    help="Se estiver no celular e o arquivo não aparecer, renomeie para algo simples como dados.csv",
 )
 
 modelo_estoque_file = st.file_uploader(
@@ -45,19 +44,9 @@ modelo_cadastro_file = st.file_uploader(
     type=["xlsx", "xls", "csv"],
 )
 
-filtro = st.text_input("🔎 Filtrar produto:", "").strip()
+estoque_padrao = st.number_input("📦 Estoque padrão", value=10)
 
-estoque_padrao = st.number_input(
-    "📦 Estoque padrão",
-    value=10,
-    min_value=0,
-    step=1,
-)
-
-depositos_input = st.text_input(
-    "🏬 IDs dos depósitos (separados por vírgula)",
-    "14888207145",
-)
+depositos_input = st.text_input("🏬 Depósitos (vírgula)", "1")
 depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 
 # =========================
@@ -66,19 +55,16 @@ depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 if st.button("🚀 EXECUTAR"):
     logs.clear()
 
-    if not depositos:
-        st.error("Informe pelo menos um depósito.")
-        st.stop()
-
+    # valida modelos
     if not modelo_estoque_file or not modelo_cadastro_file:
-        st.error("Envie os dois modelos do Bling: estoque e cadastro.")
+        st.error("Envie os modelos do Bling")
         st.stop()
 
     modelo_est = ler_planilha(modelo_estoque_file)
     modelo_cad = ler_planilha(modelo_cadastro_file)
 
     if modelo_est is None or modelo_cad is None:
-        st.error("Não foi possível ler um dos modelos do Bling.")
+        st.error("Erro ao ler modelos")
         st.stop()
 
     progress = st.progress(0)
@@ -90,18 +76,17 @@ if st.button("🚀 EXECUTAR"):
 
     if modo_coleta in ["Planilha + Site", "Só Planilha"]:
         if not arquivo_dados:
-            st.error("Envie a planilha de dados.")
+            st.error("Envie a planilha de dados")
             st.stop()
 
         entrada = ler_planilha(arquivo_dados)
-        if entrada is None:
-            st.error("Não foi possível ler a planilha de dados.")
+
+        if entrada is None or entrada.empty:
+            st.error("Planilha inválida ou vazia")
             st.stop()
 
         df_planilha = normalizar_planilha_entrada(
-            entrada,
-            url_base,
-            estoque_padrao,
+            entrada, url_base, estoque_padrao
         )
 
     # =========================
@@ -113,63 +98,43 @@ if st.button("🚀 EXECUTAR"):
         links = coletar_links_site(url_base)
 
         if not links:
-            st.error("Nenhum link de produto foi encontrado no site.")
-            st.stop()
+            st.warning("Nenhum link encontrado no site")
+        else:
+            produtos = []
 
-        st.info(f"🔗 {len(links)} links encontrados no site")
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                futures = [
+                    ex.submit(extrair_site, l, "", estoque_padrao)
+                    for l in links
+                ]
 
-        produtos = []
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            futures = [
-                ex.submit(extrair_site, link, filtro, estoque_padrao)
-                for link in links
-            ]
+                total = len(futures)
 
-            total = len(links)
-            for i, future in enumerate(as_completed(futures), start=1):
-                try:
-                    resultado = future.result()
-                    if resultado:
-                        produtos.append(resultado)
-                except Exception as e:
-                    logs.append(f"ERRO extrair_site: {e}")
+                for i, f in enumerate(as_completed(futures)):
+                    try:
+                        r = f.result()
+                        if r:
+                            produtos.append(r)
+                    except:
+                        pass
 
-                progress.progress(i / total)
+                    progress.progress((i + 1) / total)
 
-        df_site = pd.DataFrame(produtos)
+            df_site = pd.DataFrame(produtos)
 
     # =========================
     # MERGE
     # =========================
     df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
 
-    if df.empty:
-        st.error("Nenhum dado encontrado após o processamento.")
+    if df is None or df.empty:
+        st.error("Nenhum dado encontrado")
         st.stop()
 
-    # =========================
-    # VALIDAÇÃO FINAL
-    # =========================
-    for col in ["Código", "Produto", "Preço", "Descrição Curta", "Imagem", "Link", "Marca", "Estoque"]:
-        if col not in df.columns:
-            df[col] = ""
-
-    df["Código"] = df["Código"].fillna("").astype(str).str.strip()
-    df["Produto"] = df["Produto"].fillna("").astype(str).str.strip()
-    df["Preço"] = df["Preço"].fillna("0.01").astype(str).str.strip()
-    df["Descrição Curta"] = df["Descrição Curta"].fillna("").astype(str).str.strip()
-    df["Imagem"] = df["Imagem"].fillna("").astype(str).str.strip()
-    df["Link"] = df["Link"].fillna("").astype(str).str.strip()
-    df["Marca"] = df["Marca"].fillna("").astype(str).str.strip()
-
-    df = df[df["Produto"] != ""].copy()
-
-    if df.empty:
-        st.error("Nenhum produto válido restou após a validação.")
-        st.stop()
+    st.success(f"{len(df)} produtos processados")
 
     # =========================
-    # MODELOS BLING
+    # BLING
     # =========================
     df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
     df_cadastro = preencher_modelo_cadastro(modelo_cad, df)
@@ -181,51 +146,20 @@ if st.button("🚀 EXECUTAR"):
     csv_cadastro = df_cadastro.to_csv(index=False, sep=";", encoding="utf-8-sig")
 
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as z:
+
+    with zipfile.ZipFile(zip_buffer, "w") as z:
         z.writestr("estoque.csv", csv_estoque)
         z.writestr("cadastro.csv", csv_cadastro)
-    zip_buffer.seek(0)
 
-    st.success("✅ Arquivos prontos.")
+    st.success("Arquivos prontos")
 
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.download_button(
-            "📥 ESTOQUE",
-            csv_estoque,
-            "estoque.csv",
-            mime="text/csv",
-        )
-
-    with c2:
-        st.download_button(
-            "📥 CADASTRO",
-            csv_cadastro,
-            "cadastro.csv",
-            mime="text/csv",
-        )
-
-    with c3:
-        st.download_button(
-            "📦 ZIP",
-            zip_buffer.getvalue(),
-            "bling.zip",
-            mime="application/zip",
-        )
-
-    with st.expander("Visualizar base consolidada"):
-        st.dataframe(df.head(50))
-
-    with st.expander("Visualizar estoque"):
-        st.dataframe(df_estoque.head(50))
-
-    with st.expander("Visualizar cadastro"):
-        st.dataframe(df_cadastro.head(50))
+    st.download_button("📥 ESTOQUE", csv_estoque, "estoque.csv")
+    st.download_button("📥 CADASTRO", csv_cadastro, "cadastro.csv")
+    st.download_button("📦 BAIXAR TUDO (ZIP)", zip_buffer.getvalue(), "bling.zip")
 
 # =========================
 # LOG
 # =========================
 if logs:
-    st.warning("📄 LOG")
+    st.warning("LOG DO SISTEMA")
     st.text("\n".join(logs))
