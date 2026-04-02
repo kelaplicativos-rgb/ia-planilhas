@@ -55,14 +55,130 @@ def _sample_dataframe(df: pd.DataFrame, max_rows: int = 8) -> list[dict]:
     return amostra.to_dict(orient="records")
 
 
-def mapear_colunas_com_ia(df: pd.DataFrame) -> Dict[str, str]:
+def _limpar_nome(nome: str) -> str:
+    return (
+        str(nome or "")
+        .strip()
+        .lower()
+        .replace("_", " ")
+        .replace("-", " ")
+        .replace("/", " ")
+        .replace("\\", " ")
+    )
+
+
+def _rejeitar_codigo_ruim(nome_coluna: str) -> bool:
     """
-    Retorna um dict no formato:
-    {
-        "codigo": "SKU",
-        "produto": "Nome do Produto"
+    Regras para NÃO aceitar coluna ruim como SKU/código.
+    """
+    nome = _limpar_nome(nome_coluna)
+
+    rejeitados_exatos = {
+        "id",
+        "id produto",
+        "id do produto",
+        "id item",
+        "item id",
     }
+
+    if nome in rejeitados_exatos:
+        return True
+
+    # se for muito genérico e não tiver pista de sku/código/referência
+    if "id" in nome and not any(x in nome for x in [
+        "sku",
+        "codigo",
+        "código",
+        "referencia",
+        "referência",
+        "ref",
+    ]):
+        return True
+
+    return False
+
+
+def _score_codigo(nome_coluna: str) -> int:
     """
+    Pontuação de prioridade para decidir se a IA escolheu uma boa coluna de código.
+    """
+    nome = _limpar_nome(nome_coluna)
+
+    if nome == "sku":
+        return 100
+    if "sku" in nome:
+        return 95
+    if nome in ["codigo do produto", "código do produto"]:
+        return 90
+    if "codigo do produto" in nome or "código do produto" in nome:
+        return 88
+    if "codigo interno" in nome or "código interno" in nome:
+        return 85
+    if "referencia" in nome or "referência" in nome:
+        return 80
+    if nome in ["codigo", "código"]:
+        return 70
+    if "codigo" in nome or "código" in nome:
+        return 65
+    if nome in ["ref"]:
+        return 60
+    if "id" in nome:
+        return 0
+
+    return 10
+
+
+def _corrigir_codigo_mapeado(colunas: list[str], coluna_ia: str | None) -> str:
+    """
+    Aceita a coluna da IA só se ela for boa.
+    Caso contrário, tenta escolher uma melhor.
+    """
+    if coluna_ia and coluna_ia in colunas and not _rejeitar_codigo_ruim(coluna_ia):
+        score_ia = _score_codigo(coluna_ia)
+        if score_ia >= 60:
+            return coluna_ia
+
+    melhor = ""
+    melhor_score = 0
+
+    for col in colunas:
+        if _rejeitar_codigo_ruim(col):
+            continue
+
+        score = _score_codigo(col)
+        if score > melhor_score:
+            melhor = col
+            melhor_score = score
+
+    return melhor
+
+
+def _filtrar_mapa_ia(mapa: dict, colunas: list[str]) -> Dict[str, str]:
+    final = {}
+
+    for campo, coluna in mapa.items():
+        if campo not in CAMPOS_ALVO:
+            continue
+
+        if coluna not in colunas:
+            continue
+
+        # regra especial do código
+        if campo == "codigo":
+            continue
+
+        final[campo] = coluna
+
+    # trata código separadamente
+    coluna_codigo_ia = mapa.get("codigo", "")
+    codigo_final = _corrigir_codigo_mapeado(colunas, coluna_codigo_ia)
+    if codigo_final:
+        final["codigo"] = codigo_final
+
+    return final
+
+
+def mapear_colunas_com_ia(df: pd.DataFrame) -> Dict[str, str]:
     if df is None or df.empty:
         log("IA mapper: dataframe vazio")
         return {}
@@ -86,28 +202,29 @@ Sua tarefa:
 Campos alvo possíveis:
 {CAMPOS_ALVO}
 
-Regras críticas:
+REGRAS CRÍTICAS PARA "codigo":
+- "codigo" deve ser SKU/código interno/referência do produto
+- priorize colunas como:
+  SKU, SKU Pai, SKU Filho, Código do Produto, Código Interno, Referência, Ref, Código
+- NÃO use coluna chamada apenas ID
+- NÃO use coluna de identificador técnico/genérico
+- se houver SKU e ID, escolha SKU
+- se houver Referência e ID, escolha Referência
+- se houver Código do Produto e ID, escolha Código do Produto
+
+REGRAS PARA "gtin":
+- só use colunas como GTIN, GTIN/EAN, EAN, Código de Barras
+- não confunda GTIN com SKU
+
+REGRAS PARA "produto":
+- use nome/título/descrição principal do produto
+- não use descrição curta como produto se houver nome melhor
+
+REGRAS GERAIS:
 - retorne SOMENTE JSON válido
 - não invente colunas
 - se não tiver certeza, não inclua o campo
 - o valor deve ser exatamente o nome da coluna original
-- "codigo" deve ser SKU/código interno/referência do produto
-- NÃO use coluna genérica "ID" como "codigo" se existir alguma coluna melhor como SKU, Referência, Código, Código do Produto
-- "gtin" é EAN/GTIN/código de barras
-- "produto" é nome/título/descrição principal
-- "descricao_curta" é resumo curto
-- "descricao_complementar" é descrição longa/completa
-- "imagem" é URL de imagem
-- "link" é link externo/url do produto
-- "preco_custo" é custo/compra
-- "preco" é preço de venda
-- "estoque" é saldo/quantidade
-- "ncm" é classificação fiscal
-- "origem" é origem fiscal
-- "peso_liquido" e "peso_bruto" são pesos
-- "unidade" é UN, PC etc
-- "tipo" geralmente Produto
-- "situacao" geralmente Ativo/Inativo
 
 Formato de saída:
 {{
@@ -140,10 +257,7 @@ Amostra:
             log("IA mapper: resposta não é dict")
             return {}
 
-        final = {}
-        for campo, coluna in mapa.items():
-            if campo in CAMPOS_ALVO and coluna in colunas:
-                final[campo] = coluna
+        final = _filtrar_mapa_ia(mapa, colunas)
 
         log(f"IA mapper final: {final}")
         return final
