@@ -1,7 +1,9 @@
+import os
 import pandas as pd
 
 from core.logger import log
 from core.utils import detectar_marca, gerar_codigo_fallback, normalizar_url
+from core.ai_mapper import mapear_colunas_com_ia
 from core.normalizer.detector import detectar_colunas_inteligente
 from core.normalizer.cleaners import (
     limpar_texto,
@@ -13,17 +15,23 @@ from core.normalizer.cleaners import (
 
 def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
     try:
-        mapa = detectar_colunas_inteligente(df)
-        log(f"MAPEAMENTO DETECTADO: {mapa}")
+        # =========================
+        # IA FIRST, OFFLINE SECOND
+        # =========================
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        mapa_ia = {}
+
+        if api_key:
+            mapa_ia = mapear_colunas_com_ia(df, api_key)
+
+        mapa = detectar_colunas_inteligente(df, mapa_ia=mapa_ia)
+        log(f"MAPEAMENTO DETECTADO FINAL: {mapa}")
 
         dados = []
 
         for _, row in df.iterrows():
             item = {}
 
-            # =========================
-            # CÓDIGO
-            # =========================
             codigo = ""
             if mapa.get("codigo"):
                 codigo = limpar_texto(row.get(mapa["codigo"]))
@@ -36,97 +44,54 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                     or limpar_texto(row.get("ID"))
                 )
 
-            # =========================
-            # GTIN
-            # =========================
             gtin = ""
             if mapa.get("gtin"):
                 gtin = limpar_texto(row.get(mapa["gtin"]))
 
-            # =========================
-            # PRODUTO
-            # =========================
             produto = ""
             if mapa.get("produto"):
                 produto = limpar_texto(row.get(mapa["produto"]))
 
-            # =========================
-            # PREÇO
-            # =========================
             preco = "0.01"
             if mapa.get("preco"):
                 preco = limpar_preco(row.get(mapa["preco"]))
 
-            # =========================
-            # PREÇO DE CUSTO
-            # =========================
             preco_custo = ""
             if mapa.get("preco_custo"):
                 preco_custo = limpar_preco(row.get(mapa["preco_custo"]))
 
-            # =========================
-            # DESCRIÇÃO CURTA
-            # =========================
             descricao_curta = ""
             if mapa.get("descricao_curta"):
                 descricao_curta = limpar_texto(row.get(mapa["descricao_curta"]))
 
-            # =========================
-            # DESCRIÇÃO COMPLEMENTAR
-            # =========================
             descricao_complementar = ""
             if mapa.get("descricao_complementar"):
                 descricao_complementar = limpar_texto(row.get(mapa["descricao_complementar"]))
 
-            # =========================
-            # IMAGEM
-            # =========================
             imagem = ""
             if mapa.get("imagem"):
                 imagem = limpar_texto(row.get(mapa["imagem"]))
 
-            # =========================
-            # LINK
-            # =========================
             link = ""
             if mapa.get("link"):
                 link = limpar_texto(row.get(mapa["link"]))
 
-            # fallback opcional
-            if not link:
-                link = ""
-
-            # =========================
-            # MARCA
-            # =========================
             marca = ""
             if mapa.get("marca"):
                 marca = limpar_texto(row.get(mapa["marca"]))
 
-            # =========================
-            # ESTOQUE
-            # =========================
             estoque = estoque_padrao
             if mapa.get("estoque"):
                 estoque = limpar_estoque(row.get(mapa["estoque"]), estoque_padrao)
 
-            # =========================
-            # NCM
-            # =========================
             ncm = ""
             if mapa.get("ncm"):
                 ncm = limpar_texto(row.get(mapa["ncm"]))
 
-            # =========================
-            # ORIGEM
-            # =========================
             origem = ""
             if mapa.get("origem"):
                 origem = limpar_texto(row.get(mapa["origem"]))
 
-            # =========================
-            # PESOS
-            # =========================
             peso_liquido = ""
             if mapa.get("peso_liquido"):
                 peso_liquido = limpar_texto(row.get(mapa["peso_liquido"]))
@@ -135,9 +100,6 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("peso_bruto"):
                 peso_bruto = limpar_texto(row.get(mapa["peso_bruto"]))
 
-            # =========================
-            # ESTOQUE MIN/MAX
-            # =========================
             estoque_minimo = ""
             if mapa.get("estoque_minimo"):
                 estoque_minimo = limpar_texto(row.get(mapa["estoque_minimo"]))
@@ -146,9 +108,6 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("estoque_maximo"):
                 estoque_maximo = limpar_texto(row.get(mapa["estoque_maximo"]))
 
-            # =========================
-            # UNIDADE / TIPO / SITUAÇÃO
-            # =========================
             unidade = ""
             if mapa.get("unidade"):
                 unidade = limpar_texto(row.get(mapa["unidade"]))
@@ -161,9 +120,7 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("situacao"):
                 situacao = limpar_texto(row.get(mapa["situacao"]))
 
-            # =========================
-            # GARANTIAS
-            # =========================
+            # garantias
             if not produto:
                 produto = "Produto sem nome"
 
