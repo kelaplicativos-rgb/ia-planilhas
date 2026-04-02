@@ -187,3 +187,22 @@ if st.button("🚀 EXECUTAR"):
 if logs:
     st.warning("LOG")
     st.text("\n".join(logs))
+
+# =========================
+# LOG + DOWNLOAD
+# =========================
+if logs:
+    st.warning("📄 LOG DEBUG")
+
+    log_texto = "\n".join(logs)
+
+    # visualizar no app
+    st.text(log_texto)
+
+    # botão download TXT
+    st.download_button(
+        label="📥 Baixar LOG (TXT)",
+        data=log_texto,
+        file_name="debug_log.txt",
+        mime="text/plain"
+    )
