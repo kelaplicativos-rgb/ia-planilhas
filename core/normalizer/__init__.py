@@ -1,1 +1,1 @@
-
+from core.normalizer.planilha import normalizar_planilha_entrada
