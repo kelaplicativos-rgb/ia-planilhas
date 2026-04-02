@@ -29,43 +29,33 @@ def preencher_modelo_estoque(modelo, df, depositos):
         for deposito in depositos:
             nova = {col: "" for col in modelo.columns}
 
-            # ID PRODUTO sempre vazio
             if col_id_produto:
                 nova[col_id_produto] = ""
 
-            # Código do produto
             if col_codigo:
                 nova[col_codigo] = row.get("Código", "")
 
-            # GTIN / código de barras
             if col_gtin:
                 nova[col_gtin] = row.get("GTIN", "")
 
-            # Descrição do produto = título
             if col_descricao:
                 nova[col_descricao] = row.get("Produto", "")
 
-            # Depósito
             if col_deposito:
                 nova[col_deposito] = deposito
 
-            # Saldo / estoque
             if col_qtd:
                 nova[col_qtd] = row.get("Estoque", 0)
 
-            # Preço unitário
             if col_preco:
                 nova[col_preco] = row.get("Preço", "0.01")
 
-            # Preço de custo, se existir nos dados
             if col_preco_custo:
                 nova[col_preco_custo] = row.get("Preço Custo", "")
 
-            # Observação sempre vazia
             if col_observacao:
                 nova[col_observacao] = ""
 
-            # Data vazia
             if col_data:
                 nova[col_data] = ""
 
