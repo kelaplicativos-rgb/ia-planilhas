@@ -38,7 +38,6 @@ def preencher_modelo_cadastro(modelo, df):
     for _, row in df.iterrows():
         nova = {col: "" for col in modelo.columns}
 
-        # ID sempre vazio
         if col_id:
             nova[col_id] = ""
 
