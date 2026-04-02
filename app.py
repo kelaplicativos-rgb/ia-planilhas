@@ -1,7 +1,6 @@
 import io
 import time
 import zipfile
-import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -180,9 +179,8 @@ def relatorio_para_txt(relatorio):
     for item in relatorio:
         linhas.append(f"Etapa: {item['Etapa']}")
         linhas.append(f"Status: {item['Status']}")
-        lines_det = item.get("Detalhes", "")
-        if lines_det:
-            linhas.append(f"Detalhes: {lines_det}")
+        if item.get("Detalhes"):
+            linhas.append(f"Detalhes: {item['Detalhes']}")
         if item.get("Erro"):
             linhas.append(f"Erro: {item['Erro']}")
         linhas.append(f"Tempo: {item['Tempo']}")
@@ -191,9 +189,6 @@ def relatorio_para_txt(relatorio):
     return "\n".join(linhas)
 
 
-# =========================
-# ESTADO
-# =========================
 if "resultado_execucao" not in st.session_state:
     st.session_state.resultado_execucao = None
 
@@ -201,9 +196,6 @@ if "resultado_diagnostico" not in st.session_state:
     st.session_state.resultado_diagnostico = None
 
 
-# =========================
-# CONFIGURAÇÕES
-# =========================
 with st.expander("⚙️ Configurações", expanded=True):
     modo_execucao = st.radio(
         "Modo",
@@ -233,16 +225,12 @@ with st.expander("⚙️ Configurações", expanded=True):
 
 depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 
-
 with st.expander("📁 Arquivos", expanded=True):
     arquivo_dados = st.file_uploader("Planilha de dados", type=["xlsx", "xls", "csv"])
     modelo_estoque_file = st.file_uploader("Modelo ESTOQUE (Bling)", type=["xlsx", "xls", "csv"])
     modelo_cadastro_file = st.file_uploader("Modelo CADASTRO (Bling)", type=["xlsx", "xls", "csv"])
 
 
-# =========================
-# EXECUÇÃO NORMAL
-# =========================
 def executar_fluxo():
     logs.clear()
     log("🔥 EXECUTANDO FLUXO SaaS 🔥")
@@ -396,9 +384,6 @@ def executar_fluxo():
     }
 
 
-# =========================
-# DIAGNÓSTICO POR BLOCOS
-# =========================
 def executar_diagnostico():
     logs.clear()
     log("🧪 EXECUTANDO DIAGNÓSTICO POR BLOCOS 🧪")
@@ -436,8 +421,8 @@ def executar_diagnostico():
         )
 
     # 1. modelo estoque
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando leitura do modelo estoque...")
         if not modelo_estoque_file:
             raise ValueError("Modelo ESTOQUE não enviado")
@@ -465,8 +450,8 @@ def executar_diagnostico():
     avanca("Leitura modelo estoque OK")
 
     # 2. modelo cadastro
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando leitura do modelo cadastro...")
         if not modelo_cadastro_file:
             raise ValueError("Modelo CADASTRO não enviado")
@@ -494,8 +479,8 @@ def executar_diagnostico():
     avanca("Leitura modelo cadastro OK")
 
     # 3. leitura planilha dados
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando leitura da planilha de dados...")
 
         if modo_coleta in ["Planilha + Site", "Só Planilha"]:
@@ -523,8 +508,8 @@ def executar_diagnostico():
     avanca("Leitura planilha OK")
 
     # 4. normalização
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando normalização da planilha...")
 
         if entrada is not None and not entrada.empty:
@@ -548,8 +533,8 @@ def executar_diagnostico():
     avanca("Normalização OK")
 
     # 5. coleta links
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando coleta de links...")
 
         if modo_coleta in ["Planilha + Site", "Só Site"]:
@@ -569,13 +554,12 @@ def executar_diagnostico():
     avanca("Coleta de links OK")
 
     # 6. extração produtos site
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando extração de produtos...")
 
         if modo_coleta in ["Planilha + Site", "Só Site"] and links:
             amostra = links[:diagnostico_amostra_links]
-            workers = 1
             for link in amostra:
                 try:
                     r = extrair_site(link, "", estoque_padrao)
@@ -600,8 +584,8 @@ def executar_diagnostico():
     avanca("Extração do site OK")
 
     # 7. merge
+    t0 = time.time()
     try:
-        t0 = time.time()
         status.info("Testando merge final...")
 
         df_final = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
@@ -610,4 +594,15 @@ def executar_diagnostico():
         if df_final is None or df_final.empty:
             raise ValueError("Merge não gerou dados válidos")
 
-      
+        registrar_etapa(
+            relatorio,
+            "Merge final",
+            True,
+            time.time() - t0,
+            f"{len(df_final)} linhas após merge",
+        )
+    except Exception as e:
+        registrar_etapa(relatorio, "Merge final", False, time.time() - t0, erro=str(e))
+        avanca("Erro no merge")
+        return {
+            "relatorio": pd.DataFrame(relatorio)
