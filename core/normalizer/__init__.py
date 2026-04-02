@@ -1,1 +1,5 @@
-from core.normalizer.planilha import normalizar_planilha_entrada
+from .planilha import normalizar_planilha_entrada
+
+__all__ = [
+    "normalizar_planilha_entrada",
+]
