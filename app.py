@@ -16,8 +16,14 @@ from core.merger import merge_dados
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.set_page_config(page_title="🔥 BLING AUTO INTELIGENTE TURBO", layout="wide")
+st.set_page_config(
+    page_title="BLING AUTO INTELIGENTE TURBO",
+    layout="centered",
+)
+
 st.title("🔥 BLING AUTO INTELIGENTE TURBO")
+st.caption("Layout otimizado para celular")
+
 
 MAX_WORKERS_RAPIDO = 1
 MAX_WORKERS_COMPLETO = 2
@@ -37,10 +43,26 @@ def upload_para_bytes(uploaded_file):
 
 def garantir_colunas_finais(df: pd.DataFrame) -> pd.DataFrame:
     colunas_necessarias = [
-        "Código", "GTIN", "Produto", "Preço", "Preço Custo",
-        "Descrição Curta", "Descrição Complementar", "Imagem", "Link",
-        "Marca", "Estoque", "NCM", "Origem", "Peso Líquido", "Peso Bruto",
-        "Estoque Mínimo", "Estoque Máximo", "Unidade", "Tipo", "Situação",
+        "Código",
+        "GTIN",
+        "Produto",
+        "Preço",
+        "Preço Custo",
+        "Descrição Curta",
+        "Descrição Complementar",
+        "Imagem",
+        "Link",
+        "Marca",
+        "Estoque",
+        "NCM",
+        "Origem",
+        "Peso Líquido",
+        "Peso Bruto",
+        "Estoque Mínimo",
+        "Estoque Máximo",
+        "Unidade",
+        "Tipo",
+        "Situação",
     ]
 
     if df is None or df.empty:
@@ -72,35 +94,98 @@ def montar_zip_profissional(csv_estoque: str, csv_cadastro: str, log_texto: str)
     return zip_buffer.getvalue()
 
 
-with st.sidebar:
-    st.header("⚙️ Controles Turbo")
-    modo_execucao = st.radio("⚡ Modo", ["Rápido", "Completo"])
-    debug_mode = st.checkbox("🛠 Debug completo", value=True)
-    mostrar_previews = st.checkbox("👀 Mostrar prévias", value=True)
-    limite_preview = st.slider("📄 Linhas na prévia", 10, 100, 20, 10)
+def mostrar_preview(df: pd.DataFrame, titulo: str, limite: int):
+    if df is None or df.empty:
+        st.info(f"{titulo}: sem dados")
+        return
+    st.write(f"**{titulo}**")
+    st.dataframe(df.head(limite), use_container_width=True, hide_index=True)
 
 
-modo_coleta = st.radio(
-    "📥 Fonte dos dados",
-    ["Planilha + Site", "Só Planilha", "Só Site"],
-    horizontal=True,
-)
+def calcular_metricas(df_base, df_estoque, df_cadastro):
+    metricas = {
+        "produtos_finais": 0,
+        "estoque_linhas": 0,
+        "cadastro_linhas": 0,
+        "sem_gtin": 0,
+        "sem_marca": 0,
+        "sem_imagem": 0,
+        "sem_link": 0,
+    }
 
-url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/")
+    if df_base is not None and not df_base.empty:
+        metricas["produtos_finais"] = len(df_base)
+        metricas["sem_gtin"] = int((df_base["GTIN"].astype(str).str.strip() == "").sum()) if "GTIN" in df_base.columns else 0
+        metricas["sem_marca"] = int((df_base["Marca"].astype(str).str.strip() == "").sum()) if "Marca" in df_base.columns else 0
+        metricas["sem_imagem"] = int((df_base["Imagem"].astype(str).str.strip() == "").sum()) if "Imagem" in df_base.columns else 0
+        metricas["sem_link"] = int((df_base["Link"].astype(str).str.strip() == "").sum()) if "Link" in df_base.columns else 0
 
-arquivo_dados = st.file_uploader("📄 Planilha de dados", type=["xlsx", "xls", "csv"])
-modelo_estoque_file = st.file_uploader("📦 Modelo ESTOQUE (Bling)", type=["xlsx", "xls", "csv"])
-modelo_cadastro_file = st.file_uploader("📋 Modelo CADASTRO (Bling)", type=["xlsx", "xls", "csv"])
+    if df_estoque is not None and not df_estoque.empty:
+        metricas["estoque_linhas"] = len(df_estoque)
 
-col1, col2 = st.columns(2)
-with col1:
-    estoque_padrao = st.number_input("📦 Estoque padrão", value=10, min_value=0)
-with col2:
-    depositos_input = st.text_input("🏬 Depósitos (vírgula)", "1")
+    if df_cadastro is not None and not df_cadastro.empty:
+        metricas["cadastro_linhas"] = len(df_cadastro)
+
+    return metricas
+
+
+# =========================
+# ESTADO INICIAL
+# =========================
+if "resultado_execucao" not in st.session_state:
+    st.session_state.resultado_execucao = None
+
+if "debug_mode" not in st.session_state:
+    st.session_state.debug_mode = True
+
+
+# =========================
+# CONTROLES MOBILE
+# =========================
+with st.expander("⚙️ Configurações", expanded=True):
+    modo_execucao = st.radio(
+        "Modo",
+        ["Rápido", "Completo"],
+        horizontal=True,
+    )
+
+    modo_coleta = st.radio(
+        "Fonte dos dados",
+        ["Planilha + Site", "Só Planilha", "Só Site"],
+        horizontal=True,
+    )
+
+    url_base = st.text_input("Site", "https://megacentereletronicos.com.br/")
+    estoque_padrao = st.number_input("Estoque padrão", value=10, min_value=0)
+    depositos_input = st.text_input("Depósitos (separados por vírgula)", "1")
+
+    debug_mode = st.toggle("Mostrar log debug", value=True)
+    mostrar_previews = st.toggle("Mostrar prévias", value=True)
+    limite_preview = st.selectbox("Linhas na prévia", [10, 20, 30, 50, 100], index=1)
 
 depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 
 
+with st.expander("📁 Arquivos", expanded=True):
+    arquivo_dados = st.file_uploader(
+        "Planilha de dados",
+        type=["xlsx", "xls", "csv"],
+    )
+
+    modelo_estoque_file = st.file_uploader(
+        "Modelo ESTOQUE (Bling)",
+        type=["xlsx", "xls", "csv"],
+    )
+
+    modelo_cadastro_file = st.file_uploader(
+        "Modelo CADASTRO (Bling)",
+        type=["xlsx", "xls", "csv"],
+    )
+
+
+# =========================
+# FLUXO
+# =========================
 def executar_fluxo():
     logs.clear()
     log("🔥 EXECUTANDO FLUXO SaaS 🔥")
@@ -227,44 +312,75 @@ def executar_fluxo():
         "df_estoque": df_estoque,
         "df_cadastro": df_cadastro,
         "zip_bytes": zip_bytes,
+        "metricas": calcular_metricas(df, df_estoque, df_cadastro),
     }
 
 
-if st.button("🚀 EXECUTAR PROCESSAMENTO"):
-    resultado = executar_fluxo()
-
-    if resultado:
-        st.success("✅ Pacote pronto")
-
-        st.download_button(
-            "📦 BAIXAR PACOTE PROFISSIONAL",
-            resultado["zip_bytes"],
-            "bling.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
-
-        if mostrar_previews:
-            with st.expander("📄 Base final"):
-                st.dataframe(resultado["df"].head(limite_preview), use_container_width=True)
-
-            with st.expander("📦 Estoque"):
-                st.dataframe(resultado["df_estoque"].head(limite_preview), use_container_width=True)
-
-            with st.expander("📋 Cadastro"):
-                st.dataframe(resultado["df_cadastro"].head(limite_preview), use_container_width=True)
+# =========================
+# BOTÃO PRINCIPAL
+# =========================
+if st.button("🚀 EXECUTAR PROCESSAMENTO", use_container_width=True):
+    st.session_state.resultado_execucao = executar_fluxo()
 
 
-if logs:
-    st.warning("📄 LOG DEBUG")
-    log_texto = "\n".join(logs)
+# =========================
+# RESULTADOS
+# =========================
+resultado = st.session_state.resultado_execucao
 
-    if debug_mode:
-        st.text_area("Log completo", log_texto, height=300)
+if resultado:
+    st.success("✅ Pacote pronto")
+
+    m = resultado["metricas"]
+
+    with st.expander("📊 Resumo", expanded=True):
+        c1, c2 = st.columns(2)
+        c1.metric("Produtos finais", m["produtos_finais"])
+        c2.metric("Linhas estoque", m["estoque_linhas"])
+
+        c3, c4 = st.columns(2)
+        c3.metric("Linhas cadastro", m["cadastro_linhas"])
+        c4.metric("Sem GTIN", m["sem_gtin"])
+
+        c5, c6 = st.columns(2)
+        c5.metric("Sem marca", m["sem_marca"])
+        c6.metric("Sem imagem", m["sem_imagem"])
+
+        st.metric("Sem link", m["sem_link"])
 
     st.download_button(
-        label="📥 Baixar LOG (TXT)",
-        data=log_texto,
-        file_name="debug_log.txt",
-        mime="text/plain",
+        "📦 BAIXAR PACOTE PROFISSIONAL",
+        resultado["zip_bytes"],
+        "bling.zip",
+        mime="application/zip",
+        use_container_width=True,
     )
+
+    if mostrar_previews:
+        tab1, tab2, tab3 = st.tabs(["Base final", "Estoque", "Cadastro"])
+
+        with tab1:
+            mostrar_preview(resultado["df"], "Base final", limite_preview)
+
+        with tab2:
+            mostrar_preview(resultado["df_estoque"], "Estoque", limite_preview)
+
+        with tab3:
+            mostrar_preview(resultado["df_cadastro"], "Cadastro", limite_preview)
+
+
+# =========================
+# LOG
+# =========================
+if logs and debug_mode:
+    with st.expander("📄 Log debug", expanded=False):
+        log_texto = "\n".join(logs)
+        st.text_area("Log completo", log_texto, height=260)
+
+        st.download_button(
+            label="📥 Baixar LOG (TXT)",
+            data=log_texto,
+            file_name="debug_log.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
