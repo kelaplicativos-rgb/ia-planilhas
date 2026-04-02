@@ -12,6 +12,14 @@ MAPEAMENTO = {
         "referência",
         "ref",
     ],
+    "gtin": [
+        "gtin",
+        "ean",
+        "codigo de barras",
+        "código de barras",
+        "gtin/ean",
+        "barcode",
+    ],
     "produto": [
         "descricao",
         "descrição",
