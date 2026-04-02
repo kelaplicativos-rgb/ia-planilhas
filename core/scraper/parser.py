@@ -1,4 +1,6 @@
+import json
 import re
+
 from bs4 import BeautifulSoup
 
 from core.ai_product_extractor import extrair_dados_produto_com_ia
@@ -27,6 +29,39 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
     twitter = soup.find("meta", attrs={"name": "twitter:image"})
     if twitter and twitter.get("content"):
         return normalizar_url(twitter.get("content"), link)
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        texto = script.string or script.get_text(" ", strip=True)
+        if not texto:
+            continue
+        try:
+            dado = json.loads(texto)
+        except Exception:
+            continue
+
+        def walk(obj):
+            if isinstance(obj, dict):
+                if "image" in obj:
+                    img = obj["image"]
+                    if isinstance(img, str):
+                        return img
+                    if isinstance(img, list) and img:
+                        if isinstance(img[0], str):
+                            return img[0]
+                for _, v in obj.items():
+                    achado = walk(v)
+                    if achado:
+                        return achado
+            elif isinstance(obj, list):
+                for item in obj:
+                    achado = walk(item)
+                    if achado:
+                        return achado
+            return ""
+
+        achado = walk(dado)
+        if achado:
+            return normalizar_url(achado, link)
 
     for img in soup.find_all("img"):
         for attr in ["data-zoom-image", "data-src", "src"]:
@@ -114,6 +149,34 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
     if og_title and og_title.get("content"):
         candidatos.append(_limpar(og_title.get("content")))
 
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or script.get_text(" ", strip=True)
+        if not raw:
+            continue
+        try:
+            dado = json.loads(raw)
+        except Exception:
+            continue
+
+        def walk(obj):
+            if isinstance(obj, dict):
+                for chave, valor in obj.items():
+                    if chave.lower() == "name" and isinstance(valor, str):
+                        return valor
+                    achado = walk(valor)
+                    if achado:
+                        return achado
+            elif isinstance(obj, list):
+                for item in obj:
+                    achado = walk(item)
+                    if achado:
+                        return achado
+            return ""
+
+        nome_json = walk(dado)
+        if nome_json:
+            candidatos.append(_limpar(nome_json))
+
     title = soup.find("title")
     if title:
         candidatos.append(_limpar(title.get_text(" ", strip=True)))
@@ -122,7 +185,6 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
         if nome and len(nome) >= 4:
             return nome[:250]
 
-    # fallback bruto
     texto_limpo = _limpar(texto)
     if texto_limpo:
         return texto_limpo[:120]
@@ -133,6 +195,9 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
 def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
     lk = (link or "").lower()
     if any(x in lk for x in ["/produto", "/product", "/p/", "-p", ".html"]):
+        return True
+
+    if soup.find("script", type="application/ld+json"):
         return True
 
     txt = (texto or "").lower()
@@ -147,6 +212,8 @@ def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
         "adicionar ao carrinho",
         "gtin",
         "ean",
+        "preço",
+        "preco",
     ]
 
     score = 0
@@ -165,7 +232,8 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
+        if tag.name != "script" or tag.get("type") != "application/ld+json":
+            tag.decompose()
 
     texto = soup.get_text(" ", strip=True)
     nome = _extrair_nome_produto(soup, texto)
@@ -173,7 +241,6 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     if filtro and filtro.lower() not in nome.lower():
         return None
 
-    # não descarta produto por falta de h1
     if not _parece_pagina_produto(soup, texto, link):
         log(f"Página descartada por não parecer produto: {link}")
         return None
