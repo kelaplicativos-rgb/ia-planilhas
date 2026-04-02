@@ -39,6 +39,16 @@ MAPEAMENTO = {
         "descrição curta",
         "resumo",
     ],
+    "descricao_complementar": [
+        "descricao complementar",
+        "descrição complementar",
+        "descricao longa",
+        "descrição longa",
+        "descricao completa",
+        "descrição completa",
+        "observacoes produto",
+        "observações produto",
+    ],
     "imagem": [
         "url imagens externas",
         "url imagem",
@@ -69,5 +79,44 @@ MAPEAMENTO = {
         "saldo",
         "balanco",
         "balanço",
+    ],
+    "ncm": [
+        "ncm",
+    ],
+    "origem": [
+        "origem",
+    ],
+    "peso_liquido": [
+        "peso liquido",
+        "peso líquido",
+    ],
+    "peso_bruto": [
+        "peso bruto",
+    ],
+    "estoque_minimo": [
+        "estoque minimo",
+        "estoque mínimo",
+    ],
+    "estoque_maximo": [
+        "estoque maximo",
+        "estoque máximo",
+    ],
+    "unidade": [
+        "unidade",
+        "un",
+    ],
+    "tipo": [
+        "tipo",
+    ],
+    "situacao": [
+        "situacao",
+        "situação",
+        "status",
+    ],
+    "preco_custo": [
+        "preco de custo",
+        "preço de custo",
+        "custo",
+        "cost",
     ],
 }
