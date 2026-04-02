@@ -37,6 +37,13 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                 )
 
             # =========================
+            # GTIN / CÓDIGO DE BARRAS
+            # =========================
+            gtin = ""
+            if mapa.get("gtin"):
+                gtin = limpar_texto(row.get(mapa["gtin"]))
+
+            # =========================
             # PRODUTO
             # =========================
             produto = ""
@@ -65,13 +72,12 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                 imagem = limpar_texto(row.get(mapa["imagem"]))
 
             # =========================
-            # LINK (🔥 CORREÇÃO AQUI)
+            # LINK
             # =========================
             link = ""
             if mapa.get("link"):
                 link = limpar_texto(row.get(mapa["link"]))
 
-            # 🔥 fallback automático (ESSENCIAL)
             if not link and imagem:
                 link = imagem
 
@@ -105,12 +111,8 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if not marca:
                 marca = detectar_marca(produto, descricao_curta)
 
-            # =========================
-            # NORMALIZA URL
-            # =========================
             imagem = normalizar_url(imagem, url_base)
 
-            # 🔥 evita duplicar imagem como link
             if link == imagem:
                 link = ""
 
@@ -120,6 +122,7 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             # MONTAGEM FINAL
             # =========================
             item["Código"] = codigo
+            item["GTIN"] = gtin
             item["Produto"] = produto
             item["Preço"] = preco
             item["Descrição Curta"] = descricao_curta
@@ -135,7 +138,6 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
         if df_final.empty:
             return df_final
 
-        # remove linhas inválidas
         df_final = df_final[
             ~(
                 df_final["Código"].apply(valor_vazio)
@@ -143,7 +145,6 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             )
         ].copy()
 
-        # remove duplicados
         df_final = df_final.drop_duplicates(
             subset=["Código", "Produto"],
             keep="first"
