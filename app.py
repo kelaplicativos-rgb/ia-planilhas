@@ -1,4 +1,5 @@
 import io
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -129,6 +130,34 @@ def calcular_metricas(df_base, df_estoque, df_cadastro):
     return metricas
 
 
+def formatar_tempo(segundos: float) -> str:
+    segundos = int(segundos)
+    minutos = segundos // 60
+    resto = segundos % 60
+    if minutos > 0:
+        return f"{minutos}m {resto}s"
+    return f"{resto}s"
+
+
+def atualizar_progresso(progress_bar, progresso_box, valor: float, etapa: str, inicio: float, atual: int | None = None, total: int | None = None):
+    valor = max(0.0, min(1.0, valor))
+    progress_bar.progress(valor)
+
+    percentual = int(valor * 100)
+    tempo_decorrido = formatar_tempo(time.time() - inicio)
+
+    if atual is not None and total is not None and total > 0:
+        progresso_box.caption(
+            f"⏳ {etapa}  \n"
+            f"**{percentual}%** concluído — {atual}/{total} itens — tempo: **{tempo_decorrido}**"
+        )
+    else:
+        progresso_box.caption(
+            f"⏳ {etapa}  \n"
+            f"**{percentual}%** concluído — tempo: **{tempo_decorrido}**"
+        )
+
+
 # =========================
 # ESTADO INICIAL
 # =========================
@@ -200,10 +229,14 @@ def executar_fluxo():
 
     workers = MAX_WORKERS_RAPIDO if modo_execucao == "Rápido" else MAX_WORKERS_COMPLETO
 
+    inicio = time.time()
     status = st.empty()
     progress = st.progress(0)
+    progresso_info = st.empty()
 
     status.info("Lendo modelos do Bling...")
+    atualizar_progresso(progress, progresso_info, 0.05, "Lendo modelos do Bling", inicio)
+
     est_bytes, est_name = upload_para_bytes(modelo_estoque_file)
     cad_bytes, cad_name = upload_para_bytes(modelo_cadastro_file)
 
@@ -222,6 +255,8 @@ def executar_fluxo():
             return None
 
         status.info("Lendo planilha de dados...")
+        atualizar_progresso(progress, progresso_info, 0.15, "Lendo planilha de dados", inicio)
+
         dados_bytes, dados_name = upload_para_bytes(arquivo_dados)
         entrada = ler_planilha(UploadedBuffer(dados_bytes, dados_name))
 
@@ -229,19 +264,24 @@ def executar_fluxo():
             st.error("❌ Não foi possível ler a planilha de dados.")
             return None
 
+        status.info("Normalizando planilha...")
+        atualizar_progresso(progress, progresso_info, 0.25, "Normalizando planilha", inicio)
+
         df_planilha = normalizar_planilha_entrada(
             entrada,
             url_base=url_base,
             estoque_padrao=estoque_padrao,
         )
 
-    progress.progress(0.35)
+    atualizar_progresso(progress, progresso_info, 0.35, "Etapa de planilha concluída", inicio)
 
     df_site = pd.DataFrame()
     deve_rodar_site = (modo_coleta == "Só Site") or (modo_coleta == "Planilha + Site" and modo_execucao == "Completo")
 
     if deve_rodar_site:
         status.info("Coletando links do site...")
+        atualizar_progresso(progress, progresso_info, 0.40, "Coletando links do site", inicio)
+
         links = coletar_links_site(url_base)
 
         if modo_execucao == "Rápido" and len(links) > 60:
@@ -254,9 +294,10 @@ def executar_fluxo():
 
         if links:
             status.info("Extraindo produtos do site...")
+            total = len(links)
+
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futures = [ex.submit(extrair_site, link, "", estoque_padrao) for link in links]
-                total = len(links)
 
                 for i, future in enumerate(as_completed(futures), start=1):
                     try:
@@ -266,14 +307,25 @@ def executar_fluxo():
                     except Exception as e:
                         log(f"ERRO scraper: {e}")
 
-                    progress.progress(0.35 + (0.35 * (i / total)))
+                    progresso_atual = 0.40 + (0.30 * (i / total))
+                    atualizar_progresso(
+                        progress,
+                        progresso_info,
+                        progresso_atual,
+                        "Extraindo produtos do site",
+                        inicio,
+                        i,
+                        total,
+                    )
 
         df_site = pd.DataFrame(produtos)
 
     else:
-        progress.progress(0.70)
+        atualizar_progresso(progress, progresso_info, 0.70, "Etapa de site ignorada", inicio)
 
     status.info("Fazendo merge final...")
+    atualizar_progresso(progress, progresso_info, 0.78, "Fazendo merge final", inicio)
+
     df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
     df = garantir_colunas_finais(df)
 
@@ -285,15 +337,15 @@ def executar_fluxo():
         df = df.head(250).copy()
         log("Base final limitada a 250 produtos para estabilidade.")
 
-    progress.progress(0.82)
-
     status.info("Gerando planilhas do Bling...")
+    atualizar_progresso(progress, progresso_info, 0.88, "Gerando planilhas do Bling", inicio)
+
     df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
     df_cadastro = preencher_modelo_cadastro(modelo_cad, df)
 
-    progress.progress(0.92)
-
     status.info("Preparando ZIP...")
+    atualizar_progresso(progress, progresso_info, 0.95, "Preparando ZIP", inicio)
+
     csv_estoque = df_estoque.to_csv(index=False, sep=";", encoding="utf-8-sig")
     csv_cadastro = df_cadastro.to_csv(index=False, sep=";", encoding="utf-8-sig")
     log_texto = "\n".join(logs)
@@ -304,8 +356,8 @@ def executar_fluxo():
         log_texto=log_texto,
     )
 
-    progress.progress(1.0)
     status.success("Processamento concluído.")
+    atualizar_progresso(progress, progresso_info, 1.0, "Processamento concluído", inicio)
 
     return {
         "df": df,
@@ -383,4 +435,4 @@ if logs and debug_mode:
             file_name="debug_log.txt",
             mime="text/plain",
             use_container_width=True,
-        )
+    )
