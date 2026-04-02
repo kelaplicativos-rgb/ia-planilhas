@@ -92,8 +92,9 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("link"):
                 link = limpar_texto(row.get(mapa["link"]))
 
-            if not link and imagem:
-                link = imagem
+            # fallback opcional
+            if not link:
+                link = ""
 
             # =========================
             # MARCA
@@ -135,7 +136,7 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                 peso_bruto = limpar_texto(row.get(mapa["peso_bruto"]))
 
             # =========================
-            # ESTOQUES MIN/MAX
+            # ESTOQUE MIN/MAX
             # =========================
             estoque_minimo = ""
             if mapa.get("estoque_minimo"):
@@ -170,7 +171,7 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                 descricao_curta = produto
 
             if not codigo:
-                base_fallback = link or produto
+                base_fallback = link or imagem or produto
                 codigo = gerar_codigo_fallback(base_fallback)
 
             if not marca:
@@ -189,15 +190,8 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
                 origem = "0"
 
             imagem = normalizar_url(imagem, url_base)
-
-            if link == imagem:
-                link = ""
-
             link = normalizar_url(link, url_base)
 
-            # =========================
-            # MONTAGEM FINAL
-            # =========================
             item["Código"] = codigo
             item["GTIN"] = gtin
             item["Produto"] = produto
