@@ -1,4 +1,8 @@
+from datetime import datetime
+
 logs = []
 
+
 def log(msg):
-    logs.append(msg)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    logs.append(f"[{timestamp}] {msg}")
