@@ -26,10 +26,6 @@ def _obter_openai_api_key():
 
 
 def extrair_dados_produto_com_ia(texto_produto: str, link: str = "") -> Dict[str, str]:
-    """
-    Retorna um dict estruturado com os campos do produto extraídos do texto da página.
-    O que não existir deve voltar vazio.
-    """
     api_key = _obter_openai_api_key()
     if not api_key:
         log("IA extractor: OPENAI_API_KEY não encontrada")
@@ -70,23 +66,6 @@ Campos desejados:
 - unidade
 - tipo
 - situacao
-
-Regras:
-- "produto" = nome/título principal
-- "descricao_curta" = resumo curto do produto
-- "descricao_complementar" = descrição longa/completa
-- "codigo" = SKU/código interno/referência do produto
-- "gtin" = EAN/GTIN/código de barras
-- "preco" = preço de venda
-- "preco_custo" = custo, se existir
-- "imagem" = URL de imagem, se estiver explícita no texto
-- "link" = use o link recebido abaixo
-- "estoque" = quantidade, se existir
-- "ncm" = classificação fiscal
-- "origem" = origem fiscal
-- "unidade" = ex. UN
-- "tipo" = se não achar, deixe vazio
-- "situacao" = se não achar, deixe vazio
 
 Formato obrigatório:
 {{
