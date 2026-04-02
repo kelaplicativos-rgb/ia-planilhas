@@ -102,7 +102,22 @@ def parse_estoque(valor, padrao=0):
 
 
 # =========================
-# MARCA (🔥 FALTAVA ESSA)
+# GTIN (🔥 FALTAVA ESSA)
+# =========================
+def validar_gtin(valor):
+    if valor is None:
+        return ""
+
+    numeros = somente_numeros(valor)
+
+    if len(numeros) in [8, 12, 13, 14]:
+        return numeros
+
+    return ""
+
+
+# =========================
+# MARCA
 # =========================
 def detectar_marca(nome="", descricao=""):
     marcas = [
