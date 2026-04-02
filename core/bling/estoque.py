@@ -2,42 +2,38 @@ import pandas as pd
 
 
 def preencher_modelo_estoque(modelo, df, depositos):
-    mapa = {col.lower().strip(): col for col in modelo.columns}
     linhas = []
 
-    def pegar_coluna(*nomes):
-        for nome in nomes:
+    # 🔥 normaliza colunas do modelo
+    mapa = {col.lower().strip(): col for col in modelo.columns}
+
+    def encontrar_coluna(possiveis):
+        for nome in possiveis:
             nome = nome.lower().strip()
-            if nome in mapa:
-                return mapa[nome]
+            for col_norm, col_real in mapa.items():
+                if nome in col_norm:
+                    return col_real
         return None
 
-    col_id_produto = pegar_coluna("id produto")
-    col_codigo = pegar_coluna("código produto", "codigo produto", "código", "codigo")
-    col_gtin = pegar_coluna("gtin")
-    col_descricao = pegar_coluna("descrição produto", "descricao produto", "descrição", "descricao")
-    col_deposito = pegar_coluna("depósito", "deposito")
-    col_qtd = pegar_coluna("balanço", "balanco", "saldo", "estoque")
-    col_preco = pegar_coluna("preço unitário", "preco unitario", "valor", "preço", "preco")
-    col_preco_custo = pegar_coluna("preço de custo", "preco de custo")
-    col_observacao = pegar_coluna("observação", "observacao")
-    col_data = pegar_coluna("data")
+    # 🔥 DETECÇÃO FLEXÍVEL (ESSA É A CORREÇÃO)
+    col_codigo = encontrar_coluna(["codigo", "código"])
+    col_produto = encontrar_coluna(["descricao", "produto"])
+    col_deposito = encontrar_coluna(["deposito", "depósito"])
+    col_qtd = encontrar_coluna(["saldo", "balanco", "balanço", "estoque"])
+    col_preco = encontrar_coluna(["preco", "preço", "valor"])
+    col_obs = encontrar_coluna(["observacao", "observação"])
 
     for _, row in df.iterrows():
         for deposito in depositos:
+
             nova = {col: "" for col in modelo.columns}
 
-            if col_id_produto:
-                nova[col_id_produto] = ""
-
+            # 🔥 PREENCHIMENTO FORÇADO
             if col_codigo:
                 nova[col_codigo] = row.get("Código", "")
 
-            if col_gtin:
-                nova[col_gtin] = ""
-
-            if col_descricao:
-                nova[col_descricao] = row.get("Produto", "")
+            if col_produto:
+                nova[col_produto] = row.get("Produto", "")
 
             if col_deposito:
                 nova[col_deposito] = deposito
@@ -48,15 +44,11 @@ def preencher_modelo_estoque(modelo, df, depositos):
             if col_preco:
                 nova[col_preco] = row.get("Preço", "0.01")
 
-            if col_preco_custo:
-                nova[col_preco_custo] = ""
-
-            if col_observacao:
-                nova[col_observacao] = row.get("Descrição Curta", "")
-
-            if col_data:
-                nova[col_data] = ""
+            if col_obs:
+                nova[col_obs] = row.get("Descrição Curta", "")
 
             linhas.append(nova)
 
-    return pd.DataFrame(linhas, columns=modelo.columns)
+    df_final = pd.DataFrame(linhas, columns=modelo.columns)
+
+    return df_final
