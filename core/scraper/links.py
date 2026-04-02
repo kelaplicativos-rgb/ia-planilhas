@@ -85,6 +85,7 @@ def _extrair_links_de_anchors(soup, url_base):
 def _extrair_links_de_scripts(html, url_base):
     links = []
 
+    # qualquer URL absoluta/relativa que pareça produto
     padroes = [
         r'https?://[^\s"\'<>]+',
         r'/(?:produto|product|p)/[^\s"\'<>]+',
@@ -196,6 +197,7 @@ def coletar_links_site(url_base, max_paginas=100):
                 novos += 1
         return novos
 
+    # página 1 real
     urls_teste = [
         url_base,
         f"{url_base}?page=1",
