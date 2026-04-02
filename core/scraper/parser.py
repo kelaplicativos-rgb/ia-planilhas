@@ -12,6 +12,7 @@ from core.utils import (
     normalizar_url,
     parse_estoque,
     parse_preco,
+    validar_gtin,
 )
 
 
@@ -34,6 +35,7 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
         texto = script.string or script.get_text(" ", strip=True)
         if not texto:
             continue
+
         try:
             dado = json.loads(texto)
         except Exception:
@@ -48,15 +50,18 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
                     if isinstance(img, list) and img:
                         if isinstance(img[0], str):
                             return img[0]
+
                 for _, v in obj.items():
                     achado = walk(v)
                     if achado:
                         return achado
+
             elif isinstance(obj, list):
                 for item in obj:
                     achado = walk(item)
                     if achado:
                         return achado
+
             return ""
 
         achado = walk(dado)
@@ -91,10 +96,10 @@ def extrair_descricao_curta_site(soup: BeautifulSoup, nome: str) -> str:
 
 def extrair_codigo(texto: str, link: str) -> str:
     padroes = [
-        r"SKU[:\s#-]*([A-Z0-9\-_/]{4,40})",
-        r"C[ÓO]D(?:IGO)?[:\s#-]*([A-Z0-9\-_/]{4,40})",
-        r"REF[:\s#-]*([A-Z0-9\-_/]{4,40})",
-        r"REFER[ÊE]NCIA[:\s#-]*([A-Z0-9\-_/]{4,40})",
+        r"SKU[:\s#-]*([A-Z0-9\-_\/]{4,40})",
+        r"C[ÓO]D(?:IGO)?[:\s#-]*([A-Z0-9\-_\/]{4,40})",
+        r"REF[:\s#-]*([A-Z0-9\-_\/]{4,40})",
+        r"REFER[ÊE]NCIA[:\s#-]*([A-Z0-9\-_\/]{4,40})",
     ]
 
     for padrao in padroes:
@@ -153,6 +158,7 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
         raw = script.string or script.get_text(" ", strip=True)
         if not raw:
             continue
+
         try:
             dado = json.loads(raw)
         except Exception:
@@ -163,14 +169,17 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
                 for chave, valor in obj.items():
                     if chave.lower() == "name" and isinstance(valor, str):
                         return valor
+
                     achado = walk(valor)
                     if achado:
                         return achado
+
             elif isinstance(obj, list):
                 for item in obj:
                     achado = walk(item)
                     if achado:
                         return achado
+
             return ""
 
         nome_json = walk(dado)
@@ -250,7 +259,7 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
 
     offline = {
         "Código": extrair_codigo(texto, link),
-        "GTIN": extrair_gtin(texto),
+        "GTIN": validar_gtin(extrair_gtin(texto)),
         "Produto": nome,
         "Preço": extrair_preco(texto),
         "Preço Custo": "",
@@ -283,7 +292,7 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
 
     final = {
         "Código": codigo_ia or offline["Código"],
-        "GTIN": dados_ia.get("gtin") or offline["GTIN"],
+        "GTIN": validar_gtin(dados_ia.get("gtin") or offline["GTIN"]),
         "Produto": dados_ia.get("produto") or offline["Produto"],
         "Preço": parse_preco(dados_ia.get("preco") or offline["Preço"]),
         "Preço Custo": parse_preco(dados_ia.get("preco_custo") or offline["Preço Custo"]) if (dados_ia.get("preco_custo") or "").strip() else "",
