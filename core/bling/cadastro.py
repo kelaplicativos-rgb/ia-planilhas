@@ -36,10 +36,10 @@ def preencher_modelo_cadastro(modelo, df):
         nova = {col: "" for col in modelo.columns}
 
         if col_codigo:
-            nova[col_codigo] = row.get("Código") or row.get("codigo") or row.get("SKU") or ""
+            nova[col_codigo] = row.get("Código", "")
 
         if col_descricao:
-            nova[col_descricao] = row.get("Produto") or row.get("produto") or ""
+            nova[col_descricao] = row.get("Produto", "")
 
         if col_tipo:
             nova[col_tipo] = "Produto"
@@ -51,7 +51,7 @@ def preencher_modelo_cadastro(modelo, df):
             nova[col_unidade] = "UN"
 
         if col_preco:
-            nova[col_preco] = row.get("Preço") or row.get("preco") or "0.01"
+            nova[col_preco] = row.get("Preço", "0.01")
 
         if col_preco_custo:
             nova[col_preco_custo] = ""
@@ -60,7 +60,7 @@ def preencher_modelo_cadastro(modelo, df):
             nova[col_gtin] = ""
 
         if col_marca:
-            nova[col_marca] = row.get("Marca") or row.get("marca") or ""
+            nova[col_marca] = row.get("Marca", "")
 
         if col_ncm:
             nova[col_ncm] = ""
@@ -81,21 +81,16 @@ def preencher_modelo_cadastro(modelo, df):
             nova[col_estoque_maximo] = ""
 
         if col_descricao_curta:
-            nova[col_descricao_curta] = (
-                row.get("Descrição Curta")
-                or row.get("descricao_curta")
-                or row.get("Produto")
-                or ""
-            )
+            nova[col_descricao_curta] = row.get("Descrição Curta", "")
 
         if col_descricao_complementar:
             nova[col_descricao_complementar] = ""
 
         if col_url_imagens:
-            nova[col_url_imagens] = row.get("Imagem") or row.get("imagem") or ""
+            nova[col_url_imagens] = row.get("Imagem", "")
 
         if col_link_externo:
-            nova[col_link_externo] = row.get("Link") or row.get("link") or ""
+            nova[col_link_externo] = row.get("Link", "")
 
         linhas.append(nova)
 
