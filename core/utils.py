@@ -1,35 +1,29 @@
 import re
+import random
+from urllib.parse import urljoin
 
 
+# =========================
+# TEXTO
+# =========================
 def limpar(texto):
-    """
-    Limpa texto removendo espaços extras, quebras e normalizando.
-    """
     if texto is None:
         return ""
-
     texto = str(texto)
-
-    # remove múltiplos espaços
     texto = re.sub(r"\s+", " ", texto)
-
     return texto.strip()
 
 
 def somente_numeros(texto):
-    """
-    Remove tudo que não for número
-    """
     if texto is None:
         return ""
-
     return re.sub(r"\D", "", str(texto))
 
 
+# =========================
+# URL
+# =========================
 def normalizar_url(url, base=""):
-    """
-    Corrige URL relativa
-    """
     if not url:
         return ""
 
@@ -39,29 +33,27 @@ def normalizar_url(url, base=""):
         return url
 
     if base:
-        from urllib.parse import urljoin
         return urljoin(base, url)
 
     return url
 
 
+# =========================
+# SKU
+# =========================
 def gerar_codigo_fallback(seed=""):
-    """
-    Gera SKU fallback confiável
-    """
     numeros = somente_numeros(seed)
 
     if len(numeros) >= 8:
         return numeros[:14]
 
-    import random
     return str(random.randint(1000000000000, 9999999999999))
 
 
+# =========================
+# PREÇO
+# =========================
 def parse_preco(valor):
-    """
-    Converte preço para padrão Bling
-    """
     if valor is None:
         return "0.01"
 
@@ -81,16 +73,21 @@ def parse_preco(valor):
         return "0.01"
 
 
+# =========================
+# ESTOQUE
+# =========================
 def parse_estoque(valor, padrao=0):
-    """
-    Converte estoque para inteiro confiável
-    """
     if valor is None:
         return padrao
 
     texto = limpar(valor).lower()
 
-    if any(x in texto for x in ["esgotado", "sem estoque", "indisponivel", "indisponível"]):
+    if any(x in texto for x in [
+        "esgotado",
+        "sem estoque",
+        "indisponivel",
+        "indisponível"
+    ]):
         return 0
 
     match = re.search(r"-?\d+", texto)
@@ -102,3 +99,40 @@ def parse_estoque(valor, padrao=0):
             return padrao
 
     return padrao
+
+
+# =========================
+# MARCA (🔥 FALTAVA ESSA)
+# =========================
+def detectar_marca(nome="", descricao=""):
+    marcas = [
+        "Samsung", "LG", "Philips", "Lenoxx", "Knup",
+        "Motorola", "Xiaomi", "Apple", "JBL",
+        "Sony", "Kaidi", "H'maston", "It-Blue", "Grasep"
+    ]
+
+    base = f"{nome} {descricao}".lower()
+
+    for marca in marcas:
+        if marca.lower() in base:
+            return marca
+
+    return ""
+
+
+# =========================
+# VALORES VAZIOS
+# =========================
+def valor_vazio(valor):
+    if valor is None:
+        return True
+
+    texto = limpar(valor)
+
+    if texto == "":
+        return True
+
+    if texto.lower() in ["nan", "none", "null", "-"]:
+        return True
+
+    return False
