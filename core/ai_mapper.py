@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any
+from typing import Dict
 
 import pandas as pd
 from openai import OpenAI
@@ -41,13 +41,15 @@ def mapear_colunas_com_ia(df: pd.DataFrame, api_key: str) -> Dict[str, str]:
     Retorna um dict no formato:
     {
         "codigo": "SKU",
-        "produto": "Nome do Produto",
-        ...
+        "produto": "Nome do Produto"
     }
-    Só retorna campos que a IA conseguiu mapear.
     """
     if df is None or df.empty:
         log("IA mapper: dataframe vazio")
+        return {}
+
+    if not api_key:
+        log("IA mapper: api_key vazia")
         return {}
 
     colunas = [str(c) for c in df.columns]
@@ -117,7 +119,6 @@ Amostra:
             log("IA mapper: resposta não é dict")
             return {}
 
-        # filtra só campos válidos e colunas existentes
         final = {}
         for campo, coluna in mapa.items():
             if campo in CAMPOS_ALVO and coluna in colunas:
