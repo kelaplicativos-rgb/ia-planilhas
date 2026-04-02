@@ -6,10 +6,65 @@ from core.normalizer.cleaners import (
     limpar_estoque,
     limpar_preco,
     limpar_texto,
+    validar_gtin,
     valor_vazio,
 )
 from core.normalizer.detector import detectar_colunas_inteligente
 from core.utils import detectar_marca, gerar_codigo_fallback, normalizar_url
+
+
+def _pegar_codigo_seguro(row, mapa):
+    col_codigo = mapa.get("codigo")
+    if col_codigo and str(col_codigo).strip().lower() != "id":
+        valor = limpar_texto(row.get(col_codigo))
+        if valor:
+            return valor
+
+    prioridades = [
+        "SKU",
+        "sku",
+        "Código do Produto",
+        "CÓDIGO DO PRODUTO",
+        "codigo do produto",
+        "Código",
+        "codigo",
+        "Referência",
+        "Referencia",
+        "referência",
+        "referencia",
+        "Ref",
+        "ref",
+        "Código Interno",
+        "codigo interno",
+    ]
+
+    for nome in prioridades:
+        if nome in row.index:
+            valor = limpar_texto(row.get(nome))
+            if valor:
+                return valor
+
+    for col in row.index:
+        nome = str(col).strip().lower()
+        if nome == "id":
+            continue
+        if any(chave in nome for chave in [
+            "sku",
+            "codigo do produto",
+            "código do produto",
+            "referencia",
+            "referência",
+            "codigo interno",
+            "código interno",
+            "codigo",
+            "código",
+            "ref",
+        ]):
+            valor = limpar_texto(row.get(col))
+            if valor:
+                return valor
+
+    return ""
 
 
 def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
@@ -23,23 +78,11 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
         for _, row in df.iterrows():
             item = {}
 
-            codigo = ""
-            if mapa.get("codigo"):
-                codigo = limpar_texto(row.get(mapa["codigo"]))
-
-            # fallback mais seguro: NÃO usa ID genérico
-            if not codigo:
-                codigo = (
-                    limpar_texto(row.get("SKU"))
-                    or limpar_texto(row.get("Código"))
-                    or limpar_texto(row.get("codigo"))
-                    or limpar_texto(row.get("Referência"))
-                    or limpar_texto(row.get("Referencia"))
-                )
+            codigo = _pegar_codigo_seguro(row, mapa)
 
             gtin = ""
             if mapa.get("gtin"):
-                gtin = limpar_texto(row.get(mapa["gtin"]))
+                gtin = validar_gtin(row.get(mapa["gtin"]))
 
             produto = ""
             if mapa.get("produto"):
@@ -122,6 +165,7 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if not codigo:
                 base_fallback = link or imagem or produto
                 codigo = gerar_codigo_fallback(base_fallback)
+                log(f"SKU fallback gerado: {codigo}")
 
             if not marca:
                 marca = detectar_marca(produto, descricao_curta)
