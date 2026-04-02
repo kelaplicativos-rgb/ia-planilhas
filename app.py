@@ -167,7 +167,6 @@ def mostrar_preview(df: pd.DataFrame, titulo: str, termo_filtro: str, limite: in
         st.dataframe(filtrado.head(limite), use_container_width=True)
 
 
-# ========= CORREÇÃO DO ERRO DO EXCEL =========
 _ILLEGAL_EXCEL_CHARS_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
 
 
@@ -205,7 +204,24 @@ def exportar_excel_memoria(df_estoque: pd.DataFrame, df_cadastro: pd.DataFrame):
 
     output.seek(0)
     return output.getvalue()
-# =============================================
+
+
+def montar_zip_profissional(
+    csv_estoque: str,
+    csv_cadastro: str,
+    excel_bytes: bytes,
+    log_texto: str,
+):
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("estoque.csv", csv_estoque)
+        z.writestr("cadastro.csv", csv_cadastro)
+        z.writestr("bling.xlsx", excel_bytes)
+        z.writestr("debug_log.txt", log_texto or "")
+
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
 
 
 with st.sidebar:
@@ -430,18 +446,19 @@ def executar_fluxo():
 
     progress.progress(0.92)
 
-    status.info("Preparando downloads...")
+    status.info("Preparando pacote ZIP...")
 
     csv_estoque = df_estoque.to_csv(index=False, sep=";", encoding="utf-8-sig")
     csv_cadastro = df_cadastro.to_csv(index=False, sep=";", encoding="utf-8-sig")
     excel_bytes = exportar_excel_memoria(df_estoque, df_cadastro)
+    log_texto = "\n".join(logs)
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("estoque.csv", csv_estoque)
-        z.writestr("cadastro.csv", csv_cadastro)
-        z.writestr("bling.xlsx", excel_bytes)
-    zip_buffer.seek(0)
+    zip_bytes = montar_zip_profissional(
+        csv_estoque=csv_estoque,
+        csv_cadastro=csv_cadastro,
+        excel_bytes=excel_bytes,
+        log_texto=log_texto,
+    )
 
     progress.progress(1.0)
     status.success("Processamento concluído.")
@@ -452,10 +469,7 @@ def executar_fluxo():
         "df": df,
         "df_estoque": df_estoque,
         "df_cadastro": df_cadastro,
-        "csv_estoque": csv_estoque,
-        "csv_cadastro": csv_cadastro,
-        "excel_bytes": excel_bytes,
-        "zip_bytes": zip_buffer.getvalue(),
+        "zip_bytes": zip_bytes,
         "metricas": metricas,
     }
 
@@ -464,7 +478,7 @@ if st.button("🚀 EXECUTAR PROCESSAMENTO"):
     resultado = executar_fluxo()
 
     if resultado:
-        st.success("✅ Arquivos prontos para importação no Bling")
+        st.success("✅ Pacote profissional pronto para importação")
 
         m = resultado["metricas"]
 
@@ -486,39 +500,15 @@ if st.button("🚀 EXECUTAR PROCESSAMENTO"):
             f"Modo: {modo_execucao}"
         )
 
-        col1, col2, col3, col4 = st.columns(4)
+        st.download_button(
+            "📦 BAIXAR PACOTE PROFISSIONAL",
+            resultado["zip_bytes"],
+            "bling.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
 
-        with col1:
-            st.download_button(
-                "📥 ESTOQUE CSV",
-                resultado["csv_estoque"],
-                "estoque.csv",
-                mime="text/csv",
-            )
-
-        with col2:
-            st.download_button(
-                "📥 CADASTRO CSV",
-                resultado["csv_cadastro"],
-                "cadastro.csv",
-                mime="text/csv",
-            )
-
-        with col3:
-            st.download_button(
-                "📗 BLING XLSX",
-                resultado["excel_bytes"],
-                "bling.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-        with col4:
-            st.download_button(
-                "📦 PACOTE COMPLETO",
-                resultado["zip_bytes"],
-                "bling.zip",
-                mime="application/zip",
-            )
+        st.info("O ZIP contém: estoque.csv, cadastro.csv, bling.xlsx e debug_log.txt")
 
         if mostrar_previews:
             mostrar_preview(resultado["df"], "📄 Base final", termo_preview, limite_preview)
@@ -539,4 +529,4 @@ if logs:
         data=log_texto,
         file_name="debug_log.txt",
         mime="text/plain",
-    )
+        )
