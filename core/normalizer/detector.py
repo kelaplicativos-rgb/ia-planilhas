@@ -12,11 +12,22 @@ def limpar_nome_coluna(col):
 
 
 def encontrar_coluna(colunas, possiveis):
-    for col in colunas:
-        nome = limpar_nome_coluna(col)
-        for p in possiveis:
-            if p in nome:
+    # 1) primeiro tenta igualdade exata
+    for alvo in possiveis:
+        alvo = limpar_nome_coluna(alvo)
+        for col in colunas:
+            nome = limpar_nome_coluna(col)
+            if nome == alvo:
                 return col
+
+    # 2) depois tenta "contém"
+    for alvo in possiveis:
+        alvo = limpar_nome_coluna(alvo)
+        for col in colunas:
+            nome = limpar_nome_coluna(col)
+            if alvo in nome:
+                return col
+
     return None
 
 
