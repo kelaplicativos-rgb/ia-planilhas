@@ -1,4 +1,5 @@
 import io
+import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -19,17 +20,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="🔥 BLING AUTO INTELIGENTE SaaS", layout="wide")
 st.title("🔥 BLING AUTO INTELIGENTE SaaS")
 
-
-# =========================
-# CONFIG
-# =========================
 MAX_WORKERS_RAPIDO = 2
 MAX_WORKERS_COMPLETO = 3
 
 
-# =========================
-# HELPERS DE CACHE
-# =========================
 class UploadedBuffer(io.BytesIO):
     def __init__(self, data: bytes, name: str):
         super().__init__(data)
@@ -52,9 +46,6 @@ def coletar_links_site_cache(url_base: str):
     return coletar_links_site(url_base)
 
 
-# =========================
-# HELPERS GERAIS
-# =========================
 def upload_para_bytes(uploaded_file):
     if uploaded_file is None:
         return None, None
@@ -176,18 +167,47 @@ def mostrar_preview(df: pd.DataFrame, titulo: str, termo_filtro: str, limite: in
         st.dataframe(filtrado.head(limite), use_container_width=True)
 
 
+# ========= CORREÇÃO DO ERRO DO EXCEL =========
+_ILLEGAL_EXCEL_CHARS_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
+
+
+def limpar_texto_excel(valor):
+    if valor is None:
+        return ""
+    texto = str(valor)
+    texto = _ILLEGAL_EXCEL_CHARS_RE.sub("", texto)
+    return texto
+
+
+def sanitizar_dataframe_para_excel(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda v: limpar_texto_excel(v) if isinstance(v, str) or v is None else v
+        )
+
+    return df
+
+
 def exportar_excel_memoria(df_estoque: pd.DataFrame, df_cadastro: pd.DataFrame):
     output = io.BytesIO()
+
+    df_estoque_excel = sanitizar_dataframe_para_excel(df_estoque)
+    df_cadastro_excel = sanitizar_dataframe_para_excel(df_cadastro)
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_estoque.to_excel(writer, index=False, sheet_name="Estoque")
-        df_cadastro.to_excel(writer, index=False, sheet_name="Cadastro")
+        df_estoque_excel.to_excel(writer, index=False, sheet_name="Estoque")
+        df_cadastro_excel.to_excel(writer, index=False, sheet_name="Cadastro")
+
     output.seek(0)
     return output.getvalue()
+# =============================================
 
 
-# =========================
-# SIDEBAR SaaS
-# =========================
 with st.sidebar:
     st.header("⚙️ Controles SaaS")
 
@@ -218,9 +238,6 @@ with st.sidebar:
         st.success("Log limpo.")
 
 
-# =========================
-# INPUTS
-# =========================
 modo_coleta = st.radio(
     "📥 Fonte dos dados",
     ["Planilha + Site", "Só Planilha", "Só Site"],
@@ -259,9 +276,6 @@ with col4:
 depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
 
 
-# =========================
-# FLUXO PRINCIPAL
-# =========================
 def executar_fluxo():
     logs.clear()
     log("🔥 EXECUTANDO FLUXO SaaS 🔥")
@@ -280,9 +294,6 @@ def executar_fluxo():
     progress = st.progress(0)
     status = st.empty()
 
-    # =========================
-    # MODELOS
-    # =========================
     status.info("Lendo modelos do Bling...")
 
     est_bytes, est_name = upload_para_bytes(modelo_estoque_file)
@@ -299,9 +310,6 @@ def executar_fluxo():
         st.error("❌ Não foi possível ler um dos modelos do Bling.")
         return None
 
-    # =========================
-    # PLANILHA
-    # =========================
     df_planilha = pd.DataFrame()
 
     if modo_coleta in ["Planilha + Site", "Só Planilha"]:
@@ -342,9 +350,6 @@ def executar_fluxo():
 
     progress.progress(0.35)
 
-    # =========================
-    # SITE
-    # =========================
     df_site = pd.DataFrame()
 
     deve_rodar_site = (
@@ -396,9 +401,6 @@ def executar_fluxo():
     else:
         progress.progress(0.70)
 
-    # =========================
-    # MERGE
-    # =========================
     status.info("Fazendo merge final...")
 
     df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
@@ -418,9 +420,6 @@ def executar_fluxo():
 
     progress.progress(0.82)
 
-    # =========================
-    # BLING
-    # =========================
     status.info("Gerando planilhas do Bling...")
 
     df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
@@ -431,9 +430,6 @@ def executar_fluxo():
 
     progress.progress(0.92)
 
-    # =========================
-    # EXPORT
-    # =========================
     status.info("Preparando downloads...")
 
     csv_estoque = df_estoque.to_csv(index=False, sep=";", encoding="utf-8-sig")
@@ -464,9 +460,6 @@ def executar_fluxo():
     }
 
 
-# =========================
-# BOTÃO
-# =========================
 if st.button("🚀 EXECUTAR PROCESSAMENTO"):
     resultado = executar_fluxo()
 
@@ -533,9 +526,6 @@ if st.button("🚀 EXECUTAR PROCESSAMENTO"):
             mostrar_preview(resultado["df_cadastro"], "📋 Cadastro", termo_preview, limite_preview)
 
 
-# =========================
-# LOG + DOWNLOAD
-# =========================
 if logs:
     st.warning("📄 LOG DEBUG")
 
