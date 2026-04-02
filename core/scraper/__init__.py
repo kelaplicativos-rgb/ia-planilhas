@@ -1,2 +1,7 @@
-from core.scraper.links import coletar_links_site
-from core.scraper.parser import extrair_site
+from .links import coletar_links_site
+from .parser import extrair_site
+
+__all__ = [
+    "coletar_links_site",
+    "extrair_site",
+]
