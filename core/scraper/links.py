@@ -9,135 +9,100 @@ from core.scraper.fetcher import fetch
 from core.utils import limpar
 
 
-DOMINIO_PRINCIPAL = "https://megacentereletronicos.com.br"
-DOMINIOS_ACEITOS = {
-    "megacentereletronicos.com.br",
-    "www.megacentereletronicos.com.br",
-    "mega-center-eletronicos.stoqui.shop",
-}
-
-
-def _normalizar_basico(link: str) -> str:
-    link = limpar(link)
+def _normalizar(link):
     if not link:
         return ""
-
+    link = limpar(link)
     if "#" in link:
         link = link.split("#")[0]
-
     return link.rstrip("/")
 
 
-def _dominio_aceito(link: str) -> bool:
-    try:
-        host = urlparse(link).netloc.lower().strip()
-        return host in DOMINIOS_ACEITOS
-    except Exception:
-        return False
-
-
-def _eh_link_valido(link: str) -> bool:
+def _eh_link_valido(link):
     if not link:
         return False
 
     lk = link.lower()
 
     bloqueados = [
-        "javascript:",
+        "whatsapp",
+        "facebook",
+        "instagram",
+        "youtube",
         "mailto:",
         "tel:",
-        "whatsapp",
-        "instagram",
-        "facebook",
-        "youtube",
+        "javascript:",
         "/carrinho",
+        "/cart",
         "/checkout",
         "/login",
-        "/conta",
+        "/account",
         "/cliente",
         "/favoritos",
         "/wishlist",
         "/blog",
         "/sobre",
         "/contato",
+        "/contact",
     ]
 
-    return not any(b in lk for b in bloqueados)
+    for b in bloqueados:
+        if b in lk:
+            return False
+
+    return True
 
 
-def _eh_link_produto(link: str) -> bool:
+def _eh_link_produto(link):
     lk = (link or "").lower()
-    return "/produto/" in lk or "/product/" in lk or "/p/" in lk
 
-
-def _extrair_id_produto(link: str) -> str:
-    if not link:
-        return ""
-
-    padroes = [
-        r"/produto/(\d+)",
-        r"/product/(\d+)",
-        r"/p/(\d+)",
+    sinais_fortes = [
+        "/produto",
+        "/product",
+        "/p/",
+        ".html",
     ]
 
-    for padrao in padroes:
-        m = re.search(padrao, link, flags=re.IGNORECASE)
-        if m:
-            return m.group(1)
+    if any(s in lk for s in sinais_fortes):
+        return True
 
-    return ""
+    if re.search(r"-p(?:/)?$", lk):
+        return True
+
+    return False
 
 
-def _canonizar_link_produto(link: str) -> str:
-    link = _normalizar_basico(link)
+def _adicionar_link(links, link):
+    link = _normalizar(link)
+
     if not link:
-        return ""
-
-    try:
-        parsed = urlparse(link)
-        path = parsed.path or ""
-        if not path:
-            return ""
-        return f"{DOMINIO_PRINCIPAL}{path}".rstrip("/")
-    except Exception:
-        return link
-
-
-def _adicionar_link_produto(mapa_links: dict, link: str):
-    link = _normalizar_basico(link)
-    if not link or not _eh_link_valido(link):
         return
+
+    if not _eh_link_valido(link):
+        return
+
     if not _eh_link_produto(link):
         return
-    if not _dominio_aceito(link):
-        return
 
-    link_canonico = _canonizar_link_produto(link)
-    if not link_canonico:
-        return
-
-    produto_id = _extrair_id_produto(link_canonico)
-    if produto_id:
-        mapa_links[produto_id] = link_canonico
-    else:
-        mapa_links[link_canonico] = link_canonico
+    links.append(link)
 
 
 def _extrair_links_de_anchors(soup, url_base):
-    mapa = {}
+    links = []
 
     for a in soup.find_all("a", href=True):
         href = a.get("href", "")
         if not href:
             continue
-        link = urljoin(url_base, href)
-        _adicionar_link_produto(mapa, link)
 
-    return list(mapa.values())
+        link = urljoin(url_base, href)
+        _adicionar_link(links, link)
+
+    return links
 
 
 def _extrair_links_de_jsonld(soup, url_base):
-    mapa = {}
+    links = []
 
     for script in soup.find_all("script", type="application/ld+json"):
         texto = script.string or script.get_text(" ", strip=True)
@@ -153,7 +118,8 @@ def _extrair_links_de_jsonld(soup, url_base):
             if isinstance(obj, dict):
                 for k, v in obj.items():
                     if k.lower() in ["url", "@id"] and isinstance(v, str):
-                        _adicionar_link_produto(mapa, urljoin(url_base, v))
+                        link = urljoin(url_base, v)
+                        _adicionar_link(links, link)
                     else:
                         walk(v)
             elif isinstance(obj, list):
@@ -162,84 +128,44 @@ def _extrair_links_de_jsonld(soup, url_base):
 
         walk(dado)
 
-    return list(mapa.values())
+    return links
 
 
 def _extrair_links_de_scripts(html, url_base):
-    mapa = {}
+    links = []
 
     padroes = [
         r'https?://[^\s"\'<>]+',
         r'/(?:produto|product|p)/[^\s"\'<>]+',
+        r'[A-Za-z0-9\-_\/]+-p(?:/)?',
+        r'[A-Za-z0-9\-_\/]+\.html',
     ]
 
     for padrao in padroes:
-        for achado in re.findall(padrao, html, flags=re.IGNORECASE):
-            link = achado if achado.startswith("http") else urljoin(url_base, achado)
-            _adicionar_link_produto(mapa, link)
+        achados = re.findall(padrao, html, flags=re.IGNORECASE)
+        for achado in achados:
+            link = achado
+            if not str(link).startswith("http"):
+                link = urljoin(url_base, link)
+            _adicionar_link(links, link)
 
-    return list(mapa.values())
-
-
-def _extrair_links_categoria(soup, url_base):
-    """
-    Descobre páginas de categoria para depois paginar nelas também.
-    """
-    categorias = {}
-
-    for a in soup.find_all("a", href=True):
-        href = a.get("href", "")
-        if not href:
-            continue
-
-        link = urljoin(url_base, href)
-        lk = link.lower()
-
-        # ignora links de produto; queremos só páginas-lista
-        if _eh_link_produto(lk):
-            continue
-
-        if not _eh_link_valido(lk):
-            continue
-
-        if not _dominio_aceito(link):
-            continue
-
-        # bons sinais de categoria/listagem
-        sinais = [
-            "/categoria/",
-            "/produtos",
-            "/categoria",
-        ]
-
-        texto = limpar(a.get_text(" ", strip=True)).lower()
-
-        if any(s in lk for s in sinais) or texto in {
-            "produtos",
-            "cabos",
-            "fone de ouvido",
-            "carregador celular",
-            "caixa de som",
-            "mouse",
-        }:
-            categorias[link.rstrip("/")] = link.rstrip("/")
-
-    return list(categorias.values())
+    return links
 
 
 def _extrair_links_pagina(html, url_base, pagina_label=""):
     soup = BeautifulSoup(html, "html.parser")
-    mapa_final = {}
 
-    for grupo in [
-        _extrair_links_de_anchors(soup, url_base),
-        _extrair_links_de_jsonld(soup, url_base),
-        _extrair_links_de_scripts(html, url_base),
-    ]:
-        for link in grupo:
-            _adicionar_link_produto(mapa_final, link)
+    links = []
+    links.extend(_extrair_links_de_anchors(soup, url_base))
+    links.extend(_extrair_links_de_jsonld(soup, url_base))
+    links.extend(_extrair_links_de_scripts(html, url_base))
 
-    unicos = list(mapa_final.values())
+    vistos = set()
+    unicos = []
+    for link in links:
+        if link not in vistos:
+            vistos.add(link)
+            unicos.append(link)
 
     log(f"{pagina_label} links_produto_unicos={len(unicos)}")
     if unicos:
@@ -271,17 +197,18 @@ def _descobrir_total_paginas(html):
         except Exception:
             pass
 
-    return max(numeros) if numeros else 1
+    if numeros:
+        return max(numeros)
+
+    return 1
 
 
 def _coletar_melhor_pagina_1(url_base):
-    base = url_base.rstrip("/")
-
     urls_teste = [
-        base,
-        f"{base}/?page=1",
-        f"{base}/page/1",
-        f"{base}/pagina/1",
+        url_base,
+        f"{url_base}?page=1",
+        f"{url_base}/page/1",
+        f"{url_base}/pagina/1",
     ]
 
     melhor_html = None
@@ -294,7 +221,7 @@ def _coletar_melhor_pagina_1(url_base):
             log(f"[TESTE PÁGINA 1] falhou: {url}")
             continue
 
-        links = _extrair_links_pagina(html, base, f"[TESTE {url}]")
+        links = _extrair_links_pagina(html, url_base, f"[TESTE {url}]")
 
         if len(links) > len(melhor_links):
             melhor_html = html
@@ -304,61 +231,30 @@ def _coletar_melhor_pagina_1(url_base):
     return melhor_url, melhor_html, melhor_links
 
 
-def _coletar_de_uma_base(base_url, max_paginas, todos):
-    paginas_sem_novos = 0
+def _gerar_urls_pagina(url_base, pagina):
+    return [
+        f"{url_base}?page={pagina}",
+        f"{url_base}&page={pagina}" if "?" in url_base else "",
+        f"{url_base}/page/{pagina}",
+        f"{url_base}/pagina/{pagina}",
+        f"{url_base}?p={pagina}",
+    ]
+
+
+def _coletar_paginacao_numerica(url_base, max_paginas=120):
+    todos = []
+    vistos = set()
 
     def add_links(links):
-        antes = len(todos)
+        novos = 0
         for link in links:
-            _adicionar_link_produto(todos, link)
-        return len(todos) - antes
+            if link not in vistos:
+                vistos.add(link)
+                todos.append(link)
+                novos += 1
+        return novos
 
-    html_1 = fetch(base_url)
-    if not html_1:
-        return
-
-    total_paginas = _descobrir_total_paginas(html_1)
-    total_paginas = max(1, min(total_paginas, max_paginas))
-    log(f"[BASE {base_url}] paginação detectada: {total_paginas}")
-
-    links_1 = _extrair_links_pagina(html_1, base_url, f"[BASE {base_url} PAG 1]")
-    add_links(links_1)
-
-    for pagina in range(2, total_paginas + 1):
-        urls_pagina = [
-            f"{base_url.rstrip('/')}/?page={pagina}",
-            f"{base_url.rstrip('/')}/page/{pagina}",
-            f"{base_url.rstrip('/')}/pagina/{pagina}",
-        ]
-
-        melhor_links_pagina = []
-
-        for url in urls_pagina:
-            html = fetch(url)
-            if not html:
-                continue
-
-            links = _extrair_links_pagina(html, base_url, f"[BASE {base_url} PAG {pagina} {url}]")
-            if len(links) > len(melhor_links_pagina):
-                melhor_links_pagina = links
-
-        novos = add_links(melhor_links_pagina)
-        log(f"[BASE {base_url}] página {pagina}: {novos} novos links")
-
-        if novos == 0:
-            paginas_sem_novos += 1
-        else:
-            paginas_sem_novos = 0
-
-        if paginas_sem_novos >= 2:
-            break
-
-
-def coletar_links_site(url_base, max_paginas=30):
-    base = url_base.rstrip("/")
-    todos = {}
-
-    melhor_url, melhor_html, melhor_links = _coletar_melhor_pagina_1(base)
+    melhor_url, melhor_html, melhor_links = _coletar_melhor_pagina_1(url_base)
 
     if not melhor_html:
         log("ERRO: nenhuma versão da página 1 funcionou")
@@ -367,21 +263,101 @@ def coletar_links_site(url_base, max_paginas=30):
     log(f"Página 1 REAL detectada: {melhor_url}")
     log(f"Links página 1: {len(melhor_links)}")
 
-    for link in melhor_links:
-        _adicionar_link_produto(todos, link)
+    add_links(melhor_links)
 
-    # 1) paginação principal
-    _coletar_de_uma_base(base, max_paginas=max_paginas, todos=todos)
+    total_paginas = _descobrir_total_paginas(melhor_html)
+    total_paginas = max(1, min(total_paginas, max_paginas))
+    log(f"Paginação detectada: {total_paginas}")
 
-    # 2) categorias descobertas na home
-    soup = BeautifulSoup(melhor_html, "html.parser")
-    categorias = _extrair_links_categoria(soup, base)
-    log(f"Categorias descobertas: {len(categorias)}")
+    paginas_sem_novos = 0
 
-    for categoria in categorias[:20]:
-        _coletar_de_uma_base(categoria, max_paginas=10, todos=todos)
+    for pagina in range(2, total_paginas + 1):
+        melhor_links_pagina = []
 
-    links_finais = list(todos.values())
-    log(f"TOTAL LINKS COLETADOS: {len(links_finais)}")
+        for url in _gerar_urls_pagina(url_base, pagina):
+            if not url:
+                continue
 
-    return links_finais
+            html = fetch(url)
+            if not html:
+                continue
+
+            links = _extrair_links_pagina(html, url_base, f"[PAGINA {pagina} {url}]")
+
+            if len(links) > len(melhor_links_pagina):
+                melhor_links_pagina = links
+
+        novos = add_links(melhor_links_pagina)
+        log(f"Página {pagina}: {novos} novos links")
+
+        if novos == 0:
+            paginas_sem_novos += 1
+        else:
+            paginas_sem_novos = 0
+
+        if paginas_sem_novos >= 4:
+            log("Parando paginação numérica: 4 páginas seguidas sem links novos")
+            break
+
+    return todos
+
+
+def _coletar_scroll_infinito(url_base, max_batches=40):
+    todos = []
+    vistos = set()
+    batch_sem_novos = 0
+
+    for pagina in range(1, max_batches + 1):
+        urls_tentativa = _gerar_urls_pagina(url_base, pagina)
+        links_batch = []
+
+        for url in urls_tentativa:
+            if not url:
+                continue
+
+            html = fetch(url)
+            if not html:
+                continue
+
+            links = _extrair_links_pagina(html, url_base, f"[SCROLL {pagina} {url}]")
+            if len(links) > len(links_batch):
+                links_batch = links
+
+        novos = 0
+        for link in links_batch:
+            if link not in vistos:
+                vistos.add(link)
+                todos.append(link)
+                novos += 1
+
+        log(f"Scroll batch {pagina}: {novos} novos links")
+
+        if novos == 0:
+            batch_sem_novos += 1
+        else:
+            batch_sem_novos = 0
+
+        if batch_sem_novos >= 3:
+            log("Parando scroll infinito: 3 batches seguidos sem links novos")
+            break
+
+    return todos
+
+
+def coletar_links_site(url_base, max_paginas=120):
+    log("Iniciando coleta híbrida de links")
+
+    links_numericos = _coletar_paginacao_numerica(url_base, max_paginas=max_paginas)
+    links_scroll = _coletar_scroll_infinito(url_base, max_batches=min(max_paginas, 40))
+
+    final = []
+    vistos = set()
+
+    for grupo in [links_numericos, links_scroll]:
+        for link in grupo:
+            if link not in vistos:
+                vistos.add(link)
+                final.append(link)
+
+    log(f"TOTAL LINKS COLETADOS: {len(final)}")
+    return final
