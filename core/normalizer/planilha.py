@@ -1,51 +1,20 @@
-import os
 import pandas as pd
 
-from core.logger import log
-from core.utils import detectar_marca, gerar_codigo_fallback, normalizar_url
 from core.ai_mapper import mapear_colunas_com_ia
-from core.normalizer.detector import detectar_colunas_inteligente
+from core.logger import log
 from core.normalizer.cleaners import (
-    limpar_texto,
-    limpar_preco,
     limpar_estoque,
+    limpar_preco,
+    limpar_texto,
     valor_vazio,
 )
-
-
-def _obter_openai_api_key():
-    # 1) tenta variável de ambiente
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if api_key:
-        return api_key
-
-    # 2) tenta Streamlit secrets
-    try:
-        import streamlit as st
-
-        if "OPENAI_API_KEY" in st.secrets:
-            api_key = str(st.secrets["OPENAI_API_KEY"]).strip()
-            if api_key:
-                return api_key
-    except Exception as e:
-        log(f"Secrets indisponível: {e}")
-
-    return ""
+from core.normalizer.detector import detectar_colunas_inteligente
+from core.utils import detectar_marca, gerar_codigo_fallback, normalizar_url
 
 
 def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
     try:
-        # =========================
-        # IA FIRST, OFFLINE SECOND
-        # =========================
-        api_key = _obter_openai_api_key()
-        mapa_ia = {}
-
-        if api_key:
-            mapa_ia = mapear_colunas_com_ia(df, api_key)
-        else:
-            log("OPENAI_API_KEY não encontrada em env nem em st.secrets")
-
+        mapa_ia = mapear_colunas_com_ia(df)
         mapa = detectar_colunas_inteligente(df, mapa_ia=mapa_ia)
         log(f"MAPEAMENTO DETECTADO FINAL: {mapa}")
 
@@ -58,12 +27,14 @@ def normalizar_planilha_entrada(df, url_base="", estoque_padrao=0):
             if mapa.get("codigo"):
                 codigo = limpar_texto(row.get(mapa["codigo"]))
 
+            # fallback mais seguro: NÃO usa ID genérico
             if not codigo:
                 codigo = (
                     limpar_texto(row.get("SKU"))
                     or limpar_texto(row.get("Código"))
                     or limpar_texto(row.get("codigo"))
-                    or limpar_texto(row.get("ID"))
+                    or limpar_texto(row.get("Referência"))
+                    or limpar_texto(row.get("Referencia"))
                 )
 
             gtin = ""
