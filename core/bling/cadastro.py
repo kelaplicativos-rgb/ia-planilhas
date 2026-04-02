@@ -1,5 +1,62 @@
 import pandas as pd
 
+from core.utils import limpar
+
+
+TERMOS_PROPAGANDA_LINK = [
+    "youtube.com",
+    "youtu.be",
+    "instagram.com",
+    "facebook.com",
+    "wa.me",
+    "whatsapp",
+    "telegram",
+    "tiktok",
+    "canal",
+    "inscreva-se",
+    "promo",
+    "cupom",
+]
+
+
+def _link_valido_produto(link):
+    link = limpar(link)
+    if not link:
+        return ""
+
+    lk = link.lower()
+
+    if any(t in lk for t in TERMOS_PROPAGANDA_LINK):
+        return ""
+
+    if not (
+        lk.startswith("http://")
+        or lk.startswith("https://")
+        or lk.startswith("www.")
+        or "/" in lk
+    ):
+        return ""
+
+    return link
+
+
+def _imagem_valida(imagem):
+    imagem = limpar(imagem)
+    if not imagem:
+        return ""
+
+    lk = imagem.lower()
+
+    if any(t in lk for t in TERMOS_PROPAGANDA_LINK):
+        return ""
+
+    return imagem
+
+
+def _valor(row, campo, default=""):
+    valor = row.get(campo, default)
+    return "" if valor is None else valor
+
 
 def preencher_modelo_cadastro(modelo, df):
     linhas = []
@@ -38,65 +95,88 @@ def preencher_modelo_cadastro(modelo, df):
     for _, row in df.iterrows():
         nova = {col: "" for col in modelo.columns}
 
+        codigo = limpar(_valor(row, "Código"))
+        produto = limpar(_valor(row, "Produto"))
+        tipo = limpar(_valor(row, "Tipo")) or "Produto"
+        situacao = limpar(_valor(row, "Situação")) or "Ativo"
+        unidade = limpar(_valor(row, "Unidade")) or "UN"
+        preco = _valor(row, "Preço", "") or "0.01"
+        preco_custo = _valor(row, "Preço Custo", "")
+        gtin = limpar(_valor(row, "GTIN"))
+        marca = limpar(_valor(row, "Marca"))
+        ncm = limpar(_valor(row, "NCM"))
+        origem = limpar(_valor(row, "Origem")) or "0"
+        peso_liquido = limpar(_valor(row, "Peso Líquido"))
+        peso_bruto = limpar(_valor(row, "Peso Bruto"))
+        estoque_minimo = limpar(_valor(row, "Estoque Mínimo"))
+        estoque_maximo = limpar(_valor(row, "Estoque Máximo"))
+        descricao_curta = limpar(_valor(row, "Descrição Curta"))
+        descricao_complementar = limpar(_valor(row, "Descrição Complementar"))
+        imagem = _imagem_valida(_valor(row, "Imagem"))
+        link = _link_valido_produto(_valor(row, "Link"))
+
+        if not descricao_curta:
+            descricao_curta = produto
+
         if col_id:
             nova[col_id] = ""
 
         if col_codigo:
-            nova[col_codigo] = row.get("Código", "")
+            nova[col_codigo] = codigo
 
         if col_descricao:
-            nova[col_descricao] = row.get("Produto", "")
+            nova[col_descricao] = produto
 
         if col_tipo:
-            nova[col_tipo] = row.get("Tipo", "") or "Produto"
+            nova[col_tipo] = tipo
 
         if col_situacao:
-            nova[col_situacao] = row.get("Situação", "") or "Ativo"
+            nova[col_situacao] = situacao
 
         if col_unidade:
-            nova[col_unidade] = row.get("Unidade", "") or "UN"
+            nova[col_unidade] = unidade
 
         if col_preco:
-            nova[col_preco] = row.get("Preço", "") or "0.01"
+            nova[col_preco] = preco
 
         if col_preco_custo:
-            nova[col_preco_custo] = row.get("Preço Custo", "")
+            nova[col_preco_custo] = preco_custo
 
         if col_gtin:
-            nova[col_gtin] = row.get("GTIN", "")
+            nova[col_gtin] = gtin
 
         if col_marca:
-            nova[col_marca] = row.get("Marca", "")
+            nova[col_marca] = marca
 
         if col_ncm:
-            nova[col_ncm] = row.get("NCM", "")
+            nova[col_ncm] = ncm
 
         if col_origem:
-            nova[col_origem] = row.get("Origem", "") or "0"
+            nova[col_origem] = origem
 
         if col_peso_liquido:
-            nova[col_peso_liquido] = row.get("Peso Líquido", "")
+            nova[col_peso_liquido] = peso_liquido
 
         if col_peso_bruto:
-            nova[col_peso_bruto] = row.get("Peso Bruto", "")
+            nova[col_peso_bruto] = peso_bruto
 
         if col_estoque_minimo:
-            nova[col_estoque_minimo] = row.get("Estoque Mínimo", "")
+            nova[col_estoque_minimo] = estoque_minimo
 
         if col_estoque_maximo:
-            nova[col_estoque_maximo] = row.get("Estoque Máximo", "")
+            nova[col_estoque_maximo] = estoque_maximo
 
         if col_descricao_curta:
-            nova[col_descricao_curta] = row.get("Descrição Curta", "")
+            nova[col_descricao_curta] = descricao_curta
 
         if col_descricao_complementar:
-            nova[col_descricao_complementar] = row.get("Descrição Complementar", "")
+            nova[col_descricao_complementar] = descricao_complementar
 
         if col_url_imagens:
-            nova[col_url_imagens] = row.get("Imagem", "")
+            nova[col_url_imagens] = imagem
 
         if col_link_externo:
-            nova[col_link_externo] = row.get("Link", "")
+            nova[col_link_externo] = link
 
         linhas.append(nova)
 
