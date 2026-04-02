@@ -7,6 +7,7 @@ from core.ai_product_extractor import extrair_dados_produto_com_ia
 from core.logger import log
 from core.scraper.fetcher import fetch
 from core.utils import (
+    limpar,
     detectar_marca,
     gerar_codigo_fallback,
     normalizar_url,
@@ -14,12 +15,6 @@ from core.utils import (
     parse_preco,
     validar_gtin,
 )
-
-
-def _limpar(txt):
-    if txt is None:
-        return ""
-    return " ".join(str(txt).split()).strip()
 
 
 def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
@@ -87,7 +82,7 @@ def extrair_descricao_curta_site(soup: BeautifulSoup, nome: str) -> str:
     for sel in seletores:
         tag = soup.find(sel.get("name"), class_=sel.get("class_"))
         if tag:
-            texto = _limpar(tag.get_text(" ", strip=True))
+            texto = limpar(tag.get_text(" ", strip=True))
             if len(texto) >= 20:
                 return texto[:500]
 
@@ -105,7 +100,9 @@ def extrair_codigo(texto: str, link: str) -> str:
     for padrao in padroes:
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
-            return str(m.group(1)).strip()
+            valor = limpar(m.group(1))
+            if valor and valor.lower() != "id":
+                return valor
 
     return gerar_codigo_fallback(link)
 
@@ -120,7 +117,7 @@ def extrair_gtin(texto: str) -> str:
     for padrao in padroes:
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
-            return str(m.group(1)).strip()
+            return validar_gtin(m.group(1))
 
     return ""
 
@@ -148,11 +145,11 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
 
     h1 = soup.find("h1")
     if h1:
-        candidatos.append(_limpar(h1.get_text(" ", strip=True)))
+        candidatos.append(limpar(h1.get_text(" ", strip=True)))
 
     og_title = soup.find("meta", property="og:title")
     if og_title and og_title.get("content"):
-        candidatos.append(_limpar(og_title.get("content")))
+        candidatos.append(limpar(og_title.get("content")))
 
     for script in soup.find_all("script", type="application/ld+json"):
         raw = script.string or script.get_text(" ", strip=True)
@@ -184,17 +181,17 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
 
         nome_json = walk(dado)
         if nome_json:
-            candidatos.append(_limpar(nome_json))
+            candidatos.append(limpar(nome_json))
 
     title = soup.find("title")
     if title:
-        candidatos.append(_limpar(title.get_text(" ", strip=True)))
+        candidatos.append(limpar(title.get_text(" ", strip=True)))
 
     for nome in candidatos:
         if nome and len(nome) >= 4:
             return nome[:250]
 
-    texto_limpo = _limpar(texto)
+    texto_limpo = limpar(texto)
     if texto_limpo:
         return texto_limpo[:120]
 
@@ -233,33 +230,13 @@ def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
     return score >= 2
 
 
-def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
-    html = fetch(link)
-    if not html:
-        return None
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    for tag in soup(["script", "style", "noscript"]):
-        if tag.name != "script" or tag.get("type") != "application/ld+json":
-            tag.decompose()
-
-    texto = soup.get_text(" ", strip=True)
-    nome = _extrair_nome_produto(soup, texto)
-
-    if filtro and filtro.lower() not in nome.lower():
-        return None
-
-    if not _parece_pagina_produto(soup, texto, link):
-        log(f"Página descartada por não parecer produto: {link}")
-        return None
-
+def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, estoque_padrao: int) -> dict:
     imagem_site = extrair_imagem(soup, link)
     descricao_curta_site = extrair_descricao_curta_site(soup, nome)
 
-    offline = {
+    return {
         "Código": extrair_codigo(texto, link),
-        "GTIN": validar_gtin(extrair_gtin(texto)),
+        "GTIN": extrair_gtin(texto),
         "Produto": nome,
         "Preço": extrair_preco(texto),
         "Preço Custo": "",
@@ -280,38 +257,90 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         "Situação": "Ativo",
     }
 
+
+def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
+    html = fetch(link)
+    if not html:
+        log(f"Falha ao abrir produto: {link}")
+        return None
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup(["script", "style", "noscript"]):
+        if tag.name != "script" or tag.get("type") != "application/ld+json":
+            tag.decompose()
+
+    texto = soup.get_text(" ", strip=True)
+    nome = _extrair_nome_produto(soup, texto)
+
+    if filtro and filtro.lower() not in nome.lower():
+        return None
+
+    if not _parece_pagina_produto(soup, texto, link):
+        log(f"Página descartada por não parecer produto: {link}")
+        return None
+
+    offline = _offline_produto(soup, texto, nome, link, estoque_padrao)
+
     dados_ia = extrair_dados_produto_com_ia(texto_produto=texto, link=link)
 
     if not dados_ia:
         log(f"Produto extraído via offline: {offline['Produto']}")
         return offline
 
-    codigo_ia = (dados_ia.get("codigo") or "").strip()
+    codigo_ia = limpar(dados_ia.get("codigo", ""))
     if codigo_ia.lower() == "id":
         codigo_ia = ""
 
+    gtin_ia = validar_gtin(dados_ia.get("gtin", ""))
+
     final = {
         "Código": codigo_ia or offline["Código"],
-        "GTIN": validar_gtin(dados_ia.get("gtin") or offline["GTIN"]),
-        "Produto": dados_ia.get("produto") or offline["Produto"],
+        "GTIN": gtin_ia or offline["GTIN"],
+        "Produto": limpar(dados_ia.get("produto", "")) or offline["Produto"],
         "Preço": parse_preco(dados_ia.get("preco") or offline["Preço"]),
-        "Preço Custo": parse_preco(dados_ia.get("preco_custo") or offline["Preço Custo"]) if (dados_ia.get("preco_custo") or "").strip() else "",
-        "Descrição Curta": dados_ia.get("descricao_curta") or offline["Descrição Curta"],
-        "Descrição Complementar": dados_ia.get("descricao_complementar") or offline["Descrição Complementar"],
+        "Preço Custo": parse_preco(dados_ia.get("preco_custo")) if limpar(dados_ia.get("preco_custo", "")) else "",
+        "Descrição Curta": limpar(dados_ia.get("descricao_curta", "")) or offline["Descrição Curta"],
+        "Descrição Complementar": limpar(dados_ia.get("descricao_complementar", "")) or offline["Descrição Complementar"],
         "Imagem": normalizar_url(dados_ia.get("imagem") or offline["Imagem"], link),
         "Link": normalizar_url(dados_ia.get("link") or offline["Link"], link),
-        "Marca": dados_ia.get("marca") or offline["Marca"],
+        "Marca": limpar(dados_ia.get("marca", "")) or offline["Marca"],
         "Estoque": parse_estoque(dados_ia.get("estoque") or offline["Estoque"], estoque_padrao),
-        "NCM": dados_ia.get("ncm") or offline["NCM"],
-        "Origem": dados_ia.get("origem") or offline["Origem"],
-        "Peso Líquido": dados_ia.get("peso_liquido") or offline["Peso Líquido"],
-        "Peso Bruto": dados_ia.get("peso_bruto") or offline["Peso Bruto"],
-        "Estoque Mínimo": dados_ia.get("estoque_minimo") or offline["Estoque Mínimo"],
-        "Estoque Máximo": dados_ia.get("estoque_maximo") or offline["Estoque Máximo"],
-        "Unidade": dados_ia.get("unidade") or offline["Unidade"],
-        "Tipo": dados_ia.get("tipo") or offline["Tipo"],
-        "Situação": dados_ia.get("situacao") or offline["Situação"],
+        "NCM": limpar(dados_ia.get("ncm", "")) or offline["NCM"],
+        "Origem": limpar(dados_ia.get("origem", "")) or offline["Origem"],
+        "Peso Líquido": limpar(dados_ia.get("peso_liquido", "")) or offline["Peso Líquido"],
+        "Peso Bruto": limpar(dados_ia.get("peso_bruto", "")) or offline["Peso Bruto"],
+        "Estoque Mínimo": limpar(dados_ia.get("estoque_minimo", "")) or offline["Estoque Mínimo"],
+        "Estoque Máximo": limpar(dados_ia.get("estoque_maximo", "")) or offline["Estoque Máximo"],
+        "Unidade": limpar(dados_ia.get("unidade", "")) or offline["Unidade"],
+        "Tipo": limpar(dados_ia.get("tipo", "")) or offline["Tipo"],
+        "Situação": limpar(dados_ia.get("situacao", "")) or offline["Situação"],
     }
+
+    # garantias finais
+    if not final["Produto"]:
+        final["Produto"] = offline["Produto"]
+
+    if not final["Descrição Curta"]:
+        final["Descrição Curta"] = final["Produto"]
+
+    if not final["Código"]:
+        final["Código"] = gerar_codigo_fallback(final["Link"] or final["Produto"])
+
+    if not final["Marca"]:
+        final["Marca"] = detectar_marca(final["Produto"], final["Descrição Curta"])
+
+    if not final["Origem"]:
+        final["Origem"] = "0"
+
+    if not final["Unidade"]:
+        final["Unidade"] = "UN"
+
+    if not final["Tipo"]:
+        final["Tipo"] = "Produto"
+
+    if not final["Situação"]:
+        final["Situação"] = "Ativo"
 
     log(f"Produto extraído final: {final['Produto']}")
     return final
