@@ -306,3 +306,95 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
         "Peso Bruto": "",
         "Estoque Mínimo": "",
         "Estoque Máximo": "",
+        "Unidade": "UN",
+        "Tipo": "Produto",
+        "Situação": "Ativo",
+    }
+
+
+def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
+    html = fetch(link)
+    if not html:
+        log(f"Falha ao abrir produto: {link}")
+        return None
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup(["script", "style", "noscript"]):
+        if tag.name != "script" or tag.get("type") != "application/ld+json":
+            tag.decompose()
+
+    texto = soup.get_text(" ", strip=True)
+    nome = _extrair_nome_produto(soup, texto)
+
+    if filtro and filtro.lower() not in nome.lower():
+        return None
+
+    if not _parece_pagina_produto(soup, texto, link):
+        log(f"Página descartada por não parecer produto: {link}")
+        return None
+
+    offline = _offline_produto(soup, texto, nome, link, estoque_padrao)
+    dados_ia = extrair_dados_produto_com_ia(texto_produto=texto, link=link)
+
+    if not dados_ia:
+        log(f"Produto extraído via offline: {offline['Produto']}")
+        return offline
+
+    codigo_ia = limpar(dados_ia.get("codigo", ""))
+    if codigo_ia.lower() == "id":
+        codigo_ia = ""
+
+    gtin_ia = validar_gtin(dados_ia.get("gtin", ""))
+    link_ia = _link_valido_produto(dados_ia.get("link", ""))
+    imagem_ia = _imagem_valida(dados_ia.get("imagem", ""))
+
+    final = {
+        "Código": codigo_ia or offline["Código"],
+        "GTIN": gtin_ia or offline["GTIN"],
+        "Produto": limpar(dados_ia.get("produto", "")) or offline["Produto"],
+        "Preço": parse_preco(dados_ia.get("preco") or offline["Preço"]),
+        "Preço Custo": parse_preco(dados_ia.get("preco_custo"), "") if limpar(dados_ia.get("preco_custo", "")) else "",
+        "Descrição Curta": limpar(dados_ia.get("descricao_curta", "")) or offline["Descrição Curta"],
+        "Descrição Complementar": limpar(dados_ia.get("descricao_complementar", "")) or offline["Descrição Complementar"],
+        "Imagem": normalizar_url(imagem_ia or offline["Imagem"], link),
+        "Link": normalizar_url(link_ia or offline["Link"], link) if (link_ia or offline["Link"]) else "",
+        "Marca": limpar(dados_ia.get("marca", "")) or offline["Marca"],
+        "Estoque": parse_estoque(dados_ia.get("estoque") or offline["Estoque"], estoque_padrao),
+        "NCM": limpar(dados_ia.get("ncm", "")) or offline["NCM"],
+        "Origem": limpar(dados_ia.get("origem", "")) or offline["Origem"],
+        "Peso Líquido": limpar(dados_ia.get("peso_liquido", "")) or offline["Peso Líquido"],
+        "Peso Bruto": limpar(dados_ia.get("peso_bruto", "")) or offline["Peso Bruto"],
+        "Estoque Mínimo": limpar(dados_ia.get("estoque_minimo", "")) or offline["Estoque Mínimo"],
+        "Estoque Máximo": limpar(dados_ia.get("estoque_maximo", "")) or offline["Estoque Máximo"],
+        "Unidade": limpar(dados_ia.get("unidade", "")) or offline["Unidade"],
+        "Tipo": limpar(dados_ia.get("tipo", "")) or offline["Tipo"],
+        "Situação": limpar(dados_ia.get("situacao", "")) or offline["Situação"],
+    }
+
+    if not final["Produto"]:
+        final["Produto"] = offline["Produto"]
+
+    if not final["Descrição Curta"]:
+        final["Descrição Curta"] = final["Produto"]
+
+    if not final["Código"]:
+        final["Código"] = gerar_codigo_fallback(final["Link"] or final["Produto"])
+
+    if not final["Marca"]:
+        final["Marca"] = detectar_marca(final["Produto"], final["Descrição Curta"])
+
+    if not final["Origem"]:
+        final["Origem"] = "0"
+
+    if not final["Unidade"]:
+        final["Unidade"] = "UN"
+
+    if not final["Tipo"]:
+        final["Tipo"] = "Produto"
+
+    if not final["Situação"]:
+        final["Situação"] = "Ativo"
+
+    log(f"Produto extraído final: {final['Produto']}")
+    return final
