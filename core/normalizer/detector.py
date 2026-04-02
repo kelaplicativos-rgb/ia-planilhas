@@ -12,7 +12,7 @@ def limpar_nome_coluna(col):
 
 
 def encontrar_coluna(colunas, possiveis):
-    # 1) primeiro tenta igualdade exata
+    # 1) tenta igualdade exata
     for alvo in possiveis:
         alvo = limpar_nome_coluna(alvo)
         for col in colunas:
@@ -20,7 +20,7 @@ def encontrar_coluna(colunas, possiveis):
             if nome == alvo:
                 return col
 
-    # 2) depois tenta "contém"
+    # 2) tenta "contém"
     for alvo in possiveis:
         alvo = limpar_nome_coluna(alvo)
         for col in colunas:
