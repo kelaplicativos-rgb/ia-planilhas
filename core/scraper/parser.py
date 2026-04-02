@@ -17,14 +17,67 @@ from core.utils import (
 )
 
 
+TERMOS_PROPAGANDA_LINK = [
+    "youtube.com",
+    "youtu.be",
+    "instagram.com",
+    "facebook.com",
+    "wa.me",
+    "whatsapp",
+    "telegram",
+    "tiktok",
+    "canal",
+    "inscreva-se",
+    "promo",
+    "cupom",
+]
+
+
+def _link_valido_produto(link: str) -> str:
+    link = limpar(link)
+    if not link:
+        return ""
+
+    lk = link.lower()
+
+    if any(t in lk for t in TERMOS_PROPAGANDA_LINK):
+        return ""
+
+    if not (
+        lk.startswith("http://")
+        or lk.startswith("https://")
+        or lk.startswith("www.")
+        or "/" in lk
+    ):
+        return ""
+
+    return link
+
+
+def _imagem_valida(imagem: str) -> str:
+    imagem = limpar(imagem)
+    if not imagem:
+        return ""
+
+    lk = imagem.lower()
+    if any(t in lk for t in TERMOS_PROPAGANDA_LINK):
+        return ""
+
+    return imagem
+
+
 def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
-        return normalizar_url(og.get("content"), link)
+        img = _imagem_valida(og.get("content"))
+        if img:
+            return normalizar_url(img, link)
 
     twitter = soup.find("meta", attrs={"name": "twitter:image"})
     if twitter and twitter.get("content"):
-        return normalizar_url(twitter.get("content"), link)
+        img = _imagem_valida(twitter.get("content"))
+        if img:
+            return normalizar_url(img, link)
 
     for script in soup.find_all("script", type="application/ld+json"):
         texto = script.string or script.get_text(" ", strip=True)
@@ -42,9 +95,8 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
                     img = obj["image"]
                     if isinstance(img, str):
                         return img
-                    if isinstance(img, list) and img:
-                        if isinstance(img[0], str):
-                            return img[0]
+                    if isinstance(img, list) and img and isinstance(img[0], str):
+                        return img[0]
 
                 for _, v in obj.items():
                     achado = walk(v)
@@ -60,6 +112,7 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
             return ""
 
         achado = walk(dado)
+        achado = _imagem_valida(achado)
         if achado:
             return normalizar_url(achado, link)
 
@@ -67,7 +120,9 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
         for attr in ["data-zoom-image", "data-src", "src"]:
             src = img.get(attr)
             if src and not any(bad in src.lower() for bad in ["logo", "banner", "icon"]):
-                return normalizar_url(src, link)
+                src = _imagem_valida(src)
+                if src:
+                    return normalizar_url(src, link)
 
     return ""
 
@@ -166,17 +221,14 @@ def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
                 for chave, valor in obj.items():
                     if chave.lower() == "name" and isinstance(valor, str):
                         return valor
-
                     achado = walk(valor)
                     if achado:
                         return achado
-
             elif isinstance(obj, list):
                 for item in obj:
                     achado = walk(item)
                     if achado:
                         return achado
-
             return ""
 
         nome_json = walk(dado)
@@ -207,7 +259,6 @@ def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
         return True
 
     txt = (texto or "").lower()
-
     pistas = [
         "sku",
         "referência",
@@ -234,6 +285,9 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
     imagem_site = extrair_imagem(soup, link)
     descricao_curta_site = extrair_descricao_curta_site(soup, nome)
 
+    link_limpo = _link_valido_produto(link)
+    link_limpo = normalizar_url(link_limpo, link) if link_limpo else ""
+
     return {
         "Código": extrair_codigo(texto, link),
         "GTIN": extrair_gtin(texto),
@@ -243,7 +297,7 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
         "Descrição Curta": descricao_curta_site,
         "Descrição Complementar": descricao_curta_site,
         "Imagem": imagem_site,
-        "Link": link,
+        "Link": link_limpo,
         "Marca": detectar_marca(nome, texto),
         "Estoque": estoque_padrao,
         "NCM": "",
@@ -252,95 +306,3 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
         "Peso Bruto": "",
         "Estoque Mínimo": "",
         "Estoque Máximo": "",
-        "Unidade": "UN",
-        "Tipo": "Produto",
-        "Situação": "Ativo",
-    }
-
-
-def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
-    html = fetch(link)
-    if not html:
-        log(f"Falha ao abrir produto: {link}")
-        return None
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    for tag in soup(["script", "style", "noscript"]):
-        if tag.name != "script" or tag.get("type") != "application/ld+json":
-            tag.decompose()
-
-    texto = soup.get_text(" ", strip=True)
-    nome = _extrair_nome_produto(soup, texto)
-
-    if filtro and filtro.lower() not in nome.lower():
-        return None
-
-    if not _parece_pagina_produto(soup, texto, link):
-        log(f"Página descartada por não parecer produto: {link}")
-        return None
-
-    offline = _offline_produto(soup, texto, nome, link, estoque_padrao)
-
-    dados_ia = extrair_dados_produto_com_ia(texto_produto=texto, link=link)
-
-    if not dados_ia:
-        log(f"Produto extraído via offline: {offline['Produto']}")
-        return offline
-
-    codigo_ia = limpar(dados_ia.get("codigo", ""))
-    if codigo_ia.lower() == "id":
-        codigo_ia = ""
-
-    gtin_ia = validar_gtin(dados_ia.get("gtin", ""))
-
-    final = {
-        "Código": codigo_ia or offline["Código"],
-        "GTIN": gtin_ia or offline["GTIN"],
-        "Produto": limpar(dados_ia.get("produto", "")) or offline["Produto"],
-        "Preço": parse_preco(dados_ia.get("preco") or offline["Preço"]),
-        "Preço Custo": parse_preco(dados_ia.get("preco_custo")) if limpar(dados_ia.get("preco_custo", "")) else "",
-        "Descrição Curta": limpar(dados_ia.get("descricao_curta", "")) or offline["Descrição Curta"],
-        "Descrição Complementar": limpar(dados_ia.get("descricao_complementar", "")) or offline["Descrição Complementar"],
-        "Imagem": normalizar_url(dados_ia.get("imagem") or offline["Imagem"], link),
-        "Link": normalizar_url(dados_ia.get("link") or offline["Link"], link),
-        "Marca": limpar(dados_ia.get("marca", "")) or offline["Marca"],
-        "Estoque": parse_estoque(dados_ia.get("estoque") or offline["Estoque"], estoque_padrao),
-        "NCM": limpar(dados_ia.get("ncm", "")) or offline["NCM"],
-        "Origem": limpar(dados_ia.get("origem", "")) or offline["Origem"],
-        "Peso Líquido": limpar(dados_ia.get("peso_liquido", "")) or offline["Peso Líquido"],
-        "Peso Bruto": limpar(dados_ia.get("peso_bruto", "")) or offline["Peso Bruto"],
-        "Estoque Mínimo": limpar(dados_ia.get("estoque_minimo", "")) or offline["Estoque Mínimo"],
-        "Estoque Máximo": limpar(dados_ia.get("estoque_maximo", "")) or offline["Estoque Máximo"],
-        "Unidade": limpar(dados_ia.get("unidade", "")) or offline["Unidade"],
-        "Tipo": limpar(dados_ia.get("tipo", "")) or offline["Tipo"],
-        "Situação": limpar(dados_ia.get("situacao", "")) or offline["Situação"],
-    }
-
-    # garantias finais
-    if not final["Produto"]:
-        final["Produto"] = offline["Produto"]
-
-    if not final["Descrição Curta"]:
-        final["Descrição Curta"] = final["Produto"]
-
-    if not final["Código"]:
-        final["Código"] = gerar_codigo_fallback(final["Link"] or final["Produto"])
-
-    if not final["Marca"]:
-        final["Marca"] = detectar_marca(final["Produto"], final["Descrição Curta"])
-
-    if not final["Origem"]:
-        final["Origem"] = "0"
-
-    if not final["Unidade"]:
-        final["Unidade"] = "UN"
-
-    if not final["Tipo"]:
-        final["Tipo"] = "Produto"
-
-    if not final["Situação"]:
-        final["Situação"] = "Ativo"
-
-    log(f"Produto extraído final: {final['Produto']}")
-    return final
