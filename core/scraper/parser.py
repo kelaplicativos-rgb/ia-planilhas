@@ -11,7 +11,6 @@ from core.utils import (
     detectar_marca,
     gerar_codigo_fallback,
     normalizar_url,
-    parse_estoque,
     parse_preco,
     validar_gtin,
 )
@@ -33,7 +32,7 @@ TERMOS_PROPAGANDA_LINK = [
 
 
 def _link_valido_produto(link: str) -> str:
-    link = limpar(link)
+    link = limpar(link).replace("\\", "")
     if not link:
         return ""
 
@@ -54,7 +53,7 @@ def _link_valido_produto(link: str) -> str:
 
 
 def _imagem_valida(imagem: str) -> str:
-    imagem = limpar(imagem)
+    imagem = limpar(imagem).replace("\\", "")
     if not imagem:
         return ""
 
@@ -232,12 +231,93 @@ def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
     return score >= 2
 
 
+def _extrair_status_ao_vivo(texto: str) -> tuple[int, str]:
+    """
+    Regra crítica:
+    - SEM CACHE
+    - SEM IA
+    - SEM reaproveitar valor antigo
+
+    Lê o status real da página no momento da coleta.
+    """
+    txt = limpar(texto).lower()
+
+    padroes_esgotado = [
+        "esgotado",
+        "indisponível",
+        "indisponivel",
+        "fora de estoque",
+        "sem estoque",
+        "produto indisponível",
+        "produto indisponivel",
+    ]
+
+    padroes_disponivel = [
+        "em estoque",
+        "disponível",
+        "disponivel",
+        "a pronta entrega",
+    ]
+
+    for p in padroes_esgotado:
+        if p in txt:
+            return 0, "Inativo"
+
+    for p in padroes_disponivel:
+        if p in txt:
+            return 1, "Ativo"
+
+    return 0, "Inativo"
+
+
+def _extrair_estoque_numerico_ao_vivo(texto: str) -> int | None:
+    """
+    Tenta achar quantidade explícita.
+    Se não achar, devolve None e a decisão fica por conta do status.
+    """
+    txt = limpar(texto).lower()
+
+    padroes = [
+        r"(\d+)\s*(?:unidades|unidade|und|itens|itens disponíveis|itens disponiveis)",
+        r"estoque[:\s]+(\d+)",
+        r"dispon[ií]vel[:\s]+(\d+)",
+        r"quantidade[:\s]+(\d+)",
+    ]
+
+    for padrao in padroes:
+        m = re.search(padrao, txt, flags=re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                pass
+
+    return None
+
+
+def _estoque_status_ao_vivo(texto: str, estoque_padrao: int) -> tuple[int, str]:
+    qtd = _extrair_estoque_numerico_ao_vivo(texto)
+    if qtd is not None:
+        if qtd > 0:
+            return qtd, "Ativo"
+        return 0, "Inativo"
+
+    estoque, situacao = _extrair_status_ao_vivo(texto)
+
+    if situacao == "Ativo":
+        return max(1, int(estoque_padrao or 1)), "Ativo"
+
+    return 0, "Inativo"
+
+
 def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, estoque_padrao: int) -> dict:
     imagem_site = extrair_imagem(soup, link)
     descricao_curta_site = extrair_descricao_curta_site(soup, nome)
 
     link_limpo = _link_valido_produto(link)
     link_limpo = normalizar_url(link_limpo, link) if link_limpo else ""
+
+    estoque_ao_vivo, situacao_ao_vivo = _estoque_status_ao_vivo(texto, estoque_padrao)
 
     return {
         "Código": extrair_codigo(texto, link),
@@ -250,7 +330,7 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
         "Imagem": imagem_site,
         "Link": link_limpo,
         "Marca": detectar_marca(nome, texto),
-        "Estoque": estoque_padrao,
+        "Estoque": estoque_ao_vivo,
         "NCM": "",
         "Origem": "0",
         "Peso Líquido": "",
@@ -259,7 +339,7 @@ def _offline_produto(soup: BeautifulSoup, texto: str, nome: str, link: str, esto
         "Estoque Máximo": "",
         "Unidade": "UN",
         "Tipo": "Produto",
-        "Situação": "Ativo",
+        "Situação": situacao_ao_vivo,
     }
 
 
@@ -271,6 +351,18 @@ def _precisa_ia(offline: dict) -> bool:
             faltando += 1
 
     return faltando >= 1
+
+
+def _codigo_valido(codigo: str, gtin: str) -> str:
+    codigo = limpar(codigo)
+    gtin = limpar(gtin)
+
+    if not codigo:
+        return ""
+
+    # se código vier igual ao GTIN, ainda pode ser válido,
+    # mas priorizamos SKU offline quando houver um mais específico
+    return codigo
 
 
 def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
@@ -294,6 +386,7 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     if not _parece_pagina_produto(soup, texto, link):
         return None
 
+    # disponibilidade/estoque SEMPRE ao vivo
     offline = _offline_produto(soup, texto, nome, link, estoque_padrao)
 
     if not _precisa_ia(offline):
@@ -306,9 +399,13 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         log(f"Produto extraído via offline fallback: {offline['Produto']}")
         return offline
 
-    codigo_ia = limpar(dados_ia.get("codigo", ""))
+    codigo_ia = _codigo_valido(dados_ia.get("codigo", ""), dados_ia.get("gtin", ""))
     gtin_ia = validar_gtin(dados_ia.get("gtin", ""))
     marca_ia = limpar(dados_ia.get("marca", ""))
+
+    # ESTOQUE e SITUAÇÃO: sempre do HTML ao vivo
+    estoque_ao_vivo = offline["Estoque"]
+    situacao_ao_vivo = offline["Situação"]
 
     final = {
         "Código": codigo_ia or offline["Código"],
@@ -321,7 +418,7 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         "Imagem": offline["Imagem"],
         "Link": offline["Link"],
         "Marca": marca_ia or offline["Marca"],
-        "Estoque": parse_estoque(dados_ia.get("estoque") or offline["Estoque"], estoque_padrao),
+        "Estoque": estoque_ao_vivo,
         "NCM": "",
         "Origem": "0",
         "Peso Líquido": "",
@@ -330,7 +427,7 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         "Estoque Máximo": "",
         "Unidade": "UN",
         "Tipo": "Produto",
-        "Situação": "Ativo",
+        "Situação": situacao_ao_vivo,
     }
 
     if not final["Código"]:
@@ -342,5 +439,9 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     if not final["Marca"]:
         final["Marca"] = detectar_marca(final["Produto"], final["Descrição Curta"])
 
-    log(f"Produto extraído final: {final['Produto']}")
+    log(
+        f"Produto extraído final: {final['Produto']} | "
+        f"estoque_ao_vivo={final['Estoque']} | situacao_ao_vivo={final['Situação']}"
+    )
+
     return final
