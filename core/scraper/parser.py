@@ -1,5 +1,4 @@
 import re
-
 from bs4 import BeautifulSoup
 
 from core.ai_product_extractor import extrair_dados_produto_com_ia
@@ -14,10 +13,20 @@ from core.utils import (
 )
 
 
+def _limpar(txt):
+    if txt is None:
+        return ""
+    return " ".join(str(txt).split()).strip()
+
+
 def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
         return normalizar_url(og.get("content"), link)
+
+    twitter = soup.find("meta", attrs={"name": "twitter:image"})
+    if twitter and twitter.get("content"):
+        return normalizar_url(twitter.get("content"), link)
 
     for img in soup.find_all("img"):
         for attr in ["data-zoom-image", "data-src", "src"]:
@@ -30,15 +39,15 @@ def extrair_imagem(soup: BeautifulSoup, link: str) -> str:
 
 def extrair_descricao_curta_site(soup: BeautifulSoup, nome: str) -> str:
     seletores = [
-        {"name": "div", "class_": re.compile("descricao|description|product", re.I)},
-        {"name": "section", "class_": re.compile("descricao|description|product", re.I)},
-        {"name": "article", "class_": re.compile("descricao|description|product", re.I)},
+        {"name": "div", "class_": re.compile("descricao|description|product|content|detalhe", re.I)},
+        {"name": "section", "class_": re.compile("descricao|description|product|content|detalhe", re.I)},
+        {"name": "article", "class_": re.compile("descricao|description|product|content|detalhe", re.I)},
     ]
 
     for sel in seletores:
         tag = soup.find(sel.get("name"), class_=sel.get("class_"))
         if tag:
-            texto = " ".join(tag.get_text(" ", strip=True).split())
+            texto = _limpar(tag.get_text(" ", strip=True))
             if len(texto) >= 20:
                 return texto[:500]
 
@@ -47,8 +56,8 @@ def extrair_descricao_curta_site(soup: BeautifulSoup, nome: str) -> str:
 
 def extrair_codigo(texto: str, link: str) -> str:
     padroes = [
-        r"C[ÓO]D[:\s#-]*([A-Z0-9\-_/]{4,40})",
         r"SKU[:\s#-]*([A-Z0-9\-_/]{4,40})",
+        r"C[ÓO]D(?:IGO)?[:\s#-]*([A-Z0-9\-_/]{4,40})",
         r"REF[:\s#-]*([A-Z0-9\-_/]{4,40})",
         r"REFER[ÊE]NCIA[:\s#-]*([A-Z0-9\-_/]{4,40})",
     ]
@@ -94,6 +103,60 @@ def extrair_preco(texto: str) -> str:
     return f"{min(nums):.2f}"
 
 
+def _extrair_nome_produto(soup: BeautifulSoup, texto: str) -> str:
+    candidatos = []
+
+    h1 = soup.find("h1")
+    if h1:
+        candidatos.append(_limpar(h1.get_text(" ", strip=True)))
+
+    og_title = soup.find("meta", property="og:title")
+    if og_title and og_title.get("content"):
+        candidatos.append(_limpar(og_title.get("content")))
+
+    title = soup.find("title")
+    if title:
+        candidatos.append(_limpar(title.get_text(" ", strip=True)))
+
+    for nome in candidatos:
+        if nome and len(nome) >= 4:
+            return nome[:250]
+
+    # fallback bruto
+    texto_limpo = _limpar(texto)
+    if texto_limpo:
+        return texto_limpo[:120]
+
+    return "Produto sem nome"
+
+
+def _parece_pagina_produto(soup: BeautifulSoup, texto: str, link: str) -> bool:
+    lk = (link or "").lower()
+    if any(x in lk for x in ["/produto", "/product", "/p/", "-p", ".html"]):
+        return True
+
+    txt = (texto or "").lower()
+
+    pistas = [
+        "sku",
+        "referência",
+        "referencia",
+        "código",
+        "codigo",
+        "comprar",
+        "adicionar ao carrinho",
+        "gtin",
+        "ean",
+    ]
+
+    score = 0
+    for p in pistas:
+        if p in txt:
+            score += 1
+
+    return score >= 2
+
+
 def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict | None:
     html = fetch(link)
     if not html:
@@ -105,10 +168,14 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         tag.decompose()
 
     texto = soup.get_text(" ", strip=True)
-    nome_tag = soup.find("h1")
-    nome = nome_tag.get_text(strip=True) if nome_tag else "Produto sem nome"
+    nome = _extrair_nome_produto(soup, texto)
 
     if filtro and filtro.lower() not in nome.lower():
+        return None
+
+    # não descarta produto por falta de h1
+    if not _parece_pagina_produto(soup, texto, link):
+        log(f"Página descartada por não parecer produto: {link}")
         return None
 
     imagem_site = extrair_imagem(soup, link)
@@ -140,10 +207,15 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
     dados_ia = extrair_dados_produto_com_ia(texto_produto=texto, link=link)
 
     if not dados_ia:
+        log(f"Produto extraído via offline: {offline['Produto']}")
         return offline
 
+    codigo_ia = (dados_ia.get("codigo") or "").strip()
+    if codigo_ia.lower() == "id":
+        codigo_ia = ""
+
     final = {
-        "Código": dados_ia.get("codigo") or offline["Código"],
+        "Código": codigo_ia or offline["Código"],
         "GTIN": dados_ia.get("gtin") or offline["GTIN"],
         "Produto": dados_ia.get("produto") or offline["Produto"],
         "Preço": parse_preco(dados_ia.get("preco") or offline["Preço"]),
@@ -165,5 +237,5 @@ def extrair_site(link: str, filtro: str = "", estoque_padrao: int = 0) -> dict |
         "Situação": dados_ia.get("situacao") or offline["Situação"],
     }
 
-    log(f"Produto extraído final: {final}")
+    log(f"Produto extraído final: {final['Produto']}")
     return final
