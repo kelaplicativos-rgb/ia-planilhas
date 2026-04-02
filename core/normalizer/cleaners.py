@@ -6,8 +6,11 @@ def valor_vazio(valor):
     if valor is None:
         return True
 
-    if pd.isna(valor):
-        return True
+    try:
+        if pd.isna(valor):
+            return True
+    except Exception:
+        pass
 
     txt = str(valor).strip().lower()
     return txt in ["", "nan", "none", "null", "nat"]
@@ -59,3 +62,47 @@ def limpar_estoque(valor, estoque_padrao=0):
             return int(estoque_padrao)
 
     return int(estoque_padrao)
+
+
+def _somente_digitos(valor):
+    return re.sub(r"\D", "", str(valor or ""))
+
+
+def validar_gtin(valor):
+    """
+    Regra segura para evitar erro no Bling:
+    - aceita só 8, 12, 13 ou 14 dígitos
+    - valida dígito verificador
+    - se falhar, retorna vazio
+    """
+    if valor_vazio(valor):
+        return ""
+
+    codigo = _somente_digitos(valor)
+
+    if len(codigo) not in [8, 12, 13, 14]:
+        return ""
+
+    try:
+        digitos = [int(d) for d in codigo]
+    except Exception:
+        return ""
+
+    corpo = digitos[:-1]
+    verificador = digitos[-1]
+
+    corpo_invertido = list(reversed(corpo))
+    soma = 0
+
+    for i, n in enumerate(corpo_invertido):
+        if i % 2 == 0:
+            soma += n * 3
+        else:
+            soma += n
+
+    calculado = (10 - (soma % 10)) % 10
+
+    if calculado != verificador:
+        return ""
+
+    return codigo
