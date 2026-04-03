@@ -24,6 +24,10 @@ def init_state() -> None:
         "nome_arquivo": "",
         "mapa_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
+        "preview_aberto": False,
+        "ajuste_manual_aberto": True,
+        "mapeamento_final_aberto": True,
+        "colunas_auto_aberto": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -41,6 +45,10 @@ def limpar_tudo() -> None:
     st.session_state["nome_arquivo"] = ""
     st.session_state["mapa_manual"] = {}
     st.session_state["ultimo_tipo_processamento"] = "Cadastro de produtos"
+    st.session_state["preview_aberto"] = False
+    st.session_state["ajuste_manual_aberto"] = True
+    st.session_state["mapeamento_final_aberto"] = True
+    st.session_state["colunas_auto_aberto"] = False
 
 
 # =========================================================
@@ -372,6 +380,10 @@ def extrair_urls_validas(texto: str) -> List[str]:
 
 
 def quebrar_urls_imagem(texto: str) -> List[str]:
+    """
+    Regra fixa do usuário:
+    múltiplas imagens na mesma célula devem vir separadas por |
+    """
     texto = limpar_texto(texto)
 
     if not texto:
@@ -380,7 +392,7 @@ def quebrar_urls_imagem(texto: str) -> List[str]:
     if eh_texto_numerico_sem_url(texto):
         return []
 
-    partes = re.split(r"[|;\n]+", texto)
+    partes = texto.split("|")
     urls = []
 
     for parte in partes:
@@ -697,6 +709,120 @@ def construir_mapa_manual(
     return {k: (v if limpar_texto(v) else None) for k, v in mapa_manual.items()}
 
 
+def montar_df_colunas_automaticas(
+    mapa_auto: Dict[str, Optional[str]],
+    colunas_imagem_auto: List[str],
+) -> pd.DataFrame:
+    linhas = []
+
+    ordem = [
+        "codigo",
+        "nome",
+        "descricao_curta",
+        "preco",
+        "marca",
+        "imagem",
+        "link_externo",
+        "estoque",
+        "situacao",
+        "unidade",
+    ]
+
+    nomes_exibicao = {
+        "codigo": "Código / SKU",
+        "nome": "Nome do produto",
+        "descricao_curta": "Descrição curta",
+        "preco": "Preço",
+        "marca": "Marca",
+        "imagem": "Imagem principal",
+        "link_externo": "Link externo",
+        "estoque": "Estoque / Quantidade",
+        "situacao": "Situação",
+        "unidade": "Unidade",
+    }
+
+    for campo in ordem:
+        linhas.append(
+            {
+                "Campo Bling": nomes_exibicao.get(campo, campo),
+                "Coluna detectada": mapa_auto.get(campo) or "",
+            }
+        )
+
+    if colunas_imagem_auto:
+        linhas.append(
+            {
+                "Campo Bling": "Outras colunas de imagem detectadas",
+                "Coluna detectada": " | ".join(colunas_imagem_auto),
+            }
+        )
+
+    return pd.DataFrame(linhas)
+
+
+def montar_df_mapeamento_final(
+    tipo_processamento: str,
+    mapa_final: Dict[str, Optional[str]],
+    imagem_principal: Optional[str],
+    colunas_imagem_extras: List[str],
+) -> pd.DataFrame:
+    nomes_exibicao = {
+        "codigo": "Código / SKU",
+        "nome": "Nome do produto",
+        "descricao_curta": "Descrição curta",
+        "preco": "Preço",
+        "marca": "Marca",
+        "imagem": "Imagem principal",
+        "link_externo": "Link externo",
+        "estoque": "Estoque / Quantidade",
+        "situacao": "Situação",
+        "unidade": "Unidade",
+    }
+
+    if tipo_processamento == "Cadastro de produtos":
+        ordem = [
+            "codigo",
+            "nome",
+            "descricao_curta",
+            "preco",
+            "marca",
+            "imagem",
+            "link_externo",
+            "situacao",
+            "unidade",
+        ]
+    else:
+        ordem = [
+            "codigo",
+            "nome",
+            "estoque",
+        ]
+
+    linhas = []
+    for campo in ordem:
+        linhas.append(
+            {
+                "Campo Bling": nomes_exibicao.get(campo, campo),
+                "Coluna escolhida": mapa_final.get(campo) or "",
+            }
+        )
+
+    linhas.append(
+        {
+            "Campo Bling": "Imagem principal usada",
+            "Coluna escolhida": imagem_principal or "",
+        }
+    )
+    linhas.append(
+        {
+            "Campo Bling": "Colunas extras de imagem",
+            "Coluna escolhida": " | ".join(colunas_imagem_extras) if colunas_imagem_extras else "",
+        }
+    )
+
+    return pd.DataFrame(linhas)
+
+
 # =========================================================
 # APP
 # =========================================================
@@ -725,7 +851,7 @@ def main() -> None:
 
         st.divider()
 
-        if st.button("Limpar tudo", width="stretch"):
+        if st.button("Limpar tudo", use_container_width=True):
             limpar_tudo()
             st.rerun()
 
@@ -761,26 +887,18 @@ def main() -> None:
     with c2:
         st.metric("Colunas", len(df.columns))
 
-    with st.expander("👀 Preview", expanded=False):
-        st.dataframe(df.head(1), width="stretch")
-
     mapa_auto = detectar_colunas(df)
     colunas_imagem_auto = encontrar_colunas_imagem(df)
     log(f"Mapeamento automático: {mapa_auto}")
     log(f"Colunas de imagem detectadas: {colunas_imagem_auto}")
 
-    with st.expander("🔎 Colunas identificadas automaticamente", expanded=False):
-        st.json(
-            {
-                "mapa": mapa_auto,
-                "colunas_imagem_detectadas": colunas_imagem_auto,
-            }
-        )
+    with st.expander("👀 Preview", expanded=st.session_state["preview_aberto"]):
+        st.dataframe(df.head(1), use_container_width=True)
 
-    with st.expander("🛠️ Ajuste manual das colunas", expanded=False):
+    with st.expander("🛠️ Ajuste manual das colunas", expanded=st.session_state["ajuste_manual_aberto"]):
         st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
-        mapa_final = construir_mapa_manual(df, mapa_auto)
-        st.session_state["mapa_manual"] = mapa_final
+        mapa_final_temp = construir_mapa_manual(df, mapa_auto)
+        st.session_state["mapa_manual"] = mapa_final_temp
 
         st.info(
             "Regra fixa do sistema: a descrição da planilha de dados sempre vai para "
@@ -791,8 +909,24 @@ def main() -> None:
     imagem_principal = mapa_final.get("imagem")
     colunas_imagem_extras = [c for c in colunas_imagem_auto if c != imagem_principal]
 
+    with st.expander("✅ Mapeamento final que será usado", expanded=st.session_state["mapeamento_final_aberto"]):
+        df_mapeamento_final = montar_df_mapeamento_final(
+            tipo_processamento=tipo_processamento,
+            mapa_final=mapa_final,
+            imagem_principal=imagem_principal,
+            colunas_imagem_extras=colunas_imagem_extras,
+        )
+        st.dataframe(df_mapeamento_final, use_container_width=True, hide_index=True)
+
+        if st.session_state["df_saida"] is not None:
+            st.dataframe(st.session_state["df_saida"].head(20), use_container_width=True)
+
+    with st.expander("🔎 Colunas identificadas automaticamente", expanded=st.session_state["colunas_auto_aberto"]):
+        df_auto = montar_df_colunas_automaticas(mapa_auto, colunas_imagem_auto)
+        st.dataframe(df_auto, use_container_width=True, hide_index=True)
+
     if tipo_processamento == "Cadastro de produtos":
-        if st.button("Gerar planilha de cadastro", width="stretch"):
+        if st.button("Gerar planilha de cadastro", use_container_width=True):
             try:
                 saida = mapear_cadastro_bling(df, mapa_final, colunas_imagem_extras)
                 erros, avisos = validar_saida_cadastro(saida)
@@ -818,7 +952,7 @@ def main() -> None:
         if not limpar_texto(deposito):
             st.warning("⚠️ Digite em qual estoque será lançado.")
         else:
-            if st.button("Gerar planilha de estoque", width="stretch"):
+            if st.button("Gerar planilha de estoque", use_container_width=True):
                 try:
                     saida = mapear_estoque_bling(df, mapa_final, deposito)
                     erros, avisos = validar_saida_estoque(saida)
@@ -842,18 +976,6 @@ def main() -> None:
 
     df_saida = st.session_state["df_saida"]
 
-    with st.expander("✅ Mapeamento final que será usado", expanded=False):
-        st.json(
-            {
-                "tipo_processamento": tipo_processamento,
-                "mapa_final": mapa_final,
-                "imagem_principal": imagem_principal,
-                "colunas_imagem_extras": colunas_imagem_extras,
-            }
-        )
-        if df_saida is not None:
-            st.dataframe(df_saida.head(20), width="stretch")
-
     if df_saida is not None:
         nome_saida = (
             "bling_cadastro_produtos.xlsx"
@@ -868,7 +990,7 @@ def main() -> None:
             data=arquivo_excel,
             file_name=nome_saida,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
 
     st.divider()
@@ -881,7 +1003,7 @@ def main() -> None:
             data=salvar_txt_bytes(logs_txt),
             file_name="log_processamento.txt",
             mime="text/plain",
-            width="stretch",
+            use_container_width=True,
         )
 
 
