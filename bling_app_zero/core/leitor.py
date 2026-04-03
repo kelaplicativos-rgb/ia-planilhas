@@ -1,5 +1,3 @@
-# bling_app_zero/core/leitor.py
-
 import pandas as pd
 import streamlit as st
 
@@ -12,9 +10,6 @@ from ..utils.excel import (
 )
 
 
-# =========================================================
-# CARREGAR PLANILHA
-# =========================================================
 def carregar_planilha(arquivo):
     if arquivo is None:
         return None
@@ -27,37 +22,39 @@ def carregar_planilha(arquivo):
     df = normalizar_colunas(df)
     df = limpar_valores_vazios(df)
 
+    if df is None or df.empty:
+        return None
+
     return df
 
 
-# =========================================================
-# VALIDAR PLANILHA
-# =========================================================
 def validar_planilha_vazia(df):
     if df is None:
         return False
 
-    if isinstance(df, pd.DataFrame):
-        return not df.empty
+    if not isinstance(df, pd.DataFrame):
+        return False
 
-    return False
+    return not df.empty
 
 
-# =========================================================
-# PREVIEW (1 LINHA)
-# =========================================================
+def validar_planilha_basica(df):
+    return validar_planilha_vazia(df)
+
+
 def preview(df):
     if df is None or df.empty:
         st.warning("⚠️ Nenhuma planilha carregada.")
-        return
+        return pd.DataFrame()
 
     if bloco_toggle("Preview", "preview"):
-        st.dataframe(gerar_preview(df, 1), use_container_width=True)
+        prev = gerar_preview(df, 1)
+        st.dataframe(prev, use_container_width=True)
+        return prev
+
+    return pd.DataFrame()
 
 
-# =========================================================
-# COLUNAS IDENTIFICADAS
-# =========================================================
 def mostrar_colunas(df):
     if df is None or df.empty:
         return
@@ -66,20 +63,16 @@ def mostrar_colunas(df):
         st.write(list(df.columns))
 
 
-# =========================================================
-# AJUSTE MANUAL (placeholder)
-# =========================================================
 def ajuste_manual(df):
     if df is None or df.empty:
-        return
+        return {}
 
     if bloco_toggle("Ajuste manual das colunas", "ajuste_manual"):
-        st.info("🛠️ Em breve ajuste manual inteligente aqui")
+        st.info("🛠️ Ajuste manual será conectado no próximo módulo.")
+
+    return {}
 
 
-# =========================================================
-# MAPEAMENTO FINAL
-# =========================================================
 def mostrar_mapeamento(mapeamento):
     if not mapeamento:
         return
