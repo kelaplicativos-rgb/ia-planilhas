@@ -1,108 +1,26 @@
 import re
 import unicodedata
-
 import pandas as pd
 
 
-SINONIMOS = {
-    "codigo": [
-        "codigo", "código", "sku", "ref", "referencia", "referência",
-        "cod", "id produto", "id", "part number"
-    ],
-    "nome": [
-        "nome", "produto", "descricao", "descrição", "titulo", "título",
-        "nome produto", "descricao produto", "descrição produto"
-    ],
-    "preco": [
-        "preco", "preço", "valor", "price", "preco venda", "preço venda",
-        "valor venda", "preco unitario", "preço unitário", "preco unitário"
-    ],
-    "descricao_curta": [
-        "descricao curta", "descrição curta", "descricao", "descrição",
-        "detalhes", "resumo", "short description"
-    ],
-    "marca": [
-        "marca", "brand", "fabricante", "fornecedor marca"
-    ],
-    "imagem": [
-        "imagem", "imagens", "foto", "fotos", "url imagem", "url da imagem",
-        "image", "images", "link imagem", "link da imagem"
-    ],
-    "estoque": [
-        "estoque", "saldo", "quantidade", "qtd", "qtde", "disponivel",
-        "disponível", "inventory", "stock", "balanco", "balanço"
-    ],
-    "deposito": [
-        "deposito", "depósito", "armazem", "armazém", "local", "warehouse",
-        "localizacao", "localização"
-    ],
-    "situacao": [
-        "situacao", "situação", "status", "ativo", "status produto"
-    ],
-    "unidade": [
-        "unidade", "und", "un", "unit", "u.m."
-    ],
-}
-
-
-def _normalizar_texto(texto: str) -> str:
-    texto = str(texto).strip().lower()
+def _normalizar(texto):
+    texto = str(texto).lower().strip()
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(c for c in texto if not unicodedata.combining(c))
-    texto = re.sub(r"[^a-z0-9]+", " ", texto)
-    texto = re.sub(r"\s+", " ", texto).strip()
-    return texto
+    return re.sub(r"[^a-z0-9]+", " ", texto)
 
 
-def detectar_colunas(df: pd.DataFrame) -> dict:
-    resultado = {}
-    colunas_normalizadas = {col: _normalizar_texto(col) for col in df.columns}
-
-    for campo, sinonimos in SINONIMOS.items():
-        melhor_coluna = None
-        melhor_score = -1
-
-        for coluna_original, coluna_norm in colunas_normalizadas.items():
-            score = 0
-
-            for sinonimo in sinonimos:
-                sinonimo_norm = _normalizar_texto(sinonimo)
-
-                if coluna_norm == sinonimo_norm:
-                    score = max(score, 100)
-                elif sinonimo_norm in coluna_norm:
-                    score = max(score, 80)
-                elif coluna_norm in sinonimo_norm:
-                    score = max(score, 60)
-
-            if score > melhor_score:
-                melhor_score = score
-                melhor_coluna = coluna_original
-
-        resultado[campo] = melhor_coluna if melhor_score >= 60 else None
-
-    return resultado
+def _get(row, col):
+    if col and col in row and not pd.isna(row[col]):
+        return str(row[col]).strip()
+    return ""
 
 
-def _valor_seguro(row: pd.Series, coluna: str | None, padrao: str = "") -> str:
-    if not coluna:
-        return padrao
-    valor = row.get(coluna, padrao)
-    if pd.isna(valor):
-        return padrao
-    return str(valor).strip()
+def _numero(valor):
+    if not valor:
+        return "0.00"
 
-
-def _numero_seguro(valor, padrao: str = "0.00") -> str:
-    if valor is None:
-        return padrao
-
-    texto = str(valor).strip()
-
-    if texto == "" or texto.lower() in {"nan", "none", "null"}:
-        return padrao
-
-    texto = texto.replace("R$", "").replace(" ", "")
+    texto = str(valor).replace("R$", "").replace(" ", "")
 
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
@@ -110,168 +28,135 @@ def _numero_seguro(valor, padrao: str = "0.00") -> str:
         texto = texto.replace(",", ".")
 
     try:
-        numero = float(texto)
-        return f"{numero:.2f}"
-    except Exception:
-        return padrao
+        return f"{float(texto):.2f}"
+    except:
+        return "0.00"
 
 
-def _buscar_por_conteudo(row: pd.Series, tipo: str) -> str:
-    for valor in row.values:
-        if pd.isna(valor):
+def _fallback(row, tipo):
+    for v in row.values:
+        if pd.isna(v):
             continue
 
-        texto = str(valor).strip()
-        if not texto:
-            continue
+        txt = str(v).strip()
 
         if tipo == "numero":
-            bruto = texto.replace("R$", "").replace(" ", "")
-            if "," in bruto and "." in bruto:
-                bruto = bruto.replace(".", "").replace(",", ".")
-            elif "," in bruto:
-                bruto = bruto.replace(",", ".")
             try:
-                float(bruto)
-                return texto
-            except Exception:
-                continue
-
-        if tipo == "imagem":
-            texto_lower = texto.lower()
-            if texto_lower.startswith("http") and any(ext in texto_lower for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                return texto
+                float(txt.replace(",", "."))
+                return txt
+            except:
+                pass
 
         if tipo == "texto":
-            if len(texto) > 5:
-                return texto
+            if len(txt) > 5:
+                return txt
 
     return ""
 
 
-def _tem_algum(nome_modelo: str, opcoes: list[str]) -> bool:
-    return any(opcao in nome_modelo for opcao in opcoes)
+# =========================
+# CADASTRO CORRIGIDO
+# =========================
+def mapear_cadastro_bling(df, modelo, colunas):
+
+    saida = []
+
+    for _, row in df.iterrows():
+
+        codigo = _get(row, colunas.get("codigo"))
+        nome = _get(row, colunas.get("nome"))
+        preco = _get(row, colunas.get("preco"))
+        descricao = _get(row, colunas.get("descricao_curta"))
+
+        if not nome:
+            nome = _fallback(row, "texto")
+
+        if not preco:
+            preco = _fallback(row, "numero")
+
+        preco = _numero(preco)
+
+        # 🔥 CORREÇÕES BLING
+        unidade = "UN"
+        situacao = "Ativo"
+        ncm = "00000000"
+
+        nova = {c: "" for c in modelo.columns}
+
+        for col in modelo.columns:
+            n = _normalizar(col)
+
+            if "codigo" in n and "pai" not in n:
+                nova[col] = codigo
+
+            elif "nome" in n:
+                nova[col] = nome
+
+            elif "preco" in n:
+                nova[col] = preco
+
+            elif "descricao" in n:
+                nova[col] = descricao or nome
+
+            elif "unidade" in n:
+                nova[col] = unidade
+
+            elif "situacao" in n:
+                nova[col] = situacao
+
+            elif "ncm" in n:
+                nova[col] = ncm
+
+            # 🚫 IMPORTANTE: NÃO PREENCHER CODIGO PAI
+            elif "pai" in n:
+                nova[col] = ""
+
+        if codigo or nome:
+            saida.append(nova)
+
+    return pd.DataFrame(saida)
 
 
-def mapear_cadastro_bling(
-    df_origem: pd.DataFrame,
-    modelo: pd.DataFrame,
-    colunas_detectadas: dict
-) -> pd.DataFrame:
-    linhas_saida = []
+# =========================
+# ESTOQUE CORRIGIDO
+# =========================
+def mapear_estoque_bling(df, modelo, colunas, deposito_padrao):
 
-    for _, row in df_origem.iterrows():
-        valor_codigo = _valor_seguro(row, colunas_detectadas.get("codigo"))
-        valor_nome = _valor_seguro(row, colunas_detectadas.get("nome"))
-        valor_preco = _valor_seguro(row, colunas_detectadas.get("preco"))
-        valor_desc = _valor_seguro(row, colunas_detectadas.get("descricao_curta"))
-        valor_marca = _valor_seguro(row, colunas_detectadas.get("marca"))
-        valor_imagem = _valor_seguro(row, colunas_detectadas.get("imagem"))
-        valor_situacao = _valor_seguro(row, colunas_detectadas.get("situacao"))
-        valor_unidade = _valor_seguro(row, colunas_detectadas.get("unidade"))
+    saida = []
 
-        if not valor_nome:
-            valor_nome = _buscar_por_conteudo(row, "texto")
+    for _, row in df.iterrows():
 
-        if not valor_preco:
-            valor_preco = _buscar_por_conteudo(row, "numero")
+        codigo = _get(row, colunas.get("codigo"))
+        estoque = _get(row, colunas.get("estoque"))
+        preco = _get(row, colunas.get("preco"))
 
-        if not valor_desc:
-            valor_desc = valor_nome
+        if not estoque:
+            estoque = _fallback(row, "numero")
 
-        if not valor_imagem:
-            valor_imagem = _buscar_por_conteudo(row, "imagem")
+        if not preco:
+            preco = _fallback(row, "numero")
 
-        valor_preco = _numero_seguro(valor_preco, "0.00")
-        valor_situacao = valor_situacao or "Ativo"
-        valor_unidade = valor_unidade or "UN"
+        estoque = _numero(estoque)
+        preco = _numero(preco)
 
-        nova_linha = {col: "" for col in modelo.columns}
+        nova = {c: "" for c in modelo.columns}
 
-        for col_modelo in modelo.columns:
-            nome_modelo = _normalizar_texto(col_modelo)
+        for col in modelo.columns:
+            n = _normalizar(col)
 
-            if _tem_algum(nome_modelo, ["codigo", "sku"]):
-                nova_linha[col_modelo] = valor_codigo
+            if "codigo" in n:
+                nova[col] = codigo
 
-            elif "nome" in nome_modelo:
-                nova_linha[col_modelo] = valor_nome
+            elif "deposito" in n:
+                nova[col] = deposito_padrao
 
-            elif _tem_algum(nome_modelo, ["preco", "valor"]):
-                nova_linha[col_modelo] = valor_preco
+            elif "balanco" in n or "saldo" in n:
+                nova[col] = estoque
 
-            elif "descricao curta" in nome_modelo:
-                nova_linha[col_modelo] = valor_desc
+            elif "preco" in n:
+                nova[col] = preco
 
-            elif "descricao completa" in nome_modelo or nome_modelo == "descricao":
-                nova_linha[col_modelo] = valor_desc
+        if codigo:
+            saida.append(nova)
 
-            elif "marca" in nome_modelo:
-                nova_linha[col_modelo] = valor_marca
-
-            elif "imagem" in nome_modelo or "url" in nome_modelo:
-                nova_linha[col_modelo] = valor_imagem
-
-            elif "situacao" in nome_modelo or "status" in nome_modelo:
-                nova_linha[col_modelo] = valor_situacao
-
-            elif "unidade" in nome_modelo:
-                nova_linha[col_modelo] = valor_unidade
-
-        if valor_codigo or valor_nome:
-            linhas_saida.append(nova_linha)
-
-    return pd.DataFrame(linhas_saida, columns=modelo.columns)
-
-
-def mapear_estoque_bling(
-    df_origem: pd.DataFrame,
-    modelo: pd.DataFrame,
-    colunas_detectadas: dict,
-    deposito_padrao: str
-) -> pd.DataFrame:
-    linhas_saida = []
-
-    for _, row in df_origem.iterrows():
-        valor_codigo = _valor_seguro(row, colunas_detectadas.get("codigo"))
-        valor_nome = _valor_seguro(row, colunas_detectadas.get("nome"))
-        valor_estoque = _valor_seguro(row, colunas_detectadas.get("estoque"))
-        valor_preco = _valor_seguro(row, colunas_detectadas.get("preco"))
-        valor_deposito = _valor_seguro(row, colunas_detectadas.get("deposito"))
-
-        if not valor_estoque:
-            valor_estoque = _buscar_por_conteudo(row, "numero")
-
-        if not valor_preco:
-            valor_preco = _buscar_por_conteudo(row, "numero")
-
-        if not valor_deposito:
-            valor_deposito = deposito_padrao.strip()
-
-        valor_estoque = _numero_seguro(valor_estoque, "0.00")
-        valor_preco = _numero_seguro(valor_preco, "0.00")
-
-        nova_linha = {col: "" for col in modelo.columns}
-
-        for col_modelo in modelo.columns:
-            nome_modelo = _normalizar_texto(col_modelo)
-
-            if _tem_algum(nome_modelo, ["codigo produto", "codigo", "sku"]):
-                nova_linha[col_modelo] = valor_codigo
-
-            elif _tem_algum(nome_modelo, ["deposito", "localizacao", "localizacao deposito"]):
-                nova_linha[col_modelo] = valor_deposito
-
-            elif _tem_algum(nome_modelo, ["balanco", "balanço", "estoque", "saldo", "quantidade"]):
-                nova_linha[col_modelo] = valor_estoque
-
-            elif _tem_algum(nome_modelo, ["preco unitario", "preco unitário", "valor unitario", "valor unitário", "preco", "valor"]):
-                nova_linha[col_modelo] = valor_preco
-
-            elif "nome" in nome_modelo or nome_modelo == "descricao":
-                nova_linha[col_modelo] = valor_nome
-
-        if valor_codigo:
-            linhas_saida.append(nova_linha)
-
-    return pd.DataFrame(linhas_saida, columns=modelo.columns)
+    return pd.DataFrame(saida)
