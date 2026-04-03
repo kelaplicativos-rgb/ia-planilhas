@@ -166,3 +166,30 @@ def mapear_estoque_bling(df_origem, modelo, colunas_detectadas, deposito_padrao)
             saida.append(nova)
 
     return pd.DataFrame(saida, columns=modelo.columns)
+
+def detectar_colunas(df):
+    resultado = {}
+    colunas = list(df.columns)
+
+    for col in colunas:
+        nome = _normalizar(col)
+
+        if "codigo" in nome or "sku" in nome:
+            resultado["codigo"] = col
+
+        elif "nome" in nome or "descricao" in nome:
+            resultado["nome"] = col
+
+        elif "preco" in nome or "valor" in nome:
+            resultado["preco"] = col
+
+        elif "estoque" in nome or "saldo" in nome:
+            resultado["estoque"] = col
+
+        elif "imagem" in nome or "url" in nome:
+            resultado["imagem"] = col
+
+        elif "marca" in nome:
+            resultado["marca"] = col
+
+    return resultado
