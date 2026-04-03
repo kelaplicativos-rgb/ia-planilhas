@@ -33,6 +33,9 @@ def init_state() -> None:
         "mapeamento_final_aberto": True,
         "colunas_auto_aberto": False,
         "ultima_chave_arquivo": "",
+        "validacao_erros": [],
+        "validacao_avisos": [],
+        "validacao_ok": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -41,6 +44,12 @@ def init_state() -> None:
 
 def log(msg: str) -> None:
     st.session_state.logs.append(str(msg))
+
+
+def resetar_validacao() -> None:
+    st.session_state["validacao_erros"] = []
+    st.session_state["validacao_avisos"] = []
+    st.session_state["validacao_ok"] = False
 
 
 def limpar_tudo() -> None:
@@ -59,6 +68,7 @@ def limpar_tudo() -> None:
     st.session_state["mapeamento_final_aberto"] = True
     st.session_state["colunas_auto_aberto"] = False
     st.session_state["ultima_chave_arquivo"] = ""
+    resetar_validacao()
 
     for k in list(st.session_state.keys()):
         if k.startswith("map_"):
@@ -424,10 +434,6 @@ def extrair_urls_validas(texto: str) -> List[str]:
 
 
 def quebrar_urls_imagem(texto: str) -> List[str]:
-    """
-    Regra fixa do projeto:
-    múltiplas imagens na mesma célula devem vir separadas por |
-    """
     texto = limpar_texto(texto)
 
     if not texto:
@@ -558,26 +564,49 @@ def validar_saida_cadastro(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> T
         erros.append("A planilha final de cadastro ficou vazia.")
         return erros, avisos
 
-    col_codigo = encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku"])
-    col_nome = encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto"])
-    col_desc_curta = encontrar_coluna_modelo(modelo_df, ["descricao curta", "descrição curta"])
+    campos = localizar_campos_modelo_cadastro(modelo_df)
 
-    if not col_codigo:
+    if not campos["codigo"]:
         erros.append("O modelo de cadastro do Bling não possui coluna de código/SKU.")
-    if not col_nome:
+    if not campos["nome"]:
         erros.append("O modelo de cadastro do Bling não possui coluna de nome.")
-    if not col_desc_curta:
-        avisos.append("O modelo de cadastro do Bling não possui coluna de descrição curta.")
+    if not campos["descricao_curta"]:
+        erros.append("O modelo de cadastro do Bling não possui coluna de descrição curta.")
 
-    if col_codigo and col_codigo in df_saida.columns:
-        vazios = int((df_saida[col_codigo].astype(str).str.strip() == "").sum())
+    if campos["codigo"] and campos["codigo"] in df_saida.columns:
+        vazios = int((df_saida[campos["codigo"]].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append(f"Existem {vazios} linhas sem código.")
 
-    if col_nome and col_nome in df_saida.columns:
-        vazios = int((df_saida[col_nome].astype(str).str.strip() == "").sum())
+    if campos["nome"] and campos["nome"] in df_saida.columns:
+        vazios = int((df_saida[campos["nome"]].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append(f"Existem {vazios} linhas sem nome.")
+
+    if campos["descricao_curta"] and campos["descricao_curta"] in df_saida.columns:
+        vazios = int((df_saida[campos["descricao_curta"]].astype(str).str.strip() == "").sum())
+        if vazios > 0:
+            avisos.append(f"Existem {vazios} linhas sem descrição curta.")
+
+    campos_imagem = [campos["imagem_1"], campos["imagem_2"], campos["imagem_3"], campos["imagem_4"], campos["imagem_5"]]
+    for col in campos_imagem:
+        if col and col in df_saida.columns:
+            invalidas = df_saida[col].astype(str).apply(
+                lambda x: bool(x.strip()) and not re.match(r"^https?://", x.strip(), flags=re.IGNORECASE)
+            ).sum()
+            if invalidas > 0:
+                erros.append(f"A coluna {col} possui {int(invalidas)} valores que não são URL.")
+
+    if campos["imagem_unica"] and campos["imagem_unica"] in df_saida.columns:
+        invalidas = df_saida[campos["imagem_unica"]].astype(str).apply(
+            lambda x: all(
+                re.match(r"^https?://", p.strip(), flags=re.IGNORECASE)
+                for p in str(x).split("|")
+                if p.strip()
+            ) if str(x).strip() else True
+        ).sum()
+        if invalidas == 0:
+            pass
 
     return erros, avisos
 
@@ -608,6 +637,11 @@ def validar_saida_estoque(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> Tu
         vazios = int((df_saida[campos["deposito"]].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append("O depósito ficou vazio em uma ou mais linhas.")
+
+    if campos["estoque"] and campos["estoque"] in df_saida.columns:
+        negativos = int((pd.to_numeric(df_saida[campos["estoque"]], errors="coerce").fillna(0) < 0).sum())
+        if negativos > 0:
+            avisos.append(f"Existem {negativos} linhas com estoque negativo.")
 
     return erros, avisos
 
@@ -974,6 +1008,26 @@ def montar_df_mapeamento_final(
     return pd.DataFrame(linhas)
 
 
+def exibir_validacao() -> None:
+    erros = st.session_state.get("validacao_erros", [])
+    avisos = st.session_state.get("validacao_avisos", [])
+    ok = st.session_state.get("validacao_ok", False)
+
+    st.subheader("Validação antes do download")
+
+    if ok:
+        st.success("✅ Validação aprovada. A planilha está liberada para download.")
+
+    if avisos:
+        for aviso in avisos:
+            st.warning(aviso)
+
+    if erros:
+        st.error("❌ Download bloqueado. Corrija os pontos abaixo antes de baixar.")
+        for erro in erros:
+            st.error(f"- {erro}")
+
+
 # =========================================================
 # APP
 # =========================================================
@@ -1040,6 +1094,7 @@ def main() -> None:
                 st.session_state["df_saida"] = None
                 st.session_state["mapa_manual"] = {}
                 st.session_state["ultima_chave_arquivo"] = chave_atual
+                resetar_validacao()
 
                 for k in list(st.session_state.keys()):
                     if k.startswith("map_"):
@@ -1057,6 +1112,7 @@ def main() -> None:
             modelo_df = ler_modelo_bling(modelo_cadastro)
             st.session_state["modelo_cadastro_raw"] = modelo_df
             st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
+            resetar_validacao()
         except Exception as e:
             st.error(f"Erro ao ler modelo de cadastro: {e}")
             log(f"Erro ao ler modelo de cadastro: {e}")
@@ -1067,6 +1123,7 @@ def main() -> None:
             modelo_df = ler_modelo_bling(modelo_estoque)
             st.session_state["modelo_estoque_raw"] = modelo_df
             st.session_state["nome_modelo_estoque"] = modelo_estoque.name
+            resetar_validacao()
         except Exception as e:
             st.error(f"Erro ao ler modelo de estoque: {e}")
             log(f"Erro ao ler modelo de estoque: {e}")
@@ -1098,6 +1155,7 @@ def main() -> None:
         st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
         mapa_final_temp = construir_mapa_manual(df, mapa_auto)
         st.session_state["mapa_manual"] = mapa_final_temp
+        resetar_validacao()
 
         st.info(
             "Regra fixa do sistema: a descrição da planilha de dados sempre vai para "
@@ -1147,19 +1205,23 @@ def main() -> None:
                     )
                     erros, avisos = validar_saida_cadastro(saida, modelo_cadastro_df)
 
+                    st.session_state["df_saida"] = saida
+                    st.session_state["validacao_erros"] = erros
+                    st.session_state["validacao_avisos"] = avisos
+                    st.session_state["validacao_ok"] = len(erros) == 0
+
                     for aviso in avisos:
-                        st.warning(aviso)
                         log(f"Aviso: {aviso}")
 
+                    for erro in erros:
+                        log(f"Erro de validação: {erro}")
+
                     if erros:
-                        for erro in erros:
-                            st.error(erro)
-                            log(f"Erro de validação: {erro}")
+                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
                     else:
-                        st.session_state["df_saida"] = saida
                         log(f"Cadastro gerado no modelo Bling com {len(saida)} linhas.")
                         log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
-                        st.success("✅ Planilha de cadastro gerada no modelo real do Bling.")
+                        st.success("✅ Planilha de cadastro gerada e validada com sucesso.")
 
                 except Exception as e:
                     st.error(f"Erro ao gerar cadastro: {e}")
@@ -1183,20 +1245,24 @@ def main() -> None:
                     )
                     erros, avisos = validar_saida_estoque(saida, modelo_estoque_df)
 
+                    st.session_state["df_saida"] = saida
+                    st.session_state["validacao_erros"] = erros
+                    st.session_state["validacao_avisos"] = avisos
+                    st.session_state["validacao_ok"] = len(erros) == 0
+
                     for aviso in avisos:
-                        st.warning(aviso)
                         log(f"Aviso: {aviso}")
 
+                    for erro in erros:
+                        log(f"Erro de validação: {erro}")
+
                     if erros:
-                        for erro in erros:
-                            st.error(erro)
-                            log(f"Erro de validação: {erro}")
+                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
                     else:
-                        st.session_state["df_saida"] = saida
                         log(f"Estoque gerado no modelo Bling com {len(saida)} linhas.")
                         log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
                         log(f"Depósito informado: {deposito}")
-                        st.success("✅ Planilha de estoque gerada no modelo real do Bling.")
+                        st.success("✅ Planilha de estoque gerada e validada com sucesso.")
 
                 except Exception as e:
                     st.error(f"Erro ao gerar estoque: {e}")
@@ -1205,21 +1271,25 @@ def main() -> None:
     df_saida = st.session_state["df_saida"]
 
     if df_saida is not None:
-        nome_saida = (
-            "bling_cadastro_produtos_modelo_real.xlsx"
-            if tipo_processamento == "Cadastro de produtos"
-            else "bling_atualizacao_estoque_modelo_real.xlsx"
-        )
+        st.divider()
+        exibir_validacao()
 
-        arquivo_excel = salvar_excel_bytes(df_saida)
+        if st.session_state.get("validacao_ok", False):
+            nome_saida = (
+                "bling_cadastro_produtos_modelo_real.xlsx"
+                if tipo_processamento == "Cadastro de produtos"
+                else "bling_atualizacao_estoque_modelo_real.xlsx"
+            )
 
-        st.download_button(
-            "📥 Baixar planilha final",
-            data=arquivo_excel,
-            file_name=nome_saida,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+            arquivo_excel = salvar_excel_bytes(df_saida)
+
+            st.download_button(
+                "📥 Baixar planilha final",
+                data=arquivo_excel,
+                file_name=nome_saida,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
     st.divider()
 
