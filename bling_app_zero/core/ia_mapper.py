@@ -16,7 +16,7 @@ def _get_client():
 # =========================
 # AMOSTRA
 # =========================
-def _sample_dataframe(df: pd.DataFrame, max_rows=5):
+def _sample_dataframe(df: pd.DataFrame, max_rows: int = 5):
     return df.head(max_rows).to_dict(orient="records")
 
 
@@ -24,6 +24,10 @@ def _sample_dataframe(df: pd.DataFrame, max_rows=5):
 # IA DETECÇÃO DE COLUNAS
 # =========================
 def detectar_colunas_com_ia(df: pd.DataFrame) -> dict:
+    """
+    Usa IA para identificar colunas da planilha.
+    Retorna um dicionário com o mapeamento lógico.
+    """
 
     client = _get_client()
 
@@ -77,7 +81,6 @@ Amostra de dados:
         )
 
         texto = response.output_text.strip()
-
         resultado = json.loads(texto)
 
         return resultado
