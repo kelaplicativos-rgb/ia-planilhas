@@ -1,74 +1,134 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from typing import Union
 
 import pandas as pd
 
 
-ArquivoExcel = Union[str, BytesIO]
+ArquivoLike = Union[str, Path, BytesIO]
 
 
-def ler_excel(arquivo: ArquivoExcel, dtype=str) -> pd.DataFrame:
+# =========================
+# LEITURA
+# =========================
+def ler_excel(arquivo: ArquivoLike) -> pd.DataFrame:
     """
-    Lê arquivo Excel (.xlsx) e retorna DataFrame.
-
-    Parâmetros:
-        arquivo: caminho do arquivo ou objeto em memória
-        dtype: tipo padrão das colunas (str por padrão para evitar perdas)
-
-    Retorno:
-        pandas.DataFrame
+    Lê Excel (.xlsx)
     """
-    df = pd.read_excel(arquivo, dtype=dtype)
+    df = pd.read_excel(arquivo, dtype=object)
+    return normalizar_colunas(df)
+
+
+def ler_csv(arquivo: ArquivoLike) -> pd.DataFrame:
+    """
+    Lê CSV com tentativa inteligente (Brasil)
+    """
+    tentativas = [
+        {"sep": ";", "encoding": "utf-8"},
+        {"sep": ";", "encoding": "latin-1"},
+        {"sep": ",", "encoding": "utf-8"},
+        {"sep": ",", "encoding": "latin-1"},
+    ]
+
+    for cfg in tentativas:
+        try:
+            df = pd.read_csv(
+                arquivo,
+                sep=cfg["sep"],
+                encoding=cfg["encoding"],
+                dtype=object,
+            )
+            return normalizar_colunas(df)
+        except Exception:
+            continue
+
+    raise ValueError("Não foi possível ler o CSV.")
+
+
+def ler_planilha(arquivo: ArquivoLike) -> pd.DataFrame:
+    """
+    Detecta automaticamente CSV ou Excel
+    """
+    if hasattr(arquivo, "name"):
+        nome = arquivo.name.lower()
+    else:
+        nome = str(arquivo).lower()
+
+    if nome.endswith(".xlsx"):
+        return ler_excel(arquivo)
+
+    if nome.endswith(".csv"):
+        return ler_csv(arquivo)
+
+    raise ValueError("Formato não suportado. Use .xlsx ou .csv")
+
+
+# =========================
+# LIMPEZA
+# =========================
+def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Padroniza nomes das colunas
+    """
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
     return df
 
 
-def salvar_excel(df: pd.DataFrame) -> BytesIO:
+def limpar_valores_vazios(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Salva um DataFrame em memória como arquivo Excel (.xlsx).
+    Limpeza pesada:
+    - remove NaN
+    - remove espaços
+    - transforma tudo em string segura
+    """
+    df = df.copy()
 
-    Retorno:
-        BytesIO pronto para download no Streamlit.
-    """
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-    output.seek(0)
-    return output
+    df = df.fillna("")
+
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.strip()
+
+    return df
 
 
 def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Faz limpeza básica segura no DataFrame:
-    - remove colunas totalmente vazias
-    - remove linhas totalmente vazias
-    - converte nomes de colunas para string
-    - remove espaços extras dos nomes de colunas
+    Limpeza estrutural:
+    - remove linhas/colunas vazias
     """
     df = df.copy()
 
-    df.columns = [str(col).strip() for col in df.columns]
-    df = df.dropna(axis=1, how="all")
     df = df.dropna(axis=0, how="all")
+    df = df.dropna(axis=1, how="all")
 
     return df
 
 
-def normalizar_texto(valor) -> str:
+# =========================
+# EXPORTAÇÃO
+# =========================
+def salvar_excel_bytes(df: pd.DataFrame, nome_aba: str = "Planilha") -> BytesIO:
     """
-    Normaliza valor para texto seguro.
+    Gera Excel em memória (download Streamlit)
     """
-    if pd.isna(valor):
-        return ""
-    return str(valor).strip()
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=nome_aba)
+
+    output.seek(0)
+    return output
 
 
-def aplicar_normalizacao_texto(df: pd.DataFrame) -> pd.DataFrame:
+def salvar_csv_bytes(df: pd.DataFrame) -> BytesIO:
     """
-    Aplica normalização de texto em todas as células do DataFrame.
+    Gera CSV em memória
     """
-    df = df.copy()
-    for col in df.columns:
-        df[col] = df[col].apply(normalizar_texto)
-    return df
+    output = BytesIO()
+    csv_str = df.to_csv(index=False, sep=";", encoding="utf-8-sig")
+    output.write(csv_str.encode("utf-8-sig"))
+    output.seek(0)
+    return output
