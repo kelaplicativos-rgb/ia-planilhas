@@ -1,82 +1,75 @@
-from __future__ import annotations
-
-from io import BytesIO
-from pathlib import Path
-from typing import Union
-
 import pandas as pd
+import streamlit as st
 
-
-ArquivoLike = Union[str, Path, BytesIO]
-
-
-def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(col).strip() for col in df.columns]
-    return df
-
-
-def limpar_valores_vazios(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df = df.fillna("")
-
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
-
-    return df
-
-
-def ler_excel(arquivo: ArquivoLike) -> pd.DataFrame:
-    df = pd.read_excel(arquivo, dtype=object)
-    df = normalizar_colunas(df)
-    df = limpar_valores_vazios(df)
-    return df
-
-
-def ler_csv(arquivo: ArquivoLike) -> pd.DataFrame:
-    tentativas = [
-        {"sep": ";", "encoding": "utf-8"},
-        {"sep": ";", "encoding": "latin-1"},
-        {"sep": ",", "encoding": "utf-8"},
-        {"sep": ",", "encoding": "latin-1"},
-    ]
-
-    ultimo_erro = None
-
-    for cfg in tentativas:
+# =========================
+# 📥 LEITURA INTELIGENTE
+# =========================
+def ler_planilha(arquivo):
+    try:
+        df = pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            encoding="utf-8",
+            on_bad_lines="skip"
+        )
+        return df
+    except:
         try:
             df = pd.read_csv(
                 arquivo,
-                sep=cfg["sep"],
-                encoding=cfg["encoding"],
-                dtype=object,
+                sep=";",
+                engine="python",
+                encoding="latin-1",
+                on_bad_lines="skip"
             )
-            df = normalizar_colunas(df)
-            df = limpar_valores_vazios(df)
             return df
-        except Exception as e:
-            ultimo_erro = e
-
-    raise ValueError(f"Não foi possível ler o CSV enviado: {ultimo_erro}")
-
-
-def ler_planilha(arquivo: ArquivoLike) -> pd.DataFrame:
-    nome = getattr(arquivo, "name", str(arquivo)).lower()
-
-    if nome.endswith(".xlsx"):
-        return ler_excel(arquivo)
-
-    if nome.endswith(".csv"):
-        return ler_csv(arquivo)
-
-    raise ValueError("Formato não suportado. Use .xlsx ou .csv.")
+        except:
+            df = pd.read_excel(arquivo)
+            return df
 
 
-def salvar_excel_bytes(df: pd.DataFrame, nome_aba: str = "Planilha") -> BytesIO:
-    output = BytesIO()
+# =========================
+# 👁️ PREVIEW INTELIGENTE
+# =========================
+def mostrar_preview(df, nome="Planilha"):
+    st.subheader(f"📄 {nome}")
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=nome_aba)
+    if df is None or df.empty:
+        st.warning("⚠️ Planilha vazia")
+        return
 
-    output.seek(0)
-    return output
+    # =========================
+    # 🧠 COLUNAS DETECTADAS
+    # =========================
+    st.success("✅ Colunas identificadas automaticamente:")
+    st.write(list(df.columns))
+
+    # =========================
+    # 👁️ PREVIEW (1 LINHA)
+    # =========================
+    st.info("🔍 Preview (1 linha):")
+    st.dataframe(df.head(1), use_container_width=True)
+
+    # =========================
+    # 🔘 BOTÃO EXPANDIR
+    # =========================
+    if "mostrar_tudo_" + nome not in st.session_state:
+        st.session_state["mostrar_tudo_" + nome] = False
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(f"👁️ Ver tudo ({nome})"):
+            st.session_state["mostrar_tudo_" + nome] = True
+
+    with col2:
+        if st.button(f"❌ Ocultar ({nome})"):
+            st.session_state["mostrar_tudo_" + nome] = False
+
+    # =========================
+    # 📊 MOSTRAR COMPLETO
+    # =========================
+    if st.session_state["mostrar_tudo_" + nome]:
+        st.success("📊 Visualização completa:")
+        st.dataframe(df, use_container_width=True)
