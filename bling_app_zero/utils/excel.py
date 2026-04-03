@@ -1,14 +1,13 @@
-# bling_app_zero/utils/excel.py
-
 from __future__ import annotations
 
 import io
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 
 # =========================================================
@@ -34,9 +33,6 @@ SEPARADORES_TENTATIVA = [
 # FUNÇÕES BÁSICAS DE TEXTO
 # =========================================================
 def remover_acentos(texto: str) -> str:
-    """
-    Remove acentos de uma string.
-    """
     if texto is None:
         return ""
     texto = str(texto)
@@ -47,17 +43,14 @@ def remover_acentos(texto: str) -> str:
 
 
 def normalizar_texto(texto: Any) -> str:
-    """
-    Normaliza textos genéricos:
-    - converte para string
-    - remove espaços extras
-    - remove quebras de linha desnecessárias
-    """
     if texto is None:
         return ""
 
-    if pd.isna(texto):
-        return ""
+    try:
+        if pd.isna(texto):
+            return ""
+    except Exception:
+        pass
 
     texto = str(texto)
     texto = texto.replace("\r", " ").replace("\n", " ").replace("\t", " ")
@@ -66,9 +59,6 @@ def normalizar_texto(texto: Any) -> str:
 
 
 def normalizar_nome_coluna(coluna: Any) -> str:
-    """
-    Padroniza nomes de colunas para facilitar leitura automática.
-    """
     coluna = normalizar_texto(coluna)
     coluna = remover_acentos(coluna).lower()
     coluna = coluna.replace("/", " ")
@@ -84,10 +74,6 @@ def normalizar_nome_coluna(coluna: Any) -> str:
 
 
 def tornar_colunas_unicas(colunas: list[str]) -> list[str]:
-    """
-    Garante que nomes repetidos virem únicos:
-    exemplo: preco, preco_2, preco_3
-    """
     contagem: dict[str, int] = {}
     resultado: list[str] = []
 
@@ -105,12 +91,9 @@ def tornar_colunas_unicas(colunas: list[str]) -> list[str]:
 
 
 # =========================================================
-# DETECÇÃO DE TIPO
+# DETECÇÃO DE TIPO / LEITURA DE BYTES
 # =========================================================
 def obter_nome_arquivo(arquivo: Any) -> str:
-    """
-    Extrai nome do arquivo de UploadedFile, path ou objeto parecido.
-    """
     if hasattr(arquivo, "name"):
         return str(arquivo.name)
     return str(arquivo)
@@ -122,9 +105,6 @@ def obter_extensao_arquivo(arquivo: Any) -> str:
 
 
 def ler_bytes_arquivo(arquivo: Any) -> bytes:
-    """
-    Lê bytes do arquivo sem quebrar UploadedFile do Streamlit.
-    """
     if isinstance(arquivo, (str, Path)):
         with open(arquivo, "rb") as f:
             return f.read()
@@ -134,6 +114,7 @@ def ler_bytes_arquivo(arquivo: Any) -> bytes:
 
     if hasattr(arquivo, "read"):
         posicao_original = None
+
         if hasattr(arquivo, "tell"):
             try:
                 posicao_original = arquivo.tell()
@@ -143,9 +124,12 @@ def ler_bytes_arquivo(arquivo: Any) -> bytes:
         try:
             if hasattr(arquivo, "seek"):
                 arquivo.seek(0)
+
             conteudo = arquivo.read()
+
             if isinstance(conteudo, str):
                 conteudo = conteudo.encode("utf-8")
+
             return conteudo
         finally:
             if posicao_original is not None and hasattr(arquivo, "seek"):
@@ -158,13 +142,9 @@ def ler_bytes_arquivo(arquivo: Any) -> bytes:
 
 
 # =========================================================
-# LEITURA DE CSV/TXT
+# LEITURA CSV / TXT
 # =========================================================
 def tentar_ler_csv_bytes(conteudo: bytes) -> tuple[pd.DataFrame, str]:
-    """
-    Tenta ler CSV/TXT com múltiplos encodings e separadores.
-    Retorna df e descrição do método usado.
-    """
     erros: list[str] = []
 
     for encoding in ENCODINGS_TENTATIVA:
@@ -199,19 +179,13 @@ def tentar_ler_csv_bytes(conteudo: bytes) -> tuple[pd.DataFrame, str]:
             except Exception as e:
                 erros.append(f"encoding={encoding}, sep={repr(sep)} -> {e}")
 
-    raise ValueError(
-        "Falha ao ler arquivo CSV/TXT.\n"
-        + "\n".join(erros[:10])
-    )
+    raise ValueError("Falha ao ler arquivo CSV/TXT.\n" + "\n".join(erros[:10]))
 
 
 # =========================================================
-# LEITURA DE EXCEL
+# LEITURA EXCEL
 # =========================================================
 def tentar_ler_excel_bytes(conteudo: bytes) -> tuple[pd.DataFrame, str]:
-    """
-    Lê Excel (.xlsx / .xls) tentando engine compatível.
-    """
     erros: list[str] = []
 
     for engine in [None, "openpyxl"]:
@@ -227,33 +201,38 @@ def tentar_ler_excel_bytes(conteudo: bytes) -> tuple[pd.DataFrame, str]:
         except Exception as e:
             erros.append(f"engine={engine or 'auto'} -> {e}")
 
-    raise ValueError(
-        "Falha ao ler arquivo Excel.\n"
-        + "\n".join(erros[:10])
-    )
+    raise ValueError("Falha ao ler arquivo Excel.\n" + "\n".join(erros[:10]))
 
 
 # =========================================================
-# LIMPEZA DO DATAFRAME
+# LIMPEZA / NORMALIZAÇÃO DE DATAFRAME
 # =========================================================
-def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Limpeza geral da planilha:
-    - transforma cabeçalhos em texto
-    - remove linhas/colunas totalmente vazias
-    - padroniza valores
-    - remove colunas 'unnamed'
-    """
+def limpar_valores_vazios(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
 
     df = df.copy()
 
-    # Garante cabeçalhos em string
+    for coluna in df.columns:
+        df[coluna] = df[coluna].apply(normalizar_texto)
+
+    df = df.replace("", pd.NA)
+    df = df.dropna(axis=0, how="all")
+    df = df.dropna(axis=1, how="all")
+    df = df.fillna("")
+    df = df.reset_index(drop=True)
+
+    return df
+
+
+def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
     df.columns = [normalizar_nome_coluna(c) for c in df.columns]
     df.columns = tornar_colunas_unicas(list(df.columns))
 
-    # Remove colunas do tipo unnamed / coluna vazia fake
     colunas_validas = []
     for c in df.columns:
         c_limpa = normalizar_nome_coluna(c)
@@ -262,25 +241,18 @@ def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         colunas_validas.append(c)
 
     if colunas_validas:
-        df = df[colunas_validas]
+        df = df[colunas_validas].copy()
 
-    # Padroniza valores
-    for coluna in df.columns:
-        df[coluna] = df[coluna].apply(normalizar_texto)
+    return df
 
-    # Troca strings vazias por NA temporariamente para limpeza
-    df = df.replace("", pd.NA)
 
-    # Remove linhas e colunas totalmente vazias
-    df = df.dropna(axis=0, how="all")
-    df = df.dropna(axis=1, how="all")
+def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
 
-    # Volta NA para string vazia
-    df = df.fillna("")
-
-    # Reseta índice
-    df = df.reset_index(drop=True)
-
+    df = df.copy()
+    df = normalizar_colunas(df)
+    df = limpar_valores_vazios(df)
     return df
 
 
@@ -288,12 +260,8 @@ def remover_colunas_quase_vazias(
     df: pd.DataFrame,
     percentual_minimo_preenchido: float = 0.01,
 ) -> pd.DataFrame:
-    """
-    Remove colunas praticamente vazias.
-    Ex.: uma coluna preenchida em menos de 1% das linhas.
-    """
-    if df.empty:
-        return df.copy()
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
 
     total_linhas = max(len(df), 1)
     colunas_manter = []
@@ -312,27 +280,9 @@ def remover_colunas_quase_vazias(
 
 
 # =========================================================
-# FUNÇÕES PÚBLICAS PRINCIPAIS
+# FUNÇÃO PRINCIPAL DE LEITURA UNIVERSAL
 # =========================================================
 def ler_planilha_universal(arquivo: Any) -> dict[str, Any]:
-    """
-    Função principal do módulo.
-    Lê qualquer planilha suportada e devolve estrutura padronizada.
-
-    Retorno:
-    {
-        "sucesso": bool,
-        "nome_arquivo": str,
-        "extensao": str,
-        "metodo_leitura": str,
-        "total_linhas": int,
-        "total_colunas": int,
-        "colunas": list[str],
-        "df": pd.DataFrame,
-        "preview": pd.DataFrame,
-        "erro": str
-    }
-    """
     nome_arquivo = obter_nome_arquivo(arquivo)
     extensao = obter_extensao_arquivo(arquivo)
 
@@ -341,12 +291,9 @@ def ler_planilha_universal(arquivo: Any) -> dict[str, Any]:
 
         if extensao in [".xlsx", ".xls"]:
             df, metodo = tentar_ler_excel_bytes(conteudo)
-
         elif extensao in [".csv", ".txt"]:
             df, metodo = tentar_ler_csv_bytes(conteudo)
-
         else:
-            # tenta primeiro como excel, depois csv
             try:
                 df, metodo = tentar_ler_excel_bytes(conteudo)
             except Exception:
@@ -385,10 +332,20 @@ def ler_planilha_universal(arquivo: Any) -> dict[str, Any]:
         }
 
 
+# =========================================================
+# COMPATIBILIDADE COM core/leitor.py
+# =========================================================
+def ler_planilha(arquivo: Any) -> pd.DataFrame | None:
+    resultado = ler_planilha_universal(arquivo)
+    if not resultado["sucesso"]:
+        return None
+    return resultado["df"]
+
+
+# =========================================================
+# PREVIEW / RESUMO
+# =========================================================
 def gerar_preview(df: pd.DataFrame, limite_linhas: int = 1) -> pd.DataFrame:
-    """
-    Gera preview reduzido. Por sua regra, default = 1 linha.
-    """
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -397,9 +354,6 @@ def gerar_preview(df: pd.DataFrame, limite_linhas: int = 1) -> pd.DataFrame:
 
 
 def resumo_planilha(df: pd.DataFrame) -> dict[str, Any]:
-    """
-    Retorna resumo simples da planilha.
-    """
     if df is None:
         df = pd.DataFrame()
 
@@ -411,10 +365,6 @@ def resumo_planilha(df: pd.DataFrame) -> dict[str, Any]:
 
 
 def dataframe_para_texto_seguro(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Garante que todas as colunas estejam em string limpa.
-    Útil antes de mapear para o Bling.
-    """
     if df is None:
         return pd.DataFrame()
 
@@ -427,21 +377,51 @@ def dataframe_para_texto_seguro(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# FUNÇÕES AUXILIARES PARA O PRÓXIMO MÓDULO
+# EXPORTAÇÃO
+# =========================================================
+def salvar_excel_bytes(
+    df: pd.DataFrame,
+    nome_aba: str = "Dados",
+) -> bytes:
+    if df is None:
+        df = pd.DataFrame()
+
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=nome_aba)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# =========================================================
+# HELPERS DE UI
+# =========================================================
+def bloco_toggle(rotulo: str, chave_estado: str) -> bool:
+    if chave_estado not in st.session_state:
+        st.session_state[chave_estado] = False
+
+    texto_botao = f"👁️ Mostrar {rotulo}"
+    if st.session_state[chave_estado]:
+        texto_botao = f"🙈 Ocultar {rotulo}"
+
+    if st.button(texto_botao, key=f"btn_{chave_estado}"):
+        st.session_state[chave_estado] = not st.session_state[chave_estado]
+
+    return st.session_state[chave_estado]
+
+
+# =========================================================
+# AUXILIARES PARA O MAPEAMENTO
 # =========================================================
 def listar_colunas_normalizadas(df: pd.DataFrame) -> list[str]:
-    """
-    Retorna as colunas já normalizadas.
-    """
     if df is None or df.empty:
         return []
     return list(df.columns)
 
 
 def coluna_existe(df: pd.DataFrame, nome_coluna: str) -> bool:
-    """
-    Verifica existência já considerando normalização.
-    """
     if df is None or df.empty:
         return False
 
@@ -450,9 +430,6 @@ def coluna_existe(df: pd.DataFrame, nome_coluna: str) -> bool:
 
 
 def obter_valor_seguro(linha: pd.Series, coluna: str, padrao: str = "") -> str:
-    """
-    Lê valor com segurança.
-    """
     coluna = normalizar_nome_coluna(coluna)
 
     if coluna not in linha.index:
