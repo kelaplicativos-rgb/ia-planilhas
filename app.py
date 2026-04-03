@@ -9,25 +9,20 @@ import hashlib
 from datetime import datetime
 
 # =========================
-# DEPLOY PROFISSIONAL
+# DEPLOY LEVE
 # =========================
-APP_VERSION = "2026.04.03.02"
-
+APP_VERSION = "2026.04.03.04"
 
 def gerar_assinatura_deploy():
-    base = f"{APP_VERSION}|app_bling_formato_original"
-    return hashlib.md5(base.encode("utf-8")).hexdigest()
-
+    return hashlib.md5(APP_VERSION.encode("utf-8")).hexdigest()
 
 def executar_boot_deploy():
     assinatura_atual = gerar_assinatura_deploy()
-
-    if "deploy_assinatura" not in st.session_state:
-        st.session_state["deploy_assinatura"] = assinatura_atual
-        st.session_state["deploy_ja_inicializado"] = True
-        return
-
     assinatura_anterior = st.session_state.get("deploy_assinatura")
+
+    if assinatura_anterior is None:
+        st.session_state["deploy_assinatura"] = assinatura_atual
+        return
 
     if assinatura_anterior != assinatura_atual:
         try:
@@ -40,19 +35,9 @@ def executar_boot_deploy():
         except:
             pass
 
-        chaves_manter = {
-            "deploy_assinatura": assinatura_atual,
-            "deploy_ja_inicializado": True,
-        }
-
-        for chave in list(st.session_state.keys()):
-            del st.session_state[chave]
-
-        for chave, valor in chaves_manter.items():
-            st.session_state[chave] = valor
-
+        st.session_state.clear()
+        st.session_state["deploy_assinatura"] = assinatura_atual
         st.rerun()
-
 
 def reset_total_sistema():
     assinatura_atual = gerar_assinatura_deploy()
@@ -67,13 +52,9 @@ def reset_total_sistema():
     except:
         pass
 
-    for chave in list(st.session_state.keys()):
-        del st.session_state[chave]
-
+    st.session_state.clear()
     st.session_state["deploy_assinatura"] = assinatura_atual
-    st.session_state["deploy_ja_inicializado"] = True
     st.rerun()
-
 
 executar_boot_deploy()
 
@@ -84,19 +65,19 @@ st.set_page_config(page_title="🔥 BLING FORMATO ORIGINAL", layout="wide")
 st.title("🔥 BLING FORMATO ORIGINAL + LIMPEZA TOTAL")
 
 # =========================
-# PAINEL DEPLOY
+# TOPO DEPLOY
 # =========================
-col_dep1, col_dep2, col_dep3 = st.columns([1.4, 1, 1])
+dep1, dep2, dep3 = st.columns([1.3, 1, 1])
 
-with col_dep1:
+with dep1:
     st.caption(f"Versão do app: {APP_VERSION}")
 
-with col_dep2:
+with dep2:
     if st.button("🔄 Reset total do sistema", use_container_width=True):
         reset_total_sistema()
 
-with col_dep3:
-    st.caption("Modo deploy profissional ativo")
+with dep3:
+    st.caption("Modo leve ativo")
 
 # =========================
 # SESSION
@@ -124,7 +105,6 @@ for k, v in PADRAO_SESSION.items():
         else:
             st.session_state[k] = v
 
-
 # =========================
 # LOG
 # =========================
@@ -132,14 +112,12 @@ def log(msg):
     horario = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     st.session_state["logs"].append(f"[{horario}] {msg}")
 
-
 def limpar_estado():
     for k, v in PADRAO_SESSION.items():
         if isinstance(v, list):
             st.session_state[k] = []
         else:
             st.session_state[k] = v
-
 
 # =========================
 # TEXTO
@@ -163,7 +141,6 @@ def normalizar_texto(valor):
     texto = texto.replace("\t", " ")
     texto = re.sub(r"\s+", " ", texto)
     return texto.strip()
-
 
 def slug_coluna(texto):
     texto = normalizar_texto(texto).lower()
@@ -204,7 +181,6 @@ def slug_coluna(texto):
     texto = re.sub(r"_+", "_", texto).strip("_")
     return texto
 
-
 def buscar_coluna(df, aliases):
     mapa = {slug_coluna(col): col for col in df.columns}
     for alias in aliases:
@@ -212,7 +188,6 @@ def buscar_coluna(df, aliases):
         if chave in mapa:
             return mapa[chave]
     return None
-
 
 # =========================
 # NUMÉRICOS
@@ -244,7 +219,6 @@ def para_float(valor):
     except:
         return None
 
-
 def corrigir_preco(valor):
     numero = para_float(valor)
     if numero is None:
@@ -254,7 +228,6 @@ def corrigir_preco(valor):
         numero = numero / 100
 
     return round(float(numero), 2)
-
 
 def para_int(valor):
     numero = para_float(valor)
@@ -266,7 +239,6 @@ def para_int(valor):
     except:
         return 0
 
-
 # =========================
 # LIMPEZA
 # =========================
@@ -275,7 +247,6 @@ def coluna_vazia(serie):
         if normalizar_texto(valor) != "":
             return False
     return True
-
 
 def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
     if df is None:
@@ -330,13 +301,11 @@ def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
 
     return df
 
-
 # =========================
 # LEITURA
 # =========================
 def obter_extensao(nome_arquivo):
     return os.path.splitext(nome_arquivo.lower())[1]
-
 
 def ler_planilha_upload(arquivo):
     nome = arquivo.name.lower()
@@ -368,7 +337,6 @@ def ler_planilha_upload(arquivo):
 
     return limpar_dataframe_extremo(df, arquivo.name)
 
-
 def ler_planilha_bytes(nome_arquivo, dados_bytes):
     nome = nome_arquivo.lower()
 
@@ -395,7 +363,6 @@ def ler_planilha_bytes(nome_arquivo, dados_bytes):
         raise ValueError(f"Formato não suportado: {nome_arquivo}")
 
     return limpar_dataframe_extremo(df, nome_arquivo)
-
 
 # =========================
 # IDENTIFICAÇÃO
@@ -442,7 +409,6 @@ def identificar_tipo(nome, df):
 
     return None
 
-
 # =========================
 # PROGRESSO + ETA
 # =========================
@@ -474,7 +440,6 @@ class ProgressoTempo:
             f"⏱️ Decorrido: {int(decorrido)}s | ⌛ Restante estimado: {restante}s"
         )
 
-
 # =========================
 # VALIDAÇÃO ORIGEM
 # =========================
@@ -503,7 +468,6 @@ def validar_origem_estoque(df):
 
     return erros
 
-
 def validar_origem_cadastro(df):
     erros = []
 
@@ -521,7 +485,6 @@ def validar_origem_cadastro(df):
         erros.append("Não encontrei coluna de descrição na origem de cadastro.")
 
     return erros
-
 
 # =========================
 # DADOS NOVOS
@@ -551,7 +514,6 @@ def gerar_novos_dados_estoque(df):
 
     log(f"Novos dados de estoque gerados com {len(novo)} linhas.")
     return novo
-
 
 def gerar_novos_dados_cadastro(df):
     col_codigo = buscar_coluna(df, ["Código", "Codigo", "codigo"])
@@ -608,7 +570,6 @@ def gerar_novos_dados_cadastro(df):
     log(f"Novos dados de cadastro gerados com {len(novo)} linhas.")
     return novo
 
-
 # =========================
 # PRESERVAR MODELO EXATO
 # =========================
@@ -636,9 +597,8 @@ def limpar_modelo_e_inserir_exato(modelo_df, novos_dados_df, nome_tipo="modelo")
     log(f"{nome_tipo}: conteúdo antigo apagado e {len(final)} linhas novas inseridas.")
     return final
 
-
 # =========================
-# EXPORTAÇÃO NO MESMO FORMATO
+# EXPORTAÇÃO
 # =========================
 def dataframe_para_excel_bytes(df, sheet_name="Dados"):
     output = io.BytesIO()
@@ -646,7 +606,6 @@ def dataframe_para_excel_bytes(df, sheet_name="Dados"):
         df.to_excel(writer, index=False, sheet_name=sheet_name)
     output.seek(0)
     return output.getvalue()
-
 
 def detectar_separador_csv(df):
     candidatos = [",", ";", "\t"]
@@ -665,12 +624,10 @@ def detectar_separador_csv(df):
 
     return melhor_sep
 
-
 def dataframe_para_csv_bytes(df):
     sep = detectar_separador_csv(df)
     csv_text = df.to_csv(index=False, sep=sep, encoding="utf-8")
     return csv_text.encode("utf-8")
-
 
 def bytes_no_formato(df, ext, sheet_name="Dados"):
     ext = (ext or "").lower()
@@ -683,7 +640,6 @@ def bytes_no_formato(df, ext, sheet_name="Dados"):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-
 def nome_saida(base, ext):
     ext = (ext or "").lower()
     if ext not in [".csv", ".xlsx", ".xls"]:
@@ -693,7 +649,6 @@ def nome_saida(base, ext):
         ext = ".xlsx"
 
     return f"{base}{ext}"
-
 
 def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
     mem = io.BytesIO()
@@ -715,10 +670,25 @@ def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
     mem.seek(0)
     return mem.getvalue(), nome_est, nome_cad
 
-
 # =========================
 # PROCESSAMENTO
 # =========================
 def processar_lista_arquivos(lista_arquivos, progresso, origem="upload"):
     saida = {
-        "d
+        "df_origem_estoque": None,
+        "df_origem_cadastro": None,
+        "df_modelo_estoque": None,
+        "df_modelo_cadastro": None,
+        "nome_origem_estoque": None,
+        "nome_origem_cadastro": None,
+        "nome_modelo_estoque": None,
+        "nome_modelo_cadastro": None,
+        "ext_modelo_estoque": None,
+        "ext_modelo_cadastro": None,
+    }
+
+    for arquivo in lista_arquivos:
+        progresso.atualizar(f"Lendo {origem}: {arquivo['nome']}")
+
+        if arquivo["tipo_obj"] == "upload":
+            df = ler_planilha_upload(arquivo[
