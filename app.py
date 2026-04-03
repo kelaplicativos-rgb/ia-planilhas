@@ -1,267 +1,493 @@
-import io
-import zipfile
-
-import pandas as pd
 import streamlit as st
-import urllib3
+import pandas as pd
+import zipfile
+import io
+import os
+from datetime import datetime
 
-from core.logger import logs, log
-from core.reader import ler_planilha
-from core.scraper import coletar_links_site, rodar_fila_async
-from core.normalizer import normalizar_planilha_entrada
-from core.bling.estoque import preencher_modelo_estoque
-from core.bling.cadastro import preencher_modelo_cadastro
-from core.merger import merge_dados
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(page_title="📦 Modo Final Completo", layout="wide")
+st.title("📦 Upload Final Completo - Estoque + Cadastro")
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# =========================
+# SESSION STATE
+# =========================
+if "df_estoque" not in st.session_state:
+    st.session_state["df_estoque"] = None
 
-st.set_page_config(page_title="🔥 BLING AUTO INTELIGENTE", layout="wide")
-st.title("🔥 BLING AUTO INTELIGENTE")
+if "df_cadastro" not in st.session_state:
+    st.session_state["df_cadastro"] = None
 
-MAX_WORKERS = 2
+if "nome_estoque" not in st.session_state:
+    st.session_state["nome_estoque"] = None
 
+if "nome_cadastro" not in st.session_state:
+    st.session_state["nome_cadastro"] = None
 
-class UploadedBuffer(io.BytesIO):
-    def __init__(self, data: bytes, name: str):
-        super().__init__(data)
-        self.name = name
+if "logs_processamento" not in st.session_state:
+    st.session_state["logs_processamento"] = []
 
+# =========================
+# FUNÇÕES
+# =========================
+def adicionar_log(texto):
+    horario = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    st.session_state["logs_processamento"].append(f"[{horario}] {texto}")
 
-def upload_para_bytes(uploaded_file):
-    if uploaded_file is None:
-        return None, None
-    return uploaded_file.getvalue(), uploaded_file.name
+def limpar_estado():
+    st.session_state["df_estoque"] = None
+    st.session_state["df_cadastro"] = None
+    st.session_state["nome_estoque"] = None
+    st.session_state["nome_cadastro"] = None
+    st.session_state["logs_processamento"] = []
 
+def ler_planilha_bytes(nome_arquivo, dados_bytes):
+    ext = os.path.splitext(nome_arquivo.lower())[1]
 
-def garantir_colunas_finais(df: pd.DataFrame) -> pd.DataFrame:
-    colunas_necessarias = [
-        "Código",
-        "GTIN",
-        "Produto",
-        "Preço",
-        "Preço Custo",
-        "Descrição Curta",
-        "Descrição Complementar",
-        "Imagem",
-        "Link",
-        "Marca",
-        "Estoque",
-        "NCM",
-        "Origem",
-        "Peso Líquido",
-        "Peso Bruto",
-        "Estoque Mínimo",
-        "Estoque Máximo",
-        "Unidade",
-        "Tipo",
-        "Situação",
+    if ext == ".csv":
+        try:
+            return pd.read_csv(
+                io.BytesIO(dados_bytes),
+                sep=None,
+                engine="python",
+                encoding="utf-8",
+                on_bad_lines="skip"
+            )
+        except:
+            return pd.read_csv(
+                io.BytesIO(dados_bytes),
+                sep=None,
+                engine="python",
+                encoding="latin-1",
+                on_bad_lines="skip"
+            )
+
+    elif ext in [".xlsx", ".xls"]:
+        return pd.read_excel(io.BytesIO(dados_bytes))
+
+    else:
+        raise ValueError(f"Formato não suportado: {nome_arquivo}")
+
+def ler_planilha_upload(arquivo):
+    nome = arquivo.name.lower()
+
+    if nome.endswith(".csv"):
+        try:
+            return pd.read_csv(
+                arquivo,
+                sep=None,
+                engine="python",
+                encoding="utf-8",
+                on_bad_lines="skip"
+            )
+        except:
+            arquivo.seek(0)
+            return pd.read_csv(
+                arquivo,
+                sep=None,
+                engine="python",
+                encoding="latin-1",
+                on_bad_lines="skip"
+            )
+
+    elif nome.endswith((".xlsx", ".xls")):
+        arquivo.seek(0)
+        return pd.read_excel(arquivo)
+
+    else:
+        raise ValueError(f"Formato não suportado: {arquivo.name}")
+
+def identificar_por_nome(nome):
+    nome = nome.lower()
+
+    if "estoque" in nome:
+        return "estoque"
+
+    if "cadastro" in nome:
+        return "cadastro"
+
+    return None
+
+def identificar_por_colunas(df):
+    colunas = [str(c).strip().lower() for c in df.columns]
+
+    colunas_estoque = [
+        "estoque", "saldo", "quantidade", "qtde", "qtd",
+        "estoque atual", "saldo estoque", "estoque fisico"
     ]
 
-    if df is None or df.empty:
-        return pd.DataFrame(columns=colunas_necessarias)
+    colunas_cadastro = [
+        "descricao", "descrição", "nome", "produto", "marca", "sku",
+        "descrição curta", "descricao curta", "preco", "preço",
+        "categoria", "unidade", "codigo", "código"
+    ]
 
-    df = df.copy()
+    pontos_estoque = sum(1 for c in colunas if c in colunas_estoque)
+    pontos_cadastro = sum(1 for c in colunas if c in colunas_cadastro)
 
-    for col in colunas_necessarias:
-        if col not in df.columns:
-            df[col] = ""
+    if pontos_estoque > pontos_cadastro and pontos_estoque > 0:
+        return "estoque"
 
-    df = df[colunas_necessarias].fillna("")
+    if pontos_cadastro > pontos_estoque and pontos_cadastro > 0:
+        return "cadastro"
 
-    df["Produto"] = df["Produto"].astype(str).str.strip()
-    df["Descrição Curta"] = df["Descrição Curta"].astype(str).str.strip()
+    return None
 
-    df["Descrição Curta"] = df.apply(
-        lambda r: r["Descrição Curta"] if r["Descrição Curta"] else r["Produto"],
-        axis=1,
+def extrair_planilhas_do_zip(zip_file, progress_bar=None, status_text=None):
+    arquivo_estoque = None
+    arquivo_cadastro = None
+    df_estoque = None
+    df_cadastro = None
+    logs = []
+
+    with zipfile.ZipFile(zip_file, "r") as z:
+        nomes_internos = z.namelist()
+
+        planilhas_validas = [
+            nome for nome in nomes_internos
+            if not nome.endswith("/")
+            and os.path.splitext(nome.lower())[1] in [".xlsx", ".xls", ".csv"]
+        ]
+
+        if not planilhas_validas:
+            raise ValueError("Nenhuma planilha válida encontrada dentro do ZIP.")
+
+        candidatos = []
+        total = len(planilhas_validas)
+
+        for i, nome in enumerate(planilhas_validas, start=1):
+            if progress_bar is not None:
+                progresso = int((i / total) * 100)
+                progress_bar.progress(progresso)
+
+            if status_text is not None:
+                status_text.write(f"🔄 Lendo arquivo {i}/{total}: {nome}")
+
+            try:
+                dados = z.read(nome)
+                df = ler_planilha_bytes(nome, dados)
+
+                tipo_nome = identificar_por_nome(nome)
+                tipo_coluna = identificar_por_colunas(df)
+
+                candidatos.append({
+                    "nome": nome,
+                    "df": df,
+                    "tipo_nome": tipo_nome,
+                    "tipo_coluna": tipo_coluna
+                })
+
+                logs.append(f"✅ Lido: {nome} | nome={tipo_nome} | colunas={tipo_coluna}")
+
+            except Exception as e:
+                logs.append(f"❌ Erro ao ler {nome}: {e}")
+
+        for item in candidatos:
+            if item["tipo_nome"] == "estoque" and df_estoque is None:
+                arquivo_estoque = item["nome"]
+                df_estoque = item["df"]
+
+            elif item["tipo_nome"] == "cadastro" and df_cadastro is None:
+                arquivo_cadastro = item["nome"]
+                df_cadastro = item["df"]
+
+        for item in candidatos:
+            if df_estoque is None and item["tipo_coluna"] == "estoque":
+                arquivo_estoque = item["nome"]
+                df_estoque = item["df"]
+
+            elif df_cadastro is None and item["tipo_coluna"] == "cadastro":
+                arquivo_cadastro = item["nome"]
+                df_cadastro = item["df"]
+
+    return {
+        "arquivo_estoque": arquivo_estoque,
+        "arquivo_cadastro": arquivo_cadastro,
+        "df_estoque": df_estoque,
+        "df_cadastro": df_cadastro,
+        "logs": logs,
+        "arquivos_encontrados": planilhas_validas
+    }
+
+def processar_uploads_soltos(arquivos, progress_bar=None, status_text=None):
+    arquivo_estoque = None
+    arquivo_cadastro = None
+    df_estoque = None
+    df_cadastro = None
+    logs = []
+
+    total = len(arquivos)
+
+    for i, arquivo in enumerate(arquivos, start=1):
+        if progress_bar is not None:
+            progresso = int((i / total) * 100)
+            progress_bar.progress(progresso)
+
+        if status_text is not None:
+            status_text.write(f"🔄 Lendo arquivo {i}/{total}: {arquivo.name}")
+
+        try:
+            df = ler_planilha_upload(arquivo)
+            tipo_nome = identificar_por_nome(arquivo.name)
+            tipo_coluna = identificar_por_colunas(df)
+
+            logs.append(f"✅ Lido: {arquivo.name} | nome={tipo_nome} | colunas={tipo_coluna}")
+
+            if tipo_nome == "estoque" and df_estoque is None:
+                df_estoque = df
+                arquivo_estoque = arquivo.name
+
+            elif tipo_nome == "cadastro" and df_cadastro is None:
+                df_cadastro = df
+                arquivo_cadastro = arquivo.name
+
+            elif tipo_nome is None:
+                if tipo_coluna == "estoque" and df_estoque is None:
+                    df_estoque = df
+                    arquivo_estoque = arquivo.name
+
+                elif tipo_coluna == "cadastro" and df_cadastro is None:
+                    df_cadastro = df
+                    arquivo_cadastro = arquivo.name
+
+        except Exception as e:
+            logs.append(f"❌ Erro ao ler {arquivo.name}: {e}")
+
+    return {
+        "arquivo_estoque": arquivo_estoque,
+        "arquivo_cadastro": arquivo_cadastro,
+        "df_estoque": df_estoque,
+        "df_cadastro": df_cadastro,
+        "logs": logs
+    }
+
+def dataframe_para_excel_bytes(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Dados")
+    output.seek(0)
+    return output.getvalue()
+
+def dataframe_para_csv_bytes(df):
+    csv_str = df.to_csv(index=False)
+    return csv_str.encode("utf-8")
+
+def gerar_zip_final(df_estoque, df_cadastro, logs, nome_estoque="estoque_processado.xlsx", nome_cadastro="cadastro_processado.xlsx"):
+    memoria_zip = io.BytesIO()
+
+    with zipfile.ZipFile(memoria_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if df_estoque is not None:
+            zf.writestr(nome_estoque, dataframe_para_excel_bytes(df_estoque))
+
+        if df_cadastro is not None:
+            zf.writestr(nome_cadastro, dataframe_para_excel_bytes(df_cadastro))
+
+        log_texto = "\n".join(logs) if logs else "Sem logs."
+        zf.writestr("log_processamento.txt", log_texto)
+
+    memoria_zip.seek(0)
+    return memoria_zip.getvalue()
+
+# =========================
+# BOTÃO LIMPAR
+# =========================
+col_a, col_b = st.columns([1, 1])
+
+with col_a:
+    if st.button("🗑️ Limpar arquivos carregados", use_container_width=True):
+        limpar_estado()
+        st.success("✅ Estado limpo com sucesso.")
+
+with col_b:
+    st.info("Você pode enviar 1 ZIP ou 2 planilhas soltas.")
+
+# =========================
+# MODO DE ENVIO
+# =========================
+modo_envio = st.radio(
+    "📥 Escolha como deseja enviar os arquivos:",
+    ["ZIP com as duas planilhas", "Duas planilhas soltas"],
+    horizontal=True
+)
+
+progress_bar = st.progress(0)
+status_text = st.empty()
+
+# =========================
+# MODO ZIP
+# =========================
+if modo_envio == "ZIP com as duas planilhas":
+    zip_file = st.file_uploader(
+        "📦 Envie um ZIP com Estoque + Cadastro",
+        type=["zip"],
+        key="zip_upload"
     )
 
-    df = df[df["Produto"] != ""].copy()
+    if zip_file is not None:
+        try:
+            limpar_estado()
+            adicionar_log("Iniciando leitura do ZIP.")
 
-    return df.reset_index(drop=True)
+            resultado = extrair_planilhas_do_zip(zip_file, progress_bar, status_text)
 
+            for linha in resultado["logs"]:
+                adicionar_log(linha)
 
-def montar_zip_profissional(csv_estoque: str, csv_cadastro: str, log_texto: str):
-    zip_buffer = io.BytesIO()
+            st.session_state["df_estoque"] = resultado["df_estoque"]
+            st.session_state["df_cadastro"] = resultado["df_cadastro"]
+            st.session_state["nome_estoque"] = resultado["arquivo_estoque"]
+            st.session_state["nome_cadastro"] = resultado["arquivo_cadastro"]
 
-    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("estoque.csv", csv_estoque)
-        z.writestr("cadastro.csv", csv_cadastro)
-        z.writestr("debug_log.txt", log_texto or "")
+            progress_bar.progress(100)
+            status_text.write("✅ Processamento concluído.")
 
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+            st.subheader("📁 Arquivos encontrados no ZIP")
+            for nome in resultado["arquivos_encontrados"]:
+                st.write(f"- {nome}")
 
+            if resultado["df_estoque"] is None or resultado["df_cadastro"] is None:
+                st.error("⚠️ Não foi possível identificar as duas planilhas automaticamente.")
+                st.info("Dica: use nomes como estoque.xlsx e cadastro.xlsx.")
+            else:
+                st.success("✅ Estoque e cadastro identificados com sucesso.")
 
-modo_coleta = st.radio(
-    "📥 Fonte dos dados",
-    ["Planilha + Site", "Só Planilha", "Só Site"],
-    horizontal=True,
-)
+        except Exception as e:
+            st.error(f"Erro ao processar ZIP: {e}")
+            adicionar_log(f"Erro ao processar ZIP: {e}")
 
-url_base = st.text_input("🌐 Site:", "https://megacentereletronicos.com.br/")
+# =========================
+# MODO ARQUIVOS SOLTOS
+# =========================
+else:
+    arquivos = st.file_uploader(
+        "📂 Envie as duas planilhas juntas",
+        type=["xlsx", "xls", "csv"],
+        accept_multiple_files=True,
+        key="arquivos_soltos"
+    )
 
-arquivo_dados = st.file_uploader(
-    "📄 Planilha de dados",
-    type=["xlsx", "xls", "csv"],
-)
+    if arquivos:
+        try:
+            limpar_estado()
+            adicionar_log("Iniciando leitura de arquivos soltos.")
+
+            resultado = processar_uploads_soltos(arquivos, progress_bar, status_text)
+
+            for linha in resultado["logs"]:
+                adicionar_log(linha)
+
+            st.session_state["df_estoque"] = resultado["df_estoque"]
+            st.session_state["df_cadastro"] = resultado["df_cadastro"]
+            st.session_state["nome_estoque"] = resultado["arquivo_estoque"]
+            st.session_state["nome_cadastro"] = resultado["arquivo_cadastro"]
+
+            progress_bar.progress(100)
+            status_text.write("✅ Processamento concluído.")
+
+            if resultado["df_estoque"] is None or resultado["df_cadastro"] is None:
+                st.error("⚠️ Não consegui identificar estoque e cadastro.")
+                st.info("Dica: envie arquivos com nome contendo 'estoque' e 'cadastro'.")
+            else:
+                st.success("✅ As duas planilhas foram carregadas com sucesso.")
+
+        except Exception as e:
+            st.error(f"Erro ao processar arquivos: {e}")
+            adicionar_log(f"Erro ao processar arquivos soltos: {e}")
+
+# =========================
+# DADOS CARREGADOS
+# =========================
+df_estoque = st.session_state.get("df_estoque")
+df_cadastro = st.session_state.get("df_cadastro")
+nome_estoque = st.session_state.get("nome_estoque")
+nome_cadastro = st.session_state.get("nome_cadastro")
+logs = st.session_state.get("logs_processamento", [])
+
+# =========================
+# STATUS
+# =========================
+st.subheader("📌 Status atual")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    modelo_estoque_file = st.file_uploader(
-        "📦 Modelo ESTOQUE (Bling)",
-        type=["xlsx", "xls", "csv"],
-    )
+    st.write("**Arquivo de estoque:**", nome_estoque if nome_estoque else "Não carregado")
+    if df_estoque is not None:
+        st.success(f"Linhas carregadas: {len(df_estoque)}")
+    else:
+        st.warning("Sem planilha de estoque")
 
 with col2:
-    modelo_cadastro_file = st.file_uploader(
-        "📋 Modelo CADASTRO (Bling)",
-        type=["xlsx", "xls", "csv"],
-    )
+    st.write("**Arquivo de cadastro:**", nome_cadastro if nome_cadastro else "Não carregado")
+    if df_cadastro is not None:
+        st.success(f"Linhas carregadas: {len(df_cadastro)}")
+    else:
+        st.warning("Sem planilha de cadastro")
 
-col3, col4 = st.columns(2)
+# =========================
+# PRÉVIAS
+# =========================
+if df_estoque is not None:
+    st.subheader("📦 Prévia - Estoque")
+    st.dataframe(df_estoque.head(20), use_container_width=True)
 
-with col3:
-    estoque_padrao = st.number_input("📦 Estoque padrão", value=10, min_value=0)
+if df_cadastro is not None:
+    st.subheader("📋 Prévia - Cadastro")
+    st.dataframe(df_cadastro.head(20), use_container_width=True)
 
-with col4:
-    depositos_input = st.text_input("🏬 Depósitos (vírgula)", "1")
+# =========================
+# LOGS NA TELA
+# =========================
+st.subheader("🧾 Log de processamento")
 
-depositos = [d.strip() for d in depositos_input.split(",") if d.strip()]
+if logs:
+    st.text_area("Logs", value="\n".join(logs), height=250)
+else:
+    st.info("Nenhum log gerado ainda.")
 
+# =========================
+# DOWNLOADS INDIVIDUAIS
+# =========================
+if df_estoque is not None or df_cadastro is not None:
+    st.subheader("⬇️ Downloads")
 
-def executar_fluxo():
-    logs.clear()
-    log("🔥 EXECUTANDO FLUXO 🔥")
+    col3, col4, col5 = st.columns(3)
 
-    if not modelo_estoque_file or not modelo_cadastro_file:
-        st.error("❌ Envie os dois modelos do Bling.")
-        return None
+    with col3:
+        if df_estoque is not None:
+            st.download_button(
+                label="📦 Baixar Estoque.xlsx",
+                data=dataframe_para_excel_bytes(df_estoque),
+                file_name="estoque_processado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
-    if not depositos:
-        st.error("❌ Informe pelo menos um depósito.")
-        return None
+    with col4:
+        if df_cadastro is not None:
+            st.download_button(
+                label="📋 Baixar Cadastro.xlsx",
+                data=dataframe_para_excel_bytes(df_cadastro),
+                file_name="cadastro_processado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
-    status = st.empty()
-    progress = st.progress(0)
-
-    status.info("Lendo modelos do Bling...")
-
-    est_bytes, est_name = upload_para_bytes(modelo_estoque_file)
-    cad_bytes, cad_name = upload_para_bytes(modelo_cadastro_file)
-
-    modelo_est = ler_planilha(UploadedBuffer(est_bytes, est_name))
-    modelo_cad = ler_planilha(UploadedBuffer(cad_bytes, cad_name))
-
-    if modelo_est is None or modelo_cad is None:
-        st.error("❌ Não foi possível ler os modelos do Bling.")
-        return None
-
-    df_planilha = pd.DataFrame()
-
-    if modo_coleta in ["Planilha + Site", "Só Planilha"]:
-        if not arquivo_dados:
-            st.error("❌ Envie a planilha de dados.")
-            return None
-
-        status.info("Lendo planilha de dados...")
-
-        dados_bytes, dados_name = upload_para_bytes(arquivo_dados)
-        entrada = ler_planilha(UploadedBuffer(dados_bytes, dados_name))
-
-        if entrada is None or entrada.empty:
-            st.error("❌ Não foi possível ler a planilha de dados.")
-            return None
-
-        df_planilha = normalizar_planilha_entrada(
-            entrada,
-            url_base=url_base,
-            estoque_padrao=estoque_padrao,
+    with col5:
+        zip_final = gerar_zip_final(
+            df_estoque=df_estoque,
+            df_cadastro=df_cadastro,
+            logs=logs,
+            nome_estoque="estoque_processado.xlsx",
+            nome_cadastro="cadastro_processado.xlsx"
         )
-
-    progress.progress(0.35)
-
-    df_site = pd.DataFrame()
-
-    if modo_coleta in ["Planilha + Site", "Só Site"]:
-        status.info("Coletando links do site...")
-
-        links = coletar_links_site(url_base)
-
-        if modo_coleta == "Só Site" and not links:
-            st.error("❌ Nenhum link de produto foi encontrado no site.")
-            return None
-
-        if len(links) > 180:
-            links = links[:180]
-            log("Links limitados a 180 para estabilidade.")
-
-        status.info("Processando produtos do site...")
-
-        produtos = rodar_fila_async(
-            links=links,
-            filtro="",
-            estoque_padrao=estoque_padrao,
-            concorrencia=MAX_WORKERS,
-        )
-
-        df_site = pd.DataFrame(produtos)
-
-    progress.progress(0.70)
-
-    status.info("Fazendo merge final...")
-
-    df = merge_dados(df_planilha, df_site, url_base, estoque_padrao)
-    df = garantir_colunas_finais(df)
-
-    if df is None or df.empty:
-        st.error("❌ Nenhum dado final gerado.")
-        return None
-
-    if len(df) > 300:
-        df = df.head(300).copy()
-        log("Base final limitada a 300 produtos para estabilidade.")
-
-    progress.progress(0.82)
-
-    status.info("Gerando planilhas do Bling...")
-
-    df_estoque = preencher_modelo_estoque(modelo_est, df, depositos)
-    df_cadastro = preencher_modelo_cadastro(modelo_cad, df)
-
-    progress.progress(0.92)
-
-    status.info("Preparando ZIP...")
-
-    csv_estoque = df_estoque.to_csv(index=False, sep=";", encoding="utf-8-sig")
-    csv_cadastro = df_cadastro.to_csv(index=False, sep=";", encoding="utf-8-sig")
-    log_texto = "\n".join(logs)
-
-    zip_bytes = montar_zip_profissional(
-        csv_estoque=csv_estoque,
-        csv_cadastro=csv_cadastro,
-        log_texto=log_texto,
-    )
-
-    progress.progress(1.0)
-    status.success("Processamento concluído.")
-
-    return {
-        "zip_bytes": zip_bytes,
-    }
-
-
-if st.button("🚀 EXECUTAR PROCESSAMENTO"):
-    resultado = executar_fluxo()
-
-    if resultado:
-        st.success("✅ Pacote pronto")
 
         st.download_button(
-            "📦 BAIXAR PACOTE PROFISSIONAL",
-            resultado["zip_bytes"],
-            "bling.zip",
+            label="📦 Baixar ZIP Final",
+            data=zip_final,
+            file_name="planilhas_processadas.zip",
             mime="application/zip",
-            use_container_width=True,
-        )
+            use_container_width=True
+)
