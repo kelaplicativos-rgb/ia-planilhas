@@ -25,11 +25,31 @@ def ler_planilha(arquivo):
         except:
             df = pd.read_excel(arquivo)
 
-    # =========================
-    # 🧹 LIMPEZA EXTREMA (SEM WARNING)
-    # =========================
-    df = df.fillna("").infer_objects(copy=False)
+    df = limpar_valores_vazios(df)
+    df = normalizar_colunas(df)
 
+    return df
+
+
+# =========================
+# 🧹 LIMPAR VALORES VAZIOS
+# =========================
+def limpar_valores_vazios(df):
+    df = df.fillna("").infer_objects(copy=False)
+    return df
+
+
+# =========================
+# 🔤 NORMALIZAR COLUNAS
+# =========================
+def normalizar_colunas(df):
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+        .str.replace("-", "_")
+    )
     return df
 
 
@@ -43,21 +63,15 @@ def mostrar_preview(df, nome="Planilha"):
         st.warning("⚠️ Planilha vazia")
         return
 
-    # =========================
-    # 🧠 COLUNAS DETECTADAS
-    # =========================
+    # colunas detectadas
     st.success("✅ Colunas identificadas automaticamente:")
     st.write(list(df.columns))
 
-    # =========================
-    # 👁️ PREVIEW (1 LINHA)
-    # =========================
+    # preview leve
     st.info("🔍 Preview (1 linha):")
     st.dataframe(df.head(1), use_container_width=True)
 
-    # =========================
-    # 🔘 CONTROLE DE ESTADO
-    # =========================
+    # controle estado
     chave = f"mostrar_tudo_{nome}"
 
     if chave not in st.session_state:
@@ -73,9 +87,6 @@ def mostrar_preview(df, nome="Planilha"):
         if st.button(f"❌ Ocultar ({nome})", key=f"ocultar_{nome}"):
             st.session_state[chave] = False
 
-    # =========================
-    # 📊 MOSTRAR COMPLETO
-    # =========================
     if st.session_state[chave]:
         st.success("📊 Visualização completa:")
         st.dataframe(df, use_container_width=True)
