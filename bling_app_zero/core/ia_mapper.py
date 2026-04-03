@@ -75,13 +75,23 @@ Amostra de dados:
 """
 
     try:
-        response = client.responses.create(
-            model="gpt-5.3",
-            input=prompt
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você é especialista em ERP Bling."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
         )
 
-        texto = response.output_text.strip()
-        resultado = json.loads(texto)
+        texto = response.choices[0].message.content.strip()
+
+        # segurança extra (às vezes a IA manda texto + json)
+        inicio = texto.find("{")
+        fim = texto.rfind("}") + 1
+        texto_json = texto[inicio:fim]
+
+        resultado = json.loads(texto_json)
 
         return resultado
 
