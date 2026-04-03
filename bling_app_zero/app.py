@@ -203,7 +203,8 @@ def encontrar_colunas_imagem(df: pd.DataFrame) -> List[str]:
     chaves = [
         "imagem", "imagens", "foto", "fotos", "url imagem", "url imagens",
         "link imagem", "link imagens", "image", "images", "gallery",
-        "imagem 1", "imagem1", "imagem principal", "url da imagem"
+        "imagem 1", "imagem1", "imagem principal", "url da imagem",
+        "url imagens externas"
     ]
 
     for col in df.columns:
@@ -211,7 +212,6 @@ def encontrar_colunas_imagem(df: pd.DataFrame) -> List[str]:
         if any(ch in s for ch in [slug_coluna(x) for x in chaves]):
             colunas_imagem.append(col)
 
-    # remove duplicadas preservando ordem
     vistas = set()
     final = []
     for c in colunas_imagem:
@@ -241,7 +241,8 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         [
             "descricao curta", "descrição curta", "descricao", "descrição",
             "detalhes", "resumo", "informacoes", "informações",
-            "descricao produto", "descrição produto"
+            "descricao produto", "descrição produto",
+            "descricao complementar", "descrição complementar"
         ],
     )
     m["preco"] = encontrar_coluna(
@@ -332,37 +333,79 @@ def normalizar_situacao(valor) -> str:
     return "Ativo"
 
 
-def quebrar_urls_imagem(texto: str) -> List[str]:
+def eh_texto_numerico_sem_url(texto: str) -> bool:
+    texto = limpar_texto(texto)
+    if not texto:
+        return False
+    return bool(re.fullmatch(r"[0-9.,]+", texto))
+
+
+def extrair_urls_validas(texto: str) -> List[str]:
     texto = limpar_texto(texto)
     if not texto:
         return []
 
-    partes = re.split(r"[|;\n,]+", texto)
+    if eh_texto_numerico_sem_url(texto):
+        return []
+
+    urls = re.findall(r"https?://[^\s,;|]+", texto, flags=re.IGNORECASE)
+
+    if not urls and texto.startswith("www."):
+        urls = [f"https://{texto}"]
+
+    final = []
+    vistas = set()
+
+    for url in urls:
+        url = limpar_texto(url)
+        if not url:
+            continue
+        if eh_texto_numerico_sem_url(url):
+            continue
+        if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+            continue
+        if url not in vistas:
+            vistas.add(url)
+            final.append(url)
+
+    return final
+
+
+def quebrar_urls_imagem(texto: str) -> List[str]:
+    texto = limpar_texto(texto)
+
+    if not texto:
+        return []
+
+    if eh_texto_numerico_sem_url(texto):
+        return []
+
+    partes = re.split(r"[|;\n]+", texto)
     urls = []
 
     for parte in partes:
         p = limpar_texto(parte)
         if not p:
             continue
+        if eh_texto_numerico_sem_url(p):
+            continue
 
-        # tenta extrair URLs mesmo quando vier texto misturado
-        encontradas = re.findall(r"https?://[^\s,;|]+", p, flags=re.IGNORECASE)
-        if encontradas:
-            urls.extend(encontradas)
-        elif p.startswith("www."):
-            urls.append(f"https://{p}")
-        elif p.lower().startswith("http"):
-            urls.append(p)
+        urls.extend(extrair_urls_validas(p))
 
-    # remove duplicadas preservando ordem
     vistas = set()
     final = []
+
     for u in urls:
         if u not in vistas:
             vistas.add(u)
             final.append(u)
 
     return final[:5]
+
+
+def limpar_link_externo(valor: str) -> str:
+    urls = extrair_urls_validas(valor)
+    return urls[0] if urls else ""
 
 
 def extrair_imagens_da_linha(
@@ -377,18 +420,8 @@ def extrair_imagens_da_linha(
 
     for col in colunas_imagem_extras:
         if col in row.index:
-            valor = limpar_texto(row[col])
-            if not valor:
-                continue
+            urls.extend(quebrar_urls_imagem(row[col]))
 
-            if re.match(r"^https?://", valor, flags=re.IGNORECASE) or valor.startswith("www."):
-                if valor.startswith("www."):
-                    valor = f"https://{valor}"
-                urls.append(valor)
-            else:
-                urls.extend(quebrar_urls_imagem(valor))
-
-    # remove duplicadas preservando ordem
     vistas = set()
     final = []
     for u in urls:
@@ -430,6 +463,14 @@ def validar_saida_cadastro(df_saida: pd.DataFrame) -> Tuple[List[str], List[str]
         vazios = int((df_saida["descricao curta"].astype(str).str.strip() == "").sum())
         if vazios > 0:
             avisos.append(f"Existem {vazios} linhas sem descrição curta.")
+
+    for col in ["imagem 1", "imagem 2", "imagem 3", "imagem 4", "imagem 5"]:
+        if col in df_saida.columns:
+            invalidas = df_saida[col].astype(str).apply(
+                lambda x: bool(x.strip()) and not re.match(r"^https?://", x.strip(), flags=re.IGNORECASE)
+            ).sum()
+            if invalidas > 0:
+                erros.append(f"A coluna {col} possui {int(invalidas)} valores que não são URL.")
 
     return erros, avisos
 
@@ -493,16 +534,10 @@ def mapear_cadastro_bling(
     saida["situacao"] = df[situacao_col] if situacao_col and situacao_col in df.columns else "Ativo"
     saida["marca"] = df[marca_col] if marca_col and marca_col in df.columns else ""
 
-    # REGRA DEFINITIVA:
-    # a descrição vinda da planilha de dados sempre vai para "descricao curta"
     saida["descricao curta"] = df[desc_col] if desc_col and desc_col in df.columns else ""
     saida["descricao"] = ""
-
-    # REGRA DEFINITIVA:
-    # na coluna vídeo nunca inserir links
     saida["video"] = ""
 
-    # Imagens
     imagens_1 = []
     imagens_2 = []
     imagens_3 = []
@@ -523,7 +558,10 @@ def mapear_cadastro_bling(
     saida["imagem 4"] = imagens_4
     saida["imagem 5"] = imagens_5
 
-    saida["link externo"] = df[link_col] if link_col and link_col in df.columns else ""
+    if link_col and link_col in df.columns:
+        saida["link externo"] = df[link_col].apply(limpar_link_externo)
+    else:
+        saida["link externo"] = ""
 
     for col in saida.columns:
         if col == "preco":
@@ -534,24 +572,26 @@ def mapear_cadastro_bling(
     saida["situacao"] = saida["situacao"].apply(normalizar_situacao)
     saida["unidade"] = saida["unidade"].replace("", "UN")
 
-    # reforço da regra da descrição curta
-    nome_vazio = saida["descricao curta"].astype(str).str.strip() == ""
-    saida.loc[nome_vazio, "descricao curta"] = saida.loc[nome_vazio, "nome"]
+    vazia = saida["descricao curta"].astype(str).str.strip() == ""
+    saida.loc[vazia, "descricao curta"] = saida.loc[vazia, "nome"]
 
-    # sem fallback perigoso: não usa nome como código
     antes = len(saida)
     saida = saida[saida["codigo"].astype(str).str.strip() != ""].copy()
     removidas_sem_codigo = antes - len(saida)
-
     if removidas_sem_codigo > 0:
         log(f"Cadastro: removidas {removidas_sem_codigo} linhas sem código.")
 
     antes_dup = len(saida)
     saida = saida.drop_duplicates(subset=["codigo"], keep="first").reset_index(drop=True)
     removidas_duplicadas = antes_dup - len(saida)
-
     if removidas_duplicadas > 0:
         log(f"Cadastro: removidas {removidas_duplicadas} linhas com código duplicado.")
+
+    for col in ["imagem 1", "imagem 2", "imagem 3", "imagem 4", "imagem 5"]:
+        limpas = saida[col].astype(str).apply(
+            lambda x: x if (not x.strip() or re.match(r"^https?://", x.strip(), flags=re.IGNORECASE)) else ""
+        )
+        saida[col] = limpas
 
     return saida
 
@@ -577,18 +617,15 @@ def mapear_estoque_bling(
     saida["deposito"] = saida["deposito"].apply(limpar_texto)
     saida["estoque"] = saida["estoque"].apply(corrigir_estoque)
 
-    # sem fallback perigoso: não usa nome como código
     antes = len(saida)
     saida = saida[saida["codigo"].astype(str).str.strip() != ""].copy()
     removidas_sem_codigo = antes - len(saida)
-
     if removidas_sem_codigo > 0:
         log(f"Estoque: removidas {removidas_sem_codigo} linhas sem código.")
 
     antes_dup = len(saida)
     saida = saida.drop_duplicates(subset=["codigo"], keep="first").reset_index(drop=True)
     removidas_duplicadas = antes_dup - len(saida)
-
     if removidas_duplicadas > 0:
         log(f"Estoque: removidas {removidas_duplicadas} linhas com código duplicado.")
 
@@ -613,7 +650,6 @@ def construir_mapa_manual(
     mapa_auto: Dict[str, Optional[str]],
 ) -> Dict[str, Optional[str]]:
     opcoes = montar_opcoes_colunas(df)
-
     mapa_manual = dict(mapa_auto)
 
     c1, c2, c3 = st.columns(3)
@@ -689,7 +725,7 @@ def main() -> None:
 
         st.divider()
 
-        if st.button("Limpar tudo", use_container_width=True):
+        if st.button("Limpar tudo", width="stretch"):
             limpar_tudo()
             st.rerun()
 
@@ -726,7 +762,7 @@ def main() -> None:
         st.metric("Colunas", len(df.columns))
 
     with st.expander("👀 Preview", expanded=False):
-        st.dataframe(df.head(1), use_container_width=True)
+        st.dataframe(df.head(1), width="stretch")
 
     mapa_auto = detectar_colunas(df)
     colunas_imagem_auto = encontrar_colunas_imagem(df)
@@ -752,13 +788,11 @@ def main() -> None:
         )
 
     mapa_final = st.session_state.get("mapa_manual") or mapa_auto
-
-    # Colunas extras de imagem = todas as detectadas, menos a principal escolhida
     imagem_principal = mapa_final.get("imagem")
     colunas_imagem_extras = [c for c in colunas_imagem_auto if c != imagem_principal]
 
     if tipo_processamento == "Cadastro de produtos":
-        if st.button("Gerar planilha de cadastro", use_container_width=True):
+        if st.button("Gerar planilha de cadastro", width="stretch"):
             try:
                 saida = mapear_cadastro_bling(df, mapa_final, colunas_imagem_extras)
                 erros, avisos = validar_saida_cadastro(saida)
@@ -784,7 +818,7 @@ def main() -> None:
         if not limpar_texto(deposito):
             st.warning("⚠️ Digite em qual estoque será lançado.")
         else:
-            if st.button("Gerar planilha de estoque", use_container_width=True):
+            if st.button("Gerar planilha de estoque", width="stretch"):
                 try:
                     saida = mapear_estoque_bling(df, mapa_final, deposito)
                     erros, avisos = validar_saida_estoque(saida)
@@ -818,7 +852,7 @@ def main() -> None:
             }
         )
         if df_saida is not None:
-            st.dataframe(df_saida.head(20), use_container_width=True)
+            st.dataframe(df_saida.head(20), width="stretch")
 
     if df_saida is not None:
         nome_saida = (
@@ -834,7 +868,7 @@ def main() -> None:
             data=arquivo_excel,
             file_name=nome_saida,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
 
     st.divider()
@@ -847,7 +881,7 @@ def main() -> None:
             data=salvar_txt_bytes(logs_txt),
             file_name="log_processamento.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
         )
 
 
