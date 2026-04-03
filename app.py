@@ -22,10 +22,28 @@ def ler_planilha(caminho):
         return None, str(e)
 
 
+def limpar_planilha(df):
+    df = df.copy()
+
+    # remove linhas totalmente vazias
+    df = df.dropna(how="all")
+
+    # remove espaços extras
+    df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) else x)
+
+    # substitui string "None" por vazio
+    df = df.replace("None", "")
+
+    return df
+
+
 st.subheader("Verificação dos modelos")
 
 if ARQUIVO_PRODUTOS.exists():
     df_produtos, erro_produtos = ler_planilha(ARQUIVO_PRODUTOS)
+
+    if df_produtos is not None:
+        df_produtos = limpar_planilha(df_produtos)
 
     if erro_produtos:
         st.error(f"Erro ao ler produtos.xlsx: {erro_produtos}")
@@ -39,6 +57,9 @@ else:
 
 if ARQUIVO_ESTOQUE.exists():
     df_estoque, erro_estoque = ler_planilha(ARQUIVO_ESTOQUE)
+
+    if df_estoque is not None:
+        df_estoque = limpar_planilha(df_estoque)
 
     if erro_estoque:
         st.error(f"Erro ao ler saldo_estoque.xlsx: {erro_estoque}")
