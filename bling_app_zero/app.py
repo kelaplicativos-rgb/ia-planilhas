@@ -10,6 +10,10 @@ from .core.mapeamento_bling import (
     mapear_cadastro_bling,
     mapear_estoque_bling,
 )
+from .core.validacao_bling import (
+    validar_cadastro_bling,
+    validar_estoque_bling,
+)
 from .utils.excel import salvar_excel_bytes
 
 
@@ -38,6 +42,7 @@ def montar_mapeamento_manual(df_origem: pd.DataFrame, colunas_detectadas: dict) 
         "deposito",
         "situacao",
         "unidade",
+        "ncm",
     ]
 
     resultado = {}
@@ -59,6 +64,30 @@ def montar_mapeamento_manual(df_origem: pd.DataFrame, colunas_detectadas: dict) 
         resultado[campo] = escolha if escolha else None
 
     return resultado
+
+
+def mostrar_validacao(erros: list[str], avisos: list[str]):
+    st.subheader("📋 Validação estilo Bling")
+
+    if not erros and not avisos:
+        st.success("✅ Nenhum erro encontrado na validação.")
+        return
+
+    if erros:
+        st.error(f"❌ Foram encontrados {len(erros)} erro(s).")
+        for erro in erros[:20]:
+            st.write(f"- {erro}")
+
+        if len(erros) > 20:
+            st.write(f"... e mais {len(erros) - 20} erro(s).")
+
+    if avisos:
+        st.warning(f"⚠️ Foram encontrados {len(avisos)} aviso(s).")
+        for aviso in avisos[:20]:
+            st.write(f"- {aviso}")
+
+        if len(avisos) > 20:
+            st.write(f"... e mais {len(avisos) - 20} aviso(s).")
 
 
 def main():
@@ -175,17 +204,23 @@ def main():
                         colunas_detectadas=colunas_finais,
                     )
 
-                    st.success("✅ Planilha de cadastro gerada com sucesso.")
+                    erros, avisos = validar_cadastro_bling(df_saida)
+                    mostrar_validacao(erros, avisos)
+
+                    st.subheader("📄 Prévia final do cadastro")
                     st.dataframe(df_saida, width="stretch")
 
-                    arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Cadastro")
-                    st.download_button(
-                        label="📥 Baixar planilha de cadastro",
-                        data=arquivo_excel,
-                        file_name="bling_cadastro_produtos.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        width="stretch",
-                    )
+                    if erros:
+                        st.error("❌ Corrija os erros antes de usar a planilha no Bling.")
+                    else:
+                        arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Cadastro")
+                        st.download_button(
+                            label="📥 Baixar planilha de cadastro",
+                            data=arquivo_excel,
+                            file_name="bling_cadastro_produtos.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            width="stretch",
+                        )
 
                 except Exception as e:
                     st.error(f"❌ Erro ao gerar cadastro: {e}")
@@ -218,17 +253,23 @@ def main():
                         deposito_padrao=deposito.strip(),
                     )
 
-                    st.success("✅ Planilha de estoque gerada com sucesso.")
+                    erros, avisos = validar_estoque_bling(df_saida)
+                    mostrar_validacao(erros, avisos)
+
+                    st.subheader("📄 Prévia final do estoque")
                     st.dataframe(df_saida, width="stretch")
 
-                    arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Estoque")
-                    st.download_button(
-                        label="📥 Baixar planilha de estoque",
-                        data=arquivo_excel,
-                        file_name="bling_atualizacao_estoque.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        width="stretch",
-                    )
+                    if erros:
+                        st.error("❌ Corrija os erros antes de usar a planilha no Bling.")
+                    else:
+                        arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Estoque")
+                        st.download_button(
+                            label="📥 Baixar planilha de estoque",
+                            data=arquivo_excel,
+                            file_name="bling_atualizacao_estoque.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            width="stretch",
+                        )
 
                 except Exception as e:
                     st.error(f"❌ Erro ao gerar estoque: {e}")
