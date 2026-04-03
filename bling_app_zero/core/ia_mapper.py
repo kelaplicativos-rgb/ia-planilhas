@@ -1,45 +1,55 @@
 import json
+from typing import Any
+
+import openai
 import pandas as pd
 import streamlit as st
-import openai
 
 
-# =========================
-# CLIENTE IA
-# =========================
-def _get_client():
-    return openai.OpenAI(
-        api_key=st.secrets["OPENAI_API_KEY"]
-    )
-
-
-# =========================
-# AMOSTRA
-# =========================
-def _sample_dataframe(df: pd.DataFrame, max_rows: int = 5):
+def _sample_dataframe(df: pd.DataFrame, max_rows: int = 5) -> list[dict[str, Any]]:
     return df.head(max_rows).to_dict(orient="records")
 
 
-# =========================
-# IA DETECÇÃO DE COLUNAS
-# =========================
+def _extrair_json(texto: str) -> dict:
+    texto = str(texto).strip()
+
+    inicio = texto.find("{")
+    fim = texto.rfind("}") + 1
+
+    if inicio == -1 or fim <= 0:
+        return {}
+
+    trecho = texto[inicio:fim]
+
+    try:
+        return json.loads(trecho)
+    except Exception:
+        return {}
+
+
 def detectar_colunas_com_ia(df: pd.DataFrame) -> dict:
     """
     Usa IA para identificar colunas da planilha.
-    Retorna um dicionário com o mapeamento lógico.
+    Se a IA falhar, retorna {} e o fallback local assume.
     """
+    try:
+        api_key = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        return {}
 
-    client = _get_client()
+    try:
+        # Evita o erro de proxies/httpx no ambiente do Streamlit Cloud
+        client = openai.OpenAI(api_key=api_key, max_retries=1)
 
-    colunas = list(df.columns)
-    amostra = _sample_dataframe(df)
+        colunas = list(df.columns)
+        amostra = _sample_dataframe(df)
 
-    prompt = f"""
+        prompt = f"""
 Você é um especialista em integração com ERP Bling.
 
 Analise uma planilha de produtos e identifique quais colunas representam:
 
-- codigo (SKU ou código do produto)
+- codigo
 - nome
 - preco
 - descricao_curta
@@ -74,27 +84,23 @@ Amostra de dados:
 {amostra}
 """
 
-    try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Você é especialista em ERP Bling."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "Você é especialista em ERP Bling e planilhas."},
+                {"role": "user", "content": prompt},
             ],
-            temperature=0
+            temperature=0,
         )
 
-        texto = response.choices[0].message.content.strip()
+        texto = response.choices[0].message.content or ""
+        resultado = _extrair_json(texto)
 
-        # segurança extra (às vezes a IA manda texto + json)
-        inicio = texto.find("{")
-        fim = texto.rfind("}") + 1
-        texto_json = texto[inicio:fim]
+        if isinstance(resultado, dict):
+            return resultado
 
-        resultado = json.loads(texto_json)
-
-        return resultado
+        return {}
 
     except Exception as e:
-        st.warning(f"⚠️ IA falhou, usando fallback local: {e}")
+        st.warning(f"⚠️ IA falhou, usando apenas detecção local: {e}")
         return {}
