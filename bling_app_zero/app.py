@@ -2,26 +2,9 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 
-# 🔥 NOVO CORE
-from core.leitor import carregar_planilha, preview, validar_planilha_vazia
+from bling_app_zero.core.leitor import carregar_planilha, preview, validar_planilha_vazia
 
-st.set_page_config(page_title="🔥 Bling Automação PRO", layout="wide")
 
-st.title("🔥 Bling Automação PRO")
-st.subheader("🧠 Base limpa para padrão Bling")
-
-# =========================
-# CAMINHOS
-# =========================
-BASE_DIR = Path(__file__).parent
-PASTA_MODELOS = BASE_DIR / "bling_app_zero" / "modelos"
-
-ARQ_PROD = PASTA_MODELOS / "produtos.xlsx"
-ARQ_EST = PASTA_MODELOS / "saldo_estoque.xlsx"
-
-# =========================
-# FUNÇÃO LEITURA ANTIGA (mantida)
-# =========================
 def ler_excel(caminho):
     try:
         df = pd.read_excel(caminho)
@@ -29,9 +12,7 @@ def ler_excel(caminho):
     except Exception as e:
         return None, str(e)
 
-# =========================
-# LIMPEZA PROFISSIONAL (mantida)
-# =========================
+
 def limpar_total(df):
     df = df.copy()
 
@@ -43,106 +24,124 @@ def limpar_total(df):
 
     df = df.replace("None", "")
     df = df.fillna("")
-
-    # mantém só estrutura
     df = df.iloc[0:0]
 
     return df
 
-# =========================
-# 🔥 NOVA ÁREA — UPLOAD INTELIGENTE
-# =========================
-st.header("📂 Upload de planilha (modo inteligente)")
 
-arquivo = st.file_uploader(
-    "Enviar planilha para processamento",
-    type=["xlsx", "csv"]
-)
+def main():
+    st.set_page_config(page_title="🔥 Bling Automação PRO", layout="wide")
 
-if arquivo:
-    try:
-        df = carregar_planilha(arquivo)
+    st.title("🔥 Bling Automação PRO")
+    st.subheader("🧠 Base limpa para padrão Bling")
 
-        if validar_planilha_vazia(df):
-            st.error("❌ Planilha vazia ou inválida")
-            st.stop()
+    # =========================
+    # CAMINHOS
+    # =========================
+    BASE_DIR = Path(__file__).parent
+    PASTA_MODELOS = BASE_DIR / "modelos"
 
-        st.success("✅ Planilha carregada com sucesso")
+    ARQ_PROD = PASTA_MODELOS / "produtos.xlsx"
+    ARQ_EST = PASTA_MODELOS / "saldo_estoque.xlsx"
 
-        st.subheader("👀 Preview")
-        st.dataframe(preview(df), use_container_width=True)
+    # =========================
+    # UPLOAD INTELIGENTE
+    # =========================
+    st.header("📂 Upload de planilha (modo inteligente)")
 
-        st.subheader("📊 Informações")
-        col1, col2 = st.columns(2)
+    arquivo = st.file_uploader(
+        "Enviar planilha para processamento",
+        type=["xlsx", "csv"]
+    )
 
-        with col1:
-            st.metric("Linhas", len(df))
+    if arquivo:
+        try:
+            df = carregar_planilha(arquivo)
 
-        with col2:
-            st.metric("Colunas", len(df.columns))
+            if validar_planilha_vazia(df):
+                st.error("❌ Planilha vazia ou inválida")
+                st.stop()
 
-    except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+            st.success("✅ Planilha carregada com sucesso")
 
-# =========================
-# MODELOS BLING
-# =========================
-st.header("📦 Verificação dos modelos")
+            st.subheader("👀 Preview")
+            st.dataframe(preview(df), use_container_width=True)
 
-# =========================
-# PRODUTOS
-# =========================
-if ARQ_PROD.exists():
-    prod, erro = ler_excel(ARQ_PROD)
+            st.subheader("📊 Informações")
+            col1, col2 = st.columns(2)
 
-    if prod is not None:
-        st.success("✅ produtos.xlsx carregado")
+            with col1:
+                st.metric("Linhas", len(df))
 
-        st.write("📊 Colunas detectadas:")
-        st.write(list(prod.columns))
+            with col2:
+                st.metric("Colunas", len(df.columns))
 
-        prod_limpo = limpar_total(prod)
+        except Exception as e:
+            st.error(f"Erro ao processar: {e}")
 
-        st.write("🧼 Estrutura após limpeza:")
-        st.dataframe(prod_limpo)
+    # =========================
+    # MODELOS BLING
+    # =========================
+    st.header("📦 Verificação dos modelos")
 
-        st.info(f"Colunas: {len(prod_limpo.columns)} | Linhas: {len(prod_limpo)}")
+    # =========================
+    # PRODUTOS
+    # =========================
+    if ARQ_PROD.exists():
+        prod, erro = ler_excel(ARQ_PROD)
 
+        if prod is not None:
+            st.success("✅ produtos.xlsx carregado")
+
+            st.write("📊 Colunas detectadas:")
+            st.write(list(prod.columns))
+
+            prod_limpo = limpar_total(prod)
+
+            st.write("🧼 Estrutura após limpeza:")
+            st.dataframe(prod_limpo, use_container_width=True)
+
+            st.info(f"Colunas: {len(prod_limpo.columns)} | Linhas: {len(prod_limpo)}")
+
+        else:
+            st.error(f"Erro: {erro}")
     else:
-        st.error(f"Erro: {erro}")
-else:
-    st.error("❌ produtos.xlsx não encontrado")
+        st.error("❌ produtos.xlsx não encontrado")
 
-# =========================
-# ESTOQUE
-# =========================
-if ARQ_EST.exists():
-    est, erro = ler_excel(ARQ_EST)
+    # =========================
+    # ESTOQUE
+    # =========================
+    if ARQ_EST.exists():
+        est, erro = ler_excel(ARQ_EST)
 
-    if est is not None:
-        st.success("✅ saldo_estoque.xlsx carregado")
+        if est is not None:
+            st.success("✅ saldo_estoque.xlsx carregado")
 
-        st.write("📊 Colunas detectadas:")
-        st.write(list(est.columns))
+            st.write("📊 Colunas detectadas:")
+            st.write(list(est.columns))
 
-        est_limpo = limpar_total(est)
+            est_limpo = limpar_total(est)
 
-        st.write("🧼 Estrutura após limpeza:")
-        st.dataframe(est_limpo)
+            st.write("🧼 Estrutura após limpeza:")
+            st.dataframe(est_limpo, use_container_width=True)
 
-        st.info(f"Colunas: {len(est_limpo.columns)} | Linhas: {len(est_limpo)}")
+            st.info(f"Colunas: {len(est_limpo.columns)} | Linhas: {len(est_limpo)}")
 
+        else:
+            st.error(f"Erro: {erro}")
     else:
-        st.error(f"Erro: {erro}")
-else:
-    st.error("❌ saldo_estoque.xlsx não encontrado")
+        st.error("❌ saldo_estoque.xlsx não encontrado")
 
-# =========================
-# DEPÓSITO
-# =========================
-st.header("🏬 Depósito manual")
+    # =========================
+    # DEPÓSITO
+    # =========================
+    st.header("🏬 Depósito manual")
 
-deposito = st.text_input("Digite o nome do depósito (ex: Geral, Loja, CD)")
+    deposito = st.text_input("Digite o nome do depósito (ex: Geral, Loja, CD)")
 
-if deposito:
-    st.success(f"Depósito definido: {deposito}")
+    if deposito:
+        st.success(f"Depósito definido: {deposito}")
+
+
+if __name__ == "__main__":
+    main()
