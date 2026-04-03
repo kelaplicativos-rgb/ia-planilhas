@@ -1,3 +1,40 @@
+from bling_app_zero.core.mapeamento_bling import mapear_produtos
+# =========================
+# 🔥 GERAR PLANILHA BLING
+# =========================
+if arquivo and ARQ_PROD.exists():
+
+    if st.button("🚀 Gerar planilha de cadastro Bling"):
+
+        try:
+            modelo_prod, erro = ler_excel(ARQ_PROD)
+
+            if modelo_prod is None:
+                st.error(f"Erro modelo: {erro}")
+                st.stop()
+
+            df_bling = mapear_produtos(df, modelo_prod)
+
+            st.success("✅ Planilha Bling gerada")
+
+            st.dataframe(df_bling, use_container_width=True)
+
+            # DOWNLOAD
+            from bling_app_zero.utils.excel import salvar_excel_bytes
+
+            arquivo_excel = salvar_excel_bytes(df_bling)
+
+            st.download_button(
+                label="📥 Baixar planilha Bling",
+                data=arquivo_excel,
+                file_name="bling_produtos.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        except Exception as e:
+            st.error(f"Erro ao gerar: {e}")
+
+
 import streamlit as st
 import pandas as pd
 from pathlib import Path
