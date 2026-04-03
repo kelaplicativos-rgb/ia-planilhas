@@ -1,22 +1,29 @@
 import json
 import pandas as pd
 import streamlit as st
-from openai import OpenAI
+import openai
 
 
+# =========================
+# CLIENTE IA
+# =========================
 def _get_client():
-    return OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    return openai.OpenAI(
+        api_key=st.secrets["OPENAI_API_KEY"]
+    )
 
 
+# =========================
+# AMOSTRA
+# =========================
 def _sample_dataframe(df: pd.DataFrame, max_rows=5):
     return df.head(max_rows).to_dict(orient="records")
 
 
+# =========================
+# IA DETECÇÃO DE COLUNAS
+# =========================
 def detectar_colunas_com_ia(df: pd.DataFrame) -> dict:
-    """
-    Usa IA para identificar colunas da planilha.
-    Retorna um dict com mapeamento lógico.
-    """
 
     client = _get_client()
 
