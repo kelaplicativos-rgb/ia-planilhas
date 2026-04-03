@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+from io import BytesIO
 
 # =========================
 # 📥 LEITURA INTELIGENTE
@@ -35,8 +36,7 @@ def ler_planilha(arquivo):
 # 🧹 LIMPAR VALORES VAZIOS
 # =========================
 def limpar_valores_vazios(df):
-    df = df.fillna("").infer_objects(copy=False)
-    return df
+    return df.fillna("").infer_objects(copy=False)
 
 
 # =========================
@@ -54,6 +54,16 @@ def normalizar_colunas(df):
 
 
 # =========================
+# 💾 SALVAR EXCEL (BYTES)
+# =========================
+def salvar_excel_bytes(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    return output.getvalue()
+
+
+# =========================
 # 👁️ PREVIEW INTELIGENTE
 # =========================
 def mostrar_preview(df, nome="Planilha"):
@@ -63,15 +73,12 @@ def mostrar_preview(df, nome="Planilha"):
         st.warning("⚠️ Planilha vazia")
         return
 
-    # colunas detectadas
     st.success("✅ Colunas identificadas automaticamente:")
     st.write(list(df.columns))
 
-    # preview leve
     st.info("🔍 Preview (1 linha):")
     st.dataframe(df.head(1), use_container_width=True)
 
-    # controle estado
     chave = f"mostrar_tudo_{nome}"
 
     if chave not in st.session_state:
