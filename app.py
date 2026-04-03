@@ -5,13 +5,98 @@ import io
 import os
 import re
 import time
+import hashlib
 from datetime import datetime
+
+# =========================
+# DEPLOY PROFISSIONAL
+# =========================
+APP_VERSION = "2026.04.03.02"
+
+
+def gerar_assinatura_deploy():
+    base = f"{APP_VERSION}|app_bling_formato_original"
+    return hashlib.md5(base.encode("utf-8")).hexdigest()
+
+
+def executar_boot_deploy():
+    assinatura_atual = gerar_assinatura_deploy()
+
+    if "deploy_assinatura" not in st.session_state:
+        st.session_state["deploy_assinatura"] = assinatura_atual
+        st.session_state["deploy_ja_inicializado"] = True
+        return
+
+    assinatura_anterior = st.session_state.get("deploy_assinatura")
+
+    if assinatura_anterior != assinatura_atual:
+        try:
+            st.cache_data.clear()
+        except:
+            pass
+
+        try:
+            st.cache_resource.clear()
+        except:
+            pass
+
+        chaves_manter = {
+            "deploy_assinatura": assinatura_atual,
+            "deploy_ja_inicializado": True,
+        }
+
+        for chave in list(st.session_state.keys()):
+            del st.session_state[chave]
+
+        for chave, valor in chaves_manter.items():
+            st.session_state[chave] = valor
+
+        st.rerun()
+
+
+def reset_total_sistema():
+    assinatura_atual = gerar_assinatura_deploy()
+
+    try:
+        st.cache_data.clear()
+    except:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except:
+        pass
+
+    for chave in list(st.session_state.keys()):
+        del st.session_state[chave]
+
+    st.session_state["deploy_assinatura"] = assinatura_atual
+    st.session_state["deploy_ja_inicializado"] = True
+    st.rerun()
+
+
+executar_boot_deploy()
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="🔥 BLING FORMATO ORIGINAL", layout="wide")
 st.title("🔥 BLING FORMATO ORIGINAL + LIMPEZA TOTAL")
+
+# =========================
+# PAINEL DEPLOY
+# =========================
+col_dep1, col_dep2, col_dep3 = st.columns([1.4, 1, 1])
+
+with col_dep1:
+    st.caption(f"Versão do app: {APP_VERSION}")
+
+with col_dep2:
+    if st.button("🔄 Reset total do sistema", use_container_width=True):
+        reset_total_sistema()
+
+with col_dep3:
+    st.caption("Modo deploy profissional ativo")
 
 # =========================
 # SESSION
@@ -34,7 +119,10 @@ PADRAO_SESSION = {
 
 for k, v in PADRAO_SESSION.items():
     if k not in st.session_state:
-        st.session_state[k] = [] if isinstance(v, list) else None
+        if isinstance(v, list):
+            st.session_state[k] = []
+        else:
+            st.session_state[k] = v
 
 
 # =========================
@@ -47,7 +135,10 @@ def log(msg):
 
 def limpar_estado():
     for k, v in PADRAO_SESSION.items():
-        st.session_state[k] = [] if isinstance(v, list) else None
+        if isinstance(v, list):
+            st.session_state[k] = []
+        else:
+            st.session_state[k] = v
 
 
 # =========================
@@ -598,7 +689,6 @@ def nome_saida(base, ext):
     if ext not in [".csv", ".xlsx", ".xls"]:
         ext = ".xlsx"
 
-    # xls sai como xlsx para evitar engine antiga
     if ext == ".xls":
         ext = ".xlsx"
 
@@ -631,62 +721,4 @@ def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
 # =========================
 def processar_lista_arquivos(lista_arquivos, progresso, origem="upload"):
     saida = {
-        "df_origem_estoque": None,
-        "df_origem_cadastro": None,
-        "df_modelo_estoque": None,
-        "df_modelo_cadastro": None,
-        "nome_origem_estoque": None,
-        "nome_origem_cadastro": None,
-        "nome_modelo_estoque": None,
-        "nome_modelo_cadastro": None,
-        "ext_modelo_estoque": None,
-        "ext_modelo_cadastro": None,
-    }
-
-    for arquivo in lista_arquivos:
-        progresso.atualizar(f"Lendo {origem}: {arquivo['nome']}")
-
-        if arquivo["tipo_obj"] == "upload":
-            df = ler_planilha_upload(arquivo["obj"])
-        else:
-            df = ler_planilha_bytes(arquivo["nome"], arquivo["bytes"])
-
-        tipo = identificar_tipo(arquivo["nome"], df)
-        ext = obter_extensao(arquivo["nome"])
-        log(f"{arquivo['nome']}: tipo identificado = {tipo}")
-
-        if tipo == "origem_estoque" and saida["df_origem_estoque"] is None:
-            saida["df_origem_estoque"] = df
-            saida["nome_origem_estoque"] = arquivo["nome"]
-
-        elif tipo == "origem_cadastro" and saida["df_origem_cadastro"] is None:
-            saida["df_origem_cadastro"] = df
-            saida["nome_origem_cadastro"] = arquivo["nome"]
-
-        elif tipo == "modelo_estoque" and saida["df_modelo_estoque"] is None:
-            saida["df_modelo_estoque"] = df
-            saida["nome_modelo_estoque"] = arquivo["nome"]
-            saida["ext_modelo_estoque"] = ext
-
-        elif tipo == "modelo_cadastro" and saida["df_modelo_cadastro"] is None:
-            saida["df_modelo_cadastro"] = df
-            saida["nome_modelo_cadastro"] = arquivo["nome"]
-            saida["ext_modelo_cadastro"] = ext
-
-    return saida
-
-
-def extrair_arquivos_do_zip(zip_file):
-    arquivos = []
-
-    with zipfile.ZipFile(zip_file, "r") as z:
-        nomes = z.namelist()
-
-        for nome in nomes:
-            if nome.endswith("/"):
-                continue
-            if not nome.lower().endswith((".csv", ".xlsx", ".xls")):
-                continue
-
-            arquivos.append({
-                "nome": os.path.basename(nome),
+        "d
