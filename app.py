@@ -192,3 +192,37 @@ if arquivos:
 if st.session_state["logs"]:
     st.subheader("Logs")
     st.text("\n".join(st.session_state["logs"]))
+# =========================
+# LIMPEZA PROFISSIONAL
+# =========================
+def limpar_dataframe(df):
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    # remove linhas totalmente vazias
+    df = df.dropna(how="all")
+
+    # remove colunas totalmente vazias
+    df = df.dropna(axis=1, how="all")
+
+    # remove espaços nos nomes das colunas
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # limpa todos os textos
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.strip()
+                .str.replace("\n", " ")
+                .str.replace("\r", " ")
+                .str.replace("  ", " ")
+            )
+
+    # remove duplicados completos
+    df = df.drop_duplicates()
+
+    return df
