@@ -1,79 +1,64 @@
 import pandas as pd
 
-
-# =========================
-# POSSÍVEIS NOMES (IA SIMPLES)
-# =========================
-MAPEAMENTO_INTELIGENTE = {
-    "codigo": ["codigo", "sku", "id", "ref"],
-    "nome": ["nome", "produto", "titulo", "descricao"],
-    "preco": ["preco", "valor", "price"],
-    "descricao_curta": ["descricao", "desc", "detalhes"],
-    "marca": ["marca", "brand"],
-    "imagem": ["imagem", "image", "foto", "url_imagem"],
+MAPEAMENTO = {
+    "codigo": ["codigo", "sku", "id"],
+    "nome": ["nome", "produto"],
+    "preco": ["preco", "valor"],
+    "descricao": ["descricao"],
+    "marca": ["marca"],
+    "imagem": ["imagem", "url"]
 }
 
 
-def encontrar_coluna(df, possibilidades):
+def encontrar(df, chaves):
     for col in df.columns:
         nome = col.lower()
-        for p in possibilidades:
-            if p in nome:
+        for c in chaves:
+            if c in nome:
                 return col
     return None
 
 
-def mapear_produtos(df: pd.DataFrame, modelo: pd.DataFrame) -> pd.DataFrame:
-    """
-    Preenche modelo do Bling com base na planilha enviada
-    """
+def mapear_produtos(df, modelo):
 
-    df_saida = modelo.copy()
+    saida = []
 
-    # =========================
-    # DETECÇÃO AUTOMÁTICA
-    # =========================
-    col_codigo = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["codigo"])
-    col_nome = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["nome"])
-    col_preco = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["preco"])
-    col_desc = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["descricao_curta"])
-    col_marca = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["marca"])
-    col_img = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["imagem"])
-
-    # =========================
-    # LOOP DE PREENCHIMENTO
-    # =========================
-    linhas = []
+    c_cod = encontrar(df, MAPEAMENTO["codigo"])
+    c_nome = encontrar(df, MAPEAMENTO["nome"])
+    c_preco = encontrar(df, MAPEAMENTO["preco"])
+    c_desc = encontrar(df, MAPEAMENTO["descricao"])
+    c_marca = encontrar(df, MAPEAMENTO["marca"])
+    c_img = encontrar(df, MAPEAMENTO["imagem"])
 
     for _, row in df.iterrows():
-        nova_linha = {}
 
-        for col in df_saida.columns:
-            nome_col = col.lower()
+        nova = {}
 
-            if "codigo" in nome_col and col_codigo:
-                nova_linha[col] = row[col_codigo]
+        for col in modelo.columns:
 
-            elif "nome" in nome_col and col_nome:
-                nova_linha[col] = row[col_nome]
+            nome = col.lower()
 
-            elif "preco" in nome_col and col_preco:
-                nova_linha[col] = row[col_preco]
+            if "codigo" in nome and c_cod:
+                nova[col] = row[c_cod]
 
-            elif "descricao" in nome_col and col_desc:
-                nova_linha[col] = row[col_desc]
+            elif "nome" in nome and c_nome:
+                nova[col] = row[c_nome]
 
-            elif "marca" in nome_col and col_marca:
-                nova_linha[col] = row[col_marca]
+            elif "preco" in nome and c_preco:
+                nova[col] = row[c_preco]
 
-            elif "imagem" in nome_col and col_img:
-                nova_linha[col] = row[col_img]
+            elif "descricao" in nome and c_desc:
+                nova[col] = row[c_desc]
+
+            elif "marca" in nome and c_marca:
+                nova[col] = row[c_marca]
+
+            elif "imagem" in nome and c_img:
+                nova[col] = row[c_img]
 
             else:
-                nova_linha[col] = ""
+                nova[col] = ""
 
-        linhas.append(nova_linha)
+        saida.append(nova)
 
-    df_final = pd.DataFrame(linhas)
-
-    return df_final
+    return pd.DataFrame(saida)
