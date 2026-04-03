@@ -3,207 +3,192 @@ import pandas as pd
 import zipfile
 import io
 import os
+import re
 from datetime import datetime
 
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="📦 Modo Final + Limpeza Inteligente", layout="wide")
-st.title("📦 Upload + Limpeza Automática + ZIP Final")
-
-# =========================
-# SESSION STATE
-# =========================
-for key in ["df_estoque", "df_cadastro", "logs"]:
-    if key not in st.session_state:
-        st.session_state[key] = None if "df" in key else []
+st.set_page_config(page_title="🔥 BLING 100% COMPATÍVEL", layout="wide")
+st.title("🔥 BLING 100% COMPATÍVEL")
 
 # =========================
 # LOG
 # =========================
+if "logs" not in st.session_state:
+    st.session_state["logs"] = []
+
 def log(msg):
     t = datetime.now().strftime("%H:%M:%S")
     st.session_state["logs"].append(f"[{t}] {msg}")
 
 # =========================
-# LIMPEZA INTELIGENTE
+# LIMPEZA
 # =========================
-def limpar_dataframe(df):
-    if df is None:
-        return df
+def limpar_texto(x):
+    if pd.isna(x):
+        return ""
+    x = str(x).strip()
+    x = re.sub(r"\s+", " ", x)
+    return x
 
-    # remover linhas totalmente vazias
-    df = df.dropna(how="all")
+def corrigir_preco(x):
+    try:
+        x = str(x).replace(".", "").replace(",", ".")
+        v = float(x)
+        if v > 1000:
+            v = v / 100
+        return round(v, 2)
+    except:
+        return 0.0
 
-    # remover colunas totalmente vazias
-    df = df.dropna(axis=1, how="all")
-
-    # limpar nomes de colunas
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-        .str.replace("__", "_")
-    )
-
-    # limpar textos
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = (
-                df[col]
-                .astype(str)
-                .str.strip()
-                .str.replace("\n", " ")
-                .str.replace("\r", " ")
-            )
-
-    # remover duplicados
-    df = df.drop_duplicates()
-
-    return df
+def para_int(x):
+    try:
+        return int(float(str(x).replace(",", ".")))
+    except:
+        return 0
 
 # =========================
 # LEITURA
 # =========================
-def ler_arquivo(nome, bytes_data):
-    ext = os.path.splitext(nome.lower())[1]
-
-    if ext == ".csv":
+def ler(file):
+    if file.name.endswith(".csv"):
         try:
-            df = pd.read_csv(io.BytesIO(bytes_data), sep=None, engine="python", encoding="utf-8")
+            return pd.read_csv(file, sep=None, engine="python", encoding="utf-8")
         except:
-            df = pd.read_csv(io.BytesIO(bytes_data), sep=None, engine="python", encoding="latin-1")
+            file.seek(0)
+            return pd.read_csv(file, sep=None, engine="python", encoding="latin-1")
     else:
-        df = pd.read_excel(io.BytesIO(bytes_data))
-
-    return limpar_dataframe(df)
+        return pd.read_excel(file)
 
 # =========================
 # IDENTIFICAÇÃO
 # =========================
-def tipo_planilha(nome, df):
-    nome = nome.lower()
-    cols = " ".join(df.columns)
+def tipo(df):
+    cols = " ".join(df.columns).lower()
 
-    if "estoque" in nome or "quantidade" in cols:
+    if "balan" in cols:
         return "estoque"
-
-    if "cadastro" in nome or "descricao" in cols or "nome" in cols:
+    if "descricao" in cols:
         return "cadastro"
 
     return None
 
 # =========================
-# EXTRAIR ZIP
+# BLING ESTOQUE (OFICIAL)
 # =========================
-def processar_zip(zip_file):
-    estoque = None
-    cadastro = None
+def gerar_estoque(df):
+    resultado = pd.DataFrame()
 
-    with zipfile.ZipFile(zip_file) as z:
-        arquivos = z.namelist()
+    codigo = df.columns[0]
+    estoque = [c for c in df.columns if "balan" in c.lower()]
 
-        for nome in arquivos:
-            if not nome.endswith((".xlsx", ".csv", ".xls")):
-                continue
+    estoque = estoque[0] if estoque else None
 
-            dados = z.read(nome)
-            df = ler_arquivo(nome, dados)
+    resultado["Código"] = df[codigo].apply(limpar_texto)
+    resultado["Depósito"] = "Geral"
+    resultado["Estoque"] = df[estoque].apply(para_int) if estoque else 0
 
-            tipo = tipo_planilha(nome, df)
+    resultado = resultado.drop_duplicates(subset=["Código"])
 
-            log(f"{nome} identificado como {tipo}")
+    log("Estoque formatado para Bling")
 
-            if tipo == "estoque" and estoque is None:
-                estoque = df
+    return resultado
 
-            elif tipo == "cadastro" and cadastro is None:
-                cadastro = df
+# =========================
+# BLING CADASTRO (OFICIAL)
+# =========================
+def gerar_cadastro(df):
+    resultado = pd.DataFrame()
 
-    return estoque, cadastro
+    codigo = [c for c in df.columns if "codigo" in c.lower()][0]
+    descricao = [c for c in df.columns if "descricao" in c.lower()][0]
+
+    preco = None
+    for c in df.columns:
+        if "preco" in c.lower():
+            preco = c
+
+    link = None
+    for c in df.columns:
+        if "link" in c.lower():
+            link = c
+
+    resultado["Código"] = df[codigo].apply(limpar_texto)
+    resultado["Descrição"] = df[descricao].apply(limpar_texto)
+    resultado["Unidade"] = "UN"
+    resultado["Preço"] = df[preco].apply(corrigir_preco) if preco else 0
+    resultado["Situação"] = "Ativo"
+    resultado["Marca"] = ""
+    resultado["Descrição Curta"] = resultado["Descrição"]
+    resultado["URL Imagens Externas"] = ""
+    resultado["Link Externo"] = df[link] if link else ""
+
+    resultado = resultado.drop_duplicates(subset=["Código"])
+
+    log("Cadastro formatado para Bling")
+
+    return resultado
 
 # =========================
 # ZIP FINAL
 # =========================
-def gerar_zip(df1, df2):
-    buffer = io.BytesIO()
+def gerar_zip(est, cad):
+    mem = io.BytesIO()
 
-    with zipfile.ZipFile(buffer, "w") as z:
-        if df1 is not None:
-            z.writestr("estoque.xlsx", df1.to_excel(index=False, engine="openpyxl"))
+    with zipfile.ZipFile(mem, "w") as z:
+        b1 = io.BytesIO()
+        est.to_excel(b1, index=False)
+        z.writestr("atualizar_estoque.xlsx", b1.getvalue())
 
-        if df2 is not None:
-            z.writestr("cadastro.xlsx", df2.to_excel(index=False, engine="openpyxl"))
+        b2 = io.BytesIO()
+        cad.to_excel(b2, index=False)
+        z.writestr("cadastrar_produtos.xlsx", b2.getvalue())
 
-        log_txt = "\n".join(st.session_state["logs"])
-        z.writestr("log.txt", log_txt)
+        z.writestr("log.txt", "\n".join(st.session_state["logs"]))
 
-    buffer.seek(0)
-    return buffer
+    mem.seek(0)
+    return mem
 
 # =========================
 # UPLOAD
 # =========================
-modo = st.radio("Modo:", ["ZIP", "Arquivos soltos"], horizontal=True)
+arquivos = st.file_uploader("Envie as duas planilhas", accept_multiple_files=True)
 
-if modo == "ZIP":
-    zip_file = st.file_uploader("Envie ZIP", type=["zip"])
+if arquivos:
+    estoque = None
+    cadastro = None
 
-    if zip_file:
-        st.session_state["logs"] = []
-        estoque, cadastro = processar_zip(zip_file)
+    for arq in arquivos:
+        df = ler(arq)
+        t = tipo(df)
 
-        st.session_state["df_estoque"] = estoque
-        st.session_state["df_cadastro"] = cadastro
+        if t == "estoque":
+            estoque = df
+        elif t == "cadastro":
+            cadastro = df
 
-else:
-    arquivos = st.file_uploader("Envie arquivos", accept_multiple_files=True)
+    if estoque is not None:
+        st.success("Estoque carregado")
 
-    if arquivos:
-        st.session_state["logs"] = []
+    if cadastro is not None:
+        st.success("Cadastro carregado")
 
-        for arq in arquivos:
-            df = ler_arquivo(arq.name, arq.read())
-            tipo = tipo_planilha(arq.name, df)
+    if estoque is not None and cadastro is not None:
 
-            log(f"{arq.name} identificado como {tipo}")
+        est_bling = gerar_estoque(estoque)
+        cad_bling = gerar_cadastro(cadastro)
 
-            if tipo == "estoque":
-                st.session_state["df_estoque"] = df
-            elif tipo == "cadastro":
-                st.session_state["df_cadastro"] = df
+        st.subheader("Prévia Estoque")
+        st.dataframe(est_bling.head())
 
-# =========================
-# RESULTADO
-# =========================
-df_e = st.session_state["df_estoque"]
-df_c = st.session_state["df_cadastro"]
+        st.subheader("Prévia Cadastro")
+        st.dataframe(cad_bling.head())
 
-if df_e is not None:
-    st.subheader("📦 Estoque")
-    st.dataframe(df_e.head())
+        zip_final = gerar_zip(est_bling, cad_bling)
 
-if df_c is not None:
-    st.subheader("📋 Cadastro")
-    st.dataframe(df_c.head())
-
-# =========================
-# DOWNLOAD
-# =========================
-if df_e is not None or df_c is not None:
-    zip_final = gerar_zip(df_e, df_c)
-
-    st.download_button(
-        "📦 Baixar ZIP Final",
-        zip_final,
-        file_name="resultado_final.zip"
-    )
+        st.download_button("📦 Baixar ZIP Bling", zip_final, "bling_final.zip")
 
 # =========================
 # LOG
 # =========================
 if st.session_state["logs"]:
-    st.subheader("🧾 Logs")
+    st.subheader("Logs")
     st.text("\n".join(st.session_state["logs"]))
