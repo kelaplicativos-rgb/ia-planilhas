@@ -1,9 +1,4 @@
 streamlit
 pandas
-requests
-beautifulsoup4
 openpyxl
 xlrd
-urllib3
-lxml
-openai>=1.0.0
