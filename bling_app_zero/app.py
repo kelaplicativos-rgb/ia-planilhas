@@ -1,7 +1,6 @@
 import io
 import re
 import unicodedata
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -201,16 +200,18 @@ def detectar_colunas(df: pd.DataFrame) -> dict:
     m["nome"] = encontrar_coluna(
         df,
         [
-            "nome", "produto", "titulo", "título", "descricao", "descrição",
-            "nome produto", "descricao produto", "descrição produto"
+            "nome", "produto", "titulo", "título",
+            "nome produto"
         ],
     )
 
     m["descricao_curta"] = encontrar_coluna(
         df,
         [
-            "descricao curta", "descrição curta", "descricao", "descrição",
-            "detalhes", "resumo", "informacoes", "informações"
+            "descricao curta", "descrição curta",
+            "descricao", "descrição",
+            "detalhes", "resumo", "informacoes", "informações",
+            "descricao produto", "descrição produto"
         ],
     )
 
@@ -274,7 +275,11 @@ def corrigir_preco(valor) -> str:
         return ""
 
     texto = texto.replace("R$", "").replace("r$", "").strip()
-    texto = texto.replace(".", "").replace(",", ".")
+
+    if texto.count(",") > 0 and texto.count(".") > 0:
+        texto = texto.replace(".", "").replace(",", ".")
+    elif texto.count(",") > 0:
+        texto = texto.replace(",", ".")
 
     try:
         numero = float(texto)
@@ -338,6 +343,10 @@ def mapear_cadastro_bling(df: pd.DataFrame, mapa: dict) -> pd.DataFrame:
     saida["descricao"] = ""
     saida["video"] = ""
     saida["imagem 1"] = df[imagem_col] if imagem_col else ""
+    saida["imagem 2"] = ""
+    saida["imagem 3"] = ""
+    saida["imagem 4"] = ""
+    saida["imagem 5"] = ""
     saida["link externo"] = df[link_col] if link_col else ""
 
     for col in saida.columns:
