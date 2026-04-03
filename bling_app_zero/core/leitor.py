@@ -144,9 +144,6 @@ def preview(
 
     chave_base = _normalizar_nome_chave(nome)
 
-    # =====================================================
-    # 👀 PREVIEW
-    # =====================================================
     abrir_preview = bloco_toggle(
         "Preview",
         f"{chave_base}_preview_aberto"
@@ -156,9 +153,6 @@ def preview(
         st.info("👀 Preview")
         st.dataframe(df.head(1), use_container_width=True)
 
-    # =====================================================
-    # 🔎 COLUNAS IDENTIFICADAS AUTOMATICAMENTE
-    # =====================================================
     abrir_colunas = bloco_toggle(
         "Colunas identificadas automaticamente",
         f"{chave_base}_colunas_aberto"
@@ -167,9 +161,6 @@ def preview(
     if abrir_colunas:
         _render_colunas_detectadas(colunas_detectadas, df)
 
-    # =====================================================
-    # 🛠️ AJUSTE MANUAL DAS COLUNAS
-    # =====================================================
     abrir_ajuste_manual = bloco_toggle(
         "Ajuste manual das colunas",
         f"{chave_base}_ajuste_manual_aberto"
@@ -178,9 +169,6 @@ def preview(
     if abrir_ajuste_manual:
         _render_ajuste_manual(mapeamento_manual)
 
-    # =====================================================
-    # ✅ MAPEAMENTO FINAL QUE SERÁ USADO
-    # =====================================================
     abrir_mapeamento_final = bloco_toggle(
         "Mapeamento final que será usado",
         f"{chave_base}_mapeamento_final_aberto"
