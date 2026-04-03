@@ -1,45 +1,10 @@
-from bling_app_zero.core.mapeamento_bling import mapear_produtos
-# =========================
-# 🔥 GERAR PLANILHA BLING
-# =========================
-if arquivo and ARQ_PROD.exists():
-
-    if st.button("🚀 Gerar planilha de cadastro Bling"):
-
-        try:
-            modelo_prod, erro = ler_excel(ARQ_PROD)
-
-            if modelo_prod is None:
-                st.error(f"Erro modelo: {erro}")
-                st.stop()
-
-            df_bling = mapear_produtos(df, modelo_prod)
-
-            st.success("✅ Planilha Bling gerada")
-
-            st.dataframe(df_bling, use_container_width=True)
-
-            # DOWNLOAD
-            from bling_app_zero.utils.excel import salvar_excel_bytes
-
-            arquivo_excel = salvar_excel_bytes(df_bling)
-
-            st.download_button(
-                label="📥 Baixar planilha Bling",
-                data=arquivo_excel,
-                file_name="bling_produtos.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        except Exception as e:
-            st.error(f"Erro ao gerar: {e}")
-
-
 import streamlit as st
 import pandas as pd
 from pathlib import Path
 
 from bling_app_zero.core.leitor import carregar_planilha, preview, validar_planilha_vazia
+from bling_app_zero.core.mapeamento_bling import mapear_produtos
+from bling_app_zero.utils.excel import salvar_excel_bytes
 
 
 def ler_excel(caminho):
@@ -72,112 +37,86 @@ def main():
     st.title("🔥 Bling Automação PRO")
     st.subheader("🧠 Base limpa para padrão Bling")
 
-    # =========================
-    # CAMINHOS
-    # =========================
     BASE_DIR = Path(__file__).parent
     PASTA_MODELOS = BASE_DIR / "modelos"
 
     ARQ_PROD = PASTA_MODELOS / "produtos.xlsx"
     ARQ_EST = PASTA_MODELOS / "saldo_estoque.xlsx"
 
-    # =========================
-    # UPLOAD INTELIGENTE
-    # =========================
-    st.header("📂 Upload de planilha (modo inteligente)")
+    st.header("📂 Upload de planilha")
 
-    arquivo = st.file_uploader(
-        "Enviar planilha para processamento",
-        type=["xlsx", "csv"]
-    )
+    arquivo = st.file_uploader("Enviar planilha", type=["xlsx", "csv"])
+
+    df = None
 
     if arquivo:
         try:
             df = carregar_planilha(arquivo)
 
             if validar_planilha_vazia(df):
-                st.error("❌ Planilha vazia ou inválida")
+                st.error("❌ Planilha vazia")
                 st.stop()
 
-            st.success("✅ Planilha carregada com sucesso")
+            st.success("✅ Planilha carregada")
 
-            st.subheader("👀 Preview")
             st.dataframe(preview(df), use_container_width=True)
 
-            st.subheader("📊 Informações")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.metric("Linhas", len(df))
-
-            with col2:
-                st.metric("Colunas", len(df.columns))
-
         except Exception as e:
-            st.error(f"Erro ao processar: {e}")
+            st.error(f"Erro: {e}")
 
-    # =========================
-    # MODELOS BLING
-    # =========================
-    st.header("📦 Verificação dos modelos")
+    # 🔥 GERAR BLING
+    if df is not None and ARQ_PROD.exists():
 
-    # =========================
-    # PRODUTOS
-    # =========================
+        if st.button("🚀 Gerar Bling"):
+
+            try:
+                modelo, erro = ler_excel(ARQ_PROD)
+
+                if modelo is None:
+                    st.error(erro)
+                    st.stop()
+
+                df_bling = mapear_produtos(df, modelo)
+
+                st.success("✅ Gerado")
+
+                st.dataframe(df_bling, use_container_width=True)
+
+                arquivo_excel = salvar_excel_bytes(df_bling)
+
+                st.download_button(
+                    "📥 Baixar",
+                    data=arquivo_excel,
+                    file_name="bling.xlsx"
+                )
+
+            except Exception as e:
+                st.error(e)
+
+    st.header("📦 Modelos")
+
     if ARQ_PROD.exists():
         prod, erro = ler_excel(ARQ_PROD)
 
         if prod is not None:
-            st.success("✅ produtos.xlsx carregado")
-
-            st.write("📊 Colunas detectadas:")
+            st.success("Produtos OK")
             st.write(list(prod.columns))
+            st.dataframe(limpar_total(prod))
 
-            prod_limpo = limpar_total(prod)
-
-            st.write("🧼 Estrutura após limpeza:")
-            st.dataframe(prod_limpo, use_container_width=True)
-
-            st.info(f"Colunas: {len(prod_limpo.columns)} | Linhas: {len(prod_limpo)}")
-
-        else:
-            st.error(f"Erro: {erro}")
-    else:
-        st.error("❌ produtos.xlsx não encontrado")
-
-    # =========================
-    # ESTOQUE
-    # =========================
     if ARQ_EST.exists():
         est, erro = ler_excel(ARQ_EST)
 
         if est is not None:
-            st.success("✅ saldo_estoque.xlsx carregado")
-
-            st.write("📊 Colunas detectadas:")
+            st.success("Estoque OK")
             st.write(list(est.columns))
+            st.dataframe(limpar_total(est))
 
-            est_limpo = limpar_total(est)
+    st.header("🏬 Depósito")
 
-            st.write("🧼 Estrutura após limpeza:")
-            st.dataframe(est_limpo, use_container_width=True)
-
-            st.info(f"Colunas: {len(est_limpo.columns)} | Linhas: {len(est_limpo)}")
-
-        else:
-            st.error(f"Erro: {erro}")
-    else:
-        st.error("❌ saldo_estoque.xlsx não encontrado")
-
-    # =========================
-    # DEPÓSITO
-    # =========================
-    st.header("🏬 Depósito manual")
-
-    deposito = st.text_input("Digite o nome do depósito (ex: Geral, Loja, CD)")
+    deposito = st.text_input("Nome do depósito")
 
     if deposito:
-        st.success(f"Depósito definido: {deposito}")
+        st.success(deposito)
 
 
 if __name__ == "__main__":
