@@ -11,10 +11,12 @@ from datetime import datetime
 # =========================
 # DEPLOY LEVE
 # =========================
-APP_VERSION = "2026.04.03.04"
+APP_VERSION = "2026.04.03.05"
+
 
 def gerar_assinatura_deploy():
     return hashlib.md5(APP_VERSION.encode("utf-8")).hexdigest()
+
 
 def executar_boot_deploy():
     assinatura_atual = gerar_assinatura_deploy()
@@ -39,6 +41,7 @@ def executar_boot_deploy():
         st.session_state["deploy_assinatura"] = assinatura_atual
         st.rerun()
 
+
 def reset_total_sistema():
     assinatura_atual = gerar_assinatura_deploy()
 
@@ -55,6 +58,7 @@ def reset_total_sistema():
     st.session_state.clear()
     st.session_state["deploy_assinatura"] = assinatura_atual
     st.rerun()
+
 
 executar_boot_deploy()
 
@@ -112,12 +116,14 @@ def log(msg):
     horario = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     st.session_state["logs"].append(f"[{horario}] {msg}")
 
+
 def limpar_estado():
     for k, v in PADRAO_SESSION.items():
         if isinstance(v, list):
             st.session_state[k] = []
         else:
             st.session_state[k] = v
+
 
 # =========================
 # TEXTO
@@ -141,6 +147,7 @@ def normalizar_texto(valor):
     texto = texto.replace("\t", " ")
     texto = re.sub(r"\s+", " ", texto)
     return texto.strip()
+
 
 def slug_coluna(texto):
     texto = normalizar_texto(texto).lower()
@@ -181,6 +188,7 @@ def slug_coluna(texto):
     texto = re.sub(r"_+", "_", texto).strip("_")
     return texto
 
+
 def buscar_coluna(df, aliases):
     mapa = {slug_coluna(col): col for col in df.columns}
     for alias in aliases:
@@ -188,6 +196,7 @@ def buscar_coluna(df, aliases):
         if chave in mapa:
             return mapa[chave]
     return None
+
 
 # =========================
 # NUMÉRICOS
@@ -219,6 +228,7 @@ def para_float(valor):
     except:
         return None
 
+
 def corrigir_preco(valor):
     numero = para_float(valor)
     if numero is None:
@@ -228,6 +238,7 @@ def corrigir_preco(valor):
         numero = numero / 100
 
     return round(float(numero), 2)
+
 
 def para_int(valor):
     numero = para_float(valor)
@@ -239,6 +250,7 @@ def para_int(valor):
     except:
         return 0
 
+
 # =========================
 # LIMPEZA
 # =========================
@@ -247,6 +259,7 @@ def coluna_vazia(serie):
         if normalizar_texto(valor) != "":
             return False
     return True
+
 
 def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
     if df is None:
@@ -301,11 +314,13 @@ def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
 
     return df
 
+
 # =========================
 # LEITURA
 # =========================
 def obter_extensao(nome_arquivo):
     return os.path.splitext(nome_arquivo.lower())[1]
+
 
 def ler_planilha_upload(arquivo):
     nome = arquivo.name.lower()
@@ -337,6 +352,7 @@ def ler_planilha_upload(arquivo):
 
     return limpar_dataframe_extremo(df, arquivo.name)
 
+
 def ler_planilha_bytes(nome_arquivo, dados_bytes):
     nome = nome_arquivo.lower()
 
@@ -363,6 +379,7 @@ def ler_planilha_bytes(nome_arquivo, dados_bytes):
         raise ValueError(f"Formato não suportado: {nome_arquivo}")
 
     return limpar_dataframe_extremo(df, nome_arquivo)
+
 
 # =========================
 # IDENTIFICAÇÃO
@@ -409,6 +426,7 @@ def identificar_tipo(nome, df):
 
     return None
 
+
 # =========================
 # PROGRESSO + ETA
 # =========================
@@ -440,6 +458,7 @@ class ProgressoTempo:
             f"⏱️ Decorrido: {int(decorrido)}s | ⌛ Restante estimado: {restante}s"
         )
 
+
 # =========================
 # VALIDAÇÃO ORIGEM
 # =========================
@@ -468,6 +487,7 @@ def validar_origem_estoque(df):
 
     return erros
 
+
 def validar_origem_cadastro(df):
     erros = []
 
@@ -485,6 +505,7 @@ def validar_origem_cadastro(df):
         erros.append("Não encontrei coluna de descrição na origem de cadastro.")
 
     return erros
+
 
 # =========================
 # DADOS NOVOS
@@ -514,6 +535,7 @@ def gerar_novos_dados_estoque(df):
 
     log(f"Novos dados de estoque gerados com {len(novo)} linhas.")
     return novo
+
 
 def gerar_novos_dados_cadastro(df):
     col_codigo = buscar_coluna(df, ["Código", "Codigo", "codigo"])
@@ -570,6 +592,7 @@ def gerar_novos_dados_cadastro(df):
     log(f"Novos dados de cadastro gerados com {len(novo)} linhas.")
     return novo
 
+
 # =========================
 # PRESERVAR MODELO EXATO
 # =========================
@@ -597,6 +620,7 @@ def limpar_modelo_e_inserir_exato(modelo_df, novos_dados_df, nome_tipo="modelo")
     log(f"{nome_tipo}: conteúdo antigo apagado e {len(final)} linhas novas inseridas.")
     return final
 
+
 # =========================
 # EXPORTAÇÃO
 # =========================
@@ -606,6 +630,7 @@ def dataframe_para_excel_bytes(df, sheet_name="Dados"):
         df.to_excel(writer, index=False, sheet_name=sheet_name)
     output.seek(0)
     return output.getvalue()
+
 
 def detectar_separador_csv(df):
     candidatos = [",", ";", "\t"]
@@ -624,10 +649,12 @@ def detectar_separador_csv(df):
 
     return melhor_sep
 
+
 def dataframe_para_csv_bytes(df):
     sep = detectar_separador_csv(df)
     csv_text = df.to_csv(index=False, sep=sep, encoding="utf-8")
     return csv_text.encode("utf-8")
+
 
 def bytes_no_formato(df, ext, sheet_name="Dados"):
     ext = (ext or "").lower()
@@ -640,6 +667,7 @@ def bytes_no_formato(df, ext, sheet_name="Dados"):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+
 def nome_saida(base, ext):
     ext = (ext or "").lower()
     if ext not in [".csv", ".xlsx", ".xls"]:
@@ -649,6 +677,7 @@ def nome_saida(base, ext):
         ext = ".xlsx"
 
     return f"{base}{ext}"
+
 
 def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
     mem = io.BytesIO()
@@ -669,6 +698,7 @@ def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
 
     mem.seek(0)
     return mem.getvalue(), nome_est, nome_cad
+
 
 # =========================
 # PROCESSAMENTO
@@ -691,4 +721,313 @@ def processar_lista_arquivos(lista_arquivos, progresso, origem="upload"):
         progresso.atualizar(f"Lendo {origem}: {arquivo['nome']}")
 
         if arquivo["tipo_obj"] == "upload":
-            df = ler_planilha_upload(arquivo[
+            df = ler_planilha_upload(arquivo["obj"])
+        else:
+            df = ler_planilha_bytes(arquivo["nome"], arquivo["bytes"])
+
+        tipo = identificar_tipo(arquivo["nome"], df)
+        ext = obter_extensao(arquivo["nome"])
+        log(f"{arquivo['nome']}: tipo identificado = {tipo}")
+
+        if tipo == "origem_estoque" and saida["df_origem_estoque"] is None:
+            saida["df_origem_estoque"] = df
+            saida["nome_origem_estoque"] = arquivo["nome"]
+
+        elif tipo == "origem_cadastro" and saida["df_origem_cadastro"] is None:
+            saida["df_origem_cadastro"] = df
+            saida["nome_origem_cadastro"] = arquivo["nome"]
+
+        elif tipo == "modelo_estoque" and saida["df_modelo_estoque"] is None:
+            saida["df_modelo_estoque"] = df
+            saida["nome_modelo_estoque"] = arquivo["nome"]
+            saida["ext_modelo_estoque"] = ext
+
+        elif tipo == "modelo_cadastro" and saida["df_modelo_cadastro"] is None:
+            saida["df_modelo_cadastro"] = df
+            saida["nome_modelo_cadastro"] = arquivo["nome"]
+            saida["ext_modelo_cadastro"] = ext
+
+    return saida
+
+
+def extrair_arquivos_do_zip(zip_file):
+    arquivos = []
+
+    with zipfile.ZipFile(zip_file, "r") as z:
+        nomes = z.namelist()
+
+        for nome in nomes:
+            if nome.endswith("/"):
+                continue
+            if not nome.lower().endswith((".csv", ".xlsx", ".xls")):
+                continue
+
+            arquivos.append({
+                "nome": os.path.basename(nome),
+                "bytes": z.read(nome),
+                "tipo_obj": "bytes"
+            })
+
+    return arquivos
+
+
+# =========================
+# AÇÕES RÁPIDAS
+# =========================
+a1, a2 = st.columns(2)
+
+with a1:
+    if st.button("🗑️ Limpar tudo", use_container_width=True):
+        limpar_estado()
+        st.success("Estado limpo com sucesso.")
+
+with a2:
+    st.info("Se o modelo vier em CSV, o resultado sai em CSV. Se vier em XLSX/XLS, sai em XLSX.")
+
+
+# =========================
+# FORMULÁRIO
+# =========================
+with st.form("form_processamento"):
+    modo_envio = st.radio(
+        "📥 Como deseja enviar?",
+        ["Arquivos soltos", "ZIP com tudo junto"],
+        horizontal=True
+    )
+
+    if modo_envio == "Arquivos soltos":
+        arquivos_soltos = st.file_uploader(
+            "Envie os arquivos",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key="arquivos_soltos"
+        )
+        zip_unico = None
+    else:
+        zip_unico = st.file_uploader(
+            "Envie 1 ZIP com tudo dentro",
+            type=["zip"],
+            key="zip_unico"
+        )
+        arquivos_soltos = None
+
+    processar = st.form_submit_button("🚀 Processar agora", use_container_width=True)
+
+progress_bar = st.progress(0)
+status_box = st.empty()
+
+
+# =========================
+# PROCESSAR
+# =========================
+pode_processar = (arquivos_soltos and len(arquivos_soltos) > 0) or (zip_unico is not None)
+
+if processar and pode_processar:
+    try:
+        limpar_estado()
+
+        lista_arquivos = []
+
+        if arquivos_soltos:
+            for arq in arquivos_soltos:
+                lista_arquivos.append({
+                    "nome": arq.name,
+                    "obj": arq,
+                    "tipo_obj": "upload"
+                })
+
+        if zip_unico is not None:
+            lista_arquivos = extrair_arquivos_do_zip(zip_unico)
+            log(f"ZIP lido com {len(lista_arquivos)} arquivos válidos.")
+
+        total_etapas = len(lista_arquivos) + 9
+        progresso = ProgressoTempo(total_etapas, progress_bar, status_box)
+
+        progresso.atualizar("Preparando processamento")
+        log("Início do processamento.")
+
+        resultado = processar_lista_arquivos(
+            lista_arquivos,
+            progresso,
+            origem="ZIP" if zip_unico is not None else "arquivos soltos"
+        )
+
+        for chave, valor in resultado.items():
+            st.session_state[chave] = valor
+
+        progresso.atualizar("Validando origens")
+        erros = []
+
+        if st.session_state["df_origem_estoque"] is not None:
+            erros += validar_origem_estoque(st.session_state["df_origem_estoque"])
+        else:
+            erros.append("Arquivo de origem de estoque não foi identificado.")
+
+        if st.session_state["df_origem_cadastro"] is not None:
+            erros += validar_origem_cadastro(st.session_state["df_origem_cadastro"])
+        else:
+            erros.append("Arquivo de origem de cadastro não foi identificado.")
+
+        progresso.atualizar("Gerando novos dados de estoque")
+        novos_estoque = gerar_novos_dados_estoque(st.session_state["df_origem_estoque"]) if st.session_state["df_origem_estoque"] is not None else pd.DataFrame()
+
+        progresso.atualizar("Gerando novos dados de cadastro")
+        novos_cadastro = gerar_novos_dados_cadastro(st.session_state["df_origem_cadastro"]) if st.session_state["df_origem_cadastro"] is not None else pd.DataFrame()
+
+        progresso.atualizar("Limpando conteúdo antigo do modelo de estoque")
+        final_estoque = limpar_modelo_e_inserir_exato(
+            st.session_state["df_modelo_estoque"],
+            novos_estoque,
+            "modelo_estoque"
+        )
+
+        progresso.atualizar("Limpando conteúdo antigo do modelo de cadastro")
+        final_cadastro = limpar_modelo_e_inserir_exato(
+            st.session_state["df_modelo_cadastro"],
+            novos_cadastro,
+            "modelo_cadastro"
+        )
+
+        progresso.atualizar("Aplicando limpeza final no estoque")
+        final_estoque = limpar_dataframe_extremo(final_estoque, "final_estoque")
+
+        progresso.atualizar("Aplicando limpeza final no cadastro")
+        final_cadastro = limpar_dataframe_extremo(final_cadastro, "final_cadastro")
+
+        progresso.atualizar("Salvando resultados")
+        st.session_state["df_final_estoque"] = final_estoque
+        st.session_state["df_final_cadastro"] = final_cadastro
+
+        if erros:
+            for erro in erros:
+                st.error(erro)
+                log(erro)
+        else:
+            st.success("✅ Processamento concluído com sucesso.")
+            log("Processamento concluído com sucesso.")
+
+        progresso.atualizar("Concluído")
+
+    except Exception as e:
+        st.error(f"Erro no processamento: {e}")
+        log(f"Erro no processamento: {e}")
+
+
+# =========================
+# STATUS
+# =========================
+st.subheader("📌 Status atual")
+
+c1, c2 = st.columns(2)
+
+with c1:
+    st.write(f"**Origem estoque:** {st.session_state['nome_origem_estoque'] or 'Não carregado'}")
+    st.write(f"**Modelo estoque:** {st.session_state['nome_modelo_estoque'] or 'Não enviado'}")
+    st.write(f"**Formato modelo estoque:** {st.session_state['ext_modelo_estoque'] or 'Padrão .xlsx'}")
+
+with c2:
+    st.write(f"**Origem cadastro:** {st.session_state['nome_origem_cadastro'] or 'Não carregado'}")
+    st.write(f"**Modelo cadastro:** {st.session_state['nome_modelo_cadastro'] or 'Não enviado'}")
+    st.write(f"**Formato modelo cadastro:** {st.session_state['ext_modelo_cadastro'] or 'Padrão .xlsx'}")
+
+
+# =========================
+# PRÉVIAS FECHADAS
+# =========================
+with st.expander("📦 Prévia origem - estoque", expanded=False):
+    if st.session_state["df_origem_estoque"] is not None:
+        st.dataframe(st.session_state["df_origem_estoque"].head(20), use_container_width=True)
+
+with st.expander("📋 Prévia origem - cadastro", expanded=False):
+    if st.session_state["df_origem_cadastro"] is not None:
+        st.dataframe(st.session_state["df_origem_cadastro"].head(20), use_container_width=True)
+
+with st.expander("🧩 Prévia modelo - atualizar_estoque", expanded=False):
+    if st.session_state["df_modelo_estoque"] is not None:
+        st.dataframe(st.session_state["df_modelo_estoque"].head(20), use_container_width=True)
+
+with st.expander("🧩 Prévia modelo - cadastrar_produtos", expanded=False):
+    if st.session_state["df_modelo_cadastro"] is not None:
+        st.dataframe(st.session_state["df_modelo_cadastro"].head(20), use_container_width=True)
+
+with st.expander("📦 Prévia final - atualizar_estoque", expanded=False):
+    if st.session_state["df_final_estoque"] is not None and not st.session_state["df_final_estoque"].empty:
+        st.dataframe(st.session_state["df_final_estoque"].head(20), use_container_width=True)
+
+with st.expander("📋 Prévia final - cadastrar_produtos", expanded=False):
+    if st.session_state["df_final_cadastro"] is not None and not st.session_state["df_final_cadastro"].empty:
+        st.dataframe(st.session_state["df_final_cadastro"].head(20), use_container_width=True)
+
+
+# =========================
+# DOWNLOADS
+# =========================
+df_final_estoque = st.session_state["df_final_estoque"]
+df_final_cadastro = st.session_state["df_final_cadastro"]
+
+ext_modelo_estoque = st.session_state["ext_modelo_estoque"] or ".xlsx"
+ext_modelo_cadastro = st.session_state["ext_modelo_cadastro"] or ".xlsx"
+
+if (
+    (df_final_estoque is not None and not df_final_estoque.empty) or
+    (df_final_cadastro is not None and not df_final_cadastro.empty)
+):
+    st.subheader("⬇️ Downloads")
+
+    nome_est = nome_saida("atualizar_estoque", ext_modelo_estoque)
+    nome_cad = nome_saida("cadastrar_produtos", ext_modelo_cadastro)
+
+    d1, d2, d3 = st.columns(3)
+
+    with d1:
+        if df_final_estoque is not None and not df_final_estoque.empty:
+            data_est, mime_est = bytes_no_formato(df_final_estoque, ext_modelo_estoque, "Estoque")
+            st.download_button(
+                label=f"📦 Baixar {nome_est}",
+                data=data_est,
+                file_name=nome_est,
+                mime=mime_est,
+                use_container_width=True
+            )
+
+    with d2:
+        if df_final_cadastro is not None and not df_final_cadastro.empty:
+            data_cad, mime_cad = bytes_no_formato(df_final_cadastro, ext_modelo_cadastro, "Cadastro")
+            st.download_button(
+                label=f"📋 Baixar {nome_cad}",
+                data=data_cad,
+                file_name=nome_cad,
+                mime=mime_cad,
+                use_container_width=True
+            )
+
+    with d3:
+        zip_final, nome_zip_est, nome_zip_cad = gerar_zip_final(
+            df_final_estoque,
+            df_final_cadastro,
+            ext_modelo_estoque,
+            ext_modelo_cadastro,
+            st.session_state["logs"]
+        )
+
+        st.download_button(
+            label="📦 Baixar bling_final.zip",
+            data=zip_final,
+            file_name="bling_final.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
+
+
+# =========================
+# LOGS FECHADOS
+# =========================
+with st.expander("🧾 Logs", expanded=False):
+    if st.session_state["logs"]:
+        st.text_area(
+            "Log de processamento",
+            value="\n".join(st.session_state["logs"]),
+            height=320
+        )
+    else:
+        st.info("Nenhum log gerado ainda.")
