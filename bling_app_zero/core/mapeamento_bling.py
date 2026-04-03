@@ -11,12 +11,9 @@ def normalizar_texto(texto):
         return ""
 
     texto = str(texto).strip().lower()
-
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(c for c in texto if not unicodedata.combining(c))
-
-    texto = texto.replace("\n", " ")
-    texto = texto.replace("\r", " ")
+    texto = texto.replace("\n", " ").replace("\r", " ")
     texto = re.sub(r"\s+", " ", texto)
 
     return texto.strip()
@@ -33,7 +30,7 @@ def slug_coluna(texto):
 
 
 # =========================================================
-# DICIONÁRIOS DE SINÔNIMOS
+# SINÔNIMOS
 # =========================================================
 SINONIMOS = {
     "codigo": [
@@ -54,14 +51,12 @@ SINONIMOS = {
         "produto",
         "titulo",
         "titulo_produto",
-        "descricao_nome",
         "name",
         "product_name",
     ],
     "descricao_curta": [
         "descricao_curta",
         "descricaocurta",
-        "descricao",
         "descricao",
         "resumo",
         "detalhes",
@@ -153,7 +148,7 @@ SINONIMOS = {
 
 
 # =========================================================
-# CAMPOS BASE BLING
+# CAMPOS BLING
 # =========================================================
 def campos_cadastro_bling():
     return [
@@ -189,7 +184,7 @@ def campos_estoque_bling():
 
 
 # =========================================================
-# DETECÇÃO DE COLUNAS
+# DETECÇÃO
 # =========================================================
 def detectar_colunas(df: pd.DataFrame) -> dict:
     if df is None or df.empty:
@@ -197,17 +192,14 @@ def detectar_colunas(df: pd.DataFrame) -> dict:
 
     colunas_originais = list(df.columns)
     colunas_slug = {col: slug_coluna(col) for col in colunas_originais}
-
     resultado = {}
 
-    # 1) procura correspondência exata por sinônimo
     for campo, sinonimos in SINONIMOS.items():
         for coluna_original, coluna_slug in colunas_slug.items():
             if coluna_slug in sinonimos:
                 resultado[campo] = coluna_original
                 break
 
-    # 2) fallback por contains
     for campo, sinonimos in SINONIMOS.items():
         if campo in resultado:
             continue
@@ -221,7 +213,7 @@ def detectar_colunas(df: pd.DataFrame) -> dict:
 
 
 # =========================================================
-# AJUSTES DE VALORES
+# AJUSTES DE SÉRIES
 # =========================================================
 def valor_padrao_serie(df: pd.DataFrame, valor=""):
     return pd.Series([valor] * len(df), index=df.index)
@@ -248,15 +240,29 @@ def limpar_texto_serie(serie: pd.Series) -> pd.Series:
 def limpar_numero_serie(serie: pd.Series, default="0") -> pd.Series:
     s = serie.fillna("").astype(str).str.strip()
 
-    # remove separador de milhar e tenta padronizar decimal
-    s = s.str.replace(".", "", regex=False)
-    s = s.str.replace(",", ".", regex=False)
+    def normalizar_numero(valor):
+        valor = str(valor).strip()
+        if valor == "":
+            return default
 
-    # mantém só números, ponto e sinal
-    s = s.str.replace(r"[^0-9.\-]", "", regex=True)
+        valor = re.sub(r"[^0-9,.\-]", "", valor)
 
-    s = s.replace("", default)
-    return s
+        if "," in valor and "." in valor:
+            if valor.rfind(",") > valor.rfind("."):
+                valor = valor.replace(".", "")
+                valor = valor.replace(",", ".")
+            else:
+                valor = valor.replace(",", "")
+        elif "," in valor:
+            valor = valor.replace(".", "")
+            valor = valor.replace(",", ".")
+
+        if valor in ["", "-", ".", "-.", ".-", "--"]:
+            return default
+
+        return valor
+
+    return s.apply(normalizar_numero)
 
 
 def limpar_gtin_serie(serie: pd.Series) -> pd.Series:
@@ -266,8 +272,7 @@ def limpar_gtin_serie(serie: pd.Series) -> pd.Series:
 
 
 def limpar_url_serie(serie: pd.Series) -> pd.Series:
-    s = serie.fillna("").astype(str).str.strip()
-    return s
+    return serie.fillna("").astype(str).str.strip()
 
 
 # =========================================================
@@ -296,10 +301,8 @@ def mapear_cadastro_bling(
         return pd.DataFrame(columns=campos_cadastro_bling()), {}
 
     mapeamento_final = resolver_mapeamento_final(df, mapeamento_manual)
-
     saida = pd.DataFrame(index=df.index)
 
-    # regras fixas do usuário
     saida["id"] = ""
     saida["codigo"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "codigo", ""))
     saida["nome"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "nome", ""))
@@ -308,21 +311,13 @@ def mapear_cadastro_bling(
     saida["situacao"] = "Ativo"
     saida["marca"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "marca", ""))
 
-    # REGRA DEFINITIVA:
-    # descrição sempre em descricao_curta
+    # regra fixa do usuário
     saida["descricao_curta"] = limpar_texto_serie(
         obter_serie(df, mapeamento_final, "descricao_curta", "")
     )
-
-    # REGRA DEFINITIVA:
-    # coluna descricao fica vazia
     saida["descricao"] = ""
-
-    # REGRA DEFINITIVA:
-    # coluna video fica vazia
     saida["video"] = ""
 
-    # links apenas nas imagens
     imagem_base = limpar_url_serie(obter_serie(df, mapeamento_final, "imagem", ""))
     saida["imagem_1"] = imagem_base
     saida["imagem_2"] = ""
@@ -335,7 +330,6 @@ def mapear_cadastro_bling(
     saida["peso_liquido"] = limpar_numero_serie(obter_serie(df, mapeamento_final, "peso", "0"), default="0")
     saida["gtin"] = limpar_gtin_serie(obter_serie(df, mapeamento_final, "gtin", ""))
 
-    # garante ordem final
     saida = saida[campos_cadastro_bling()]
 
     return saida, mapeamento_final
@@ -352,8 +346,8 @@ def mapear_estoque_bling(
         return pd.DataFrame(columns=campos_estoque_bling()), {}
 
     mapeamento_final = resolver_mapeamento_final(df, mapeamento_manual)
-
     saida = pd.DataFrame(index=df.index)
+
     saida["id"] = ""
     saida["codigo"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "codigo", ""))
     saida["nome"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "nome", ""))
