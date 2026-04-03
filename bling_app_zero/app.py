@@ -1,6 +1,6 @@
 import hashlib
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from .core.leitor import (
     carregar_planilha,
@@ -43,11 +43,6 @@ def get_state(chave, default=None):
 
 def set_state(chave, valor):
     st.session_state[chave] = valor
-
-
-def del_state(chave):
-    if chave in st.session_state:
-        del st.session_state[chave]
 
 
 def gerar_hash_arquivo(uploaded_file):
@@ -99,7 +94,6 @@ def resetar_apenas_resultados():
     set_state("painel_real_ajuste_manual_aberto", False)
     set_state("painel_real_mapeamento_final_aberto", False)
 
-    # fecha também os blocos do preview/controlados
     for chave in list(st.session_state.keys()):
         if (
             chave.endswith("_preview_aberto")
@@ -124,7 +118,6 @@ def resetar_estado_quando_trocar_arquivo(arquivo_hash_novo, arquivo_nome_novo):
         set_state("df_planilha", None)
         resetar_apenas_resultados()
 
-        # limpa selects antigos do painel manual
         for chave in list(st.session_state.keys()):
             if chave.startswith("select_manual_"):
                 del st.session_state[chave]
