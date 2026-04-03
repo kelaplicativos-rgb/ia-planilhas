@@ -1,111 +1,79 @@
-from __future__ import annotations
-
 import pandas as pd
 
 
 # =========================
-# 📦 PADRÃO BLING - CADASTRO
+# POSSÍVEIS NOMES (IA SIMPLES)
 # =========================
-COLUNAS_CADASTRO = [
-    "codigo",
-    "nome",
-    "unidade",
-    "preco",
-    "situacao",
-    "marca",
-    "descricao_curta",
-    "url_imagens",
-    "link_externo"
-]
-
-
-# =========================
-# 📦 PADRÃO BLING - ESTOQUE
-# =========================
-COLUNAS_ESTOQUE = [
-    "codigo",
-    "deposito",
-    "estoque"
-]
-
-
-# =========================
-# 🧠 MAPEAMENTO INTELIGENTE
-# =========================
-MAPEAMENTO_PADRAO = {
+MAPEAMENTO_INTELIGENTE = {
     "codigo": ["codigo", "sku", "id", "ref"],
-    "nome": ["nome", "produto", "descricao", "titulo"],
-    "unidade": ["unidade", "und"],
+    "nome": ["nome", "produto", "titulo", "descricao"],
     "preco": ["preco", "valor", "price"],
-    "situacao": ["situacao", "status"],
+    "descricao_curta": ["descricao", "desc", "detalhes"],
     "marca": ["marca", "brand"],
-    "descricao_curta": ["descricao_curta", "descricao", "desc"],
-    "url_imagens": ["imagem", "imagens", "image", "foto"],
-    "link_externo": ["link", "url", "produto_url"]
+    "imagem": ["imagem", "image", "foto", "url_imagem"],
 }
 
 
-# =========================
-# 🔎 FUNÇÃO DE DETECÇÃO
-# =========================
-def detectar_coluna(df: pd.DataFrame, possiveis_nomes: list[str]) -> str | None:
+def encontrar_coluna(df, possibilidades):
     for col in df.columns:
-        if col in possiveis_nomes:
-            return col
+        nome = col.lower()
+        for p in possibilidades:
+            if p in nome:
+                return col
     return None
 
 
-# =========================
-# 🧱 MONTAR CADASTRO
-# =========================
-def montar_planilha_cadastro(df: pd.DataFrame) -> pd.DataFrame:
-    resultado = pd.DataFrame(columns=COLUNAS_CADASTRO)
+def mapear_produtos(df: pd.DataFrame, modelo: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preenche modelo do Bling com base na planilha enviada
+    """
 
-    for coluna_final, possiveis in MAPEAMENTO_PADRAO.items():
-        col_origem = detectar_coluna(df, possiveis)
+    df_saida = modelo.copy()
 
-        if col_origem:
-            resultado[coluna_final] = df[col_origem]
-        else:
-            resultado[coluna_final] = ""
+    # =========================
+    # DETECÇÃO AUTOMÁTICA
+    # =========================
+    col_codigo = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["codigo"])
+    col_nome = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["nome"])
+    col_preco = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["preco"])
+    col_desc = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["descricao_curta"])
+    col_marca = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["marca"])
+    col_img = encontrar_coluna(df, MAPEAMENTO_INTELIGENTE["imagem"])
 
-    # valores padrão obrigatórios
-    if "situacao" in resultado.columns:
-        resultado["situacao"] = resultado["situacao"].replace("", "Ativo")
+    # =========================
+    # LOOP DE PREENCHIMENTO
+    # =========================
+    linhas = []
 
-    if "unidade" in resultado.columns:
-        resultado["unidade"] = resultado["unidade"].replace("", "UN")
+    for _, row in df.iterrows():
+        nova_linha = {}
 
-    return resultado
+        for col in df_saida.columns:
+            nome_col = col.lower()
 
+            if "codigo" in nome_col and col_codigo:
+                nova_linha[col] = row[col_codigo]
 
-# =========================
-# 🧱 MONTAR ESTOQUE
-# =========================
-def montar_planilha_estoque(
-    df: pd.DataFrame,
-    deposito_padrao: str = "Geral"
-) -> pd.DataFrame:
+            elif "nome" in nome_col and col_nome:
+                nova_linha[col] = row[col_nome]
 
-    resultado = pd.DataFrame(columns=COLUNAS_ESTOQUE)
+            elif "preco" in nome_col and col_preco:
+                nova_linha[col] = row[col_preco]
 
-    # código
-    col_codigo = detectar_coluna(df, MAPEAMENTO_PADRAO["codigo"])
-    if col_codigo:
-        resultado["codigo"] = df[col_codigo]
-    else:
-        resultado["codigo"] = ""
+            elif "descricao" in nome_col and col_desc:
+                nova_linha[col] = row[col_desc]
 
-    # estoque
-    possiveis_estoque = ["estoque", "quantidade", "qtd", "stock"]
-    col_estoque = detectar_coluna(df, possiveis_estoque)
+            elif "marca" in nome_col and col_marca:
+                nova_linha[col] = row[col_marca]
 
-    if col_estoque:
-        resultado["estoque"] = df[col_estoque]
-    else:
-        resultado["estoque"] = 0
+            elif "imagem" in nome_col and col_img:
+                nova_linha[col] = row[col_img]
 
-    # depósito (manual)
-    resultado["deposito"] = deposito_padrao
+            else:
+                nova_linha[col] = ""
 
-    return resultado
+        linhas.append(nova_linha)
+
+    df_final = pd.DataFrame(linhas)
+
+    return df_final
