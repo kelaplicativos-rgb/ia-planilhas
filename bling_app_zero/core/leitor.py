@@ -1,6 +1,6 @@
 import pandas as pd
 
-from bling_app_zero.utils.excel import (
+from ..utils.excel import (
     ler_planilha,
     limpar_valores_vazios,
     normalizar_colunas,
