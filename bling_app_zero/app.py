@@ -21,13 +21,18 @@ def init_state() -> None:
         "logs": [],
         "df_origem": None,
         "df_saida": None,
-        "nome_arquivo": "",
+        "nome_arquivo_origem": "",
+        "nome_modelo_cadastro": "",
+        "nome_modelo_estoque": "",
+        "modelo_cadastro_raw": None,
+        "modelo_estoque_raw": None,
         "mapa_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
         "preview_aberto": False,
         "ajuste_manual_aberto": True,
         "mapeamento_final_aberto": True,
         "colunas_auto_aberto": False,
+        "ultima_chave_arquivo": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -42,13 +47,22 @@ def limpar_tudo() -> None:
     st.session_state["logs"] = []
     st.session_state["df_origem"] = None
     st.session_state["df_saida"] = None
-    st.session_state["nome_arquivo"] = ""
+    st.session_state["nome_arquivo_origem"] = ""
+    st.session_state["nome_modelo_cadastro"] = ""
+    st.session_state["nome_modelo_estoque"] = ""
+    st.session_state["modelo_cadastro_raw"] = None
+    st.session_state["modelo_estoque_raw"] = None
     st.session_state["mapa_manual"] = {}
     st.session_state["ultimo_tipo_processamento"] = "Cadastro de produtos"
     st.session_state["preview_aberto"] = False
     st.session_state["ajuste_manual_aberto"] = True
     st.session_state["mapeamento_final_aberto"] = True
     st.session_state["colunas_auto_aberto"] = False
+    st.session_state["ultima_chave_arquivo"] = ""
+
+    for k in list(st.session_state.keys()):
+        if k.startswith("map_"):
+            del st.session_state[k]
 
 
 # =========================================================
@@ -83,6 +97,7 @@ def slug_coluna(nome: str) -> str:
     nome = nome.replace("/", " ")
     nome = nome.replace("\\", " ")
     nome = nome.replace("-", " ")
+    nome = nome.replace("_", " ")
     nome = re.sub(r"[^a-z0-9 ]+", "", nome)
     nome = re.sub(r"\s+", " ", nome).strip()
     return nome
@@ -109,7 +124,7 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def limpar_dataframe_origem(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     df = normalizar_colunas(df)
@@ -125,50 +140,79 @@ def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def limpar_dataframe_modelo(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.dropna(axis=0, how="all")
+    df = df.reset_index(drop=True)
+    return df
+
+
 # =========================================================
 # LEITURA DE ARQUIVO
 # =========================================================
-def ler_planilha(arquivo) -> pd.DataFrame:
+def _ler_csv_com_tentativas(arquivo, limpar: bool) -> pd.DataFrame:
+    tentativas = [
+        {"sep": None, "engine": "python", "encoding": "utf-8"},
+        {"sep": ";", "engine": "python", "encoding": "utf-8"},
+        {"sep": ",", "engine": "python", "encoding": "utf-8"},
+        {"sep": "\t", "engine": "python", "encoding": "utf-8"},
+        {"sep": None, "engine": "python", "encoding": "latin-1"},
+        {"sep": ";", "engine": "python", "encoding": "latin-1"},
+        {"sep": ",", "engine": "python", "encoding": "latin-1"},
+        {"sep": "\t", "engine": "python", "encoding": "latin-1"},
+    ]
+
+    ultimo_erro = None
+    for t in tentativas:
+        try:
+            arquivo.seek(0)
+            df = pd.read_csv(
+                arquivo,
+                sep=t["sep"],
+                engine=t["engine"],
+                encoding=t["encoding"],
+                dtype=str,
+                on_bad_lines="skip",
+            )
+            if limpar:
+                df = limpar_dataframe_origem(df)
+            else:
+                df = limpar_dataframe_modelo(df)
+            if len(df.columns) > 0:
+                return df
+        except Exception as e:
+            ultimo_erro = e
+
+    raise ValueError(f"Erro ao ler CSV: {ultimo_erro}")
+
+
+def ler_planilha_origem(arquivo) -> pd.DataFrame:
     nome = arquivo.name.lower()
 
     if nome.endswith(".csv"):
-        tentativas = [
-            {"sep": None, "engine": "python", "encoding": "utf-8"},
-            {"sep": ";", "engine": "python", "encoding": "utf-8"},
-            {"sep": ",", "engine": "python", "encoding": "utf-8"},
-            {"sep": "\t", "engine": "python", "encoding": "utf-8"},
-            {"sep": None, "engine": "python", "encoding": "latin-1"},
-            {"sep": ";", "engine": "python", "encoding": "latin-1"},
-            {"sep": ",", "engine": "python", "encoding": "latin-1"},
-            {"sep": "\t", "engine": "python", "encoding": "latin-1"},
-        ]
-
-        ultimo_erro = None
-        for t in tentativas:
-            try:
-                arquivo.seek(0)
-                df = pd.read_csv(
-                    arquivo,
-                    sep=t["sep"],
-                    engine=t["engine"],
-                    encoding=t["encoding"],
-                    dtype=str,
-                    on_bad_lines="skip",
-                )
-                df = limpar_dataframe(df)
-                if len(df.columns) > 0:
-                    return df
-            except Exception as e:
-                ultimo_erro = e
-
-        raise ValueError(f"Erro ao ler CSV: {ultimo_erro}")
+        return _ler_csv_com_tentativas(arquivo, limpar=True)
 
     arquivo.seek(0)
     try:
         df = pd.read_excel(arquivo, dtype=str)
-        return limpar_dataframe(df)
+        return limpar_dataframe_origem(df)
     except Exception as e:
-        raise ValueError(f"Erro ao ler planilha Excel: {e}")
+        raise ValueError(f"Erro ao ler planilha de origem: {e}")
+
+
+def ler_modelo_bling(arquivo) -> pd.DataFrame:
+    nome = arquivo.name.lower()
+
+    if nome.endswith(".csv"):
+        return _ler_csv_com_tentativas(arquivo, limpar=False)
+
+    arquivo.seek(0)
+    try:
+        df = pd.read_excel(arquivo, dtype=str)
+        return limpar_dataframe_modelo(df)
+    except Exception as e:
+        raise ValueError(f"Erro ao ler modelo Bling: {e}")
 
 
 # =========================================================
@@ -242,7 +286,7 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     )
     m["nome"] = encontrar_coluna(
         df,
-        ["nome", "produto", "titulo", "título", "nome produto", "descricao"]
+        ["nome", "produto", "titulo", "título", "nome produto", "descricao", "descrição"]
     )
     m["descricao_curta"] = encontrar_coluna(
         df,
@@ -264,7 +308,7 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     m["imagem"] = encontrar_coluna(
         df,
         [
-            "imagem", "imagem 1", "url imagem", "url da imagem", "foto",
+            "imagem", "imagens", "imagem 1", "url imagem", "url da imagem", "foto",
             "link imagem", "url imagens externas"
         ],
     )
@@ -381,7 +425,7 @@ def extrair_urls_validas(texto: str) -> List[str]:
 
 def quebrar_urls_imagem(texto: str) -> List[str]:
     """
-    Regra fixa do usuário:
+    Regra fixa do projeto:
     múltiplas imagens na mesma célula devem vir separadas por |
     """
     texto = limpar_texto(texto)
@@ -446,9 +490,67 @@ def extrair_imagens_da_linha(
 
 
 # =========================================================
+# MODELO BLING
+# =========================================================
+def encontrar_coluna_modelo(modelo_df: pd.DataFrame, candidatos: List[str]) -> Optional[str]:
+    for col in modelo_df.columns:
+        col_slug = slug_coluna(col)
+        for cand in candidatos:
+            if col_slug == slug_coluna(cand):
+                return col
+
+    for col in modelo_df.columns:
+        col_slug = slug_coluna(col)
+        for cand in candidatos:
+            cand_slug = slug_coluna(cand)
+            if cand_slug and cand_slug in col_slug:
+                return col
+
+    return None
+
+
+def criar_saida_no_modelo(modelo_df: pd.DataFrame, quantidade_linhas: int) -> pd.DataFrame:
+    return pd.DataFrame("", index=range(quantidade_linhas), columns=list(modelo_df.columns))
+
+
+def localizar_campos_modelo_cadastro(modelo_df: pd.DataFrame) -> Dict[str, Optional[str]]:
+    return {
+        "id": encontrar_coluna_modelo(modelo_df, ["id", "codigo pai", "código pai"]),
+        "codigo": encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku"]),
+        "nome": encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto"]),
+        "unidade": encontrar_coluna_modelo(modelo_df, ["unidade", "und", "un"]),
+        "preco": encontrar_coluna_modelo(modelo_df, ["preco", "preço", "valor", "preco venda"]),
+        "situacao": encontrar_coluna_modelo(modelo_df, ["situacao", "situação", "status"]),
+        "marca": encontrar_coluna_modelo(modelo_df, ["marca", "fabricante"]),
+        "descricao_curta": encontrar_coluna_modelo(modelo_df, ["descricao curta", "descrição curta"]),
+        "descricao": encontrar_coluna_modelo(modelo_df, ["descricao", "descrição"]),
+        "video": encontrar_coluna_modelo(modelo_df, ["video", "vídeo"]),
+        "imagem_1": encontrar_coluna_modelo(modelo_df, ["imagem 1", "imagem1"]),
+        "imagem_2": encontrar_coluna_modelo(modelo_df, ["imagem 2", "imagem2"]),
+        "imagem_3": encontrar_coluna_modelo(modelo_df, ["imagem 3", "imagem3"]),
+        "imagem_4": encontrar_coluna_modelo(modelo_df, ["imagem 4", "imagem4"]),
+        "imagem_5": encontrar_coluna_modelo(modelo_df, ["imagem 5", "imagem5"]),
+        "imagem_unica": encontrar_coluna_modelo(modelo_df, ["imagem", "imagens"]),
+        "link_externo": encontrar_coluna_modelo(modelo_df, ["link externo", "url produto", "link produto", "url"]),
+        "estoque": encontrar_coluna_modelo(modelo_df, ["estoque", "saldo"]),
+    }
+
+
+def localizar_campos_modelo_estoque(modelo_df: pd.DataFrame) -> Dict[str, Optional[str]]:
+    return {
+        "id": encontrar_coluna_modelo(modelo_df, ["id"]),
+        "codigo": encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku"]),
+        "nome": encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto"]),
+        "deposito": encontrar_coluna_modelo(modelo_df, ["deposito", "depósito", "almoxarifado"]),
+        "estoque": encontrar_coluna_modelo(modelo_df, ["estoque", "saldo", "quantidade"]),
+        "preco_unitario": encontrar_coluna_modelo(modelo_df, ["preco unitario", "preço unitário", "preco", "preço"]),
+    }
+
+
+# =========================================================
 # VALIDAÇÃO
 # =========================================================
-def validar_saida_cadastro(df_saida: pd.DataFrame) -> Tuple[List[str], List[str]]:
+def validar_saida_cadastro(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> Tuple[List[str], List[str]]:
     erros = []
     avisos = []
 
@@ -456,38 +558,31 @@ def validar_saida_cadastro(df_saida: pd.DataFrame) -> Tuple[List[str], List[str]
         erros.append("A planilha final de cadastro ficou vazia.")
         return erros, avisos
 
-    obrigatorias = ["codigo", "nome", "descricao curta"]
-    for col in obrigatorias:
-        if col not in df_saida.columns:
-            erros.append(f"Coluna obrigatória ausente na saída: {col}")
+    col_codigo = encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku"])
+    col_nome = encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto"])
+    col_desc_curta = encontrar_coluna_modelo(modelo_df, ["descricao curta", "descrição curta"])
 
-    if "codigo" in df_saida.columns:
-        vazios = int((df_saida["codigo"].astype(str).str.strip() == "").sum())
+    if not col_codigo:
+        erros.append("O modelo de cadastro do Bling não possui coluna de código/SKU.")
+    if not col_nome:
+        erros.append("O modelo de cadastro do Bling não possui coluna de nome.")
+    if not col_desc_curta:
+        avisos.append("O modelo de cadastro do Bling não possui coluna de descrição curta.")
+
+    if col_codigo and col_codigo in df_saida.columns:
+        vazios = int((df_saida[col_codigo].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append(f"Existem {vazios} linhas sem código.")
 
-    if "nome" in df_saida.columns:
-        vazios = int((df_saida["nome"].astype(str).str.strip() == "").sum())
+    if col_nome and col_nome in df_saida.columns:
+        vazios = int((df_saida[col_nome].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append(f"Existem {vazios} linhas sem nome.")
-
-    if "descricao curta" in df_saida.columns:
-        vazios = int((df_saida["descricao curta"].astype(str).str.strip() == "").sum())
-        if vazios > 0:
-            avisos.append(f"Existem {vazios} linhas sem descrição curta.")
-
-    for col in ["imagem 1", "imagem 2", "imagem 3", "imagem 4", "imagem 5"]:
-        if col in df_saida.columns:
-            invalidas = df_saida[col].astype(str).apply(
-                lambda x: bool(x.strip()) and not re.match(r"^https?://", x.strip(), flags=re.IGNORECASE)
-            ).sum()
-            if invalidas > 0:
-                erros.append(f"A coluna {col} possui {int(invalidas)} valores que não são URL.")
 
     return erros, avisos
 
 
-def validar_saida_estoque(df_saida: pd.DataFrame) -> Tuple[List[str], List[str]]:
+def validar_saida_estoque(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> Tuple[List[str], List[str]]:
     erros = []
     avisos = []
 
@@ -495,38 +590,39 @@ def validar_saida_estoque(df_saida: pd.DataFrame) -> Tuple[List[str], List[str]]
         erros.append("A planilha final de estoque ficou vazia.")
         return erros, avisos
 
-    obrigatorias = ["codigo", "deposito", "estoque"]
-    for col in obrigatorias:
-        if col not in df_saida.columns:
-            erros.append(f"Coluna obrigatória ausente na saída: {col}")
+    campos = localizar_campos_modelo_estoque(modelo_df)
 
-    if "codigo" in df_saida.columns:
-        vazios = int((df_saida["codigo"].astype(str).str.strip() == "").sum())
+    if not campos["codigo"]:
+        erros.append("O modelo de estoque do Bling não possui coluna de código/SKU.")
+    if not campos["deposito"]:
+        erros.append("O modelo de estoque do Bling não possui coluna de depósito.")
+    if not campos["estoque"]:
+        erros.append("O modelo de estoque do Bling não possui coluna de estoque.")
+
+    if campos["codigo"] and campos["codigo"] in df_saida.columns:
+        vazios = int((df_saida[campos["codigo"]].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append(f"Existem {vazios} linhas sem código.")
 
-    if "deposito" in df_saida.columns:
-        vazios = int((df_saida["deposito"].astype(str).str.strip() == "").sum())
+    if campos["deposito"] and campos["deposito"] in df_saida.columns:
+        vazios = int((df_saida[campos["deposito"]].astype(str).str.strip() == "").sum())
         if vazios > 0:
             erros.append("O depósito ficou vazio em uma ou mais linhas.")
-
-    if "estoque" in df_saida.columns:
-        negativos = int((pd.to_numeric(df_saida["estoque"], errors="coerce").fillna(0) < 0).sum())
-        if negativos > 0:
-            avisos.append(f"Existem {negativos} linhas com estoque negativo.")
 
     return erros, avisos
 
 
 # =========================================================
-# MAPEAMENTO BLING
+# MAPEAMENTO BLING DENTRO DO MODELO
 # =========================================================
-def mapear_cadastro_bling(
+def mapear_cadastro_no_modelo_bling(
     df: pd.DataFrame,
     mapa: Dict[str, Optional[str]],
     colunas_imagem_extras: List[str],
+    modelo_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    saida = pd.DataFrame(index=df.index)
+    campos_modelo = localizar_campos_modelo_cadastro(modelo_df)
+    saida = criar_saida_no_modelo(modelo_df, len(df))
 
     codigo_col = mapa.get("codigo")
     nome_col = mapa.get("nome")
@@ -537,109 +633,153 @@ def mapear_cadastro_bling(
     link_col = mapa.get("link_externo")
     situacao_col = mapa.get("situacao")
     unidade_col = mapa.get("unidade")
+    estoque_col = mapa.get("estoque")
 
-    saida["id"] = ""
-    saida["codigo"] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
-    saida["nome"] = df[nome_col] if nome_col and nome_col in df.columns else ""
-    saida["unidade"] = df[unidade_col] if unidade_col and unidade_col in df.columns else "UN"
-    saida["preco"] = df[preco_col] if preco_col and preco_col in df.columns else ""
-    saida["situacao"] = df[situacao_col] if situacao_col and situacao_col in df.columns else "Ativo"
-    saida["marca"] = df[marca_col] if marca_col and marca_col in df.columns else ""
+    if campos_modelo["id"]:
+        saida[campos_modelo["id"]] = ""
 
-    saida["descricao curta"] = df[desc_col] if desc_col and desc_col in df.columns else ""
-    saida["descricao"] = ""
-    saida["video"] = ""
+    if campos_modelo["codigo"]:
+        saida[campos_modelo["codigo"]] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
 
-    imagens_1 = []
-    imagens_2 = []
-    imagens_3 = []
-    imagens_4 = []
-    imagens_5 = []
+    if campos_modelo["nome"]:
+        saida[campos_modelo["nome"]] = df[nome_col] if nome_col and nome_col in df.columns else ""
 
+    if campos_modelo["unidade"]:
+        saida[campos_modelo["unidade"]] = df[unidade_col] if unidade_col and unidade_col in df.columns else "UN"
+
+    if campos_modelo["preco"]:
+        saida[campos_modelo["preco"]] = df[preco_col] if preco_col and preco_col in df.columns else ""
+
+    if campos_modelo["situacao"]:
+        saida[campos_modelo["situacao"]] = df[situacao_col] if situacao_col and situacao_col in df.columns else "Ativo"
+
+    if campos_modelo["marca"]:
+        saida[campos_modelo["marca"]] = df[marca_col] if marca_col and marca_col in df.columns else ""
+
+    if campos_modelo["descricao_curta"]:
+        saida[campos_modelo["descricao_curta"]] = df[desc_col] if desc_col and desc_col in df.columns else ""
+
+    if campos_modelo["descricao"]:
+        saida[campos_modelo["descricao"]] = ""
+
+    if campos_modelo["video"]:
+        saida[campos_modelo["video"]] = ""
+
+    if campos_modelo["estoque"]:
+        saida[campos_modelo["estoque"]] = df[estoque_col] if estoque_col and estoque_col in df.columns else ""
+
+    imagens_linhas = []
     for _, row in df.iterrows():
-        urls = extrair_imagens_da_linha(row, imagem_col, colunas_imagem_extras)
-        imagens_1.append(urls[0] if len(urls) > 0 else "")
-        imagens_2.append(urls[1] if len(urls) > 1 else "")
-        imagens_3.append(urls[2] if len(urls) > 2 else "")
-        imagens_4.append(urls[3] if len(urls) > 3 else "")
-        imagens_5.append(urls[4] if len(urls) > 4 else "")
+        imagens_linhas.append(extrair_imagens_da_linha(row, imagem_col, colunas_imagem_extras))
 
-    saida["imagem 1"] = imagens_1
-    saida["imagem 2"] = imagens_2
-    saida["imagem 3"] = imagens_3
-    saida["imagem 4"] = imagens_4
-    saida["imagem 5"] = imagens_5
+    colunas_multiplas = [
+        campos_modelo["imagem_1"],
+        campos_modelo["imagem_2"],
+        campos_modelo["imagem_3"],
+        campos_modelo["imagem_4"],
+        campos_modelo["imagem_5"],
+    ]
+    tem_colunas_multiplas = any(colunas_multiplas)
 
-    if link_col and link_col in df.columns:
-        saida["link externo"] = df[link_col].apply(limpar_link_externo)
-    else:
-        saida["link externo"] = ""
+    if tem_colunas_multiplas:
+        for idx, imagens in enumerate(imagens_linhas):
+            for pos, campo in enumerate(colunas_multiplas):
+                if campo:
+                    saida.at[idx, campo] = imagens[pos] if pos < len(imagens) else ""
+    elif campos_modelo["imagem_unica"]:
+        saida[campos_modelo["imagem_unica"]] = ["|".join(imagens) for imagens in imagens_linhas]
+
+    if campos_modelo["link_externo"]:
+        if link_col and link_col in df.columns:
+            saida[campos_modelo["link_externo"]] = df[link_col].apply(limpar_link_externo)
+        else:
+            saida[campos_modelo["link_externo"]] = ""
 
     for col in saida.columns:
-        if col == "preco":
+        if col == campos_modelo["preco"]:
             continue
         saida[col] = saida[col].apply(limpar_texto)
 
-    saida["preco"] = saida["preco"].apply(corrigir_preco)
-    saida["situacao"] = saida["situacao"].apply(normalizar_situacao)
-    saida["unidade"] = saida["unidade"].replace("", "UN")
+    if campos_modelo["preco"]:
+        saida[campos_modelo["preco"]] = saida[campos_modelo["preco"]].apply(corrigir_preco)
 
-    vazia = saida["descricao curta"].astype(str).str.strip() == ""
-    saida.loc[vazia, "descricao curta"] = saida.loc[vazia, "nome"]
+    if campos_modelo["situacao"]:
+        saida[campos_modelo["situacao"]] = saida[campos_modelo["situacao"]].apply(normalizar_situacao)
 
-    antes = len(saida)
-    saida = saida[saida["codigo"].astype(str).str.strip() != ""].copy()
-    removidas_sem_codigo = antes - len(saida)
-    if removidas_sem_codigo > 0:
-        log(f"Cadastro: removidas {removidas_sem_codigo} linhas sem código.")
+    if campos_modelo["unidade"]:
+        saida[campos_modelo["unidade"]] = saida[campos_modelo["unidade"]].replace("", "UN")
 
-    antes_dup = len(saida)
-    saida = saida.drop_duplicates(subset=["codigo"], keep="first").reset_index(drop=True)
-    removidas_duplicadas = antes_dup - len(saida)
-    if removidas_duplicadas > 0:
-        log(f"Cadastro: removidas {removidas_duplicadas} linhas com código duplicado.")
+    if campos_modelo["descricao_curta"] and campos_modelo["nome"]:
+        vazia = saida[campos_modelo["descricao_curta"]].astype(str).str.strip() == ""
+        saida.loc[vazia, campos_modelo["descricao_curta"]] = saida.loc[vazia, campos_modelo["nome"]]
 
-    for col in ["imagem 1", "imagem 2", "imagem 3", "imagem 4", "imagem 5"]:
-        limpas = saida[col].astype(str).apply(
-            lambda x: x if (not x.strip() or re.match(r"^https?://", x.strip(), flags=re.IGNORECASE)) else ""
-        )
-        saida[col] = limpas
+    if campos_modelo["codigo"]:
+        antes = len(saida)
+        saida = saida[saida[campos_modelo["codigo"]].astype(str).str.strip() != ""].copy()
+        removidas_sem_codigo = antes - len(saida)
+        if removidas_sem_codigo > 0:
+            log(f"Cadastro: removidas {removidas_sem_codigo} linhas sem código.")
+
+        antes_dup = len(saida)
+        saida = saida.drop_duplicates(subset=[campos_modelo["codigo"]], keep="first").reset_index(drop=True)
+        removidas_duplicadas = antes_dup - len(saida)
+        if removidas_duplicadas > 0:
+            log(f"Cadastro: removidas {removidas_duplicadas} linhas com código duplicado.")
 
     return saida
 
 
-def mapear_estoque_bling(
+def mapear_estoque_no_modelo_bling(
     df: pd.DataFrame,
     mapa: Dict[str, Optional[str]],
     deposito: str,
+    modelo_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    saida = pd.DataFrame(index=df.index)
+    campos_modelo = localizar_campos_modelo_estoque(modelo_df)
+    saida = criar_saida_no_modelo(modelo_df, len(df))
 
     codigo_col = mapa.get("codigo")
-    estoque_col = mapa.get("estoque")
+    estoque_col_origem = mapa.get("estoque")
     nome_col = mapa.get("nome")
+    preco_col = mapa.get("preco")
 
-    saida["codigo"] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
-    saida["nome"] = df[nome_col] if nome_col and nome_col in df.columns else ""
-    saida["deposito"] = limpar_texto(deposito)
-    saida["estoque"] = df[estoque_col] if estoque_col and estoque_col in df.columns else 0
+    if campos_modelo["id"]:
+        saida[campos_modelo["id"]] = ""
 
-    saida["codigo"] = saida["codigo"].apply(limpar_texto)
-    saida["nome"] = saida["nome"].apply(limpar_texto)
-    saida["deposito"] = saida["deposito"].apply(limpar_texto)
-    saida["estoque"] = saida["estoque"].apply(corrigir_estoque)
+    if campos_modelo["codigo"]:
+        saida[campos_modelo["codigo"]] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
 
-    antes = len(saida)
-    saida = saida[saida["codigo"].astype(str).str.strip() != ""].copy()
-    removidas_sem_codigo = antes - len(saida)
-    if removidas_sem_codigo > 0:
-        log(f"Estoque: removidas {removidas_sem_codigo} linhas sem código.")
+    if campos_modelo["nome"]:
+        saida[campos_modelo["nome"]] = df[nome_col] if nome_col and nome_col in df.columns else ""
 
-    antes_dup = len(saida)
-    saida = saida.drop_duplicates(subset=["codigo"], keep="first").reset_index(drop=True)
-    removidas_duplicadas = antes_dup - len(saida)
-    if removidas_duplicadas > 0:
-        log(f"Estoque: removidas {removidas_duplicadas} linhas com código duplicado.")
+    if campos_modelo["deposito"]:
+        saida[campos_modelo["deposito"]] = limpar_texto(deposito)
+
+    if campos_modelo["estoque"]:
+        origem = df[estoque_col_origem] if estoque_col_origem and estoque_col_origem in df.columns else 0
+        saida[campos_modelo["estoque"]] = pd.Series(origem).apply(corrigir_estoque)
+
+    if campos_modelo["preco_unitario"]:
+        origem_preco = df[preco_col] if preco_col and preco_col in df.columns else ""
+        saida[campos_modelo["preco_unitario"]] = pd.Series(origem_preco).apply(corrigir_preco)
+
+    for col in saida.columns:
+        if col in [campos_modelo["estoque"], campos_modelo["preco_unitario"]]:
+            continue
+        saida[col] = saida[col].apply(limpar_texto)
+
+    if campos_modelo["codigo"]:
+        antes = len(saida)
+        saida = saida[saida[campos_modelo["codigo"]].astype(str).str.strip() != ""].copy()
+        removidas_sem_codigo = antes - len(saida)
+        if removidas_sem_codigo > 0:
+            log(f"Estoque: removidas {removidas_sem_codigo} linhas sem código.")
+
+        antes_dup = len(saida)
+        saida = saida.drop_duplicates(subset=[campos_modelo["codigo"]], keep="first").reset_index(drop=True)
+        removidas_duplicadas = antes_dup - len(saida)
+        if removidas_duplicadas > 0:
+            log(f"Estoque: removidas {removidas_duplicadas} linhas com código duplicado.")
 
     return saida
 
@@ -765,6 +905,7 @@ def montar_df_mapeamento_final(
     mapa_final: Dict[str, Optional[str]],
     imagem_principal: Optional[str],
     colunas_imagem_extras: List[str],
+    modelo_nome: str,
 ) -> pd.DataFrame:
     nomes_exibicao = {
         "codigo": "Código / SKU",
@@ -788,6 +929,7 @@ def montar_df_mapeamento_final(
             "marca",
             "imagem",
             "link_externo",
+            "estoque",
             "situacao",
             "unidade",
         ]
@@ -796,9 +938,12 @@ def montar_df_mapeamento_final(
             "codigo",
             "nome",
             "estoque",
+            "preco",
         ]
 
     linhas = []
+    linhas.append({"Campo Bling": "Modelo Bling anexado", "Coluna escolhida": modelo_nome})
+
     for campo in ordem:
         linhas.append(
             {
@@ -817,6 +962,12 @@ def montar_df_mapeamento_final(
         {
             "Campo Bling": "Colunas extras de imagem",
             "Coluna escolhida": " | ".join(colunas_imagem_extras) if colunas_imagem_extras else "",
+        }
+    )
+    linhas.append(
+        {
+            "Campo Bling": "Regra fixa",
+            "Coluna escolhida": "Descrição do fornecedor -> descrição curta | descrição -> vazio | vídeo -> vazio",
         }
     )
 
@@ -855,42 +1006,90 @@ def main() -> None:
             limpar_tudo()
             st.rerun()
 
-    st.subheader("Envio da planilha")
-    arquivo = st.file_uploader(
-        "Selecione sua planilha",
+    st.subheader("Envio dos arquivos")
+
+    arquivo_origem = st.file_uploader(
+        "1) Planilha do fornecedor",
         type=["xlsx", "xls", "csv"],
+        key="upload_origem",
     )
 
-    if arquivo is not None:
+    col_modelo_1, col_modelo_2 = st.columns(2)
+
+    with col_modelo_1:
+        modelo_cadastro = st.file_uploader(
+            "2) Modelo de cadastro do Bling",
+            type=["xlsx", "xls", "csv"],
+            key="upload_modelo_cadastro",
+        )
+
+    with col_modelo_2:
+        modelo_estoque = st.file_uploader(
+            "3) Modelo de estoque do Bling",
+            type=["xlsx", "xls", "csv"],
+            key="upload_modelo_estoque",
+        )
+
+    if arquivo_origem is not None:
+        chave_atual = f"{arquivo_origem.name}-{getattr(arquivo_origem, 'size', 0)}"
+        if st.session_state["ultima_chave_arquivo"] != chave_atual:
+            try:
+                df = ler_planilha_origem(arquivo_origem)
+                st.session_state["df_origem"] = df
+                st.session_state["nome_arquivo_origem"] = arquivo_origem.name
+                st.session_state["df_saida"] = None
+                st.session_state["mapa_manual"] = {}
+                st.session_state["ultima_chave_arquivo"] = chave_atual
+
+                for k in list(st.session_state.keys()):
+                    if k.startswith("map_"):
+                        del st.session_state[k]
+
+                log(f"Arquivo de origem carregado: {arquivo_origem.name}")
+                log(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo de origem: {e}")
+                log(f"Erro ao ler arquivo de origem: {e}")
+                return
+
+    if modelo_cadastro is not None:
         try:
-            df = ler_planilha(arquivo)
-            st.session_state["df_origem"] = df
-            st.session_state["nome_arquivo"] = arquivo.name
-            st.session_state["df_saida"] = None
-            log(f"Arquivo carregado: {arquivo.name}")
-            log(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
+            modelo_df = ler_modelo_bling(modelo_cadastro)
+            st.session_state["modelo_cadastro_raw"] = modelo_df
+            st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
         except Exception as e:
-            st.error(f"Erro ao ler arquivo: {e}")
-            log(f"Erro ao ler arquivo: {e}")
+            st.error(f"Erro ao ler modelo de cadastro: {e}")
+            log(f"Erro ao ler modelo de cadastro: {e}")
+            return
+
+    if modelo_estoque is not None:
+        try:
+            modelo_df = ler_modelo_bling(modelo_estoque)
+            st.session_state["modelo_estoque_raw"] = modelo_df
+            st.session_state["nome_modelo_estoque"] = modelo_estoque.name
+        except Exception as e:
+            st.error(f"Erro ao ler modelo de estoque: {e}")
+            log(f"Erro ao ler modelo de estoque: {e}")
             return
 
     df = st.session_state["df_origem"]
 
     if df is None:
+        st.info("Anexe a planilha do fornecedor para começar.")
         return
 
-    st.success(f"✅ Arquivo carregado: {st.session_state['nome_arquivo']}")
+    st.success(f"✅ Arquivo de origem carregado: {st.session_state['nome_arquivo_origem']}")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.metric("Linhas", len(df))
     with c2:
         st.metric("Colunas", len(df.columns))
+    with c3:
+        st.metric("Campos detectados", len([v for v in detectar_colunas(df).values() if v]))
 
     mapa_auto = detectar_colunas(df)
     colunas_imagem_auto = encontrar_colunas_imagem(df)
-    log(f"Mapeamento automático: {mapa_auto}")
-    log(f"Colunas de imagem detectadas: {colunas_imagem_auto}")
 
     with st.expander("👀 Preview", expanded=st.session_state["preview_aberto"]):
         st.dataframe(df.head(1), use_container_width=True)
@@ -902,12 +1101,18 @@ def main() -> None:
 
         st.info(
             "Regra fixa do sistema: a descrição da planilha de dados sempre vai para "
-            "'descricao curta'. A coluna 'descricao' fica vazia. A coluna 'video' também fica vazia."
+            "'descrição curta'. A coluna 'descrição' fica vazia. A coluna 'vídeo' também fica vazia."
         )
 
     mapa_final = st.session_state.get("mapa_manual") or mapa_auto
     imagem_principal = mapa_final.get("imagem")
     colunas_imagem_extras = [c for c in colunas_imagem_auto if c != imagem_principal]
+
+    modelo_nome_exibicao = (
+        st.session_state["nome_modelo_cadastro"]
+        if tipo_processamento == "Cadastro de produtos"
+        else st.session_state["nome_modelo_estoque"]
+    )
 
     with st.expander("✅ Mapeamento final que será usado", expanded=st.session_state["mapeamento_final_aberto"]):
         df_mapeamento_final = montar_df_mapeamento_final(
@@ -915,6 +1120,7 @@ def main() -> None:
             mapa_final=mapa_final,
             imagem_principal=imagem_principal,
             colunas_imagem_extras=colunas_imagem_extras,
+            modelo_nome=modelo_nome_exibicao or "",
         )
         st.dataframe(df_mapeamento_final, use_container_width=True, hide_index=True)
 
@@ -926,36 +1132,20 @@ def main() -> None:
         st.dataframe(df_auto, use_container_width=True, hide_index=True)
 
     if tipo_processamento == "Cadastro de produtos":
-        if st.button("Gerar planilha de cadastro", use_container_width=True):
-            try:
-                saida = mapear_cadastro_bling(df, mapa_final, colunas_imagem_extras)
-                erros, avisos = validar_saida_cadastro(saida)
+        modelo_cadastro_df = st.session_state["modelo_cadastro_raw"]
 
-                for aviso in avisos:
-                    st.warning(aviso)
-                    log(f"Aviso: {aviso}")
-
-                if erros:
-                    for erro in erros:
-                        st.error(erro)
-                        log(f"Erro de validação: {erro}")
-                else:
-                    st.session_state["df_saida"] = saida
-                    log(f"Cadastro gerado com {len(saida)} linhas.")
-                    st.success("✅ Planilha de cadastro gerada com sucesso.")
-
-            except Exception as e:
-                st.error(f"Erro ao gerar cadastro: {e}")
-                log(f"Erro ao gerar cadastro: {e}")
-
-    else:
-        if not limpar_texto(deposito):
-            st.warning("⚠️ Digite em qual estoque será lançado.")
+        if modelo_cadastro_df is None:
+            st.warning("⚠️ Anexe o modelo de cadastro do Bling.")
         else:
-            if st.button("Gerar planilha de estoque", use_container_width=True):
+            if st.button("Gerar planilha de cadastro", use_container_width=True):
                 try:
-                    saida = mapear_estoque_bling(df, mapa_final, deposito)
-                    erros, avisos = validar_saida_estoque(saida)
+                    saida = mapear_cadastro_no_modelo_bling(
+                        df=df,
+                        mapa=mapa_final,
+                        colunas_imagem_extras=colunas_imagem_extras,
+                        modelo_df=modelo_cadastro_df,
+                    )
+                    erros, avisos = validar_saida_cadastro(saida, modelo_cadastro_df)
 
                     for aviso in avisos:
                         st.warning(aviso)
@@ -967,8 +1157,46 @@ def main() -> None:
                             log(f"Erro de validação: {erro}")
                     else:
                         st.session_state["df_saida"] = saida
-                        log(f"Estoque gerado com {len(saida)} linhas. Depósito: {deposito}")
-                        st.success("✅ Planilha de estoque gerada com sucesso.")
+                        log(f"Cadastro gerado no modelo Bling com {len(saida)} linhas.")
+                        log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
+                        st.success("✅ Planilha de cadastro gerada no modelo real do Bling.")
+
+                except Exception as e:
+                    st.error(f"Erro ao gerar cadastro: {e}")
+                    log(f"Erro ao gerar cadastro: {e}")
+
+    else:
+        modelo_estoque_df = st.session_state["modelo_estoque_raw"]
+
+        if modelo_estoque_df is None:
+            st.warning("⚠️ Anexe o modelo de estoque do Bling.")
+        elif not limpar_texto(deposito):
+            st.warning("⚠️ Digite em qual estoque será lançado.")
+        else:
+            if st.button("Gerar planilha de estoque", use_container_width=True):
+                try:
+                    saida = mapear_estoque_no_modelo_bling(
+                        df=df,
+                        mapa=mapa_final,
+                        deposito=deposito,
+                        modelo_df=modelo_estoque_df,
+                    )
+                    erros, avisos = validar_saida_estoque(saida, modelo_estoque_df)
+
+                    for aviso in avisos:
+                        st.warning(aviso)
+                        log(f"Aviso: {aviso}")
+
+                    if erros:
+                        for erro in erros:
+                            st.error(erro)
+                            log(f"Erro de validação: {erro}")
+                    else:
+                        st.session_state["df_saida"] = saida
+                        log(f"Estoque gerado no modelo Bling com {len(saida)} linhas.")
+                        log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
+                        log(f"Depósito informado: {deposito}")
+                        st.success("✅ Planilha de estoque gerada no modelo real do Bling.")
 
                 except Exception as e:
                     st.error(f"Erro ao gerar estoque: {e}")
@@ -978,9 +1206,9 @@ def main() -> None:
 
     if df_saida is not None:
         nome_saida = (
-            "bling_cadastro_produtos.xlsx"
+            "bling_cadastro_produtos_modelo_real.xlsx"
             if tipo_processamento == "Cadastro de produtos"
-            else "bling_atualizacao_estoque.xlsx"
+            else "bling_atualizacao_estoque_modelo_real.xlsx"
         )
 
         arquivo_excel = salvar_excel_bytes(df_saida)
