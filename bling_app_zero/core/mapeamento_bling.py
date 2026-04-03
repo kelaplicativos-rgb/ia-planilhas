@@ -14,7 +14,7 @@ SINONIMOS = {
     ],
     "preco": [
         "preco", "preço", "valor", "price", "preco venda", "preço venda",
-        "valor venda", "preco unitario", "preço unitário"
+        "valor venda", "preco unitario", "preço unitário", "preco unitário"
     ],
     "descricao_curta": [
         "descricao curta", "descrição curta", "descricao", "descrição",
@@ -29,10 +29,11 @@ SINONIMOS = {
     ],
     "estoque": [
         "estoque", "saldo", "quantidade", "qtd", "qtde", "disponivel",
-        "disponível", "inventory", "stock"
+        "disponível", "inventory", "stock", "balanco", "balanço"
     ],
     "deposito": [
-        "deposito", "depósito", "armazem", "armazém", "local", "warehouse"
+        "deposito", "depósito", "armazem", "armazém", "local", "warehouse",
+        "localizacao", "localização"
     ],
     "situacao": [
         "situacao", "situação", "status", "ativo", "status produto"
@@ -53,10 +54,6 @@ def _normalizar_texto(texto: str) -> str:
 
 
 def detectar_colunas(df: pd.DataFrame) -> dict:
-    """
-    Detecta automaticamente as colunas de uma planilha qualquer.
-    Retorna um dicionário com o campo lógico e a coluna encontrada.
-    """
     resultado = {}
     colunas_normalizadas = {col: _normalizar_texto(col) for col in df.columns}
 
@@ -81,15 +78,12 @@ def detectar_colunas(df: pd.DataFrame) -> dict:
                 melhor_score = score
                 melhor_coluna = coluna_original
 
-        if melhor_score >= 60:
-            resultado[campo] = melhor_coluna
-        else:
-            resultado[campo] = None
+        resultado[campo] = melhor_coluna if melhor_score >= 60 else None
 
     return resultado
 
 
-def _valor_seguro(row: pd.Series, coluna: str | None, padrao: str = ""):
+def _valor_seguro(row: pd.Series, coluna: str | None, padrao: str = "") -> str:
     if not coluna:
         return padrao
     valor = row.get(coluna, padrao)
@@ -98,14 +92,40 @@ def _valor_seguro(row: pd.Series, coluna: str | None, padrao: str = ""):
     return str(valor).strip()
 
 
+def _numero_seguro(valor, padrao: str = "0") -> str:
+    if valor is None:
+        return padrao
+
+    texto = str(valor).strip()
+
+    if texto == "" or texto.lower() in {"nan", "none", "null"}:
+        return padrao
+
+    texto = texto.replace("R$", "").replace(" ", "")
+
+    # 1.234,56 -> 1234.56
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    # 12,34 -> 12.34
+    elif "," in texto:
+        texto = texto.replace(",", ".")
+
+    try:
+        numero = float(texto)
+        return f"{numero:.2f}"
+    except Exception:
+        return padrao
+
+
+def _primeiro_campo_existente(nome_modelo: str, opcoes: list[str]) -> bool:
+    return any(opcao in nome_modelo for opcao in opcoes)
+
+
 def mapear_cadastro_bling(
     df_origem: pd.DataFrame,
     modelo: pd.DataFrame,
     colunas_detectadas: dict
 ) -> pd.DataFrame:
-    """
-    Preenche o modelo de cadastro do Bling com base na planilha de origem.
-    """
     linhas_saida = []
 
     for _, row in df_origem.iterrows():
@@ -114,20 +134,29 @@ def mapear_cadastro_bling(
         for col_modelo in modelo.columns:
             nome_modelo = _normalizar_texto(col_modelo)
 
-            if "codigo" in nome_modelo or "sku" in nome_modelo:
+            if _primeiro_campo_existente(nome_modelo, ["codigo", "sku"]):
                 nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("codigo"))
 
-            elif "nome" in nome_modelo:
+            elif "nome" in nome_modelo or nome_modelo == "descricao":
                 nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("nome"))
 
-            elif "preco" in nome_modelo or "preco de venda" in nome_modelo or "valor" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("preco"))
+            elif _primeiro_campo_existente(nome_modelo, ["preco", "valor"]):
+                nova_linha[col_modelo] = _numero_seguro(
+                    _valor_seguro(row, colunas_detectadas.get("preco")),
+                    padrao="0.00"
+                )
 
             elif "descricao curta" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("descricao_curta"))
+                valor_desc = _valor_seguro(row, colunas_detectadas.get("descricao_curta"))
+                if not valor_desc:
+                    valor_desc = _valor_seguro(row, colunas_detectadas.get("nome"))
+                nova_linha[col_modelo] = valor_desc
 
-            elif nome_modelo == "descricao" or "descricao completa" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("descricao_curta"))
+            elif "descricao completa" in nome_modelo or nome_modelo == "descricao complementar":
+                valor_desc = _valor_seguro(row, colunas_detectadas.get("descricao_curta"))
+                if not valor_desc:
+                    valor_desc = _valor_seguro(row, colunas_detectadas.get("nome"))
+                nova_linha[col_modelo] = valor_desc
 
             elif "marca" in nome_modelo:
                 nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("marca"))
@@ -143,7 +172,11 @@ def mapear_cadastro_bling(
                 origem_unidade = _valor_seguro(row, colunas_detectadas.get("unidade"))
                 nova_linha[col_modelo] = origem_unidade if origem_unidade else "UN"
 
-        linhas_saida.append(nova_linha)
+        codigo = str(nova_linha.get(next((c for c in modelo.columns if "codigo" in _normalizar_texto(c)), ""), "")).strip()
+        nome = str(nova_linha.get(next((c for c in modelo.columns if "nome" in _normalizar_texto(c) or _normalizar_texto(c) == "descricao"), ""), "")).strip()
+
+        if codigo or nome:
+            linhas_saida.append(nova_linha)
 
     return pd.DataFrame(linhas_saida, columns=modelo.columns)
 
@@ -154,30 +187,60 @@ def mapear_estoque_bling(
     colunas_detectadas: dict,
     deposito_padrao: str
 ) -> pd.DataFrame:
-    """
-    Preenche o modelo de estoque do Bling com base na planilha de origem.
-    """
     linhas_saida = []
 
     for _, row in df_origem.iterrows():
         nova_linha = {col: "" for col in modelo.columns}
 
+        valor_codigo = _valor_seguro(row, colunas_detectadas.get("codigo"))
+        valor_nome = _valor_seguro(row, colunas_detectadas.get("nome"))
+        valor_estoque = _numero_seguro(
+            _valor_seguro(row, colunas_detectadas.get("estoque")),
+            padrao="0.00"
+        )
+        valor_preco = _numero_seguro(
+            _valor_seguro(row, colunas_detectadas.get("preco")),
+            padrao="0.00"
+        )
+        valor_deposito_origem = _valor_seguro(row, colunas_detectadas.get("deposito"))
+        valor_deposito_final = valor_deposito_origem if valor_deposito_origem else deposito_padrao.strip()
+
         for col_modelo in modelo.columns:
             nome_modelo = _normalizar_texto(col_modelo)
 
-            if "codigo" in nome_modelo or "sku" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("codigo"))
+            if _primeiro_campo_existente(nome_modelo, ["codigo produto", "codigo", "sku"]):
+                nova_linha[col_modelo] = valor_codigo
 
-            elif "saldo" in nome_modelo or "estoque" in nome_modelo or "quantidade" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("estoque"))
+            elif _primeiro_campo_existente(nome_modelo, ["deposito", "localizacao", "localizacao deposito"]):
+                nova_linha[col_modelo] = valor_deposito_final
 
-            elif "deposito" in nome_modelo or "deposito" == nome_modelo:
-                origem_deposito = _valor_seguro(row, colunas_detectadas.get("deposito"))
-                nova_linha[col_modelo] = origem_deposito if origem_deposito else deposito_padrao
+            elif _primeiro_campo_existente(nome_modelo, ["balanco", "balanço", "estoque", "saldo", "quantidade"]):
+                nova_linha[col_modelo] = valor_estoque
 
-            elif "nome" in nome_modelo:
-                nova_linha[col_modelo] = _valor_seguro(row, colunas_detectadas.get("nome"))
+            elif _primeiro_campo_existente(nome_modelo, ["preco unitario", "preco unitário", "valor unitario", "valor unitário", "preco", "valor"]):
+                nova_linha[col_modelo] = valor_preco
 
-        linhas_saida.append(nova_linha)
+            elif "nome" in nome_modelo or nome_modelo == "descricao":
+                nova_linha[col_modelo] = valor_nome
+
+        # só mantém linha se tiver código
+        if valor_codigo:
+            # garante obrigatórios mínimos mesmo se o nome da coluna do modelo variar um pouco
+            for col_modelo in modelo.columns:
+                nome_modelo = _normalizar_texto(col_modelo)
+
+                if _primeiro_campo_existente(nome_modelo, ["deposito", "localizacao"]):
+                    if not str(nova_linha[col_modelo]).strip():
+                        nova_linha[col_modelo] = deposito_padrao.strip()
+
+                if _primeiro_campo_existente(nome_modelo, ["balanco", "balanço", "estoque", "saldo", "quantidade"]):
+                    if not str(nova_linha[col_modelo]).strip():
+                        nova_linha[col_modelo] = "0.00"
+
+                if _primeiro_campo_existente(nome_modelo, ["preco unitario", "preco unitário", "valor unitario", "valor unitário", "preco", "valor"]):
+                    if not str(nova_linha[col_modelo]).strip():
+                        nova_linha[col_modelo] = "0.00"
+
+            linhas_saida.append(nova_linha)
 
     return pd.DataFrame(linhas_saida, columns=modelo.columns)
