@@ -4,38 +4,37 @@ import zipfile
 import io
 import os
 import re
-import math
+import time
 from datetime import datetime
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="🔥 BLING LIMPEZA EXTREMA", layout="wide")
-st.title("🔥 BLING LIMPEZA EXTREMA")
+st.set_page_config(page_title="🔥 BLING FORMATO ORIGINAL", layout="wide")
+st.title("🔥 BLING FORMATO ORIGINAL + LIMPEZA TOTAL")
 
 # =========================
-# SESSION STATE
+# SESSION
 # =========================
-if "logs" not in st.session_state:
-    st.session_state["logs"] = []
+PADRAO_SESSION = {
+    "logs": [],
+    "df_origem_estoque": None,
+    "df_origem_cadastro": None,
+    "df_modelo_estoque": None,
+    "df_modelo_cadastro": None,
+    "df_final_estoque": None,
+    "df_final_cadastro": None,
+    "nome_origem_estoque": None,
+    "nome_origem_cadastro": None,
+    "nome_modelo_estoque": None,
+    "nome_modelo_cadastro": None,
+    "ext_modelo_estoque": None,
+    "ext_modelo_cadastro": None,
+}
 
-if "df_estoque_original" not in st.session_state:
-    st.session_state["df_estoque_original"] = None
-
-if "df_cadastro_original" not in st.session_state:
-    st.session_state["df_cadastro_original"] = None
-
-if "df_estoque_bling" not in st.session_state:
-    st.session_state["df_estoque_bling"] = None
-
-if "df_cadastro_bling" not in st.session_state:
-    st.session_state["df_cadastro_bling"] = None
-
-if "nome_arquivo_estoque" not in st.session_state:
-    st.session_state["nome_arquivo_estoque"] = None
-
-if "nome_arquivo_cadastro" not in st.session_state:
-    st.session_state["nome_arquivo_cadastro"] = None
+for k, v in PADRAO_SESSION.items():
+    if k not in st.session_state:
+        st.session_state[k] = [] if isinstance(v, list) else None
 
 
 # =========================
@@ -47,17 +46,12 @@ def log(msg):
 
 
 def limpar_estado():
-    st.session_state["logs"] = []
-    st.session_state["df_estoque_original"] = None
-    st.session_state["df_cadastro_original"] = None
-    st.session_state["df_estoque_bling"] = None
-    st.session_state["df_cadastro_bling"] = None
-    st.session_state["nome_arquivo_estoque"] = None
-    st.session_state["nome_arquivo_cadastro"] = None
+    for k, v in PADRAO_SESSION.items():
+        st.session_state[k] = [] if isinstance(v, list) else None
 
 
 # =========================
-# TEXTO / NORMALIZAÇÃO
+# TEXTO
 # =========================
 def normalizar_texto(valor):
     if valor is None:
@@ -70,27 +64,20 @@ def normalizar_texto(valor):
         pass
 
     texto = str(valor)
-
-    # remove BOM e caracteres invisíveis comuns
     texto = texto.replace("\ufeff", "")
     texto = texto.replace("\u200b", "")
     texto = texto.replace("\xa0", " ")
-
-    # troca quebras
     texto = texto.replace("\r", " ")
     texto = texto.replace("\n", " ")
     texto = texto.replace("\t", " ")
-
-    # compacta espaços
     texto = re.sub(r"\s+", " ", texto)
-
     return texto.strip()
 
 
 def slug_coluna(texto):
     texto = normalizar_texto(texto).lower()
 
-    mapa = {
+    trocas = {
         "ç": "c",
         "á": "a",
         "à": "a",
@@ -118,32 +105,21 @@ def slug_coluna(texto):
         ".": "",
     }
 
-    for antigo, novo in mapa.items():
+    for antigo, novo in trocas.items():
         texto = texto.replace(antigo, novo)
 
     texto = re.sub(r"[^a-z0-9_ ]", "", texto)
     texto = texto.replace(" ", "_")
     texto = re.sub(r"_+", "_", texto).strip("_")
-
     return texto
-
-
-def coluna_vazia_serie(serie):
-    for valor in serie:
-        txt = normalizar_texto(valor)
-        if txt != "":
-            return False
-    return True
 
 
 def buscar_coluna(df, aliases):
     mapa = {slug_coluna(col): col for col in df.columns}
-
     for alias in aliases:
-        alias_slug = slug_coluna(alias)
-        if alias_slug in mapa:
-            return mapa[alias_slug]
-
+        chave = slug_coluna(alias)
+        if chave in mapa:
+            return mapa[chave]
     return None
 
 
@@ -161,21 +137,16 @@ def para_float(valor):
         pass
 
     texto = normalizar_texto(valor)
-
     if texto == "":
         return None
 
-    texto = texto.replace("R$", "").replace("r$", "")
-    texto = texto.replace("%", "")
-    texto = texto.replace(" ", "")
+    texto = texto.replace("R$", "").replace("r$", "").replace("%", "").replace(" ", "")
 
-    # primeira tentativa direta
     try:
         return float(texto)
     except:
         pass
 
-    # formato brasileiro
     texto2 = texto.replace(".", "").replace(",", ".")
     try:
         return float(texto2)
@@ -185,11 +156,9 @@ def para_float(valor):
 
 def corrigir_preco(valor):
     numero = para_float(valor)
-
     if numero is None:
         return 0.0
 
-    # correção de preços multiplicados por 100
     if numero >= 1000:
         numero = numero / 100
 
@@ -198,7 +167,6 @@ def corrigir_preco(valor):
 
 def para_int(valor):
     numero = para_float(valor)
-
     if numero is None:
         return 0
 
@@ -209,8 +177,15 @@ def para_int(valor):
 
 
 # =========================
-# LIMPEZA NÍVEL EXTREMO
+# LIMPEZA
 # =========================
+def coluna_vazia(serie):
+    for valor in serie:
+        if normalizar_texto(valor) != "":
+            return False
+    return True
+
+
 def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
     if df is None:
         log(f"{nome_arquivo}: dataframe inexistente.")
@@ -220,89 +195,46 @@ def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
     linhas_antes = len(df)
     colunas_antes = len(df.columns)
 
-    # remove BOM dos nomes das colunas
-    df.columns = [normalizar_texto(col) for col in df.columns]
+    df.columns = [normalizar_texto(c) for c in df.columns]
 
-    # remove colunas unnamed
     colunas_validas = []
-    removidas_unnamed = 0
+    unnamed_removidas = 0
     for col in df.columns:
         if slug_coluna(col).startswith("unnamed"):
-            removidas_unnamed += 1
+            unnamed_removidas += 1
             continue
         colunas_validas.append(col)
+
     df = df[colunas_validas]
 
-    # remove colunas totalmente vazias
     cols_remover = []
     for col in df.columns:
-        if coluna_vazia_serie(df[col]):
+        if coluna_vazia(df[col]):
             cols_remover.append(col)
+
     if cols_remover:
         df = df.drop(columns=cols_remover)
 
-    # limpa textos
     for col in df.columns:
         try:
             if df[col].dtype == "object":
                 df[col] = df[col].apply(normalizar_texto)
             else:
-                # mesmo colunas não-object podem conter sujeira visual ao serem convertidas
                 df[col] = df[col].apply(lambda x: normalizar_texto(x) if isinstance(x, str) else x)
         except:
             pass
 
-    # transforma strings vazias em NA temporariamente
     for col in df.columns:
         df[col] = df[col].apply(lambda x: pd.NA if normalizar_texto(x) == "" else x)
 
-    # remove linhas totalmente vazias
     df = df.dropna(how="all")
-
-    # remove duplicidade exata de linhas
     df = df.drop_duplicates()
-
-    # preenche de volta vazios como string vazia
     df = df.fillna("")
-
-    # remove colunas duplicadas pelo nome após normalização
-    nomes_slug = []
-    colunas_finais = []
-    duplicadas_nome = 0
-    for col in df.columns:
-        s = slug_coluna(col)
-        if s in nomes_slug:
-            duplicadas_nome += 1
-            continue
-        nomes_slug.append(s)
-        colunas_finais.append(col)
-    df = df[colunas_finais]
-
-    # remove linhas que viraram "só espaços" depois da limpeza
-    linhas_validas = []
-    for _, row in df.iterrows():
-        tem_valor = False
-        for valor in row.tolist():
-            if normalizar_texto(valor) != "":
-                tem_valor = True
-                break
-        linhas_validas.append(tem_valor)
-
-    if len(linhas_validas) == len(df):
-        df = df.loc[linhas_validas].copy()
-
-    # reset índice
     df = df.reset_index(drop=True)
 
-    linhas_depois = len(df)
-    colunas_depois = len(df.columns)
-
     log(
-        f"{nome_arquivo}: limpeza extrema concluída | "
-        f"linhas {linhas_antes}->{linhas_depois} | "
-        f"colunas {colunas_antes}->{colunas_depois} | "
-        f"unnamed removidas={removidas_unnamed} | "
-        f"nomes duplicados removidos={duplicadas_nome}"
+        f"{nome_arquivo}: limpeza concluída | linhas {linhas_antes}->{len(df)} | "
+        f"colunas {colunas_antes}->{len(df.columns)} | unnamed removidas={unnamed_removidas}"
     )
 
     return df
@@ -311,7 +243,11 @@ def limpar_dataframe_extremo(df, nome_arquivo="arquivo"):
 # =========================
 # LEITURA
 # =========================
-def ler_planilha(arquivo):
+def obter_extensao(nome_arquivo):
+    return os.path.splitext(nome_arquivo.lower())[1]
+
+
+def ler_planilha_upload(arquivo):
     nome = arquivo.name.lower()
 
     if nome.endswith(".csv"):
@@ -339,8 +275,7 @@ def ler_planilha(arquivo):
     else:
         raise ValueError(f"Formato não suportado: {arquivo.name}")
 
-    df = limpar_dataframe_extremo(df, arquivo.name)
-    return df
+    return limpar_dataframe_extremo(df, arquivo.name)
 
 
 def ler_planilha_bytes(nome_arquivo, dados_bytes):
@@ -368,43 +303,95 @@ def ler_planilha_bytes(nome_arquivo, dados_bytes):
     else:
         raise ValueError(f"Formato não suportado: {nome_arquivo}")
 
-    df = limpar_dataframe_extremo(df, nome_arquivo)
-    return df
+    return limpar_dataframe_extremo(df, nome_arquivo)
 
 
 # =========================
 # IDENTIFICAÇÃO
 # =========================
-def identificar_tipo(nome_arquivo, df):
-    nome = nome_arquivo.lower()
-    colunas_slug = [slug_coluna(c) for c in df.columns]
+def identificar_tipo(nome, df):
+    nome_lower = nome.lower()
+    cols = [slug_coluna(c) for c in df.columns]
 
-    if "estoque" in nome:
-        return "estoque"
+    if "atualizar_estoque" in nome_lower:
+        return "modelo_estoque"
 
-    if "cadastro" in nome or "produto" in nome:
-        return "cadastro"
+    if "cadastrar_produtos" in nome_lower:
+        return "modelo_cadastro"
 
-    if "balanco_obrigatorio" in colunas_slug:
-        return "estoque"
+    if "modelo_estoque" in nome_lower:
+        return "modelo_estoque"
 
-    if "codigo" in colunas_slug and "descricao" in colunas_slug:
-        return "cadastro"
+    if "modelo_cadastro" in nome_lower:
+        return "modelo_cadastro"
 
-    if "link_externo" in colunas_slug:
-        return "cadastro"
+    if "estoque" in nome_lower and "atualizar" not in nome_lower:
+        return "origem_estoque"
+
+    if "cadastro" in nome_lower and "cadastrar" not in nome_lower:
+        return "origem_cadastro"
+
+    if "produto" in nome_lower and "cadastrar" not in nome_lower:
+        return "origem_cadastro"
+
+    if "deposito" in cols and "estoque" in cols and "codigo" in cols:
+        return "modelo_estoque"
+
+    if "descricao" in cols and "unidade" in cols and "preco" in cols and "situacao" in cols:
+        return "modelo_cadastro"
+
+    if "balanco_obrigatorio" in cols or "codigo_produto" in cols:
+        return "origem_estoque"
+
+    if "link_externo" in cols or "descricao_curta" in cols:
+        return "origem_cadastro"
+
+    if "codigo" in cols and "descricao" in cols:
+        return "origem_cadastro"
 
     return None
 
 
 # =========================
-# VALIDAÇÃO BASE
+# PROGRESSO + ETA
 # =========================
-def validar_original_estoque(df):
+class ProgressoTempo:
+    def __init__(self, total, progress_widget, status_widget):
+        self.total = max(1, total)
+        self.atual = 0
+        self.inicio = time.time()
+        self.progress_widget = progress_widget
+        self.status_widget = status_widget
+
+    def atualizar(self, mensagem):
+        self.atual += 1
+        self.atual = min(self.atual, self.total)
+
+        percentual = int((self.atual / self.total) * 100)
+        agora = time.time()
+        decorrido = agora - self.inicio
+
+        if self.atual > 0:
+            medio = decorrido / self.atual
+            restante = max(0, int(round((self.total - self.atual) * medio)))
+        else:
+            restante = 0
+
+        self.progress_widget.progress(percentual)
+        self.status_widget.write(
+            f"**{percentual}%** — {mensagem}  \n"
+            f"⏱️ Decorrido: {int(decorrido)}s | ⌛ Restante estimado: {restante}s"
+        )
+
+
+# =========================
+# VALIDAÇÃO ORIGEM
+# =========================
+def validar_origem_estoque(df):
     erros = []
 
     if df is None or df.empty:
-        erros.append("Planilha original de estoque está vazia.")
+        erros.append("Planilha de origem de estoque está vazia.")
         return erros
 
     col_codigo = buscar_coluna(df, [
@@ -412,303 +399,294 @@ def validar_original_estoque(df):
         "Código", "Codigo", "codigo"
     ])
 
-    col_balanco = buscar_coluna(df, [
+    col_estoque = buscar_coluna(df, [
         "Balanço (OBRIGATÓRIO)", "Balanco (OBRIGATÓRIO)",
-        "Balanço", "Balanco", "balanco_obrigatorio", "balanco"
+        "Balanço", "Balanco", "Estoque", "estoque", "balanco"
     ])
 
     if not col_codigo:
-        erros.append("Não encontrei coluna de código na planilha de estoque.")
-    if not col_balanco:
-        erros.append("Não encontrei coluna de estoque/balanço na planilha de estoque.")
+        erros.append("Não encontrei coluna de código na origem de estoque.")
+
+    if not col_estoque:
+        erros.append("Não encontrei coluna de estoque/balanço na origem de estoque.")
 
     return erros
 
 
-def validar_original_cadastro(df):
+def validar_origem_cadastro(df):
     erros = []
 
     if df is None or df.empty:
-        erros.append("Planilha original de cadastro está vazia.")
+        erros.append("Planilha de origem de cadastro está vazia.")
         return erros
 
     col_codigo = buscar_coluna(df, ["Código", "Codigo", "codigo"])
     col_descricao = buscar_coluna(df, ["Descrição", "Descricao", "descricao"])
 
     if not col_codigo:
-        erros.append("Não encontrei coluna de código na planilha de cadastro.")
+        erros.append("Não encontrei coluna de código na origem de cadastro.")
+
     if not col_descricao:
-        erros.append("Não encontrei coluna de descrição na planilha de cadastro.")
+        erros.append("Não encontrei coluna de descrição na origem de cadastro.")
 
     return erros
 
 
 # =========================
-# GERAÇÃO BLING - ESTOQUE
+# DADOS NOVOS
 # =========================
-def gerar_estoque_bling(df):
-    if df is None or df.empty:
-        return pd.DataFrame()
-
+def gerar_novos_dados_estoque(df):
     col_codigo = buscar_coluna(df, [
         "Codigo produto *", "Codigo produto", "codigo_produto",
         "Código", "Codigo", "codigo"
     ])
 
-    col_balanco = buscar_coluna(df, [
+    col_estoque = buscar_coluna(df, [
         "Balanço (OBRIGATÓRIO)", "Balanco (OBRIGATÓRIO)",
-        "Balanço", "Balanco", "balanco_obrigatorio", "balanco"
+        "Balanço", "Balanco", "Estoque", "estoque", "balanco"
     ])
 
-    resultado = pd.DataFrame()
-    resultado["Código"] = df[col_codigo] if col_codigo else ""
-    resultado["Depósito"] = "Geral"
-    resultado["Estoque"] = df[col_balanco] if col_balanco else 0
+    novo = pd.DataFrame()
+    novo["Código"] = df[col_codigo] if col_codigo else ""
+    novo["Depósito"] = "Geral"
+    novo["Estoque"] = df[col_estoque] if col_estoque else 0
 
-    resultado["Código"] = resultado["Código"].apply(normalizar_texto)
-    resultado["Depósito"] = resultado["Depósito"].apply(normalizar_texto)
-    resultado["Estoque"] = resultado["Estoque"].apply(para_int)
+    novo["Código"] = novo["Código"].apply(normalizar_texto)
+    novo["Depósito"] = novo["Depósito"].apply(normalizar_texto)
+    novo["Estoque"] = novo["Estoque"].apply(para_int)
 
-    # remove linhas vazias
-    resultado = resultado[resultado["Código"].astype(str).str.strip() != ""].copy()
+    novo = novo[novo["Código"].astype(str).str.strip() != ""].copy()
+    novo = novo.drop_duplicates(subset=["Código"], keep="first").reset_index(drop=True)
 
-    # remove duplicados por código
-    resultado = resultado.drop_duplicates(subset=["Código"], keep="first").reset_index(drop=True)
-
-    log(f"estoque_bling gerado com {len(resultado)} linhas.")
-    return resultado
+    log(f"Novos dados de estoque gerados com {len(novo)} linhas.")
+    return novo
 
 
-# =========================
-# GERAÇÃO BLING - CADASTRO
-# =========================
-def gerar_cadastro_bling(df):
-    if df is None or df.empty:
-        return pd.DataFrame()
-
+def gerar_novos_dados_cadastro(df):
     col_codigo = buscar_coluna(df, ["Código", "Codigo", "codigo"])
     col_descricao = buscar_coluna(df, ["Descrição", "Descricao", "descricao"])
     col_unidade = buscar_coluna(df, ["Unidade", "unidade"])
     col_preco = buscar_coluna(df, ["Preço", "Preco", "preco"])
     col_situacao = buscar_coluna(df, ["Situação", "Situacao", "situacao"])
-    col_descricao_curta = buscar_coluna(df, ["Descrição Curta", "Descricao Curta", "descricao_curta"])
+    col_marca = buscar_coluna(df, ["Marca", "marca"])
+    col_desc_curta = buscar_coluna(df, ["Descrição Curta", "Descricao Curta", "descricao_curta"])
     col_url = buscar_coluna(df, ["URL Imagens Externas", "Url Imagens Externas", "url_imagens_externas"])
     col_link = buscar_coluna(df, ["Link Externo", "link_externo"])
-    col_marca = buscar_coluna(df, ["Marca", "marca"])
 
-    resultado = pd.DataFrame()
-    resultado["Código"] = df[col_codigo] if col_codigo else ""
-    resultado["Descrição"] = df[col_descricao] if col_descricao else ""
-    resultado["Unidade"] = df[col_unidade] if col_unidade else "UN"
-    resultado["Preço"] = df[col_preco] if col_preco else 0
-    resultado["Situação"] = df[col_situacao] if col_situacao else "Ativo"
-    resultado["Marca"] = df[col_marca] if col_marca else ""
-    resultado["Descrição Curta"] = df[col_descricao_curta] if col_descricao_curta else ""
-    resultado["URL Imagens Externas"] = df[col_url] if col_url else ""
-    resultado["Link Externo"] = df[col_link] if col_link else ""
+    novo = pd.DataFrame()
+    novo["Código"] = df[col_codigo] if col_codigo else ""
+    novo["Descrição"] = df[col_descricao] if col_descricao else ""
+    novo["Unidade"] = df[col_unidade] if col_unidade else "UN"
+    novo["Preço"] = df[col_preco] if col_preco else 0
+    novo["Situação"] = df[col_situacao] if col_situacao else "Ativo"
+    novo["Marca"] = df[col_marca] if col_marca else ""
+    novo["Descrição Curta"] = df[col_desc_curta] if col_desc_curta else ""
+    novo["URL Imagens Externas"] = df[col_url] if col_url else ""
+    novo["Link Externo"] = df[col_link] if col_link else ""
 
-    # limpeza
     for col in [
         "Código", "Descrição", "Unidade", "Situação", "Marca",
         "Descrição Curta", "URL Imagens Externas", "Link Externo"
     ]:
-        resultado[col] = resultado[col].apply(normalizar_texto)
+        novo[col] = novo[col].apply(normalizar_texto)
 
-    resultado["Preço"] = resultado["Preço"].apply(corrigir_preco)
+    novo["Preço"] = novo["Preço"].apply(corrigir_preco)
+    novo["Unidade"] = novo["Unidade"].replace("", "UN")
 
-    # fallbacks
-    resultado["Unidade"] = resultado["Unidade"].replace("", "UN")
-
-    def normalizar_situacao(valor):
-        v = normalizar_texto(valor).lower()
-
-        if v in ["", "ativo", "1", "sim", "s", "true"]:
+    def norm_situacao(v):
+        t = normalizar_texto(v).lower()
+        if t in ["", "ativo", "1", "sim", "s", "true"]:
             return "Ativo"
-
-        if v in ["inativo", "0", "nao", "não", "n", "false"]:
+        if t in ["inativo", "0", "nao", "não", "n", "false"]:
             return "Inativo"
-
-        if "inativo" in v:
+        if "inativo" in t:
             return "Inativo"
-
         return "Ativo"
 
-    resultado["Situação"] = resultado["Situação"].apply(normalizar_situacao)
+    novo["Situação"] = novo["Situação"].apply(norm_situacao)
 
-    mascara_codigo_vazio = resultado["Código"].astype(str).str.strip() == ""
-    resultado.loc[mascara_codigo_vazio, "Código"] = resultado.loc[mascara_codigo_vazio, "Descrição"]
+    mask_codigo_vazio = novo["Código"].astype(str).str.strip() == ""
+    novo.loc[mask_codigo_vazio, "Código"] = novo.loc[mask_codigo_vazio, "Descrição"]
 
-    mascara_desc_curta_vazia = resultado["Descrição Curta"].astype(str).str.strip() == ""
-    resultado.loc[mascara_desc_curta_vazia, "Descrição Curta"] = resultado.loc[mascara_desc_curta_vazia, "Descrição"]
+    mask_desc_curta_vazia = novo["Descrição Curta"].astype(str).str.strip() == ""
+    novo.loc[mask_desc_curta_vazia, "Descrição Curta"] = novo.loc[mask_desc_curta_vazia, "Descrição"]
 
-    # remove linhas vazias
-    resultado = resultado[resultado["Código"].astype(str).str.strip() != ""].copy()
+    novo = novo[novo["Código"].astype(str).str.strip() != ""].copy()
+    novo = novo.drop_duplicates(subset=["Código"], keep="first").reset_index(drop=True)
 
-    # remove duplicados
-    resultado = resultado.drop_duplicates(subset=["Código"], keep="first").reset_index(drop=True)
-
-    log(f"cadastro_bling gerado com {len(resultado)} linhas.")
-    return resultado
+    log(f"Novos dados de cadastro gerados com {len(novo)} linhas.")
+    return novo
 
 
 # =========================
-# VALIDAÇÃO FINAL BLING
+# PRESERVAR MODELO EXATO
 # =========================
-def validar_bling_estoque(df):
-    erros = []
+def limpar_modelo_e_inserir_exato(modelo_df, novos_dados_df, nome_tipo="modelo"):
+    if modelo_df is None or modelo_df.empty:
+        log(f"{nome_tipo}: sem modelo enviado, gerando arquivo direto pelos novos dados.")
+        return novos_dados_df.copy()
 
-    if df is None or df.empty:
-        erros.append("Arquivo final de estoque ficou vazio.")
-        return erros
+    colunas_modelo = list(modelo_df.columns)
+    log(f"{nome_tipo}: modelo carregado com {len(modelo_df)} linhas antigas. Conteúdo será apagado.")
 
-    obrigatorias = ["Código", "Depósito", "Estoque"]
-    for col in obrigatorias:
-        if col not in df.columns:
-            erros.append(f"Falta a coluna obrigatória no estoque final: {col}")
+    final = pd.DataFrame(columns=colunas_modelo)
+    mapa_novos = {slug_coluna(col): col for col in novos_dados_df.columns}
 
-    return erros
+    for col_modelo in colunas_modelo:
+        chave = slug_coluna(col_modelo)
+        if chave in mapa_novos:
+            col_nova = mapa_novos[chave]
+            final[col_modelo] = novos_dados_df[col_nova]
+        else:
+            final[col_modelo] = ""
 
+    final = final.fillna("").reset_index(drop=True)
 
-def validar_bling_cadastro(df):
-    erros = []
-
-    if df is None or df.empty:
-        erros.append("Arquivo final de cadastro ficou vazio.")
-        return erros
-
-    obrigatorias = ["Código", "Descrição", "Unidade", "Preço", "Situação"]
-    for col in obrigatorias:
-        if col not in df.columns:
-            erros.append(f"Falta a coluna obrigatória no cadastro final: {col}")
-
-    return erros
+    log(f"{nome_tipo}: conteúdo antigo apagado e {len(final)} linhas novas inseridas.")
+    return final
 
 
 # =========================
-# EXPORTAÇÃO
+# EXPORTAÇÃO NO MESMO FORMATO
 # =========================
-def dataframe_para_excel_bytes(df, aba="Dados"):
+def dataframe_para_excel_bytes(df, sheet_name="Dados"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=aba)
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
     output.seek(0)
     return output.getvalue()
 
 
-def gerar_zip_final(df_estoque, df_cadastro, logs):
+def detectar_separador_csv(df):
+    candidatos = [",", ";", "\t"]
+    melhor_sep = ";"
+    maior_score = -1
+
+    for sep in candidatos:
+        try:
+            preview = df.head(20).to_csv(index=False, sep=sep)
+            score = preview.count(sep)
+            if score > maior_score:
+                maior_score = score
+                melhor_sep = sep
+        except:
+            pass
+
+    return melhor_sep
+
+
+def dataframe_para_csv_bytes(df):
+    sep = detectar_separador_csv(df)
+    csv_text = df.to_csv(index=False, sep=sep, encoding="utf-8")
+    return csv_text.encode("utf-8")
+
+
+def bytes_no_formato(df, ext, sheet_name="Dados"):
+    ext = (ext or "").lower()
+
+    if ext == ".csv":
+        return dataframe_para_csv_bytes(df), "text/csv"
+
+    return (
+        dataframe_para_excel_bytes(df, sheet_name),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+def nome_saida(base, ext):
+    ext = (ext or "").lower()
+    if ext not in [".csv", ".xlsx", ".xls"]:
+        ext = ".xlsx"
+
+    # xls sai como xlsx para evitar engine antiga
+    if ext == ".xls":
+        ext = ".xlsx"
+
+    return f"{base}{ext}"
+
+
+def gerar_zip_final(df_estoque, df_cadastro, ext_estoque, ext_cadastro, logs):
     mem = io.BytesIO()
+
+    nome_est = nome_saida("atualizar_estoque", ext_estoque)
+    nome_cad = nome_saida("cadastrar_produtos", ext_cadastro)
 
     with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as z:
         if df_estoque is not None and not df_estoque.empty:
-            z.writestr(
-                "atualizar_estoque.xlsx",
-                dataframe_para_excel_bytes(df_estoque, "Estoque")
-            )
+            bytes_est, _ = bytes_no_formato(df_estoque, ext_estoque, "Estoque")
+            z.writestr(nome_est, bytes_est)
 
         if df_cadastro is not None and not df_cadastro.empty:
-            z.writestr(
-                "cadastrar_produtos.xlsx",
-                dataframe_para_excel_bytes(df_cadastro, "Cadastro")
-            )
+            bytes_cad, _ = bytes_no_formato(df_cadastro, ext_cadastro, "Cadastro")
+            z.writestr(nome_cad, bytes_cad)
 
         z.writestr("log_processamento.txt", "\n".join(logs) if logs else "Sem logs.")
 
     mem.seek(0)
-    return mem.getvalue()
+    return mem.getvalue(), nome_est, nome_cad
 
 
 # =========================
-# PROCESSAMENTO ZIP
+# PROCESSAMENTO
 # =========================
-def processar_zip(zip_file, progress_bar=None, status_box=None):
-    df_estoque = None
-    df_cadastro = None
-    nome_estoque = None
-    nome_cadastro = None
-    arquivos_lidos = []
+def processar_lista_arquivos(lista_arquivos, progresso, origem="upload"):
+    saida = {
+        "df_origem_estoque": None,
+        "df_origem_cadastro": None,
+        "df_modelo_estoque": None,
+        "df_modelo_cadastro": None,
+        "nome_origem_estoque": None,
+        "nome_origem_cadastro": None,
+        "nome_modelo_estoque": None,
+        "nome_modelo_cadastro": None,
+        "ext_modelo_estoque": None,
+        "ext_modelo_cadastro": None,
+    }
+
+    for arquivo in lista_arquivos:
+        progresso.atualizar(f"Lendo {origem}: {arquivo['nome']}")
+
+        if arquivo["tipo_obj"] == "upload":
+            df = ler_planilha_upload(arquivo["obj"])
+        else:
+            df = ler_planilha_bytes(arquivo["nome"], arquivo["bytes"])
+
+        tipo = identificar_tipo(arquivo["nome"], df)
+        ext = obter_extensao(arquivo["nome"])
+        log(f"{arquivo['nome']}: tipo identificado = {tipo}")
+
+        if tipo == "origem_estoque" and saida["df_origem_estoque"] is None:
+            saida["df_origem_estoque"] = df
+            saida["nome_origem_estoque"] = arquivo["nome"]
+
+        elif tipo == "origem_cadastro" and saida["df_origem_cadastro"] is None:
+            saida["df_origem_cadastro"] = df
+            saida["nome_origem_cadastro"] = arquivo["nome"]
+
+        elif tipo == "modelo_estoque" and saida["df_modelo_estoque"] is None:
+            saida["df_modelo_estoque"] = df
+            saida["nome_modelo_estoque"] = arquivo["nome"]
+            saida["ext_modelo_estoque"] = ext
+
+        elif tipo == "modelo_cadastro" and saida["df_modelo_cadastro"] is None:
+            saida["df_modelo_cadastro"] = df
+            saida["nome_modelo_cadastro"] = arquivo["nome"]
+            saida["ext_modelo_cadastro"] = ext
+
+    return saida
+
+
+def extrair_arquivos_do_zip(zip_file):
+    arquivos = []
 
     with zipfile.ZipFile(zip_file, "r") as z:
         nomes = z.namelist()
 
-        planilhas = [
-            nome for nome in nomes
-            if not nome.endswith("/") and nome.lower().endswith((".csv", ".xlsx", ".xls"))
-        ]
+        for nome in nomes:
+            if nome.endswith("/"):
+                continue
+            if not nome.lower().endswith((".csv", ".xlsx", ".xls")):
+                continue
 
-        if not planilhas:
-            raise ValueError("Nenhuma planilha válida encontrada dentro do ZIP.")
-
-        total = len(planilhas)
-
-        for i, nome in enumerate(planilhas, start=1):
-            if progress_bar is not None:
-                progress_bar.progress(int((i / total) * 100))
-
-            if status_box is not None:
-                status_box.write(f"🔄 Lendo {i}/{total}: {nome}")
-
-            try:
-                dados = z.read(nome)
-                df = ler_planilha_bytes(nome, dados)
-                tipo = identificar_tipo(nome, df)
-
-                arquivos_lidos.append(nome)
-                log(f"{nome}: tipo identificado = {tipo}")
-
-                if tipo == "estoque" and df_estoque is None:
-                    df_estoque = df
-                    nome_estoque = nome
-
-                elif tipo == "cadastro" and df_cadastro is None:
-                    df_cadastro = df
-                    nome_cadastro = nome
-
-            except Exception as e:
-                log(f"Erro ao ler {nome}: {e}")
-
-    return df_estoque, df_cadastro, nome_estoque, nome_cadastro, arquivos_lidos
-
-
-def processar_arquivos_soltos(arquivos, progress_bar=None, status_box=None):
-    df_estoque = None
-    df_cadastro = None
-    nome_estoque = None
-    nome_cadastro = None
-
-    total = len(arquivos)
-
-    for i, arquivo in enumerate(arquivos, start=1):
-        if progress_bar is not None:
-            progress_bar.progress(int((i / total) * 100))
-
-        if status_box is not None:
-            status_box.write(f"🔄 Lendo {i}/{total}: {arquivo.name}")
-
-        try:
-            df = ler_planilha(arquivo)
-            tipo = identificar_tipo(arquivo.name, df)
-
-            log(f"{arquivo.name}: tipo identificado = {tipo}")
-
-            if tipo == "estoque" and df_estoque is None:
-                df_estoque = df
-                nome_estoque = arquivo.name
-
-            elif tipo == "cadastro" and df_cadastro is None:
-                df_cadastro = df
-                nome_cadastro = arquivo.name
-
-        except Exception as e:
-            log(f"Erro ao ler {arquivo.name}: {e}")
-
-    return df_estoque, df_cadastro, nome_estoque, nome_cadastro
-
-
-# =========================
-# TOPO
-# =========================
-top1, top2 = st.columns(2)
-
-with top1:
-    if st.button("🗑️ Limpar tudo", use_container_width=True):
-        limpar_est
+            arquivos.append({
+                "nome": os.path.basename(nome),
