@@ -59,7 +59,7 @@ def main():
 
             st.success("✅ Planilha carregada")
 
-            st.dataframe(preview(df), use_container_width=True)
+            st.dataframe(preview(df), width="stretch")
 
         except Exception as e:
             st.error(f"Erro: {e}")
@@ -80,7 +80,7 @@ def main():
 
                 st.success("✅ Gerado")
 
-                st.dataframe(df_bling, use_container_width=True)
+                st.dataframe(df_bling, width="stretch")
 
                 arquivo_excel = salvar_excel_bytes(df_bling)
 
@@ -101,7 +101,7 @@ def main():
         if prod is not None:
             st.success("Produtos OK")
             st.write(list(prod.columns))
-            st.dataframe(limpar_total(prod))
+            st.dataframe(limpar_total(prod), width="stretch")
 
     if ARQ_EST.exists():
         est, erro = ler_excel(ARQ_EST)
@@ -109,7 +109,7 @@ def main():
         if est is not None:
             st.success("Estoque OK")
             st.write(list(est.columns))
-            st.dataframe(limpar_total(est))
+            st.dataframe(limpar_total(est), width="stretch")
 
     st.header("🏬 Depósito")
 
