@@ -30,7 +30,7 @@ def _numero(valor, padrao="0.00"):
 
     try:
         return f"{float(texto):.2f}"
-    except Exception:
+    except:
         return padrao
 
 
@@ -44,116 +44,32 @@ def _fallback(row, tipo):
             continue
 
         if tipo == "numero":
-            bruto = txt.replace("R$", "").replace(" ", "")
-            if "," in bruto and "." in bruto:
-                bruto = bruto.replace(".", "").replace(",", ".")
-            elif "," in bruto:
-                bruto = bruto.replace(",", ".")
             try:
-                float(bruto)
+                float(txt.replace(",", "."))
                 return txt
-            except Exception:
+            except:
                 pass
 
         if tipo == "texto":
             if len(txt) > 5:
                 return txt
 
-        if tipo == "imagem":
-            t = txt.lower()
-            if t.startswith("http") and any(ext in t for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                return txt
-
     return ""
 
 
-SINONIMOS = {
-    "codigo": [
-        "codigo", "código", "sku", "ref", "referencia", "referência",
-        "cod", "id produto", "id", "part number"
-    ],
-    "nome": [
-        "nome", "produto", "descricao", "descrição", "titulo", "título",
-        "nome produto", "descricao produto", "descrição produto"
-    ],
-    "preco": [
-        "preco", "preço", "valor", "price", "preco venda", "preço venda",
-        "valor venda", "preco unitario", "preço unitário", "preco unitário"
-    ],
-    "descricao_curta": [
-        "descricao curta", "descrição curta", "descricao", "descrição",
-        "detalhes", "resumo", "short description"
-    ],
-    "marca": [
-        "marca", "brand", "fabricante", "fornecedor marca"
-    ],
-    "imagem": [
-        "imagem", "imagens", "foto", "fotos", "url imagem", "url da imagem",
-        "image", "images", "link imagem", "link da imagem"
-    ],
-    "estoque": [
-        "estoque", "saldo", "quantidade", "qtd", "qtde", "disponivel",
-        "disponível", "inventory", "stock", "balanco", "balanço"
-    ],
-    "deposito": [
-        "deposito", "depósito", "armazem", "armazém", "local", "warehouse",
-        "localizacao", "localização"
-    ],
-    "situacao": [
-        "situacao", "situação", "status", "ativo", "status produto"
-    ],
-    "unidade": [
-        "unidade", "und", "un", "unit", "u.m."
-    ],
-    "ncm": [
-        "ncm", "classificacao fiscal", "classificação fiscal"
-    ],
-}
+# =========================
+# CADASTRO BLING
+# =========================
+def mapear_cadastro_bling(df_origem, modelo, colunas_detectadas):
 
-
-def detectar_colunas(df: pd.DataFrame) -> dict:
-    resultado = {}
-    colunas_normalizadas = {col: _normalizar(col) for col in df.columns}
-
-    for campo, sinonimos in SINONIMOS.items():
-        melhor_coluna = None
-        melhor_score = -1
-
-        for coluna_original, coluna_norm in colunas_normalizadas.items():
-            score = 0
-
-            for sinonimo in sinonimos:
-                sinonimo_norm = _normalizar(sinonimo)
-
-                if coluna_norm == sinonimo_norm:
-                    score = max(score, 100)
-                elif sinonimo_norm in coluna_norm:
-                    score = max(score, 80)
-                elif coluna_norm in sinonimo_norm:
-                    score = max(score, 60)
-
-            if score > melhor_score:
-                melhor_score = score
-                melhor_coluna = coluna_original
-
-        resultado[campo] = melhor_coluna if melhor_score >= 60 else None
-
-    return resultado
-
-
-def mapear_cadastro_bling(df, modelo, colunas):
     saida = []
 
-    for _, row in df.iterrows():
-        codigo = _get(row, colunas.get("codigo"))
-        nome = _get(row, colunas.get("nome"))
-        preco = _get(row, colunas.get("preco"))
-        descricao = _get(row, colunas.get("descricao_curta"))
-        marca = _get(row, colunas.get("marca"))
-        imagem = _get(row, colunas.get("imagem"))
-        unidade_origem = _get(row, colunas.get("unidade"))
-        situacao_origem = _get(row, colunas.get("situacao"))
-        ncm_origem = _get(row, colunas.get("ncm"))
+    for _, row in df_origem.iterrows():
+
+        codigo = _get(row, colunas_detectadas.get("codigo"))
+        nome = _get(row, colunas_detectadas.get("nome"))
+        preco = _get(row, colunas_detectadas.get("preco"))
+        descricao = _get(row, colunas_detectadas.get("descricao_curta"))
 
         if not nome:
             nome = _fallback(row, "texto")
@@ -161,45 +77,32 @@ def mapear_cadastro_bling(df, modelo, colunas):
         if not preco:
             preco = _fallback(row, "numero")
 
-        if not descricao:
-            descricao = nome
+        preco = _numero(preco)
 
-        if not imagem:
-            imagem = _fallback(row, "imagem")
-
-        preco = _numero(preco, "0.00")
-        unidade = unidade_origem if unidade_origem else "UN"
-        situacao = situacao_origem if situacao_origem else "Ativo"
-        ncm = ncm_origem if ncm_origem else "00000000"
+        unidade = "UN"
+        situacao = "Ativo"
+        ncm = "00000000"
 
         nova = {c: "" for c in modelo.columns}
 
         for col in modelo.columns:
             n = _normalizar(col)
 
-            if "codigo pai" in n or ("pai" in n and "codigo" in n) or n == "id pai":
+            # 🔥 CODIGO PAI SEMPRE VAZIO
+            if "pai" in n:
                 nova[col] = ""
 
-            elif ("codigo" in n or "sku" in n or n == "id") and "pai" not in n:
+            elif "codigo" in n or "sku" in n or n == "id":
                 nova[col] = codigo
 
-            elif "nome" in n or n == "descricao":
+            elif "nome" in n:
                 nova[col] = nome
 
             elif "preco" in n or "valor" in n:
                 nova[col] = preco
 
-            elif "descricao curta" in n:
-                nova[col] = descricao
-
             elif "descricao" in n:
-                nova[col] = descricao
-
-            elif "marca" in n:
-                nova[col] = marca
-
-            elif "imagem" in n or "url" in n:
-                nova[col] = imagem
+                nova[col] = descricao or nome
 
             elif "unidade" in n:
                 nova[col] = unidade
@@ -216,14 +119,18 @@ def mapear_cadastro_bling(df, modelo, colunas):
     return pd.DataFrame(saida, columns=modelo.columns)
 
 
-def mapear_estoque_bling(df, modelo, colunas, deposito_padrao):
+# =========================
+# ESTOQUE BLING
+# =========================
+def mapear_estoque_bling(df_origem, modelo, colunas_detectadas, deposito_padrao):
+
     saida = []
 
-    for _, row in df.iterrows():
-        codigo = _get(row, colunas.get("codigo"))
-        estoque = _get(row, colunas.get("estoque"))
-        preco = _get(row, colunas.get("preco"))
-        deposito = _get(row, colunas.get("deposito"))
+    for _, row in df_origem.iterrows():
+
+        codigo = _get(row, colunas_detectadas.get("codigo"))
+        estoque = _get(row, colunas_detectadas.get("estoque"))
+        preco = _get(row, colunas_detectadas.get("preco"))
 
         if not estoque:
             estoque = _fallback(row, "numero")
@@ -231,30 +138,28 @@ def mapear_estoque_bling(df, modelo, colunas, deposito_padrao):
         if not preco:
             preco = _fallback(row, "numero")
 
-        if not deposito:
-            deposito = deposito_padrao
-
-        estoque = _numero(estoque, "0.00")
-        preco = _numero(preco, "0.00")
+        estoque = _numero(estoque)
+        preco = _numero(preco)
 
         nova = {c: "" for c in modelo.columns}
 
         for col in modelo.columns:
             n = _normalizar(col)
 
-            if "codigo pai" in n or ("pai" in n and "codigo" in n) or n == "id pai":
+            # 🔥 CODIGO PAI SEMPRE VAZIO
+            if "pai" in n:
                 nova[col] = ""
 
-            elif "codigo produto" in n or ("codigo" in n and "pai" not in n):
+            elif "codigo" in n:
                 nova[col] = codigo
 
             elif "deposito" in n or "localizacao" in n:
-                nova[col] = deposito
+                nova[col] = deposito_padrao
 
-            elif "balanco" in n or "balanço" in n or "saldo" in n or "estoque" in n:
+            elif "balanco" in n or "saldo" in n or "estoque" in n:
                 nova[col] = estoque
 
-            elif "preco unitario" in n or "preco unitário" in n or "valor unitario" in n or "preco" in n or "valor" in n:
+            elif "preco" in n or "valor" in n:
                 nova[col] = preco
 
         if codigo:
