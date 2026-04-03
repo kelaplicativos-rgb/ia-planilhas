@@ -3,7 +3,11 @@ import pandas as pd
 from pathlib import Path
 
 from bling_app_zero.core.leitor import carregar_planilha, preview, validar_planilha_vazia
-from bling_app_zero.core.mapeamento_bling import mapear_produtos
+from bling_app_zero.core.mapeamento_bling import (
+    detectar_colunas,
+    mapear_cadastro_bling,
+    mapear_estoque_bling,
+)
 from bling_app_zero.utils.excel import salvar_excel_bytes
 
 
@@ -19,11 +23,15 @@ def main():
     st.set_page_config(page_title="🔥 Bling Automação PRO", layout="wide")
 
     st.title("🔥 Bling Automação PRO")
+    st.caption("Painel modular para transformar planilhas de fornecedores em arquivos prontos para o Bling.")
 
-    # =========================
-    # 🔹 ESCOLHA DA ORIGEM
-    # =========================
-    st.header("📡 Origem dos dados")
+    base_dir = Path(__file__).parent
+    pasta_modelos = base_dir / "modelos"
+
+    arq_prod = pasta_modelos / "produtos.xlsx"
+    arq_est = pasta_modelos / "saldo_estoque.xlsx"
+
+    st.header("1️⃣ Origem dos dados")
 
     origem = st.radio(
         "Selecione a origem:",
@@ -31,133 +39,133 @@ def main():
         horizontal=True
     )
 
-    # =========================
-    # 🔹 ESCOLHA DO MÓDULO
-    # =========================
-    st.header("⚙️ Módulo")
+    df_origem = None
+    colunas_detectadas = None
 
-    modulo = st.radio(
-        "O que deseja fazer?",
-        ["📦 Cadastro de Produtos", "📊 Atualização de Estoque"],
-        horizontal=True
-    )
-
-    BASE_DIR = Path(__file__).parent
-    PASTA_MODELOS = BASE_DIR / "modelos"
-
-    ARQ_PROD = PASTA_MODELOS / "produtos.xlsx"
-    ARQ_EST = PASTA_MODELOS / "saldo_estoque.xlsx"
-
-    df = None
-
-    # =========================
-    # 📄 PLANILHA
-    # =========================
     if origem == "📄 Planilha":
-
-        st.header("📂 Upload")
+        st.header("2️⃣ Anexar planilha")
+        st.write("Envie qualquer planilha de fornecedor. O sistema tentará identificar automaticamente os dados.")
 
         arquivo = st.file_uploader(
-            "Envie sua planilha",
+            "Anexar planilha de produtos",
             type=["xlsx", "csv"]
         )
 
         if arquivo:
             try:
-                df = carregar_planilha(arquivo)
+                df_origem = carregar_planilha(arquivo)
 
-                if validar_planilha_vazia(df):
-                    st.error("❌ Planilha vazia")
+                if validar_planilha_vazia(df_origem):
+                    st.error("❌ A planilha enviada está vazia ou inválida.")
                     st.stop()
 
-                st.success("✅ Planilha carregada")
+                colunas_detectadas = detectar_colunas(df_origem)
 
-                st.subheader("👀 Preview")
-                st.dataframe(preview(df), width="stretch")
+                st.success("✅ Planilha carregada e analisada com sucesso.")
+
+                st.subheader("Preview da planilha enviada")
+                st.dataframe(preview(df_origem, linhas=10), width="stretch")
+
+                st.subheader("Colunas identificadas automaticamente")
+                resumo_detectado = pd.DataFrame(
+                    [
+                        {"Campo lógico": campo, "Coluna encontrada": coluna if coluna else "Não identificada"}
+                        for campo, coluna in colunas_detectadas.items()
+                    ]
+                )
+                st.dataframe(resumo_detectado, width="stretch")
 
             except Exception as e:
-                st.error(f"Erro: {e}")
+                st.error(f"❌ Erro ao processar a planilha: {e}")
+                st.stop()
 
-    # =========================
-    # 🌐 SITE (FUTURO)
-    # =========================
     else:
-        st.info("🔧 Módulo de extração por site será ativado em breve")
+        st.header("2️⃣ Extração por site")
+        st.info("🔧 O modo de extração por site ficará nesta etapa do fluxo, sem misturar com o restante do painel.")
 
-    # =========================
-    # 📦 CADASTRO PRODUTOS
-    # =========================
-    if modulo == "📦 Cadastro de Produtos":
+    if df_origem is not None:
+        st.header("3️⃣ O que deseja fazer?")
 
-        if df is not None and ARQ_PROD.exists():
+        modulo = st.radio(
+            "Selecione o módulo:",
+            ["📦 Cadastro de Produtos", "📊 Atualização de Estoque"],
+            horizontal=True
+        )
 
-            if st.button("🚀 Gerar Cadastro Bling"):
+        if modulo == "📦 Cadastro de Produtos":
+            st.subheader("Gerar planilha de cadastro")
 
+            if not arq_prod.exists():
+                st.error("❌ O modelo produtos.xlsx não foi encontrado na pasta modelos.")
+                st.stop()
+
+            if st.button("🚀 Gerar cadastro Bling", width="stretch"):
                 try:
-                    modelo, erro = ler_excel(ARQ_PROD)
+                    modelo_prod, erro = ler_excel(arq_prod)
 
-                    if modelo is None:
-                        st.error(erro)
+                    if modelo_prod is None:
+                        st.error(f"❌ Erro ao abrir modelo de cadastro: {erro}")
                         st.stop()
 
-                    df_bling = mapear_produtos(df, modelo)
+                    df_saida = mapear_cadastro_bling(
+                        df_origem=df_origem,
+                        modelo=modelo_prod,
+                        colunas_detectadas=colunas_detectadas,
+                    )
 
-                    st.success("✅ Cadastro gerado")
+                    st.success("✅ Planilha de cadastro gerada com sucesso.")
+                    st.dataframe(df_saida, width="stretch")
 
-                    st.dataframe(df_bling, width="stretch")
-
-                    arquivo_excel = salvar_excel_bytes(df_bling)
-
+                    arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Cadastro")
                     st.download_button(
-                        "📥 Baixar cadastro",
+                        label="📥 Baixar planilha de cadastro",
                         data=arquivo_excel,
-                        file_name="bling_cadastro.xlsx"
+                        file_name="bling_cadastro_produtos.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch",
                     )
 
                 except Exception as e:
-                    st.error(e)
+                    st.error(f"❌ Erro ao gerar cadastro: {e}")
 
-    # =========================
-    # 📊 ESTOQUE
-    # =========================
-    elif modulo == "📊 Atualização de Estoque":
+        elif modulo == "📊 Atualização de Estoque":
+            st.subheader("Gerar planilha de estoque")
 
-        deposito = st.text_input("🏬 Nome do depósito")
+            deposito = st.text_input("Nome do depósito padrão", placeholder="Ex.: Geral")
 
-        if df is not None and ARQ_EST.exists():
+            if not arq_est.exists():
+                st.error("❌ O modelo saldo_estoque.xlsx não foi encontrado na pasta modelos.")
+                st.stop()
 
-            if st.button("🚀 Gerar Estoque Bling"):
-
+            if st.button("🚀 Gerar estoque Bling", width="stretch"):
                 try:
-                    modelo, erro = ler_excel(ARQ_EST)
+                    modelo_est, erro = ler_excel(arq_est)
 
-                    if modelo is None:
-                        st.error(erro)
+                    if modelo_est is None:
+                        st.error(f"❌ Erro ao abrir modelo de estoque: {erro}")
                         st.stop()
 
-                    df_estoque = modelo.copy()
+                    df_saida = mapear_estoque_bling(
+                        df_origem=df_origem,
+                        modelo=modelo_est,
+                        colunas_detectadas=colunas_detectadas,
+                        deposito_padrao=deposito.strip(),
+                    )
 
-                    # 🔥 EXEMPLO SIMPLES (iremos evoluir)
-                    if "codigo" in df.columns:
-                        df_estoque["codigo"] = df["codigo"]
+                    st.success("✅ Planilha de estoque gerada com sucesso.")
+                    st.dataframe(df_saida, width="stretch")
 
-                    if deposito:
-                        df_estoque["deposito"] = deposito
-
-                    st.success("✅ Estoque gerado")
-
-                    st.dataframe(df_estoque, width="stretch")
-
-                    arquivo_excel = salvar_excel_bytes(df_estoque)
-
+                    arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Estoque")
                     st.download_button(
-                        "📥 Baixar estoque",
+                        label="📥 Baixar planilha de estoque",
                         data=arquivo_excel,
-                        file_name="bling_estoque.xlsx"
+                        file_name="bling_atualizacao_estoque.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch",
                     )
 
                 except Exception as e:
-                    st.error(e)
+                    st.error(f"❌ Erro ao gerar estoque: {e}")
 
 
 if __name__ == "__main__":
