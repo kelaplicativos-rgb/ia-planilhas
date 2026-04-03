@@ -22,60 +22,26 @@ def carregar_planilha(arquivo):
     df = normalizar_colunas(df)
     df = limpar_valores_vazios(df)
 
-    if df is None or df.empty:
-        return None
-
     return df
 
 
-def validar_planilha_vazia(df):
+def validar_planilha_basica(df):
     if df is None:
         return False
-
-    if not isinstance(df, pd.DataFrame):
-        return False
-
     return not df.empty
 
 
-def validar_planilha_basica(df):
-    return validar_planilha_vazia(df)
-
-
 def preview(df):
-    if df is None or df.empty:
-        st.warning("⚠️ Nenhuma planilha carregada.")
-        return pd.DataFrame()
+    if df is None:
+        return
 
     if bloco_toggle("Preview", "preview"):
-        prev = gerar_preview(df, 1)
-        st.dataframe(prev, use_container_width=True)
-        return prev
-
-    return pd.DataFrame()
+        st.dataframe(gerar_preview(df, 1))
 
 
 def mostrar_colunas(df):
-    if df is None or df.empty:
+    if df is None:
         return
 
-    if bloco_toggle("Colunas identificadas automaticamente", "colunas_auto"):
+    if bloco_toggle("Colunas", "cols"):
         st.write(list(df.columns))
-
-
-def ajuste_manual(df):
-    if df is None or df.empty:
-        return {}
-
-    if bloco_toggle("Ajuste manual das colunas", "ajuste_manual"):
-        st.info("🛠️ Ajuste manual será conectado no próximo módulo.")
-
-    return {}
-
-
-def mostrar_mapeamento(mapeamento):
-    if not mapeamento:
-        return
-
-    if bloco_toggle("Mapeamento final que será usado", "map_final"):
-        st.json(mapeamento)
