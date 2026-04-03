@@ -1,95 +1,121 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-from ..utils.excel import ler_planilha
+from ..utils.excel import (
+    ler_planilha,
+    limpar_valores_vazios,
+    normalizar_colunas,
+    bloco_toggle,
+)
 
 
+# =========================
+# 📥 CARREGAR PLANILHA
+# =========================
 def carregar_planilha(arquivo):
     if arquivo is None:
         return None
-    return ler_planilha(arquivo)
+
+    df = ler_planilha(arquivo)
+    df = limpar_valores_vazios(df)
+    df = normalizar_colunas(df)
+
+    return df
 
 
-def validar_planilha(df):
+# =========================
+# ✅ VALIDAR PLANILHA
+# =========================
+def validar_planilha_basica(df):
     if df is None:
         return False, "Nenhuma planilha carregada."
+
+    if not isinstance(df, pd.DataFrame):
+        return False, "Arquivo inválido."
+
     if df.empty:
         return False, "A planilha está vazia."
+
     return True, "Planilha válida."
 
 
-def _init_toggle(chave: str):
-    if chave not in st.session_state:
-        st.session_state[chave] = False
-
-
-def _bloco_toggle(titulo: str, chave_base: str):
-    _init_toggle(chave_base)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button(f"👁️ Mostrar {titulo}", key=f"btn_show_{chave_base}"):
-            st.session_state[chave_base] = True
-
-    with col2:
-        if st.button(f"❌ Ocultar {titulo}", key=f"btn_hide_{chave_base}"):
-            st.session_state[chave_base] = False
-
-    return st.session_state[chave_base]
-
-
-def preview(df, nome="Planilha"):
+# =========================
+# 👀 PREVIEW COMPLETO CONTROLADO
+# =========================
+def preview(
+    df,
+    nome="Planilha",
+    colunas_detectadas=None,
+    mapeamento_manual=None,
+    mapeamento_final=None,
+):
     st.subheader(f"📄 {nome}")
 
     if df is None or df.empty:
         st.warning("⚠️ Planilha vazia")
         return
 
-    # =========================
+    chave_base = nome.strip().lower().replace(" ", "_")
+
+    # =====================================
     # 👀 PREVIEW
-    # =========================
-    mostrar_preview = _bloco_toggle(
-        titulo="Preview",
-        chave_base=f"{nome}_preview"
+    # =====================================
+    abrir_preview = bloco_toggle(
+        "Preview",
+        f"{chave_base}_preview_aberto"
     )
 
-    if mostrar_preview:
-        st.info("🔍 Preview (1 linha):")
+    if abrir_preview:
+        st.info("👀 Preview")
         st.dataframe(df.head(1), use_container_width=True)
 
-    # =========================
-    # 🔎 COLUNAS IDENTIFICADAS
-    # =========================
-    mostrar_colunas = _bloco_toggle(
-        titulo="Colunas identificadas automaticamente",
-        chave_base=f"{nome}_colunas"
+    # =====================================
+    # 🔎 COLUNAS IDENTIFICADAS AUTOMATICAMENTE
+    # =====================================
+    abrir_colunas = bloco_toggle(
+        "Colunas identificadas automaticamente",
+        f"{chave_base}_colunas_aberto"
     )
 
-    if mostrar_colunas:
+    if abrir_colunas:
         st.success("🔎 Colunas identificadas automaticamente")
-        st.write(list(df.columns))
 
-    # =========================
+        if colunas_detectadas is None:
+            colunas_detectadas = list(df.columns)
+
+        if isinstance(colunas_detectadas, dict):
+            st.json(colunas_detectadas)
+        else:
+            st.write(colunas_detectadas)
+
+    # =====================================
     # 🛠️ AJUSTE MANUAL DAS COLUNAS
-    # =========================
-    mostrar_ajuste = _bloco_toggle(
-        titulo="Ajuste manual das colunas",
-        chave_base=f"{nome}_ajuste_manual"
+    # =====================================
+    abrir_ajuste_manual = bloco_toggle(
+        "Ajuste manual das colunas",
+        f"{chave_base}_ajuste_manual_aberto"
     )
 
-    if mostrar_ajuste:
+    if abrir_ajuste_manual:
         st.warning("🛠️ Ajuste manual das colunas")
-        st.caption("Aqui entra a interface manual de seleção/mapeamento das colunas.")
 
-    # =========================
-    # ✅ MAPEAMENTO FINAL
-    # =========================
-    mostrar_mapeamento = _bloco_toggle(
-        titulo="Mapeamento final que será usado",
-        chave_base=f"{nome}_mapeamento_final"
+        if not mapeamento_manual:
+            st.caption("Nenhum ajuste manual disponível no momento.")
+        else:
+            st.write(mapeamento_manual)
+
+    # =====================================
+    # ✅ MAPEAMENTO FINAL QUE SERÁ USADO
+    # =====================================
+    abrir_mapeamento_final = bloco_toggle(
+        "Mapeamento final que será usado",
+        f"{chave_base}_mapeamento_final_aberto"
     )
 
-    if mostrar_mapeamento:
+    if abrir_mapeamento_final:
         st.success("✅ Mapeamento final que será usado")
-        st.caption("Aqui entra o resultado final do mapeamento aplicado no processamento.")
+
+        if not mapeamento_final:
+            st.caption("Nenhum mapeamento final disponível no momento.")
+        else:
+            st.write(mapeamento_final)
