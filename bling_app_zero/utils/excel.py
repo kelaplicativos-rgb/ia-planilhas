@@ -13,7 +13,6 @@ def ler_planilha(arquivo):
             encoding="utf-8",
             on_bad_lines="skip"
         )
-        return df
     except:
         try:
             df = pd.read_csv(
@@ -23,10 +22,15 @@ def ler_planilha(arquivo):
                 encoding="latin-1",
                 on_bad_lines="skip"
             )
-            return df
         except:
             df = pd.read_excel(arquivo)
-            return df
+
+    # =========================
+    # 🧹 LIMPEZA EXTREMA (SEM WARNING)
+    # =========================
+    df = df.fillna("").infer_objects(copy=False)
+
+    return df
 
 
 # =========================
@@ -52,24 +56,26 @@ def mostrar_preview(df, nome="Planilha"):
     st.dataframe(df.head(1), use_container_width=True)
 
     # =========================
-    # 🔘 BOTÃO EXPANDIR
+    # 🔘 CONTROLE DE ESTADO
     # =========================
-    if "mostrar_tudo_" + nome not in st.session_state:
-        st.session_state["mostrar_tudo_" + nome] = False
+    chave = f"mostrar_tudo_{nome}"
+
+    if chave not in st.session_state:
+        st.session_state[chave] = False
 
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button(f"👁️ Ver tudo ({nome})"):
-            st.session_state["mostrar_tudo_" + nome] = True
+        if st.button(f"👁️ Ver tudo ({nome})", key=f"ver_{nome}"):
+            st.session_state[chave] = True
 
     with col2:
-        if st.button(f"❌ Ocultar ({nome})"):
-            st.session_state["mostrar_tudo_" + nome] = False
+        if st.button(f"❌ Ocultar ({nome})", key=f"ocultar_{nome}"):
+            st.session_state[chave] = False
 
     # =========================
     # 📊 MOSTRAR COMPLETO
     # =========================
-    if st.session_state["mostrar_tudo_" + nome]:
+    if st.session_state[chave]:
         st.success("📊 Visualização completa:")
         st.dataframe(df, use_container_width=True)
