@@ -1,279 +1,352 @@
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-from .core.ia_mapper import detectar_colunas_com_ia
-from .core.leitor import carregar_planilha, preview, validar_planilha_vazia
-from .core.mapeamento_bling import (
-    detectar_colunas,
-    mapear_cadastro_bling,
-    mapear_estoque_bling,
-)
-from .core.validacao_bling import (
-    validar_cadastro_bling,
-    validar_estoque_bling,
+from .core.leitor import (
+    carregar_planilha,
+    preview,
+    validar_planilha_basica,
 )
 from .utils.excel import salvar_excel_bytes
 
 
-def ler_excel(caminho):
-    try:
-        df = pd.read_excel(caminho, dtype=object)
-        return df, None
-    except Exception as e:
-        return None, str(e)
+# =========================================================
+# CONFIG
+# =========================================================
+def configurar_pagina():
+    st.set_page_config(
+        page_title="Bling App Zero",
+        layout="wide"
+    )
+    st.title("📦 Bling App Zero")
+    st.caption("Importação, análise e preparação de planilhas no padrão Bling.")
 
 
-def montar_mapeamento_manual(df_origem: pd.DataFrame, colunas_detectadas: dict) -> dict:
-    st.subheader("🛠️ Ajuste manual das colunas")
-    st.caption("Se alguma coluna estiver errada, ajuste manualmente antes de gerar o arquivo final.")
+# =========================================================
+# ESTADO INICIAL
+# =========================================================
+def iniciar_estado():
+    if "df_planilha" not in st.session_state:
+        st.session_state.df_planilha = None
 
-    opcoes = [""] + list(df_origem.columns)
+    if "arquivo_nome" not in st.session_state:
+        st.session_state.arquivo_nome = ""
 
-    campos = [
-        "codigo",
-        "nome",
-        "preco",
-        "descricao_curta",
-        "marca",
-        "imagem",
-        "estoque",
-        "deposito",
-        "situacao",
-        "unidade",
-        "ncm",
-    ]
+    if "colunas_detectadas" not in st.session_state:
+        st.session_state.colunas_detectadas = []
 
+    if "mapeamento_manual" not in st.session_state:
+        st.session_state.mapeamento_manual = {}
+
+    if "mapeamento_final" not in st.session_state:
+        st.session_state.mapeamento_final = {}
+
+    if "tipo_planilha" not in st.session_state:
+        st.session_state.tipo_planilha = "cadastro"
+
+
+# =========================================================
+# HELPERS
+# =========================================================
+def detectar_colunas_basico(df: pd.DataFrame) -> dict:
     resultado = {}
-    col1, col2 = st.columns(2)
 
-    for i, campo in enumerate(campos):
-        detectado = colunas_detectadas.get(campo)
-        indice_padrao = opcoes.index(detectado) if detectado in opcoes else 0
-        container = col1 if i % 2 == 0 else col2
+    for col in df.columns:
+        nome = str(col).strip().lower()
 
-        with container:
-            escolha = st.selectbox(
-                label=f"Campo: {campo}",
-                options=opcoes,
-                index=indice_padrao,
-                key=f"map_{campo}",
-            )
-
-        resultado[campo] = escolha if escolha else None
+        if any(x in nome for x in ["sku", "codigo", "código", "referencia", "referência"]):
+            resultado["codigo"] = col
+        elif any(x in nome for x in ["nome", "produto", "titulo", "título"]):
+            resultado["nome"] = col
+        elif any(x in nome for x in ["descricao_curta", "descrição_curta", "descricao", "descrição"]):
+            resultado["descricao_curta"] = col
+        elif any(x in nome for x in ["marca"]):
+            resultado["marca"] = col
+        elif any(x in nome for x in ["preco", "preço", "valor"]):
+            resultado["preco"] = col
+        elif any(x in nome for x in ["estoque", "saldo", "quantidade", "qtde"]):
+            resultado["estoque"] = col
+        elif any(x in nome for x in ["imagem", "img", "foto"]):
+            resultado["imagem"] = col
+        elif any(x in nome for x in ["link", "url", "site"]):
+            resultado["link_externo"] = col
+        elif any(x in nome for x in ["categoria"]):
+            resultado["categoria"] = col
+        elif any(x in nome for x in ["peso"]):
+            resultado["peso"] = col
+        elif any(x in nome for x in ["gtin", "ean", "barcode", "codigo_barras", "código_barras"]):
+            resultado["gtin"] = col
 
     return resultado
 
 
-def mostrar_validacao(erros: list[str], avisos: list[str]):
-    st.subheader("📋 Validação estilo Bling")
+def montar_mapeamento_final(df: pd.DataFrame, mapeamento_manual: dict) -> dict:
+    automatico = detectar_colunas_basico(df)
 
-    if not erros and not avisos:
-        st.success("✅ Nenhum erro encontrado na validação.")
-        return
+    final = automatico.copy()
+    for campo, coluna in mapeamento_manual.items():
+        if coluna and coluna != "__nenhuma__":
+            final[campo] = coluna
 
-    if erros:
-        st.error(f"❌ Foram encontrados {len(erros)} erro(s).")
-        for erro in erros[:20]:
-            st.write(f"- {erro}")
-
-        if len(erros) > 20:
-            st.write(f"... e mais {len(erros) - 20} erro(s).")
-
-    if avisos:
-        st.warning(f"⚠️ Foram encontrados {len(avisos)} aviso(s).")
-        for aviso in avisos[:20]:
-            st.write(f"- {aviso}")
-
-        if len(avisos) > 20:
-            st.write(f"... e mais {len(avisos) - 20} aviso(s).")
+    return final
 
 
-def main():
-    st.set_page_config(page_title="🔥 Bling Automação PRO", layout="wide")
+def montar_planilha_saida(df: pd.DataFrame, mapeamento_final: dict, tipo_planilha: str) -> pd.DataFrame:
+    saida = pd.DataFrame()
 
-    st.title("🔥 Bling Automação PRO")
-    st.caption("Fluxo inteligente: detecção local primeiro, IA como reforço e correção manual antes de gerar o Bling.")
+    def pegar_coluna(campo, default=""):
+        col = mapeamento_final.get(campo)
+        if col and col in df.columns:
+            return df[col]
+        return pd.Series([default] * len(df))
 
-    base_dir = Path(__file__).parent
-    pasta_modelos = base_dir / "modelos"
+    if tipo_planilha == "cadastro":
+        # Estrutura base segura para cadastro no Bling
+        saida["id"] = ""
+        saida["codigo"] = pegar_coluna("codigo")
+        saida["nome"] = pegar_coluna("nome")
+        saida["unidade"] = "UN"
+        saida["preco"] = pegar_coluna("preco")
+        saida["situacao"] = "Ativo"
+        saida["marca"] = pegar_coluna("marca")
 
-    arq_prod = pasta_modelos / "produtos.xlsx"
-    arq_est = pasta_modelos / "saldo_estoque.xlsx"
+        # REGRA DO USUÁRIO:
+        # descrição vai apenas em descrição curta
+        saida["descricao_curta"] = pegar_coluna("descricao_curta")
+        saida["descricao"] = ""
 
-    st.header("1️⃣ Origem dos dados")
+        # REGRA DO USUÁRIO:
+        # vídeo não recebe link
+        saida["video"] = ""
 
-    origem = st.radio(
-        "Selecione a origem:",
-        ["📄 Planilha", "🌐 Site (em breve)"],
-        horizontal=True,
-    )
+        # links apenas nas colunas de imagem
+        saida["imagem_1"] = pegar_coluna("imagem")
+        saida["imagem_2"] = ""
+        saida["imagem_3"] = ""
+        saida["imagem_4"] = ""
+        saida["imagem_5"] = ""
 
-    df_origem = None
-    colunas_finais = None
-
-    if origem == "📄 Planilha":
-        st.header("2️⃣ Anexar planilha")
-
-        arquivo = st.file_uploader(
-            "Envie qualquer planilha de fornecedor",
-            type=["xlsx", "csv"],
-        )
-
-        if arquivo:
-            try:
-                df_origem = carregar_planilha(arquivo)
-
-                if validar_planilha_vazia(df_origem):
-                    st.error("❌ A planilha enviada está vazia ou inválida.")
-                    st.stop()
-
-                st.success("✅ Planilha carregada com sucesso.")
-
-                st.subheader("👀 Preview")
-                st.dataframe(preview(df_origem, linhas=10), width="stretch")
-
-                colunas_local = detectar_colunas(df_origem)
-                faltantes = [chave for chave, valor in colunas_local.items() if not valor]
-
-                usar_ia = st.checkbox(
-                    "🧠 Usar IA para melhorar a detecção quando o local não encontrar tudo",
-                    value=True,
-                )
-
-                colunas_ia = {}
-                if usar_ia and faltantes:
-                    with st.spinner("🧠 IA analisando colunas faltantes..."):
-                        colunas_ia = detectar_colunas_com_ia(df_origem)
-
-                todas_as_chaves = sorted(set(colunas_local.keys()) | set(colunas_ia.keys()))
-                colunas_detectadas = {
-                    chave: colunas_local.get(chave) or colunas_ia.get(chave)
-                    for chave in todas_as_chaves
-                }
-
-                st.subheader("🔎 Colunas identificadas automaticamente")
-                df_cols = pd.DataFrame(
-                    [{"Campo": k, "Coluna detectada": v if v else "Não encontrada"} for k, v in colunas_detectadas.items()]
-                )
-                st.dataframe(df_cols, width="stretch")
-
-                colunas_finais = montar_mapeamento_manual(df_origem, colunas_detectadas)
-
-                st.subheader("✅ Mapeamento final que será usado")
-                df_cols_finais = pd.DataFrame(
-                    [{"Campo": k, "Coluna final": v if v else "Não definida"} for k, v in colunas_finais.items()]
-                )
-                st.dataframe(df_cols_finais, width="stretch")
-
-            except Exception as e:
-                st.error(f"❌ Erro ao processar a planilha: {e}")
-                st.stop()
+        saida["link_externo"] = pegar_coluna("link_externo")
+        saida["categoria"] = pegar_coluna("categoria")
+        saida["peso_liquido"] = pegar_coluna("peso")
+        saida["gtin"] = pegar_coluna("gtin")
 
     else:
-        st.info("🚧 O modo site ficará aqui, separado do fluxo de planilha.")
+        # Estrutura base segura para estoque
+        saida["id"] = ""
+        saida["codigo"] = pegar_coluna("codigo")
+        saida["nome"] = pegar_coluna("nome")
+        saida["estoque"] = pegar_coluna("estoque", 0)
 
-    if df_origem is not None and colunas_finais is not None:
-        st.header("3️⃣ O que deseja fazer?")
+    return saida
 
-        modulo = st.radio(
-            "Selecione o módulo:",
-            ["📦 Cadastro de Produtos", "📊 Atualização de Estoque"],
-            horizontal=True,
+
+# =========================================================
+# UPLOAD
+# =========================================================
+def bloco_upload():
+    st.subheader("📤 Envio da planilha")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        arquivo = st.file_uploader(
+            "Selecione a planilha",
+            type=["xlsx", "xls", "csv"],
+            key="uploader_planilha"
         )
 
-        if modulo == "📦 Cadastro de Produtos":
-            st.subheader("Gerar planilha de cadastro")
+    with col2:
+        tipo_planilha = st.selectbox(
+            "Tipo de saída",
+            options=["cadastro", "estoque"],
+            index=0 if st.session_state.tipo_planilha == "cadastro" else 1
+        )
+        st.session_state.tipo_planilha = tipo_planilha
 
-            if not arq_prod.exists():
-                st.error("❌ O modelo produtos.xlsx não foi encontrado.")
-                st.stop()
+    if arquivo is not None:
+        df = carregar_planilha(arquivo)
+        ok, msg = validar_planilha_basica(df)
 
-            if st.button("🚀 Gerar cadastro Bling", width="stretch"):
-                try:
-                    modelo_prod, erro = ler_excel(arq_prod)
+        if not ok:
+            st.error(msg)
+            return
 
-                    if modelo_prod is None:
-                        st.error(f"❌ Erro ao abrir o modelo de cadastro: {erro}")
-                        st.stop()
+        st.session_state.df_planilha = df
+        st.session_state.arquivo_nome = arquivo.name
+        st.session_state.colunas_detectadas = list(df.columns)
+        st.session_state.mapeamento_manual = {}
+        st.session_state.mapeamento_final = montar_mapeamento_final(df, {})
 
-                    df_saida = mapear_cadastro_bling(
-                        df_origem=df_origem,
-                        modelo=modelo_prod,
-                        colunas_detectadas=colunas_finais,
-                    )
+        st.success(f"✅ Planilha carregada com sucesso: {arquivo.name}")
 
-                    erros, avisos = validar_cadastro_bling(df_saida)
-                    mostrar_validacao(erros, avisos)
 
-                    st.subheader("📄 Prévia final do cadastro")
-                    st.dataframe(df_saida, width="stretch")
+# =========================================================
+# AJUSTE MANUAL
+# =========================================================
+def bloco_ajuste_manual(df: pd.DataFrame):
+    opcoes = ["__nenhuma__"] + list(df.columns)
 
-                    if erros:
-                        st.error("❌ Corrija os erros antes de usar a planilha no Bling.")
-                    else:
-                        arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Cadastro")
-                        st.download_button(
-                            label="📥 Baixar planilha de cadastro",
-                            data=arquivo_excel,
-                            file_name="bling_cadastro_produtos.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            width="stretch",
-                        )
+    campos = [
+        "codigo",
+        "nome",
+        "descricao_curta",
+        "marca",
+        "preco",
+        "estoque",
+        "imagem",
+        "link_externo",
+        "categoria",
+        "peso",
+        "gtin",
+    ]
 
-                except Exception as e:
-                    st.error(f"❌ Erro ao gerar cadastro: {e}")
+    mapeamento_atual = st.session_state.get("mapeamento_final", {})
 
-        else:
-            st.subheader("Gerar planilha de estoque")
+    novo_mapeamento = {}
 
-            deposito = st.text_input(
-                "Nome do depósito padrão",
-                value="Geral",
-                placeholder="Ex.: Geral",
+    st.write("Selecione manualmente apenas se quiser corrigir algo.")
+
+    col1, col2 = st.columns(2)
+
+    for i, campo in enumerate(campos):
+        valor_atual = mapeamento_atual.get(campo, "__nenhuma__")
+        if valor_atual not in opcoes:
+            valor_atual = "__nenhuma__"
+
+        index_atual = opcoes.index(valor_atual)
+
+        with col1 if i % 2 == 0 else col2:
+            novo_mapeamento[campo] = st.selectbox(
+                f"Campo: {campo}",
+                options=opcoes,
+                index=index_atual,
+                key=f"map_{campo}"
             )
 
-            if not arq_est.exists():
-                st.error("❌ O modelo saldo_estoque.xlsx não foi encontrado.")
-                st.stop()
+    st.session_state.mapeamento_manual = novo_mapeamento
 
-            if st.button("🚀 Gerar estoque Bling", width="stretch"):
-                try:
-                    modelo_est, erro = ler_excel(arq_est)
-
-                    if modelo_est is None:
-                        st.error(f"❌ Erro ao abrir o modelo de estoque: {erro}")
-                        st.stop()
-
-                    df_saida = mapear_estoque_bling(
-                        df_origem=df_origem,
-                        modelo=modelo_est,
-                        colunas_detectadas=colunas_finais,
-                        deposito_padrao=deposito.strip(),
-                    )
-
-                    erros, avisos = validar_estoque_bling(df_saida)
-                    mostrar_validacao(erros, avisos)
-
-                    st.subheader("📄 Prévia final do estoque")
-                    st.dataframe(df_saida, width="stretch")
-
-                    if erros:
-                        st.error("❌ Corrija os erros antes de usar a planilha no Bling.")
-                    else:
-                        arquivo_excel = salvar_excel_bytes(df_saida, nome_aba="Estoque")
-                        st.download_button(
-                            label="📥 Baixar planilha de estoque",
-                            data=arquivo_excel,
-                            file_name="bling_atualizacao_estoque.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            width="stretch",
-                        )
-
-                except Exception as e:
-                    st.error(f"❌ Erro ao gerar estoque: {e}")
+    if st.button("💾 Aplicar mapeamento manual", key="aplicar_mapeamento_manual"):
+        st.session_state.mapeamento_final = montar_mapeamento_final(df, novo_mapeamento)
+        st.success("✅ Mapeamento manual aplicado com sucesso.")
 
 
-if __name__ == "__main__":
-    main()
+# =========================================================
+# MAPEAMENTO FINAL
+# =========================================================
+def bloco_mapeamento_final():
+    mapeamento_final = st.session_state.get("mapeamento_final", {})
+
+    if not mapeamento_final:
+        st.caption("Nenhum mapeamento final disponível.")
+        return
+
+    df_map = pd.DataFrame(
+        [
+            {"campo_destino": k, "coluna_origem": v}
+            for k, v in mapeamento_final.items()
+        ]
+    )
+
+    st.dataframe(df_map, use_container_width=True, hide_index=True)
+
+
+# =========================================================
+# DOWNLOAD
+# =========================================================
+def bloco_download(df: pd.DataFrame):
+    st.subheader("📥 Geração da planilha final")
+
+    mapeamento_final = st.session_state.get("mapeamento_final", {})
+    tipo_planilha = st.session_state.get("tipo_planilha", "cadastro")
+
+    if not mapeamento_final:
+        st.warning("⚠️ Não há mapeamento final disponível.")
+        return
+
+    df_saida = montar_planilha_saida(df, mapeamento_final, tipo_planilha)
+
+    st.success("✅ Planilha final gerada.")
+
+    nome_arquivo = f"bling_{tipo_planilha}.xlsx"
+    excel_bytes = salvar_excel_bytes(df_saida)
+
+    st.download_button(
+        label=f"⬇️ Baixar planilha {tipo_planilha}",
+        data=excel_bytes,
+        file_name=nome_arquivo,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="download_planilha_final"
+    )
+
+
+# =========================================================
+# MAIN
+# =========================================================
+def main():
+    configurar_pagina()
+    iniciar_estado()
+    bloco_upload()
+
+    df = st.session_state.get("df_planilha")
+
+    if df is None:
+        st.info("Envie uma planilha para continuar.")
+        return
+
+    st.divider()
+
+    # Preview controlado e fechado por padrão
+    preview(
+        df=df,
+        nome="Planilha carregada",
+        colunas_detectadas=st.session_state.get("colunas_detectadas", []),
+        mapeamento_manual=st.session_state.get("mapeamento_manual", {}),
+        mapeamento_final=st.session_state.get("mapeamento_final", {}),
+    )
+
+    st.divider()
+
+    # Ajuste manual real, também fechado por padrão
+    chave_ajuste_real = "bloco_real_ajuste_manual"
+
+    if chave_ajuste_real not in st.session_state:
+        st.session_state[chave_ajuste_real] = False
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("👁️ Mostrar painel real de ajuste manual", key="show_real_ajuste"):
+            st.session_state[chave_ajuste_real] = True
+
+    with col2:
+        if st.button("❌ Ocultar painel real de ajuste manual", key="hide_real_ajuste"):
+            st.session_state[chave_ajuste_real] = False
+
+    if st.session_state[chave_ajuste_real]:
+        st.subheader("🛠️ Painel real de ajuste manual")
+        bloco_ajuste_manual(df)
+
+    st.divider()
+
+    # Mapeamento final real, também fechado por padrão
+    chave_mapeamento_real = "bloco_real_mapeamento_final"
+
+    if chave_mapeamento_real not in st.session_state:
+        st.session_state[chave_mapeamento_real] = False
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        if st.button("👁️ Mostrar painel real de mapeamento final", key="show_real_map_final"):
+            st.session_state[chave_mapeamento_real] = True
+
+    with col4:
+        if st.button("❌ Ocultar painel real de mapeamento final", key="hide_real_map_final"):
+            st.session_state[chave_mapeamento_real] = False
+
+    if st.session_state[chave_mapeamento_real]:
+        st.subheader("✅ Painel real de mapeamento final")
+        bloco_mapeamento_final()
+
+    st.divider()
+    bloco_download(df)
