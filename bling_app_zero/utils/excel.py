@@ -11,6 +11,9 @@ def ler_planilha(arquivo):
         return None
 
     try:
+        if hasattr(arquivo, "seek"):
+            arquivo.seek(0)
+
         df = pd.read_csv(
             arquivo,
             sep=None,
