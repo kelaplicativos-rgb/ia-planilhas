@@ -162,130 +162,67 @@ def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
 
     st.markdown("### 👀 Preview (fixo)")
 
-    st.markdown(
-        """
-        <style>
-        .preview-wrap {
-            overflow-x: auto;
-            padding-bottom: 6px;
-        }
-        .preview-table {
-            min-width: max-content;
-        }
-        .preview-head {
-            font-size: 12px;
-            font-weight: 700;
-            padding-bottom: 4px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .preview-cell {
-            font-size: 11px;
-            min-height: 34px;
-            padding: 6px 4px;
-            border-top: 1px solid rgba(128,128,128,0.18);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .preview-row-title {
-            font-size: 11px;
-            font-weight: 600;
-            color: #666;
-            padding: 6px 4px;
-            border-top: 1px solid rgba(128,128,128,0.18);
-            white-space: nowrap;
-        }
-        div[data-testid="stSelectbox"] label {
-            display: none !important;
-        }
-        div[data-baseweb="select"] > div {
-            min-height: 34px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    # preview normal, com rolagem lateral nativa
+    st.dataframe(
+        preview_rows,
+        width="stretch",
+        height=140,
     )
 
-    # cabeçalho + 2 linhas preview + 3ª linha mapeamento
-    total_cols = len(colunas) + 1
-    widths = [1.1] + [2.2] * len(colunas)
+    st.caption("Clique na linha abaixo para relacionar cada coluna do fornecedor com um campo do sistema.")
 
-    # cabeçalho
-    head_cols = st.columns(widths)
-    with head_cols[0]:
-        st.markdown('<div class="preview-head"></div>', unsafe_allow_html=True)
-    for i, col in enumerate(colunas, start=1):
-        with head_cols[i]:
-            st.markdown(f'<div class="preview-head">{col}</div>', unsafe_allow_html=True)
+    usados = {v for v in mapeamento_atual.values() if v}
 
-    # linha 1 preview
-    if len(preview_rows) >= 1:
-        row1_cols = st.columns(widths)
-        with row1_cols[0]:
-            st.markdown('<div class="preview-row-title">Linha 1</div>', unsafe_allow_html=True)
-        for i, col in enumerate(colunas, start=1):
-            with row1_cols[i]:
-                valor = preview_rows.iloc[0][col] if col in preview_rows.columns else ""
-                st.markdown(f'<div class="preview-cell">{valor}</div>', unsafe_allow_html=True)
+    df_relacionar = pd.DataFrame(
+        [[mapeamento_atual.get(col, "") for col in colunas]],
+        columns=colunas,
+        index=["Relacionar"],
+    )
 
-    # linha 2 preview
-    if len(preview_rows) >= 2:
-        row2_cols = st.columns(widths)
-        with row2_cols[0]:
-            st.markdown('<div class="preview-row-title">Linha 2</div>', unsafe_allow_html=True)
-        for i, col in enumerate(colunas, start=1):
-            with row2_cols[i]:
-                valor = preview_rows.iloc[1][col] if col in preview_rows.columns else ""
-                st.markdown(f'<div class="preview-cell">{valor}</div>', unsafe_allow_html=True)
+    column_config = {}
 
-    # terceira linha = relacionamento
-    row3_cols = st.columns(widths)
-    with row3_cols[0]:
-        st.markdown('<div class="preview-row-title">Relacionar</div>', unsafe_allow_html=True)
-
-    usados = set()
-
-    novo_mapeamento = {}
     for col in colunas:
         valor_atual = mapeamento_atual.get(col, "")
-        if valor_atual:
-            usados.add(valor_atual)
 
-    usados_processados = set()
+        usados_por_outros = {
+            v for chave, v in mapeamento_atual.items()
+            if chave != col and v
+        }
 
-    for i, col in enumerate(colunas, start=1):
-        with row3_cols[i]:
-            valor_atual = mapeamento_atual.get(col, "")
+        opcoes_filtradas = [
+            o for o in OPCOES_MAPEAMENTO
+            if o == "" or o == valor_atual or o not in usados_por_outros
+        ]
 
-            usados_por_outros = {
-                v
-                for chave, v in mapeamento_atual.items()
-                if chave != col and v
-            }
+        column_config[col] = st.column_config.SelectboxColumn(
+            label=col,
+            options=opcoes_filtradas,
+            required=False,
+            width="medium",
+        )
 
-            opcoes_filtradas = [
-                o for o in OPCOES_MAPEAMENTO
-                if o == "" or o == valor_atual or o not in usados_por_outros
-            ]
+    df_relacionar_editado = st.data_editor(
+        df_relacionar,
+        width="stretch",
+        height=90,
+        hide_index=False,
+        num_rows="fixed",
+        column_config=column_config,
+        key="editor_relacionar_preview",
+    )
 
-            if valor_atual not in opcoes_filtradas:
-                valor_atual = ""
+    novo_mapeamento = {}
+    linha_editada = df_relacionar_editado.iloc[0].to_dict()
 
-            escolha = st.selectbox(
-                f"map_{col}",
-                opcoes_filtradas,
-                index=opcoes_filtradas.index(valor_atual) if valor_atual in opcoes_filtradas else 0,
-                format_func=lambda x: x.upper() if x else "— NÃO MAPEAR —",
-                key=f"map_preview_{col}",
-                label_visibility="collapsed",
-            )
-
-            novo_mapeamento[col] = escolha
+    for col in colunas:
+        valor = str(linha_editada.get(col, "") or "").strip()
+        if valor not in OPCOES_MAPEAMENTO:
+            valor = ""
+        novo_mapeamento[col] = valor
 
     novo_mapeamento = _resolver_duplicados(novo_mapeamento)
     st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo_mapeamento
+
     return novo_mapeamento
 
 
