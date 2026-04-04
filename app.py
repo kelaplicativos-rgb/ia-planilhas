@@ -1,22 +1,168 @@
 import json
-import os
 import re
 import unicodedata
+from collections import Counter, defaultdict
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.leitor import carregar_planilha
-from bling_app_zero.utils.excel import ler_planilha, salvar_excel_bytes
+from bling_app_zero.utils.excel import salvar_excel_bytes
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 
-# =========================================================
-# CONFIG
-# =========================================================
 st.set_page_config(page_title="Bling Cadastro Manual PRO", layout="wide")
+
+
+# =========================================================
+# MODELO OFICIAL BLING TRAVADO
+# =========================================================
+BLING_COLUNAS_OFICIAIS = [
+    "ID",
+    "Código",
+    "Descrição",
+    "Unidade",
+    "NCM",
+    "Origem",
+    "Preço",
+    "Valor IPI fixo",
+    "Observações",
+    "Situação",
+    "Estoque",
+    "Preço de custo",
+    "Cód no fornecedor",
+    "Fornecedor",
+    "Localização",
+    "Estoque maximo",
+    "Estoque minimo",
+    "Peso líquido (Kg)",
+    "Peso bruto (Kg)",
+    "GTIN/EAN",
+    "GTIN/EAN da embalagem",
+    "Largura do Produto",
+    "Altura do Produto",
+    "Profundidade do produto",
+    "Data Validade",
+    "Descrição do Produto no Fornecedor",
+    "Descrição Complementar",
+    "Itens p/ caixa",
+    "Produto Variação",
+    "Tipo Produção",
+    "Classe de enquadramento do IPI",
+    "Código da lista de serviços",
+    "Tipo do item",
+    "Grupo de Tags/Tags",
+    "Tributos",
+    "Código Pai",
+    "Código Integração",
+    "Grupo de produtos",
+    "Marca",
+    "CEST",
+    "Volumes",
+    "Descrição Curta",
+    "Cross-Docking",
+    "URL Imagens Externas",
+    "Link Externo",
+    "Meses Garantia no Fornecedor",
+    "Clonar dados do pai",
+    "Condição do produto",
+    "Frete Grátis",
+    "Número FCI",
+    "Vídeo",
+    "Departamento",
+    "Unidade de medida",
+    "Preço de compra",
+    "Valor base ICMS ST para retenção",
+    "Valor ICMS ST para retenção",
+    "Valor ICMS próprio do substituto",
+    "Categoria do produto",
+    "Informações Adicionais",
+]
+
+BLING_OBRIGATORIOS = [
+    "Código",
+    "Descrição",
+    "Unidade",
+    "Preço",
+    "Situação",
+]
+
+BLING_COLUNA_PRECO = "Preço"
+BLING_COLUNA_IMAGENS = "URL Imagens Externas"
+BLING_COLUNA_PRECO_CUSTO = "Preço de custo"
+BLING_COLUNA_PRECO_COMPRA = "Preço de compra"
+
+
+# =========================================================
+# ALIASES
+# =========================================================
+ALIASES_BLING: Dict[str, List[str]] = {
+    "ID": ["id", "codigo pai id"],
+    "Código": ["codigo", "código", "sku", "ref", "referencia", "referência", "cod", "cod produto", "codigo produto", "part number"],
+    "Descrição": ["descricao", "descrição", "nome", "titulo", "título", "produto", "nome produto", "descricao produto", "item", "nome do produto"],
+    "Unidade": ["unidade", "und", "un", "u.m", "unid", "medida"],
+    "NCM": ["ncm"],
+    "Origem": ["origem", "origem mercadoria"],
+    "Preço": ["preco", "preço", "valor", "valor venda", "preco venda", "preço venda", "price", "valor unitario", "valor unitário"],
+    "Valor IPI fixo": ["ipi", "valor ipi", "ipi fixo"],
+    "Observações": ["observacao", "observação", "obs", "observacoes", "observações"],
+    "Situação": ["situacao", "situação", "status", "ativo", "inativo", "status produto"],
+    "Estoque": ["estoque", "saldo", "quantidade", "qtd", "qtde", "disponivel", "disponível", "saldo estoque"],
+    "Preço de custo": ["preco custo", "preço custo", "custo", "valor custo", "cost", "custo unitario", "custo unitário"],
+    "Cód no fornecedor": ["cod fornecedor", "codigo fornecedor", "cód no fornecedor", "ref fornecedor", "sku fornecedor", "codigo fornecedor externo"],
+    "Fornecedor": ["fornecedor", "distribuidor", "importadora"],
+    "Localização": ["localizacao", "localização", "prateleira", "endereco estoque"],
+    "Estoque maximo": ["estoque maximo", "estoque máximo", "maximo", "máximo"],
+    "Estoque minimo": ["estoque minimo", "estoque mínimo", "minimo", "mínimo"],
+    "Peso líquido (Kg)": ["peso liquido", "peso líquido", "peso liq", "peso"],
+    "Peso bruto (Kg)": ["peso bruto"],
+    "GTIN/EAN": ["gtin", "ean", "codigo barras", "código barras", "cod barras", "barcode"],
+    "GTIN/EAN da embalagem": ["gtin embalagem", "ean embalagem", "codigo barras embalagem"],
+    "Largura do Produto": ["largura", "width"],
+    "Altura do Produto": ["altura", "height"],
+    "Profundidade do produto": ["profundidade", "comprimento", "length", "profundidade produto"],
+    "Data Validade": ["validade", "data validade", "vencimento"],
+    "Descrição do Produto no Fornecedor": ["descricao fornecedor", "descrição fornecedor", "nome fornecedor", "descricao produto fornecedor"],
+    "Descrição Complementar": ["descricao complementar", "descrição complementar", "complemento", "detalhes", "descricao longa", "descrição longa"],
+    "Itens p/ caixa": ["itens caixa", "item caixa", "cx", "caixa", "quantidade caixa", "qtd caixa"],
+    "Produto Variação": ["variacao", "variação", "tipo variacao", "produto variacao", "grade", "cor", "tamanho"],
+    "Tipo Produção": ["tipo producao", "tipo produção"],
+    "Classe de enquadramento do IPI": ["classe ipi", "enquadramento ipi"],
+    "Código da lista de serviços": ["lista servicos", "lista serviços", "codigo servico"],
+    "Tipo do item": ["tipo item"],
+    "Grupo de Tags/Tags": ["tags", "grupo tags", "grupo de tags", "tag"],
+    "Tributos": ["tributos", "impostos", "regra tributaria", "regra tributária"],
+    "Código Pai": ["codigo pai", "código pai", "sku pai"],
+    "Código Integração": ["codigo integracao", "código integração", "id integracao", "id integração"],
+    "Grupo de produtos": ["grupo produtos", "grupo de produtos", "grupo", "colecao", "coleção", "linha"],
+    "Marca": ["marca", "fabricante", "brand"],
+    "CEST": ["cest"],
+    "Volumes": ["volume", "volumes"],
+    "Descrição Curta": ["descricao curta", "descrição curta", "resumo", "short description", "subtitulo", "subtítulo"],
+    "URL Imagens Externas": ["imagem", "imagens", "url imagem", "url imagens", "fotos", "fotos produto", "imagem externa", "link imagem", "imagem 1", "foto 1"],
+    "Link Externo": ["link externo", "url produto", "link produto", "url externa", "site produto", "pagina produto", "página produto"],
+    "Meses Garantia no Fornecedor": ["garantia", "meses garantia"],
+    "Clonar dados do pai": ["clonar dados pai"],
+    "Condição do produto": ["condicao", "condição", "novo usado", "condicao produto"],
+    "Frete Grátis": ["frete gratis", "frete grátis"],
+    "Número FCI": ["fci", "numero fci", "número fci"],
+    "Vídeo": ["video", "vídeo", "youtube"],
+    "Departamento": ["departamento", "genero", "gênero", "publico", "público", "setor"],
+    "Unidade de medida": ["unidade medida", "medida"],
+    "Preço de compra": ["preco compra", "preço compra", "valor compra", "compra"],
+    "Valor base ICMS ST para retenção": ["base icms st", "valor base icms st"],
+    "Valor ICMS ST para retenção": ["icms st", "valor icms st"],
+    "Valor ICMS próprio do substituto": ["icms proprio", "icms próprio substituto"],
+    "Categoria do produto": ["categoria", "categoria produto", "grupo categoria", "departamento categoria", "subcategoria", "segmento"],
+    "Informações Adicionais": ["informacoes adicionais", "informações adicionais", "info adicionais", "nfe", "nf-e", "observacao fiscal", "observação fiscal"],
+}
 
 
 # =========================================================
@@ -25,7 +171,6 @@ st.set_page_config(page_title="Bling Cadastro Manual PRO", layout="wide")
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "bling_app_zero" / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 MAPEAMENTOS_FILE = DATA_DIR / "mapeamentos_fornecedor.json"
 
 
@@ -35,50 +180,38 @@ MAPEAMENTOS_FILE = DATA_DIR / "mapeamentos_fornecedor.json"
 def init_state() -> None:
     defaults = {
         "df_origem": None,
-        "df_modelo": None,
         "df_saida": None,
         "nome_arquivo_origem": "",
-        "nome_modelo_cadastro": "",
         "ultima_chave_origem": "",
-        "ultima_chave_modelo": "",
-        "mapeamento_manual": {},
         "fornecedor_id": "",
-        "logs": [],
-        "precificacao_habilitada": False,
-        "precificacao_config": {},
+        "mapeamento_manual": {},
         "campos_sem_vinculo": [],
         "campos_obrigatorios_sem_vinculo": [],
+        "precificacao_config": {},
+        "logs": [],
+        "sugestao_confianca": {},
     }
-
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 
 def log(msg: str) -> None:
-    st.session_state.logs.append(str(msg))
+    st.session_state["logs"].append(str(msg))
 
 
 def limpar_tudo() -> None:
-    chaves_base = {
-        "df_origem": None,
-        "df_modelo": None,
-        "df_saida": None,
-        "nome_arquivo_origem": "",
-        "nome_modelo_cadastro": "",
-        "ultima_chave_origem": "",
-        "ultima_chave_modelo": "",
-        "mapeamento_manual": {},
-        "fornecedor_id": "",
-        "logs": [],
-        "precificacao_habilitada": False,
-        "precificacao_config": {},
-        "campos_sem_vinculo": [],
-        "campos_obrigatorios_sem_vinculo": [],
-    }
-
-    for chave, valor in chaves_base.items():
-        st.session_state[chave] = valor
+    st.session_state["df_origem"] = None
+    st.session_state["df_saida"] = None
+    st.session_state["nome_arquivo_origem"] = ""
+    st.session_state["ultima_chave_origem"] = ""
+    st.session_state["fornecedor_id"] = ""
+    st.session_state["mapeamento_manual"] = {}
+    st.session_state["campos_sem_vinculo"] = []
+    st.session_state["campos_obrigatorios_sem_vinculo"] = []
+    st.session_state["precificacao_config"] = {}
+    st.session_state["logs"] = []
+    st.session_state["sugestao_confianca"] = {}
 
     for chave in list(st.session_state.keys()):
         if chave.startswith("map_") or chave.startswith("cfg_"):
@@ -87,13 +220,15 @@ def limpar_tudo() -> None:
 
 def zerar_mapeamento_visual() -> None:
     st.session_state["mapeamento_manual"] = {}
+    st.session_state["df_saida"] = None
+    st.session_state["sugestao_confianca"] = {}
     for chave in list(st.session_state.keys()):
         if chave.startswith("map_"):
             del st.session_state[chave]
 
 
 # =========================================================
-# HELPERS TEXTO
+# HELPERS TEXTO / NUMÉRICO
 # =========================================================
 def limpar_texto(valor) -> str:
     if valor is None:
@@ -103,7 +238,6 @@ def limpar_texto(valor) -> str:
             return ""
     except Exception:
         pass
-
     texto = str(valor)
     texto = texto.replace("\n", " ").replace("\r", " ").replace("\t", " ")
     texto = re.sub(r"\s+", " ", texto)
@@ -111,9 +245,8 @@ def limpar_texto(valor) -> str:
 
 
 def remover_acentos(texto: str) -> str:
-    texto = str(texto)
     return "".join(
-        c for c in unicodedata.normalize("NFKD", texto)
+        c for c in unicodedata.normalize("NFKD", str(texto))
         if not unicodedata.combining(c)
     )
 
@@ -121,19 +254,22 @@ def remover_acentos(texto: str) -> str:
 def slug_coluna(nome: str) -> str:
     nome = limpar_texto(nome)
     nome = remover_acentos(nome).lower()
-    nome = nome.replace("/", " ")
-    nome = nome.replace("\\", " ")
-    nome = nome.replace("-", " ")
-    nome = nome.replace("_", " ")
+    nome = nome.replace("/", " ").replace("\\", " ").replace("-", " ").replace("_", " ")
     nome = re.sub(r"[^a-z0-9 ]+", "", nome)
     nome = re.sub(r"\s+", " ", nome).strip()
     return nome
 
 
+def formatar_preview_valor(valor) -> str:
+    txt = limpar_texto(valor)
+    if len(txt) > 90:
+        return txt[:87] + "..."
+    return txt
+
+
 def fornecedor_id_por_nome(nome_arquivo: str) -> str:
     base = Path(nome_arquivo).stem
-    base = slug_coluna(base)
-    return base or "fornecedor_sem_nome"
+    return slug_coluna(base) or "fornecedor_sem_nome"
 
 
 def normalizar_valor_numerico(valor) -> float:
@@ -166,149 +302,59 @@ def normalizar_valor_numerico(valor) -> float:
         return 0.0
 
 
-def formatar_preview_valor(valor) -> str:
+def parece_numero(valor: str) -> bool:
+    texto = limpar_texto(valor)
+    if not texto:
+        return False
+    try:
+        _ = normalizar_valor_numerico(texto)
+        return True
+    except Exception:
+        return False
+
+
+def parece_url(valor: str) -> bool:
+    texto = limpar_texto(valor).lower()
+    return texto.startswith("http://") or texto.startswith("https://") or "www." in texto
+
+
+def parece_data(valor: str) -> bool:
+    texto = limpar_texto(valor)
+    if not texto:
+        return False
+    padroes = [
+        r"^\d{2}/\d{2}/\d{4}$",
+        r"^\d{4}-\d{2}-\d{2}$",
+        r"^\d{2}-\d{2}-\d{4}$",
+    ]
+    return any(re.match(p, texto) for p in padroes)
+
+
+def somente_digitos(valor: str) -> str:
+    return re.sub(r"\D+", "", limpar_texto(valor))
+
+
+def parece_gtin(valor: str) -> bool:
+    dig = somente_digitos(valor)
+    return len(dig) in {8, 12, 13, 14}
+
+
+def parece_ncm(valor: str) -> bool:
+    dig = somente_digitos(valor)
+    return len(dig) == 8
+
+
+def parece_cest(valor: str) -> bool:
+    dig = somente_digitos(valor)
+    return len(dig) == 7
+
+
+def normalizar_lista_urls_imagem(valor) -> str:
     texto = limpar_texto(valor)
     if not texto:
         return ""
-    if len(texto) > 80:
-        return texto[:77] + "..."
-    return texto
 
-
-# =========================================================
-# HELPERS ARQUIVO
-# =========================================================
-def carregar_modelo_bling(arquivo) -> Optional[pd.DataFrame]:
-    if arquivo is None:
-        return None
-
-    try:
-        df = ler_planilha(arquivo)
-        if df is None or df.empty:
-            return None
-
-        df = df.copy()
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.dropna(axis=0, how="all").reset_index(drop=True)
-        return df
-    except Exception as e:
-        st.error(f"Erro ao ler modelo de cadastro do Bling: {e}")
-        return None
-
-
-def carregar_mapeamentos_salvos() -> Dict[str, dict]:
-    if not MAPEAMENTOS_FILE.exists():
-        return {}
-
-    try:
-        with open(MAPEAMENTOS_FILE, "r", encoding="utf-8") as f:
-            conteudo = json.load(f)
-            if isinstance(conteudo, dict):
-                return conteudo
-            return {}
-    except Exception:
-        return {}
-
-
-def salvar_mapeamentos_salvos(dados: Dict[str, dict]) -> None:
-    with open(MAPEAMENTOS_FILE, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False, indent=2)
-
-
-def salvar_mapeamento_fornecedor(
-    fornecedor_id: str,
-    nome_arquivo_origem: str,
-    nome_modelo: str,
-    mapeamento_manual: dict,
-    precificacao_config: dict,
-) -> None:
-    banco = carregar_mapeamentos_salvos()
-    banco[fornecedor_id] = {
-        "fornecedor_id": fornecedor_id,
-        "nome_arquivo_origem": nome_arquivo_origem,
-        "nome_modelo": nome_modelo,
-        "mapeamento_manual": mapeamento_manual,
-        "precificacao_config": precificacao_config,
-    }
-    salvar_mapeamentos_salvos(banco)
-
-
-def carregar_mapeamento_fornecedor(fornecedor_id: str) -> Optional[dict]:
-    banco = carregar_mapeamentos_salvos()
-    return banco.get(fornecedor_id)
-
-
-# =========================================================
-# IDENTIFICAÇÃO DE CAMPOS
-# =========================================================
-def encontrar_colunas_por_palavras(colunas: List[str], palavras: List[str]) -> List[str]:
-    resultado = []
-    for col in colunas:
-        col_slug = slug_coluna(col)
-        for palavra in palavras:
-            if slug_coluna(palavra) in col_slug:
-                resultado.append(col)
-                break
-    return resultado
-
-
-def detectar_campos_obrigatorios_modelo(modelo_df: pd.DataFrame) -> List[str]:
-    if modelo_df is None or modelo_df.empty:
-        return []
-
-    colunas = list(modelo_df.columns)
-    obrigatorios = []
-
-    chaves = [
-        ["codigo", "código", "sku"],
-        ["nome", "produto", "titulo", "título", "descricao"],
-        ["preco", "preço", "valor"],
-        ["unidade", "und", "un"],
-    ]
-
-    for grupo in chaves:
-        encontrados = encontrar_colunas_por_palavras(colunas, grupo)
-        if encontrados:
-            obrigatorios.append(encontrados[0])
-
-    obrigatorios_unicos = []
-    vistos = set()
-    for c in obrigatorios:
-        if c not in vistos:
-            vistos.add(c)
-            obrigatorios_unicos.append(c)
-
-    return obrigatorios_unicos
-
-
-def detectar_colunas_imagem_modelo(modelo_df: pd.DataFrame) -> List[str]:
-    if modelo_df is None or modelo_df.empty:
-        return []
-    return encontrar_colunas_por_palavras(
-        list(modelo_df.columns),
-        ["imagem", "imagens", "foto", "fotos"],
-    )
-
-
-def detectar_coluna_preco_modelo(modelo_df: pd.DataFrame) -> Optional[str]:
-    if modelo_df is None or modelo_df.empty:
-        return None
-    encontrados = encontrar_colunas_por_palavras(
-        list(modelo_df.columns),
-        ["preco", "preço", "valor"],
-    )
-    return encontrados[0] if encontrados else None
-
-
-# =========================================================
-# IMAGENS
-# =========================================================
-def extrair_lista_imagens(texto: str) -> List[str]:
-    bruto = limpar_texto(texto)
-    if not bruto:
-        return []
-
-    partes = re.split(r"[|,;\n\r\t]+", bruto)
+    partes = re.split(r"[|,;\n\r\t]+", texto)
     urls = []
     vistos = set()
 
@@ -324,19 +370,556 @@ def extrair_lista_imagens(texto: str) -> List[str]:
         vistos.add(chave)
         urls.append(url)
 
-    return urls
-
-
-def normalizar_coluna_imagens_pipe(serie: pd.Series) -> pd.Series:
-    valores = []
-    for valor in serie.fillna("").astype(str).tolist():
-        imagens = extrair_lista_imagens(valor)
-        valores.append("|".join(imagens))
-    return pd.Series(valores, index=serie.index, dtype="object")
+    return "|".join(urls)
 
 
 # =========================================================
-# PRECIFICAÇÃO INTELIGENTE
+# PERSISTÊNCIA
+# =========================================================
+def carregar_mapeamentos_salvos() -> Dict[str, dict]:
+    if not MAPEAMENTOS_FILE.exists():
+        return {}
+    try:
+        return json.loads(MAPEAMENTOS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def salvar_mapeamentos_salvos(dados: Dict[str, dict]) -> None:
+    MAPEAMENTOS_FILE.write_text(
+        json.dumps(dados, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def salvar_mapeamento_fornecedor(
+    fornecedor_id: str,
+    nome_arquivo_origem: str,
+    mapeamento_manual: dict,
+    precificacao_config: dict,
+) -> None:
+    banco = carregar_mapeamentos_salvos()
+    banco[fornecedor_id] = {
+        "fornecedor_id": fornecedor_id,
+        "nome_arquivo_origem": nome_arquivo_origem,
+        "mapeamento_manual": mapeamento_manual,
+        "precificacao_config": precificacao_config,
+    }
+    salvar_mapeamentos_salvos(banco)
+
+
+def carregar_mapeamento_fornecedor(fornecedor_id: str) -> Optional[dict]:
+    banco = carregar_mapeamentos_salvos()
+    return banco.get(fornecedor_id)
+
+
+# =========================================================
+# OPENAI OPCIONAL
+# =========================================================
+def obter_cliente_openai():
+    if OpenAI is None:
+        return None
+
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        return OpenAI(api_key=api_key)
+    except Exception:
+        return None
+
+
+# =========================================================
+# PERFIL REAL DAS COLUNAS DO FORNECEDOR
+# =========================================================
+def extrair_amostra_coluna(serie: pd.Series, limite: int = 30) -> List[str]:
+    valores = []
+    for v in serie.fillna("").astype(str).tolist():
+        txt = limpar_texto(v)
+        if txt:
+            valores.append(txt)
+        if len(valores) >= limite:
+            break
+    return valores
+
+
+def perfil_coluna_fornecedor(serie: pd.Series) -> dict:
+    amostra = extrair_amostra_coluna(serie, limite=40)
+    total = len(amostra)
+
+    if total == 0:
+        return {
+            "total": 0,
+            "pct_numerico": 0.0,
+            "pct_url": 0.0,
+            "pct_gtin": 0.0,
+            "pct_ncm": 0.0,
+            "pct_cest": 0.0,
+            "pct_data": 0.0,
+            "pct_curto": 0.0,
+            "pct_longo": 0.0,
+            "pct_sim_nao": 0.0,
+            "valores_unicos": 0,
+            "media_tamanho": 0.0,
+        }
+
+    numerico = sum(1 for v in amostra if parece_numero(v))
+    url = sum(1 for v in amostra if parece_url(v))
+    gtin = sum(1 for v in amostra if parece_gtin(v))
+    ncm = sum(1 for v in amostra if parece_ncm(v))
+    cest = sum(1 for v in amostra if parece_cest(v))
+    data = sum(1 for v in amostra if parece_data(v))
+    curto = sum(1 for v in amostra if len(v) <= 20)
+    longo = sum(1 for v in amostra if len(v) >= 60)
+
+    sim_nao_vals = {"sim", "nao", "não", "s", "n", "true", "false", "ativo", "inativo", "1", "0"}
+    sim_nao = sum(1 for v in amostra if slug_coluna(v) in sim_nao_vals)
+
+    return {
+        "total": total,
+        "pct_numerico": numerico / total,
+        "pct_url": url / total,
+        "pct_gtin": gtin / total,
+        "pct_ncm": ncm / total,
+        "pct_cest": cest / total,
+        "pct_data": data / total,
+        "pct_curto": curto / total,
+        "pct_longo": longo / total,
+        "pct_sim_nao": sim_nao / total,
+        "valores_unicos": len(set(amostra)),
+        "media_tamanho": sum(len(v) for v in amostra) / total,
+    }
+
+
+def construir_perfis_fornecedor(df_origem: pd.DataFrame) -> Dict[str, dict]:
+    perfis = {}
+    for coluna in df_origem.columns:
+        perfis[coluna] = perfil_coluna_fornecedor(df_origem[coluna])
+    return perfis
+
+
+# =========================================================
+# APRENDIZADO DOS MAPEAMENTOS SALVOS
+# =========================================================
+def memoria_mapeamentos_por_coluna() -> Dict[str, Counter]:
+    """
+    Retorna:
+    {
+      "codigo fornecedor": Counter({"Código": 5, "Cód no fornecedor": 1}),
+      ...
+    }
+    """
+    banco = carregar_mapeamentos_salvos()
+    memoria: Dict[str, Counter] = defaultdict(Counter)
+
+    for _, payload in banco.items():
+        mapeamento = payload.get("mapeamento_manual", {}) or {}
+        for col_bling, col_origem in mapeamento.items():
+            if not col_origem:
+                continue
+            memoria[slug_coluna(col_origem)][col_bling] += 1
+
+    return memoria
+
+
+# =========================================================
+# SCORE DE SUGESTÃO REFINADO
+# =========================================================
+def score_nome_coluna(coluna_bling: str, coluna_fornecedor: str) -> float:
+    slug_bling = slug_coluna(coluna_bling)
+    slug_forn = slug_coluna(coluna_fornecedor)
+
+    if not slug_forn:
+        return 0.0
+
+    score = 0.0
+
+    if slug_bling == slug_forn:
+        score += 100.0
+
+    aliases = ALIASES_BLING.get(coluna_bling, [])
+    for alias in aliases:
+        alias_slug = slug_coluna(alias)
+        if not alias_slug:
+            continue
+        if alias_slug == slug_forn:
+            score += 95.0
+        elif alias_slug in slug_forn:
+            score += min(75.0, 32.0 + len(alias_slug))
+        elif slug_forn in alias_slug and len(slug_forn) >= 4:
+            score += 24.0
+
+    palavras_bling = set(slug_bling.split())
+    palavras_forn = set(slug_forn.split())
+    score += len(palavras_bling.intersection(palavras_forn)) * 8.0
+
+    return score
+
+
+def score_tipo_valor(coluna_bling: str, perfil: dict) -> float:
+    score = 0.0
+
+    if coluna_bling == "URL Imagens Externas":
+        score += perfil["pct_url"] * 120
+        score += perfil["pct_longo"] * 10
+
+    elif coluna_bling in {"Preço", "Preço de custo", "Preço de compra", "Valor IPI fixo",
+                          "Valor base ICMS ST para retenção", "Valor ICMS ST para retenção",
+                          "Valor ICMS próprio do substituto"}:
+        score += perfil["pct_numerico"] * 60
+
+    elif coluna_bling in {"Estoque", "Estoque maximo", "Estoque minimo", "Itens p/ caixa", "Volumes", "Cross-Docking"}:
+        score += perfil["pct_numerico"] * 50
+        score += perfil["pct_curto"] * 8
+
+    elif coluna_bling == "GTIN/EAN":
+        score += perfil["pct_gtin"] * 120
+        score += perfil["pct_numerico"] * 15
+
+    elif coluna_bling == "GTIN/EAN da embalagem":
+        score += perfil["pct_gtin"] * 115
+        score += perfil["pct_numerico"] * 12
+
+    elif coluna_bling == "NCM":
+        score += perfil["pct_ncm"] * 120
+
+    elif coluna_bling == "CEST":
+        score += perfil["pct_cest"] * 120
+
+    elif coluna_bling == "Data Validade":
+        score += perfil["pct_data"] * 120
+
+    elif coluna_bling in {"Descrição", "Descrição Curta", "Descrição Complementar", "Descrição do Produto no Fornecedor", "Informações Adicionais"}:
+        score += perfil["pct_longo"] * 25
+        score += max(0.0, 1 - perfil["pct_numerico"]) * 20
+
+    elif coluna_bling in {"Situação", "Frete Grátis", "Clonar dados do pai"}:
+        score += perfil["pct_sim_nao"] * 100
+        score += perfil["pct_curto"] * 12
+
+    elif coluna_bling in {"Marca", "Fornecedor", "Categoria do produto", "Grupo de produtos", "Departamento"}:
+        score += max(0.0, 1 - perfil["pct_numerico"]) * 18
+        score += perfil["pct_curto"] * 15
+
+    elif coluna_bling in {"Largura do Produto", "Altura do Produto", "Profundidade do produto", "Peso líquido (Kg)", "Peso bruto (Kg)"}:
+        score += perfil["pct_numerico"] * 55
+
+    elif coluna_bling == "Link Externo":
+        score += perfil["pct_url"] * 100
+
+    elif coluna_bling == "Vídeo":
+        score += perfil["pct_url"] * 90
+
+    return score
+
+
+def score_memoria_mapeada(coluna_bling: str, coluna_fornecedor: str, memoria: Dict[str, Counter]) -> float:
+    slug_forn = slug_coluna(coluna_fornecedor)
+    if slug_forn not in memoria:
+        return 0.0
+
+    contador = memoria[slug_forn]
+    total = sum(contador.values())
+    if total <= 0:
+        return 0.0
+
+    hits = contador.get(coluna_bling, 0)
+    return (hits / total) * 90.0
+
+
+def score_coluna_fornecedor_para_bling(
+    coluna_bling: str,
+    coluna_fornecedor: str,
+    perfil: dict,
+    memoria: Dict[str, Counter],
+) -> float:
+    score = 0.0
+    score += score_nome_coluna(coluna_bling, coluna_fornecedor)
+    score += score_tipo_valor(coluna_bling, perfil)
+    score += score_memoria_mapeada(coluna_bling, coluna_fornecedor, memoria)
+
+    slug_forn = slug_coluna(coluna_fornecedor)
+
+    # Penalidades úteis
+    if coluna_bling == "URL Imagens Externas" and "video" in slug_forn:
+        score -= 35
+    if coluna_bling == "Vídeo" and "imagem" in slug_forn:
+        score -= 35
+    if coluna_bling == "Preço" and "custo" in slug_forn:
+        score -= 25
+    if coluna_bling in {"Preço de custo", "Preço de compra"} and ("venda" in slug_forn or "preco venda" in slug_forn):
+        score -= 25
+    if coluna_bling == "Descrição" and ("curta" in slug_forn or "resumo" in slug_forn):
+        score -= 12
+    if coluna_bling == "Descrição Curta" and ("nome" in slug_forn or "titulo" in slug_forn):
+        score -= 8
+
+    return score
+
+
+def limiar_por_campo(coluna_bling: str) -> float:
+    if coluna_bling in {
+        "Código", "Descrição", "Preço", "Estoque", "Preço de custo", "Preço de compra",
+        "Marca", "Descrição Curta", "Categoria do produto", "URL Imagens Externas",
+        "GTIN/EAN", "NCM", "CEST"
+    }:
+        return 48.0
+    if coluna_bling in BLING_OBRIGATORIOS:
+        return 44.0
+    return 58.0
+
+
+def nivel_confianca(score: float) -> str:
+    if score >= 150:
+        return "alta"
+    if score >= 90:
+        return "média"
+    return "baixa"
+
+
+def sugerir_mapeamento_local_refinado(df_origem: pd.DataFrame) -> Tuple[dict, dict]:
+    mapeamento = {}
+    confianca = {}
+    disponiveis = list(df_origem.columns)
+    perfis = construir_perfis_fornecedor(df_origem)
+    memoria = memoria_mapeamentos_por_coluna()
+
+    for coluna_bling in BLING_COLUNAS_OFICIAIS:
+        ranking = []
+
+        for coluna_origem in disponiveis:
+            score = score_coluna_fornecedor_para_bling(
+                coluna_bling=coluna_bling,
+                coluna_fornecedor=coluna_origem,
+                perfil=perfis[coluna_origem],
+                memoria=memoria,
+            )
+            ranking.append((coluna_origem, score))
+
+        ranking.sort(key=lambda x: x[1], reverse=True)
+
+        melhor_coluna = None
+        melhor_score = 0.0
+        segunda_score = 0.0
+
+        if ranking:
+            melhor_coluna, melhor_score = ranking[0]
+            if len(ranking) > 1:
+                segunda_score = ranking[1][1]
+
+        limiar = limiar_por_campo(coluna_bling)
+
+        # Se a melhor opção quase empata com a segunda, considera duvidoso
+        vantagem = melhor_score - segunda_score
+        if melhor_score >= limiar and vantagem >= 8:
+            mapeamento[coluna_bling] = melhor_coluna
+            confianca[coluna_bling] = {
+                "coluna": melhor_coluna,
+                "score": round(melhor_score, 1),
+                "nivel": nivel_confianca(melhor_score),
+                "vantagem": round(vantagem, 1),
+            }
+        else:
+            mapeamento[coluna_bling] = None
+            confianca[coluna_bling] = {
+                "coluna": melhor_coluna if melhor_score > 0 else None,
+                "score": round(melhor_score, 1),
+                "nivel": "baixa",
+                "vantagem": round(vantagem, 1),
+            }
+
+    # Evitar colisões nas colunas principais
+    principais = [
+        "Código",
+        "Descrição",
+        "Preço",
+        "Estoque",
+        "Preço de custo",
+        "Preço de compra",
+        "Descrição Curta",
+        "Marca",
+        "Categoria do produto",
+        "URL Imagens Externas",
+        "GTIN/EAN",
+    ]
+
+    usados = {}
+    for campo in principais:
+        col = mapeamento.get(campo)
+        if not col:
+            continue
+
+        if col not in usados:
+            usados[col] = campo
+        else:
+            atual = confianca.get(campo, {}).get("score", 0.0)
+            anterior_campo = usados[col]
+            anterior = confianca.get(anterior_campo, {}).get("score", 0.0)
+
+            if atual > anterior:
+                mapeamento[anterior_campo] = None
+                usados[col] = campo
+            else:
+                mapeamento[campo] = None
+
+    return mapeamento, confianca
+
+
+# =========================================================
+# OPENAI REFINO OPCIONAL
+# =========================================================
+def sugerir_mapeamento_openai(df_origem: pd.DataFrame) -> Optional[dict]:
+    client = obter_cliente_openai()
+    if client is None:
+        return None
+
+    colunas_fornecedor = list(df_origem.columns)
+    exemplo = {}
+
+    if not df_origem.empty:
+        primeira = df_origem.head(1).fillna("").astype(str).to_dict(orient="records")[0]
+        for k, v in primeira.items():
+            exemplo[k] = formatar_preview_valor(v)
+
+    prompt = f"""
+Você deve sugerir um mapeamento entre colunas do fornecedor e colunas fixas do modelo Bling.
+Responda SOMENTE em JSON válido no formato:
+{{"mapeamento": {{"COLUNA BLING": "COLUNA FORNECEDOR ou null"}}}}
+
+Regras:
+- Use apenas estas colunas Bling: {BLING_COLUNAS_OFICIAIS}
+- Use apenas estas colunas do fornecedor: {colunas_fornecedor}
+- Se houver dúvida, coloque null
+- Não invente colunas
+- Preço = preço de venda
+- Preço de custo / Preço de compra = custo/compra quando existir
+- Código = SKU/referência/código quando existir
+- URL Imagens Externas = campo com URLs/imagens
+- Descrição = nome/título principal do produto
+- Descrição Curta = resumo/descrição curta quando existir
+
+Exemplo de valores da primeira linha:
+{json.dumps(exemplo, ensure_ascii=False)}
+"""
+
+    try:
+        resp = client.responses.create(
+            model="gpt-5-mini",
+            input=prompt,
+        )
+        texto = getattr(resp, "output_text", "") or ""
+        inicio = texto.find("{")
+        fim = texto.rfind("}")
+        if inicio == -1 or fim == -1:
+            return None
+
+        dados = json.loads(texto[inicio:fim + 1])
+        bruto = dados.get("mapeamento", {})
+
+        final = {}
+        for col_bling in BLING_COLUNAS_OFICIAIS:
+            valor = bruto.get(col_bling)
+            final[col_bling] = valor if valor in colunas_fornecedor else None
+
+        return final
+    except Exception as e:
+        log(f"Falha ao sugerir via IA: {e}")
+        return None
+
+
+# =========================================================
+# APLICAÇÃO DAS SUGESTÕES
+# =========================================================
+def aplicar_sugestao_no_estado(mapeamento: dict, confianca: Optional[dict] = None) -> None:
+    st.session_state["mapeamento_manual"] = dict(mapeamento)
+    if confianca is not None:
+        st.session_state["sugestao_confianca"] = confianca
+
+    for col_bling, col_origem in mapeamento.items():
+        st.session_state[f"map_{slug_coluna(col_bling)}"] = col_origem or ""
+
+
+# =========================================================
+# MAPEAMENTO VISUAL
+# =========================================================
+def construir_mapeamento_visual(df_origem: pd.DataFrame) -> dict:
+    opcoes = [""] + list(df_origem.columns)
+    primeira = df_origem.head(1).copy()
+    mapeamento = {}
+    confiancas = st.session_state.get("sugestao_confianca", {}) or {}
+
+    st.markdown("## Vinculação manual das colunas")
+
+    header = st.columns([2.2, 0.9, 2.3, 2.5, 1.2])
+    header[0].markdown("**Campo Bling oficial**")
+    header[1].markdown("**Obrigatório**")
+    header[2].markdown("**Coluna do fornecedor**")
+    header[3].markdown("**Prévia**")
+    header[4].markdown("**Confiança**")
+
+    st.markdown("---")
+
+    for col_bling in BLING_COLUNAS_OFICIAIS:
+        obrigatorio = col_bling in BLING_OBRIGATORIOS
+        key = f"map_{slug_coluna(col_bling)}"
+
+        valor_inicial = st.session_state.get("mapeamento_manual", {}).get(col_bling, "")
+        if valor_inicial not in opcoes:
+            valor_inicial = ""
+
+        if key not in st.session_state:
+            st.session_state[key] = valor_inicial
+
+        c1, c2, c3, c4, c5 = st.columns([2.2, 0.9, 2.3, 2.5, 1.2])
+
+        with c1:
+            st.markdown(f"**🔴 {col_bling}**" if obrigatorio else col_bling)
+
+        with c2:
+            st.markdown("**SIM**" if obrigatorio else "não")
+
+        with c3:
+            escolha = st.selectbox(
+                f"Mapear {col_bling}",
+                options=opcoes,
+                key=key,
+                label_visibility="collapsed",
+            )
+
+        with c4:
+            preview = ""
+            if escolha and escolha in primeira.columns and not primeira.empty:
+                preview = formatar_preview_valor(primeira.iloc[0][escolha])
+            st.caption(preview or "-")
+
+        with c5:
+            info = confiancas.get(col_bling, {})
+            nivel = info.get("nivel", "")
+            if escolha:
+                if nivel == "alta":
+                    st.success("alta")
+                elif nivel == "média":
+                    st.warning("média")
+                elif nivel == "baixa":
+                    st.caption("baixa")
+                else:
+                    st.caption("-")
+            else:
+                st.caption("-")
+
+        mapeamento[col_bling] = escolha or None
+
+    return mapeamento
+
+
+def analisar_vinculos(mapeamento_manual: dict) -> Tuple[List[str], List[str]]:
+    sem_vinculo = [campo for campo, origem in mapeamento_manual.items() if not origem]
+    obrigatorios_sem_vinculo = [campo for campo in BLING_OBRIGATORIOS if not mapeamento_manual.get(campo)]
+    return sem_vinculo, obrigatorios_sem_vinculo
+
+
+# =========================================================
+# PRECIFICAÇÃO
 # =========================================================
 def calcular_preco_venda(
     custo: float,
@@ -352,155 +935,12 @@ def calcular_preco_venda(
     valor_fixo = max(valor_fixo, 0.0)
 
     percentual_total = (lucro_percentual + imposto_percentual + taxa_percentual) / 100.0
-
     base = custo + valor_fixo
 
     if percentual_total >= 0.999:
         return round(base, 2)
 
-    preco = base / (1.0 - percentual_total)
-    return round(preco, 2)
-
-
-def aplicar_precificacao_dataframe(
-    df_saida: pd.DataFrame,
-    df_origem: pd.DataFrame,
-    coluna_preco_modelo: Optional[str],
-    config: dict,
-) -> pd.DataFrame:
-    if df_saida is None or df_saida.empty:
-        return df_saida
-
-    if not coluna_preco_modelo:
-        return df_saida
-
-    if not config.get("habilitada", False):
-        return df_saida
-
-    coluna_custo_origem = config.get("coluna_custo_origem")
-    if not coluna_custo_origem or coluna_custo_origem not in df_origem.columns:
-        return df_saida
-
-    lucro_percentual = normalizar_valor_numerico(config.get("lucro_percentual"))
-    imposto_percentual = normalizar_valor_numerico(config.get("imposto_percentual"))
-    taxa_percentual = normalizar_valor_numerico(config.get("taxa_percentual"))
-    valor_fixo = normalizar_valor_numerico(config.get("valor_fixo"))
-
-    custos = df_origem[coluna_custo_origem].fillna("").astype(str).tolist()
-    precos = []
-
-    for custo in custos[: len(df_saida)]:
-        custo_float = normalizar_valor_numerico(custo)
-        preco_venda = calcular_preco_venda(
-            custo=custo_float,
-            lucro_percentual=lucro_percentual,
-            imposto_percentual=imposto_percentual,
-            taxa_percentual=taxa_percentual,
-            valor_fixo=valor_fixo,
-        )
-        precos.append(preco_venda)
-
-    while len(precos) < len(df_saida):
-        precos.append(0.0)
-
-    df_saida[coluna_preco_modelo] = precos
-    return df_saida
-
-
-# =========================================================
-# MAPEAMENTO VISUAL
-# =========================================================
-def montar_opcoes_colunas(df: pd.DataFrame) -> List[str]:
-    if df is None or df.empty:
-        return [""]
-    return [""] + list(df.columns)
-
-
-def aplicar_mapeamento_salvo_no_estado(mapeamento_salvo: dict) -> None:
-    mapeamento_manual = mapeamento_salvo.get("mapeamento_manual") or {}
-    precificacao_config = mapeamento_salvo.get("precificacao_config") or {}
-
-    st.session_state["mapeamento_manual"] = mapeamento_manual
-    st.session_state["precificacao_config"] = precificacao_config
-    st.session_state["precificacao_habilitada"] = bool(precificacao_config.get("habilitada", False))
-
-    for chave, valor in mapeamento_manual.items():
-        estado_key = f"map_{slug_coluna(chave)}"
-        st.session_state[estado_key] = valor or ""
-
-    if precificacao_config:
-        st.session_state["cfg_coluna_custo_origem"] = precificacao_config.get("coluna_custo_origem", "")
-        st.session_state["cfg_lucro_percentual"] = precificacao_config.get("lucro_percentual", 0.0)
-        st.session_state["cfg_imposto_percentual"] = precificacao_config.get("imposto_percentual", 0.0)
-        st.session_state["cfg_taxa_percentual"] = precificacao_config.get("taxa_percentual", 0.0)
-        st.session_state["cfg_valor_fixo"] = precificacao_config.get("valor_fixo", 0.0)
-
-
-def construir_mapeamento_visual(
-    df_origem: pd.DataFrame,
-    modelo_df: pd.DataFrame,
-    obrigatorios: List[str],
-) -> dict:
-    opcoes = montar_opcoes_colunas(df_origem)
-    mapeamento = {}
-
-    st.markdown("## Vinculação manual das colunas")
-
-    header = st.columns([2.2, 0.8, 2.2, 2.8])
-    header[0].markdown("**Campo do cadastro Bling**")
-    header[1].markdown("**Obrigatório**")
-    header[2].markdown("**Coluna do fornecedor**")
-    header[3].markdown("**Prévia da coluna escolhida**")
-
-    st.markdown("---")
-
-    primeira_linha = df_origem.head(1).copy()
-
-    for coluna_modelo in modelo_df.columns:
-        obrigatorio = coluna_modelo in obrigatorios
-        estado_key = f"map_{slug_coluna(coluna_modelo)}"
-
-        valor_inicial = st.session_state.get("mapeamento_manual", {}).get(coluna_modelo, "")
-        if valor_inicial not in opcoes:
-            valor_inicial = ""
-
-        if estado_key not in st.session_state:
-            st.session_state[estado_key] = valor_inicial
-
-        c1, c2, c3, c4 = st.columns([2.2, 0.8, 2.2, 2.8])
-
-        with c1:
-            if obrigatorio:
-                st.markdown(f"**🔴 {coluna_modelo}**")
-            else:
-                st.markdown(f"{coluna_modelo}")
-
-        with c2:
-            st.markdown("**SIM**" if obrigatorio else "não")
-
-        with c3:
-            escolha = st.selectbox(
-                label=f"Mapear {coluna_modelo}",
-                options=opcoes,
-                key=estado_key,
-                label_visibility="collapsed",
-            )
-
-        with c4:
-            preview = ""
-            if escolha and escolha in primeira_linha.columns and not primeira_linha.empty:
-                preview = formatar_preview_valor(primeira_linha.iloc[0][escolha])
-            st.caption(preview or "-")
-
-        mapeamento[coluna_modelo] = escolha or None
-
-    return mapeamento
-
-
-def analisar_vinculos(mapeamento_manual: dict, obrigatorios: List[str]) -> tuple[list, list]:
-    sem_vinculo = [campo for campo, origem in mapeamento_manual.items() if not origem]
-    obrigatorios_sem_vinculo = [campo for campo in obrigatorios if not mapeamento_manual.get(campo)]
-    return sem_vinculo, obrigatorios_sem_vinculo
+    return round(base / (1.0 - percentual_total), 2)
 
 
 # =========================================================
@@ -508,28 +948,50 @@ def analisar_vinculos(mapeamento_manual: dict, obrigatorios: List[str]) -> tuple
 # =========================================================
 def gerar_planilha_saida(
     df_origem: pd.DataFrame,
-    modelo_df: pd.DataFrame,
     mapeamento_manual: dict,
+    config_precificacao: dict,
 ) -> pd.DataFrame:
-    saida = pd.DataFrame("", index=range(len(df_origem)), columns=list(modelo_df.columns))
+    saida = pd.DataFrame("", index=range(len(df_origem)), columns=BLING_COLUNAS_OFICIAIS)
 
-    colunas_imagem_modelo = detectar_colunas_imagem_modelo(modelo_df)
+    for col_bling in BLING_COLUNAS_OFICIAIS:
+        col_origem = mapeamento_manual.get(col_bling)
 
-    for coluna_modelo in modelo_df.columns:
-        coluna_origem = mapeamento_manual.get(coluna_modelo)
-
-        if not coluna_origem:
+        if not col_origem:
+            continue
+        if col_origem not in df_origem.columns:
             continue
 
-        if coluna_origem not in df_origem.columns:
-            continue
+        serie = df_origem[col_origem].fillna("").astype(str).reset_index(drop=True)
 
-        serie_origem = df_origem[coluna_origem].fillna("").astype(str).reset_index(drop=True)
+        if col_bling == BLING_COLUNA_IMAGENS:
+            serie = serie.apply(normalizar_lista_urls_imagem)
 
-        if coluna_modelo in colunas_imagem_modelo:
-            serie_origem = normalizar_coluna_imagens_pipe(serie_origem)
+        saida[col_bling] = serie.values
 
-        saida[coluna_modelo] = serie_origem.values
+    if config_precificacao.get("habilitada"):
+        col_custo = config_precificacao.get("coluna_custo_origem")
+        if col_custo and col_custo in df_origem.columns:
+            lucro = normalizar_valor_numerico(config_precificacao.get("lucro_percentual"))
+            impostos = normalizar_valor_numerico(config_precificacao.get("imposto_percentual"))
+            taxas = normalizar_valor_numerico(config_precificacao.get("taxa_percentual"))
+            fixo = normalizar_valor_numerico(config_precificacao.get("valor_fixo"))
+
+            precos = []
+            for valor in df_origem[col_custo].tolist():
+                custo = normalizar_valor_numerico(valor)
+                precos.append(calcular_preco_venda(custo, lucro, impostos, taxas, fixo))
+
+            saida[BLING_COLUNA_PRECO] = precos
+
+            if config_precificacao.get("preencher_preco_custo"):
+                saida[BLING_COLUNA_PRECO_CUSTO] = [
+                    normalizar_valor_numerico(v) for v in df_origem[col_custo].tolist()
+                ]
+
+            if config_precificacao.get("preencher_preco_compra"):
+                saida[BLING_COLUNA_PRECO_COMPRA] = [
+                    normalizar_valor_numerico(v) for v in df_origem[col_custo].tolist()
+                ]
 
     return saida
 
@@ -545,6 +1007,21 @@ def gerar_excel_download(df_saida: pd.DataFrame) -> bytes:
         return output.getvalue()
 
 
+def carregar_arquivo_origem(arquivo_origem) -> Optional[pd.DataFrame]:
+    try:
+        df_origem = carregar_planilha(arquivo_origem)
+        if df_origem is None or df_origem.empty:
+            return None
+
+        df_origem = df_origem.copy()
+        df_origem.columns = [str(c).strip() for c in df_origem.columns]
+        df_origem = df_origem.dropna(axis=0, how="all").reset_index(drop=True)
+        return df_origem
+    except Exception as e:
+        log(f"Erro ao ler planilha do fornecedor: {e}")
+        return None
+
+
 # =========================================================
 # APP
 # =========================================================
@@ -552,7 +1029,7 @@ def main() -> None:
     init_state()
 
     st.title("Bling Cadastro Manual PRO")
-    st.caption("Upload do fornecedor → vínculo manual → precificação → download")
+    st.caption("Modelo travado no Bling oficial → sugestão inteligente refinada → conferência → download")
 
     with st.sidebar:
         st.header("Ações")
@@ -565,36 +1042,29 @@ def main() -> None:
             zerar_mapeamento_visual()
             st.rerun()
 
-    st.markdown("## Envio dos arquivos")
+        st.divider()
+        st.markdown("**Modelo oficial travado**")
+        st.caption("59 colunas fixas do Bling")
+        st.caption("A sugestão usa nome da coluna + amostra real + histórico salvo")
+        st.caption("Na dúvida, deixa em branco")
 
-    tipos_aceitos = ["xlsx", "xls", "csv", "zip"]
+    st.markdown("## 1) Suba a planilha do fornecedor")
 
     arquivo_origem = st.file_uploader(
-        "1) Planilha do fornecedor",
-        type=tipos_aceitos,
+        "Planilha do fornecedor",
+        type=["xlsx", "xls", "csv", "zip"],
         key="upload_origem",
     )
 
-    modelo_cadastro = st.file_uploader(
-        "2) Modelo de cadastro do Bling",
-        type=tipos_aceitos,
-        key="upload_modelo_cadastro",
-    )
-
-    # -----------------------------------------------------
-    # CARREGA ORIGEM
-    # -----------------------------------------------------
     if arquivo_origem is not None:
         chave_atual = f"{arquivo_origem.name}-{getattr(arquivo_origem, 'size', 0)}"
+
         if st.session_state["ultima_chave_origem"] != chave_atual:
-            df_origem = carregar_planilha(arquivo_origem)
+            df_origem = carregar_arquivo_origem(arquivo_origem)
 
             if df_origem is None or df_origem.empty:
                 st.error("Erro ao ler a planilha do fornecedor.")
                 return
-
-            df_origem = df_origem.copy()
-            df_origem.columns = [str(c).strip() for c in df_origem.columns]
 
             st.session_state["df_origem"] = df_origem
             st.session_state["nome_arquivo_origem"] = arquivo_origem.name
@@ -604,109 +1074,108 @@ def main() -> None:
             fornecedor_id = fornecedor_id_por_nome(arquivo_origem.name)
             st.session_state["fornecedor_id"] = fornecedor_id
 
-            log(f"Planilha do fornecedor carregada: {arquivo_origem.name}")
+            mapeamento_auto, confianca = sugerir_mapeamento_local_refinado(df_origem)
+            aplicar_sugestao_no_estado(mapeamento_auto, confianca)
 
-            mapeamento_salvo = carregar_mapeamento_fornecedor(fornecedor_id)
-            if mapeamento_salvo:
-                aplicar_mapeamento_salvo_no_estado(mapeamento_salvo)
+            salvo = carregar_mapeamento_fornecedor(fornecedor_id)
+            if salvo:
+                aplicar_sugestao_no_estado(
+                    salvo.get("mapeamento_manual", {}),
+                    st.session_state.get("sugestao_confianca", {}),
+                )
+                st.session_state["precificacao_config"] = salvo.get("precificacao_config", {})
                 log(f"Mapeamento reaproveitado automaticamente para: {fornecedor_id}")
 
-    # -----------------------------------------------------
-    # CARREGA MODELO
-    # -----------------------------------------------------
-    if modelo_cadastro is not None:
-        chave_modelo = f"{modelo_cadastro.name}-{getattr(modelo_cadastro, 'size', 0)}"
-        if st.session_state["ultima_chave_modelo"] != chave_modelo:
-            df_modelo = carregar_modelo_bling(modelo_cadastro)
-
-            if df_modelo is None or df_modelo.empty:
-                st.error("Erro ao ler o modelo de cadastro do Bling.")
-                return
-
-            st.session_state["df_modelo"] = df_modelo
-            st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
-            st.session_state["ultima_chave_modelo"] = chave_modelo
-            st.session_state["df_saida"] = None
-
-            log(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
+            log(f"Planilha do fornecedor carregada: {arquivo_origem.name}")
 
     df_origem = st.session_state["df_origem"]
-    df_modelo = st.session_state["df_modelo"]
 
     if df_origem is None:
         st.info("Anexe a planilha do fornecedor para começar.")
         return
 
-    st.success(f"✅ Fornecedor carregado: {st.session_state['nome_arquivo_origem']}")
+    st.success(f"✅ Arquivo carregado: {st.session_state['nome_arquivo_origem']}")
 
-    info_cols = st.columns(3)
-    info_cols[0].metric("Linhas", len(df_origem))
-    info_cols[1].metric("Colunas do fornecedor", len(df_origem.columns))
-    info_cols[2].metric("Fornecedor ID", st.session_state["fornecedor_id"] or "-")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Linhas", len(df_origem))
+    c2.metric("Colunas do fornecedor", len(df_origem.columns))
+    c3.metric("Fornecedor ID", st.session_state["fornecedor_id"] or "-")
 
-    if df_modelo is None:
-        st.warning("Anexe o modelo de cadastro do Bling para liberar o vínculo manual.")
-        return
+    with st.expander("Ver colunas lidas do fornecedor"):
+        st.write(list(df_origem.columns))
+        st.dataframe(df_origem.head(3), use_container_width=True)
 
-    st.success(f"✅ Modelo carregado: {st.session_state['nome_modelo_cadastro']}")
+    st.markdown("## 2) Sugestão inteligente refinada")
 
-    obrigatorios = detectar_campos_obrigatorios_modelo(df_modelo)
+    s1, s2, s3 = st.columns([1.5, 1.3, 3.2])
 
-    if obrigatorios:
-        st.info("Campos obrigatórios destacados em vermelho.")
+    with s1:
+        if st.button("🧠 Recalcular sugestões", use_container_width=True):
+            mapeamento_auto, confianca = sugerir_mapeamento_local_refinado(df_origem)
+            atual = st.session_state.get("mapeamento_manual", {}) or {}
+            combinado = {}
 
-    # -----------------------------------------------------
-    # VÍNCULO MANUAL
-    # -----------------------------------------------------
-    mapeamento_manual = construir_mapeamento_visual(
-        df_origem=df_origem,
-        modelo_df=df_modelo,
-        obrigatorios=obrigatorios,
-    )
+            for campo in BLING_COLUNAS_OFICIAIS:
+                combinado[campo] = atual.get(campo) or mapeamento_auto.get(campo)
 
+            aplicar_sugestao_no_estado(combinado, confianca)
+            st.success("Sugestões refinadas aplicadas.")
+            st.rerun()
+
+    with s2:
+        usar_openai = st.checkbox("Usar IA se disponível", value=False, key="usar_openai_checkbox")
+        if st.button("✨ Refinar com IA", use_container_width=True, disabled=not usar_openai):
+            mapeamento_ia = sugerir_mapeamento_openai(df_origem)
+            if mapeamento_ia:
+                atual = st.session_state.get("mapeamento_manual", {}) or {}
+                combinado = {}
+                for campo in BLING_COLUNAS_OFICIAIS:
+                    combinado[campo] = atual.get(campo) or mapeamento_ia.get(campo)
+                aplicar_sugestao_no_estado(combinado, st.session_state.get("sugestao_confianca", {}))
+                st.success("Sugestão por IA aplicada. Onde houve dúvida, o campo permaneceu em branco ou foi mantido.")
+                st.rerun()
+            else:
+                st.warning("IA não disponível ou sem resposta válida. Mantive o mapeamento atual.")
+
+    with s3:
+        st.caption(
+            "A sugestão agora usa o nome da coluna, uma amostra real dos valores e o histórico dos mapeamentos salvos. "
+            "Quando a confiança não passa do limite ou fica muito próxima da segunda melhor opção, o campo fica em branco."
+        )
+
+    mapeamento_manual = construir_mapeamento_visual(df_origem)
     st.session_state["mapeamento_manual"] = mapeamento_manual
 
-    campos_sem_vinculo, obrigatorios_sem_vinculo = analisar_vinculos(mapeamento_manual, obrigatorios)
+    campos_sem_vinculo, obrigatorios_sem_vinculo = analisar_vinculos(mapeamento_manual)
     st.session_state["campos_sem_vinculo"] = campos_sem_vinculo
     st.session_state["campos_obrigatorios_sem_vinculo"] = obrigatorios_sem_vinculo
 
-    st.markdown("## Status do mapeamento")
+    st.markdown("## 3) Status da conferência")
 
     if obrigatorios_sem_vinculo:
-        st.error(
-            "Campos obrigatórios sem vínculo: "
-            + ", ".join(obrigatorios_sem_vinculo)
-        )
+        st.error("Campos obrigatórios sem vínculo: " + ", ".join(obrigatorios_sem_vinculo))
     else:
-        st.success("Todos os campos obrigatórios detectados estão vinculados.")
+        st.success("Todos os campos obrigatórios estão vinculados.")
 
     opcionais_sem_vinculo = [c for c in campos_sem_vinculo if c not in obrigatorios_sem_vinculo]
     if opcionais_sem_vinculo:
-        st.warning(
-            "Campos sem vínculo: "
-            + ", ".join(opcionais_sem_vinculo)
-        )
+        st.warning("Campos opcionais sem vínculo: " + ", ".join(opcionais_sem_vinculo))
 
-    # -----------------------------------------------------
-    # PRECIFICAÇÃO
-    # -----------------------------------------------------
-    st.markdown("## Precificação inteligente")
+    st.markdown("## 4) Precificação inteligente")
 
-    coluna_preco_modelo = detectar_coluna_preco_modelo(df_modelo)
     opcoes_origem = [""] + list(df_origem.columns)
-
     config_salva = st.session_state.get("precificacao_config", {}) or {}
 
-    habilitada = st.checkbox(
-        "Ativar precificação automática do preço de venda",
-        value=st.session_state.get("precificacao_habilitada", False),
-        key="cfg_precificacao_habilitada",
-    )
-    st.session_state["precificacao_habilitada"] = habilitada
+    p1, p2, p3, p4, p5 = st.columns(5)
 
-    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+    with p1:
+        habilitada = st.checkbox(
+            "Ativar precificação",
+            value=bool(config_salva.get("habilitada", False)),
+            key="cfg_habilitada",
+        )
 
-    with pc1:
+    with p2:
         coluna_custo_origem = st.selectbox(
             "Coluna de custo",
             options=opcoes_origem,
@@ -715,8 +1184,8 @@ def main() -> None:
             disabled=not habilitada,
         )
 
-    with pc2:
-        lucro_percentual = st.number_input(
+    with p3:
+        lucro = st.number_input(
             "Lucro %",
             min_value=0.0,
             value=float(config_salva.get("lucro_percentual", 0.0)),
@@ -725,8 +1194,8 @@ def main() -> None:
             disabled=not habilitada,
         )
 
-    with pc3:
-        imposto_percentual = st.number_input(
+    with p4:
+        impostos = st.number_input(
             "Impostos %",
             min_value=0.0,
             value=float(config_salva.get("imposto_percentual", 0.0)),
@@ -735,8 +1204,8 @@ def main() -> None:
             disabled=not habilitada,
         )
 
-    with pc4:
-        taxa_percentual = st.number_input(
+    with p5:
+        taxas = st.number_input(
             "Taxas %",
             min_value=0.0,
             value=float(config_salva.get("taxa_percentual", 0.0)),
@@ -745,7 +1214,9 @@ def main() -> None:
             disabled=not habilitada,
         )
 
-    with pc5:
+    p6, p7, p8 = st.columns([1.2, 1.2, 2.6])
+
+    with p6:
         valor_fixo = st.number_input(
             "Valor fixo",
             min_value=0.0,
@@ -755,114 +1226,102 @@ def main() -> None:
             disabled=not habilitada,
         )
 
+    with p7:
+        preencher_preco_custo = st.checkbox(
+            "Preencher Preço de custo",
+            value=bool(config_salva.get("preencher_preco_custo", True)),
+            key="cfg_preencher_preco_custo",
+            disabled=not habilitada,
+        )
+        preencher_preco_compra = st.checkbox(
+            "Preencher Preço de compra",
+            value=bool(config_salva.get("preencher_preco_compra", False)),
+            key="cfg_preencher_preco_compra",
+            disabled=not habilitada,
+        )
+
+    with p8:
+        if habilitada and coluna_custo_origem:
+            exemplo_custo = 100.0
+            exemplo_preco = calcular_preco_venda(exemplo_custo, lucro, impostos, taxas, valor_fixo)
+            st.success(
+                f"Exemplo: custo 100,00 → venda {exemplo_preco:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+        else:
+            st.caption("Ative a precificação e escolha a coluna de custo para recalcular o preço de venda.")
+
     precificacao_config = {
-        "habilitada": habilitada,
+        "habilitada": bool(habilitada),
         "coluna_custo_origem": coluna_custo_origem,
-        "lucro_percentual": float(lucro_percentual),
-        "imposto_percentual": float(imposto_percentual),
-        "taxa_percentual": float(taxa_percentual),
+        "lucro_percentual": float(lucro),
+        "imposto_percentual": float(impostos),
+        "taxa_percentual": float(taxas),
         "valor_fixo": float(valor_fixo),
+        "preencher_preco_custo": bool(preencher_preco_custo),
+        "preencher_preco_compra": bool(preencher_preco_compra),
     }
     st.session_state["precificacao_config"] = precificacao_config
 
-    if habilitada:
-        if not coluna_preco_modelo:
-            st.warning("Não encontrei automaticamente a coluna de preço no modelo do Bling.")
-        elif not coluna_custo_origem:
-            st.warning("Selecione a coluna de custo para a precificação.")
-        else:
-            exemplo_custo = 100.0
-            exemplo_preco = calcular_preco_venda(
-                custo=exemplo_custo,
-                lucro_percentual=lucro_percentual,
-                imposto_percentual=imposto_percentual,
-                taxa_percentual=taxa_percentual,
-                valor_fixo=valor_fixo,
-            )
-            st.success(
-                f"Exemplo de cálculo: custo {exemplo_custo:.2f} → venda {exemplo_preco:.2f}"
-            )
+    st.markdown("## 5) Reaproveitamento do fornecedor")
 
-    # -----------------------------------------------------
-    # SALVAR MAPEAMENTO
-    # -----------------------------------------------------
-    st.markdown("## Reaproveitamento do fornecedor")
+    sv1, sv2 = st.columns([1.5, 3.5])
 
-    c_save_1, c_save_2 = st.columns([1.2, 3])
-
-    with c_save_1:
+    with sv1:
         if st.button("💾 Salvar mapeamento deste fornecedor", use_container_width=True):
             fornecedor_id = st.session_state["fornecedor_id"] or fornecedor_id_por_nome(
                 st.session_state["nome_arquivo_origem"]
             )
-
             salvar_mapeamento_fornecedor(
                 fornecedor_id=fornecedor_id,
                 nome_arquivo_origem=st.session_state["nome_arquivo_origem"],
-                nome_modelo=st.session_state["nome_modelo_cadastro"],
                 mapeamento_manual=mapeamento_manual,
                 precificacao_config=precificacao_config,
             )
             st.success("Mapeamento salvo com sucesso.")
             log(f"Mapeamento salvo para fornecedor: {fornecedor_id}")
 
-    with c_save_2:
-        st.caption(
-            "Quando você subir novamente uma planilha do mesmo fornecedor, o sistema reaproveita o mapeamento salvo automaticamente."
-        )
+    with sv2:
+        st.caption("Quando subir novamente uma planilha do mesmo fornecedor, o sistema tenta reaproveitar o vínculo salvo automaticamente.")
 
-    # -----------------------------------------------------
-    # GERAÇÃO
-    # -----------------------------------------------------
-    st.markdown("## Gerar planilha final")
+    st.markdown("## 6) Gerar planilha final")
 
-    if st.button("📦 Gerar planilha de cadastro", use_container_width=True):
+    if st.button("📦 Gerar planilha para conferência", use_container_width=True):
         try:
             df_saida = gerar_planilha_saida(
                 df_origem=df_origem,
-                modelo_df=df_modelo,
                 mapeamento_manual=mapeamento_manual,
+                config_precificacao=precificacao_config,
             )
-
-            df_saida = aplicar_precificacao_dataframe(
-                df_saida=df_saida,
-                df_origem=df_origem,
-                coluna_preco_modelo=coluna_preco_modelo,
-                config=precificacao_config,
-            )
-
             st.session_state["df_saida"] = df_saida
             log(f"Planilha final gerada com {len(df_saida)} linhas.")
-
-            st.success("Planilha final gerada com sucesso.")
-
+            st.success("Planilha gerada. Revise a prévia abaixo antes de baixar.")
         except Exception as e:
             st.error(f"Erro ao gerar planilha final: {e}")
             log(f"Erro ao gerar planilha final: {e}")
 
-    # -----------------------------------------------------
-    # PRÉVIA E DOWNLOAD
-    # -----------------------------------------------------
     df_saida = st.session_state.get("df_saida")
 
     if df_saida is not None and not df_saida.empty:
-        st.markdown("## Prévia final")
+        st.markdown("## 7) Prévia final para conferência")
         st.dataframe(df_saida.head(20), use_container_width=True)
 
-        nome_saida = "bling_cadastro_manual_final.xlsx"
+        st.markdown("### Resumo rápido")
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Linhas na saída", len(df_saida))
+        r2.metric("Colunas fixas Bling", len(df_saida.columns))
+        preenchidas = sum(1 for c in BLING_COLUNAS_OFICIAIS if df_saida[c].astype(str).str.strip().ne("").any())
+        r3.metric("Colunas com algum valor", preenchidas)
+
         arquivo_excel = gerar_excel_download(df_saida)
 
         st.download_button(
             "📥 Baixar planilha final",
             data=arquivo_excel,
-            file_name=nome_saida,
+            file_name="bling_cadastro_travado_modelo_oficial.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
-    # -----------------------------------------------------
-    # LOGS
-    # -----------------------------------------------------
     if st.session_state["logs"]:
         with st.expander("Logs"):
             st.text_area(
