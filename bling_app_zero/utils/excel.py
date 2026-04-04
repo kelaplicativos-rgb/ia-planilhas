@@ -48,7 +48,7 @@ def slug_coluna(nome: str) -> str:
 
 
 # =========================================================
-# ZIP (mantido)
+# ZIP
 # =========================================================
 def _extrair_melhor_arquivo_do_zip(arquivo_zip):
     arquivo_zip.seek(0)
@@ -79,7 +79,7 @@ def _extrair_melhor_arquivo_do_zip(arquivo_zip):
 
 
 # =========================================================
-# LEITURA MELHORADA
+# LEITURA
 # =========================================================
 def _ler_excel_multiplas_formas(arquivo):
     tentativas = [
@@ -94,7 +94,6 @@ def _ler_excel_multiplas_formas(arquivo):
         try:
             arquivo.seek(0)
             df = tentativa()
-
             if df is not None and df.shape[1] > 0:
                 return df
         except Exception as e:
@@ -133,6 +132,10 @@ def _ajustar_header(df):
         "marca",
         "gtin",
         "ean",
+        "deposito",
+        "depósito",
+        "saldo",
+        "quantidade",
     ]
 
     limite = min(25, len(df))
@@ -151,7 +154,6 @@ def _ajustar_header(df):
             if any(p in v for p in palavras_fortes):
                 score += 3
 
-        # penaliza linhas muito textuais de instrução
         for v in valores:
             if "exemplo" in v or "instru" in v or "observa" in v:
                 score -= 2
@@ -197,9 +199,6 @@ def _ler_csv_com_tentativas(arquivo):
     raise ValueError(f"Falha ao ler CSV: {ultimo_erro}")
 
 
-# =========================================================
-# FUNÇÃO PRINCIPAL
-# =========================================================
 def ler_planilha(arquivo):
     if arquivo is None:
         return None
@@ -227,7 +226,6 @@ def ler_planilha(arquivo):
         df = df.fillna("")
         df = df.astype(str).reset_index(drop=True)
 
-        # remove colunas totalmente vazias
         df = df.loc[:, (df != "").any(axis=0)]
 
         if df.empty or len(df.columns) == 0:
@@ -303,7 +301,7 @@ def salvar_excel_bytes(df):
     buffer = io.BytesIO()
 
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
+        df.to_excel(writer, index=False, sheet_name="Dados")
 
     buffer.seek(0)
     return buffer.getvalue()
