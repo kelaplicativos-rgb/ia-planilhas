@@ -1,5 +1,7 @@
 import re
 import unicodedata
+from typing import Optional
+
 import pandas as pd
 import streamlit as st
 
@@ -43,6 +45,8 @@ def init_state() -> None:
         "mapa_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
         "ultima_chave_arquivo": "",
+        "ultima_chave_modelo_cadastro": "",
+        "ultima_chave_modelo_estoque": "",
         "validacao_erros": [],
         "validacao_avisos": [],
         "validacao_ok": False,
@@ -76,6 +80,8 @@ def limpar_tudo() -> None:
         "mapa_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
         "ultima_chave_arquivo": "",
+        "ultima_chave_modelo_cadastro": "",
+        "ultima_chave_modelo_estoque": "",
         "validacao_erros": [],
         "validacao_avisos": [],
         "validacao_ok": False,
@@ -125,6 +131,33 @@ def slug_coluna(nome: str) -> str:
     nome = re.sub(r"[^a-z0-9 ]+", "", nome)
     nome = re.sub(r"\s+", " ", nome).strip()
     return nome
+
+
+def _coluna_segura(df: pd.DataFrame, nome_coluna: Optional[str], fallback: str = "") -> pd.Series:
+    if nome_coluna and nome_coluna in df.columns:
+        return df[nome_coluna].fillna("").astype(str)
+    return pd.Series([fallback] * len(df), index=df.index, dtype="object")
+
+
+def _extrair_lista_imagens(texto: str) -> list[str]:
+    bruto = limpar_texto(texto)
+    if not bruto:
+        return []
+
+    partes = re.split(r"[|,;\n\r\t]+", bruto)
+    imagens = []
+    vistos = set()
+
+    for parte in partes:
+        url = limpar_texto(parte)
+        if not url:
+            continue
+        if url.lower() in vistos:
+            continue
+        vistos.add(url.lower())
+        imagens.append(url)
+
+    return imagens
 
 
 def carregar_modelo_bling(arquivo):
@@ -191,7 +224,7 @@ def construir_mapa_manual(df: pd.DataFrame, mapa_auto: dict) -> dict:
             "Marca", opcoes, mapa_auto.get("marca"), "map_marca"
         )
         mapa_manual["imagem"] = select_coluna(
-            "Imagem principal", opcoes, mapa_auto.get("imagem"), "map_imagem"
+            "Imagem principal / links de imagens", opcoes, mapa_auto.get("imagem"), "map_imagem"
         )
         mapa_manual["situacao"] = select_coluna(
             "Situação", opcoes, mapa_auto.get("situacao"), "map_situacao"
@@ -224,7 +257,7 @@ def montar_df_colunas_automaticas(mapa_auto: dict) -> pd.DataFrame:
         "descricao_curta": "Descrição curta",
         "preco": "Preço",
         "marca": "Marca",
-        "imagem": "Imagem principal",
+        "imagem": "Imagem principal / imagens",
         "link_externo": "Link externo",
         "estoque": "Estoque / Quantidade",
         "situacao": "Situação",
@@ -273,7 +306,7 @@ def montar_df_mapeamento_final(
         "descricao_curta": "Descrição curta",
         "preco": "Preço",
         "marca": "Marca",
-        "imagem": "Imagem principal",
+        "imagem": "Imagem principal / imagens",
         "link_externo": "Link externo",
         "estoque": "Estoque / Quantidade",
         "situacao": "Situação",
@@ -406,31 +439,45 @@ def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFra
     saida = pd.DataFrame("", index=range(len(df_base)), columns=list(modelo_df.columns))
     campos = localizar_campos_modelo_cadastro(modelo_df)
 
-    mapeamento_base = {
-        "codigo": "codigo",
-        "nome": "nome",
-        "unidade": "unidade",
-        "preco": "preco",
-        "situacao": "situacao",
-        "marca": "marca",
-        "descricao_curta": "descricao_curta",
-        "descricao": "descricao",
-        "video": "video",
-        "imagem_1": "imagem_1",
-        "imagem_2": "imagem_2",
-        "imagem_3": "imagem_3",
-        "imagem_4": "imagem_4",
-        "imagem_5": "imagem_5",
-        "link_externo": "link_externo",
-        "categoria": "categoria",
-        "peso_liquido": "peso_liquido",
-        "gtin": "gtin",
-    }
+    codigo = _coluna_segura(df_base, "codigo")
+    nome = _coluna_segura(df_base, "nome")
+    unidade = _coluna_segura(df_base, "unidade", "UN")
+    preco = _coluna_segura(df_base, "preco")
+    situacao = _coluna_segura(df_base, "situacao", "A")
+    marca = _coluna_segura(df_base, "marca")
+    descricao_curta = _coluna_segura(df_base, "descricao_curta")
+    categoria = _coluna_segura(df_base, "categoria")
+    peso = _coluna_segura(df_base, "peso_liquido")
+    gtin = _coluna_segura(df_base, "gtin")
 
-    for campo_modelo, campo_base in mapeamento_base.items():
-        col_modelo = campos.get(campo_modelo)
-        if col_modelo and campo_base in df_base.columns:
-            saida[col_modelo] = df_base[campo_base].astype(str)
+    # regra fixa do usuário
+    descricao = nome.copy()
+
+    imagens_brutas = _coluna_segura(df_base, "imagem")
+    imagens_processadas = [ _extrair_lista_imagens(v) for v in imagens_brutas.tolist() ]
+
+    if campos.get("codigo"):
+        saida[campos["codigo"]] = codigo
+    if campos.get("nome"):
+        saida[campos["nome"]] = nome
+    if campos.get("unidade"):
+        saida[campos["unidade"]] = unidade.replace("", "UN")
+    if campos.get("preco"):
+        saida[campos["preco"]] = preco
+    if campos.get("situacao"):
+        saida[campos["situacao"]] = situacao.replace("", "A")
+    if campos.get("marca"):
+        saida[campos["marca"]] = marca
+    if campos.get("descricao_curta"):
+        saida[campos["descricao_curta"]] = descricao_curta
+    if campos.get("descricao"):
+        saida[campos["descricao"]] = descricao
+    if campos.get("categoria"):
+        saida[campos["categoria"]] = categoria
+    if campos.get("peso_liquido"):
+        saida[campos["peso_liquido"]] = peso
+    if campos.get("gtin"):
+        saida[campos["gtin"]] = gtin
 
     if campos.get("id"):
         saida[campos["id"]] = ""
@@ -441,32 +488,62 @@ def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFra
     if campos.get("link_externo"):
         saida[campos["link_externo"]] = ""
 
-    return saida
+    colunas_multiplas = [
+        campos.get("imagem_1"),
+        campos.get("imagem_2"),
+        campos.get("imagem_3"),
+        campos.get("imagem_4"),
+        campos.get("imagem_5"),
+    ]
+
+    tem_colunas_multiplas = any(colunas_multiplas)
+
+    if tem_colunas_multiplas:
+        for idx, imagens in enumerate(imagens_processadas):
+            for pos, campo in enumerate(colunas_multiplas):
+                if campo:
+                    saida.at[idx, campo] = imagens[pos] if pos < len(imagens) else ""
+    elif campos.get("imagem_unica"):
+        saida[campos["imagem_unica"]] = ["|".join(imagens) for imagens in imagens_processadas]
+
+    # remove linhas sem código
+    if campos.get("codigo"):
+        saida = saida[saida[campos["codigo"]].astype(str).str.strip() != ""].copy()
+
+    return saida.reset_index(drop=True)
 
 
 def adaptar_estoque_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     saida = pd.DataFrame("", index=range(len(df_base)), columns=list(modelo_df.columns))
     campos = localizar_campos_modelo_estoque(modelo_df)
 
+    codigo = _coluna_segura(df_base, "codigo")
+    nome = _coluna_segura(df_base, "nome")
+    estoque = _coluna_segura(df_base, "estoque", "0")
+    preco = _coluna_segura(df_base, "preco")
+
     if campos.get("id"):
         saida[campos["id"]] = ""
 
-    if campos.get("codigo") and "codigo" in df_base.columns:
-        saida[campos["codigo"]] = df_base["codigo"].astype(str)
+    if campos.get("codigo"):
+        saida[campos["codigo"]] = codigo
 
-    if campos.get("nome") and "nome" in df_base.columns:
-        saida[campos["nome"]] = df_base["nome"].astype(str)
+    if campos.get("nome"):
+        saida[campos["nome"]] = nome
 
     if campos.get("deposito"):
         saida[campos["deposito"]] = limpar_texto(deposito)
 
-    if campos.get("estoque") and "estoque" in df_base.columns:
-        saida[campos["estoque"]] = df_base["estoque"].astype(str)
+    if campos.get("estoque"):
+        saida[campos["estoque"]] = estoque
 
-    if campos.get("preco_unitario") and "preco" in df_base.columns:
-        saida[campos["preco_unitario"]] = df_base["preco"].astype(str)
+    if campos.get("preco_unitario"):
+        saida[campos["preco_unitario"]] = preco
 
-    return saida
+    if campos.get("codigo"):
+        saida = saida[saida[campos["codigo"]].astype(str).str.strip() != ""].copy()
+
+    return saida.reset_index(drop=True)
 
 
 # =========================================================
@@ -553,26 +630,38 @@ def main() -> None:
             log(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
 
     if modelo_cadastro is not None:
-        modelo_df = carregar_modelo_bling(modelo_cadastro)
-        if modelo_df is None:
-            st.error("Erro ao ler modelo de cadastro.")
-            log("Erro ao ler modelo de cadastro.")
-            return
+        chave_modelo_cadastro = f"{modelo_cadastro.name}-{getattr(modelo_cadastro, 'size', 0)}"
+        if st.session_state["ultima_chave_modelo_cadastro"] != chave_modelo_cadastro:
+            modelo_df = carregar_modelo_bling(modelo_cadastro)
+            if modelo_df is None or modelo_df.empty:
+                st.session_state["modelo_cadastro_raw"] = None
+                st.session_state["nome_modelo_cadastro"] = ""
+                st.error("Erro ao ler modelo de cadastro.")
+                log("Erro ao ler modelo de cadastro.")
+                return
 
-        st.session_state["modelo_cadastro_raw"] = modelo_df
-        st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
-        resetar_validacao()
+            st.session_state["modelo_cadastro_raw"] = modelo_df
+            st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
+            st.session_state["ultima_chave_modelo_cadastro"] = chave_modelo_cadastro
+            resetar_validacao()
+            log(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
 
     if modelo_estoque is not None:
-        modelo_df = carregar_modelo_bling(modelo_estoque)
-        if modelo_df is None:
-            st.error("Erro ao ler modelo de estoque.")
-            log("Erro ao ler modelo de estoque.")
-            return
+        chave_modelo_estoque = f"{modelo_estoque.name}-{getattr(modelo_estoque, 'size', 0)}"
+        if st.session_state["ultima_chave_modelo_estoque"] != chave_modelo_estoque:
+            modelo_df = carregar_modelo_bling(modelo_estoque)
+            if modelo_df is None or modelo_df.empty:
+                st.session_state["modelo_estoque_raw"] = None
+                st.session_state["nome_modelo_estoque"] = ""
+                st.error("Erro ao ler modelo de estoque.")
+                log("Erro ao ler modelo de estoque.")
+                return
 
-        st.session_state["modelo_estoque_raw"] = modelo_df
-        st.session_state["nome_modelo_estoque"] = modelo_estoque.name
-        resetar_validacao()
+            st.session_state["modelo_estoque_raw"] = modelo_df
+            st.session_state["nome_modelo_estoque"] = modelo_estoque.name
+            st.session_state["ultima_chave_modelo_estoque"] = chave_modelo_estoque
+            resetar_validacao()
+            log(f"Modelo de estoque carregado: {modelo_estoque.name}")
 
     df = st.session_state["df_origem"]
 
@@ -607,7 +696,7 @@ def main() -> None:
             "A coluna 'vídeo' fica vazia. A coluna 'link externo' também fica vazia."
         )
 
-    mapa_final = st.session_state.get("mapa_manual") or mapa_auto
+    mapa_final = dict(st.session_state.get("mapa_manual") or mapa_auto)
     mapa_final["link_externo"] = None
 
     modelo_nome_exibicao = (
