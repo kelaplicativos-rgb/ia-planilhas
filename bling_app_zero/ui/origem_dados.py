@@ -4,7 +4,10 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_auto import sugestao_automatica
-from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
+from bling_app_zero.core.precificacao import (
+    calcular_preco_compra_automatico_df,
+    calcular_preco_venda,
+)
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 MODO_CADASTRO = "Cadastro de produtos"
@@ -16,11 +19,10 @@ ORIGEM_SITE = "Buscar em site"
 
 OPCOES_SITUACAO = ["Ativo", "Desativado"]
 OPCOES_PRECO = [
-    "Usar precificação automática",
-    "Selecionar coluna da planilha",
+    "Usar calculadora da precificação",
+    "Usar coluna da planilha",
 ]
 
-# Campos fixos que não devem depender da planilha do fornecedor
 CAMPOS_FIXOS_CADASTRO = {
     "condicao": "NOVO",
     "frete_gratis": "NÃO",
@@ -88,7 +90,6 @@ def _normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = df.fillna("")
 
-    # Caso o pandas tenha lido cabeçalhos como 0,1,2...
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
         primeira_linha = [str(x).strip() for x in df.iloc[0].tolist()]
         if any(primeira_linha):
@@ -112,7 +113,6 @@ def _ler_csv_bytes(arquivo) -> pd.DataFrame:
         except Exception:
             arquivo.seek(0)
             df = pd.read_csv(arquivo, sep="\t", dtype=str)
-
     return _normalizar_dataframe(df)
 
 
@@ -120,12 +120,7 @@ def _ler_excel_bytes(arquivo, nome_arquivo: str) -> pd.DataFrame:
     arquivo.seek(0)
     nome = (nome_arquivo or "").lower()
 
-    engine = None
-    if nome.endswith(".xlsx"):
-        engine = "openpyxl"
-    elif nome.endswith(".xls"):
-        # tentativa sem engine fixa primeiro
-        engine = None
+    engine = "openpyxl" if nome.endswith(".xlsx") else None
 
     try:
         if engine:
@@ -153,7 +148,6 @@ def carregar_planilha(file) -> pd.DataFrame:
     if nome.endswith(".xlsx") or nome.endswith(".xls"):
         return _ler_excel_bytes(file, nome)
 
-    # fallback: tenta excel, depois csv
     try:
         return _ler_excel_bytes(file, nome)
     except Exception:
@@ -217,11 +211,9 @@ def _campos_por_modo(modo: str) -> List[str]:
 
 def _aplicar_sugestao_automatica(df: pd.DataFrame, campos_validos: List[str]) -> Dict[str, str]:
     sugestoes: Dict[str, str] = {}
-
     for col in df.columns:
         sugestao = sugestao_automatica(col)
         sugestoes[col] = sugestao if sugestao in campos_validos else ""
-
     return sugestoes
 
 
@@ -230,6 +222,7 @@ def _montar_tabela_mapeamento_final(
     situacao_fixa: str | None = None,
     preco_modo: str | None = None,
     preco_coluna: str | None = None,
+    preco_calculado: float | None = None,
 ) -> pd.DataFrame:
     linhas = []
 
@@ -237,15 +230,25 @@ def _montar_tabela_mapeamento_final(
         if not campo_codigo:
             continue
 
-        if campo_codigo == "preco" and preco_modo == "auto":
-            linhas.append(
-                {
-                    "Campo do painel": _label_campo("preco"),
-                    "Código interno": "preco",
-                    "Origem": "PRECIFICAÇÃO AUTOMÁTICA",
-                }
-            )
-            continue
+        if campo_codigo == "preco":
+            if preco_modo == "calculadora":
+                linhas.append(
+                    {
+                        "Campo do painel": _label_campo("preco"),
+                        "Código interno": "preco",
+                        "Origem": f"CALCULADORA DE PRECIFICAÇÃO: {preco_calculado:.2f}".replace(".", ","),
+                    }
+                )
+                continue
+            if preco_modo == "coluna" and preco_coluna:
+                linhas.append(
+                    {
+                        "Campo do painel": _label_campo("preco"),
+                        "Código interno": "preco",
+                        "Origem": preco_coluna,
+                    }
+                )
+                continue
 
         linhas.append(
             {
@@ -255,19 +258,23 @@ def _montar_tabela_mapeamento_final(
             }
         )
 
-    if preco_modo == "coluna" and preco_coluna:
-        existe_preco = any(
-            linha["Código interno"] == "preco"
-            for linha in linhas
+    if preco_modo == "calculadora" and not any(l["Código interno"] == "preco" for l in linhas):
+        linhas.append(
+            {
+                "Campo do painel": _label_campo("preco"),
+                "Código interno": "preco",
+                "Origem": f"CALCULADORA DE PRECIFICAÇÃO: {preco_calculado:.2f}".replace(".", ","),
+            }
         )
-        if not existe_preco:
-            linhas.append(
-                {
-                    "Campo do painel": _label_campo("preco"),
-                    "Código interno": "preco",
-                    "Origem": preco_coluna,
-                }
-            )
+
+    if preco_modo == "coluna" and preco_coluna and not any(l["Código interno"] == "preco" for l in linhas):
+        linhas.append(
+            {
+                "Campo do painel": _label_campo("preco"),
+                "Código interno": "preco",
+                "Origem": preco_coluna,
+            }
+        )
 
     if situacao_fixa:
         linhas.append(
@@ -290,7 +297,11 @@ def _montar_tabela_mapeamento_final(
     if not linhas:
         return pd.DataFrame(columns=["Campo do painel", "Código interno", "Origem"])
 
-    return pd.DataFrame(linhas).drop_duplicates(subset=["Código interno"], keep="first").reset_index(drop=True)
+    return (
+        pd.DataFrame(linhas)
+        .drop_duplicates(subset=["Código interno"], keep="first")
+        .reset_index(drop=True)
+    )
 
 
 def render_origem_dados() -> None:
@@ -361,14 +372,88 @@ def render_origem_dados() -> None:
 
     st.session_state.df_origem = df
 
-    # Preview curto
-    st.markdown("### 👀 Preview da entrada")
-    st.dataframe(df.head(5), use_container_width=True, height=220)
-
-    st.divider()
-
     campos = _campos_por_modo(modo)
     sugestoes = _aplicar_sugestao_automatica(df, campos)
+
+    st.markdown("### 💰 Definição de preço")
+    modo_preco_ui = st.radio(
+        "Como deseja formar o preço?",
+        OPCOES_PRECO,
+        horizontal=True,
+        key="modo_preco_ui",
+    )
+
+    preco_modo = "calculadora"
+    preco_coluna = None
+    preco_calculado = 0.0
+
+    preco_compra_base = calcular_preco_compra_automatico_df(df)
+
+    if modo_preco_ui == "Usar coluna da planilha":
+        preco_modo = "coluna"
+        preco_coluna = st.selectbox(
+            "Coluna da planilha para preço",
+            options=list(df.columns),
+            key="preco_coluna_planilha",
+        )
+    else:
+        preco_modo = "calculadora"
+
+        col_calc1, col_calc2, col_calc3 = st.columns(3)
+        with col_calc1:
+            preco_compra_editavel = st.number_input(
+                "Preço de custo base",
+                min_value=0.0,
+                value=float(preco_compra_base or 0.0),
+                step=0.01,
+                format="%.2f",
+                key="preco_compra_base_input",
+            )
+            percentual_impostos = st.number_input(
+                "Impostos (%)",
+                min_value=0.0,
+                value=float(st.session_state.get("percentual_impostos", 0.0)),
+                step=0.1,
+                format="%.2f",
+                key="percentual_impostos",
+            )
+
+        with col_calc2:
+            margem_lucro = st.number_input(
+                "Lucro (%)",
+                min_value=0.0,
+                value=float(st.session_state.get("margem_lucro", 0.0)),
+                step=0.1,
+                format="%.2f",
+                key="margem_lucro",
+            )
+            taxa_extra = st.number_input(
+                "Taxas extras (%)",
+                min_value=0.0,
+                value=float(st.session_state.get("taxa_extra", 0.0)),
+                step=0.1,
+                format="%.2f",
+                key="taxa_extra",
+            )
+
+        with col_calc3:
+            custo_fixo = st.number_input(
+                "Valor fixo (R$)",
+                min_value=0.0,
+                value=float(st.session_state.get("custo_fixo", 0.0)),
+                step=0.01,
+                format="%.2f",
+                key="custo_fixo",
+            )
+
+        preco_calculado = calcular_preco_venda(
+            preco_compra=preco_compra_editavel,
+            percentual_impostos=percentual_impostos,
+            margem_lucro=margem_lucro,
+            custo_fixo=custo_fixo,
+            taxa_extra=taxa_extra,
+        )
+        st.success(f"Preço calculado: R$ {preco_calculado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
     situacao_key = "situacao_fixa"
     situacao_fixa = st.session_state.get(situacao_key, "Ativo")
@@ -381,78 +466,56 @@ def render_origem_dados() -> None:
             key=situacao_key,
         )
 
-    st.markdown("### 💰 Preço")
-    modo_preco_ui = st.radio(
-        "Definição do preço",
-        OPCOES_PRECO,
-        horizontal=True,
-        key="modo_preco_ui",
-    )
+    st.markdown("### 🛠️ Mapeamento manual por coluna do preview")
+    st.caption("Role para o lado e faça o vínculo direto em cada coluna da planilha do fornecedor.")
 
-    preco_modo = "auto"
-    preco_coluna = None
-
-    if modo_preco_ui == "Selecionar coluna da planilha":
-        preco_modo = "coluna"
-        preco_coluna = st.selectbox(
-            "Coluna da planilha para preço",
-            options=list(df.columns),
-            key="preco_coluna_planilha",
-        )
-    else:
-        preco_modo = "auto"
-        try:
-            preco_auto = calcular_preco_compra_automatico_df(df)
-            st.info(f"Preço automático detectado: {preco_auto}")
-        except Exception:
-            st.info("Precificação automática habilitada.")
-
-    st.divider()
-
-    st.markdown("### 🛠️ Mapeamento manual")
-
-    mapeamento: Dict[str, str] = {}
     usados: List[str] = []
-
-    # Reserva preco se ele estiver vindo da planilha por seletor próprio
-    if preco_modo == "coluna":
+    if preco_modo in {"calculadora", "coluna"}:
         usados.append("preco")
 
-    for col in df.columns:
-        valor_inicial = ""
+    mapeamento: Dict[str, str] = {}
+    colunas_preview = df.columns.tolist()
 
-        if isinstance(st.session_state.get("mapeamento_manual"), dict):
-            valor_inicial = st.session_state.mapeamento_manual.get(col, "")
+    num_colunas = max(len(colunas_preview), 1)
+    cols_ui = st.columns(num_colunas)
 
-        if not valor_inicial:
-            valor_inicial = sugestoes.get(col, "")
+    for idx_coluna, col in enumerate(colunas_preview):
+        with cols_ui[idx_coluna]:
+            st.markdown(f"**{col}**")
+            preview_vals = df[col].head(5).tolist()
+            preview_txt = "\n".join([f"- {str(v)}" for v in preview_vals])
+            st.caption(preview_txt if preview_txt else "-")
 
-        if preco_modo == "auto" and valor_inicial == "preco":
             valor_inicial = ""
+            if isinstance(st.session_state.get("mapeamento_manual"), dict):
+                valor_inicial = st.session_state.mapeamento_manual.get(col, "")
 
-        opcoes = [
-            x for x in campos
-            if x == "" or x == valor_inicial or x not in usados
-        ]
+            if not valor_inicial:
+                valor_inicial = sugestoes.get(col, "")
 
-        # preço não deve aparecer aqui se está sendo tratado pelo seletor acima
-        if preco_modo == "auto":
-            opcoes = [x for x in opcoes if x != "preco"]
+            if valor_inicial == "preco" and preco_modo in {"calculadora", "coluna"}:
+                valor_inicial = ""
 
-        idx = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
+            opcoes = [x for x in campos if x == "" or x == valor_inicial or x not in usados]
 
-        escolha = st.selectbox(
-            label=col,
-            options=opcoes,
-            index=idx,
-            key=f"map_{col}",
-            format_func=_label_campo,
-        )
+            if preco_modo in {"calculadora", "coluna"}:
+                opcoes = [x for x in opcoes if x != "preco"]
 
-        mapeamento[col] = escolha
+            idx_opcao = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
-        if escolha and escolha != "situacao":
-            usados.append(escolha)
+            escolha = st.selectbox(
+                "Mapear",
+                options=opcoes,
+                index=idx_opcao,
+                key=f"map_preview_{col}",
+                format_func=_label_campo,
+                label_visibility="collapsed",
+            )
+
+            mapeamento[col] = escolha
+
+            if escolha and escolha != "situacao":
+                usados.append(escolha)
 
     st.session_state.mapeamento_manual = mapeamento
 
@@ -461,6 +524,7 @@ def render_origem_dados() -> None:
         situacao_fixa=situacao_fixa if modo == MODO_CADASTRO else None,
         preco_modo=preco_modo,
         preco_coluna=preco_coluna,
+        preco_calculado=preco_calculado,
     )
 
     st.session_state.mapeamento_final_tabela = tabela_mapeamento
