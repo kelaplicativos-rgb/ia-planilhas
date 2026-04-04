@@ -1,1 +1,1 @@
-# Pacote principal do projeto Bling App Zero.
+__all__ = []
