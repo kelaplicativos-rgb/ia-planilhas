@@ -27,7 +27,14 @@ def safe_float(value: Any) -> Optional[float]:
     if texto == "":
         return None
 
-    texto = texto.replace("R$", "").replace(".", "").replace(",", ".").strip()
+    texto = (
+        texto.replace("R$", "")
+        .replace("\u00a0", "")
+        .replace(" ", "")
+        .replace(".", "")
+        .replace(",", ".")
+        .strip()
+    )
 
     try:
         return float(texto)
