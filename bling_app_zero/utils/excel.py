@@ -6,6 +6,9 @@ import pandas as pd
 import streamlit as st
 
 
+# =========================================================
+# TEXTO
+# =========================================================
 def remover_acentos(texto: str) -> str:
     if texto is None:
         return ""
@@ -38,16 +41,60 @@ def limpar_texto(valor) -> str:
 def slug_coluna(nome: str) -> str:
     nome = limpar_texto(nome)
     nome = remover_acentos(nome).lower()
-    nome = nome.replace("/", " ")
-    nome = nome.replace("\\", " ")
-    nome = nome.replace("-", " ")
-    nome = re.sub(r"[^a-z0-9 ]+", "", nome)
-    nome = re.sub(r"\s+", "_", nome).strip("_")
+    nome = re.sub(r"[^a-z0-9]+", "_", nome)
+    nome = re.sub(r"_+", "_", nome).strip("_")
 
-    if not nome:
-        nome = "coluna"
+    return nome or "coluna"
 
-    return nome
+
+# =========================================================
+# LEITURA ROBUSTA
+# =========================================================
+def _ler_excel_multiplas_formas(arquivo):
+    """
+    Tenta várias formas de leitura para evitar erro no modelo do Bling
+    """
+    tentativas = []
+
+    # tentativa padrão
+    tentativas.append(lambda: pd.read_excel(arquivo, dtype=str))
+
+    # sem header
+    tentativas.append(lambda: pd.read_excel(arquivo, dtype=str, header=None))
+
+    ultimo_erro = None
+
+    for tentativa in tentativas:
+        try:
+            arquivo.seek(0)
+            df = tentativa()
+
+            if df is not None and df.shape[1] > 0:
+                return df
+
+        except Exception as e:
+            ultimo_erro = e
+
+    raise ValueError(f"Erro ao ler Excel: {ultimo_erro}")
+
+
+def _ajustar_header(df):
+    """
+    Detecta automaticamente a linha correta de cabeçalho
+    """
+    for i in range(min(10, len(df))):
+        linha = df.iloc[i]
+
+        # se tiver vários valores preenchidos → provável header
+        if linha.notna().sum() > 2:
+            df.columns = linha
+            df = df.iloc[i + 1:]
+            break
+
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.reset_index(drop=True)
+
+    return df
 
 
 def _ler_csv_com_tentativas(arquivo):
@@ -57,12 +104,7 @@ def _ler_csv_com_tentativas(arquivo):
         {"sep": ",", "engine": "python", "encoding": "utf-8"},
         {"sep": "\t", "engine": "python", "encoding": "utf-8"},
         {"sep": None, "engine": "python", "encoding": "latin-1"},
-        {"sep": ";", "engine": "python", "encoding": "latin-1"},
-        {"sep": ",", "engine": "python", "encoding": "latin-1"},
-        {"sep": "\t", "engine": "python", "encoding": "latin-1"},
     ]
-
-    ultimo_erro = None
 
     for tentativa in tentativas:
         try:
@@ -77,16 +119,15 @@ def _ler_csv_com_tentativas(arquivo):
             )
             if df is not None and len(df.columns) > 0:
                 return df
-        except Exception as e:
-            ultimo_erro = e
+        except:
+            continue
 
-    raise ValueError(f"Erro ao ler CSV: {ultimo_erro}")
+    raise ValueError("Erro ao ler CSV")
 
 
 def ler_planilha(arquivo):
     """
-    Lê CSV, XLS ou XLSX com fallback robusto.
-    Retorna DataFrame ou None em caso de falha.
+    SUPER LEITOR UNIVERSAL (corrigido)
     """
     if arquivo is None:
         return None
@@ -94,81 +135,31 @@ def ler_planilha(arquivo):
     nome = str(getattr(arquivo, "name", "")).lower()
 
     try:
+        # CSV
         if nome.endswith(".csv"):
-            return _ler_csv_com_tentativas(arquivo)
+            df = _ler_csv_com_tentativas(arquivo)
+        else:
+            df = _ler_excel_multiplas_formas(arquivo)
+            df = _ajustar_header(df)
 
-        arquivo.seek(0)
-        return pd.read_excel(arquivo, dtype=str)
-    except Exception:
+        if df is None or df.empty:
+            return None
+
+        df = df.dropna(axis=0, how="all")
+        df = df.fillna("")
+        df = df.astype(str)
+
+        return df
+
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
         return None
 
 
-def limpar_valores_vazios(df):
-    """
-    Limpa células vazias e normaliza todas como texto.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    for col in df.columns:
-        df[col] = df[col].apply(limpar_texto)
-
-    df = df.fillna("")
-    df = df.astype(str)
-
-    return df
-
-
-def normalizar_colunas(df):
-    """
-    Normaliza nomes de colunas e evita duplicadas.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    novas_colunas = []
-    usados = {}
-
-    for c in df.columns:
-        base = slug_coluna(c)
-
-        if base not in usados:
-            usados[base] = 1
-            novas_colunas.append(base)
-        else:
-            usados[base] += 1
-            novas_colunas.append(f"{base}_{usados[base]}")
-
-    df.columns = novas_colunas
-    return df
-
-
-def gerar_preview(df, linhas=1):
-    """
-    Gera preview enxuto.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    try:
-        linhas = int(linhas)
-    except Exception:
-        linhas = 1
-
-    if linhas <= 0:
-        linhas = 1
-
-    return df.head(linhas)
-
-
+# =========================================================
+# EXPORT
+# =========================================================
 def salvar_excel_bytes(df):
-    """
-    Exporta DataFrame para bytes Excel.
-    """
     buffer = io.BytesIO()
 
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -179,17 +170,13 @@ def salvar_excel_bytes(df):
 
 
 def salvar_txt_bytes(texto: str):
-    """
-    Exporta texto simples para bytes.
-    """
     return str(texto).encode("utf-8")
 
 
+# =========================================================
+# UI
+# =========================================================
 def bloco_toggle(nome, chave):
-    """
-    Botão toggle persistente no session_state.
-    Começa sempre fechado por padrão.
-    """
     estado_key = f"toggle_{chave}"
     botao_key = f"btn_{chave}"
 
