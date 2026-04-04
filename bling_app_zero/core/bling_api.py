@@ -40,7 +40,6 @@ class BlingAPIClient:
             with httpx.Client(timeout=timeout) as client:
                 resp = client.request(method.upper(), url, headers=headers, params=params, json=json)
 
-            # Se o token vencer entre a checagem e a chamada, tenta 1 refresh.
             if resp.status_code == 401:
                 refresh_ok, refresh_msg = self.auth.refresh_access_token()
                 if not refresh_ok:
@@ -65,21 +64,5 @@ class BlingAPIClient:
                 }
 
             return True, payload
-
         except Exception as exc:
             return False, f"Erro de comunicação com o Bling: {exc}"
-
-    def test_connection(self) -> Tuple[bool, Any]:
-        candidate_paths = [
-            "empresas/me",
-            "empresa",
-            "conta",
-            "produtos?pagina=1&limite=1",
-        ]
-
-        for path in candidate_paths:
-            ok, payload = self.request("GET", path)
-            if ok:
-                return True, {"path_ok": path, "response": payload}
-
-        return False, "Não foi possível validar a conexão em nenhum endpoint de teste."
