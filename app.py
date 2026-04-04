@@ -9,7 +9,6 @@ from bling_app_zero.ui.bling_panel import (
 from bling_app_zero.ui.precificacao_panel import render_precificacao_panel
 from bling_app_zero.ui.envio_panel import render_send_panel
 
-
 st.set_page_config(page_title="Bling Manual PRO", layout="wide")
 
 
