@@ -1,5 +1,3 @@
-# (mantive seu código inteiro, só melhorei pontos críticos)
-
 import io
 import re
 import zipfile
@@ -90,6 +88,8 @@ def _ler_excel_multiplas_formas(arquivo):
         lambda: pd.read_excel(arquivo, dtype=str, engine="openpyxl"),
     ]
 
+    ultimo_erro = None
+
     for tentativa in tentativas:
         try:
             arquivo.seek(0)
@@ -97,40 +97,85 @@ def _ler_excel_multiplas_formas(arquivo):
 
             if df is not None and df.shape[1] > 0:
                 return df
-        except:
+        except Exception as e:
+            ultimo_erro = e
             continue
 
-    raise ValueError("Falha total ao ler Excel")
+    raise ValueError(f"Falha total ao ler Excel: {ultimo_erro}")
 
 
 def _ajustar_header(df):
+    """
+    Detecta o cabeçalho real, ignorando linhas de instrução.
+    Melhorado para os modelos do Bling.
+    """
     if df is None or df.empty:
         return df
 
     df = df.copy()
 
-    # procura header nas primeiras 15 linhas (ANTES era 10)
-    for i in range(min(15, len(df))):
+    melhor_linha = None
+    melhor_score = -1
+
+    palavras_fortes = [
+        "descricao",
+        "descrição",
+        "descricao curta",
+        "descrição curta",
+        "produto",
+        "codigo",
+        "código",
+        "sku",
+        "preco",
+        "preço",
+        "estoque",
+        "categoria",
+        "marca",
+        "gtin",
+        "ean",
+    ]
+
+    limite = min(25, len(df))
+
+    for i in range(limite):
         linha = df.iloc[i]
-        valores = [limpar_texto(v) for v in linha.tolist()]
+        valores = [limpar_texto(v).lower() for v in linha.tolist()]
 
         preenchidos = sum(1 for v in valores if v)
+        if preenchidos <= 1:
+            continue
 
-        # precisa ter mais conteúdo pra ser header real
-        if preenchidos >= 3:
-            df.columns = valores
-            df = df.iloc[i + 1:].reset_index(drop=True)
-            break
+        score = preenchidos
+
+        for v in valores:
+            if any(p in v for p in palavras_fortes):
+                score += 3
+
+        # penaliza linhas muito textuais de instrução
+        for v in valores:
+            if "exemplo" in v or "instru" in v or "observa" in v:
+                score -= 2
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_linha = i
+
+    if melhor_linha is None:
+        melhor_linha = 0
 
     df.columns = [
-        limpar_texto(c) or f"coluna_{i+1}"
-        for i, c in enumerate(df.columns)
+        limpar_texto(c) or f"coluna_{idx+1}"
+        for idx, c in enumerate(df.iloc[melhor_linha])
     ]
+
+    df = df.iloc[melhor_linha + 1:].reset_index(drop=True)
 
     return df
 
 
 def _ler_csv_com_tentativas(arquivo):
+    ultimo_erro = None
+
     for enc in ["utf-8", "latin-1"]:
         for sep in [None, ";", ",", "\t"]:
             try:
@@ -145,14 +190,15 @@ def _ler_csv_com_tentativas(arquivo):
                 )
                 if df is not None and len(df.columns) > 0:
                     return df
-            except:
+            except Exception as e:
+                ultimo_erro = e
                 continue
 
-    raise ValueError("Falha ao ler CSV")
+    raise ValueError(f"Falha ao ler CSV: {ultimo_erro}")
 
 
 # =========================================================
-# FUNÇÃO PRINCIPAL (AJUSTADA)
+# FUNÇÃO PRINCIPAL
 # =========================================================
 def ler_planilha(arquivo):
     if arquivo is None:
@@ -181,7 +227,7 @@ def ler_planilha(arquivo):
         df = df.fillna("")
         df = df.astype(str).reset_index(drop=True)
 
-        # REMOVE COLUNAS VAZIAS (corrigido)
+        # remove colunas totalmente vazias
         df = df.loc[:, (df != "").any(axis=0)]
 
         if df.empty or len(df.columns) == 0:
@@ -192,6 +238,62 @@ def ler_planilha(arquivo):
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
         return None
+
+
+# =========================================================
+# LIMPEZA / NORMALIZAÇÃO
+# =========================================================
+def limpar_valores_vazios(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    for col in df.columns:
+        df[col] = df[col].apply(limpar_texto)
+
+    df = df.fillna("")
+    df = df.astype(str)
+
+    return df
+
+
+def normalizar_colunas(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    novas_colunas = []
+    usados = {}
+
+    for c in df.columns:
+        base = slug_coluna(c)
+
+        if base not in usados:
+            usados[base] = 1
+            novas_colunas.append(base)
+        else:
+            usados[base] += 1
+            novas_colunas.append(f"{base}_{usados[base]}")
+
+    df.columns = novas_colunas
+    return df
+
+
+def gerar_preview(df, linhas=1):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    try:
+        linhas = int(linhas)
+    except Exception:
+        linhas = 1
+
+    if linhas <= 0:
+        linhas = 1
+
+    return df.head(linhas)
 
 
 # =========================================================
