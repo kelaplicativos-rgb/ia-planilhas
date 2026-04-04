@@ -314,13 +314,6 @@ def mapear_cadastro_bling(
     saida["situacao"] = "Ativo"
     saida["marca"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "marca", ""))
 
-    # =====================================================
-    # REGRA FIXA DEFINITIVA DO USUÁRIO
-    # descricao = título/nome do produto
-    # descricao_curta = descrição real do produto
-    # video = vazio
-    # link_externo = vazio
-    # =====================================================
     nome_produto = limpar_texto_serie(
         obter_serie(df, mapeamento_final, "nome", "")
     )
@@ -385,53 +378,3 @@ def mapear_estoque_bling(
     saida = saida[campos_estoque_bling()]
 
     return saida, mapeamento_final
-
-
-# =========================================================
-# VALIDAÇÕES
-# =========================================================
-def validar_cadastro_bling(df_saida: pd.DataFrame) -> tuple[bool, list]:
-    erros = []
-
-    if df_saida is None or df_saida.empty:
-        erros.append("A planilha de cadastro está vazia.")
-        return False, erros
-
-    obrigatorias = ["codigo", "nome"]
-
-    for col in obrigatorias:
-        if col not in df_saida.columns:
-            erros.append(f"Coluna obrigatória ausente: {col}")
-
-    if "codigo" in df_saida.columns:
-        vazios = (df_saida["codigo"].astype(str).str.strip() == "").sum()
-        if vazios > 0:
-            erros.append(f"Existem {vazios} produto(s) sem código.")
-
-    if "nome" in df_saida.columns:
-        vazios = (df_saida["nome"].astype(str).str.strip() == "").sum()
-        if vazios > 0:
-            erros.append(f"Existem {vazios} produto(s) sem nome.")
-
-    return len(erros) == 0, erros
-
-
-def validar_estoque_bling(df_saida: pd.DataFrame) -> tuple[bool, list]:
-    erros = []
-
-    if df_saida is None or df_saida.empty:
-        erros.append("A planilha de estoque está vazia.")
-        return False, erros
-
-    obrigatorias = ["codigo", "estoque"]
-
-    for col in obrigatorias:
-        if col not in df_saida.columns:
-            erros.append(f"Coluna obrigatória ausente: {col}")
-
-    if "codigo" in df_saida.columns:
-        vazios = (df_saida["codigo"].astype(str).str.strip() == "").sum()
-        if vazios > 0:
-            erros.append(f"Existem {vazios} item(ns) sem código.")
-
-    return len(erros) == 0, erros
