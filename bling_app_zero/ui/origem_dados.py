@@ -63,7 +63,7 @@ def _normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = df.fillna("")
 
-    # Corrige casos em que o pandas leu colunas como 0,1,2,3...
+    # Corrige casos em que o pandas leu as colunas como 0,1,2,3...
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
         primeira_linha = [str(x).strip() for x in df.iloc[0].tolist()]
         if any(primeira_linha):
@@ -90,11 +90,11 @@ def _ler_csv_bytes(arquivo) -> pd.DataFrame:
 def _ler_excel_bytes(arquivo) -> pd.DataFrame:
     arquivo.seek(0)
 
-    # Primeiro tenta leitura padrão
+    # Primeira tentativa padrão
     df = pd.read_excel(arquivo, dtype=str)
     df = _normalizar_dataframe(df)
 
-    # Se vier com colunas genéricas/estranhas, tenta forçar header=None
+    # Se ainda vier esquisito, força leitura sem header e usa a primeira linha como cabeçalho
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
         arquivo.seek(0)
         bruto = pd.read_excel(arquivo, dtype=str, header=None)
@@ -388,7 +388,7 @@ def render_origem_dados() -> None:
 
     st.download_button(
         "Baixar entrada tratada",
-        data=df_to_excel_bytes(df, "entrada_tratada"),
+        data=df_to_excel_bytes(df),
         file_name="entrada_tratada.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         width="stretch",
