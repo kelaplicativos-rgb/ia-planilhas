@@ -29,10 +29,6 @@ def _slug(texto) -> str:
 
 
 def _coluna_por_trecho(df: pd.DataFrame, trechos: list[str]):
-    """
-    Localiza coluna por trecho usando comparação normalizada.
-    Primeiro tenta igualdade exata; depois busca parcial.
-    """
     if df is None or df.empty:
         return None
 
@@ -121,9 +117,6 @@ def _gtin_valido(gtin: str) -> bool:
 
 
 def _contar_urls_invalidas_multiplas(valor: str) -> bool:
-    """
-    Valida campo com URLs separadas por |.
-    """
     texto = _texto(valor)
     if not texto:
         return False
@@ -219,24 +212,18 @@ def validar_cadastro_bling(df: pd.DataFrame) -> tuple[list[str], list[str]]:
             elif preco_float <= 0:
                 avisos.append(f"Linha {linha}: preço igual ou menor que zero.")
 
-        # Regra oficial atual do sistema:
-        # descricao = nome/título do produto
         if not nome and not descricao:
             erros.append(f"Linha {linha}: nome/título do produto vazio.")
 
-        # descricao curta = descrição real do produto
         if not descricao_curta:
             avisos.append(f"Linha {linha}: descrição curta vazia.")
 
-        # vídeo deve ficar vazio
         if video:
             erros.append(f"Linha {linha}: coluna de vídeo deve ficar vazia.")
 
-        # link externo deve ficar vazio
         if link_externo:
             erros.append(f"Linha {linha}: coluna de link externo deve ficar vazia.")
 
-        # GTIN, se preenchido, deve ser válido
         if gtin:
             gtin_limpo = _limpar_gtin(gtin)
             if len(gtin_limpo) not in (8, 12, 13, 14):
@@ -244,7 +231,6 @@ def validar_cadastro_bling(df: pd.DataFrame) -> tuple[list[str], list[str]]:
             elif not _gtin_valido(gtin_limpo):
                 erros.append(f"Linha {linha}: GTIN/EAN inválido.")
 
-        # valida imagens
         for col_imagem in [col_imagem_1, col_imagem_2, col_imagem_3, col_imagem_4, col_imagem_5]:
             if col_imagem:
                 valor = _texto(row.get(col_imagem, ""))
