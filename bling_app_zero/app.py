@@ -36,6 +36,7 @@ def init_state() -> None:
         "validacao_erros": [],
         "validacao_avisos": [],
         "validacao_ok": False,
+        "auto_info_cache": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -68,6 +69,7 @@ def limpar_tudo() -> None:
     st.session_state["mapeamento_final_aberto"] = True
     st.session_state["colunas_auto_aberto"] = False
     st.session_state["ultima_chave_arquivo"] = ""
+    st.session_state["auto_info_cache"] = None
     resetar_validacao()
 
     for k in list(st.session_state.keys()):
@@ -286,6 +288,7 @@ def encontrar_colunas_imagem(df: pd.DataFrame) -> List[str]:
 
 def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     m = {}
+
     m["codigo"] = encontrar_coluna(
         df,
         [
@@ -294,19 +297,43 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
             "ean", "gtin", "cod", "codigo sku"
         ],
     )
+
+    # nome NÃO usa descrição automaticamente
     m["nome"] = encontrar_coluna(
         df,
-        ["nome", "produto", "titulo", "título", "nome produto", "descricao", "descrição"]
+        [
+            "nome",
+            "nome produto",
+            "produto",
+            "titulo",
+            "título",
+            "nome comercial",
+            "titulo produto",
+            "title"
+        ],
     )
+
+    # descrição curta = descrição real do produto
     m["descricao_curta"] = encontrar_coluna(
         df,
         [
-            "descricao curta", "descrição curta", "descricao", "descrição",
-            "detalhes", "resumo", "informacoes", "informações",
-            "descricao produto", "descrição produto",
-            "descricao complementar", "descrição complementar"
+            "descricao completa",
+            "descrição completa",
+            "descricao longa",
+            "descrição longa",
+            "descricao do produto",
+            "descrição do produto",
+            "descricao",
+            "descrição",
+            "detalhes",
+            "resumo",
+            "informacoes",
+            "informações",
+            "descricao complementar",
+            "descrição complementar"
         ],
     )
+
     m["preco"] = encontrar_coluna(
         df,
         [
@@ -322,10 +349,10 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
             "link imagem", "url imagens externas"
         ],
     )
-    m["link_externo"] = encontrar_coluna(
-        df,
-        ["link externo", "url produto", "link produto", "produto url", "link", "url"]
-    )
+
+    # regra fixa: link externo deve ficar vazio
+    m["link_externo"] = None
+
     m["estoque"] = encontrar_coluna(
         df,
         [
@@ -336,7 +363,40 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     m["situacao"] = encontrar_coluna(df, ["situacao", "situação", "status", "ativo"])
     m["unidade"] = encontrar_coluna(df, ["unidade", "und", "un"])
 
+    # extras para preencher mais colunas do Bling
+    m["categoria"] = encontrar_coluna(df, ["categoria", "grupo", "departamento", "secao", "seção"])
+    m["gtin"] = encontrar_coluna(df, ["gtin", "ean", "codigo barras", "código barras", "barcode"])
+    m["ncm"] = encontrar_coluna(df, ["ncm"])
+    m["origem"] = encontrar_coluna(df, ["origem"])
+    m["peso_liquido"] = encontrar_coluna(df, ["peso liquido", "peso líquido", "peso"])
+    m["peso_bruto"] = encontrar_coluna(df, ["peso bruto"])
+    m["largura"] = encontrar_coluna(df, ["largura"])
+    m["altura"] = encontrar_coluna(df, ["altura"])
+    m["profundidade"] = encontrar_coluna(df, ["profundidade", "comprimento"])
+    m["meses_garantia_fornecedor"] = encontrar_coluna(
+        df, ["meses garantia no fornecedor", "garantia fornecedor", "meses garantia", "garantia"]
+    )
+    m["descricao_complementar"] = encontrar_coluna(
+        df,
+        ["descricao complementar", "descrição complementar", "observacoes", "observações", "complemento"]
+    )
+
     return m
+
+
+def obter_info_automatica(df: pd.DataFrame) -> Dict[str, object]:
+    cache = st.session_state.get("auto_info_cache")
+    if cache is not None:
+        return cache
+
+    mapa_auto = detectar_colunas(df)
+    colunas_imagem_auto = encontrar_colunas_imagem(df)
+    info = {
+        "mapa_auto": mapa_auto,
+        "colunas_imagem_auto": colunas_imagem_auto,
+    }
+    st.session_state["auto_info_cache"] = info
+    return info
 
 
 # =========================================================
@@ -378,6 +438,15 @@ def corrigir_estoque(valor) -> int:
         return int(float(texto))
     except Exception:
         return 0
+
+
+def corrigir_numero_livre(valor) -> str:
+    texto = limpar_texto(valor)
+    if not texto:
+        return ""
+    texto = texto.replace(",", ".")
+    texto = re.sub(r"[^0-9.]+", "", texto)
+    return texto
 
 
 def normalizar_situacao(valor) -> str:
@@ -465,11 +534,6 @@ def quebrar_urls_imagem(texto: str) -> List[str]:
     return final[:5]
 
 
-def limpar_link_externo(valor: str) -> str:
-    urls = extrair_urls_validas(valor)
-    return urls[0] if urls else ""
-
-
 def extrair_imagens_da_linha(
     row: pd.Series,
     coluna_imagem_principal: Optional[str],
@@ -530,6 +594,7 @@ def localizar_campos_modelo_cadastro(modelo_df: pd.DataFrame) -> Dict[str, Optio
         "marca": encontrar_coluna_modelo(modelo_df, ["marca", "fabricante"]),
         "descricao_curta": encontrar_coluna_modelo(modelo_df, ["descricao curta", "descrição curta"]),
         "descricao": encontrar_coluna_modelo(modelo_df, ["descricao", "descrição"]),
+        "descricao_complementar": encontrar_coluna_modelo(modelo_df, ["descricao complementar", "descrição complementar"]),
         "video": encontrar_coluna_modelo(modelo_df, ["video", "vídeo"]),
         "imagem_1": encontrar_coluna_modelo(modelo_df, ["imagem 1", "imagem1"]),
         "imagem_2": encontrar_coluna_modelo(modelo_df, ["imagem 2", "imagem2"]),
@@ -539,16 +604,29 @@ def localizar_campos_modelo_cadastro(modelo_df: pd.DataFrame) -> Dict[str, Optio
         "imagem_unica": encontrar_coluna_modelo(modelo_df, ["imagem", "imagens"]),
         "link_externo": encontrar_coluna_modelo(modelo_df, ["link externo", "url produto", "link produto", "url"]),
         "estoque": encontrar_coluna_modelo(modelo_df, ["estoque", "saldo"]),
+        "categoria": encontrar_coluna_modelo(modelo_df, ["categoria", "grupo", "departamento"]),
+        "gtin": encontrar_coluna_modelo(modelo_df, ["gtin", "ean", "codigo barras", "código barras"]),
+        "ncm": encontrar_coluna_modelo(modelo_df, ["ncm"]),
+        "origem": encontrar_coluna_modelo(modelo_df, ["origem"]),
+        "peso_liquido": encontrar_coluna_modelo(modelo_df, ["peso liquido", "peso líquido", "peso"]),
+        "peso_bruto": encontrar_coluna_modelo(modelo_df, ["peso bruto"]),
+        "largura": encontrar_coluna_modelo(modelo_df, ["largura"]),
+        "altura": encontrar_coluna_modelo(modelo_df, ["altura"]),
+        "profundidade": encontrar_coluna_modelo(modelo_df, ["profundidade", "comprimento"]),
+        "meses_garantia_fornecedor": encontrar_coluna_modelo(
+            modelo_df,
+            ["meses garantia no fornecedor", "garantia fornecedor", "meses garantia"],
+        ),
     }
 
 
 def localizar_campos_modelo_estoque(modelo_df: pd.DataFrame) -> Dict[str, Optional[str]]:
     return {
         "id": encontrar_coluna_modelo(modelo_df, ["id"]),
-        "codigo": encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku"]),
-        "nome": encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto"]),
+        "codigo": encontrar_coluna_modelo(modelo_df, ["codigo", "código", "sku", "codigo produto"]),
+        "nome": encontrar_coluna_modelo(modelo_df, ["nome", "nome produto", "produto", "descricao produto"]),
         "deposito": encontrar_coluna_modelo(modelo_df, ["deposito", "depósito", "almoxarifado"]),
-        "estoque": encontrar_coluna_modelo(modelo_df, ["estoque", "saldo", "quantidade"]),
+        "estoque": encontrar_coluna_modelo(modelo_df, ["estoque", "saldo", "quantidade", "balanco", "balanço"]),
         "preco_unitario": encontrar_coluna_modelo(modelo_df, ["preco unitario", "preço unitário", "preco", "preço"]),
     }
 
@@ -604,9 +682,15 @@ def validar_saida_cadastro(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> T
                 for p in str(x).split("|")
                 if p.strip()
             ) if str(x).strip() else True
-        ).sum()
-        if invalidas == 0:
-            pass
+        )
+        qtd_invalidas = int((~invalidas).sum())
+        if qtd_invalidas > 0:
+            erros.append(f"A coluna {campos['imagem_unica']} possui {qtd_invalidas} linhas com URLs inválidas.")
+
+    if campos["link_externo"] and campos["link_externo"] in df_saida.columns:
+        preenchidas = int((df_saida[campos["link_externo"]].astype(str).str.strip() != "").sum())
+        if preenchidas > 0:
+            erros.append("A coluna de link externo deve permanecer vazia.")
 
     return erros, avisos
 
@@ -649,6 +733,32 @@ def validar_saida_estoque(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> Tu
 # =========================================================
 # MAPEAMENTO BLING DENTRO DO MODELO
 # =========================================================
+def preencher_coluna_se_existir(
+    saida: pd.DataFrame,
+    nome_coluna_modelo: Optional[str],
+    serie_origem,
+    transformacao=None,
+) -> None:
+    if not nome_coluna_modelo:
+        return
+
+    if isinstance(serie_origem, pd.Series):
+        serie = serie_origem.copy()
+    else:
+        serie = pd.Series([serie_origem] * len(saida), index=saida.index)
+
+    if transformacao is not None:
+        serie = serie.apply(transformacao)
+
+    saida[nome_coluna_modelo] = serie
+
+
+def coluna_origem(df: pd.DataFrame, nome_coluna: Optional[str], padrao="") -> pd.Series:
+    if nome_coluna and nome_coluna in df.columns:
+        return df[nome_coluna]
+    return pd.Series([padrao] * len(df), index=df.index)
+
+
 def mapear_cadastro_no_modelo_bling(
     df: pd.DataFrame,
     mapa: Dict[str, Optional[str]],
@@ -664,43 +774,56 @@ def mapear_cadastro_no_modelo_bling(
     preco_col = mapa.get("preco")
     marca_col = mapa.get("marca")
     imagem_col = mapa.get("imagem")
-    link_col = mapa.get("link_externo")
     situacao_col = mapa.get("situacao")
     unidade_col = mapa.get("unidade")
     estoque_col = mapa.get("estoque")
 
+    categoria_col = mapa.get("categoria")
+    gtin_col = mapa.get("gtin")
+    ncm_col = mapa.get("ncm")
+    origem_col = mapa.get("origem")
+    peso_liquido_col = mapa.get("peso_liquido")
+    peso_bruto_col = mapa.get("peso_bruto")
+    largura_col = mapa.get("largura")
+    altura_col = mapa.get("altura")
+    profundidade_col = mapa.get("profundidade")
+    meses_garantia_col = mapa.get("meses_garantia_fornecedor")
+    descricao_complementar_col = mapa.get("descricao_complementar")
+
     if campos_modelo["id"]:
         saida[campos_modelo["id"]] = ""
 
-    if campos_modelo["codigo"]:
-        saida[campos_modelo["codigo"]] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
+    preencher_coluna_se_existir(saida, campos_modelo["codigo"], coluna_origem(df, codigo_col))
+    preencher_coluna_se_existir(saida, campos_modelo["nome"], coluna_origem(df, nome_col))
+    preencher_coluna_se_existir(saida, campos_modelo["unidade"], coluna_origem(df, unidade_col, "UN"))
+    preencher_coluna_se_existir(saida, campos_modelo["preco"], coluna_origem(df, preco_col), corrigir_preco)
+    preencher_coluna_se_existir(saida, campos_modelo["situacao"], coluna_origem(df, situacao_col, "Ativo"), normalizar_situacao)
+    preencher_coluna_se_existir(saida, campos_modelo["marca"], coluna_origem(df, marca_col))
+    preencher_coluna_se_existir(saida, campos_modelo["descricao_curta"], coluna_origem(df, desc_col))
+    preencher_coluna_se_existir(saida, campos_modelo["descricao_complementar"], coluna_origem(df, descricao_complementar_col))
+    preencher_coluna_se_existir(saida, campos_modelo["estoque"], coluna_origem(df, estoque_col))
+    preencher_coluna_se_existir(saida, campos_modelo["categoria"], coluna_origem(df, categoria_col))
+    preencher_coluna_se_existir(saida, campos_modelo["gtin"], coluna_origem(df, gtin_col))
+    preencher_coluna_se_existir(saida, campos_modelo["ncm"], coluna_origem(df, ncm_col))
+    preencher_coluna_se_existir(saida, campos_modelo["origem"], coluna_origem(df, origem_col))
+    preencher_coluna_se_existir(saida, campos_modelo["peso_liquido"], coluna_origem(df, peso_liquido_col), corrigir_numero_livre)
+    preencher_coluna_se_existir(saida, campos_modelo["peso_bruto"], coluna_origem(df, peso_bruto_col), corrigir_numero_livre)
+    preencher_coluna_se_existir(saida, campos_modelo["largura"], coluna_origem(df, largura_col), corrigir_numero_livre)
+    preencher_coluna_se_existir(saida, campos_modelo["altura"], coluna_origem(df, altura_col), corrigir_numero_livre)
+    preencher_coluna_se_existir(saida, campos_modelo["profundidade"], coluna_origem(df, profundidade_col), corrigir_numero_livre)
+    preencher_coluna_se_existir(saida, campos_modelo["meses_garantia_fornecedor"], coluna_origem(df, meses_garantia_col), corrigir_numero_livre)
 
-    if campos_modelo["nome"]:
-        saida[campos_modelo["nome"]] = df[nome_col] if nome_col and nome_col in df.columns else ""
-
-    if campos_modelo["unidade"]:
-        saida[campos_modelo["unidade"]] = df[unidade_col] if unidade_col and unidade_col in df.columns else "UN"
-
-    if campos_modelo["preco"]:
-        saida[campos_modelo["preco"]] = df[preco_col] if preco_col and preco_col in df.columns else ""
-
-    if campos_modelo["situacao"]:
-        saida[campos_modelo["situacao"]] = df[situacao_col] if situacao_col and situacao_col in df.columns else "Ativo"
-
-    if campos_modelo["marca"]:
-        saida[campos_modelo["marca"]] = df[marca_col] if marca_col and marca_col in df.columns else ""
-
-    if campos_modelo["descricao_curta"]:
-        saida[campos_modelo["descricao_curta"]] = df[desc_col] if desc_col and desc_col in df.columns else ""
-
+    # regras fixas
     if campos_modelo["descricao"]:
         saida[campos_modelo["descricao"]] = ""
-
     if campos_modelo["video"]:
         saida[campos_modelo["video"]] = ""
+    if campos_modelo["link_externo"]:
+        saida[campos_modelo["link_externo"]] = ""
 
-    if campos_modelo["estoque"]:
-        saida[campos_modelo["estoque"]] = df[estoque_col] if estoque_col and estoque_col in df.columns else ""
+    if campos_modelo["descricao_curta"] and campos_modelo["nome"]:
+        vazia = saida[campos_modelo["descricao_curta"]].astype(str).str.strip() == ""
+        saida.loc[vazia, campos_modelo["descricao_curta"]] = saida.loc[vazia, campos_modelo["nome"]]
 
     imagens_linhas = []
     for _, row in df.iterrows():
@@ -723,29 +846,13 @@ def mapear_cadastro_no_modelo_bling(
     elif campos_modelo["imagem_unica"]:
         saida[campos_modelo["imagem_unica"]] = ["|".join(imagens) for imagens in imagens_linhas]
 
-    if campos_modelo["link_externo"]:
-        if link_col and link_col in df.columns:
-            saida[campos_modelo["link_externo"]] = df[link_col].apply(limpar_link_externo)
-        else:
-            saida[campos_modelo["link_externo"]] = ""
-
     for col in saida.columns:
         if col == campos_modelo["preco"]:
             continue
         saida[col] = saida[col].apply(limpar_texto)
 
-    if campos_modelo["preco"]:
-        saida[campos_modelo["preco"]] = saida[campos_modelo["preco"]].apply(corrigir_preco)
-
-    if campos_modelo["situacao"]:
-        saida[campos_modelo["situacao"]] = saida[campos_modelo["situacao"]].apply(normalizar_situacao)
-
     if campos_modelo["unidade"]:
         saida[campos_modelo["unidade"]] = saida[campos_modelo["unidade"]].replace("", "UN")
-
-    if campos_modelo["descricao_curta"] and campos_modelo["nome"]:
-        vazia = saida[campos_modelo["descricao_curta"]].astype(str).str.strip() == ""
-        saida.loc[vazia, campos_modelo["descricao_curta"]] = saida.loc[vazia, campos_modelo["nome"]]
 
     if campos_modelo["codigo"]:
         antes = len(saida)
@@ -780,22 +887,11 @@ def mapear_estoque_no_modelo_bling(
     if campos_modelo["id"]:
         saida[campos_modelo["id"]] = ""
 
-    if campos_modelo["codigo"]:
-        saida[campos_modelo["codigo"]] = df[codigo_col] if codigo_col and codigo_col in df.columns else ""
-
-    if campos_modelo["nome"]:
-        saida[campos_modelo["nome"]] = df[nome_col] if nome_col and nome_col in df.columns else ""
-
-    if campos_modelo["deposito"]:
-        saida[campos_modelo["deposito"]] = limpar_texto(deposito)
-
-    if campos_modelo["estoque"]:
-        origem = df[estoque_col_origem] if estoque_col_origem and estoque_col_origem in df.columns else 0
-        saida[campos_modelo["estoque"]] = pd.Series(origem).apply(corrigir_estoque)
-
-    if campos_modelo["preco_unitario"]:
-        origem_preco = df[preco_col] if preco_col and preco_col in df.columns else ""
-        saida[campos_modelo["preco_unitario"]] = pd.Series(origem_preco).apply(corrigir_preco)
+    preencher_coluna_se_existir(saida, campos_modelo["codigo"], coluna_origem(df, codigo_col))
+    preencher_coluna_se_existir(saida, campos_modelo["nome"], coluna_origem(df, nome_col))
+    preencher_coluna_se_existir(saida, campos_modelo["deposito"], limpar_texto(deposito))
+    preencher_coluna_se_existir(saida, campos_modelo["estoque"], coluna_origem(df, estoque_col_origem, 0), corrigir_estoque)
+    preencher_coluna_se_existir(saida, campos_modelo["preco_unitario"], coluna_origem(df, preco_col), corrigir_preco)
 
     for col in saida.columns:
         if col in [campos_modelo["estoque"], campos_modelo["preco_unitario"]]:
@@ -848,7 +944,13 @@ def construir_mapa_manual(
             "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
         )
         mapa_manual["descricao_curta"] = select_coluna(
-            "Descrição curta", opcoes, mapa_auto.get("descricao_curta"), "map_descricao_curta"
+            "Descrição curta (descrição real do produto)", opcoes, mapa_auto.get("descricao_curta"), "map_descricao_curta"
+        )
+        mapa_manual["categoria"] = select_coluna(
+            "Categoria", opcoes, mapa_auto.get("categoria"), "map_categoria"
+        )
+        mapa_manual["gtin"] = select_coluna(
+            "GTIN / EAN", opcoes, mapa_auto.get("gtin"), "map_gtin"
         )
 
     with c2:
@@ -861,10 +963,16 @@ def construir_mapa_manual(
         mapa_manual["imagem"] = select_coluna(
             "Coluna principal de imagem", opcoes, mapa_auto.get("imagem"), "map_imagem"
         )
+        mapa_manual["ncm"] = select_coluna(
+            "NCM", opcoes, mapa_auto.get("ncm"), "map_ncm"
+        )
+        mapa_manual["origem"] = select_coluna(
+            "Origem", opcoes, mapa_auto.get("origem"), "map_origem"
+        )
 
     with c3:
         mapa_manual["link_externo"] = select_coluna(
-            "Link externo", opcoes, mapa_auto.get("link_externo"), "map_link_externo"
+            "Link externo (deve ficar vazio)", opcoes, mapa_auto.get("link_externo"), "map_link_externo"
         )
         mapa_manual["estoque"] = select_coluna(
             "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
@@ -872,13 +980,34 @@ def construir_mapa_manual(
         mapa_manual["situacao"] = select_coluna(
             "Situação", opcoes, mapa_auto.get("situacao"), "map_situacao"
         )
+        mapa_manual["unidade"] = select_coluna(
+            "Unidade", opcoes, mapa_auto.get("unidade"), "map_unidade"
+        )
+        mapa_manual["descricao_complementar"] = select_coluna(
+            "Descrição complementar", opcoes, mapa_auto.get("descricao_complementar"), "map_descricao_complementar"
+        )
 
-    mapa_manual["unidade"] = st.selectbox(
-        "Unidade",
-        options=opcoes,
-        index=opcoes.index(mapa_auto.get("unidade")) if mapa_auto.get("unidade") in opcoes else 0,
-        key="map_unidade",
-    )
+    c4, c5 = st.columns(2)
+    with c4:
+        mapa_manual["peso_liquido"] = select_coluna(
+            "Peso líquido", opcoes, mapa_auto.get("peso_liquido"), "map_peso_liquido"
+        )
+        mapa_manual["peso_bruto"] = select_coluna(
+            "Peso bruto", opcoes, mapa_auto.get("peso_bruto"), "map_peso_bruto"
+        )
+        mapa_manual["largura"] = select_coluna(
+            "Largura", opcoes, mapa_auto.get("largura"), "map_largura"
+        )
+    with c5:
+        mapa_manual["altura"] = select_coluna(
+            "Altura", opcoes, mapa_auto.get("altura"), "map_altura"
+        )
+        mapa_manual["profundidade"] = select_coluna(
+            "Profundidade / Comprimento", opcoes, mapa_auto.get("profundidade"), "map_profundidade"
+        )
+        mapa_manual["meses_garantia_fornecedor"] = select_coluna(
+            "Meses garantia no fornecedor", opcoes, mapa_auto.get("meses_garantia_fornecedor"), "map_meses_garantia_fornecedor"
+        )
 
     return {k: (v if limpar_texto(v) else None) for k, v in mapa_manual.items()}
 
@@ -900,6 +1029,17 @@ def montar_df_colunas_automaticas(
         "estoque",
         "situacao",
         "unidade",
+        "categoria",
+        "gtin",
+        "ncm",
+        "origem",
+        "peso_liquido",
+        "peso_bruto",
+        "largura",
+        "altura",
+        "profundidade",
+        "meses_garantia_fornecedor",
+        "descricao_complementar",
     ]
 
     nomes_exibicao = {
@@ -913,6 +1053,17 @@ def montar_df_colunas_automaticas(
         "estoque": "Estoque / Quantidade",
         "situacao": "Situação",
         "unidade": "Unidade",
+        "categoria": "Categoria",
+        "gtin": "GTIN / EAN",
+        "ncm": "NCM",
+        "origem": "Origem",
+        "peso_liquido": "Peso líquido",
+        "peso_bruto": "Peso bruto",
+        "largura": "Largura",
+        "altura": "Altura",
+        "profundidade": "Profundidade / Comprimento",
+        "meses_garantia_fornecedor": "Meses garantia no fornecedor",
+        "descricao_complementar": "Descrição complementar",
     }
 
     for campo in ordem:
@@ -952,6 +1103,17 @@ def montar_df_mapeamento_final(
         "estoque": "Estoque / Quantidade",
         "situacao": "Situação",
         "unidade": "Unidade",
+        "categoria": "Categoria",
+        "gtin": "GTIN / EAN",
+        "ncm": "NCM",
+        "origem": "Origem",
+        "peso_liquido": "Peso líquido",
+        "peso_bruto": "Peso bruto",
+        "largura": "Largura",
+        "altura": "Altura",
+        "profundidade": "Profundidade / Comprimento",
+        "meses_garantia_fornecedor": "Meses garantia no fornecedor",
+        "descricao_complementar": "Descrição complementar",
     }
 
     if tipo_processamento == "Cadastro de produtos":
@@ -966,6 +1128,17 @@ def montar_df_mapeamento_final(
             "estoque",
             "situacao",
             "unidade",
+            "categoria",
+            "gtin",
+            "ncm",
+            "origem",
+            "peso_liquido",
+            "peso_bruto",
+            "largura",
+            "altura",
+            "profundidade",
+            "meses_garantia_fornecedor",
+            "descricao_complementar",
         ]
     else:
         ordem = [
@@ -1001,7 +1174,7 @@ def montar_df_mapeamento_final(
     linhas.append(
         {
             "Campo Bling": "Regra fixa",
-            "Coluna escolhida": "Descrição do fornecedor -> descrição curta | descrição -> vazio | vídeo -> vazio",
+            "Coluna escolhida": "descrição curta = descrição real do produto | descrição = vazio | vídeo = vazio | link externo = vazio",
         }
     )
 
@@ -1094,6 +1267,7 @@ def main() -> None:
                 st.session_state["df_saida"] = None
                 st.session_state["mapa_manual"] = {}
                 st.session_state["ultima_chave_arquivo"] = chave_atual
+                st.session_state["auto_info_cache"] = None
                 resetar_validacao()
 
                 for k in list(st.session_state.keys()):
@@ -1135,6 +1309,10 @@ def main() -> None:
         st.info("Anexe a planilha do fornecedor para começar.")
         return
 
+    auto_info = obter_info_automatica(df)
+    mapa_auto = auto_info["mapa_auto"]
+    colunas_imagem_auto = auto_info["colunas_imagem_auto"]
+
     st.success(f"✅ Arquivo de origem carregado: {st.session_state['nome_arquivo_origem']}")
 
     c1, c2, c3 = st.columns(3)
@@ -1143,10 +1321,7 @@ def main() -> None:
     with c2:
         st.metric("Colunas", len(df.columns))
     with c3:
-        st.metric("Campos detectados", len([v for v in detectar_colunas(df).values() if v]))
-
-    mapa_auto = detectar_colunas(df)
-    colunas_imagem_auto = encontrar_colunas_imagem(df)
+        st.metric("Campos detectados", len([v for v in mapa_auto.values() if v]))
 
     with st.expander("👀 Preview", expanded=st.session_state["preview_aberto"]):
         st.dataframe(df.head(1), use_container_width=True)
@@ -1158,11 +1333,14 @@ def main() -> None:
         resetar_validacao()
 
         st.info(
-            "Regra fixa do sistema: a descrição da planilha de dados sempre vai para "
-            "'descrição curta'. A coluna 'descrição' fica vazia. A coluna 'vídeo' também fica vazia."
+            "Regra fixa do sistema: a descrição real do produto sempre vai para "
+            "'descrição curta'. A coluna 'descrição' fica vazia. A coluna 'vídeo' fica vazia. "
+            "A coluna 'link externo' também fica vazia."
         )
 
     mapa_final = st.session_state.get("mapa_manual") or mapa_auto
+    mapa_final["link_externo"] = None
+
     imagem_principal = mapa_final.get("imagem")
     colunas_imagem_extras = [c for c in colunas_imagem_auto if c != imagem_principal]
 
