@@ -43,6 +43,7 @@ def init_state() -> None:
         "modelo_cadastro_raw": None,
         "modelo_estoque_raw": None,
         "mapa_manual": {},
+        "mapeamento_modelo_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
         "ultima_chave_arquivo": "",
         "ultima_chave_modelo_cadastro": "",
@@ -51,8 +52,6 @@ def init_state() -> None:
         "validacao_avisos": [],
         "validacao_ok": False,
         "ultimo_mapeamento_auto": {},
-        "tipo_saida_atual": "",
-        "deposito_informado": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -69,15 +68,6 @@ def resetar_validacao() -> None:
     st.session_state["validacao_ok"] = False
 
 
-def limpar_resultado() -> None:
-    st.session_state["df_saida"] = None
-    st.session_state["validacao_erros"] = []
-    st.session_state["validacao_avisos"] = []
-    st.session_state["validacao_ok"] = False
-    st.session_state["tipo_saida_atual"] = ""
-    st.session_state["deposito_informado"] = ""
-
-
 def limpar_tudo() -> None:
     chaves_base = {
         "logs": [],
@@ -89,6 +79,7 @@ def limpar_tudo() -> None:
         "modelo_cadastro_raw": None,
         "modelo_estoque_raw": None,
         "mapa_manual": {},
+        "mapeamento_modelo_manual": {},
         "ultimo_tipo_processamento": "Cadastro de produtos",
         "ultima_chave_arquivo": "",
         "ultima_chave_modelo_cadastro": "",
@@ -97,15 +88,17 @@ def limpar_tudo() -> None:
         "validacao_avisos": [],
         "validacao_ok": False,
         "ultimo_mapeamento_auto": {},
-        "tipo_saida_atual": "",
-        "deposito_informado": "",
     }
 
     for chave, valor in chaves_base.items():
         st.session_state[chave] = valor
 
     for chave in list(st.session_state.keys()):
-        if chave.startswith("map_") or chave.startswith("toggle_"):
+        if (
+            chave.startswith("map_")
+            or chave.startswith("toggle_")
+            or chave.startswith("modelo_map_")
+        ):
             del st.session_state[chave]
 
 
@@ -203,201 +196,6 @@ def select_coluna(label: str, opcoes, valor_atual, key: str) -> str:
     return st.selectbox(label, options=opcoes, index=idx, key=key)
 
 
-def construir_mapa_manual(df: pd.DataFrame, mapa_auto: dict) -> dict:
-    opcoes = montar_opcoes_colunas(df)
-    mapa_manual = dict(mapa_auto)
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        mapa_manual["codigo"] = select_coluna(
-            "Código / SKU", opcoes, mapa_auto.get("codigo"), "map_codigo"
-        )
-        mapa_manual["nome"] = select_coluna(
-            "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
-        )
-        mapa_manual["descricao_curta"] = select_coluna(
-            "Descrição curta (descrição real do produto)",
-            opcoes,
-            mapa_auto.get("descricao_curta"),
-            "map_descricao_curta",
-        )
-        mapa_manual["categoria"] = select_coluna(
-            "Categoria", opcoes, mapa_auto.get("categoria"), "map_categoria"
-        )
-        mapa_manual["gtin"] = select_coluna(
-            "GTIN / EAN", opcoes, mapa_auto.get("gtin"), "map_gtin"
-        )
-
-    with c2:
-        mapa_manual["preco"] = select_coluna(
-            "Preço", opcoes, mapa_auto.get("preco"), "map_preco"
-        )
-        mapa_manual["marca"] = select_coluna(
-            "Marca", opcoes, mapa_auto.get("marca"), "map_marca"
-        )
-        mapa_manual["imagem"] = select_coluna(
-            "Imagem principal / links de imagens", opcoes, mapa_auto.get("imagem"), "map_imagem"
-        )
-        mapa_manual["situacao"] = select_coluna(
-            "Situação", opcoes, mapa_auto.get("situacao"), "map_situacao"
-        )
-        mapa_manual["unidade"] = select_coluna(
-            "Unidade", opcoes, mapa_auto.get("unidade"), "map_unidade"
-        )
-
-    with c3:
-        mapa_manual["estoque"] = select_coluna(
-            "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
-        )
-        mapa_manual["peso"] = select_coluna(
-            "Peso", opcoes, mapa_auto.get("peso"), "map_peso"
-        )
-        mapa_manual["link_externo"] = select_coluna(
-            "Link externo (será ignorado e ficará vazio)",
-            opcoes,
-            mapa_auto.get("link_externo"),
-            "map_link_externo",
-        )
-
-    return {k: (v if limpar_texto(v) else None) for k, v in mapa_manual.items()}
-
-
-def montar_df_colunas_automaticas(mapa_auto: dict) -> pd.DataFrame:
-    nomes_exibicao = {
-        "codigo": "Código / SKU",
-        "nome": "Nome do produto",
-        "descricao_curta": "Descrição curta",
-        "preco": "Preço",
-        "marca": "Marca",
-        "imagem": "Imagem principal / imagens",
-        "link_externo": "Link externo",
-        "estoque": "Estoque / Quantidade",
-        "situacao": "Situação",
-        "unidade": "Unidade",
-        "categoria": "Categoria",
-        "gtin": "GTIN / EAN",
-        "peso": "Peso",
-    }
-
-    ordem = [
-        "codigo",
-        "nome",
-        "descricao_curta",
-        "preco",
-        "marca",
-        "imagem",
-        "link_externo",
-        "estoque",
-        "situacao",
-        "unidade",
-        "categoria",
-        "gtin",
-        "peso",
-    ]
-
-    linhas = []
-    for campo in ordem:
-        linhas.append(
-            {
-                "Campo": nomes_exibicao.get(campo, campo),
-                "Coluna detectada": mapa_auto.get(campo) or "",
-            }
-        )
-
-    return pd.DataFrame(linhas)
-
-
-def montar_df_mapeamento_final(
-    tipo_processamento: str,
-    mapa_final: dict,
-    modelo_nome: str,
-) -> pd.DataFrame:
-    nomes_exibicao = {
-        "codigo": "Código / SKU",
-        "nome": "Nome do produto",
-        "descricao_curta": "Descrição curta",
-        "preco": "Preço",
-        "marca": "Marca",
-        "imagem": "Imagem principal / imagens",
-        "link_externo": "Link externo",
-        "estoque": "Estoque / Quantidade",
-        "situacao": "Situação",
-        "unidade": "Unidade",
-        "categoria": "Categoria",
-        "gtin": "GTIN / EAN",
-        "peso": "Peso",
-    }
-
-    if tipo_processamento == "Cadastro de produtos":
-        ordem = [
-            "codigo",
-            "nome",
-            "descricao_curta",
-            "preco",
-            "marca",
-            "imagem",
-            "link_externo",
-            "estoque",
-            "situacao",
-            "unidade",
-            "categoria",
-            "gtin",
-            "peso",
-        ]
-    else:
-        ordem = ["codigo", "nome", "estoque", "preco"]
-
-    linhas = [{"Campo": "Modelo Bling anexado", "Coluna escolhida": modelo_nome or ""}]
-
-    for campo in ordem:
-        linhas.append(
-            {
-                "Campo": nomes_exibicao.get(campo, campo),
-                "Coluna escolhida": mapa_final.get(campo) or "",
-            }
-        )
-
-    linhas.append(
-        {
-            "Campo": "Regra fixa",
-            "Coluna escolhida": (
-                "descrição = título/nome do produto | "
-                "descrição curta = descrição real do produto | "
-                "vídeo = vazio | "
-                "link externo = vazio"
-            ),
-        }
-    )
-
-    return pd.DataFrame(linhas)
-
-
-def exibir_validacao() -> None:
-    erros = st.session_state.get("validacao_erros", [])
-    avisos = st.session_state.get("validacao_avisos", [])
-    ok = st.session_state.get("validacao_ok", False)
-
-    st.subheader("Validação informativa para conferência")
-
-    if ok:
-        st.success("✅ Nenhum erro crítico encontrado na conferência atual.")
-
-    for aviso in avisos:
-        st.warning(aviso)
-
-    if erros:
-        st.error("⚠️ Foram encontrados pontos para revisar antes do download.")
-        for erro in erros:
-            st.error(f"- {erro}")
-
-    if not erros and not avisos:
-        st.info("Nenhum aviso ou erro encontrado.")
-
-
-# =========================================================
-# ADAPTAÇÃO AO MODELO REAL DO BLING
-# =========================================================
 def encontrar_coluna_modelo(modelo_df: pd.DataFrame, candidatos: list[str]):
     for col in modelo_df.columns:
         col_slug = slug_coluna(col)
@@ -451,7 +249,348 @@ def localizar_campos_modelo_estoque(modelo_df: pd.DataFrame) -> dict:
     }
 
 
-def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFrame) -> pd.DataFrame:
+def sugerir_coluna_origem_por_destino(destino_coluna: str, mapa_auto: dict) -> str:
+    destino_slug = slug_coluna(destino_coluna)
+
+    regras = [
+        (["codigo", "código", "sku"], "codigo"),
+        (["nome", "produto", "titulo", "título"], "nome"),
+        (["descricao curta", "descrição curta"], "descricao_curta"),
+        (["descricao", "descrição"], "descricao_curta"),
+        (["preco", "preço", "valor"], "preco"),
+        (["marca", "fabricante"], "marca"),
+        (["imagem"], "imagem"),
+        (["link externo", "url produto", "link produto", "url"], "link_externo"),
+        (["estoque", "saldo", "quantidade"], "estoque"),
+        (["situacao", "situação", "status"], "situacao"),
+        (["unidade", "und"], "unidade"),
+        (["categoria", "grupo", "departamento"], "categoria"),
+        (["gtin", "ean", "codigo barras", "código barras"], "gtin"),
+        (["peso"], "peso"),
+    ]
+
+    for aliases, campo_canonico in regras:
+        for alias in aliases:
+            if slug_coluna(alias) in destino_slug:
+                return mapa_auto.get(campo_canonico) or ""
+
+    return ""
+
+
+def construir_mapa_manual_campos_principais(
+    df: pd.DataFrame,
+    mapa_auto: dict,
+    tipo_processamento: str,
+) -> dict:
+    opcoes = montar_opcoes_colunas(df)
+    mapa_manual = dict(mapa_auto)
+
+    c1, c2, c3 = st.columns(3)
+
+    if tipo_processamento == "Cadastro de produtos":
+        with c1:
+            mapa_manual["codigo"] = select_coluna(
+                "Código / SKU", opcoes, mapa_auto.get("codigo"), "map_codigo"
+            )
+            mapa_manual["nome"] = select_coluna(
+                "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
+            )
+            mapa_manual["descricao_curta"] = select_coluna(
+                "Descrição curta (descrição real do produto)",
+                opcoes,
+                mapa_auto.get("descricao_curta"),
+                "map_descricao_curta",
+            )
+            mapa_manual["categoria"] = select_coluna(
+                "Categoria", opcoes, mapa_auto.get("categoria"), "map_categoria"
+            )
+            mapa_manual["gtin"] = select_coluna(
+                "GTIN / EAN", opcoes, mapa_auto.get("gtin"), "map_gtin"
+            )
+
+        with c2:
+            mapa_manual["preco"] = select_coluna(
+                "Preço", opcoes, mapa_auto.get("preco"), "map_preco"
+            )
+            mapa_manual["marca"] = select_coluna(
+                "Marca", opcoes, mapa_auto.get("marca"), "map_marca"
+            )
+            mapa_manual["imagem"] = select_coluna(
+                "Imagem principal / links de imagens",
+                opcoes,
+                mapa_auto.get("imagem"),
+                "map_imagem",
+            )
+            mapa_manual["situacao"] = select_coluna(
+                "Situação", opcoes, mapa_auto.get("situacao"), "map_situacao"
+            )
+            mapa_manual["unidade"] = select_coluna(
+                "Unidade", opcoes, mapa_auto.get("unidade"), "map_unidade"
+            )
+
+        with c3:
+            mapa_manual["estoque"] = select_coluna(
+                "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
+            )
+            mapa_manual["peso"] = select_coluna(
+                "Peso", opcoes, mapa_auto.get("peso"), "map_peso"
+            )
+            mapa_manual["link_externo"] = select_coluna(
+                "Link externo (será ignorado e ficará vazio)",
+                opcoes,
+                mapa_auto.get("link_externo"),
+                "map_link_externo",
+            )
+    else:
+        with c1:
+            mapa_manual["codigo"] = select_coluna(
+                "Código / SKU", opcoes, mapa_auto.get("codigo"), "map_codigo"
+            )
+            mapa_manual["nome"] = select_coluna(
+                "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
+            )
+
+        with c2:
+            mapa_manual["estoque"] = select_coluna(
+                "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
+            )
+
+        with c3:
+            mapa_manual["preco"] = select_coluna(
+                "Preço", opcoes, mapa_auto.get("preco"), "map_preco"
+            )
+
+    return {k: (v if limpar_texto(v) else None) for k, v in mapa_manual.items()}
+
+
+def construir_mapeamento_completo_modelo(
+    df: pd.DataFrame,
+    mapa_auto: dict,
+    modelo_df: Optional[pd.DataFrame],
+    tipo_processamento: str,
+) -> dict:
+    if modelo_df is None or modelo_df.empty:
+        return {}
+
+    opcoes = montar_opcoes_colunas(df)
+
+    st.markdown("### Todas as colunas do modelo selecionado")
+
+    st.caption(
+        "Aqui você pode mapear manualmente qualquer coluna do modelo "
+        "de saída selecionado. Se não quiser usar uma coluna, deixe em branco."
+    )
+
+    if tipo_processamento == "Cadastro de produtos":
+        st.info("Modo atual: Cadastro de produtos — exibindo todas as colunas do modelo de cadastro.")
+    else:
+        st.info("Modo atual: Atualização de estoque — exibindo todas as colunas do modelo de estoque.")
+
+    resultado = {}
+    colunas_layout = st.columns(3)
+
+    for idx, coluna_modelo in enumerate(modelo_df.columns):
+        sugestao = sugerir_coluna_origem_por_destino(coluna_modelo, mapa_auto)
+        chave_estado = f"modelo_map_{tipo_processamento}_{idx}_{slug_coluna(coluna_modelo)}"
+
+        with colunas_layout[idx % 3]:
+            resultado[coluna_modelo] = select_coluna(
+                coluna_modelo,
+                opcoes,
+                sugestao,
+                chave_estado,
+            )
+
+    return {k: (v if limpar_texto(v) else None) for k, v in resultado.items()}
+
+
+def montar_df_colunas_automaticas(mapa_auto: dict) -> pd.DataFrame:
+    nomes_exibicao = {
+        "codigo": "Código / SKU",
+        "nome": "Nome do produto",
+        "descricao_curta": "Descrição curta",
+        "preco": "Preço",
+        "marca": "Marca",
+        "imagem": "Imagem principal / imagens",
+        "link_externo": "Link externo",
+        "estoque": "Estoque / Quantidade",
+        "situacao": "Situação",
+        "unidade": "Unidade",
+        "categoria": "Categoria",
+        "gtin": "GTIN / EAN",
+        "peso": "Peso",
+    }
+
+    ordem = [
+        "codigo",
+        "nome",
+        "descricao_curta",
+        "preco",
+        "marca",
+        "imagem",
+        "link_externo",
+        "estoque",
+        "situacao",
+        "unidade",
+        "categoria",
+        "gtin",
+        "peso",
+    ]
+
+    linhas = []
+    for campo in ordem:
+        linhas.append(
+            {
+                "Campo": nomes_exibicao.get(campo, campo),
+                "Coluna detectada": mapa_auto.get(campo) or "",
+            }
+        )
+
+    return pd.DataFrame(linhas)
+
+
+def montar_df_mapeamento_final(
+    tipo_processamento: str,
+    mapa_final: dict,
+    modelo_nome: str,
+    mapeamento_modelo_manual: Optional[dict] = None,
+) -> pd.DataFrame:
+    nomes_exibicao = {
+        "codigo": "Código / SKU",
+        "nome": "Nome do produto",
+        "descricao_curta": "Descrição curta",
+        "preco": "Preço",
+        "marca": "Marca",
+        "imagem": "Imagem principal / imagens",
+        "link_externo": "Link externo",
+        "estoque": "Estoque / Quantidade",
+        "situacao": "Situação",
+        "unidade": "Unidade",
+        "categoria": "Categoria",
+        "gtin": "GTIN / EAN",
+        "peso": "Peso",
+    }
+
+    if tipo_processamento == "Cadastro de produtos":
+        ordem = [
+            "codigo",
+            "nome",
+            "descricao_curta",
+            "preco",
+            "marca",
+            "imagem",
+            "link_externo",
+            "estoque",
+            "situacao",
+            "unidade",
+            "categoria",
+            "gtin",
+            "peso",
+        ]
+    else:
+        ordem = ["codigo", "nome", "estoque", "preco"]
+
+    linhas = [{"Campo": "Modelo Bling anexado", "Coluna escolhida": modelo_nome or ""}]
+
+    for campo in ordem:
+        linhas.append(
+            {
+                "Campo": nomes_exibicao.get(campo, campo),
+                "Coluna escolhida": mapa_final.get(campo) or "",
+            }
+        )
+
+    if mapeamento_modelo_manual:
+        linhas.append({"Campo": "----------------", "Coluna escolhida": "----------------"})
+        linhas.append({"Campo": "Mapeamento manual das colunas do modelo", "Coluna escolhida": ""})
+
+        for coluna_modelo, coluna_origem in mapeamento_modelo_manual.items():
+            linhas.append(
+                {
+                    "Campo": f"Modelo -> {coluna_modelo}",
+                    "Coluna escolhida": coluna_origem or "",
+                }
+            )
+
+    linhas.append(
+        {
+            "Campo": "Regra fixa",
+            "Coluna escolhida": (
+                "descrição = título/nome do produto | "
+                "descrição curta = descrição real do produto | "
+                "vídeo = vazio | "
+                "link externo = vazio"
+            ),
+        }
+    )
+
+    return pd.DataFrame(linhas)
+
+
+def exibir_validacao() -> None:
+    erros = st.session_state.get("validacao_erros", [])
+    avisos = st.session_state.get("validacao_avisos", [])
+    ok = st.session_state.get("validacao_ok", False)
+
+    st.subheader("Validação antes do download")
+
+    if ok:
+        st.success("✅ Validação aprovada. A planilha está liberada para download.")
+
+    for aviso in avisos:
+        st.warning(aviso)
+
+    if erros:
+        st.error("❌ Download bloqueado. Corrija os pontos abaixo antes de baixar.")
+        for erro in erros:
+            st.error(f"- {erro}")
+
+
+def aplicar_mapeamento_manual_do_modelo(
+    saida: pd.DataFrame,
+    df_origem: pd.DataFrame,
+    mapeamento_modelo_manual: Optional[dict],
+    colunas_bloqueadas: Optional[set] = None,
+) -> pd.DataFrame:
+    if saida is None or saida.empty:
+        return saida
+
+    if not mapeamento_modelo_manual:
+        return saida
+
+    colunas_bloqueadas = colunas_bloqueadas or set()
+
+    for coluna_modelo, coluna_origem in mapeamento_modelo_manual.items():
+        if not coluna_modelo or not coluna_origem:
+            continue
+        if coluna_modelo not in saida.columns:
+            continue
+        if coluna_modelo in colunas_bloqueadas:
+            continue
+        if coluna_origem not in df_origem.columns:
+            continue
+
+        serie_origem = df_origem[coluna_origem].fillna("").astype(str)
+
+        if len(serie_origem) < len(saida):
+            serie_origem = serie_origem.reindex(range(len(saida)), fill_value="")
+        else:
+            serie_origem = serie_origem.iloc[: len(saida)].reset_index(drop=True)
+
+        saida[coluna_modelo] = serie_origem.values
+
+    return saida
+
+
+# =========================================================
+# ADAPTAÇÃO AO MODELO REAL DO BLING
+# =========================================================
+def adaptar_cadastro_ao_modelo_real(
+    df_base: pd.DataFrame,
+    modelo_df: pd.DataFrame,
+    df_origem: Optional[pd.DataFrame] = None,
+    mapeamento_modelo_manual: Optional[dict] = None,
+) -> pd.DataFrame:
     saida = pd.DataFrame("", index=range(len(df_base)), columns=list(modelo_df.columns))
     campos = localizar_campos_modelo_cadastro(modelo_df)
 
@@ -524,10 +663,48 @@ def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFra
     if campos.get("codigo"):
         saida = saida[saida[campos["codigo"]].astype(str).str.strip() != ""].copy()
 
-    return saida.reset_index(drop=True)
+    saida = saida.reset_index(drop=True)
+
+    if df_origem is not None:
+        colunas_bloqueadas = {
+            campos.get("id"),
+            campos.get("codigo"),
+            campos.get("nome"),
+            campos.get("unidade"),
+            campos.get("preco"),
+            campos.get("situacao"),
+            campos.get("marca"),
+            campos.get("descricao_curta"),
+            campos.get("descricao"),
+            campos.get("video"),
+            campos.get("imagem_1"),
+            campos.get("imagem_2"),
+            campos.get("imagem_3"),
+            campos.get("imagem_4"),
+            campos.get("imagem_5"),
+            campos.get("imagem_unica"),
+            campos.get("link_externo"),
+            campos.get("categoria"),
+            campos.get("peso_liquido"),
+            campos.get("gtin"),
+        }
+        saida = aplicar_mapeamento_manual_do_modelo(
+            saida=saida,
+            df_origem=df_origem,
+            mapeamento_modelo_manual=mapeamento_modelo_manual,
+            colunas_bloqueadas={c for c in colunas_bloqueadas if c},
+        )
+
+    return saida
 
 
-def adaptar_estoque_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFrame, deposito: str) -> pd.DataFrame:
+def adaptar_estoque_ao_modelo_real(
+    df_base: pd.DataFrame,
+    modelo_df: pd.DataFrame,
+    deposito: str,
+    df_origem: Optional[pd.DataFrame] = None,
+    mapeamento_modelo_manual: Optional[dict] = None,
+) -> pd.DataFrame:
     saida = pd.DataFrame("", index=range(len(df_base)), columns=list(modelo_df.columns))
     campos = localizar_campos_modelo_estoque(modelo_df)
 
@@ -557,7 +734,25 @@ def adaptar_estoque_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFram
     if campos.get("codigo"):
         saida = saida[saida[campos["codigo"]].astype(str).str.strip() != ""].copy()
 
-    return saida.reset_index(drop=True)
+    saida = saida.reset_index(drop=True)
+
+    if df_origem is not None:
+        colunas_bloqueadas = {
+            campos.get("id"),
+            campos.get("codigo"),
+            campos.get("nome"),
+            campos.get("deposito"),
+            campos.get("estoque"),
+            campos.get("preco_unitario"),
+        }
+        saida = aplicar_mapeamento_manual_do_modelo(
+            saida=saida,
+            df_origem=df_origem,
+            mapeamento_modelo_manual=mapeamento_modelo_manual,
+            colunas_bloqueadas={c for c in colunas_bloqueadas if c},
+        )
+
+    return saida
 
 
 # =========================================================
@@ -583,7 +778,6 @@ def main() -> None:
         if tipo_processamento == "Atualização de estoque":
             deposito = st.text_input(
                 "Em qual estoque será lançado?",
-                value=st.session_state.get("deposito_informado", ""),
                 placeholder="Ex: Geral, Loja, CD",
             )
 
@@ -603,21 +797,20 @@ def main() -> None:
         key="upload_origem",
     )
 
-    col_modelo_1, col_modelo_2 = st.columns(2)
-
-    with col_modelo_1:
+    if tipo_processamento == "Cadastro de produtos":
         modelo_cadastro = st.file_uploader(
             "2) Modelo de cadastro do Bling",
             type=tipos_aceitos,
             key="upload_modelo_cadastro",
         )
-
-    with col_modelo_2:
+        modelo_estoque = None
+    else:
         modelo_estoque = st.file_uploader(
-            "3) Modelo de estoque do Bling",
+            "2) Modelo de estoque do Bling",
             type=tipos_aceitos,
             key="upload_modelo_estoque",
         )
+        modelo_cadastro = None
 
     if arquivo_origem is not None:
         chave_atual = f"{arquivo_origem.name}-{getattr(arquivo_origem, 'size', 0)}"
@@ -631,13 +824,15 @@ def main() -> None:
 
             st.session_state["df_origem"] = df
             st.session_state["nome_arquivo_origem"] = arquivo_origem.name
+            st.session_state["df_saida"] = None
             st.session_state["mapa_manual"] = {}
+            st.session_state["mapeamento_modelo_manual"] = {}
             st.session_state["ultima_chave_arquivo"] = chave_atual
             st.session_state["ultimo_mapeamento_auto"] = detectar_colunas(df)
-            limpar_resultado()
+            resetar_validacao()
 
             for k in list(st.session_state.keys()):
-                if k.startswith("map_"):
+                if k.startswith("map_") or k.startswith("modelo_map_"):
                     del st.session_state[k]
 
             log(f"Arquivo de origem carregado: {arquivo_origem.name}")
@@ -657,7 +852,8 @@ def main() -> None:
             st.session_state["modelo_cadastro_raw"] = modelo_df
             st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
             st.session_state["ultima_chave_modelo_cadastro"] = chave_modelo_cadastro
-            limpar_resultado()
+            st.session_state["mapeamento_modelo_manual"] = {}
+            resetar_validacao()
             log(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
 
     if modelo_estoque is not None:
@@ -674,7 +870,8 @@ def main() -> None:
             st.session_state["modelo_estoque_raw"] = modelo_df
             st.session_state["nome_modelo_estoque"] = modelo_estoque.name
             st.session_state["ultima_chave_modelo_estoque"] = chave_modelo_estoque
-            limpar_resultado()
+            st.session_state["mapeamento_modelo_manual"] = {}
+            resetar_validacao()
             log(f"Modelo de estoque carregado: {modelo_estoque.name}")
 
     df = st.session_state["df_origem"]
@@ -698,11 +895,35 @@ def main() -> None:
     if bloco_toggle("Preview", "preview"):
         st.dataframe(df.head(1), use_container_width=True)
 
+    modelo_df_selecionado = (
+        st.session_state["modelo_cadastro_raw"]
+        if tipo_processamento == "Cadastro de produtos"
+        else st.session_state["modelo_estoque_raw"]
+    )
+
     if bloco_toggle("Ajuste manual das colunas", "ajuste_manual"):
         st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
-        mapa_final_temp = construir_mapa_manual(df, mapa_auto)
+
+        st.markdown("### Campos principais do sistema")
+        mapa_final_temp = construir_mapa_manual_campos_principais(
+            df=df,
+            mapa_auto=mapa_auto,
+            tipo_processamento=tipo_processamento,
+        )
         st.session_state["mapa_manual"] = mapa_final_temp
-        limpar_resultado()
+
+        if modelo_df_selecionado is not None and not modelo_df_selecionado.empty:
+            mapeamento_modelo_manual = construir_mapeamento_completo_modelo(
+                df=df,
+                mapa_auto=mapa_auto,
+                modelo_df=modelo_df_selecionado,
+                tipo_processamento=tipo_processamento,
+            )
+            st.session_state["mapeamento_modelo_manual"] = mapeamento_modelo_manual
+        else:
+            st.session_state["mapeamento_modelo_manual"] = {}
+
+        resetar_validacao()
 
         st.info(
             "Regra fixa do sistema: a descrição real do produto vai para "
@@ -712,6 +933,8 @@ def main() -> None:
 
     mapa_final = dict(st.session_state.get("mapa_manual") or mapa_auto)
     mapa_final["link_externo"] = None
+
+    mapeamento_modelo_manual = dict(st.session_state.get("mapeamento_modelo_manual") or {})
 
     modelo_nome_exibicao = (
         st.session_state["nome_modelo_cadastro"]
@@ -724,15 +947,16 @@ def main() -> None:
             tipo_processamento=tipo_processamento,
             mapa_final=mapa_final,
             modelo_nome=modelo_nome_exibicao or "",
+            mapeamento_modelo_manual=mapeamento_modelo_manual,
         )
         st.dataframe(df_mapeamento_final, use_container_width=True, hide_index=True)
+
+        if st.session_state["df_saida"] is not None:
+            st.dataframe(st.session_state["df_saida"].head(20), use_container_width=True)
 
     if bloco_toggle("Colunas identificadas automaticamente", "colunas_auto"):
         df_auto = montar_df_colunas_automaticas(mapa_auto)
         st.dataframe(df_auto, use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.subheader("Montagem para conferência manual")
 
     if tipo_processamento == "Cadastro de produtos":
         modelo_cadastro_df = st.session_state["modelo_cadastro_raw"]
@@ -740,24 +964,24 @@ def main() -> None:
         if modelo_cadastro_df is None:
             st.warning("⚠️ Anexe o modelo de cadastro do Bling.")
         else:
-            if st.button("Montar prévia de cadastro para conferência", use_container_width=True):
+            if st.button("Gerar planilha de cadastro", use_container_width=True):
                 try:
                     saida_base, _ = mapear_cadastro_bling(
                         df=df,
                         mapeamento_manual=mapa_final,
                     )
-                    saida = adaptar_cadastro_ao_modelo_real(saida_base, modelo_cadastro_df)
+                    saida = adaptar_cadastro_ao_modelo_real(
+                        df_base=saida_base,
+                        modelo_df=modelo_cadastro_df,
+                        df_origem=df,
+                        mapeamento_modelo_manual=mapeamento_modelo_manual,
+                    )
                     erros, avisos = validar_cadastro_bling(saida)
 
                     st.session_state["df_saida"] = saida
                     st.session_state["validacao_erros"] = erros
                     st.session_state["validacao_avisos"] = avisos
                     st.session_state["validacao_ok"] = len(erros) == 0
-                    st.session_state["tipo_saida_atual"] = "Cadastro de produtos"
-                    st.session_state["deposito_informado"] = ""
-
-                    log(f"Prévia de cadastro montada com {len(saida)} linhas.")
-                    log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
 
                     for aviso in avisos:
                         log(f"Aviso: {aviso}")
@@ -765,11 +989,16 @@ def main() -> None:
                     for erro in erros:
                         log(f"Erro de validação: {erro}")
 
-                    st.success("✅ Prévia de cadastro montada para sua conferência manual.")
+                    if erros:
+                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
+                    else:
+                        log(f"Cadastro gerado com {len(saida)} linhas.")
+                        log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
+                        st.success("✅ Planilha de cadastro gerada e validada com sucesso.")
 
                 except Exception as e:
-                    st.error(f"Erro ao montar prévia de cadastro: {e}")
-                    log(f"Erro ao montar prévia de cadastro: {e}")
+                    st.error(f"Erro ao gerar cadastro: {e}")
+                    log(f"Erro ao gerar cadastro: {e}")
 
     else:
         modelo_estoque_df = st.session_state["modelo_estoque_raw"]
@@ -779,25 +1008,25 @@ def main() -> None:
         elif not limpar_texto(deposito):
             st.warning("⚠️ Digite em qual estoque será lançado.")
         else:
-            if st.button("Montar prévia de estoque para conferência", use_container_width=True):
+            if st.button("Gerar planilha de estoque", use_container_width=True):
                 try:
                     saida_base, _ = mapear_estoque_bling(
                         df=df,
                         mapeamento_manual=mapa_final,
                     )
-                    saida = adaptar_estoque_ao_modelo_real(saida_base, modelo_estoque_df, deposito)
+                    saida = adaptar_estoque_ao_modelo_real(
+                        df_base=saida_base,
+                        modelo_df=modelo_estoque_df,
+                        deposito=deposito,
+                        df_origem=df,
+                        mapeamento_modelo_manual=mapeamento_modelo_manual,
+                    )
                     erros, avisos = validar_estoque_bling(saida)
 
                     st.session_state["df_saida"] = saida
                     st.session_state["validacao_erros"] = erros
                     st.session_state["validacao_avisos"] = avisos
                     st.session_state["validacao_ok"] = len(erros) == 0
-                    st.session_state["tipo_saida_atual"] = "Atualização de estoque"
-                    st.session_state["deposito_informado"] = deposito
-
-                    log(f"Prévia de estoque montada com {len(saida)} linhas.")
-                    log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
-                    log(f"Depósito informado: {deposito}")
 
                     for aviso in avisos:
                         log(f"Aviso: {aviso}")
@@ -805,54 +1034,35 @@ def main() -> None:
                     for erro in erros:
                         log(f"Erro de validação: {erro}")
 
-                    st.success("✅ Prévia de estoque montada para sua conferência manual.")
+                    if erros:
+                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
+                    else:
+                        log(f"Estoque gerado com {len(saida)} linhas.")
+                        log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
+                        log(f"Depósito informado: {deposito}")
+                        st.success("✅ Planilha de estoque gerada e validada com sucesso.")
 
                 except Exception as e:
-                    st.error(f"Erro ao montar prévia de estoque: {e}")
-                    log(f"Erro ao montar prévia de estoque: {e}")
+                    st.error(f"Erro ao gerar estoque: {e}")
+                    log(f"Erro ao gerar estoque: {e}")
 
     df_saida = st.session_state["df_saida"]
 
     if df_saida is not None:
         st.divider()
-        st.subheader("Resultado da conferência")
-
-        info1, info2 = st.columns(2)
-        with info1:
-            st.metric("Linhas na prévia", len(df_saida))
-        with info2:
-            st.metric("Tipo da prévia", st.session_state.get("tipo_saida_atual", ""))
-
-        if bloco_toggle("Preview da prévia gerada", "preview_saida"):
-            st.dataframe(df_saida.head(20), use_container_width=True)
-
         exibir_validacao()
 
-        st.info(
-            "O download fica liberado para você somente depois da conferência manual. "
-            "Os avisos e erros acima são informativos para sua revisão."
-        )
-
-        tipo_saida_atual = st.session_state.get("tipo_saida_atual", "")
-
-        if tipo_saida_atual == "Cadastro de produtos":
-            nome_saida = "bling_cadastro_produtos_modelo_real.xlsx"
-            arquivo_excel = salvar_excel_bytes(df_saida)
-
-            st.download_button(
-                "📥 Baixar planilha de cadastro",
-                data=arquivo_excel,
-                file_name=nome_saida,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+        if st.session_state.get("validacao_ok", False):
+            nome_saida = (
+                "bling_cadastro_produtos_modelo_real.xlsx"
+                if tipo_processamento == "Cadastro de produtos"
+                else "bling_atualizacao_estoque_modelo_real.xlsx"
             )
 
-        elif tipo_saida_atual == "Atualização de estoque":
-            nome_saida = "bling_atualizacao_estoque_modelo_real.xlsx"
             arquivo_excel = salvar_excel_bytes(df_saida)
 
             st.download_button(
-                "📥 Baixar planilha de estoque",
+                "📥 Baixar planilha final",
                 data=arquivo_excel,
                 file_name=nome_saida,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
