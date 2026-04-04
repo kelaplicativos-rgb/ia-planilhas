@@ -1,4 +1,3 @@
-import io
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
 
@@ -6,9 +5,6 @@ import pandas as pd
 
 
 def _safe_text(node: Optional[ET.Element], tag: str, default: str = "") -> str:
-    """
-    Busca texto do primeiro filho com a tag informada ignorando namespace.
-    """
     if node is None:
         return default
 
@@ -20,9 +16,6 @@ def _safe_text(node: Optional[ET.Element], tag: str, default: str = "") -> str:
 
 
 def _find_first(node: Optional[ET.Element], tag: str) -> Optional[ET.Element]:
-    """
-    Retorna o primeiro elemento encontrado pela tag ignorando namespace.
-    """
     if node is None:
         return None
 
@@ -34,9 +27,6 @@ def _find_first(node: Optional[ET.Element], tag: str) -> Optional[ET.Element]:
 
 
 def _find_all(node: Optional[ET.Element], tag: str) -> List[ET.Element]:
-    """
-    Retorna todos os elementos encontrados pela tag ignorando namespace.
-    """
     if node is None:
         return []
 
@@ -48,58 +38,7 @@ def _find_all(node: Optional[ET.Element], tag: str) -> List[ET.Element]:
     return encontrados
 
 
-def _parse_xml_bytes(xml_bytes: bytes) -> ET.Element:
-    """
-    Faz parse do XML a partir de bytes.
-    """
-    parser = ET.XMLParser(encoding="utf-8")
-    return ET.fromstring(xml_bytes, parser=parser)
-
-
-def _valor_icms_aprox(det: ET.Element) -> str:
-    """
-    Tenta localizar um valor de ICMS dentro do item.
-    """
-    imposto = _find_first(det, "imposto")
-    if imposto is None:
-        return ""
-
-    icms = _find_first(imposto, "ICMS")
-    if icms is None:
-        return ""
-
-    for child in icms.iter():
-        tag = child.tag.split("}")[-1]
-        if tag == "vICMS":
-            return (child.text or "").strip()
-
-    return ""
-
-
-def _aliquota_icms_aprox(det: ET.Element) -> str:
-    """
-    Tenta localizar uma alíquota de ICMS dentro do item.
-    """
-    imposto = _find_first(det, "imposto")
-    if imposto is None:
-        return ""
-
-    icms = _find_first(imposto, "ICMS")
-    if icms is None:
-        return ""
-
-    for child in icms.iter():
-        tag = child.tag.split("}")[-1]
-        if tag == "pICMS":
-            return (child.text or "").strip()
-
-    return ""
-
-
 def _normalize_xml_upload_to_bytes(arquivo) -> bytes:
-    """
-    Streamlit UploadedFile / file-like -> bytes
-    """
     if arquivo is None:
         return b""
 
@@ -117,18 +56,33 @@ def _normalize_xml_upload_to_bytes(arquivo) -> bytes:
     return conteudo or b""
 
 
+def arquivo_parece_xml_nfe(arquivo) -> bool:
+    if arquivo is None:
+        return False
+
+    nome = (getattr(arquivo, "name", "") or "").lower().strip()
+    if not nome.endswith(".xml"):
+        return False
+
+    try:
+        xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
+        trecho = xml_bytes[:5000].decode("utf-8", errors="ignore").lower()
+        return (
+            "<nfeproc" in trecho
+            or "<nfe" in trecho
+            or "<infnfe" in trecho
+            or "portalfiscal.inf.br/nfe" in trecho
+        )
+    except Exception:
+        return True
+
+
 def ler_xml_nfe(arquivo) -> pd.DataFrame:
-    """
-    Lê XML de NF-e/NFeProc e retorna DataFrame com os produtos.
-    Compatível com XML padrão da NF-e, com ou sem namespace.
-    """
     xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
     if not xml_bytes:
         return pd.DataFrame()
 
-    root = _parse_xml_bytes(xml_bytes)
-
-    # Pode vir em <nfeProc> ou <NFe>
+    root = ET.fromstring(xml_bytes)
     inf_nfe = _find_first(root, "infNFe")
     if inf_nfe is None:
         return pd.DataFrame()
@@ -146,6 +100,7 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
     emitente_nome = _safe_text(emit, "xNome")
     emitente_fantasia = _safe_text(emit, "xFant")
     emitente_cnpj = _safe_text(emit, "CNPJ") or _safe_text(emit, "CPF")
+
     destinatario_nome = _safe_text(dest, "xNome")
     destinatario_cnpj = _safe_text(dest, "CNPJ") or _safe_text(dest, "CPF")
 
@@ -159,11 +114,9 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
         if prod is None:
             continue
 
-        imposto = _find_first(det, "imposto")
-
         linha = {
-            "origem_arquivo": getattr(arquivo, "name", "xml_nfe"),
-            "tipo_entrada": "xml_nfe",
+            "origem_tipo": "xml_nfe",
+            "origem_arquivo_ou_url": getattr(arquivo, "name", "xml_nfe"),
             "numero_nfe": numero_nfe,
             "serie_nfe": serie_nfe,
             "data_emissao": data_emissao,
@@ -196,41 +149,11 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
             "seguro_item": _safe_text(prod, "vSeg"),
             "desconto_item": _safe_text(prod, "vDesc"),
             "outras_despesas_item": _safe_text(prod, "vOutro"),
-            "icms_valor": _valor_icms_aprox(det),
-            "icms_aliquota": _aliquota_icms_aprox(det),
             "inf_adicional_item": _safe_text(det, "infAdProd"),
-            "ean": _safe_text(prod, "cEAN"),
+            "fornecedor": emitente_fantasia or emitente_nome,
+            "cnpj_fornecedor": emitente_cnpj,
         }
-
-        # Mantém imposto como variável local para futuras expansões sem quebrar
-        _ = imposto
 
         linhas.append(linha)
 
     return pd.DataFrame(linhas)
-
-
-def arquivo_parece_xml_nfe(arquivo) -> bool:
-    """
-    Verifica pelo nome e por um trecho do conteúdo se parece XML de NF-e.
-    """
-    if arquivo is None:
-        return False
-
-    nome = getattr(arquivo, "name", "") or ""
-    nome = nome.lower().strip()
-
-    if nome.endswith(".xml"):
-        try:
-            xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
-            trecho = xml_bytes[:5000].decode("utf-8", errors="ignore").lower()
-            return (
-                "<nfeproc" in trecho
-                or "<nfe" in trecho
-                or "<infnfe" in trecho
-                or "http://www.portalfiscal.inf.br/nfe" in trecho
-            )
-        except Exception:
-            return True
-
-    return False
