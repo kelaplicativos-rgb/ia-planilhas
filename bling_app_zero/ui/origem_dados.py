@@ -19,7 +19,6 @@ OPCOES_PRECO = [
     "Usar coluna da planilha",
 ]
 
-# Campos fixos fora do preview
 CAMPOS_FIXOS_CADASTRO = {
     "situacao": "Ativo",
     "condicao": "NOVO",
@@ -87,7 +86,6 @@ def _normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy().fillna("")
 
-    # Corrige quando o pandas lê 0,1,2... como cabeçalho
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
         primeira_linha = [str(x).strip() for x in df.iloc[0].tolist()]
         if any(primeira_linha):
@@ -235,9 +233,11 @@ def _formatar_moeda_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _preview_valores(coluna: pd.Series, limite: int = 5) -> List[str]:
-    valores = coluna.head(limite).astype(str).tolist()
-    return [v if len(v) <= 60 else f"{v[:57]}..." for v in valores]
+def _preview_valor_unico(coluna: pd.Series) -> str:
+    if coluna.empty:
+        return "-"
+    valor = str(coluna.iloc[0])
+    return valor if len(valor) <= 65 else f"{valor[:62]}..."
 
 
 def _montar_tabela_mapeamento_final(
@@ -302,7 +302,49 @@ def _montar_tabela_mapeamento_final(
     )
 
 
-def _render_card_preview(
+def _injeta_css_compacto() -> None:
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stSelectbox"] label p {
+            font-size: 0.78rem !important;
+        }
+
+        div[data-testid="stSelectbox"] > div {
+            margin-top: -2px !important;
+        }
+
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+            min-height: 34px !important;
+            padding-top: 0px !important;
+            padding-bottom: 0px !important;
+            font-size: 0.85rem !important;
+        }
+
+        .map-card-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 0.2rem;
+        }
+
+        .map-card-preview {
+            font-size: 0.78rem;
+            color: #666;
+            min-height: 18px;
+            margin-bottom: 0.35rem;
+            line-height: 1.2;
+        }
+
+        div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 10px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_card_preview_compacto(
     coluna_fornecedor: str,
     df: pd.DataFrame,
     opcoes: List[str],
@@ -310,9 +352,11 @@ def _render_card_preview(
     key: str,
 ) -> str:
     with st.container(border=True):
-        st.markdown(f"**{coluna_fornecedor}**")
-        for valor in _preview_valores(df[coluna_fornecedor]):
-            st.caption(f"• {valor}")
+        st.markdown(f"<div class='map-card-title'>{coluna_fornecedor}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='map-card-preview'>{_preview_valor_unico(df[coluna_fornecedor])}</div>",
+            unsafe_allow_html=True,
+        )
 
         return st.selectbox(
             "Relacionar com",
@@ -320,15 +364,16 @@ def _render_card_preview(
             index=opcoes.index(valor_inicial) if valor_inicial in opcoes else 0,
             key=key,
             format_func=_label_campo,
+            label_visibility="collapsed",
         )
 
 
 def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
+    _injeta_css_compacto()
 
     st.info(
-        "Melhor operação: manter a planilha fornecedora visível no preview e escolher, em cada coluna, "
-        "qual campo do download/Bling ela deve preencher."
+        "Melhor operação: manter a planilha fornecedora visível e relacionar cada coluna diretamente no próprio preview."
     )
 
     modo = st.radio(
@@ -379,7 +424,7 @@ def render_origem_dados() -> None:
     else:
         texto_urls = st.text_area(
             "Cole uma URL por linha",
-            height=150,
+            height=120,
             key="origem_urls_texto",
         )
         if not texto_urls.strip():
@@ -395,110 +440,116 @@ def render_origem_dados() -> None:
     campos_destino = _campos_por_modo(modo)
     sugestoes = _aplicar_sugestao_automatica(df, campos_destino)
 
-    st.markdown("### Definição de preço")
+    with st.expander("Definição de preço", expanded=False):
+        modo_preco_ui = st.radio(
+            "Como deseja formar o preço de venda?",
+            OPCOES_PRECO,
+            horizontal=True,
+            key="modo_preco_ui",
+        )
 
-    modo_preco_ui = st.radio(
-        "Como deseja formar o preço de venda?",
-        OPCOES_PRECO,
-        horizontal=True,
-        key="modo_preco_ui",
-    )
+        preco_modo = "calculadora"
+        preco_coluna_custo = None
+        preco_coluna_saida = None
+        preco_preview = None
 
-    preco_modo = "calculadora"
-    preco_coluna_custo = None
-    preco_coluna_saida = None
+        if modo_preco_ui == "Usar coluna da planilha":
+            preco_modo = "coluna"
+            preco_coluna_saida = st.selectbox(
+                "Coluna fornecedora que vai virar o preço",
+                options=list(df.columns),
+                key="preco_coluna_planilha",
+            )
+        else:
+            preco_modo = "calculadora"
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                preco_coluna_custo = st.selectbox(
+                    "Coluna de custo base",
+                    options=list(df.columns),
+                    key="preco_custo_base_coluna",
+                )
+                percentual_impostos = st.number_input(
+                    "Impostos (%)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("percentual_impostos", 0.0)),
+                    step=0.1,
+                    format="%.2f",
+                    key="percentual_impostos",
+                )
+
+            with c2:
+                margem_lucro = st.number_input(
+                    "Lucro (%)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("margem_lucro", 0.0)),
+                    step=0.1,
+                    format="%.2f",
+                    key="margem_lucro",
+                )
+                taxa_extra = st.number_input(
+                    "Taxas extras (%)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("taxa_extra", 0.0)),
+                    step=0.1,
+                    format="%.2f",
+                    key="taxa_extra",
+                )
+
+            with c3:
+                custo_fixo = st.number_input(
+                    "Valores fixos (R$)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("custo_fixo", 0.0)),
+                    step=0.01,
+                    format="%.2f",
+                    key="custo_fixo",
+                )
+
+            serie_custo = _serie_numerica(df, preco_coluna_custo)
+            custo_base_medio = float(serie_custo.dropna().mean()) if not serie_custo.dropna().empty else 0.0
+
+            preco_preview = calcular_preco_venda(
+                preco_compra=custo_base_medio,
+                percentual_impostos=percentual_impostos,
+                margem_lucro=margem_lucro,
+                custo_fixo=custo_fixo,
+                taxa_extra=taxa_extra,
+            )
+
+            st.success(f"Prévia do preço calculado: {_formatar_moeda_br(preco_preview)}")
+
+            st.session_state.config_precificacao = {
+                "modo": "calculadora",
+                "coluna_custo_base": preco_coluna_custo,
+                "percentual_impostos": percentual_impostos,
+                "margem_lucro": margem_lucro,
+                "taxa_extra": taxa_extra,
+                "custo_fixo": custo_fixo,
+            }
+
+    # fallback caso o expander não tenha sido aberto ainda
+    modo_preco_ui = st.session_state.get("modo_preco_ui", OPCOES_PRECO[0])
+    preco_modo = "coluna" if modo_preco_ui == "Usar coluna da planilha" else "calculadora"
+    preco_coluna_custo = st.session_state.get("preco_custo_base_coluna")
+    preco_coluna_saida = st.session_state.get("preco_coluna_planilha")
     preco_preview = None
 
-    if modo_preco_ui == "Usar coluna da planilha":
-        preco_modo = "coluna"
-        preco_coluna_saida = st.selectbox(
-            "Coluna fornecedora que vai virar o preço",
-            options=list(df.columns),
-            key="preco_coluna_planilha",
-        )
-    else:
-        preco_modo = "calculadora"
-
-        st.caption(
-            "Selecione a coluna de custo/preço base da planilha fornecedora e informe taxas, porcentagens e valores fixos."
-        )
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            preco_coluna_custo = st.selectbox(
-                "Coluna de custo base",
-                options=list(df.columns),
-                key="preco_custo_base_coluna",
-            )
-            percentual_impostos = st.number_input(
-                "Impostos (%)",
-                min_value=0.0,
-                value=float(st.session_state.get("percentual_impostos", 0.0)),
-                step=0.1,
-                format="%.2f",
-                key="percentual_impostos",
-            )
-
-        with c2:
-            margem_lucro = st.number_input(
-                "Lucro (%)",
-                min_value=0.0,
-                value=float(st.session_state.get("margem_lucro", 0.0)),
-                step=0.1,
-                format="%.2f",
-                key="margem_lucro",
-            )
-            taxa_extra = st.number_input(
-                "Taxas extras (%)",
-                min_value=0.0,
-                value=float(st.session_state.get("taxa_extra", 0.0)),
-                step=0.1,
-                format="%.2f",
-                key="taxa_extra",
-            )
-
-        with c3:
-            custo_fixo = st.number_input(
-                "Valores fixos (R$)",
-                min_value=0.0,
-                value=float(st.session_state.get("custo_fixo", 0.0)),
-                step=0.01,
-                format="%.2f",
-                key="custo_fixo",
-            )
-
+    if preco_modo == "calculadora":
         serie_custo = _serie_numerica(df, preco_coluna_custo)
         custo_base_medio = float(serie_custo.dropna().mean()) if not serie_custo.dropna().empty else 0.0
-
         preco_preview = calcular_preco_venda(
             preco_compra=custo_base_medio,
-            percentual_impostos=percentual_impostos,
-            margem_lucro=margem_lucro,
-            custo_fixo=custo_fixo,
-            taxa_extra=taxa_extra,
+            percentual_impostos=float(st.session_state.get("percentual_impostos", 0.0)),
+            margem_lucro=float(st.session_state.get("margem_lucro", 0.0)),
+            custo_fixo=float(st.session_state.get("custo_fixo", 0.0)),
+            taxa_extra=float(st.session_state.get("taxa_extra", 0.0)),
         )
-
-        st.success(
-            f"Prévia do preço calculado: {_formatar_moeda_br(preco_preview)}"
-        )
-
-        st.session_state.config_precificacao = {
-            "modo": "calculadora",
-            "coluna_custo_base": preco_coluna_custo,
-            "percentual_impostos": percentual_impostos,
-            "margem_lucro": margem_lucro,
-            "taxa_extra": taxa_extra,
-            "custo_fixo": custo_fixo,
-        }
-
-    st.divider()
 
     st.markdown("### Relacionar no próprio preview")
-    st.caption(
-        "Cada card abaixo representa uma coluna da planilha fornecedora. "
-        "Escolha dentro do próprio card qual campo do download/Bling ela deve preencher."
-    )
+    st.caption("Visual compacto: 1 exemplo por coluna e seleção direta no card.")
 
     usados: List[str] = []
     if preco_modo in {"calculadora", "coluna"}:
@@ -506,41 +557,44 @@ def render_origem_dados() -> None:
 
     colunas_fornecedor = df.columns.tolist()
     mapeamento: Dict[str, str] = {}
-    col_esq, col_dir = st.columns(2)
 
-    for idx, coluna_fornecedor in enumerate(colunas_fornecedor):
-        valor_inicial = ""
-        if isinstance(st.session_state.get("mapeamento_manual"), dict):
-            valor_inicial = st.session_state.mapeamento_manual.get(coluna_fornecedor, "")
+    grade = 3
+    for inicio in range(0, len(colunas_fornecedor), grade):
+        linha_cols = st.columns(grade)
+        trecho = colunas_fornecedor[inicio:inicio + grade]
 
-        if not valor_inicial:
-            valor_inicial = sugestoes.get(coluna_fornecedor, "")
-
-        if valor_inicial == "preco" and preco_modo in {"calculadora", "coluna"}:
+        for idx, coluna_fornecedor in enumerate(trecho):
             valor_inicial = ""
+            if isinstance(st.session_state.get("mapeamento_manual"), dict):
+                valor_inicial = st.session_state.mapeamento_manual.get(coluna_fornecedor, "")
 
-        opcoes = [
-            campo
-            for campo in campos_destino
-            if campo == "" or campo == valor_inicial or campo not in usados
-        ]
+            if not valor_inicial:
+                valor_inicial = sugestoes.get(coluna_fornecedor, "")
 
-        if preco_modo in {"calculadora", "coluna"}:
-            opcoes = [campo for campo in opcoes if campo != "preco"]
+            if valor_inicial == "preco" and preco_modo in {"calculadora", "coluna"}:
+                valor_inicial = ""
 
-        target_col = col_esq if idx % 2 == 0 else col_dir
-        with target_col:
-            escolha = _render_card_preview(
-                coluna_fornecedor=coluna_fornecedor,
-                df=df,
-                opcoes=opcoes,
-                valor_inicial=valor_inicial,
-                key=f"map_preview_{coluna_fornecedor}",
-            )
+            opcoes = [
+                campo
+                for campo in campos_destino
+                if campo == "" or campo == valor_inicial or campo not in usados
+            ]
 
-        mapeamento[coluna_fornecedor] = escolha
-        if escolha:
-            usados.append(escolha)
+            if preco_modo in {"calculadora", "coluna"}:
+                opcoes = [campo for campo in opcoes if campo != "preco"]
+
+            with linha_cols[idx]:
+                escolha = _render_card_preview_compacto(
+                    coluna_fornecedor=coluna_fornecedor,
+                    df=df,
+                    opcoes=opcoes,
+                    valor_inicial=valor_inicial,
+                    key=f"map_preview_{coluna_fornecedor}",
+                )
+
+            mapeamento[coluna_fornecedor] = escolha
+            if escolha:
+                usados.append(escolha)
 
     st.session_state.mapeamento_manual = mapeamento
 
@@ -558,12 +612,12 @@ def render_origem_dados() -> None:
         for _, linha in tabela_mapeamento.iterrows()
     }
 
-    st.markdown("### Mapeamento final")
-    st.dataframe(
-        tabela_mapeamento,
-        width="stretch",
-        hide_index=True,
-    )
+    with st.expander("Mapeamento final", expanded=False):
+        st.dataframe(
+            tabela_mapeamento,
+            width="stretch",
+            hide_index=True,
+        )
 
     st.download_button(
         "Baixar entrada tratada",
