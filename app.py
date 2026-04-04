@@ -249,161 +249,6 @@ def localizar_campos_modelo_estoque(modelo_df: pd.DataFrame) -> dict:
     }
 
 
-def sugerir_coluna_origem_por_destino(destino_coluna: str, mapa_auto: dict) -> str:
-    destino_slug = slug_coluna(destino_coluna)
-
-    regras = [
-        (["codigo", "código", "sku"], "codigo"),
-        (["nome", "produto", "titulo", "título"], "nome"),
-        (["descricao curta", "descrição curta"], "descricao_curta"),
-        (["descricao", "descrição"], "descricao_curta"),
-        (["preco", "preço", "valor"], "preco"),
-        (["marca", "fabricante"], "marca"),
-        (["imagem"], "imagem"),
-        (["link externo", "url produto", "link produto", "url"], "link_externo"),
-        (["estoque", "saldo", "quantidade"], "estoque"),
-        (["situacao", "situação", "status"], "situacao"),
-        (["unidade", "und"], "unidade"),
-        (["categoria", "grupo", "departamento"], "categoria"),
-        (["gtin", "ean", "codigo barras", "código barras"], "gtin"),
-        (["peso"], "peso"),
-    ]
-
-    for aliases, campo_canonico in regras:
-        for alias in aliases:
-            if slug_coluna(alias) in destino_slug:
-                return mapa_auto.get(campo_canonico) or ""
-
-    return ""
-
-
-def construir_mapa_manual_campos_principais(
-    df: pd.DataFrame,
-    mapa_auto: dict,
-    tipo_processamento: str,
-) -> dict:
-    opcoes = montar_opcoes_colunas(df)
-    mapa_manual = dict(mapa_auto)
-
-    c1, c2, c3 = st.columns(3)
-
-    if tipo_processamento == "Cadastro de produtos":
-        with c1:
-            mapa_manual["codigo"] = select_coluna(
-                "Código / SKU", opcoes, mapa_auto.get("codigo"), "map_codigo"
-            )
-            mapa_manual["nome"] = select_coluna(
-                "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
-            )
-            mapa_manual["descricao_curta"] = select_coluna(
-                "Descrição curta (descrição real do produto)",
-                opcoes,
-                mapa_auto.get("descricao_curta"),
-                "map_descricao_curta",
-            )
-            mapa_manual["categoria"] = select_coluna(
-                "Categoria", opcoes, mapa_auto.get("categoria"), "map_categoria"
-            )
-            mapa_manual["gtin"] = select_coluna(
-                "GTIN / EAN", opcoes, mapa_auto.get("gtin"), "map_gtin"
-            )
-
-        with c2:
-            mapa_manual["preco"] = select_coluna(
-                "Preço", opcoes, mapa_auto.get("preco"), "map_preco"
-            )
-            mapa_manual["marca"] = select_coluna(
-                "Marca", opcoes, mapa_auto.get("marca"), "map_marca"
-            )
-            mapa_manual["imagem"] = select_coluna(
-                "Imagem principal / links de imagens",
-                opcoes,
-                mapa_auto.get("imagem"),
-                "map_imagem",
-            )
-            mapa_manual["situacao"] = select_coluna(
-                "Situação", opcoes, mapa_auto.get("situacao"), "map_situacao"
-            )
-            mapa_manual["unidade"] = select_coluna(
-                "Unidade", opcoes, mapa_auto.get("unidade"), "map_unidade"
-            )
-
-        with c3:
-            mapa_manual["estoque"] = select_coluna(
-                "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
-            )
-            mapa_manual["peso"] = select_coluna(
-                "Peso", opcoes, mapa_auto.get("peso"), "map_peso"
-            )
-            mapa_manual["link_externo"] = select_coluna(
-                "Link externo (será ignorado e ficará vazio)",
-                opcoes,
-                mapa_auto.get("link_externo"),
-                "map_link_externo",
-            )
-    else:
-        with c1:
-            mapa_manual["codigo"] = select_coluna(
-                "Código / SKU", opcoes, mapa_auto.get("codigo"), "map_codigo"
-            )
-            mapa_manual["nome"] = select_coluna(
-                "Nome do produto", opcoes, mapa_auto.get("nome"), "map_nome"
-            )
-
-        with c2:
-            mapa_manual["estoque"] = select_coluna(
-                "Estoque / Quantidade", opcoes, mapa_auto.get("estoque"), "map_estoque"
-            )
-
-        with c3:
-            mapa_manual["preco"] = select_coluna(
-                "Preço", opcoes, mapa_auto.get("preco"), "map_preco"
-            )
-
-    return {k: (v if limpar_texto(v) else None) for k, v in mapa_manual.items()}
-
-
-def construir_mapeamento_completo_modelo(
-    df: pd.DataFrame,
-    mapa_auto: dict,
-    modelo_df: Optional[pd.DataFrame],
-    tipo_processamento: str,
-) -> dict:
-    if modelo_df is None or modelo_df.empty:
-        return {}
-
-    opcoes = montar_opcoes_colunas(df)
-
-    st.markdown("### Todas as colunas do modelo selecionado")
-
-    st.caption(
-        "Aqui você pode mapear manualmente qualquer coluna do modelo "
-        "de saída selecionado. Se não quiser usar uma coluna, deixe em branco."
-    )
-
-    if tipo_processamento == "Cadastro de produtos":
-        st.info("Modo atual: Cadastro de produtos — exibindo todas as colunas do modelo de cadastro.")
-    else:
-        st.info("Modo atual: Atualização de estoque — exibindo todas as colunas do modelo de estoque.")
-
-    resultado = {}
-    colunas_layout = st.columns(3)
-
-    for idx, coluna_modelo in enumerate(modelo_df.columns):
-        sugestao = sugerir_coluna_origem_por_destino(coluna_modelo, mapa_auto)
-        chave_estado = f"modelo_map_{tipo_processamento}_{idx}_{slug_coluna(coluna_modelo)}"
-
-        with colunas_layout[idx % 3]:
-            resultado[coluna_modelo] = select_coluna(
-                coluna_modelo,
-                opcoes,
-                sugestao,
-                chave_estado,
-            )
-
-    return {k: (v if limpar_texto(v) else None) for k, v in resultado.items()}
-
-
 def montar_df_colunas_automaticas(mapa_auto: dict) -> pd.DataFrame:
     nomes_exibicao = {
         "codigo": "Código / SKU",
@@ -449,61 +294,77 @@ def montar_df_colunas_automaticas(mapa_auto: dict) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
+def construir_mapeamento_completo_modelo(
+    df: pd.DataFrame,
+    mapa_auto: dict,
+    modelo_df: Optional[pd.DataFrame],
+    tipo_processamento: str,
+) -> dict:
+    if modelo_df is None or modelo_df.empty:
+        return {}
+
+    opcoes = montar_opcoes_colunas(df)
+
+    if tipo_processamento == "Cadastro de produtos":
+        st.markdown("### Todas as colunas do modelo de cadastro")
+        st.caption("Vincule cada coluna do modelo de cadastro do Bling com uma coluna da planilha do fornecedor.")
+    else:
+        st.markdown("### Todas as colunas do modelo de estoque")
+        st.caption("Vincule cada coluna do modelo de estoque do Bling com uma coluna da planilha do fornecedor.")
+
+    resultado = {}
+    colunas_layout = st.columns(3)
+
+    for idx, coluna_modelo in enumerate(modelo_df.columns):
+        chave_estado = f"modelo_map_{tipo_processamento}_{idx}_{slug_coluna(coluna_modelo)}"
+
+        sugestao = ""
+        coluna_slug = slug_coluna(coluna_modelo)
+
+        heuristicas = [
+            (["codigo", "código", "sku"], mapa_auto.get("codigo")),
+            (["nome", "produto", "titulo", "título"], mapa_auto.get("nome")),
+            (["descricao curta", "descrição curta"], mapa_auto.get("descricao_curta")),
+            (["descricao", "descrição"], mapa_auto.get("descricao_curta")),
+            (["preco", "preço", "valor"], mapa_auto.get("preco")),
+            (["marca", "fabricante"], mapa_auto.get("marca")),
+            (["imagem"], mapa_auto.get("imagem")),
+            (["link externo", "url produto", "link produto", "url"], mapa_auto.get("link_externo")),
+            (["estoque", "saldo", "quantidade"], mapa_auto.get("estoque")),
+            (["situacao", "situação", "status"], mapa_auto.get("situacao")),
+            (["unidade", "und"], mapa_auto.get("unidade")),
+            (["categoria", "grupo", "departamento"], mapa_auto.get("categoria")),
+            (["gtin", "ean", "codigo barras", "código barras"], mapa_auto.get("gtin")),
+            (["peso"], mapa_auto.get("peso")),
+        ]
+
+        for aliases, valor in heuristicas:
+            for alias in aliases:
+                if slug_coluna(alias) in coluna_slug and valor:
+                    sugestao = valor
+                    break
+            if sugestao:
+                break
+
+        with colunas_layout[idx % 3]:
+            resultado[coluna_modelo] = select_coluna(
+                coluna_modelo,
+                opcoes,
+                sugestao,
+                chave_estado,
+            )
+
+    return {k: (v if limpar_texto(v) else None) for k, v in resultado.items()}
+
+
 def montar_df_mapeamento_final(
     tipo_processamento: str,
-    mapa_final: dict,
     modelo_nome: str,
     mapeamento_modelo_manual: Optional[dict] = None,
 ) -> pd.DataFrame:
-    nomes_exibicao = {
-        "codigo": "Código / SKU",
-        "nome": "Nome do produto",
-        "descricao_curta": "Descrição curta",
-        "preco": "Preço",
-        "marca": "Marca",
-        "imagem": "Imagem principal / imagens",
-        "link_externo": "Link externo",
-        "estoque": "Estoque / Quantidade",
-        "situacao": "Situação",
-        "unidade": "Unidade",
-        "categoria": "Categoria",
-        "gtin": "GTIN / EAN",
-        "peso": "Peso",
-    }
-
-    if tipo_processamento == "Cadastro de produtos":
-        ordem = [
-            "codigo",
-            "nome",
-            "descricao_curta",
-            "preco",
-            "marca",
-            "imagem",
-            "link_externo",
-            "estoque",
-            "situacao",
-            "unidade",
-            "categoria",
-            "gtin",
-            "peso",
-        ]
-    else:
-        ordem = ["codigo", "nome", "estoque", "preco"]
-
     linhas = [{"Campo": "Modelo Bling anexado", "Coluna escolhida": modelo_nome or ""}]
 
-    for campo in ordem:
-        linhas.append(
-            {
-                "Campo": nomes_exibicao.get(campo, campo),
-                "Coluna escolhida": mapa_final.get(campo) or "",
-            }
-        )
-
     if mapeamento_modelo_manual:
-        linhas.append({"Campo": "----------------", "Coluna escolhida": "----------------"})
-        linhas.append({"Campo": "Mapeamento manual das colunas do modelo", "Coluna escolhida": ""})
-
         for coluna_modelo, coluna_origem in mapeamento_modelo_manual.items():
             linhas.append(
                 {
@@ -756,6 +617,60 @@ def adaptar_estoque_ao_modelo_real(
 
 
 # =========================================================
+# CONVERSÃO DO MAPEAMENTO DO MODELO PARA MAPA INTERNO
+# =========================================================
+def construir_mapa_interno_a_partir_do_modelo(
+    tipo_processamento: str,
+    modelo_df: Optional[pd.DataFrame],
+    mapa_auto: dict,
+    mapeamento_modelo_manual: dict,
+) -> dict:
+    mapa_final = dict(mapa_auto or {})
+
+    if modelo_df is None or modelo_df.empty:
+        return mapa_final
+
+    if tipo_processamento == "Cadastro de produtos":
+        campos = localizar_campos_modelo_cadastro(modelo_df)
+
+        relacao = {
+            "codigo": campos.get("codigo"),
+            "nome": campos.get("nome"),
+            "descricao_curta": campos.get("descricao_curta"),
+            "preco": campos.get("preco"),
+            "marca": campos.get("marca"),
+            "imagem": campos.get("imagem_unica") or campos.get("imagem_1"),
+            "estoque": None,
+            "situacao": campos.get("situacao"),
+            "unidade": campos.get("unidade"),
+            "categoria": campos.get("categoria"),
+            "gtin": campos.get("gtin"),
+            "peso": campos.get("peso_liquido"),
+        }
+
+        for chave_interna, coluna_modelo in relacao.items():
+            if coluna_modelo and mapeamento_modelo_manual.get(coluna_modelo):
+                mapa_final[chave_interna] = mapeamento_modelo_manual.get(coluna_modelo)
+
+    else:
+        campos = localizar_campos_modelo_estoque(modelo_df)
+
+        relacao = {
+            "codigo": campos.get("codigo"),
+            "nome": campos.get("nome"),
+            "estoque": campos.get("estoque"),
+            "preco": campos.get("preco_unitario"),
+        }
+
+        for chave_interna, coluna_modelo in relacao.items():
+            if coluna_modelo and mapeamento_modelo_manual.get(coluna_modelo):
+                mapa_final[chave_interna] = mapeamento_modelo_manual.get(coluna_modelo)
+
+    mapa_final["link_externo"] = None
+    return mapa_final
+
+
+# =========================================================
 # APP
 # =========================================================
 def main() -> None:
@@ -902,17 +817,12 @@ def main() -> None:
     )
 
     if bloco_toggle("Ajuste manual das colunas", "ajuste_manual"):
-        st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
-
-        st.markdown("### Campos principais do sistema")
-        mapa_final_temp = construir_mapa_manual_campos_principais(
-            df=df,
-            mapa_auto=mapa_auto,
-            tipo_processamento=tipo_processamento,
-        )
-        st.session_state["mapa_manual"] = mapa_final_temp
-
-        if modelo_df_selecionado is not None and not modelo_df_selecionado.empty:
+        if modelo_df_selecionado is None or modelo_df_selecionado.empty:
+            if tipo_processamento == "Cadastro de produtos":
+                st.warning("⚠️ Anexe o modelo de cadastro do Bling para liberar o vínculo manual.")
+            else:
+                st.warning("⚠️ Anexe o modelo de estoque do Bling para liberar o vínculo manual.")
+        else:
             mapeamento_modelo_manual = construir_mapeamento_completo_modelo(
                 df=df,
                 mapa_auto=mapa_auto,
@@ -920,21 +830,22 @@ def main() -> None:
                 tipo_processamento=tipo_processamento,
             )
             st.session_state["mapeamento_modelo_manual"] = mapeamento_modelo_manual
-        else:
-            st.session_state["mapeamento_modelo_manual"] = {}
+            resetar_validacao()
 
-        resetar_validacao()
-
-        st.info(
-            "Regra fixa do sistema: a descrição real do produto vai para "
-            "'descrição curta'. A coluna 'descrição' recebe o título/nome do produto. "
-            "A coluna 'vídeo' fica vazia. A coluna 'link externo' também fica vazia."
-        )
-
-    mapa_final = dict(st.session_state.get("mapa_manual") or mapa_auto)
-    mapa_final["link_externo"] = None
+            st.info(
+                "Regra fixa do sistema: a descrição real do produto vai para "
+                "'descrição curta'. A coluna 'descrição' recebe o título/nome do produto. "
+                "A coluna 'vídeo' fica vazia. A coluna 'link externo' também fica vazia."
+            )
 
     mapeamento_modelo_manual = dict(st.session_state.get("mapeamento_modelo_manual") or {})
+
+    mapa_final = construir_mapa_interno_a_partir_do_modelo(
+        tipo_processamento=tipo_processamento,
+        modelo_df=modelo_df_selecionado,
+        mapa_auto=mapa_auto,
+        mapeamento_modelo_manual=mapeamento_modelo_manual,
+    )
 
     modelo_nome_exibicao = (
         st.session_state["nome_modelo_cadastro"]
@@ -945,7 +856,6 @@ def main() -> None:
     if bloco_toggle("Mapeamento final que será usado", "mapeamento_final"):
         df_mapeamento_final = montar_df_mapeamento_final(
             tipo_processamento=tipo_processamento,
-            mapa_final=mapa_final,
             modelo_nome=modelo_nome_exibicao or "",
             mapeamento_modelo_manual=mapeamento_modelo_manual,
         )
