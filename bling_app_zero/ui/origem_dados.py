@@ -1,491 +1,436 @@
-from __future__ import annotations
-
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.mapeamento_auto import sugestao_automatica
+from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
+from bling_app_zero.utils.excel import df_to_excel_bytes
 
-# =========================================================
-# CONFIG
-# =========================================================
 
-CAMPOS_BLING: List[Dict[str, object]] = [
-    {"key": "codigo", "label": "Código", "required_cadastro": True, "required_estoque": True},
-    {"key": "nome", "label": "Nome", "required_cadastro": True, "required_estoque": False},
-    {"key": "descricao_curta", "label": "Descrição curta", "required_cadastro": False, "required_estoque": False},
-    {"key": "preco", "label": "Preço", "required_cadastro": False, "required_estoque": False},
-    {"key": "preco_custo", "label": "Preço de custo", "required_cadastro": False, "required_estoque": False},
-    {"key": "estoque", "label": "Estoque", "required_cadastro": False, "required_estoque": True},
-    {"key": "gtin", "label": "GTIN / EAN", "required_cadastro": False, "required_estoque": False},
-    {"key": "marca", "label": "Marca", "required_cadastro": False, "required_estoque": False},
-    {"key": "categoria", "label": "Categoria", "required_cadastro": False, "required_estoque": False},
-    {"key": "ncm", "label": "NCM", "required_cadastro": False, "required_estoque": False},
-    {"key": "origem", "label": "Origem", "required_cadastro": False, "required_estoque": False},
-    {"key": "unidade", "label": "Unidade", "required_cadastro": False, "required_estoque": False},
-    {"key": "deposito_id", "label": "Depósito ID", "required_cadastro": False, "required_estoque": True},
+# =========================
+# CONFIG FIXA DO SISTEMA
+# =========================
+
+CAMPOS_FIXOS = {
+    "condicao": "NOVO",
+    "frete_gratis": "NÃO",
+    "volume": 1,
+    "itens_caixa": 1,
+    "unidade_medida": "CENTIMETROS",
+    "departamento": "ADULTO UNISSEX",
+    "descricao_complementar": "NÃO",
+    "link_externo": "NÃO",
+    "video": "NÃO",
+    "observacoes": "NÃO",
+}
+
+OPCOES_PRECO = [
+    "Usar precificação automática",
+    "Selecionar coluna da planilha",
 ]
 
-OPCAO_NAO_MAPEAR = "— Não mapear —"
+# Lista padrão ampliada.
+# Se em outro ponto do sistema existir:
+# - st.session_state["colunas_modelo_cadastro"]
+# ou
+# - st.session_state["df_modelo_cadastro"]
+# essas colunas terão prioridade e aparecerão no painel fixo.
+CAMPOS_CADASTRO_BLING_PADRAO = [
+    "",
+    "codigo",
+    "nome",
+    "descricao_curta",
+    "descricao_complementar",
+    "marca",
+    "categoria",
+    "subcategoria",
+    "grupo_produto",
+    "fornecedor",
+    "fabricante",
+    "modelo",
+    "colecao",
+    "genero",
+    "linha",
+    "material",
+    "garantia",
+    "localizacao",
+    "situacao",
+    "tipo",
+    "origem",
+    "ncm",
+    "cest",
+    "gtin",
+    "gtin_embalagem",
+    "codigo_fabricante",
+    "referencia_fabricante",
+    "referencia_fornecedor",
+    "unidade",
+    "unidade_medida",
+    "preco",
+    "preco_promocional",
+    "preco_custo",
+    "custo",
+    "lucro",
+    "estoque",
+    "estoque_minimo",
+    "estoque_maximo",
+    "deposito_id",
+    "peso_liquido",
+    "peso_bruto",
+    "altura",
+    "largura",
+    "comprimento",
+    "diametro",
+    "formato_embalagem",
+    "volume",
+    "itens_caixa",
+    "volumes",
+    "dias_preparacao",
+    "dias_garantia",
+    "condicao",
+    "frete_gratis",
+    "descricao_html",
+    "descricao_completa",
+    "seo_title",
+    "seo_description",
+    "palavras_chave",
+    "slug",
+    "link_externo",
+    "video",
+    "url_video",
+    "observacoes",
+    "imagem_1",
+    "imagem_2",
+    "imagem_3",
+    "imagem_4",
+    "imagem_5",
+    "imagem_6",
+    "imagem_7",
+    "imagem_8",
+    "imagem_9",
+    "imagem_10",
+    "variacao_nome",
+    "variacao_valor",
+    "tributacao",
+    "classe_fiscal",
+    "tipo_producao",
+    "departamento",
+]
+
+CHAVE_MAPEAMENTO_PREVIEW = "mapeamento_preview_editor"
+CHAVE_OPCOES_MAPEAMENTO = "opcoes_mapeamento_preview"
 
 
-# =========================================================
-# ESTADO
-# =========================================================
-
-def _init_local_state() -> None:
-    defaults = {
-        "df_origem": None,
-        "mapeamento_manual": {},           # fornecedor_col -> campo_bling_key
-        "preview_row_index": 0,
-        "auto_map_applied": False,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-
-# =========================================================
-# UTIL
-# =========================================================
+# =========================
+# FUNÇÕES BASE
+# =========================
 
 def normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
     df = df.fillna("")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Corrigir cabeçalho errado
+    if len(df.columns) > 0 and all(str(c).isdigit() for c in df.columns):
+        df.columns = df.iloc[0]
+        df = df.iloc[1:].reset_index(drop=True)
+
     return df
 
 
-def carregar_planilha(file) -> pd.DataFrame:
-    nome = str(getattr(file, "name", "")).lower()
+def carregar_planilha(file):
+    nome = (getattr(file, "name", "") or "").lower()
 
-    try:
-        if nome.endswith(".csv"):
-            df = pd.read_csv(file, dtype=str)
-        else:
-            df = pd.read_excel(file, dtype=str, engine="openpyxl")
-    except Exception:
-        file.seek(0)
+    if nome.endswith(".csv"):
         try:
-            df = pd.read_csv(file, dtype=str, sep=";")
+            file.seek(0)
+            df = pd.read_csv(file, dtype=str)
+            return normalizar_df(df)
         except Exception:
             file.seek(0)
-            df = pd.read_excel(file, dtype=str, engine="openpyxl")
+            df = pd.read_csv(file, dtype=str, sep=";")
+            return normalizar_df(df)
 
+    file.seek(0)
+    df = pd.read_excel(file, dtype=str)
     return normalizar_df(df)
 
 
-def _normalize_text(value: object) -> str:
-    texto = str(value or "").strip().lower()
-    substituicoes = {
-        "ç": "c",
-        "ã": "a",
-        "á": "a",
-        "à": "a",
-        "â": "a",
-        "é": "e",
-        "ê": "e",
-        "í": "i",
-        "ó": "o",
-        "ô": "o",
-        "õ": "o",
-        "ú": "u",
-        "-": " ",
-        "_": " ",
-        "/": " ",
-        ".": " ",
-    }
-    for antigo, novo in substituicoes.items():
-        texto = texto.replace(antigo, novo)
-    return " ".join(texto.split())
+def _texto_preview(valor, limite=60):
+    texto = str(valor or "").replace("\n", " ").replace("\r", " ").strip()
+    if len(texto) <= limite:
+        return texto
+    return texto[:limite].rstrip() + "..."
 
 
-def _campo_meta(campo_key: str) -> Dict[str, object]:
-    for item in CAMPOS_BLING:
-        if item["key"] == campo_key:
-            return item
-    return {"key": campo_key, "label": campo_key, "required_cadastro": False, "required_estoque": False}
+def _obter_campos_modelo_bling() -> List[str]:
+    """
+    Prioridade:
+    1) st.session_state['colunas_modelo_cadastro']
+    2) st.session_state['df_modelo_cadastro'].columns
+    3) lista padrão ampliada
+    """
+    colunas_modelo = st.session_state.get("colunas_modelo_cadastro")
+    if isinstance(colunas_modelo, list) and colunas_modelo:
+        opcoes = [""] + [str(c).strip() for c in colunas_modelo if str(c).strip()]
+        return list(dict.fromkeys(opcoes))
+
+    df_modelo = st.session_state.get("df_modelo_cadastro")
+    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
+        opcoes = [""] + [str(c).strip() for c in df_modelo.columns if str(c).strip()]
+        return list(dict.fromkeys(opcoes))
+
+    return list(dict.fromkeys(CAMPOS_CADASTRO_BLING_PADRAO))
 
 
-def _campos_disponiveis() -> List[Tuple[str, str]]:
-    return [(str(c["key"]), str(c["label"])) for c in CAMPOS_BLING]
+def _inicializar_mapeamento_preview(
+    colunas_fornecedor: List[str],
+    opcoes_mapeamento: List[str],
+) -> Dict[str, str]:
+    atual = st.session_state.get(CHAVE_MAPEAMENTO_PREVIEW, {}) or {}
+    novo = {}
+
+    for col in colunas_fornecedor:
+        valor = str(atual.get(col, "") or "").strip()
+        if valor not in opcoes_mapeamento:
+            valor = ""
+        novo[col] = valor
+
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo
+    st.session_state[CHAVE_OPCOES_MAPEAMENTO] = opcoes_mapeamento
+    return novo
 
 
-def _campos_obrigatorios_por_modo() -> set[str]:
-    modo = st.session_state.get("modo_operacao", "Cadastro de produtos")
-    if modo == "Atualização de estoque":
-        return {str(c["key"]) for c in CAMPOS_BLING if bool(c.get("required_estoque"))}
-    return {str(c["key"]) for c in CAMPOS_BLING if bool(c.get("required_cadastro"))}
+def _aplicar_sugestoes_iniciais(
+    colunas_fornecedor: List[str],
+    opcoes_mapeamento: List[str],
+) -> Dict[str, str]:
+    atual = _inicializar_mapeamento_preview(colunas_fornecedor, opcoes_mapeamento).copy()
+    usados = {v for v in atual.values() if v}
 
-
-def _status_campo_destino(campo_key: str, mapeamento: Dict[str, str]) -> str:
-    obrigatorios = _campos_obrigatorios_por_modo()
-    ja_usado = campo_key in set(mapeamento.values())
-    if ja_usado:
-        return "ok"
-    if campo_key in obrigatorios:
-        return "erro"
-    return "pendente"
-
-
-def _status_coluna_fornecedor(coluna: str, mapeamento: Dict[str, str]) -> str:
-    destino = mapeamento.get(coluna)
-    if destino:
-        return "ok"
-    return "pendente"
-
-
-def _status_badge_html(status: str, texto: str) -> str:
-    estilos = {
-        "ok": ("#e8f7ee", "#1f7a3d", "🟢"),
-        "pendente": ("#fff7db", "#9a6a00", "🟡"),
-        "erro": ("#fdeaea", "#b42318", "🔴"),
-    }
-    bg, fg, emoji = estilos.get(status, estilos["pendente"])
-    return (
-        f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;"
-        f"background:{bg};color:{fg};font-size:12px;font-weight:700;'>"
-        f"{emoji} {texto}</span>"
-    )
-
-
-def _valor_preview(row: pd.Series, coluna: str) -> str:
-    if coluna not in row.index:
-        return ""
-    valor = str(row[coluna] if row[coluna] is not None else "").strip()
-    return valor[:120] + ("..." if len(valor) > 120 else "")
-
-
-def _sugerir_destino_para_coluna(coluna: str) -> str:
-    nome = _normalize_text(coluna)
-
-    regras = [
-        (["codigo sku referencia cod ref"], "codigo"),
-        (["nome titulo produto descricao nome produto"], "nome"),
-        (["descricao curta desc curta descricao produto"], "descricao_curta"),
-        (["preco venda valor venda preco"], "preco"),
-        (["custo preco custo custo produto"], "preco_custo"),
-        (["estoque qtd quantidade saldo"], "estoque"),
-        (["ean gtin codigo barras cod barras"], "gtin"),
-        (["marca fabricante"], "marca"),
-        (["categoria departamento secao"], "categoria"),
-        (["ncm"], "ncm"),
-        (["origem"], "origem"),
-        (["unidade und un med medida"], "unidade"),
-        (["deposito deposito id id deposito"], "deposito_id"),
-    ]
-
-    for grupos, destino in regras:
-        for grupo in grupos:
-            for palavra in grupo.split():
-                if palavra in nome:
-                    return destino
-    return ""
-
-
-def _aplicar_sugestoes_iniciais(df: pd.DataFrame) -> None:
-    if st.session_state.get("auto_map_applied"):
-        return
-
-    atual = dict(st.session_state.get("mapeamento_manual", {}))
-    usados = set(atual.values())
-
-    for coluna in df.columns:
-        if coluna in atual:
+    for col in colunas_fornecedor:
+        if atual.get(col):
             continue
-        sugerido = _sugerir_destino_para_coluna(coluna)
-        if sugerido and sugerido not in usados:
-            atual[coluna] = sugerido
-            usados.add(sugerido)
 
-    st.session_state.mapeamento_manual = atual
-    st.session_state.auto_map_applied = True
+        sugestao = sugestao_automatica(col)
+        if sugestao in opcoes_mapeamento and sugestao not in usados:
+            atual[col] = sugestao
+            usados.add(sugestao)
 
-
-def _resumo_status(mapeamento: Dict[str, str]) -> Tuple[int, int, int]:
-    obrigatorios = _campos_obrigatorios_por_modo()
-    usados = set(mapeamento.values())
-
-    ok = len(usados)
-    faltando_obrigatorio = sum(1 for c in obrigatorios if c not in usados)
-    pendente = max(len(CAMPOS_BLING) - ok - faltando_obrigatorio, 0)
-    return ok, pendente, faltando_obrigatorio
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = atual
+    return atual
 
 
-# =========================================================
-# CSS
-# =========================================================
+def _resolver_duplicados(mapeamento: Dict[str, str]) -> Dict[str, str]:
+    vistos = set()
+    corrigido = {}
 
-def _inject_css() -> None:
-    st.markdown(
-        """
-        <style>
-        .mm-wrap {
-            border: 1px solid rgba(120, 120, 120, 0.18);
-            border-radius: 16px;
-            padding: 14px;
-            background: rgba(255, 255, 255, 0.02);
-            margin-bottom: 12px;
-        }
-        .mm-title {
-            font-size: 14px;
-            font-weight: 700;
-            margin-bottom: 6px;
-            line-height: 1.2;
-        }
-        .mm-sub {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 8px;
-        }
-        .mm-value {
-            background: rgba(120, 120, 120, 0.08);
-            border-radius: 10px;
-            padding: 8px 10px;
-            font-size: 12px;
-            min-height: 56px;
-            margin: 8px 0 10px 0;
-            overflow-wrap: anywhere;
-        }
-        .mm-legend {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin: 8px 0 14px 0;
-        }
-        .mm-note {
-            font-size: 12px;
-            color: #666;
-        }
-        .mm-section-title {
-            font-size: 18px;
-            font-weight: 700;
-            margin: 12px 0 6px 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    for col, campo in mapeamento.items():
+        if not campo:
+            corrigido[col] = ""
+            continue
+
+        if campo in vistos:
+            corrigido[col] = ""
+        else:
+            corrigido[col] = campo
+            vistos.add(campo)
+
+    return corrigido
 
 
-# =========================================================
-# PREVIEW
-# =========================================================
+def _get_preview_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
 
-def _get_preview_df(df: pd.DataFrame, limite: int = 20) -> pd.DataFrame:
-    preview = df.head(limite).copy()
-    preview.insert(0, "Linha", range(1, len(preview) + 1))
+    qtd = min(2, len(df))
+    preview = df.head(qtd).copy()
+
+    for col in preview.columns:
+        preview[col] = preview[col].apply(_texto_preview)
+
+    preview.index = [f"Linha {i+1}" for i in range(len(preview))]
     return preview
 
 
-def _render_preview_selecionavel(df: pd.DataFrame) -> int:
-    st.markdown("<div class='mm-section-title'>Preview da planilha</div>", unsafe_allow_html=True)
-    st.caption("Clique em uma linha do preview para carregar os valores daquela linha no painel de mapeamento.")
+def _limpar_mapeamento_preview(colunas_fornecedor: List[str]) -> None:
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = {col: "" for col in colunas_fornecedor}
+    if "editor_relacionar_preview" in st.session_state:
+        del st.session_state["editor_relacionar_preview"]
 
-    preview_df = _get_preview_df(df, limite=20)
 
-    try:
-        event = st.dataframe(
-            preview_df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="preview_dataframe_select",
-            row_height=38,
+def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
+    colunas_fornecedor = list(df.columns)
+    opcoes_mapeamento = _obter_campos_modelo_bling()
+    mapeamento_atual = _aplicar_sugestoes_iniciais(colunas_fornecedor, opcoes_mapeamento).copy()
+    preview_rows = _get_preview_rows(df)
+
+    st.markdown("### Preview (fixo)")
+    st.dataframe(
+        preview_rows,
+        width="stretch",
+        height=140,
+    )
+
+    st.caption(
+        "Relacione cada coluna do fornecedor diretamente na terceira linha. "
+        "O painel fixo usa todas as colunas disponíveis do cadastro do Bling "
+        "que estiverem disponíveis no sistema."
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+
+    with c1:
+        st.info(f"Colunas do fornecedor: {len(colunas_fornecedor)}")
+
+    with c2:
+        qtd_campos_bling = len([x for x in opcoes_mapeamento if x])
+        st.info(f"Campos do Bling no painel: {qtd_campos_bling}")
+
+    with c3:
+        qtd_relacionados = len([v for v in mapeamento_atual.values() if v])
+        st.info(f"Mapeados: {qtd_relacionados}")
+
+    if st.button("🧹 Limpar mapeamento", use_container_width=True):
+        _limpar_mapeamento_preview(colunas_fornecedor)
+        st.rerun()
+
+    df_relacionar = pd.DataFrame(
+        [[mapeamento_atual.get(col, "") for col in colunas_fornecedor]],
+        columns=colunas_fornecedor,
+        index=["Relacionar"],
+    )
+
+    column_config = {}
+    for col in colunas_fornecedor:
+        valor_atual = mapeamento_atual.get(col, "")
+        usados_por_outros = {
+            v for chave, v in mapeamento_atual.items()
+            if chave != col and v
+        }
+
+        opcoes_filtradas = [
+            o for o in opcoes_mapeamento
+            if o == "" or o == valor_atual or o not in usados_por_outros
+        ]
+
+        column_config[col] = st.column_config.SelectboxColumn(
+            label=col,
+            options=opcoes_filtradas,
+            required=False,
+            width="medium",
         )
 
-        selecionadas = []
-        if hasattr(event, "selection"):
-            selecionadas = list(getattr(event.selection, "rows", []) or [])
-        elif isinstance(event, dict):
-            selecionadas = list(event.get("selection", {}).get("rows", []) or [])
-
-        if selecionadas:
-            st.session_state.preview_row_index = int(selecionadas[0])
-
-    except TypeError:
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
-        max_idx = max(len(df) - 1, 0)
-        st.session_state.preview_row_index = int(
-            st.number_input(
-                "Linha para inspecionar",
-                min_value=0,
-                max_value=max_idx,
-                value=min(int(st.session_state.get("preview_row_index", 0)), max_idx),
-                step=1,
-            )
-        )
-
-    idx = int(st.session_state.get("preview_row_index", 0))
-    idx = max(0, min(idx, len(df) - 1))
-    st.session_state.preview_row_index = idx
-    return idx
-
-
-# =========================================================
-# MAPEAMENTO
-# =========================================================
-
-def _render_resumo_mapeamento(mapeamento: Dict[str, str]) -> None:
-    ok, pendente, erro = _resumo_status(mapeamento)
-    total = len(CAMPOS_BLING)
-    progresso = ok / total if total else 0
-
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    c1.metric("Mapeados", ok)
-    c2.metric("Pendentes", pendente)
-    c3.metric("Obrigatórios faltando", erro)
-    c4.progress(progresso, text=f"{ok}/{total} campos Bling relacionados")
-
-    st.markdown(
-        "<div class='mm-legend'>"
-        f"{_status_badge_html('ok', 'Mapeado')}"
-        f"{_status_badge_html('pendente', 'Pendente')}"
-        f"{_status_badge_html('erro', 'Obrigatório faltando')}"
-        "</div>",
-        unsafe_allow_html=True,
+    df_relacionar_editado = st.data_editor(
+        df_relacionar,
+        width="stretch",
+        height=90,
+        hide_index=False,
+        num_rows="fixed",
+        column_config=column_config,
+        key="editor_relacionar_preview",
     )
 
+    novo_mapeamento = {}
+    linha_editada = df_relacionar_editado.iloc[0].to_dict()
 
-def _render_status_destinos(mapeamento: Dict[str, str]) -> None:
-    st.markdown("<div class='mm-section-title'>Status dos campos do Bling</div>", unsafe_allow_html=True)
+    for col in colunas_fornecedor:
+        valor = str(linha_editada.get(col, "") or "").strip()
+        if valor not in opcoes_mapeamento:
+            valor = ""
+        novo_mapeamento[col] = valor
 
-    cols = st.columns(4)
-    for i, campo in enumerate(CAMPOS_BLING):
-        key = str(campo["key"])
-        label = str(campo["label"])
-        status = _status_campo_destino(key, mapeamento)
-        obrigatorio = key in _campos_obrigatorios_por_modo()
+    novo_mapeamento = _resolver_duplicados(novo_mapeamento)
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo_mapeamento
 
-        with cols[i % 4]:
-            st.markdown(
-                (
-                    "<div class='mm-wrap'>"
-                    f"<div class='mm-title'>{label}</div>"
-                    f"<div class='mm-sub'>{'Obrigatório' if obrigatorio else 'Opcional'}</div>"
-                    f"{_status_badge_html(status, 'Relacionado' if status == 'ok' else ('Sem vínculo' if status == 'erro' else 'Disponível'))}"
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
-            )
+    with st.expander("Ver todos os campos disponíveis do painel fixo", expanded=False):
+        campos_visiveis = [campo for campo in opcoes_mapeamento if campo]
+        st.write(campos_visiveis)
+
+    return novo_mapeamento
 
 
-def _render_card_coluna(
-    coluna: str,
-    valor_exemplo: str,
-    mapeamento: Dict[str, str],
-    indice: int,
-) -> None:
-    destino_atual = mapeamento.get(coluna, "")
-    usados_por_outras = {v for k, v in mapeamento.items() if k != coluna and v}
+# =========================
+# UI PRINCIPAL
+# =========================
 
-    opcoes = [OPCAO_NAO_MAPEAR]
-    labels_por_valor = {OPCAO_NAO_MAPEAR: OPCAO_NAO_MAPEAR}
+def render_origem_dados():
+    st.subheader("Origem dos dados")
 
-    for key, label in _campos_disponiveis():
-        if key not in usados_por_outras or key == destino_atual:
-            opcoes.append(key)
-            labels_por_valor[key] = label
-
-    status = _status_coluna_fornecedor(coluna, mapeamento)
-    badge_texto = "Mapeada" if status == "ok" else "Sem vínculo"
-
-    st.markdown(
-        (
-            "<div class='mm-wrap'>"
-            f"<div class='mm-title'>{coluna}</div>"
-            f"<div class='mm-sub'>Coluna do fornecedor</div>"
-            f"{_status_badge_html(status, badge_texto)}"
-            f"<div class='mm-value'>{valor_exemplo or '— vazio —'}</div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-
-    selecionado = st.selectbox(
-        "Relacionar com campo do Bling",
-        options=opcoes,
-        index=opcoes.index(destino_atual) if destino_atual in opcoes else 0,
-        key=f"map_fornecedor_{indice}_{coluna}",
-        format_func=lambda x: labels_por_valor.get(x, x),
-    )
-
-    if selecionado == OPCAO_NAO_MAPEAR:
-        mapeamento.pop(coluna, None)
-    else:
-        mapeamento[coluna] = selecionado
-
-
-def render_mapeamento(df: pd.DataFrame, row_idx: int) -> None:
-    st.markdown("<div class='mm-section-title'>Relacionamento visual</div>", unsafe_allow_html=True)
-    st.caption("A linha clicada no preview aparece abaixo. Cada cartão representa uma coluna da planilha do fornecedor.")
-
-    mapeamento = dict(st.session_state.get("mapeamento_manual", {}))
-    linha = df.iloc[row_idx]
-
-    _render_resumo_mapeamento(mapeamento)
-    _render_status_destinos(mapeamento)
-
-    st.markdown("<div class='mm-section-title'>Colunas da linha selecionada</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='mm-note'>Clique no select de cada cartão para escolher o campo correspondente do Bling. "
-        "Um mesmo campo do Bling não pode ser usado duas vezes.</div>",
-        unsafe_allow_html=True,
-    )
-
-    colunas_visuais = st.columns(4)
-    for i, coluna in enumerate(df.columns):
-        with colunas_visuais[i % 4]:
-            _render_card_coluna(
-                coluna=coluna,
-                valor_exemplo=_valor_preview(linha, coluna),
-                mapeamento=mapeamento,
-                indice=i,
-            )
-
-    st.session_state.mapeamento_manual = mapeamento
-
-    with st.expander("Ver mapeamento salvo", expanded=False):
-        st.json(mapeamento)
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def render_origem_dados() -> None:
-    _init_local_state()
-    _inject_css()
-
-    st.subheader("Origem de Dados")
-
-    arquivo = st.file_uploader(
-        "Anexar planilha",
-        type=["xlsx", "xls", "csv"],
-        help="Envie a planilha do fornecedor para visualizar, clicar em uma linha e fazer o relacionamento visual com os campos do Bling.",
-    )
-
+    arquivo = st.file_uploader("Anexar planilha", type=["xlsx", "xls", "csv"])
     if not arquivo:
-        st.info("Envie uma planilha para iniciar o preview e o relacionamento visual.")
         return
 
     df = carregar_planilha(arquivo)
     st.session_state.df_origem = df
 
-    if df.empty:
-        st.warning("A planilha foi carregada, mas não possui linhas.")
-        return
+    mapeamento = _render_preview_com_terceira_linha(df)
 
-    _aplicar_sugestoes_iniciais(df)
+    st.divider()
 
-    st.success(f"✅ Planilha carregada: {df.shape[0]} linhas x {df.shape[1]} colunas")
+    # =========================
+    # PREÇO INTELIGENTE
+    # =========================
+    st.markdown("### Configuração de Preço")
 
-    row_idx = _render_preview_selecionavel(df)
-
-    st.caption(
-        f"Linha ativa para inspeção: **{row_idx + 1}** de **{len(df)}**. "
-        "Se a sua versão do Streamlit não permitir clique na linha, o app usa seleção manual por número."
+    modo_preco = st.radio(
+        "Como definir o preço?",
+        OPCOES_PRECO,
     )
 
-    render_mapeamento(df, row_idx)
+    coluna_preco = None
+    if modo_preco == OPCOES_PRECO[1]:
+        coluna_preco = st.selectbox(
+            "Selecione a coluna de preço",
+            df.columns,
+        )
+        st.session_state["coluna_preco_manual"] = coluna_preco
+    else:
+        preco_auto = calcular_preco_compra_automatico_df(df)
+        st.success(f"Preço automático detectado: {preco_auto}")
+
+    st.divider()
+
+    # =========================
+    # MAPEAMENTO FINAL
+    # =========================
+    resultado = []
+
+    for col, campo in mapeamento.items():
+        if campo:
+            resultado.append(
+                {
+                    "Campo painel": campo.upper(),
+                    "Origem": col,
+                }
+            )
+
+    for campo, valor in CAMPOS_FIXOS.items():
+        resultado.append(
+            {
+                "Campo painel": campo.upper(),
+                "Origem": f"FIXO: {valor}",
+            }
+        )
+
+    df_final = pd.DataFrame(resultado)
+
+    st.markdown("### ✅ Mapeamento final")
+    st.dataframe(df_final, width="stretch")
+
+    # compatibilidade com o restante do sistema
+    st.session_state.mapeamento_manual = mapeamento
+    st.session_state.mapeamento_final = {
+        item["Campo painel"]: item["Origem"]
+        for item in resultado
+    }
+
+    # =========================
+    # DOWNLOAD
+    # =========================
+    st.download_button(
+        "Baixar entrada tratada",
+        data=df_to_excel_bytes(df),
+        file_name="entrada.xlsx",
+        width="stretch",
+    )
