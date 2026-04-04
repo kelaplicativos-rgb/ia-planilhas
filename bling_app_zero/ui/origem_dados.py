@@ -15,12 +15,12 @@ ORIGEM_PLANILHA = "Anexar planilha"
 ORIGEM_XML = "Anexar XML da nota fiscal"
 ORIGEM_SITE = "Buscar em site"
 
-# Códigos internos -> nomes amigáveis que devem aparecer no painel
 CAMPO_LABELS = {
     "": "— Não mapear —",
     "codigo": "Código",
     "nome": "Nome",
     "descricao_curta": "Descrição curta",
+    "descricao_complementar": "Descrição complementar",
     "preco": "Preço",
     "preco_custo": "Preço de custo",
     "estoque": "Estoque",
@@ -39,9 +39,16 @@ CAMPO_LABELS = {
     "origem": "Origem",
     "deposito_id": "Depósito / Estoque destino",
     "situacao": "Situação",
+    "peso_liquido": "Peso líquido",
+    "peso_bruto": "Peso bruto",
+    "largura": "Largura",
+    "altura": "Altura",
+    "profundidade": "Profundidade",
+    "comprimento": "Comprimento",
+    "diametro": "Diâmetro",
+    "volume": "Volume",
 }
 
-# Campo fixo solicitado anteriormente
 OPCOES_SITUACAO = ["Ativo", "Desativado"]
 
 
@@ -49,25 +56,17 @@ def _label_campo(codigo: str) -> str:
     return CAMPO_LABELS.get(codigo, codigo.replace("_", " ").strip().title())
 
 
-def _ler_csv_bytes(arquivo) -> pd.DataFrame:
-    try:
-        arquivo.seek(0)
-        return pd.read_csv(arquivo, dtype=str)
-    except Exception:
-        arquivo.seek(0)
-        return pd.read_csv(arquivo, sep=";", dtype=str)
-
-
-def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+def _normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
 
     df = df.copy()
+    df = df.fillna("")
 
-    # Corrige casos em que o cabeçalho vem numérico e a primeira linha é o header real
+    # Corrige casos em que o pandas leu colunas como 0,1,2,3...
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
-        primeira_linha = df.iloc[0].fillna("").astype(str).tolist()
-        if any(valor.strip() for valor in primeira_linha):
+        primeira_linha = [str(x).strip() for x in df.iloc[0].tolist()]
+        if any(primeira_linha):
             df.columns = primeira_linha
             df = df.iloc[1:].reset_index(drop=True)
 
@@ -77,15 +76,45 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _ler_csv_bytes(arquivo) -> pd.DataFrame:
+    arquivo.seek(0)
+    try:
+        df = pd.read_csv(arquivo, dtype=str)
+    except Exception:
+        arquivo.seek(0)
+        df = pd.read_csv(arquivo, sep=";", dtype=str)
+
+    return _normalizar_dataframe(df)
+
+
+def _ler_excel_bytes(arquivo) -> pd.DataFrame:
+    arquivo.seek(0)
+
+    # Primeiro tenta leitura padrão
+    df = pd.read_excel(arquivo, dtype=str)
+    df = _normalizar_dataframe(df)
+
+    # Se vier com colunas genéricas/estranhas, tenta forçar header=None
+    if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
+        arquivo.seek(0)
+        bruto = pd.read_excel(arquivo, dtype=str, header=None)
+        bruto = bruto.fillna("")
+        if not bruto.empty:
+            bruto.columns = [str(x).strip() for x in bruto.iloc[0].tolist()]
+            df = bruto.iloc[1:].reset_index(drop=True)
+            df = _normalizar_dataframe(df)
+
+    return df
+
+
 def carregar_entrada_upload(arquivo) -> pd.DataFrame:
     nome = (arquivo.name or "").lower()
 
     if nome.endswith(".csv"):
-        return _normalizar_df(_ler_csv_bytes(arquivo))
+        return _ler_csv_bytes(arquivo)
 
     if nome.endswith(".xlsx") or nome.endswith(".xls"):
-        arquivo.seek(0)
-        return _normalizar_df(pd.read_excel(arquivo, dtype=str))
+        return _ler_excel_bytes(arquivo)
 
     if nome.endswith(".xml"):
         return pd.DataFrame(
@@ -132,6 +161,7 @@ def _campos_por_modo(modo: str) -> List[str]:
             "codigo",
             "nome",
             "descricao_curta",
+            "descricao_complementar",
             "preco",
             "preco_custo",
             "estoque",
@@ -149,6 +179,14 @@ def _campos_por_modo(modo: str) -> List[str]:
             "imagens",
             "origem",
             "situacao",
+            "peso_liquido",
+            "peso_bruto",
+            "largura",
+            "altura",
+            "profundidade",
+            "comprimento",
+            "diametro",
+            "volume",
         ]
 
     return [
@@ -326,7 +364,6 @@ def render_origem_dados() -> None:
 
         mapeamento[col] = escolha
 
-        # "situacao" é campo fixo e não deve ser disputado com as demais colunas
         if escolha and escolha != "situacao":
             usados.append(escolha)
 
@@ -337,7 +374,6 @@ def render_origem_dados() -> None:
         situacao_fixa=situacao_fixa if modo == MODO_CADASTRO else None,
     )
 
-    # Estruturas prontas para outras etapas do sistema
     st.session_state.mapeamento_final_tabela = tabela_mapeamento
     st.session_state.mapeamento_final = {
         linha["Campo do painel"]: linha["Coluna do fornecedor"]
