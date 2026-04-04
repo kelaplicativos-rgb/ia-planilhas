@@ -8,11 +8,6 @@ from typing import Any, Dict, Optional
 
 
 class BlingTokenStore:
-    """
-    Store simples em JSON local no servidor.
-    Pode ser trocado depois por banco sem alterar a camada de auth/api.
-    """
-
     def __init__(self, file_path: str) -> None:
         self.file_path = Path(file_path)
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,14 +26,16 @@ class BlingTokenStore:
             return {}
 
     def _write_all(self, data: Dict[str, Any]) -> None:
-        payload = json.dumps(data, ensure_ascii=False, indent=2)
-        self.file_path.write_text(payload, encoding="utf-8")
+        self.file_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def get(self, user_key: str = "default") -> Optional[Dict[str, Any]]:
         with self._lock:
             data = self._read_all()
-            item = data.get(user_key)
-            return item if isinstance(item, dict) else None
+            value = data.get(user_key)
+            return value if isinstance(value, dict) else None
 
     def save_token_payload(
         self,
@@ -47,38 +44,37 @@ class BlingTokenStore:
         company_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = datetime.now(timezone.utc)
-
         expires_in = int(token_payload.get("expires_in", 0) or 0)
-        expires_at = now + timedelta(seconds=max(expires_in, 0))
+        expires_at = now + timedelta(seconds=max(0, expires_in))
 
-        current = self.get(user_key) or {}
+        atual = self.get(user_key) or {}
 
-        stored = {
+        item = {
             "access_token": token_payload.get("access_token", ""),
-            "refresh_token": token_payload.get("refresh_token", current.get("refresh_token", "")),
+            "refresh_token": token_payload.get("refresh_token", atual.get("refresh_token", "")),
             "token_type": token_payload.get("token_type", "Bearer"),
             "scope": token_payload.get("scope", ""),
             "expires_in": expires_in,
             "expires_at": expires_at.isoformat(),
             "last_auth_at": now.isoformat(),
-            "company_name": company_name or current.get("company_name"),
+            "company_name": company_name or atual.get("company_name"),
         }
 
         with self._lock:
             data = self._read_all()
-            data[user_key] = stored
+            data[user_key] = item
             self._write_all(data)
 
-        return stored
+        return item
 
     def update_company_name(self, company_name: str, user_key: str = "default") -> None:
         with self._lock:
             data = self._read_all()
-            item = data.get(user_key, {})
-            if not isinstance(item, dict):
-                item = {}
-            item["company_name"] = company_name
-            data[user_key] = item
+            atual = data.get(user_key, {})
+            if not isinstance(atual, dict):
+                atual = {}
+            atual["company_name"] = company_name
+            data[user_key] = atual
             self._write_all(data)
 
     def delete(self, user_key: str = "default") -> bool:
