@@ -104,10 +104,6 @@ def _ler_excel_multiplas_formas(arquivo):
 
 
 def _ajustar_header(df):
-    """
-    Detecta o cabeçalho real, ignorando linhas de instrução.
-    Melhorado para os modelos do Bling.
-    """
     if df is None or df.empty:
         return df
 
