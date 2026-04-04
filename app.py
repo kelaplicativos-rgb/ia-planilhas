@@ -587,8 +587,109 @@ def obter_cliente_openai():
         if not api_key:
             return None
         return OpenAI(api_key=api_key)
-    except Exception:
+    except Exception as e:
+        log(f"OpenAI indisponível: {e}")
         return None
+
+
+def extrair_texto_resposta_openai(resp) -> str:
+    try:
+        texto = getattr(resp, "output_text", None)
+        if texto:
+            return str(texto).strip()
+    except Exception:
+        pass
+
+    try:
+        if hasattr(resp, "choices") and resp.choices:
+            mensagem = resp.choices[0].message
+            conteudo = getattr(mensagem, "content", "")
+            if isinstance(conteudo, str):
+                return conteudo.strip()
+            if isinstance(conteudo, list):
+                partes = []
+                for item in conteudo:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text" and item.get("text"):
+                            partes.append(str(item["text"]))
+                    else:
+                        txt = getattr(item, "text", None)
+                        if txt:
+                            partes.append(str(txt))
+                return "\n".join(partes).strip()
+    except Exception:
+        pass
+
+    try:
+        output = getattr(resp, "output", None)
+        if output:
+            partes = []
+            for bloco in output:
+                content = getattr(bloco, "content", None) or []
+                for item in content:
+                    txt = getattr(item, "text", None)
+                    if txt:
+                        partes.append(str(txt))
+            if partes:
+                return "\n".join(partes).strip()
+    except Exception:
+        pass
+
+    try:
+        if isinstance(resp, dict):
+            choices = resp.get("choices", [])
+            if choices:
+                message = choices[0].get("message", {})
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    return content.strip()
+    except Exception:
+        pass
+
+    return ""
+
+
+def chamar_openai_texto(client, prompt: str) -> str:
+    ultimo_erro = None
+
+    try:
+        if hasattr(client, "chat") and hasattr(client.chat, "completions"):
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você é um especialista em mapeamento de planilhas para importação no Bling. "
+                            "Responda somente em JSON válido."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+            )
+            texto = extrair_texto_resposta_openai(resp)
+            if texto:
+                return texto
+    except Exception as e:
+        ultimo_erro = e
+
+    try:
+        if hasattr(client, "responses"):
+            resp = client.responses.create(
+                model="gpt-4o-mini",
+                input=prompt,
+            )
+            texto = extrair_texto_resposta_openai(resp)
+            if texto:
+                return texto
+    except Exception as e:
+        ultimo_erro = e
+
+    if ultimo_erro:
+        raise ultimo_erro
+
+    raise RuntimeError("Nenhum método compatível da OpenAI foi encontrado.")
 
 
 # =========================================================
@@ -983,6 +1084,7 @@ def sugerir_mapeamento_local_refinado(df_origem: pd.DataFrame, modo: str) -> Tup
 def sugerir_mapeamento_openai(df_origem: pd.DataFrame, modo: str) -> Optional[dict]:
     client = obter_cliente_openai()
     if client is None:
+        log("IA indisponível: OPENAI_API_KEY ausente ou biblioteca OpenAI não carregada.")
         return None
 
     modelo = get_modelo(modo)
@@ -1028,14 +1130,15 @@ Modo atual:
 """
 
     try:
-        resp = client.responses.create(
-            model="gpt-5-mini",
-            input=prompt,
-        )
-        texto = getattr(resp, "output_text", "") or ""
+        texto = chamar_openai_texto(client, prompt)
+        if not texto:
+            log("IA não retornou texto utilizável.")
+            return None
+
         inicio = texto.find("{")
         fim = texto.rfind("}")
         if inicio == -1 or fim == -1:
+            log("IA retornou conteúdo fora do formato JSON esperado.")
             return None
 
         dados = json.loads(texto[inicio:fim + 1])
