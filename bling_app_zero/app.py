@@ -3,17 +3,17 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
-from core.leitor import carregar_planilha
-from core.mapeamento_bling import (
+from .core.leitor import carregar_planilha
+from .core.mapeamento_bling import (
     detectar_colunas,
     mapear_cadastro_bling,
     mapear_estoque_bling,
 )
-from core.validacao_bling import (
+from .core.validacao_bling import (
     validar_cadastro_bling,
     validar_estoque_bling,
 )
-from utils.excel import (
+from .utils.excel import (
     ler_planilha,
     salvar_excel_bytes,
     salvar_txt_bytes,
