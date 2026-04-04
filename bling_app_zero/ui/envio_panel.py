@@ -4,8 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.utils.numeros import normalize_value, safe_float
-from bling_app_zero.core.bling_auth import BlingAuthManager
-from bling_app_zero.core.bling_sync import BlingSyncService
 
 
 def get_column_by_mapped_name(
@@ -70,17 +68,7 @@ def build_stock_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]
 
 
 def render_send_panel() -> None:
-    st.subheader("Enviar dados para o Bling")
-
-    auth = BlingAuthManager()
-
-    if not auth.is_configured():
-        st.info("Configure o Bling para liberar o envio.")
-        return
-
-    if not auth.get_connection_status()["connected"]:
-        st.info("Conecte sua conta do Bling para enviar dados.")
-        return
+    st.subheader("Enviar dados")
 
     df = st.session_state.get("df_origem")
     mapeamento = st.session_state.get("mapeamento_manual") or {}
@@ -89,41 +77,31 @@ def render_send_panel() -> None:
         st.info("Carregue primeiro uma origem de dados.")
         return
 
-    service = BlingSyncService()
-    tab1, tab2 = st.tabs(["Enviar cadastro", "Enviar estoque"])
+    tab1, tab2 = st.tabs(["Preparar cadastro", "Preparar estoque"])
 
     with tab1:
         rows = build_product_rows(df, mapeamento)
         st.write(f"Linhas preparadas para cadastro: **{len(rows)}**")
 
-        somente_validar = st.checkbox("Somente validar cadastro", value=True)
+        if st.button("Gerar preview de cadastro", width="stretch"):
+            st.session_state.ultimo_log_envio = rows[:50]
 
-        if st.button("Enviar cadastro ao Bling", use_container_width=True):
-            ok, resultado = service.enviar_cadastros(rows, dry_run=somente_validar)
-            st.session_state.ultimo_log_envio = resultado if isinstance(resultado, list) else []
-
-            if ok:
-                st.success("Processo de cadastro concluído.")
-            else:
-                st.error("O envio teve falhas.")
-
-            if resultado:
-                st.json(resultado)
+        if st.session_state.get("ultimo_log_envio"):
+            with st.expander("Preview do payload", expanded=False):
+                st.json(st.session_state.ultimo_log_envio)
 
     with tab2:
         rows = build_stock_rows(df, mapeamento)
         st.write(f"Linhas preparadas para estoque: **{len(rows)}**")
 
-        somente_validar = st.checkbox("Somente validar estoque", value=True)
+        if st.button("Gerar preview de estoque", width="stretch"):
+            st.session_state.ultimo_log_envio = rows[:50]
 
-        if st.button("Enviar estoque ao Bling", use_container_width=True):
-            ok, resultado = service.enviar_estoques(rows, dry_run=somente_validar)
-            st.session_state.ultimo_log_envio = resultado if isinstance(resultado, list) else []
+        if st.session_state.get("ultimo_log_envio"):
+            with st.expander("Preview do payload", expanded=False):
+                st.json(st.session_state.ultimo_log_envio)
 
-            if ok:
-                st.success("Processo de estoque concluído.")
-            else:
-                st.error("O envio teve falhas.")
-
-            if resultado:
-                st.json(resultado)
+    st.warning(
+        "Nesta prioridade, a aba de envio está preparando os payloads. "
+        "O envio real para o Bling entra na prioridade de integração."
+    )
