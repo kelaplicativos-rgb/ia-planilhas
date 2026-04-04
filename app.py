@@ -51,6 +51,8 @@ def init_state() -> None:
         "validacao_avisos": [],
         "validacao_ok": False,
         "ultimo_mapeamento_auto": {},
+        "tipo_saida_atual": "",
+        "deposito_informado": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -65,6 +67,15 @@ def resetar_validacao() -> None:
     st.session_state["validacao_erros"] = []
     st.session_state["validacao_avisos"] = []
     st.session_state["validacao_ok"] = False
+
+
+def limpar_resultado() -> None:
+    st.session_state["df_saida"] = None
+    st.session_state["validacao_erros"] = []
+    st.session_state["validacao_avisos"] = []
+    st.session_state["validacao_ok"] = False
+    st.session_state["tipo_saida_atual"] = ""
+    st.session_state["deposito_informado"] = ""
 
 
 def limpar_tudo() -> None:
@@ -86,6 +97,8 @@ def limpar_tudo() -> None:
         "validacao_avisos": [],
         "validacao_ok": False,
         "ultimo_mapeamento_auto": {},
+        "tipo_saida_atual": "",
+        "deposito_informado": "",
     }
 
     for chave, valor in chaves_base.items():
@@ -365,18 +378,21 @@ def exibir_validacao() -> None:
     avisos = st.session_state.get("validacao_avisos", [])
     ok = st.session_state.get("validacao_ok", False)
 
-    st.subheader("Validação antes do download")
+    st.subheader("Validação informativa para conferência")
 
     if ok:
-        st.success("✅ Validação aprovada. A planilha está liberada para download.")
+        st.success("✅ Nenhum erro crítico encontrado na conferência atual.")
 
     for aviso in avisos:
         st.warning(aviso)
 
     if erros:
-        st.error("❌ Download bloqueado. Corrija os pontos abaixo antes de baixar.")
+        st.error("⚠️ Foram encontrados pontos para revisar antes do download.")
         for erro in erros:
             st.error(f"- {erro}")
+
+    if not erros and not avisos:
+        st.info("Nenhum aviso ou erro encontrado.")
 
 
 # =========================================================
@@ -450,11 +466,10 @@ def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFra
     peso = _coluna_segura(df_base, "peso_liquido")
     gtin = _coluna_segura(df_base, "gtin")
 
-    # regra fixa do usuário
     descricao = nome.copy()
 
     imagens_brutas = _coluna_segura(df_base, "imagem")
-    imagens_processadas = [ _extrair_lista_imagens(v) for v in imagens_brutas.tolist() ]
+    imagens_processadas = [_extrair_lista_imagens(v) for v in imagens_brutas.tolist()]
 
     if campos.get("codigo"):
         saida[campos["codigo"]] = codigo
@@ -506,7 +521,6 @@ def adaptar_cadastro_ao_modelo_real(df_base: pd.DataFrame, modelo_df: pd.DataFra
     elif campos.get("imagem_unica"):
         saida[campos["imagem_unica"]] = ["|".join(imagens) for imagens in imagens_processadas]
 
-    # remove linhas sem código
     if campos.get("codigo"):
         saida = saida[saida[campos["codigo"]].astype(str).str.strip() != ""].copy()
 
@@ -569,6 +583,7 @@ def main() -> None:
         if tipo_processamento == "Atualização de estoque":
             deposito = st.text_input(
                 "Em qual estoque será lançado?",
+                value=st.session_state.get("deposito_informado", ""),
                 placeholder="Ex: Geral, Loja, CD",
             )
 
@@ -616,11 +631,10 @@ def main() -> None:
 
             st.session_state["df_origem"] = df
             st.session_state["nome_arquivo_origem"] = arquivo_origem.name
-            st.session_state["df_saida"] = None
             st.session_state["mapa_manual"] = {}
             st.session_state["ultima_chave_arquivo"] = chave_atual
             st.session_state["ultimo_mapeamento_auto"] = detectar_colunas(df)
-            resetar_validacao()
+            limpar_resultado()
 
             for k in list(st.session_state.keys()):
                 if k.startswith("map_"):
@@ -643,7 +657,7 @@ def main() -> None:
             st.session_state["modelo_cadastro_raw"] = modelo_df
             st.session_state["nome_modelo_cadastro"] = modelo_cadastro.name
             st.session_state["ultima_chave_modelo_cadastro"] = chave_modelo_cadastro
-            resetar_validacao()
+            limpar_resultado()
             log(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
 
     if modelo_estoque is not None:
@@ -660,7 +674,7 @@ def main() -> None:
             st.session_state["modelo_estoque_raw"] = modelo_df
             st.session_state["nome_modelo_estoque"] = modelo_estoque.name
             st.session_state["ultima_chave_modelo_estoque"] = chave_modelo_estoque
-            resetar_validacao()
+            limpar_resultado()
             log(f"Modelo de estoque carregado: {modelo_estoque.name}")
 
     df = st.session_state["df_origem"]
@@ -688,7 +702,7 @@ def main() -> None:
         st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
         mapa_final_temp = construir_mapa_manual(df, mapa_auto)
         st.session_state["mapa_manual"] = mapa_final_temp
-        resetar_validacao()
+        limpar_resultado()
 
         st.info(
             "Regra fixa do sistema: a descrição real do produto vai para "
@@ -713,12 +727,12 @@ def main() -> None:
         )
         st.dataframe(df_mapeamento_final, use_container_width=True, hide_index=True)
 
-        if st.session_state["df_saida"] is not None:
-            st.dataframe(st.session_state["df_saida"].head(20), use_container_width=True)
-
     if bloco_toggle("Colunas identificadas automaticamente", "colunas_auto"):
         df_auto = montar_df_colunas_automaticas(mapa_auto)
         st.dataframe(df_auto, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Montagem para conferência manual")
 
     if tipo_processamento == "Cadastro de produtos":
         modelo_cadastro_df = st.session_state["modelo_cadastro_raw"]
@@ -726,7 +740,7 @@ def main() -> None:
         if modelo_cadastro_df is None:
             st.warning("⚠️ Anexe o modelo de cadastro do Bling.")
         else:
-            if st.button("Gerar planilha de cadastro", use_container_width=True):
+            if st.button("Montar prévia de cadastro para conferência", use_container_width=True):
                 try:
                     saida_base, _ = mapear_cadastro_bling(
                         df=df,
@@ -739,6 +753,11 @@ def main() -> None:
                     st.session_state["validacao_erros"] = erros
                     st.session_state["validacao_avisos"] = avisos
                     st.session_state["validacao_ok"] = len(erros) == 0
+                    st.session_state["tipo_saida_atual"] = "Cadastro de produtos"
+                    st.session_state["deposito_informado"] = ""
+
+                    log(f"Prévia de cadastro montada com {len(saida)} linhas.")
+                    log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
 
                     for aviso in avisos:
                         log(f"Aviso: {aviso}")
@@ -746,16 +765,11 @@ def main() -> None:
                     for erro in erros:
                         log(f"Erro de validação: {erro}")
 
-                    if erros:
-                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
-                    else:
-                        log(f"Cadastro gerado com {len(saida)} linhas.")
-                        log(f"Modelo de cadastro usado: {st.session_state['nome_modelo_cadastro']}")
-                        st.success("✅ Planilha de cadastro gerada e validada com sucesso.")
+                    st.success("✅ Prévia de cadastro montada para sua conferência manual.")
 
                 except Exception as e:
-                    st.error(f"Erro ao gerar cadastro: {e}")
-                    log(f"Erro ao gerar cadastro: {e}")
+                    st.error(f"Erro ao montar prévia de cadastro: {e}")
+                    log(f"Erro ao montar prévia de cadastro: {e}")
 
     else:
         modelo_estoque_df = st.session_state["modelo_estoque_raw"]
@@ -765,7 +779,7 @@ def main() -> None:
         elif not limpar_texto(deposito):
             st.warning("⚠️ Digite em qual estoque será lançado.")
         else:
-            if st.button("Gerar planilha de estoque", use_container_width=True):
+            if st.button("Montar prévia de estoque para conferência", use_container_width=True):
                 try:
                     saida_base, _ = mapear_estoque_bling(
                         df=df,
@@ -778,6 +792,12 @@ def main() -> None:
                     st.session_state["validacao_erros"] = erros
                     st.session_state["validacao_avisos"] = avisos
                     st.session_state["validacao_ok"] = len(erros) == 0
+                    st.session_state["tipo_saida_atual"] = "Atualização de estoque"
+                    st.session_state["deposito_informado"] = deposito
+
+                    log(f"Prévia de estoque montada com {len(saida)} linhas.")
+                    log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
+                    log(f"Depósito informado: {deposito}")
 
                     for aviso in avisos:
                         log(f"Aviso: {aviso}")
@@ -785,35 +805,54 @@ def main() -> None:
                     for erro in erros:
                         log(f"Erro de validação: {erro}")
 
-                    if erros:
-                        st.error("❌ A planilha foi gerada, mas o download foi bloqueado pela validação.")
-                    else:
-                        log(f"Estoque gerado com {len(saida)} linhas.")
-                        log(f"Modelo de estoque usado: {st.session_state['nome_modelo_estoque']}")
-                        log(f"Depósito informado: {deposito}")
-                        st.success("✅ Planilha de estoque gerada e validada com sucesso.")
+                    st.success("✅ Prévia de estoque montada para sua conferência manual.")
 
                 except Exception as e:
-                    st.error(f"Erro ao gerar estoque: {e}")
-                    log(f"Erro ao gerar estoque: {e}")
+                    st.error(f"Erro ao montar prévia de estoque: {e}")
+                    log(f"Erro ao montar prévia de estoque: {e}")
 
     df_saida = st.session_state["df_saida"]
 
     if df_saida is not None:
         st.divider()
+        st.subheader("Resultado da conferência")
+
+        info1, info2 = st.columns(2)
+        with info1:
+            st.metric("Linhas na prévia", len(df_saida))
+        with info2:
+            st.metric("Tipo da prévia", st.session_state.get("tipo_saida_atual", ""))
+
+        if bloco_toggle("Preview da prévia gerada", "preview_saida"):
+            st.dataframe(df_saida.head(20), use_container_width=True)
+
         exibir_validacao()
 
-        if st.session_state.get("validacao_ok", False):
-            nome_saida = (
-                "bling_cadastro_produtos_modelo_real.xlsx"
-                if tipo_processamento == "Cadastro de produtos"
-                else "bling_atualizacao_estoque_modelo_real.xlsx"
-            )
+        st.info(
+            "O download fica liberado para você somente depois da conferência manual. "
+            "Os avisos e erros acima são informativos para sua revisão."
+        )
 
+        tipo_saida_atual = st.session_state.get("tipo_saida_atual", "")
+
+        if tipo_saida_atual == "Cadastro de produtos":
+            nome_saida = "bling_cadastro_produtos_modelo_real.xlsx"
             arquivo_excel = salvar_excel_bytes(df_saida)
 
             st.download_button(
-                "📥 Baixar planilha final",
+                "📥 Baixar planilha de cadastro",
+                data=arquivo_excel,
+                file_name=nome_saida,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        elif tipo_saida_atual == "Atualização de estoque":
+            nome_saida = "bling_atualizacao_estoque_modelo_real.xlsx"
+            arquivo_excel = salvar_excel_bytes(df_saida)
+
+            st.download_button(
+                "📥 Baixar planilha de estoque",
                 data=arquivo_excel,
                 file_name=nome_saida,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
