@@ -1,5 +1,6 @@
 import streamlit as st
 
+from bling_app_zero.core.precificacao import calcular_preco_venda
 from bling_app_zero.utils.numeros import format_money
 
 
@@ -60,11 +61,16 @@ def render_precificacao_panel() -> None:
             format="%.4f",
         )
 
-    total_percentual = (percentual_impostos + margem_lucro + taxa_extra) / 100.0
-    preco_venda = (preco_compra + custo_fixo) * (1 + total_percentual)
+    preco_venda = calcular_preco_venda(
+        preco_compra=preco_compra,
+        percentual_impostos=percentual_impostos,
+        margem_lucro=margem_lucro,
+        custo_fixo=custo_fixo,
+        taxa_extra=taxa_extra,
+    )
 
     st.metric("Preço de venda sugerido", format_money(preco_venda))
 
     origem_atual = st.session_state.get("origem_atual", "")
     if origem_atual == "XML NF-e":
-        st.caption("Preço de compra preenchido automaticamente a partir do XML da NF-e.")
+        st.caption("Preço de compra preenchido automaticamente a partir do XML.")
