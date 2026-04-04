@@ -8,20 +8,28 @@ from ..utils.excel import (
     gerar_preview,
     bloco_toggle,
 )
+from ..utils.xml_nfe import ler_xml_nfe, arquivo_parece_xml_nfe
 
 
 def carregar_planilha(arquivo):
     """
-    Lê, normaliza e limpa a planilha enviada.
+    Lê, normaliza e limpa a entrada enviada.
+    Aceita:
+    - Excel / CSV
+    - XML de NF-e
+
     Retorna um DataFrame pronto para uso ou None em caso de falha.
     """
     if arquivo is None:
         return None
 
     try:
-        df = ler_planilha(arquivo)
+        if arquivo_parece_xml_nfe(arquivo):
+            df = ler_xml_nfe(arquivo)
+        else:
+            df = ler_planilha(arquivo)
     except Exception as e:
-        st.error(f"Erro ao ler a planilha: {e}")
+        st.error(f"Erro ao ler o arquivo: {e}")
         return None
 
     if df is None or df.empty:
@@ -31,7 +39,7 @@ def carregar_planilha(arquivo):
         df = normalizar_colunas(df)
         df = limpar_valores_vazios(df)
     except Exception as e:
-        st.error(f"Erro ao preparar a planilha: {e}")
+        st.error(f"Erro ao preparar os dados: {e}")
         return None
 
     if df is None or df.empty:
@@ -42,7 +50,7 @@ def carregar_planilha(arquivo):
 
 def validar_planilha_basica(df):
     """
-    Validação mínima para garantir que a planilha existe
+    Validação mínima para garantir que a planilha/arquivo existe
     e possui conteúdo utilizável.
     """
     if df is None:
@@ -60,28 +68,33 @@ def validar_planilha_basica(df):
     return True
 
 
-def preview(df, linhas=1):
+def mostrar_preview_planilha(df, linhas=1, titulo="Preview"):
     """
-    Exibe preview enxuto da planilha.
-    Mantém o comportamento fechado por padrão via bloco_toggle.
-    """
-    if not validar_planilha_basica(df):
-        return
-
-    if bloco_toggle("Preview", "preview"):
-        try:
-            st.dataframe(gerar_preview(df, linhas), use_container_width=True)
-        except Exception:
-            st.dataframe(df.head(linhas), use_container_width=True)
-
-
-def mostrar_colunas(df):
-    """
-    Exibe lista de colunas da planilha.
-    Mantém o comportamento fechado por padrão via bloco_toggle.
+    Exibe preview controlado do DataFrame.
     """
     if not validar_planilha_basica(df):
+        st.warning("Nenhum dado válido para mostrar no preview.")
         return
 
-    if bloco_toggle("Colunas", "cols"):
-        st.write(list(df.columns))
+    if bloco_toggle(titulo, f"toggle_{titulo.lower().replace(' ', '_')}"):
+        st.dataframe(gerar_preview(df, linhas=linhas), use_container_width=True)
+
+
+def obter_colunas(df):
+    """
+    Retorna lista de colunas do DataFrame.
+    """
+    if not validar_planilha_basica(df):
+        return []
+
+    return list(df.columns)
+
+
+def dataframe_para_registros(df):
+    """
+    Converte DataFrame em lista de dicts.
+    """
+    if not validar_planilha_basica(df):
+        return []
+
+    return df.to_dict(orient="records")
