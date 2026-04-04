@@ -19,3 +19,19 @@ def calcular_preco_compra_automatico_df(df: pd.DataFrame) -> float:
                 return valor
 
     return 0.0
+
+
+def calcular_preco_venda(
+    preco_compra: float,
+    percentual_impostos: float,
+    margem_lucro: float,
+    custo_fixo: float,
+    taxa_extra: float,
+) -> float:
+    base = float(preco_compra or 0.0) + float(custo_fixo or 0.0)
+    total_percentual = (
+        float(percentual_impostos or 0.0)
+        + float(margem_lucro or 0.0)
+        + float(taxa_extra or 0.0)
+    ) / 100.0
+    return base * (1.0 + total_percentual)
