@@ -15,23 +15,77 @@ ORIGEM_PLANILHA = "Anexar planilha"
 ORIGEM_XML = "Anexar XML da nota fiscal"
 ORIGEM_SITE = "Buscar em site"
 
+# Códigos internos -> nomes amigáveis que devem aparecer no painel
+CAMPO_LABELS = {
+    "": "— Não mapear —",
+    "codigo": "Código",
+    "nome": "Nome",
+    "descricao_curta": "Descrição curta",
+    "preco": "Preço",
+    "preco_custo": "Preço de custo",
+    "estoque": "Estoque",
+    "gtin": "GTIN / EAN",
+    "marca": "Marca",
+    "categoria": "Categoria",
+    "ncm": "NCM",
+    "cest": "CEST",
+    "cfop": "CFOP",
+    "unidade": "Unidade",
+    "fornecedor": "Fornecedor",
+    "cnpj_fornecedor": "CNPJ do fornecedor",
+    "numero_nfe": "Número da NF-e",
+    "data_emissao": "Data de emissão",
+    "imagens": "Imagens",
+    "origem": "Origem",
+    "deposito_id": "Depósito / Estoque destino",
+    "situacao": "Situação",
+}
+
+# Campo fixo solicitado anteriormente
+OPCOES_SITUACAO = ["Ativo", "Desativado"]
+
+
+def _label_campo(codigo: str) -> str:
+    return CAMPO_LABELS.get(codigo, codigo.replace("_", " ").strip().title())
+
 
 def _ler_csv_bytes(arquivo) -> pd.DataFrame:
     try:
-        return pd.read_csv(arquivo)
+        arquivo.seek(0)
+        return pd.read_csv(arquivo, dtype=str)
     except Exception:
         arquivo.seek(0)
-        return pd.read_csv(arquivo, sep=";")
+        return pd.read_csv(arquivo, sep=";", dtype=str)
+
+
+def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # Corrige casos em que o cabeçalho vem numérico e a primeira linha é o header real
+    if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
+        primeira_linha = df.iloc[0].fillna("").astype(str).tolist()
+        if any(valor.strip() for valor in primeira_linha):
+            df.columns = primeira_linha
+            df = df.iloc[1:].reset_index(drop=True)
+
+    df.columns = [str(col).strip() for col in df.columns]
+    df = df.fillna("")
+
+    return df
 
 
 def carregar_entrada_upload(arquivo) -> pd.DataFrame:
     nome = (arquivo.name or "").lower()
 
     if nome.endswith(".csv"):
-        return _ler_csv_bytes(arquivo)
+        return _normalizar_df(_ler_csv_bytes(arquivo))
 
     if nome.endswith(".xlsx") or nome.endswith(".xls"):
-        return pd.read_excel(arquivo)
+        arquivo.seek(0)
+        return _normalizar_df(pd.read_excel(arquivo, dtype=str))
 
     if nome.endswith(".xml"):
         return pd.DataFrame(
@@ -65,7 +119,6 @@ def detectar_modo_visual_por_upload(arquivo) -> str:
 
     if nome.endswith(".xml"):
         return "XML NF-e"
-
     if nome.endswith(".csv") or nome.endswith(".xlsx") or nome.endswith(".xls"):
         return "Planilha"
 
@@ -95,6 +148,7 @@ def _campos_por_modo(modo: str) -> List[str]:
             "data_emissao",
             "imagens",
             "origem",
+            "situacao",
         ]
 
     return [
@@ -108,11 +162,47 @@ def _campos_por_modo(modo: str) -> List[str]:
     ]
 
 
-def _aplicar_sugestao_automatica(df: pd.DataFrame) -> Dict[str, str]:
-    sugestoes = {}
+def _aplicar_sugestao_automatica(df: pd.DataFrame, campos_validos: List[str]) -> Dict[str, str]:
+    sugestoes: Dict[str, str] = {}
+
     for col in df.columns:
-        sugestoes[col] = sugestao_automatica(col)
+        sugestao = sugestao_automatica(col)
+        sugestoes[col] = sugestao if sugestao in campos_validos else ""
+
     return sugestoes
+
+
+def _montar_tabela_mapeamento_final(
+    mapeamento_coluna_para_campo: Dict[str, str],
+    situacao_fixa: str | None = None,
+) -> pd.DataFrame:
+    linhas = []
+
+    for coluna_fornecedor, campo_codigo in mapeamento_coluna_para_campo.items():
+        if not campo_codigo:
+            continue
+
+        linhas.append(
+            {
+                "Campo do painel": _label_campo(campo_codigo),
+                "Código interno": campo_codigo,
+                "Coluna do fornecedor": coluna_fornecedor,
+            }
+        )
+
+    if situacao_fixa:
+        linhas.append(
+            {
+                "Campo do painel": _label_campo("situacao"),
+                "Código interno": "situacao",
+                "Coluna do fornecedor": f"Valor fixo: {situacao_fixa}",
+            }
+        )
+
+    if not linhas:
+        return pd.DataFrame(columns=["Campo do painel", "Código interno", "Coluna do fornecedor"])
+
+    return pd.DataFrame(linhas).sort_values(by=["Campo do painel"]).reset_index(drop=True)
 
 
 def render_origem_dados() -> None:
@@ -194,15 +284,28 @@ def render_origem_dados() -> None:
         st.dataframe(df.head(30), width="stretch")
 
     campos = _campos_por_modo(modo)
-    sugestoes = _aplicar_sugestao_automatica(df)
+    sugestoes = _aplicar_sugestao_automatica(df, campos)
 
     st.markdown("#### Mapeamento manual")
 
     mapeamento: Dict[str, str] = {}
     usados: List[str] = []
 
+    situacao_key = "situacao_fixa"
+    situacao_fixa = st.session_state.get(situacao_key, "Ativo")
+
+    if modo == MODO_CADASTRO:
+        situacao_fixa = st.selectbox(
+            "Situação",
+            options=OPCOES_SITUACAO,
+            index=0 if situacao_fixa == "Ativo" else 1,
+            key=situacao_key,
+            help="Campo fixo do painel. Não depende da planilha do fornecedor.",
+        )
+
     for col in df.columns:
         valor_inicial = ""
+
         if isinstance(st.session_state.get("mapeamento_manual"), dict):
             valor_inicial = st.session_state.mapeamento_manual.get(col, "")
 
@@ -210,6 +313,7 @@ def render_origem_dados() -> None:
             valor_inicial = sugestoes.get(col, "")
 
         opcoes = [x for x in campos if x == "" or x == valor_inicial or x not in usados]
+
         idx = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
         escolha = st.selectbox(
@@ -217,16 +321,34 @@ def render_origem_dados() -> None:
             options=opcoes,
             index=idx,
             key=f"map_{col}",
+            format_func=_label_campo,
         )
 
         mapeamento[col] = escolha
-        if escolha:
+
+        # "situacao" é campo fixo e não deve ser disputado com as demais colunas
+        if escolha and escolha != "situacao":
             usados.append(escolha)
 
     st.session_state.mapeamento_manual = mapeamento
 
+    tabela_mapeamento = _montar_tabela_mapeamento_final(
+        mapeamento_coluna_para_campo=mapeamento,
+        situacao_fixa=situacao_fixa if modo == MODO_CADASTRO else None,
+    )
+
+    # Estruturas prontas para outras etapas do sistema
+    st.session_state.mapeamento_final_tabela = tabela_mapeamento
+    st.session_state.mapeamento_final = {
+        linha["Campo do painel"]: linha["Coluna do fornecedor"]
+        for _, linha in tabela_mapeamento.iterrows()
+    }
+
     with st.expander("Mapeamento final", expanded=False):
-        st.json(mapeamento)
+        if tabela_mapeamento.empty:
+            st.warning("Nenhum campo foi mapeado ainda.")
+        else:
+            st.dataframe(tabela_mapeamento, width="stretch", hide_index=True)
 
     st.download_button(
         "Baixar entrada tratada",
