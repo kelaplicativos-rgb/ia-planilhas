@@ -298,7 +298,6 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         ],
     )
 
-    # nome NÃO usa descrição automaticamente
     m["nome"] = encontrar_coluna(
         df,
         [
@@ -313,7 +312,6 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         ],
     )
 
-    # descrição curta = descrição real do produto
     m["descricao_curta"] = encontrar_coluna(
         df,
         [
@@ -323,6 +321,8 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
             "descrição longa",
             "descricao do produto",
             "descrição do produto",
+            "descricao curta",
+            "descrição curta",
             "descricao",
             "descrição",
             "detalhes",
@@ -350,7 +350,6 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         ],
     )
 
-    # regra fixa: link externo deve ficar vazio
     m["link_externo"] = None
 
     m["estoque"] = encontrar_coluna(
@@ -363,7 +362,6 @@ def detectar_colunas(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     m["situacao"] = encontrar_coluna(df, ["situacao", "situação", "status", "ativo"])
     m["unidade"] = encontrar_coluna(df, ["unidade", "und", "un"])
 
-    # extras para preencher mais colunas do Bling
     m["categoria"] = encontrar_coluna(df, ["categoria", "grupo", "departamento", "secao", "seção"])
     m["gtin"] = encontrar_coluna(df, ["gtin", "ean", "codigo barras", "código barras", "barcode"])
     m["ncm"] = encontrar_coluna(df, ["ncm"])
@@ -447,6 +445,47 @@ def corrigir_numero_livre(valor) -> str:
     texto = texto.replace(",", ".")
     texto = re.sub(r"[^0-9.]+", "", texto)
     return texto
+
+
+def limpar_gtin(valor) -> str:
+    texto = limpar_texto(valor)
+    if not texto:
+        return ""
+    return re.sub(r"\D+", "", texto)
+
+
+def gtin_valido(gtin: str) -> bool:
+    gtin = limpar_gtin(gtin)
+
+    if not gtin:
+        return False
+
+    if len(gtin) not in (8, 12, 13, 14):
+        return False
+
+    numeros = [int(c) for c in gtin]
+    digito_informado = numeros[-1]
+    corpo = numeros[:-1]
+
+    soma = 0
+    peso = 3
+
+    for n in reversed(corpo):
+        soma += n * peso
+        peso = 1 if peso == 3 else 3
+
+    digito_calculado = (10 - (soma % 10)) % 10
+    return digito_calculado == digito_informado
+
+
+def normalizar_gtin_serie(serie: pd.Series) -> Tuple[pd.Series, int]:
+    serie_limpa = serie.fillna("").astype(str).apply(limpar_gtin)
+
+    invalidos = serie_limpa.apply(lambda x: bool(x) and not gtin_valido(x))
+    qtd_invalidos = int(invalidos.sum())
+
+    serie_final = serie_limpa.mask(invalidos, "")
+    return serie_final, qtd_invalidos
 
 
 def normalizar_situacao(valor) -> str:
@@ -557,6 +596,34 @@ def extrair_imagens_da_linha(
             final.append(u)
 
     return final[:5]
+
+
+def montar_nome_final(df: pd.DataFrame, mapa: Dict[str, Optional[str]]) -> pd.Series:
+    nome_col = mapa.get("nome")
+    desc_col = mapa.get("descricao_curta")
+
+    nome = coluna_origem(df, nome_col, "").apply(limpar_texto)
+    desc = coluna_origem(df, desc_col, "").apply(limpar_texto)
+
+    nome_final = nome.copy()
+    vazios = nome_final.astype(str).str.strip() == ""
+    nome_final.loc[vazios] = desc.loc[vazios]
+
+    return nome_final
+
+
+def montar_descricao_curta_final(df: pd.DataFrame, mapa: Dict[str, Optional[str]]) -> pd.Series:
+    nome_col = mapa.get("nome")
+    desc_col = mapa.get("descricao_curta")
+
+    nome = coluna_origem(df, nome_col, "").apply(limpar_texto)
+    desc = coluna_origem(df, desc_col, "").apply(limpar_texto)
+
+    desc_final = desc.copy()
+    vazios = desc_final.astype(str).str.strip() == ""
+    desc_final.loc[vazios] = nome.loc[vazios]
+
+    return desc_final
 
 
 # =========================================================
@@ -692,6 +759,21 @@ def validar_saida_cadastro(df_saida: pd.DataFrame, modelo_df: pd.DataFrame) -> T
         if preenchidas > 0:
             erros.append("A coluna de link externo deve permanecer vazia.")
 
+    if campos["gtin"] and campos["gtin"] in df_saida.columns:
+        serie_gtin = df_saida[campos["gtin"]].fillna("").astype(str).apply(limpar_gtin)
+
+        comprimentos_invalidos = int(
+            serie_gtin.apply(lambda x: bool(x) and len(x) not in (8, 12, 13, 14)).sum()
+        )
+        if comprimentos_invalidos > 0:
+            erros.append(f"Existem {comprimentos_invalidos} GTIN/EAN com comprimento inválido.")
+
+        checks_invalidos = int(
+            serie_gtin.apply(lambda x: bool(x) and not gtin_valido(x)).sum()
+        )
+        if checks_invalidos > 0:
+            erros.append(f"Existem {checks_invalidos} GTIN/EAN inválidos após normalização.")
+
     return erros, avisos
 
 
@@ -769,8 +851,6 @@ def mapear_cadastro_no_modelo_bling(
     saida = criar_saida_no_modelo(modelo_df, len(df))
 
     codigo_col = mapa.get("codigo")
-    nome_col = mapa.get("nome")
-    desc_col = mapa.get("descricao_curta")
     preco_col = mapa.get("preco")
     marca_col = mapa.get("marca")
     imagem_col = mapa.get("imagem")
@@ -790,20 +870,29 @@ def mapear_cadastro_no_modelo_bling(
     meses_garantia_col = mapa.get("meses_garantia_fornecedor")
     descricao_complementar_col = mapa.get("descricao_complementar")
 
+    nome_final = montar_nome_final(df, mapa)
+    descricao_curta_final = montar_descricao_curta_final(df, mapa)
+
     if campos_modelo["id"]:
         saida[campos_modelo["id"]] = ""
 
     preencher_coluna_se_existir(saida, campos_modelo["codigo"], coluna_origem(df, codigo_col))
-    preencher_coluna_se_existir(saida, campos_modelo["nome"], coluna_origem(df, nome_col))
+    preencher_coluna_se_existir(saida, campos_modelo["nome"], nome_final)
     preencher_coluna_se_existir(saida, campos_modelo["unidade"], coluna_origem(df, unidade_col, "UN"))
     preencher_coluna_se_existir(saida, campos_modelo["preco"], coluna_origem(df, preco_col), corrigir_preco)
     preencher_coluna_se_existir(saida, campos_modelo["situacao"], coluna_origem(df, situacao_col, "Ativo"), normalizar_situacao)
     preencher_coluna_se_existir(saida, campos_modelo["marca"], coluna_origem(df, marca_col))
-    preencher_coluna_se_existir(saida, campos_modelo["descricao_curta"], coluna_origem(df, desc_col))
+    preencher_coluna_se_existir(saida, campos_modelo["descricao_curta"], descricao_curta_final)
     preencher_coluna_se_existir(saida, campos_modelo["descricao_complementar"], coluna_origem(df, descricao_complementar_col))
     preencher_coluna_se_existir(saida, campos_modelo["estoque"], coluna_origem(df, estoque_col))
     preencher_coluna_se_existir(saida, campos_modelo["categoria"], coluna_origem(df, categoria_col))
-    preencher_coluna_se_existir(saida, campos_modelo["gtin"], coluna_origem(df, gtin_col))
+
+    if campos_modelo["gtin"]:
+        gtin_serie, qtd_gtin_invalidos = normalizar_gtin_serie(coluna_origem(df, gtin_col))
+        saida[campos_modelo["gtin"]] = gtin_serie
+        if qtd_gtin_invalidos > 0:
+            log(f"Cadastro: {qtd_gtin_invalidos} GTIN/EAN inválidos foram zerados automaticamente.")
+
     preencher_coluna_se_existir(saida, campos_modelo["ncm"], coluna_origem(df, ncm_col))
     preencher_coluna_se_existir(saida, campos_modelo["origem"], coluna_origem(df, origem_col))
     preencher_coluna_se_existir(saida, campos_modelo["peso_liquido"], coluna_origem(df, peso_liquido_col), corrigir_numero_livre)
@@ -813,17 +902,13 @@ def mapear_cadastro_no_modelo_bling(
     preencher_coluna_se_existir(saida, campos_modelo["profundidade"], coluna_origem(df, profundidade_col), corrigir_numero_livre)
     preencher_coluna_se_existir(saida, campos_modelo["meses_garantia_fornecedor"], coluna_origem(df, meses_garantia_col), corrigir_numero_livre)
 
-    # regras fixas
+    # regras fixas atualizadas
     if campos_modelo["descricao"]:
-        saida[campos_modelo["descricao"]] = ""
+        saida[campos_modelo["descricao"]] = nome_final
     if campos_modelo["video"]:
         saida[campos_modelo["video"]] = ""
     if campos_modelo["link_externo"]:
         saida[campos_modelo["link_externo"]] = ""
-
-    if campos_modelo["descricao_curta"] and campos_modelo["nome"]:
-        vazia = saida[campos_modelo["descricao_curta"]].astype(str).str.strip() == ""
-        saida.loc[vazia, campos_modelo["descricao_curta"]] = saida.loc[vazia, campos_modelo["nome"]]
 
     imagens_linhas = []
     for _, row in df.iterrows():
@@ -1174,7 +1259,7 @@ def montar_df_mapeamento_final(
     linhas.append(
         {
             "Campo Bling": "Regra fixa",
-            "Coluna escolhida": "descrição curta = descrição real do produto | descrição = vazio | vídeo = vazio | link externo = vazio",
+            "Coluna escolhida": "descrição curta = descrição real do produto | descrição = título/nome do produto | vídeo = vazio | link externo = vazio",
         }
     )
 
@@ -1229,7 +1314,7 @@ def main() -> None:
 
         st.divider()
 
-        if st.button("Limpar tudo", use_container_width=True):
+        if st.button("Limpar tudo", width="stretch"):
             limpar_tudo()
             st.rerun()
 
@@ -1324,7 +1409,7 @@ def main() -> None:
         st.metric("Campos detectados", len([v for v in mapa_auto.values() if v]))
 
     with st.expander("👀 Preview", expanded=st.session_state["preview_aberto"]):
-        st.dataframe(df.head(1), use_container_width=True)
+        st.dataframe(df.head(1), width="stretch")
 
     with st.expander("🛠️ Ajuste manual das colunas", expanded=st.session_state["ajuste_manual_aberto"]):
         st.caption("Se alguma coluna foi identificada errado, ajuste aqui manualmente.")
@@ -1334,8 +1419,8 @@ def main() -> None:
 
         st.info(
             "Regra fixa do sistema: a descrição real do produto sempre vai para "
-            "'descrição curta'. A coluna 'descrição' fica vazia. A coluna 'vídeo' fica vazia. "
-            "A coluna 'link externo' também fica vazia."
+            "'descrição curta'. A coluna 'descrição' recebe o título/nome do produto. "
+            "A coluna 'vídeo' fica vazia. A coluna 'link externo' também fica vazia."
         )
 
     mapa_final = st.session_state.get("mapa_manual") or mapa_auto
@@ -1358,14 +1443,14 @@ def main() -> None:
             colunas_imagem_extras=colunas_imagem_extras,
             modelo_nome=modelo_nome_exibicao or "",
         )
-        st.dataframe(df_mapeamento_final, use_container_width=True, hide_index=True)
+        st.dataframe(df_mapeamento_final, width="stretch", hide_index=True)
 
         if st.session_state["df_saida"] is not None:
-            st.dataframe(st.session_state["df_saida"].head(20), use_container_width=True)
+            st.dataframe(st.session_state["df_saida"].head(20), width="stretch")
 
     with st.expander("🔎 Colunas identificadas automaticamente", expanded=st.session_state["colunas_auto_aberto"]):
         df_auto = montar_df_colunas_automaticas(mapa_auto, colunas_imagem_auto)
-        st.dataframe(df_auto, use_container_width=True, hide_index=True)
+        st.dataframe(df_auto, width="stretch", hide_index=True)
 
     if tipo_processamento == "Cadastro de produtos":
         modelo_cadastro_df = st.session_state["modelo_cadastro_raw"]
@@ -1373,7 +1458,7 @@ def main() -> None:
         if modelo_cadastro_df is None:
             st.warning("⚠️ Anexe o modelo de cadastro do Bling.")
         else:
-            if st.button("Gerar planilha de cadastro", use_container_width=True):
+            if st.button("Gerar planilha de cadastro", width="stretch"):
                 try:
                     saida = mapear_cadastro_no_modelo_bling(
                         df=df,
@@ -1413,7 +1498,7 @@ def main() -> None:
         elif not limpar_texto(deposito):
             st.warning("⚠️ Digite em qual estoque será lançado.")
         else:
-            if st.button("Gerar planilha de estoque", use_container_width=True):
+            if st.button("Gerar planilha de estoque", width="stretch"):
                 try:
                     saida = mapear_estoque_no_modelo_bling(
                         df=df,
@@ -1466,7 +1551,7 @@ def main() -> None:
                 data=arquivo_excel,
                 file_name=nome_saida,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
 
     st.divider()
@@ -1479,7 +1564,7 @@ def main() -> None:
             data=salvar_txt_bytes(logs_txt),
             file_name="log_processamento.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
         )
 
 
