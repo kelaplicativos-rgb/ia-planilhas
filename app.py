@@ -503,9 +503,11 @@ def main() -> None:
 
     st.subheader("Envio dos arquivos")
 
+    tipos_aceitos = ["xlsx", "xls", "csv", "zip"]
+
     arquivo_origem = st.file_uploader(
         "1) Planilha do fornecedor",
-        type=["xlsx", "xls", "csv"],
+        type=tipos_aceitos,
         key="upload_origem",
     )
 
@@ -514,14 +516,14 @@ def main() -> None:
     with col_modelo_1:
         modelo_cadastro = st.file_uploader(
             "2) Modelo de cadastro do Bling",
-            type=["xlsx", "xls", "csv"],
+            type=tipos_aceitos,
             key="upload_modelo_cadastro",
         )
 
     with col_modelo_2:
         modelo_estoque = st.file_uploader(
             "3) Modelo de estoque do Bling",
-            type=["xlsx", "xls", "csv"],
+            type=tipos_aceitos,
             key="upload_modelo_estoque",
         )
 
