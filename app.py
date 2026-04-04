@@ -741,9 +741,11 @@ def score_tipo_valor(coluna_bling: str, perfil: dict, modo: str) -> float:
         score += perfil["pct_url"] * 120
         score += perfil["pct_longo"] * 10
 
-    elif coluna_bling in {"Preço", "Preço de custo", "Preço de compra", "Valor IPI fixo",
-                          "Valor base ICMS ST para retenção", "Valor ICMS ST para retenção",
-                          "Valor ICMS próprio do substituto"}:
+    elif coluna_bling in {
+        "Preço", "Preço de custo", "Preço de compra", "Valor IPI fixo",
+        "Valor base ICMS ST para retenção", "Valor ICMS ST para retenção",
+        "Valor ICMS próprio do substituto"
+    }:
         score += perfil["pct_numerico"] * 60
 
     elif coluna_bling in {"Estoque", "Estoque maximo", "Estoque minimo", "Itens p/ caixa", "Volumes", "Cross-Docking"}:
@@ -1070,8 +1072,7 @@ def construir_mapeamento_visual(df_origem: pd.DataFrame, modo: str) -> dict:
     colunas_bling = modelo["colunas"]
     obrigatorios = modelo["obrigatorios"]
 
-    opcoes = [""] + list(df_origem.columns)
-    primeira = df_origem.head(1).copy()
+    todas_opcoes = list(df_origem.columns)
     mapeamento = {}
     confiancas = st.session_state.get("sugestao_confianca", {}) or {}
 
@@ -1086,16 +1087,40 @@ def construir_mapeamento_visual(df_origem: pd.DataFrame, modo: str) -> dict:
 
     st.markdown("---")
 
+    valores_atuais = {}
     for col_bling in colunas_bling:
-        obrigatorio = col_bling in obrigatorios
-        key = f"map_{slug_coluna(col_bling)}"
-
+        estado_key = f"map_{slug_coluna(col_bling)}"
         valor_inicial = st.session_state.get("mapeamento_manual", {}).get(col_bling, "")
-        if valor_inicial not in opcoes:
+
+        if estado_key in st.session_state:
+            valor_inicial = st.session_state.get(estado_key, valor_inicial)
+
+        if valor_inicial not in todas_opcoes:
             valor_inicial = ""
 
-        if key not in st.session_state:
-            st.session_state[key] = valor_inicial
+        valores_atuais[col_bling] = valor_inicial
+
+    for col_bling in colunas_bling:
+        obrigatorio = col_bling in obrigatorios
+        estado_key = f"map_{slug_coluna(col_bling)}"
+        valor_atual = valores_atuais.get(col_bling, "")
+
+        usadas_por_outros = {
+            valores_atuais.get(outro_campo, "")
+            for outro_campo in colunas_bling
+            if outro_campo != col_bling and valores_atuais.get(outro_campo, "")
+        }
+
+        opcoes = [""]
+        for col in todas_opcoes:
+            if col == valor_atual or col not in usadas_por_outros:
+                opcoes.append(col)
+
+        if valor_atual not in opcoes:
+            valor_atual = ""
+
+        if estado_key not in st.session_state or st.session_state.get(estado_key) not in opcoes:
+            st.session_state[estado_key] = valor_atual
 
         c1, c2, c3, c4, c5 = st.columns([2.2, 0.9, 2.3, 2.5, 1.2])
 
@@ -1109,14 +1134,21 @@ def construir_mapeamento_visual(df_origem: pd.DataFrame, modo: str) -> dict:
             escolha = st.selectbox(
                 f"Mapear {col_bling}",
                 options=opcoes,
-                key=key,
+                key=estado_key,
                 label_visibility="collapsed",
             )
 
+        valores_atuais[col_bling] = escolha or ""
+
         with c4:
             preview = ""
-            if escolha and escolha in primeira.columns and not primeira.empty:
-                preview = formatar_preview_valor(primeira.iloc[0][escolha])
+            if escolha and escolha in df_origem.columns and not df_origem.empty:
+                valores_validos = df_origem[escolha].fillna("").astype(str).tolist()
+                for valor in valores_validos:
+                    valor_limpo = formatar_preview_valor(valor)
+                    if valor_limpo:
+                        preview = valor_limpo
+                        break
             st.caption(preview or "-")
 
         with c5:
@@ -1161,13 +1193,13 @@ def calcular_preco_venda(
     taxa_percentual = max(taxa_percentual, 0.0)
     valor_fixo = max(valor_fixo, 0.0)
 
-    percentual_total = (lucro_percentual + imposto_percentual + taxa_percentual) / 100.0
-    base = custo + valor_fixo
+    preco = custo
+    preco += custo * (lucro_percentual / 100.0)
+    preco += custo * (imposto_percentual / 100.0)
+    preco += custo * (taxa_percentual / 100.0)
+    preco += valor_fixo
 
-    if percentual_total >= 0.999:
-        return round(base, 2)
-
-    return round(base / (1.0 - percentual_total), 2)
+    return round(preco, 2)
 
 
 # =========================================================
@@ -1398,9 +1430,21 @@ def main() -> None:
     c2.metric("Colunas do fornecedor", len(df_origem.columns))
     c3.metric("Fornecedor ID", st.session_state["fornecedor_id"] or "-")
 
-    with st.expander("Ver colunas lidas do fornecedor"):
-        st.write(list(df_origem.columns))
-        st.dataframe(df_origem.head(3), use_container_width=True)
+    with st.expander("👀 Ver planilha do fornecedor", expanded=False):
+        try:
+            df_origem_preview = df_origem.astype(str)
+        except Exception:
+            df_origem_preview = df_origem.copy()
+
+        st.markdown("### 📊 Prévia da planilha (dados reais)")
+        st.dataframe(df_origem_preview.head(20), use_container_width=True)
+
+        st.markdown("### 🧠 Colunas detectadas")
+        df_colunas = pd.DataFrame({
+            "Nº": list(range(1, len(df_origem.columns) + 1)),
+            "Nome da coluna": list(df_origem.columns),
+        })
+        st.dataframe(df_colunas, use_container_width=True, hide_index=True)
 
     st.markdown("## 2) Sugestão inteligente refinada")
 
