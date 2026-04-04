@@ -1,253 +1,205 @@
+import io
+from typing import Dict, List
+
 import pandas as pd
 import streamlit as st
+
+
+CAMPOS_SISTEMA = [
+    "— Não mapear —",
+    "ID",
+    "Código",
+    "Descrição",
+    "Unidade",
+    "NCM",
+    "Origem",
+    "Preço",
+    "Valor IPI fixo",
+    "Observações",
+    "Situação",
+    "Estoque",
+    "Preço de custo",
+]
+
+CHAVE_MAPEAMENTO = "mapeamento_fornecedor_para_sistema"
 
 
 # =========================
 # UTIL
 # =========================
-def normalizar_df(df):
+def normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     df = df.fillna("")
     return df
 
 
-def carregar_planilha(file):
+def _read_excel(file) -> pd.DataFrame:
+    file.seek(0)
+    return pd.read_excel(file, dtype=str, engine="openpyxl")
+
+
+def _read_csv(file, sep=None) -> pd.DataFrame:
+    file.seek(0)
+    return pd.read_csv(file, dtype=str, sep=sep)
+
+
+def carregar_planilha(file) -> pd.DataFrame:
     nome = (getattr(file, "name", "") or "").lower()
 
-    try:
-        file.seek(0)
-    except Exception:
-        pass
+    erros: List[str] = []
 
-    if nome.endswith(".xlsx") or nome.endswith(".xls"):
+    if nome.endswith((".xlsx", ".xls")):
         try:
-            df = pd.read_excel(file, dtype=str, engine="openpyxl")
-            return normalizar_df(df)
-        except Exception:
-            try:
-                file.seek(0)
-            except Exception:
-                pass
+            return normalizar_df(_read_excel(file))
+        except Exception as exc:
+            erros.append(f"excel: {exc}")
 
-    try:
-        df = pd.read_csv(file, dtype=str)
-        return normalizar_df(df)
-    except Exception:
+    for sep in (None, ";", "\t", "|"):
         try:
-            file.seek(0)
-        except Exception:
-            pass
+            return normalizar_df(_read_csv(file, sep=sep))
+        except Exception as exc:
+            erros.append(f"csv({sep}): {exc}")
 
     try:
-        df = pd.read_csv(file, dtype=str, sep=";")
-        return normalizar_df(df)
-    except Exception:
-        try:
-            file.seek(0)
-        except Exception:
-            pass
+        return normalizar_df(_read_excel(file))
+    except Exception as exc:
+        erros.append(f"excel-final: {exc}")
 
-    df = pd.read_excel(file, dtype=str, engine="openpyxl")
-    return normalizar_df(df)
+    raise ValueError("Não foi possível ler a planilha enviada.")
 
 
-def _texto_preview(valor, limite=60):
+def _texto_preview(valor, limite=80) -> str:
     texto = str(valor or "").replace("\n", " ").replace("\r", " ").strip()
     if len(texto) <= limite:
         return texto
     return texto[:limite].rstrip() + "..."
 
 
-# =========================
-# MAPEAMENTO NO PRÓPRIO PREVIEW
-# =========================
-def render_mapeamento_preview(df):
-    st.markdown("### Mapeamento")
+def _inicializar_mapeamento(colunas_fornecedor: List[str]) -> Dict[str, str]:
+    atual = st.session_state.get(CHAVE_MAPEAMENTO, {}) or {}
+    novo = {}
 
-    colunas_fornecedor = list(df.columns)
+    for coluna in colunas_fornecedor:
+        valor = atual.get(coluna, "— Não mapear —")
+        if valor not in CAMPOS_SISTEMA:
+            valor = "— Não mapear —"
+        novo[coluna] = valor
 
-    campos_bling = [
-        "ID",
-        "Código",
-        "Descrição",
-        "Unidade",
-        "NCM",
-        "Origem",
-        "Preço",
-        "Valor IPI fixo",
-        "Observações",
-        "Situação",
-        "Estoque",
-        "Preço de custo",
-    ]
-
-    if "mapeamento_manual" not in st.session_state:
-        st.session_state.mapeamento_manual = {}
-
-    for campo in campos_bling:
-        st.session_state.mapeamento_manual.setdefault(campo, "— Não mapear —")
-
-    usados_validos = {
-        v
-        for v in st.session_state.mapeamento_manual.values()
-        if v != "— Não mapear —"
-    }
-
-    st.markdown(
-        """
-        <style>
-        .map-inline-card {
-            border: 1px solid rgba(128,128,128,0.20);
-            border-radius: 8px;
-            padding: 6px;
-            margin-bottom: 8px;
-            background: rgba(255,255,255,0.01);
-        }
-
-        .map-inline-title {
-            font-size: 12px;
-            font-weight: 700;
-            margin-bottom: 2px;
-            line-height: 1.1;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .map-inline-preview {
-            font-size: 10px;
-            color: #777;
-            margin-bottom: 4px;
-            min-height: 14px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        div[data-testid="stSelectbox"] label {
-            display: none !important;
-        }
-
-        div[data-baseweb="select"] > div {
-            min-height: 34px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    for inicio in range(0, len(campos_bling), 6):
-        linha_campos = campos_bling[inicio:inicio + 6]
-        cols = st.columns(len(linha_campos))
-
-        for idx, campo in enumerate(linha_campos):
-            with cols[idx]:
-                valor_atual = st.session_state.mapeamento_manual.get(campo, "— Não mapear —")
-
-                usados_por_outros = {
-                    st.session_state.mapeamento_manual.get(outro, "— Não mapear —")
-                    for outro in campos_bling
-                    if outro != campo and st.session_state.mapeamento_manual.get(outro, "— Não mapear —") != "— Não mapear —"
-                }
-
-                opcoes = ["— Não mapear —"]
-                for col in colunas_fornecedor:
-                    if col == valor_atual or col not in usados_por_outros:
-                        opcoes.append(col)
-
-                if valor_atual not in opcoes:
-                    valor_atual = "— Não mapear —"
-                    st.session_state.mapeamento_manual[campo] = valor_atual
-
-                exemplo = ""
-                if valor_atual != "— Não mapear —" and valor_atual in df.columns and len(df) > 0:
-                    exemplo = _texto_preview(df[valor_atual].iloc[0])
-
-                st.markdown('<div class="map-inline-card">', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="map-inline-title">{campo}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f'<div class="map-inline-preview">{exemplo if exemplo else "Sem exemplo"}</div>',
-                    unsafe_allow_html=True,
-                )
-
-                selecionado = st.selectbox(
-                    f"map_{campo}",
-                    options=opcoes,
-                    index=opcoes.index(valor_atual),
-                    key=f"map_select_{campo}",
-                    label_visibility="collapsed",
-                )
-
-                st.session_state.mapeamento_manual[campo] = selecionado
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    st.session_state.mapeamento_manual = {
-        campo: valor
-        for campo, valor in st.session_state.mapeamento_manual.items()
-        if valor != "— Não mapear —"
-    }
+    st.session_state[CHAVE_MAPEAMENTO] = novo
+    return novo
 
 
-# =========================
-# MONTA PREVIEW CONFORME MAPEAMENTO
-# =========================
-def montar_preview_mapeado(df):
-    campos_bling = [
-        "ID",
-        "Código",
-        "Descrição",
-        "Unidade",
-        "NCM",
-        "Origem",
-        "Preço",
-        "Valor IPI fixo",
-        "Observações",
-        "Situação",
-        "Estoque",
-        "Preço de custo",
-    ]
+def _resolver_duplicados(mapeamento: Dict[str, str]) -> Dict[str, str]:
+    usados = set()
+    corrigido = {}
 
-    mapeamento = st.session_state.get("mapeamento_manual", {}) or {}
-
-    linha = {}
-    for campo in campos_bling:
-        coluna_origem = mapeamento.get(campo)
-
-        if campo == "Situação":
-            linha[campo] = "Ativo"
+    for coluna, campo_sistema in mapeamento.items():
+        if campo_sistema == "— Não mapear —":
+            corrigido[coluna] = campo_sistema
             continue
 
-        if coluna_origem and coluna_origem in df.columns and len(df) > 0:
-            linha[campo] = df[coluna_origem].iloc[0]
+        if campo_sistema in usados:
+            corrigido[coluna] = "— Não mapear —"
         else:
-            linha[campo] = ""
+            corrigido[coluna] = campo_sistema
+            usados.add(campo_sistema)
 
-    return pd.DataFrame([linha])
+    return corrigido
+
+
+def _montar_linha_mapeamento(colunas_fornecedor: List[str]) -> pd.DataFrame:
+    mapeamento = _inicializar_mapeamento(colunas_fornecedor)
+    return pd.DataFrame([mapeamento], index=["Relacionar com"])
+
+
+def _salvar_mapeamento_editado(df_mapeamento: pd.DataFrame) -> None:
+    linha = df_mapeamento.iloc[0].to_dict()
+    linha = {
+        str(coluna): (valor if valor in CAMPOS_SISTEMA else "— Não mapear —")
+        for coluna, valor in linha.items()
+    }
+
+    linha = _resolver_duplicados(linha)
+    st.session_state[CHAVE_MAPEAMENTO] = linha
+
+    # compatibilidade com o restante do app:
+    # sistema -> coluna do fornecedor
+    st.session_state["mapeamento_manual"] = {
+        campo_sistema: coluna_fornecedor
+        for coluna_fornecedor, campo_sistema in linha.items()
+        if campo_sistema != "— Não mapear —"
+    }
+
+
+def _render_preview_com_mapeamento(df: pd.DataFrame) -> None:
+    st.markdown("### Preview da entrada")
+
+    preview_df = df.head(1).copy()
+    if not preview_df.empty:
+        preview_df = preview_df.applymap(_texto_preview)
+
+    st.dataframe(
+        preview_df,
+        width="stretch",
+        height=140,
+    )
+
+    st.caption("Clique nas células da linha abaixo para relacionar cada coluna do fornecedor com uma coluna do sistema.")
+
+    df_mapeamento = _montar_linha_mapeamento(list(df.columns))
+
+    column_config = {
+        coluna: st.column_config.SelectboxColumn(
+            label=coluna,
+            options=CAMPOS_SISTEMA,
+            required=False,
+            help=f"Relacionar a coluna '{coluna}' com um campo do sistema",
+            width="small",
+        )
+        for coluna in df.columns
+    }
+
+    editado = st.data_editor(
+        df_mapeamento,
+        width="stretch",
+        hide_index=False,
+        num_rows="fixed",
+        disabled=False,
+        column_config=column_config,
+        key="preview_mapeamento_editor",
+    )
+
+    _salvar_mapeamento_editado(editado)
+
+    valores = list(st.session_state[CHAVE_MAPEAMENTO].values())
+    usados = [v for v in valores if v != "— Não mapear —"]
+    if len(usados) != len(set(usados)):
+        st.warning("Campos duplicados foram liberados automaticamente e os repetidos voltaram para 'Não mapear'.")
 
 
 # =========================
 # MAIN
 # =========================
 def render_origem_dados():
-    st.subheader("Origem de Dados")
+    st.subheader("📥 Origem de Dados")
 
-    arquivo = st.file_uploader("Anexar planilha do fornecedor", type=["xlsx", "xls", "csv"])
+    arquivo = st.file_uploader(
+        "Anexar planilha do fornecedor",
+        type=["xlsx", "xls", "csv"],
+    )
 
     if not arquivo:
         return
 
-    df = carregar_planilha(arquivo)
+    try:
+        df = carregar_planilha(arquivo)
+    except Exception as exc:
+        st.error(f"Erro ao ler planilha: {exc}")
+        return
+
     st.session_state.df_origem = df
 
     st.success(f"✅ Planilha carregada: {df.shape[0]} linhas")
 
-    preview_df = montar_preview_mapeado(df)
-
-    st.markdown("### Preview da entrada")
-    st.dataframe(preview_df.head(1), width="stretch", height=120)
-
-    render_mapeamento_preview(df)
+    _render_preview_com_mapeamento(df)
