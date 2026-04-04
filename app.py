@@ -1,4 +1,4 @@
-import json
+import re
 from io import BytesIO
 from typing import Dict, List, Optional
 
@@ -13,11 +13,20 @@ from bling_app_zero.core.perfil_colunas import (
 )
 from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.core.bling_sync import BlingSyncService
+from bling_app_zero.core.roteador_entrada import (
+    carregar_entrada_upload,
+    carregar_entrada_urls,
+    detectar_modo_visual_por_upload,
+)
 
 st.set_page_config(page_title="Bling Manual PRO", layout="wide")
 
 MODO_CADASTRO = "Cadastro de produtos"
 MODO_ESTOQUE = "Atualização de estoque"
+
+ORIGEM_PLANILHA = "Anexar planilha"
+ORIGEM_XML = "Anexar XML da nota fiscal"
+ORIGEM_SITE = "Anexar site / URLs"
 
 
 # =========================================================
@@ -45,7 +54,16 @@ def safe_float(value) -> Optional[float]:
         return None
 
     try:
-        txt = str(value).strip().replace(".", "").replace(",", ".")
+        txt = str(value).strip()
+        txt = txt.replace("R$", "").replace(" ", "")
+
+        # 1.234,56 -> 1234.56
+        if "," in txt and "." in txt:
+            txt = txt.replace(".", "").replace(",", ".")
+        # 123,45 -> 123.45
+        elif "," in txt:
+            txt = txt.replace(",", ".")
+
         return float(txt)
     except Exception:
         try:
@@ -54,14 +72,8 @@ def safe_float(value) -> Optional[float]:
             return None
 
 
-def safe_int(value) -> Optional[int]:
-    f = safe_float(value)
-    if f is None:
-        return None
-    try:
-        return int(round(f))
-    except Exception:
-        return None
+def format_money(value: float) -> str:
+    return f"R$ {value:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def init_state():
@@ -80,40 +92,6 @@ def init_state():
             st.session_state[key] = value
 
 
-def detectar_tipo_visual(arquivo) -> str:
-    nome = (getattr(arquivo, "name", "") or "").lower().strip()
-
-    if nome.endswith(".xml"):
-        return "XML NF-e"
-    if nome.endswith(".csv"):
-        return "Planilha CSV"
-    if nome.endswith(".xlsx") or nome.endswith(".xls"):
-        return "Planilha Excel"
-
-    return "Arquivo"
-
-
-def calcular_preco_compra_automatico_df(df: pd.DataFrame) -> float:
-    if df is None or df.empty:
-        return 0.0
-
-    # prioridade 1: custo já calculado do XML
-    if "preco_custo" in df.columns:
-        serie_custo = pd.to_numeric(df["preco_custo"], errors="coerce")
-        if "quantidade" in df.columns:
-            serie_qtd = pd.to_numeric(df["quantidade"], errors="coerce").fillna(0)
-            base = pd.DataFrame({"custo": serie_custo, "qtd": serie_qtd}).dropna(subset=["custo"])
-            base = base[base["qtd"] > 0]
-            if not base.empty and base["qtd"].sum() > 0:
-                return float((base["custo"] * base["qtd"]).sum() / base["qtd"].sum())
-
-        valores = serie_custo.dropna()
-        if not valores.empty:
-            return float(valores.iloc[0])
-
-    return 0.0
-
-
 def sugestao_automatica(nome_coluna: str) -> str:
     c = str(nome_coluna).strip().lower()
 
@@ -123,30 +101,37 @@ def sugestao_automatica(nome_coluna: str) -> str:
         "cod": "codigo",
         "cprod": "codigo",
         "sku": "codigo",
+
         "nome": "nome",
         "produto": "nome",
         "titulo": "nome",
         "título": "nome",
         "descricao": "nome",
         "descrição": "nome",
+
         "descricao_curta": "descricao_curta",
         "descrição_curta": "descricao_curta",
         "xprod": "descricao_curta",
+
         "preco": "preco",
         "preço": "preco",
         "valor": "preco",
         "venda": "preco",
+
         "preco_custo": "preco_custo",
         "preço_custo": "preco_custo",
         "preco_compra_xml": "preco_custo",
         "custo": "preco_custo",
         "vuncom": "preco_custo",
+
         "estoque": "estoque",
         "quantidade": "estoque",
         "qcom": "estoque",
+
         "gtin": "gtin",
         "ean": "gtin",
         "cean": "gtin",
+
         "marca": "marca",
         "categoria": "categoria",
         "ncm": "ncm",
@@ -154,13 +139,18 @@ def sugestao_automatica(nome_coluna: str) -> str:
         "cfop": "cfop",
         "unidade": "unidade",
         "ucom": "unidade",
+
         "emitente_nome": "fornecedor",
         "emitente_fantasia": "fornecedor",
         "fornecedor": "fornecedor",
+
         "emitente_cnpj": "cnpj_fornecedor",
         "cnpj_fornecedor": "cnpj_fornecedor",
+
         "numero_nfe": "numero_nfe",
         "data_emissao": "data_emissao",
+        "imagens": "imagens",
+        "origem_arquivo_ou_url": "origem",
     }
 
     if c in mapa:
@@ -200,8 +190,34 @@ def sugestao_automatica(nome_coluna: str) -> str:
         return "numero_nfe"
     if "data" in c and "emissao" in c:
         return "data_emissao"
+    if "imagem" in c or "foto" in c:
+        return "imagens"
+    if "url" in c or "origem" in c:
+        return "origem"
 
     return ""
+
+
+def calcular_preco_compra_automatico_df(df: pd.DataFrame) -> float:
+    if df is None or df.empty:
+        return 0.0
+
+    if "preco_custo" in df.columns:
+        serie_custo = pd.to_numeric(df["preco_custo"], errors="coerce")
+
+        if "quantidade" in df.columns:
+            serie_qtd = pd.to_numeric(df["quantidade"], errors="coerce").fillna(0)
+            base = pd.DataFrame({"custo": serie_custo, "qtd": serie_qtd}).dropna(subset=["custo"])
+            base = base[base["qtd"] > 0]
+
+            if not base.empty and base["qtd"].sum() > 0:
+                return float((base["custo"] * base["qtd"]).sum() / base["qtd"].sum())
+
+        valores = serie_custo.dropna()
+        if not valores.empty:
+            return float(valores.iloc[0])
+
+    return 0.0
 
 
 # =========================================================
@@ -300,7 +316,10 @@ def render_bling_import_panel() -> None:
             limite_produtos = st.number_input("Limite de produtos", min_value=1, max_value=100, value=50, step=1)
 
         if st.button("Puxar produtos do Bling", use_container_width=True):
-            ok, payload = service.importar_produtos(pagina=int(pagina_produtos), limite=int(limite_produtos))
+            ok, payload = service.importar_produtos(
+                pagina=int(pagina_produtos),
+                limite=int(limite_produtos),
+            )
             if ok:
                 df = pd.DataFrame(payload)
                 st.session_state.bling_produtos_df = df
@@ -311,6 +330,13 @@ def render_bling_import_panel() -> None:
         df_prod = st.session_state.get("bling_produtos_df")
         if isinstance(df_prod, pd.DataFrame) and not df_prod.empty:
             st.dataframe(df_prod, use_container_width=True, height=320)
+            st.download_button(
+                "Baixar produtos do Bling em Excel",
+                data=df_to_excel_bytes(df_prod, "produtos_bling"),
+                file_name="produtos_bling.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
     with tab2:
         c1, c2, c3 = st.columns([1, 1, 1])
@@ -337,31 +363,78 @@ def render_bling_import_panel() -> None:
         df_est = st.session_state.get("bling_estoque_df")
         if isinstance(df_est, pd.DataFrame) and not df_est.empty:
             st.dataframe(df_est, use_container_width=True, height=320)
+            st.download_button(
+                "Baixar estoque do Bling em Excel",
+                data=df_to_excel_bytes(df_est, "estoque_bling"),
+                file_name="estoque_bling.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
 
 # =========================================================
-# ENTRADA + MAPEAMENTO
+# ORIGEM DE DADOS
 # =========================================================
 def render_mapping_panel() -> None:
-    st.subheader("Entrada de dados")
+    st.subheader("Origem de dados")
 
     modo = st.radio("Modo de operação", [MODO_CADASTRO, MODO_ESTOQUE], horizontal=True)
-
-    arquivo = st.file_uploader(
-        "Anexar planilha do fornecedor ou XML da NF-e",
-        type=["xlsx", "xls", "csv", "xml"],
+    origem = st.radio(
+        "Escolha a origem",
+        [ORIGEM_PLANILHA, ORIGEM_XML, ORIGEM_SITE],
+        horizontal=True,
     )
 
-    if not arquivo:
-        return
+    df = None
+    tipo_visual = ""
 
-    tipo_visual = detectar_tipo_visual(arquivo)
-    st.info(f"Entrada detectada: **{tipo_visual}**")
+    if origem == ORIGEM_PLANILHA:
+        arquivo = st.file_uploader(
+            "Anexar planilha do fornecedor",
+            type=["xlsx", "xls", "csv"],
+            key="uploader_planilha",
+        )
 
-    df = carregar_planilha(arquivo)
+        if not arquivo:
+            return
+
+        tipo_visual = detectar_modo_visual_por_upload(arquivo)
+        df = carregar_entrada_upload(arquivo)
+
+    elif origem == ORIGEM_XML:
+        arquivo = st.file_uploader(
+            "Anexar XML da nota fiscal",
+            type=["xml"],
+            key="uploader_xml",
+        )
+
+        if not arquivo:
+            return
+
+        tipo_visual = detectar_modo_visual_por_upload(arquivo)
+        df = carregar_entrada_upload(arquivo)
+
+    else:
+        texto_urls = st.text_area(
+            "Cole uma URL por linha",
+            height=180,
+            placeholder=(
+                "https://site.com/produto-1\n"
+                "https://site.com/produto-2\n"
+                "https://site.com/produto-3"
+            ),
+        )
+
+        if not texto_urls.strip():
+            return
+
+        with st.spinner("Buscando produtos nos sites..."):
+            df = carregar_entrada_urls(texto_urls)
+
+        tipo_visual = "Site / URLs"
 
     if df is None or df.empty:
-        st.error("Erro ao ler a entrada.")
+        st.error("Não foi possível gerar dados de entrada.")
         return
 
     st.session_state.df_origem = df
@@ -370,10 +443,11 @@ def render_mapping_panel() -> None:
     if tipo_visual == "XML NF-e":
         preco_auto = calcular_preco_compra_automatico_df(df)
         st.session_state.preco_compra_modulo_precificacao = preco_auto
-        st.success(
-            f"XML lido com sucesso. Preço de compra automático definido em: "
-            f"R$ {preco_auto:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
+        st.success(f"XML lido com sucesso. Preço de compra automático: {format_money(preco_auto)}")
+    else:
+        st.session_state.preco_compra_modulo_precificacao = 0.0
+
+    st.info(f"Entrada detectada: **{tipo_visual}**")
 
     assinatura = list(df.columns)
     perfil = carregar_perfil(assinatura)
@@ -434,6 +508,8 @@ def render_mapping_panel() -> None:
             "cnpj_fornecedor",
             "numero_nfe",
             "data_emissao",
+            "imagens",
+            "origem",
         ]
     else:
         campos = [
@@ -443,6 +519,7 @@ def render_mapping_panel() -> None:
             "preco",
             "preco_custo",
             "deposito_id",
+            "origem",
         ]
 
     st.markdown("#### Mapeamento manual")
@@ -488,6 +565,14 @@ def render_mapping_panel() -> None:
 
     with st.expander("Mapeamento final", expanded=False):
         st.json(mapeamento)
+
+    st.download_button(
+        "Baixar entrada tratada",
+        data=df_to_excel_bytes(df, "entrada_tratada"),
+        file_name="entrada_tratada.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 
 # =========================================================
@@ -551,10 +636,7 @@ def render_precificacao_panel() -> None:
     total_percentual = (percentual_impostos + margem_lucro + taxa_extra) / 100.0
     preco_venda = (preco_compra + custo_fixo) * (1 + total_percentual)
 
-    st.metric(
-        "Preço de venda sugerido",
-        f"R$ {preco_venda:,.4f}".replace(",", "X").replace(".", ",").replace("X", "."),
-    )
+    st.metric("Preço de venda sugerido", format_money(preco_venda))
 
     origem_atual = st.session_state.get("origem_atual", "")
     if origem_atual == "XML NF-e":
@@ -633,7 +715,7 @@ def render_send_panel() -> None:
     mapeamento = st.session_state.get("mapeamento_manual") or {}
 
     if not isinstance(df, pd.DataFrame) or df.empty:
-        st.info("Anexe primeiro a planilha ou XML.")
+        st.info("Carregue primeiro uma origem de dados.")
         return
 
     service = BlingSyncService()
