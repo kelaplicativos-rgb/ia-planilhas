@@ -34,4 +34,5 @@ def calcular_preco_venda(
         + float(margem_lucro or 0.0)
         + float(taxa_extra or 0.0)
     ) / 100.0
+
     return base * (1.0 + total_percentual)
