@@ -1,13 +1,10 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_auto import sugestao_automatica
-from bling_app_zero.core.precificacao import (
-    calcular_preco_compra_automatico_df,
-    calcular_preco_venda,
-)
+from bling_app_zero.core.precificacao import calcular_preco_venda
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 MODO_CADASTRO = "Cadastro de produtos"
@@ -17,13 +14,14 @@ ORIGEM_PLANILHA = "Anexar planilha"
 ORIGEM_XML = "Anexar XML da nota fiscal"
 ORIGEM_SITE = "Buscar em site"
 
-OPCOES_SITUACAO = ["Ativo", "Desativado"]
 OPCOES_PRECO = [
     "Usar calculadora da precificação",
     "Usar coluna da planilha",
 ]
 
+# Fixos fora do preview
 CAMPOS_FIXOS_CADASTRO = {
+    "situacao": "Ativo",
     "condicao": "NOVO",
     "frete_gratis": "NÃO",
     "volume": "1",
@@ -90,6 +88,7 @@ def _normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = df.fillna("")
 
+    # Corrige quando a primeira linha real virou dado
     if len(df.columns) > 0 and all(str(col).strip().isdigit() for col in df.columns):
         primeira_linha = [str(x).strip() for x in df.iloc[0].tolist()]
         if any(primeira_linha):
@@ -113,6 +112,7 @@ def _ler_csv_bytes(arquivo) -> pd.DataFrame:
         except Exception:
             arquivo.seek(0)
             df = pd.read_csv(arquivo, sep="\t", dtype=str)
+
     return _normalizar_dataframe(df)
 
 
@@ -120,23 +120,26 @@ def _ler_excel_bytes(arquivo, nome_arquivo: str) -> pd.DataFrame:
     arquivo.seek(0)
     nome = (nome_arquivo or "").lower()
 
-    engine = "openpyxl" if nome.endswith(".xlsx") else None
+    if nome.endswith(".xlsx"):
+        try:
+            df = pd.read_excel(arquivo, dtype=str, engine="openpyxl")
+            return _normalizar_dataframe(df)
+        except Exception:
+            arquivo.seek(0)
 
     try:
-        if engine:
-            df = pd.read_excel(arquivo, dtype=str, engine=engine)
-        else:
-            df = pd.read_excel(arquivo, dtype=str)
+        df = pd.read_excel(arquivo, dtype=str)
+        return _normalizar_dataframe(df)
     except Exception:
         arquivo.seek(0)
         bruto = pd.read_excel(arquivo, dtype=str, header=None, engine="openpyxl")
         bruto = bruto.fillna("")
         if bruto.empty:
             return pd.DataFrame()
+
         bruto.columns = [str(x).strip() for x in bruto.iloc[0].tolist()]
         df = bruto.iloc[1:].reset_index(drop=True)
-
-    return _normalizar_dataframe(df)
+        return _normalizar_dataframe(df)
 
 
 def carregar_planilha(file) -> pd.DataFrame:
@@ -188,7 +191,6 @@ def _campos_por_modo(modo: str) -> List[str]:
             "data_emissao",
             "imagens",
             "origem",
-            "situacao",
             "peso_liquido",
             "peso_bruto",
             "largura",
@@ -217,85 +219,81 @@ def _aplicar_sugestao_automatica(df: pd.DataFrame, campos_validos: List[str]) ->
     return sugestoes
 
 
+def _serie_numerica(df: pd.DataFrame, coluna: Optional[str]) -> pd.Series:
+    if not coluna or coluna not in df.columns:
+        return pd.Series(dtype=float)
+
+    serie = (
+        df[coluna]
+        .astype(str)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .str.replace("R$", "", regex=False)
+        .str.strip()
+    )
+    return pd.to_numeric(serie, errors="coerce")
+
+
 def _montar_tabela_mapeamento_final(
     mapeamento_coluna_para_campo: Dict[str, str],
-    situacao_fixa: str | None = None,
-    preco_modo: str | None = None,
-    preco_coluna: str | None = None,
-    preco_calculado: float | None = None,
+    preco_modo: str,
+    preco_coluna_custo: Optional[str],
+    preco_coluna_saida: Optional[str],
+    preco_preview: Optional[float],
 ) -> pd.DataFrame:
     linhas = []
 
-    for coluna_fornecedor, campo_codigo in mapeamento_coluna_para_campo.items():
-        if not campo_codigo:
+    # Mapeamento manual: origem = planilha fornecedora / destino = campo do Bling
+    for coluna_fornecedor, campo_destino in mapeamento_coluna_para_campo.items():
+        if not campo_destino:
             continue
 
-        if campo_codigo == "preco":
-            if preco_modo == "calculadora":
-                linhas.append(
-                    {
-                        "Campo do painel": _label_campo("preco"),
-                        "Código interno": "preco",
-                        "Origem": f"CALCULADORA DE PRECIFICAÇÃO: {preco_calculado:.2f}".replace(".", ","),
-                    }
-                )
-                continue
-            if preco_modo == "coluna" and preco_coluna:
-                linhas.append(
-                    {
-                        "Campo do painel": _label_campo("preco"),
-                        "Código interno": "preco",
-                        "Origem": preco_coluna,
-                    }
-                )
-                continue
+        if campo_destino == "preco":
+            continue
 
         linhas.append(
             {
-                "Campo do painel": _label_campo(campo_codigo),
-                "Código interno": campo_codigo,
-                "Origem": coluna_fornecedor,
+                "Campo do download": _label_campo(campo_destino),
+                "Código interno": campo_destino,
+                "Coluna fornecedora": coluna_fornecedor,
             }
         )
 
-    if preco_modo == "calculadora" and not any(l["Código interno"] == "preco" for l in linhas):
+    # Preço tratado à parte
+    if preco_modo == "calculadora" and preco_coluna_custo:
+        origem_txt = f"CALCULADORA sobre coluna: {preco_coluna_custo}"
+        if preco_preview is not None:
+            origem_txt += f" | prévia média: {preco_preview:.2f}".replace(".", ",")
+
         linhas.append(
             {
-                "Campo do painel": _label_campo("preco"),
+                "Campo do download": _label_campo("preco"),
                 "Código interno": "preco",
-                "Origem": f"CALCULADORA DE PRECIFICAÇÃO: {preco_calculado:.2f}".replace(".", ","),
+                "Coluna fornecedora": origem_txt,
             }
         )
 
-    if preco_modo == "coluna" and preco_coluna and not any(l["Código interno"] == "preco" for l in linhas):
+    elif preco_modo == "coluna" and preco_coluna_saida:
         linhas.append(
             {
-                "Campo do painel": _label_campo("preco"),
+                "Campo do download": _label_campo("preco"),
                 "Código interno": "preco",
-                "Origem": preco_coluna,
+                "Coluna fornecedora": preco_coluna_saida,
             }
         )
 
-    if situacao_fixa:
-        linhas.append(
-            {
-                "Campo do painel": _label_campo("situacao"),
-                "Código interno": "situacao",
-                "Origem": f"VALOR FIXO: {situacao_fixa}",
-            }
-        )
-
+    # Fixos fora do preview
     for campo_fixo, valor_fixo in CAMPOS_FIXOS_CADASTRO.items():
         linhas.append(
             {
-                "Campo do painel": _label_campo(campo_fixo),
+                "Campo do download": _label_campo(campo_fixo),
                 "Código interno": campo_fixo,
-                "Origem": f"VALOR FIXO: {valor_fixo}",
+                "Coluna fornecedora": f"VALOR FIXO: {valor_fixo}",
             }
         )
 
     if not linhas:
-        return pd.DataFrame(columns=["Campo do painel", "Código interno", "Origem"])
+        return pd.DataFrame(columns=["Campo do download", "Código interno", "Coluna fornecedora"])
 
     return (
         pd.DataFrame(linhas)
@@ -306,6 +304,11 @@ def _montar_tabela_mapeamento_final(
 
 def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
+
+    st.info(
+        "Sugestão de operação: manter os campos do download/Bling como base fixa "
+        "e fazer o vínculo usando as colunas da planilha fornecedora no preview."
+    )
 
     modo = st.radio(
         "Modo de operação",
@@ -330,7 +333,6 @@ def render_origem_dados() -> None:
         )
         if not arquivo:
             return
-
         df = carregar_planilha(arquivo)
 
     elif origem == ORIGEM_XML:
@@ -342,13 +344,12 @@ def render_origem_dados() -> None:
         if not arquivo:
             return
 
+        # Estrutura mínima de preview
         df = pd.DataFrame(
             [
                 {
                     "codigo": "",
                     "descricao_curta": "Produto vindo do XML",
-                    "quantidade": 1,
-                    "preco": 0.0,
                     "preco_custo": 0.0,
                     "origem": "XML NF-e",
                 }
@@ -363,7 +364,6 @@ def render_origem_dados() -> None:
         )
         if not texto_urls.strip():
             return
-
         df = carregar_entrada_urls(texto_urls)
 
     if df is None or df.empty:
@@ -372,42 +372,45 @@ def render_origem_dados() -> None:
 
     st.session_state.df_origem = df
 
-    campos = _campos_por_modo(modo)
-    sugestoes = _aplicar_sugestao_automatica(df, campos)
+    campos_destino = _campos_por_modo(modo)
+    sugestoes = _aplicar_sugestao_automatica(df, campos_destino)
 
-    st.markdown("### 💰 Definição de preço")
+    st.markdown("### Definição de preço")
+
     modo_preco_ui = st.radio(
-        "Como deseja formar o preço?",
+        "Como deseja formar o preço de venda?",
         OPCOES_PRECO,
         horizontal=True,
         key="modo_preco_ui",
     )
 
     preco_modo = "calculadora"
-    preco_coluna = None
-    preco_calculado = 0.0
-
-    preco_compra_base = calcular_preco_compra_automatico_df(df)
+    preco_coluna_custo = None
+    preco_coluna_saida = None
+    preco_preview = None
 
     if modo_preco_ui == "Usar coluna da planilha":
         preco_modo = "coluna"
-        preco_coluna = st.selectbox(
-            "Coluna da planilha para preço",
+        preco_coluna_saida = st.selectbox(
+            "Coluna fornecedora que vai virar o preço",
             options=list(df.columns),
             key="preco_coluna_planilha",
         )
     else:
         preco_modo = "calculadora"
 
+        st.caption(
+            "Aqui o preço de custo base deve ser a coluna de preços/custos da planilha "
+            "fornecedora, do site ou do XML."
+        )
+
         col_calc1, col_calc2, col_calc3 = st.columns(3)
+
         with col_calc1:
-            preco_compra_editavel = st.number_input(
-                "Preço de custo base",
-                min_value=0.0,
-                value=float(preco_compra_base or 0.0),
-                step=0.01,
-                format="%.2f",
-                key="preco_compra_base_input",
+            preco_coluna_custo = st.selectbox(
+                "Preço de custo base (coluna da planilha)",
+                options=list(df.columns),
+                key="preco_custo_base_coluna",
             )
             percentual_impostos = st.number_input(
                 "Impostos (%)",
@@ -438,7 +441,7 @@ def render_origem_dados() -> None:
 
         with col_calc3:
             custo_fixo = st.number_input(
-                "Valor fixo (R$)",
+                "Valores fixos (R$)",
                 min_value=0.0,
                 value=float(st.session_state.get("custo_fixo", 0.0)),
                 step=0.01,
@@ -446,100 +449,116 @@ def render_origem_dados() -> None:
                 key="custo_fixo",
             )
 
-        preco_calculado = calcular_preco_venda(
-            preco_compra=preco_compra_editavel,
+        serie_custo = _serie_numerica(df, preco_coluna_custo)
+        custo_base_medio = float(serie_custo.dropna().mean()) if not serie_custo.dropna().empty else 0.0
+
+        preco_preview = calcular_preco_venda(
+            preco_compra=custo_base_medio,
             percentual_impostos=percentual_impostos,
             margem_lucro=margem_lucro,
             custo_fixo=custo_fixo,
             taxa_extra=taxa_extra,
         )
-        st.success(f"Preço calculado: R$ {preco_calculado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    situacao_key = "situacao_fixa"
-    situacao_fixa = st.session_state.get(situacao_key, "Ativo")
-
-    if modo == MODO_CADASTRO:
-        situacao_fixa = st.selectbox(
-            "Situação",
-            options=OPCOES_SITUACAO,
-            index=0 if situacao_fixa == "Ativo" else 1,
-            key=situacao_key,
+        st.success(
+            f"Prévia do preço calculado pela média da coluna {preco_coluna_custo}: "
+            f"R$ {preco_preview:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         )
 
-    st.markdown("### 🛠️ Mapeamento manual por coluna do preview")
-    st.caption("Role para o lado e faça o vínculo direto em cada coluna da planilha do fornecedor.")
+        st.session_state.config_precificacao = {
+            "modo": "calculadora",
+            "coluna_custo_base": preco_coluna_custo,
+            "percentual_impostos": percentual_impostos,
+            "margem_lucro": margem_lucro,
+            "taxa_extra": taxa_extra,
+            "custo_fixo": custo_fixo,
+        }
+
+    st.divider()
+
+    st.markdown("### Mapeamento manual no preview")
+    st.caption(
+        "Colunas fixas na tela = planilha fornecedora. "
+        "Em cada coluna você escolhe o campo de destino do download/Bling."
+    )
 
     usados: List[str] = []
     if preco_modo in {"calculadora", "coluna"}:
         usados.append("preco")
 
     mapeamento: Dict[str, str] = {}
-    colunas_preview = df.columns.tolist()
+    colunas_fornecedor = df.columns.tolist()
+    colunas_ui = st.columns(len(colunas_fornecedor)) if colunas_fornecedor else []
 
-    num_colunas = max(len(colunas_preview), 1)
-    cols_ui = st.columns(num_colunas)
+    for idx, coluna_fornecedor in enumerate(colunas_fornecedor):
+        with colunas_ui[idx]:
+            st.markdown(f"**{coluna_fornecedor}**")
 
-    for idx_coluna, col in enumerate(colunas_preview):
-        with cols_ui[idx_coluna]:
-            st.markdown(f"**{col}**")
-            preview_vals = df[col].head(5).tolist()
-            preview_txt = "\n".join([f"- {str(v)}" for v in preview_vals])
-            st.caption(preview_txt if preview_txt else "-")
+            preview_vals = df[coluna_fornecedor].head(5).astype(str).tolist()
+            st.caption("\n".join([f"- {v}" for v in preview_vals]) if preview_vals else "-")
 
             valor_inicial = ""
             if isinstance(st.session_state.get("mapeamento_manual"), dict):
-                valor_inicial = st.session_state.mapeamento_manual.get(col, "")
+                valor_inicial = st.session_state.mapeamento_manual.get(coluna_fornecedor, "")
 
             if not valor_inicial:
-                valor_inicial = sugestoes.get(col, "")
+                valor_inicial = sugestoes.get(coluna_fornecedor, "")
 
             if valor_inicial == "preco" and preco_modo in {"calculadora", "coluna"}:
                 valor_inicial = ""
 
-            opcoes = [x for x in campos if x == "" or x == valor_inicial or x not in usados]
+            opcoes = [
+                campo
+                for campo in campos_destino
+                if campo == "" or campo == valor_inicial or campo not in usados
+            ]
 
             if preco_modo in {"calculadora", "coluna"}:
-                opcoes = [x for x in opcoes if x != "preco"]
+                opcoes = [campo for campo in opcoes if campo != "preco"]
 
             idx_opcao = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
             escolha = st.selectbox(
-                "Mapear",
+                f"Destino {coluna_fornecedor}",
                 options=opcoes,
                 index=idx_opcao,
-                key=f"map_preview_{col}",
+                key=f"map_preview_{coluna_fornecedor}",
                 format_func=_label_campo,
                 label_visibility="collapsed",
             )
 
-            mapeamento[col] = escolha
+            mapeamento[coluna_fornecedor] = escolha
 
-            if escolha and escolha != "situacao":
+            if escolha:
                 usados.append(escolha)
 
     st.session_state.mapeamento_manual = mapeamento
 
     tabela_mapeamento = _montar_tabela_mapeamento_final(
         mapeamento_coluna_para_campo=mapeamento,
-        situacao_fixa=situacao_fixa if modo == MODO_CADASTRO else None,
         preco_modo=preco_modo,
-        preco_coluna=preco_coluna,
-        preco_calculado=preco_calculado,
+        preco_coluna_custo=preco_coluna_custo,
+        preco_coluna_saida=preco_coluna_saida,
+        preco_preview=preco_preview,
     )
 
     st.session_state.mapeamento_final_tabela = tabela_mapeamento
     st.session_state.mapeamento_final = {
-        linha["Campo do painel"]: linha["Origem"]
+        linha["Campo do download"]: linha["Coluna fornecedora"]
         for _, linha in tabela_mapeamento.iterrows()
     }
 
-    st.markdown("### ✅ Mapeamento final")
-    st.dataframe(tabela_mapeamento, use_container_width=True, hide_index=True)
+    st.markdown("### Mapeamento final")
+    st.dataframe(
+        tabela_mapeamento,
+        width="stretch",
+        hide_index=True,
+    )
 
     st.download_button(
         "Baixar entrada tratada",
         data=df_to_excel_bytes(df),
         file_name="entrada_tratada.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
     )
