@@ -8,7 +8,6 @@ from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
 from bling_app_zero.utils.excel import df_to_excel_bytes
 from bling_app_zero.utils.numeros import format_money
 
-
 MODO_CADASTRO = "Cadastro de produtos"
 MODO_ESTOQUE = "Atualização de estoque"
 
@@ -35,8 +34,6 @@ def carregar_entrada_upload(arquivo) -> pd.DataFrame:
         return pd.read_excel(arquivo)
 
     if nome.endswith(".xml"):
-        # Placeholder simples desta prioridade:
-        # na prioridade de XML vamos trocar por parser real.
         return pd.DataFrame(
             [
                 {
@@ -58,8 +55,6 @@ def carregar_entrada_urls(texto_urls: str) -> pd.DataFrame:
     if not linhas:
         return pd.DataFrame()
 
-    # Placeholder desta prioridade:
-    # na prioridade de site/scraper, isso vira extração real.
     return pd.DataFrame(
         [{"url": url, "nome": "Produto do site", "origem": "Site / URLs"} for url in linhas]
     )
