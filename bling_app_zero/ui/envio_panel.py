@@ -21,7 +21,11 @@ def get_column_by_mapped_name(
 def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]:
     sku_col = get_column_by_mapped_name(df, mapeamento, ["sku", "codigo"])
     nome_col = get_column_by_mapped_name(df, mapeamento, ["nome"])
-    desc_col = get_column_by_mapped_name(df, mapeamento, ["descricao_curta", "descricao_html"])
+    desc_col = get_column_by_mapped_name(
+        df,
+        mapeamento,
+        ["descricao_curta", "descricao_html"],
+    )
     preco_col = get_column_by_mapped_name(df, mapeamento, ["preco"])
     custo_col = get_column_by_mapped_name(df, mapeamento, ["custo", "preco_custo"])
     estoque_col = get_column_by_mapped_name(df, mapeamento, ["estoque"])
