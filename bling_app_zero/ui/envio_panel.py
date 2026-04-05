@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -72,6 +72,94 @@ def build_stock_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]
     return rows
 
 
+def validar_produtos(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    validos: List[Dict] = []
+    invalidos: List[Dict] = []
+
+    for indice, row in enumerate(rows, start=1):
+        faltando: List[str] = []
+
+        if not row.get("codigo"):
+            faltando.append("codigo")
+        if not row.get("nome"):
+            faltando.append("nome")
+        if row.get("preco") is None or float(row.get("preco") or 0) <= 0:
+            faltando.append("preco")
+
+        if faltando:
+            invalidos.append(
+                {
+                    "linha": indice,
+                    "codigo": row.get("codigo"),
+                    "nome": row.get("nome"),
+                    "faltando": ", ".join(faltando),
+                    "payload": row,
+                }
+            )
+        else:
+            validos.append(row)
+
+    return validos, invalidos
+
+
+def validar_estoque(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    validos: List[Dict] = []
+    invalidos: List[Dict] = []
+
+    for indice, row in enumerate(rows, start=1):
+        faltando: List[str] = []
+
+        if not row.get("codigo"):
+            faltando.append("codigo")
+        if row.get("estoque") is None:
+            faltando.append("estoque")
+
+        if faltando:
+            invalidos.append(
+                {
+                    "linha": indice,
+                    "codigo": row.get("codigo"),
+                    "faltando": ", ".join(faltando),
+                    "payload": row,
+                }
+            )
+        else:
+            validos.append(row)
+
+    return validos, invalidos
+
+
+def _mostrar_resumo_validacao(
+    titulo_ok: str,
+    titulo_erro: str,
+    validos: List[Dict],
+    invalidos: List[Dict],
+) -> None:
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.metric("Linhas válidas", len(validos))
+
+    with c2:
+        st.metric("Linhas com pendência", len(invalidos))
+
+    if invalidos:
+        st.warning(
+            f"{len(invalidos)} linha(s) estão com campos obrigatórios faltando e "
+            f"precisam de conferência antes do envio."
+        )
+
+        df_invalidos = pd.DataFrame(invalidos)
+
+        with st.expander(titulo_erro, expanded=False):
+            st.dataframe(df_invalidos, use_container_width=True, height=220)
+
+    if validos:
+        st.success(f"{len(validos)} linha(s) prontas para uso.")
+        with st.expander(titulo_ok, expanded=False):
+            st.json(validos[:50])
+
+
 def render_send_panel() -> None:
     st.subheader("Enviar dados")
 
@@ -86,27 +174,45 @@ def render_send_panel() -> None:
 
     with tab1:
         rows = build_product_rows(df, mapeamento)
-        st.write(f"Linhas preparadas para cadastro: **{len(rows)}**")
+        validos, invalidos = validar_produtos(rows)
+
+        st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
 
         if st.button("Gerar preview de cadastro", use_container_width=True):
-            st.session_state["ultimo_log_envio"] = rows[:50]
+            st.session_state["ultimo_log_envio"] = {
+                "tipo": "cadastro",
+                "validos": validos[:50],
+                "invalidos": invalidos[:50],
+            }
 
-        if st.session_state.get("ultimo_log_envio"):
-            with st.expander("Preview do payload", expanded=False):
-                st.json(st.session_state["ultimo_log_envio"])
+        _mostrar_resumo_validacao(
+            "Preview de cadastro válido",
+            "Linhas de cadastro com pendência",
+            validos,
+            invalidos,
+        )
 
     with tab2:
         rows = build_stock_rows(df, mapeamento)
-        st.write(f"Linhas preparadas para estoque: **{len(rows)}**")
+        validos, invalidos = validar_estoque(rows)
+
+        st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
 
         if st.button("Gerar preview de estoque", use_container_width=True):
-            st.session_state["ultimo_log_envio"] = rows[:50]
+            st.session_state["ultimo_log_envio"] = {
+                "tipo": "estoque",
+                "validos": validos[:50],
+                "invalidos": invalidos[:50],
+            }
 
-        if st.session_state.get("ultimo_log_envio"):
-            with st.expander("Preview do payload", expanded=False):
-                st.json(st.session_state["ultimo_log_envio"])
+        _mostrar_resumo_validacao(
+            "Preview de estoque válido",
+            "Linhas de estoque com pendência",
+            validos,
+            invalidos,
+        )
 
     st.warning(
-        "Nesta prioridade, a aba de envio está preparando os payloads. "
+        "Nesta prioridade, a aba de envio está preparando e validando os payloads. "
         "O envio real para o Bling entra na prioridade de integração."
-    )
+        )
