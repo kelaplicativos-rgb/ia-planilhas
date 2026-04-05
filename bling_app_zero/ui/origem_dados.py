@@ -1,52 +1,25 @@
 import csv
 import hashlib
 import io
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import numbers
 from pandas.errors import ParserError
-
-from bling_app_zero.core.mapeamento_ia import mapear_colunas_ia
-from bling_app_zero.core.memoria_fornecedor import (
-    recuperar_mapeamento,
-    salvar_mapeamento,
-)
-from bling_app_zero.core.precificacao import (
-    calcular_preco_compra_automatico_df,
-    calcular_preco_venda,
-    calcular_preco_venda_df,
-)
-from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
 OPERACOES = {
     "cadastro": {
         "label": "Cadastro / atualização de produtos",
         "arquivo_saida": "bling_cadastro.xlsx",
-        "colunas_destino_padrao": [
-            "sku",
-            "nome",
-            "gtin",
-            "ncm",
-            "marca",
-            "categoria",
-            "preco",
-            "custo",
-            "estoque",
-            "peso",
-        ],
-        "defaults": {},
     },
     "estoque": {
         "label": "Atualização de estoque",
         "arquivo_saida": "bling_estoque.xlsx",
-        "colunas_destino_padrao": [
-            "sku",
-            "estoque",
-        ],
-        "defaults": {},
     },
 }
 
@@ -73,6 +46,85 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalizar_texto(texto: str) -> str:
+    texto = str(texto or "").strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = texto.encode("ascii", "ignore").decode("utf-8")
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _coluna_normalizada_map(colunas: List[str]) -> Dict[str, str]:
+    return {_normalizar_texto(c): c for c in colunas}
+
+
+def _render_lista_colunas_simples(colunas: List[str]) -> None:
+    if not colunas:
+        st.caption("Sem colunas para exibir.")
+        return
+
+    st.code("\n".join(str(c) for c in colunas if str(c).strip()), language=None)
+
+
+def _to_float(valor) -> float:
+    if valor is None:
+        return 0.0
+
+    try:
+        if pd.isna(valor):
+            return 0.0
+    except Exception:
+        pass
+
+    texto = str(valor).strip()
+    if not texto:
+        return 0.0
+
+    texto = (
+        texto.replace("R$", "")
+        .replace("r$", "")
+        .replace("\u00a0", "")
+        .replace(" ", "")
+    )
+
+    if "," in texto and "." in texto:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+
+    try:
+        return float(texto)
+    except Exception:
+        return 0.0
+
+
+def _serie_texto(df: pd.DataFrame, coluna: str) -> pd.Series:
+    if coluna not in df.columns:
+        return pd.Series([""] * len(df), index=df.index, dtype="string")
+
+    return (
+        df[coluna]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+    )
+
+
+def _serie_float(df: pd.DataFrame, coluna: str, default: float = 0.0) -> pd.Series:
+    if coluna not in df.columns:
+        return pd.Series([default] * len(df), index=df.index, dtype="float64")
+
+    serie = df[coluna].apply(_to_float)
+    serie = pd.to_numeric(serie, errors="coerce").fillna(default).astype("float64")
+    return serie
+
+
+# ==========================================================
+# XML
+# ==========================================================
 def _local_name(tag: str) -> str:
     if "}" in tag:
         return tag.split("}", 1)[1]
@@ -86,21 +138,6 @@ def _find_child_text(element: ET.Element, child_name: str) -> str:
     return ""
 
 
-def _render_lista_colunas_simples(colunas: List[str]) -> None:
-    """
-    Mostra somente os nomes das colunas, sem índices e sem estrutura de lista Python.
-    """
-    if not colunas:
-        st.caption("Sem colunas para exibir.")
-        return
-
-    texto = "\n".join(str(col) for col in colunas if str(col).strip())
-    st.code(texto, language=None)
-
-
-# ==========================================================
-# XML
-# ==========================================================
 def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     root = ET.fromstring(xml_bytes)
     itens = []
@@ -110,65 +147,44 @@ def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
             continue
 
         prod = None
-        imposto = None
 
         for child in list(det):
-            nome = _local_name(child.tag)
-            if nome == "prod":
+            if _local_name(child.tag) == "prod":
                 prod = child
-            elif nome == "imposto":
-                imposto = child
+                break
 
         if prod is None:
             continue
 
-        item = {
-            "cprod": _find_child_text(prod, "cProd"),
-            "cean": _find_child_text(prod, "cEAN"),
-            "xprod": _find_child_text(prod, "xProd"),
-            "ncm": _find_child_text(prod, "NCM"),
-            "cfop": _find_child_text(prod, "CFOP"),
-            "ucom": _find_child_text(prod, "uCom"),
-            "qcom": _find_child_text(prod, "qCom"),
-            "vuncom": _find_child_text(prod, "vUnCom"),
-            "vprod": _find_child_text(prod, "vProd"),
-            "ceantrib": _find_child_text(prod, "cEANTrib"),
-            "utrib": _find_child_text(prod, "uTrib"),
-            "qtrib": _find_child_text(prod, "qTrib"),
-            "vuntrib": _find_child_text(prod, "vUnTrib"),
-        }
-
-        if imposto is not None:
-            item["vtottrib"] = _find_child_text(imposto, "vTotTrib")
-        else:
-            item["vtottrib"] = ""
-
-        itens.append(item)
+        itens.append(
+            {
+                "cprod": _find_child_text(prod, "cProd"),
+                "cean": _find_child_text(prod, "cEAN"),
+                "xprod": _find_child_text(prod, "xProd"),
+                "ncm": _find_child_text(prod, "NCM"),
+                "ucom": _find_child_text(prod, "uCom"),
+                "qcom": _find_child_text(prod, "qCom"),
+                "vuncom": _find_child_text(prod, "vUnCom"),
+                "vprod": _find_child_text(prod, "vProd"),
+            }
+        )
 
     if not itens:
         raise ValueError("Nenhum produto foi encontrado no XML da NF-e.")
 
-    df = pd.DataFrame(itens)
-
-    if "vuncom" in df.columns and "custo_total_item_xml" not in df.columns:
-        df["custo_total_item_xml"] = df["vuncom"]
-
-    return _normalizar_colunas(df)
+    return _normalizar_colunas(pd.DataFrame(itens))
 
 
 # ==========================================================
 # CSV ROBUSTO
 # ==========================================================
 def _detectar_encoding(raw_bytes: bytes) -> str:
-    candidatos = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
-
-    for enc in candidatos:
+    for enc in ["utf-8-sig", "utf-8", "cp1252", "latin1"]:
         try:
             raw_bytes.decode(enc)
             return enc
         except UnicodeDecodeError:
             continue
-
     return "latin1"
 
 
@@ -189,29 +205,18 @@ def _detectar_separador(texto: str) -> str | None:
         "\t": amostra.count("\t"),
         "|": amostra.count("|"),
     }
-
     melhor = max(contagens, key=contagens.get)
-    if contagens[melhor] > 0:
-        return melhor
-
-    return None
+    return melhor if contagens[melhor] > 0 else None
 
 
-def _tentar_ler_csv_com_config(
-    texto: str,
-    sep: str | None,
-    tolerante: bool = False,
-) -> pd.DataFrame:
+def _tentar_ler_csv_com_config(texto: str, sep: str | None, tolerante: bool = False) -> pd.DataFrame:
     kwargs = {
         "engine": "python",
         "dtype": str,
         "keep_default_na": False,
     }
 
-    if sep:
-        kwargs["sep"] = sep
-    else:
-        kwargs["sep"] = None
+    kwargs["sep"] = sep if sep else None
 
     if tolerante:
         kwargs["on_bad_lines"] = "skip"
@@ -224,8 +229,6 @@ def _ler_csv_robusto(arquivo) -> Tuple[pd.DataFrame, str]:
     encoding = _detectar_encoding(raw_bytes)
     texto = raw_bytes.decode(encoding, errors="replace")
     separador = _detectar_separador(texto)
-
-    tentativas = []
 
     configuracoes = [
         {"sep": separador, "tolerante": False, "rotulo": "detecção automática"},
@@ -249,20 +252,17 @@ def _ler_csv_robusto(arquivo) -> Tuple[pd.DataFrame, str]:
                 tolerante=cfg["tolerante"],
             )
             df = _normalizar_colunas(df)
-
             if df is not None and not df.empty and len(df.columns) >= 2:
                 melhor_df = df
                 melhor_rotulo = cfg["rotulo"]
                 break
-
-        except ParserError as e:
-            tentativas.append(f"{cfg['rotulo']}: {e}")
-        except Exception as e:
-            tentativas.append(f"{cfg['rotulo']}: {e}")
+        except ParserError:
+            continue
+        except Exception:
+            continue
 
     if melhor_df is None or melhor_df.empty:
-        detalhes = " | ".join(tentativas[-4:]) if tentativas else "sem detalhes"
-        raise ValueError(f"Não foi possível ler o CSV. Tentativas: {detalhes}")
+        raise ValueError("Não foi possível ler o CSV.")
 
     _log(
         f"CSV lido com encoding {encoding} e estratégia {melhor_rotulo}"
@@ -280,49 +280,40 @@ def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
 
     if nome_arquivo.endswith(".xml"):
         xml_bytes = arquivo.getvalue()
-
         try:
             return _parse_nfe_xml_produtos(xml_bytes), "XML NF-e"
         except Exception:
             arquivo.seek(0)
             try:
-                df_xml = pd.read_xml(io.BytesIO(xml_bytes))
-                return _normalizar_colunas(df_xml), "XML genérico"
+                return _normalizar_colunas(pd.read_xml(io.BytesIO(xml_bytes))), "XML genérico"
             except Exception as e:
                 raise ValueError(f"Não foi possível ler o XML: {e}") from e
 
     if nome_arquivo.endswith(".csv"):
         return _ler_csv_robusto(arquivo)
 
-    df_excel = pd.read_excel(arquivo, dtype=str)
-    return _normalizar_colunas(df_excel), "Planilha"
+    return _normalizar_colunas(pd.read_excel(arquivo, dtype=str)), "Planilha"
 
 
 def _ler_planilha_modelo(upload_modelo, modo: str) -> Tuple[pd.DataFrame | None, List[str], str]:
     if not upload_modelo:
-        return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+        return None, [], ""
 
     try:
         df_modelo, origem_modelo = _ler_arquivo_upload(upload_modelo)
-        if df_modelo is None:
-            return None, OPERACOES[modo]["colunas_destino_padrao"], ""
-
         colunas_modelo = [str(c).strip() for c in df_modelo.columns if str(c).strip()]
-        if not colunas_modelo:
-            return None, OPERACOES[modo]["colunas_destino_padrao"], ""
-
         return df_modelo, colunas_modelo, origem_modelo
     except Exception as e:
         st.warning(f"Não foi possível ler a planilha modelo de {OPERACOES[modo]['label']}: {e}")
         _log(f"Falha ao ler modelo {modo}: {e}")
-        return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+        return None, [], ""
 
 
 # ==========================================================
 # ESTADO
 # ==========================================================
 def _limpar_estado_geracao(modo: str | None = None) -> None:
-    chaves_base = [
+    for chave in [
         "df_saida",
         "df_saida_preview_hash",
         "excel_saida_bytes",
@@ -330,10 +321,9 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "df_origem_hash",
         "coluna_preco_base_cadastro",
         "coluna_preco_destino_cadastro",
-        "modelo_cadastro_hash",
-        "modelo_estoque_hash",
-    ]
-    for chave in chaves_base:
+        "validacao_erros_saida",
+        "validacao_avisos_saida",
+    ]:
         st.session_state.pop(chave, None)
 
     if modo:
@@ -341,89 +331,53 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
 
 
 # ==========================================================
-# MAPEAMENTO / SAÍDA
+# SUGESTÕES E MAPEAMENTO
 # ==========================================================
-def _montar_df_saida_base(
-    df_origem: pd.DataFrame,
-    colunas_destino: List[str],
-    mapeamento_manual: Dict[str, str],
-    defaults: Dict[str, object] | None = None,
-) -> pd.DataFrame:
-    defaults = defaults or {}
-    df_saida = pd.DataFrame(index=df_origem.index)
+def _sugerir_por_nome_modelo(colunas_origem: List[str], colunas_modelo: List[str]) -> Dict[str, str]:
+    mapa_origem = _coluna_normalizada_map(colunas_origem)
+    resultado: Dict[str, str] = {}
 
-    for destino in colunas_destino:
-        origem_selecionada = str(mapeamento_manual.get(destino, "") or "").strip()
+    sinonimos = {
+        "codigo": ["codigo", "código", "sku", "referencia", "ref"],
+        "descricao": ["descricao", "descrição", "nome", "produto", "titulo"],
+        "unidade": ["unidade", "un", "und"],
+        "ncm": ["ncm"],
+        "marca": ["marca", "fabricante"],
+        "categoria": ["categoria", "departamento", "grupo"],
+        "preco": ["preco", "preço", "valor", "valor venda", "preco venda", "preco de venda"],
+        "preco custo": ["custo", "preco custo", "preço custo", "valor custo", "preco de custo"],
+        "estoque": ["estoque", "quantidade", "qtd", "saldo"],
+        "peso liquido": ["peso", "peso liquido", "peso líquido", "peso bruto"],
+        "ean": ["ean", "gtin", "codigo barras", "código barras", "codigo de barras"],
+    }
 
-        if origem_selecionada and origem_selecionada in df_origem.columns:
-            df_saida[destino] = df_origem[origem_selecionada]
-        else:
-            valor_padrao = defaults.get(destino, "")
-            df_saida[destino] = valor_padrao
+    for col_modelo in colunas_modelo:
+        chave = _normalizar_texto(col_modelo)
 
-    return df_saida
+        # match exato
+        if chave in mapa_origem:
+            resultado[col_modelo] = mapa_origem[chave]
+            continue
 
+        # match por sinônimo
+        for destino, termos in sinonimos.items():
+            if destino in chave:
+                for termo in termos:
+                    termo_norm = _normalizar_texto(termo)
+                    if termo_norm in mapa_origem:
+                        resultado[col_modelo] = mapa_origem[termo_norm]
+                        break
+            if col_modelo in resultado:
+                break
 
-def _aplicar_modelo_na_saida(
-    df_saida_base: pd.DataFrame,
-    colunas_modelo: List[str],
-    df_modelo: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    df_final = pd.DataFrame(index=df_saida_base.index)
+        # fallback contém
+        if col_modelo not in resultado:
+            for origem in colunas_origem:
+                if _normalizar_texto(origem) in chave or chave in _normalizar_texto(origem):
+                    resultado[col_modelo] = origem
+                    break
 
-    for col in colunas_modelo:
-        if col in df_saida_base.columns:
-            df_final[col] = df_saida_base[col]
-        else:
-            valor_padrao = ""
-            if df_modelo is not None and not df_modelo.empty and col in df_modelo.columns:
-                try:
-                    primeiro = df_modelo[col].iloc[0]
-                    valor_padrao = "" if pd.isna(primeiro) else primeiro
-                except Exception:
-                    valor_padrao = ""
-            df_final[col] = valor_padrao
-
-    return df_final
-
-
-def _sugerir_mapeamento_inicial(
-    colunas_origem: List[str],
-    colunas_destino: List[str],
-    memoria: Dict,
-) -> Dict[str, str]:
-    mapeamento_manual: Dict[str, str] = {}
-
-    try:
-        mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
-    except Exception:
-        mapeamento_memoria = {}
-
-    if mapeamento_memoria:
-        for origem, destino in mapeamento_memoria.items():
-            if destino in colunas_destino and origem in colunas_origem:
-                if destino not in mapeamento_manual:
-                    mapeamento_manual[destino] = origem
-
-    try:
-        mapa_ia = mapear_colunas_ia(colunas_origem, colunas_destino)
-    except Exception:
-        mapa_ia = {}
-
-    for origem, dados in mapa_ia.items():
-        destino = str(dados.get("destino", "") or "").strip()
-        score = float(dados.get("score", 0) or 0)
-
-        if (
-            destino
-            and destino in colunas_destino
-            and origem in colunas_origem
-            and score >= 0.60
-            and destino not in mapeamento_manual
-        ):
-            mapeamento_manual[destino] = origem
-
-    return mapeamento_manual
+    return resultado
 
 
 def _render_mapeamento_manual(
@@ -432,17 +386,17 @@ def _render_mapeamento_manual(
     state_key: str,
 ) -> Dict[str, str]:
     st.subheader("Mapeamento manual")
-    st.caption("Relacione manualmente as colunas da origem com as colunas do arquivo final.")
+    st.caption("Relacione manualmente as colunas da origem com as colunas reais do modelo final.")
 
     if state_key not in st.session_state:
-        st.session_state[state_key] = {}
+        st.session_state[state_key] = _sugerir_por_nome_modelo(list(df_origem.columns), colunas_destino)
 
     mapeamento = dict(st.session_state.get(state_key, {}))
     colunas_origem = list(df_origem.columns)
 
-    cab1, cab2, cab3 = st.columns([1.25, 1.8, 2.1])
+    cab1, cab2, cab3 = st.columns([1.3, 1.7, 2.0])
     with cab1:
-        st.markdown("**Coluna final**")
+        st.markdown("**Coluna do modelo**")
     with cab2:
         st.markdown("**Coluna da origem**")
     with cab3:
@@ -455,7 +409,7 @@ def _render_mapeamento_manual(
         if atual:
             usados.add(atual)
 
-        c1, c2, c3 = st.columns([1.25, 1.8, 2.1])
+        c1, c2, c3 = st.columns([1.3, 1.7, 2.0])
 
         with c1:
             st.markdown(f"`{destino}`")
@@ -480,8 +434,13 @@ def _render_mapeamento_manual(
         with c3:
             origem_exemplo = mapeamento.get(destino, "")
             if origem_exemplo and origem_exemplo in df_origem.columns:
-                serie = df_origem[origem_exemplo].astype(str).replace("nan", "").replace("None", "")
-                serie = serie[serie.str.strip() != ""]
+                serie = (
+                    df_origem[origem_exemplo]
+                    .astype("string")
+                    .fillna("")
+                    .str.strip()
+                )
+                serie = serie[serie != ""]
                 exemplo = serie.iloc[0] if not serie.empty else ""
                 st.caption(str(exemplo)[:120] if exemplo else "—")
             else:
@@ -497,27 +456,25 @@ def _render_mapeamento_manual(
 def _detectar_coluna_preco_base(colunas_origem: List[str]) -> str:
     prioridades = [
         "custo",
-        "preco_custo",
-        "preço_custo",
+        "preco custo",
+        "preço custo",
         "preco de custo",
-        "preço de custo",
-        "valor_unitario",
-        "valor unitario",
+        "valor custo",
         "valor",
         "preco",
         "preço",
         "vuncom",
         "vprod",
     ]
-
-    mapa = {str(col).strip().lower(): col for col in colunas_origem}
+    mapa = _coluna_normalizada_map(colunas_origem)
 
     for chave in prioridades:
-        if chave in mapa:
-            return mapa[chave]
+        chave_norm = _normalizar_texto(chave)
+        if chave_norm in mapa:
+            return mapa[chave_norm]
 
     for col in colunas_origem:
-        cl = str(col).strip().lower()
+        cl = _normalizar_texto(col)
         if "custo" in cl or "preco" in cl or "valor" in cl:
             return col
 
@@ -531,25 +488,41 @@ def _detectar_coluna_preco_destino(colunas_destino: List[str]) -> str:
         "preco venda",
         "preço venda",
         "preco de venda",
-        "preço de venda",
         "valor de venda",
-        "preco_venda",
-        "preço_venda",
-        "valor venda",
     ]
-
-    mapa = {str(col).strip().lower(): col for col in colunas_destino}
+    mapa = _coluna_normalizada_map(colunas_destino)
 
     for chave in prioridades:
-        if chave in mapa:
-            return mapa[chave]
+        chave_norm = _normalizar_texto(chave)
+        if chave_norm in mapa:
+            return mapa[chave_norm]
 
     for col in colunas_destino:
-        cl = str(col).strip().lower()
+        cl = _normalizar_texto(col)
         if "preco" in cl or "preço" in cl:
             return col
 
-    return "preco" if "preco" in colunas_destino else ""
+    return ""
+
+
+def _calcular_preco_venda_unitario(
+    preco_compra: float,
+    percentual_impostos: float,
+    margem_lucro: float,
+    custo_fixo: float,
+    taxa_extra: float,
+) -> float:
+    base = float(preco_compra or 0.0) + float(custo_fixo or 0.0)
+    impostos = float(percentual_impostos or 0.0) / 100.0
+    lucro = float(margem_lucro or 0.0) / 100.0
+    taxa = float(taxa_extra or 0.0) / 100.0
+
+    denominador = 1.0 - impostos - lucro - taxa
+    if denominador <= 0:
+        return 0.0
+
+    resultado = base / denominador
+    return round(resultado if resultado > 0 else 0.0, 2)
 
 
 def _render_calculadora_cadastro(
@@ -558,29 +531,23 @@ def _render_calculadora_cadastro(
 ) -> Dict[str, object]:
     st.divider()
     st.subheader("Calculadora de preço de venda")
-    st.caption(
-        "Selecione a coluna de custo/preço da planilha fornecedora e a coluna de preço de venda do modelo final."
-    )
+    st.caption("O preço calculado será gravado na coluna real de preço do modelo final.")
 
     colunas_origem = list(df_origem.columns)
 
-    coluna_preco_base_default = st.session_state.get("coluna_preco_base_cadastro", "")
-    if not coluna_preco_base_default or coluna_preco_base_default not in colunas_origem:
-        coluna_preco_base_default = _detectar_coluna_preco_base(colunas_origem)
+    base_default = st.session_state.get("coluna_preco_base_cadastro", "")
+    if not base_default or base_default not in colunas_origem:
+        base_default = _detectar_coluna_preco_base(colunas_origem)
 
-    coluna_preco_destino_default = st.session_state.get("coluna_preco_destino_cadastro", "")
-    if not coluna_preco_destino_default or coluna_preco_destino_default not in colunas_destino_ativas:
-        coluna_preco_destino_default = _detectar_coluna_preco_destino(colunas_destino_ativas)
+    destino_default = st.session_state.get("coluna_preco_destino_cadastro", "")
+    if not destino_default or destino_default not in colunas_destino_ativas:
+        destino_default = _detectar_coluna_preco_destino(colunas_destino_ativas)
 
     csel1, csel2 = st.columns(2)
 
     with csel1:
         opcoes_preco_origem = [""] + colunas_origem
-        idx_origem = (
-            opcoes_preco_origem.index(coluna_preco_base_default)
-            if coluna_preco_base_default in opcoes_preco_origem
-            else 0
-        )
+        idx_origem = opcoes_preco_origem.index(base_default) if base_default in opcoes_preco_origem else 0
         coluna_preco_base = st.selectbox(
             "Coluna da fornecedora usada como preço base",
             options=opcoes_preco_origem,
@@ -590,11 +557,7 @@ def _render_calculadora_cadastro(
 
     with csel2:
         opcoes_preco_destino = [""] + colunas_destino_ativas
-        idx_destino = (
-            opcoes_preco_destino.index(coluna_preco_destino_default)
-            if coluna_preco_destino_default in opcoes_preco_destino
-            else 0
-        )
+        idx_destino = opcoes_preco_destino.index(destino_default) if destino_default in opcoes_preco_destino else 0
         coluna_preco_destino = st.selectbox(
             "Coluna do modelo final que receberá o preço de venda",
             options=opcoes_preco_destino,
@@ -605,72 +568,40 @@ def _render_calculadora_cadastro(
     st.session_state["coluna_preco_base_cadastro"] = coluna_preco_base
     st.session_state["coluna_preco_destino_cadastro"] = coluna_preco_destino
 
-    preco_compra_detectado = 0.0
+    preco_base_medio = 0.0
     exemplo_base = ""
 
     if coluna_preco_base and coluna_preco_base in df_origem.columns:
-        serie_exemplo = df_origem[coluna_preco_base].astype(str)
-        serie_exemplo = serie_exemplo[serie_exemplo.str.strip() != ""]
+        serie_exemplo = _serie_texto(df_origem, coluna_preco_base)
+        serie_exemplo = serie_exemplo[serie_exemplo != ""]
         exemplo_base = serie_exemplo.iloc[0] if not serie_exemplo.empty else ""
 
-        df_tmp = pd.DataFrame({"custo": df_origem[coluna_preco_base]})
-        preco_compra_detectado = calcular_preco_compra_automatico_df(df_tmp)
-
-    st.session_state["preco_compra_modulo_precificacao"] = float(preco_compra_detectado or 0.0)
+        precos = _serie_float(df_origem, coluna_preco_base, default=0.0)
+        precos = precos[precos > 0]
+        preco_base_medio = float(precos.mean()) if not precos.empty else 0.0
 
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        margem = st.number_input(
-            "Lucro (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(st.session_state.get("calc_margem_lucro", 30.0)),
-            step=1.0,
-            key="calc_margem_lucro",
-        )
-
+        margem = st.number_input("Lucro (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="calc_margem_lucro")
     with c2:
-        impostos = st.number_input(
-            "Impostos (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(st.session_state.get("calc_impostos", 0.0)),
-            step=1.0,
-            key="calc_impostos",
-        )
-
+        impostos = st.number_input("Impostos (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="calc_impostos")
     with c3:
-        taxa_extra = st.number_input(
-            "Taxas extras (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(st.session_state.get("calc_taxa_extra", 15.0)),
-            step=1.0,
-            key="calc_taxa_extra",
-        )
-
+        taxa_extra = st.number_input("Taxas extras (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key="calc_taxa_extra")
     with c4:
-        custo_fixo = st.number_input(
-            "Custo fixo (R$)",
-            min_value=0.0,
-            value=float(st.session_state.get("calc_custo_fixo", 0.0)),
-            step=1.0,
-            key="calc_custo_fixo",
-        )
+        custo_fixo = st.number_input("Custo fixo (R$)", min_value=0.0, value=0.0, step=1.0, key="calc_custo_fixo")
 
-    preco_sugerido = calcular_preco_venda(
-        preco_compra=preco_compra_detectado,
+    preco_sugerido = _calcular_preco_venda_unitario(
+        preco_compra=preco_base_medio,
         percentual_impostos=impostos,
         margem_lucro=margem,
         custo_fixo=custo_fixo,
         taxa_extra=taxa_extra,
     )
-    st.session_state["preco_venda_calculado"] = float(preco_sugerido or 0.0)
 
     m1, m2, m3 = st.columns(3)
     with m1:
-        st.metric("Preço base médio detectado", f"R$ {preco_compra_detectado:.2f}")
+        st.metric("Preço base médio detectado", f"R$ {preco_base_medio:.2f}")
     with m2:
         st.metric("Preço de venda sugerido", f"R$ {preco_sugerido:.2f}")
     with m3:
@@ -689,38 +620,108 @@ def _render_calculadora_cadastro(
     }
 
 
-def _aplicar_preco_no_df_saida(
-    df_saida: pd.DataFrame,
+# ==========================================================
+# MONTAGEM DA SAÍDA EXATA DO MODELO
+# ==========================================================
+def _montar_df_saida_exato_modelo(
     df_origem: pd.DataFrame,
-    coluna_preco_base_origem: str,
-    coluna_preco_destino: str,
-    impostos: float,
-    margem: float,
-    custo_fixo: float,
-    taxa_extra: float,
+    colunas_modelo: List[str],
+    mapeamento_manual: Dict[str, str],
+    calculadora_cfg: Dict[str, object] | None,
+    modo: str,
 ) -> pd.DataFrame:
-    if (
-        not coluna_preco_base_origem
-        or coluna_preco_base_origem not in df_origem.columns
-        or not coluna_preco_destino
-    ):
-        return df_saida
+    df_saida = pd.DataFrame(index=df_origem.index)
 
-    df_tmp = df_saida.copy()
-    df_tmp["__preco_base__"] = df_origem[coluna_preco_base_origem]
+    for col_modelo in colunas_modelo:
+        origem = str(mapeamento_manual.get(col_modelo, "") or "").strip()
+        if origem and origem in df_origem.columns:
+            df_saida[col_modelo] = df_origem[origem]
+        else:
+            df_saida[col_modelo] = ""
 
-    df_tmp = calcular_preco_venda_df(
-        df=df_tmp,
-        coluna_preco_base="__preco_base__",
-        percentual_impostos=float(impostos or 0.0),
-        margem_lucro=float(margem or 0.0),
-        custo_fixo=float(custo_fixo or 0.0),
-        taxa_extra=float(taxa_extra or 0.0),
-        nome_coluna_saida=coluna_preco_destino,
-    )
+    if modo == "cadastro" and calculadora_cfg:
+        col_base = str(calculadora_cfg.get("coluna_preco_base", "") or "").strip()
+        col_destino = str(calculadora_cfg.get("coluna_preco_destino", "") or "").strip()
 
-    df_tmp = df_tmp.drop(columns=["__preco_base__"], errors="ignore")
-    return df_tmp
+        if col_base and col_base in df_origem.columns and col_destino:
+            base = _serie_float(df_origem, col_base, default=0.0)
+            df_saida[col_destino] = base.apply(
+                lambda valor: _calcular_preco_venda_unitario(
+                    preco_compra=valor,
+                    percentual_impostos=float(calculadora_cfg.get("impostos", 0.0)),
+                    margem_lucro=float(calculadora_cfg.get("margem", 0.0)),
+                    custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
+                    taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
+                )
+                if float(valor) > 0
+                else 0.0
+            )
+
+    return df_saida
+
+
+def _validar_saida_bling(df_saida: pd.DataFrame, modo: str) -> Tuple[List[str], List[str]]:
+    erros: List[str] = []
+    avisos: List[str] = []
+
+    if df_saida is None or df_saida.empty:
+        erros.append("Nenhum dado foi gerado.")
+        return erros, avisos
+
+    mapa_colunas = _coluna_normalizada_map(list(df_saida.columns))
+
+    obrigatorias_cadastro = [
+        ["codigo", "código"],
+        ["descricao", "descrição", "nome"],
+        ["unidade", "un"],
+        ["ncm"],
+    ]
+    obrigatorias_estoque = [
+        ["codigo", "código"],
+    ]
+
+    obrigatorias = obrigatorias_cadastro if modo == "cadastro" else obrigatorias_estoque
+
+    for grupo in obrigatorias:
+        col_real = ""
+        for alias in grupo:
+            alias_norm = _normalizar_texto(alias)
+            if alias_norm in mapa_colunas:
+                col_real = mapa_colunas[alias_norm]
+                break
+
+        if not col_real:
+            erros.append(f"Coluna obrigatória ausente no modelo: {grupo[0]}")
+            continue
+
+        serie = _serie_texto(df_saida, col_real)
+        vazios = int((serie == "").sum())
+        if vazios > 0:
+            erros.append(f"Coluna obrigatória '{col_real}' possui {vazios} linha(s) vazia(s).")
+
+    return erros, avisos
+
+
+# ==========================================================
+# EXPORTAÇÃO EXATA DO MODELO
+# ==========================================================
+def _exportar_df_exato_para_excel_bytes(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Produtos")
+        ws = writer.sheets["Produtos"]
+
+        mapa_colunas = {cell.value: cell.column_letter for cell in ws[1]}
+        texto_alvos = {"codigo", "código", "ean", "gtin", "ncm"}
+
+        for header, col_letter in mapa_colunas.items():
+            if _normalizar_texto(header) in {_normalizar_texto(x) for x in texto_alvos}:
+                for cell in ws[col_letter]:
+                    cell.number_format = numbers.FORMAT_TEXT
+
+    output.seek(0)
+    return output.getvalue()
 
 
 # ==========================================================
@@ -728,9 +729,7 @@ def _aplicar_preco_no_df_saida(
 # ==========================================================
 def render_origem_dados() -> None:
     st.subheader("Planilhas modelo para o download")
-    st.caption(
-        "Anexe os modelos oficiais. O arquivo final será montado com as mesmas colunas e na mesma ordem do modelo correspondente."
-    )
+    st.caption("Anexe os modelos oficiais. O arquivo final será baixado exatamente com as colunas e a ordem do modelo correspondente.")
 
     mc1, mc2 = st.columns(2)
 
@@ -748,14 +747,8 @@ def render_origem_dados() -> None:
             key="upload_modelo_estoque",
         )
 
-    df_modelo_cadastro, colunas_modelo_cadastro, origem_modelo_cadastro = _ler_planilha_modelo(
-        upload_modelo_cadastro,
-        "cadastro",
-    )
-    df_modelo_estoque, colunas_modelo_estoque, origem_modelo_estoque = _ler_planilha_modelo(
-        upload_modelo_estoque,
-        "estoque",
-    )
+    df_modelo_cadastro, colunas_modelo_cadastro, origem_modelo_cadastro = _ler_planilha_modelo(upload_modelo_cadastro, "cadastro")
+    df_modelo_estoque, colunas_modelo_estoque, origem_modelo_estoque = _ler_planilha_modelo(upload_modelo_estoque, "estoque")
 
     modo = st.radio(
         "Selecione a operação antes de tudo",
@@ -767,7 +760,6 @@ def render_origem_dados() -> None:
 
     config = OPERACOES[modo]
     arquivo_saida = config["arquivo_saida"]
-    defaults = config.get("defaults", {})
 
     if modo == "cadastro":
         df_modelo_ativo = df_modelo_cadastro
@@ -793,10 +785,8 @@ def render_origem_dados() -> None:
         with st.expander("Ver colunas do modelo ativo"):
             _render_lista_colunas_simples(colunas_destino_ativas)
     else:
-        st.warning(
-            "Nenhuma planilha modelo foi anexada para essa operação. "
-            "O sistema usará as colunas padrão internas."
-        )
+        st.warning("Anexe a planilha modelo da operação selecionada antes de gerar o download.")
+        return
 
     arquivo = st.file_uploader(
         "Anexar planilha ou XML da fornecedora",
@@ -838,16 +828,7 @@ def render_origem_dados() -> None:
     st.subheader("Preview da origem")
     st.dataframe(df_origem.head(10), width="stretch")
 
-    memoria = st.session_state.get("mapeamento_memoria", {})
     state_key = f"mapeamento_manual_{modo}"
-
-    if state_key not in st.session_state:
-        st.session_state[state_key] = _sugerir_mapeamento_inicial(
-            colunas_origem=list(df_origem.columns),
-            colunas_destino=colunas_destino_ativas,
-            memoria=memoria,
-        )
-
     mapeamento_manual = _render_mapeamento_manual(
         df_origem=df_origem,
         colunas_destino=colunas_destino_ativas,
@@ -864,91 +845,50 @@ def render_origem_dados() -> None:
     st.divider()
     st.subheader("Preview do que será baixado")
 
-    df_saida_base = _montar_df_saida_base(
+    df_preview_saida = _montar_df_saida_exato_modelo(
         df_origem=df_origem,
-        colunas_destino=colunas_destino_ativas,
-        mapeamento_manual=mapeamento_manual,
-        defaults=defaults,
-    )
-
-    if modo == "cadastro" and calculadora_cfg:
-        df_saida_base = _aplicar_preco_no_df_saida(
-            df_saida=df_saida_base,
-            df_origem=df_origem,
-            coluna_preco_base_origem=str(calculadora_cfg.get("coluna_preco_base", "") or "").strip(),
-            coluna_preco_destino=str(calculadora_cfg.get("coluna_preco_destino", "") or "").strip(),
-            impostos=float(calculadora_cfg.get("impostos", 0.0)),
-            margem=float(calculadora_cfg.get("margem", 0.0)),
-            custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
-            taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
-        )
-
-    df_preview_saida = _aplicar_modelo_na_saida(
-        df_saida_base=df_saida_base,
         colunas_modelo=colunas_destino_ativas,
-        df_modelo=df_modelo_ativo,
+        mapeamento_manual=mapeamento_manual,
+        calculadora_cfg=calculadora_cfg,
+        modo=modo,
     )
+
+    erros_preview, avisos_preview = _validar_saida_bling(df_preview_saida, modo)
+    st.session_state["validacao_erros_saida"] = erros_preview
+    st.session_state["validacao_avisos_saida"] = avisos_preview
 
     st.dataframe(df_preview_saida.head(20), width="stretch")
+
+    if erros_preview:
+        st.error("Pendências antes do download:\n\n- " + "\n- ".join(erros_preview))
+    elif avisos_preview:
+        st.warning("Avisos:\n\n- " + "\n- ".join(avisos_preview))
+    else:
+        st.success("Preview válido para gerar o arquivo final.")
 
     b1, b2 = st.columns(2)
 
     with b1:
         if st.button("Gerar preview final", width="stretch"):
             try:
-                df_saida_base_final = _montar_df_saida_base(
+                df_saida_final = _montar_df_saida_exato_modelo(
                     df_origem=df_origem,
-                    colunas_destino=colunas_destino_ativas,
-                    mapeamento_manual=mapeamento_manual,
-                    defaults=defaults,
-                )
-
-                if modo == "cadastro" and calculadora_cfg:
-                    df_saida_base_final = _aplicar_preco_no_df_saida(
-                        df_saida=df_saida_base_final,
-                        df_origem=df_origem,
-                        coluna_preco_base_origem=str(calculadora_cfg.get("coluna_preco_base", "") or "").strip(),
-                        coluna_preco_destino=str(calculadora_cfg.get("coluna_preco_destino", "") or "").strip(),
-                        impostos=float(calculadora_cfg.get("impostos", 0.0)),
-                        margem=float(calculadora_cfg.get("margem", 0.0)),
-                        custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
-                        taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
-                    )
-
-                    coluna_base = str(calculadora_cfg.get("coluna_preco_base", "") or "").strip()
-                    if coluna_base and coluna_base in df_origem.columns:
-                        st.session_state["preco_compra_modulo_precificacao"] = float(
-                            calcular_preco_compra_automatico_df(
-                                pd.DataFrame({"custo": df_origem[coluna_base]})
-                            )
-                        )
-
-                df_saida_final = _aplicar_modelo_na_saida(
-                    df_saida_base=df_saida_base_final,
                     colunas_modelo=colunas_destino_ativas,
-                    df_modelo=df_modelo_ativo,
+                    mapeamento_manual=mapeamento_manual,
+                    calculadora_cfg=calculadora_cfg,
+                    modo=modo,
                 )
 
-                if df_saida_final.empty:
-                    st.warning("Nenhum dado foi gerado.")
+                erros_final, avisos_final = _validar_saida_bling(df_saida_final, modo)
+
+                st.session_state["validacao_erros_saida"] = erros_final
+                st.session_state["validacao_avisos_saida"] = avisos_final
+
+                if erros_final:
+                    st.error("Não foi possível liberar o download porque ainda existem pendências.")
                     return
 
-                mapa_para_memoria = {}
-                for destino, origem in mapeamento_manual.items():
-                    if origem:
-                        mapa_para_memoria[origem] = destino
-
-                try:
-                    salvar_mapeamento(
-                        memoria,
-                        list(df_origem.columns),
-                        mapa_para_memoria,
-                    )
-                    st.session_state["mapeamento_memoria"] = memoria
-                except Exception as e:
-                    _log(f"Falha ao salvar memória de mapeamento: {e}")
-
-                excel_bytes = df_to_excel_bytes(df_saida_final)
+                excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_final)
 
                 st.session_state["df_saida"] = df_saida_final.copy()
                 st.session_state["df_saida_preview_hash"] = origem_hash
