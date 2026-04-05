@@ -14,7 +14,7 @@ from bling_app_zero.ui.bling_panel import (
     render_bling_panel,
 )
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.3"
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kelaplicativos-rgb/ia-planilhas/main/version.json"
 UPDATE_CHECK_TIMEOUT_SECONDS = 3
 AUTO_RERUN_LIMIT = 2
