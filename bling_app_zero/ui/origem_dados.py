@@ -23,9 +23,9 @@ from bling_app_zero.utils.excel import df_to_excel_bytes
 
 OPERACOES = {
     "cadastro": {
-        "label": "Cadastro de produtos",
+        "label": "Cadastro / atualização de produtos",
         "arquivo_saida": "bling_cadastro.xlsx",
-        "colunas_destino": [
+        "colunas_destino_padrao": [
             "sku",
             "nome",
             "gtin",
@@ -42,7 +42,7 @@ OPERACOES = {
     "estoque": {
         "label": "Atualização de estoque",
         "arquivo_saida": "bling_estoque.xlsx",
-        "colunas_destino": [
+        "colunas_destino_padrao": [
             "sku",
             "estoque",
         ],
@@ -51,15 +51,25 @@ OPERACOES = {
 }
 
 
+# ==========================================================
+# LOG
+# ==========================================================
 def _log(msg: str) -> None:
     if "logs" not in st.session_state:
         st.session_state["logs"] = []
     st.session_state["logs"].append(str(msg))
 
 
-def _gerar_hash_arquivo(df: pd.DataFrame, nome_arquivo: str) -> str:
+# ==========================================================
+# UTIL
+# ==========================================================
+def _gerar_hash_texto(texto: str) -> str:
+    return hashlib.md5(texto.encode("utf-8")).hexdigest()
+
+
+def _gerar_hash_arquivo_df(df: pd.DataFrame, nome_arquivo: str) -> str:
     base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
-    return hashlib.md5(base.encode("utf-8")).hexdigest()
+    return _gerar_hash_texto(base)
 
 
 def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
@@ -81,6 +91,9 @@ def _find_child_text(element: ET.Element, child_name: str) -> str:
     return ""
 
 
+# ==========================================================
+# XML
+# ==========================================================
 def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     root = ET.fromstring(xml_bytes)
     itens = []
@@ -136,6 +149,9 @@ def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     return _normalizar_colunas(df)
 
 
+# ==========================================================
+# CSV ROBUSTO
+# ==========================================================
 def _detectar_encoding(raw_bytes: bytes) -> str:
     candidatos = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
 
@@ -249,6 +265,9 @@ def _ler_csv_robusto(arquivo) -> Tuple[pd.DataFrame, str]:
     return melhor_df, f"CSV ({encoding})"
 
 
+# ==========================================================
+# LEITURA GERAL
+# ==========================================================
 def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
     nome_arquivo = str(getattr(arquivo, "name", "")).lower()
 
@@ -272,6 +291,29 @@ def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
     return _normalizar_colunas(df_excel), "Planilha"
 
 
+def _ler_planilha_modelo(upload_modelo, modo: str) -> Tuple[pd.DataFrame | None, List[str], str]:
+    if not upload_modelo:
+        return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+
+    try:
+        df_modelo, origem_modelo = _ler_arquivo_upload(upload_modelo)
+        if df_modelo is None:
+            return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+
+        colunas_modelo = [str(c).strip() for c in df_modelo.columns if str(c).strip()]
+        if not colunas_modelo:
+            return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+
+        return df_modelo, colunas_modelo, origem_modelo
+    except Exception as e:
+        st.warning(f"Não foi possível ler a planilha modelo de {OPERACOES[modo]['label']}: {e}")
+        _log(f"Falha ao ler modelo {modo}: {e}")
+        return None, OPERACOES[modo]["colunas_destino_padrao"], ""
+
+
+# ==========================================================
+# ESTADO
+# ==========================================================
 def _limpar_estado_geracao(modo: str | None = None) -> None:
     chaves_base = [
         "df_saida",
@@ -280,6 +322,9 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "excel_saida_nome",
         "df_origem_hash",
         "coluna_preco_base_cadastro",
+        "coluna_preco_destino_cadastro",
+        "modelo_cadastro_hash",
+        "modelo_estoque_hash",
     ]
     for chave in chaves_base:
         st.session_state.pop(chave, None)
@@ -288,7 +333,10 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         st.session_state.pop(f"mapeamento_manual_{modo}", None)
 
 
-def _montar_df_saida(
+# ==========================================================
+# MAPEAMENTO / SAÍDA
+# ==========================================================
+def _montar_df_saida_base(
     df_origem: pd.DataFrame,
     colunas_destino: List[str],
     mapeamento_manual: Dict[str, str],
@@ -307,6 +355,29 @@ def _montar_df_saida(
             df_saida[destino] = valor_padrao
 
     return df_saida
+
+
+def _aplicar_modelo_na_saida(
+    df_saida_base: pd.DataFrame,
+    colunas_modelo: List[str],
+    df_modelo: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    df_final = pd.DataFrame(index=df_saida_base.index)
+
+    for col in colunas_modelo:
+        if col in df_saida_base.columns:
+            df_final[col] = df_saida_base[col]
+        else:
+            valor_padrao = ""
+            if df_modelo is not None and not df_modelo.empty and col in df_modelo.columns:
+                try:
+                    primeiro = df_modelo[col].iloc[0]
+                    valor_padrao = "" if pd.isna(primeiro) else primeiro
+                except Exception:
+                    valor_padrao = ""
+            df_final[col] = valor_padrao
+
+    return df_final
 
 
 def _sugerir_mapeamento_inicial(
@@ -354,7 +425,7 @@ def _render_mapeamento_manual(
     state_key: str,
 ) -> Dict[str, str]:
     st.subheader("Mapeamento manual")
-    st.caption("Defina manualmente o que vai para o arquivo final antes de gerar o preview final.")
+    st.caption("Relacione manualmente as colunas da origem com as colunas do arquivo final.")
 
     if state_key not in st.session_state:
         st.session_state[state_key] = {}
@@ -362,7 +433,7 @@ def _render_mapeamento_manual(
     mapeamento = dict(st.session_state.get(state_key, {}))
     colunas_origem = list(df_origem.columns)
 
-    cab1, cab2, cab3 = st.columns([1.2, 1.8, 2.0])
+    cab1, cab2, cab3 = st.columns([1.25, 1.8, 2.1])
     with cab1:
         st.markdown("**Coluna final**")
     with cab2:
@@ -377,7 +448,7 @@ def _render_mapeamento_manual(
         if atual:
             usados.add(atual)
 
-        c1, c2, c3 = st.columns([1.2, 1.8, 2.0])
+        c1, c2, c3 = st.columns([1.25, 1.8, 2.1])
 
         with c1:
             st.markdown(f"`{destino}`")
@@ -397,7 +468,6 @@ def _render_mapeamento_manual(
                 key=f"map_{state_key}_{destino}",
                 label_visibility="collapsed",
             )
-
             mapeamento[destino] = novo_valor or ""
 
         with c3:
@@ -414,6 +484,9 @@ def _render_mapeamento_manual(
     return mapeamento
 
 
+# ==========================================================
+# PREÇO
+# ==========================================================
 def _detectar_coluna_preco_base(colunas_origem: List[str]) -> str:
     prioridades = [
         "custo",
@@ -437,37 +510,85 @@ def _detectar_coluna_preco_base(colunas_origem: List[str]) -> str:
             return mapa[chave]
 
     for col in colunas_origem:
-        col_lower = str(col).strip().lower()
-        if "custo" in col_lower or "preco" in col_lower or "valor" in col_lower:
+        cl = str(col).strip().lower()
+        if "custo" in cl or "preco" in cl or "valor" in cl:
             return col
 
     return ""
 
 
-def _render_calculadora_cadastro(df_origem: pd.DataFrame) -> Dict[str, object]:
+def _detectar_coluna_preco_destino(colunas_destino: List[str]) -> str:
+    prioridades = [
+        "preco",
+        "preço",
+        "preco venda",
+        "preço venda",
+        "preco de venda",
+        "preço de venda",
+        "valor de venda",
+        "preco_venda",
+        "preço_venda",
+        "valor venda",
+    ]
+
+    mapa = {str(col).strip().lower(): col for col in colunas_destino}
+
+    for chave in prioridades:
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in colunas_destino:
+        cl = str(col).strip().lower()
+        if "preco" in cl or "preço" in cl:
+            return col
+
+    return "preco" if "preco" in colunas_destino else ""
+
+
+def _render_calculadora_cadastro(
+    df_origem: pd.DataFrame,
+    colunas_destino_ativas: List[str],
+) -> Dict[str, object]:
     st.divider()
     st.subheader("Calculadora de preço de venda")
     st.caption(
-        "Selecione a coluna de custo/preço base da planilha fornecedora. "
-        "O valor calculado será gravado automaticamente na coluna `preco` da planilha final."
+        "Selecione a coluna de custo/preço da planilha fornecedora e a coluna de preço de venda do modelo final."
     )
 
     colunas_origem = list(df_origem.columns)
-    coluna_padrao = st.session_state.get("coluna_preco_base_cadastro", "")
 
-    if not coluna_padrao or coluna_padrao not in colunas_origem:
-        coluna_padrao = _detectar_coluna_preco_base(colunas_origem)
+    coluna_preco_base_default = st.session_state.get("coluna_preco_base_cadastro", "")
+    if not coluna_preco_base_default or coluna_preco_base_default not in colunas_origem:
+        coluna_preco_base_default = _detectar_coluna_preco_base(colunas_origem)
 
-    opcoes_preco = [""] + colunas_origem
-    index_preco = opcoes_preco.index(coluna_padrao) if coluna_padrao in opcoes_preco else 0
+    coluna_preco_destino_default = st.session_state.get("coluna_preco_destino_cadastro", "")
+    if not coluna_preco_destino_default or coluna_preco_destino_default not in colunas_destino_ativas:
+        coluna_preco_destino_default = _detectar_coluna_preco_destino(colunas_destino_ativas)
 
-    coluna_preco_base = st.selectbox(
-        "Coluna da planilha fornecedora usada como preço base",
-        options=opcoes_preco,
-        index=index_preco,
-        key="coluna_preco_base_cadastro_widget",
-    )
+    csel1, csel2 = st.columns(2)
+
+    with csel1:
+        opcoes_preco_origem = [""] + colunas_origem
+        idx_origem = opcoes_preco_origem.index(coluna_preco_base_default) if coluna_preco_base_default in opcoes_preco_origem else 0
+        coluna_preco_base = st.selectbox(
+            "Coluna da fornecedora usada como preço base",
+            options=opcoes_preco_origem,
+            index=idx_origem,
+            key="coluna_preco_base_cadastro_widget",
+        )
+
+    with csel2:
+        opcoes_preco_destino = [""] + colunas_destino_ativas
+        idx_destino = opcoes_preco_destino.index(coluna_preco_destino_default) if coluna_preco_destino_default in opcoes_preco_destino else 0
+        coluna_preco_destino = st.selectbox(
+            "Coluna do modelo final que receberá o preço de venda",
+            options=opcoes_preco_destino,
+            index=idx_destino,
+            key="coluna_preco_destino_cadastro_widget",
+        )
+
     st.session_state["coluna_preco_base_cadastro"] = coluna_preco_base
+    st.session_state["coluna_preco_destino_cadastro"] = coluna_preco_destino
 
     preco_compra_detectado = 0.0
     exemplo_base = ""
@@ -534,26 +655,18 @@ def _render_calculadora_cadastro(df_origem: pd.DataFrame) -> Dict[str, object]:
 
     m1, m2, m3 = st.columns(3)
     with m1:
-        st.metric(
-            "Preço base médio detectado",
-            f"R$ {preco_compra_detectado:.2f}",
-        )
+        st.metric("Preço base médio detectado", f"R$ {preco_compra_detectado:.2f}")
     with m2:
-        st.metric(
-            "Preço de venda sugerido",
-            f"R$ {preco_sugerido:.2f}",
-        )
+        st.metric("Preço de venda sugerido", f"R$ {preco_sugerido:.2f}")
     with m3:
-        st.metric(
-            "Exemplo da coluna base",
-            str(exemplo_base) if exemplo_base else "—",
-        )
+        st.metric("Exemplo da coluna base", str(exemplo_base) if exemplo_base else "—")
 
     if margem + impostos + taxa_extra >= 100:
-        st.warning("A soma de lucro + impostos + taxas extras está inválida. Ajuste os valores.")
+        st.warning("A soma de lucro + impostos + taxas extras precisa ser menor que 100%.")
 
     return {
         "coluna_preco_base": coluna_preco_base,
+        "coluna_preco_destino": coluna_preco_destino,
         "margem": margem,
         "impostos": impostos,
         "taxa_extra": taxa_extra,
@@ -561,8 +674,75 @@ def _render_calculadora_cadastro(df_origem: pd.DataFrame) -> Dict[str, object]:
     }
 
 
+def _aplicar_preco_no_df_saida(
+    df_saida: pd.DataFrame,
+    df_origem: pd.DataFrame,
+    coluna_preco_base_origem: str,
+    coluna_preco_destino: str,
+    impostos: float,
+    margem: float,
+    custo_fixo: float,
+    taxa_extra: float,
+) -> pd.DataFrame:
+    if (
+        not coluna_preco_base_origem
+        or coluna_preco_base_origem not in df_origem.columns
+        or not coluna_preco_destino
+    ):
+        return df_saida
+
+    df_tmp = df_saida.copy()
+    df_tmp["__preco_base__"] = df_origem[coluna_preco_base_origem]
+
+    df_tmp = calcular_preco_venda_df(
+        df=df_tmp,
+        coluna_preco_base="__preco_base__",
+        percentual_impostos=float(impostos or 0.0),
+        margem_lucro=float(margem or 0.0),
+        custo_fixo=float(custo_fixo or 0.0),
+        taxa_extra=float(taxa_extra or 0.0),
+        nome_coluna_saida=coluna_preco_destino,
+    )
+
+    df_tmp = df_tmp.drop(columns=["__preco_base__"], errors="ignore")
+    return df_tmp
+
+
+# ==========================================================
+# UI
+# ==========================================================
 def render_origem_dados() -> None:
     st.title("Origem dos dados")
+
+    st.subheader("Planilhas modelo para o download")
+    st.caption(
+        "Anexe os modelos oficiais. O arquivo final será montado com as mesmas colunas e na mesma ordem do modelo correspondente."
+    )
+
+    mc1, mc2 = st.columns(2)
+
+    with mc1:
+        upload_modelo_cadastro = st.file_uploader(
+            "Modelo de cadastro / atualização de produtos",
+            type=["xlsx", "xls", "csv"],
+            key="upload_modelo_cadastro",
+        )
+
+    with mc2:
+        upload_modelo_estoque = st.file_uploader(
+            "Modelo de atualização de estoque",
+            type=["xlsx", "xls", "csv"],
+            key="upload_modelo_estoque",
+        )
+
+    df_modelo_cadastro, colunas_modelo_cadastro, origem_modelo_cadastro = _ler_planilha_modelo(
+        upload_modelo_cadastro,
+        "cadastro",
+    )
+    df_modelo_estoque, colunas_modelo_estoque, origem_modelo_estoque = _ler_planilha_modelo(
+        upload_modelo_estoque,
+        "estoque",
+    )
 
     modo = st.radio(
         "Selecione a operação antes de tudo",
@@ -573,19 +753,44 @@ def render_origem_dados() -> None:
     )
 
     config = OPERACOES[modo]
-    colunas_destino = config["colunas_destino"]
     arquivo_saida = config["arquivo_saida"]
     defaults = config.get("defaults", {})
+
+    if modo == "cadastro":
+        df_modelo_ativo = df_modelo_cadastro
+        colunas_destino_ativas = colunas_modelo_cadastro
+        origem_modelo_ativo = origem_modelo_cadastro
+        nome_modelo_ativo = getattr(upload_modelo_cadastro, "name", "")
+    else:
+        df_modelo_ativo = df_modelo_estoque
+        colunas_destino_ativas = colunas_modelo_estoque
+        origem_modelo_ativo = origem_modelo_estoque
+        nome_modelo_ativo = getattr(upload_modelo_estoque, "name", "")
 
     st.info(
         f"Operação selecionada: **{config['label']}**. "
         "Você vai mapear manualmente, gerar o preview final e só depois baixar."
     )
 
+    if nome_modelo_ativo:
+        st.success(
+            f"Modelo ativo carregado: **{nome_modelo_ativo}** "
+            f"({origem_modelo_ativo}) com **{len(colunas_destino_ativas)}** colunas."
+        )
+        with st.expander("Ver colunas do modelo ativo"):
+            st.write(colunas_destino_ativas)
+            if df_modelo_ativo is not None and not df_modelo_ativo.empty:
+                st.dataframe(df_modelo_ativo.head(5), width="stretch")
+    else:
+        st.warning(
+            "Nenhuma planilha modelo foi anexada para essa operação. "
+            "O sistema usará as colunas padrão internas."
+        )
+
     arquivo = st.file_uploader(
-        "Anexar planilha ou XML",
+        "Anexar planilha ou XML da fornecedora",
         type=["xlsx", "xls", "csv", "xml"],
-        key=f"upload_{modo}",
+        key=f"upload_origem_{modo}",
     )
 
     if not arquivo:
@@ -603,7 +808,10 @@ def render_origem_dados() -> None:
         return
 
     nome_arquivo = str(getattr(arquivo, "name", "arquivo"))
-    origem_hash = _gerar_hash_arquivo(df_origem, f"{modo}|{nome_arquivo}")
+    assinatura_modelo = f"{modo}|{nome_modelo_ativo}|{'|'.join(colunas_destino_ativas)}"
+    origem_hash = _gerar_hash_texto(
+        f"{nome_arquivo}|{'|'.join(map(str, df_origem.columns))}|{len(df_origem)}|{assinatura_modelo}"
+    )
 
     if st.session_state.get("df_origem_hash") != origem_hash:
         _limpar_estado_geracao()
@@ -625,95 +833,94 @@ def render_origem_dados() -> None:
     if state_key not in st.session_state:
         st.session_state[state_key] = _sugerir_mapeamento_inicial(
             colunas_origem=list(df_origem.columns),
-            colunas_destino=colunas_destino,
+            colunas_destino=colunas_destino_ativas,
             memoria=memoria,
         )
 
     mapeamento_manual = _render_mapeamento_manual(
         df_origem=df_origem,
-        colunas_destino=colunas_destino,
+        colunas_destino=colunas_destino_ativas,
         state_key=state_key,
     )
 
     calculadora_cfg = None
     if modo == "cadastro":
-        calculadora_cfg = _render_calculadora_cadastro(df_origem)
+        calculadora_cfg = _render_calculadora_cadastro(
+            df_origem=df_origem,
+            colunas_destino_ativas=colunas_destino_ativas,
+        )
 
     st.divider()
     st.subheader("Preview do que será baixado")
 
-    df_preview_saida = _montar_df_saida(
+    df_saida_base = _montar_df_saida_base(
         df_origem=df_origem,
-        colunas_destino=colunas_destino,
+        colunas_destino=colunas_destino_ativas,
         mapeamento_manual=mapeamento_manual,
         defaults=defaults,
     )
 
     if modo == "cadastro" and calculadora_cfg:
-        coluna_preco_base = calculadora_cfg.get("coluna_preco_base", "")
+        df_saida_base = _aplicar_preco_no_df_saida(
+            df_saida=df_saida_base,
+            df_origem=df_origem,
+            coluna_preco_base_origem=str(calculadora_cfg.get("coluna_preco_base", "") or "").strip(),
+            coluna_preco_destino=str(calculadora_cfg.get("coluna_preco_destino", "") or "").strip(),
+            impostos=float(calculadora_cfg.get("impostos", 0.0)),
+            margem=float(calculadora_cfg.get("margem", 0.0)),
+            custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
+            taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
+        )
 
-        if coluna_preco_base and coluna_preco_base in df_origem.columns:
-            df_preview_saida = calcular_preco_venda_df(
-                df=df_preview_saida,
-                coluna_preco_base="custo" if "custo" in df_preview_saida.columns and mapeamento_manual.get("custo") == coluna_preco_base else coluna_preco_base,
-                percentual_impostos=float(calculadora_cfg.get("impostos", 0.0)),
-                margem_lucro=float(calculadora_cfg.get("margem", 0.0)),
-                custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
-                taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
-                nome_coluna_saida="preco",
-            )
-
-            if coluna_preco_base not in df_preview_saida.columns:
-                df_preview_saida[coluna_preco_base] = df_origem[coluna_preco_base]
-                df_preview_saida = calcular_preco_venda_df(
-                    df=df_preview_saida,
-                    coluna_preco_base=coluna_preco_base,
-                    percentual_impostos=float(calculadora_cfg.get("impostos", 0.0)),
-                    margem_lucro=float(calculadora_cfg.get("margem", 0.0)),
-                    custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
-                    taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
-                    nome_coluna_saida="preco",
-                )
-                df_preview_saida = df_preview_saida.drop(columns=[coluna_preco_base], errors="ignore")
+    df_preview_saida = _aplicar_modelo_na_saida(
+        df_saida_base=df_saida_base,
+        colunas_modelo=colunas_destino_ativas,
+        df_modelo=df_modelo_ativo,
+    )
 
     st.dataframe(df_preview_saida.head(20), width="stretch")
 
-    col1, col2 = st.columns(2)
+    b1, b2 = st.columns(2)
 
-    with col1:
+    with b1:
         if st.button("Gerar preview final", width="stretch"):
             try:
-                df_saida = _montar_df_saida(
+                df_saida_base_final = _montar_df_saida_base(
                     df_origem=df_origem,
-                    colunas_destino=colunas_destino,
+                    colunas_destino=colunas_destino_ativas,
                     mapeamento_manual=mapeamento_manual,
                     defaults=defaults,
                 )
 
-                if df_saida.empty:
+                if modo == "cadastro" and calculadora_cfg:
+                    df_saida_base_final = _aplicar_preco_no_df_saida(
+                        df_saida=df_saida_base_final,
+                        df_origem=df_origem,
+                        coluna_preco_base_origem=str(calculadora_cfg.get("coluna_preco_base", "") or "").strip(),
+                        coluna_preco_destino=str(calculadora_cfg.get("coluna_preco_destino", "") or "").strip(),
+                        impostos=float(calculadora_cfg.get("impostos", 0.0)),
+                        margem=float(calculadora_cfg.get("margem", 0.0)),
+                        custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
+                        taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
+                    )
+
+                    coluna_base = str(calculadora_cfg.get("coluna_preco_base", "") or "").strip()
+                    if coluna_base and coluna_base in df_origem.columns:
+                        st.session_state["preco_compra_modulo_precificacao"] = float(
+                            calcular_preco_compra_automatico_df(
+                                pd.DataFrame({"custo": df_origem[coluna_base]})
+                            )
+                        )
+
+                df_saida_final = _aplicar_modelo_na_saida(
+                    df_saida_base=df_saida_base_final,
+                    colunas_modelo=colunas_destino_ativas,
+                    df_modelo=df_modelo_ativo,
+                )
+
+                if df_saida_final.empty:
                     st.warning("Nenhum dado foi gerado.")
                     return
-
-                if modo == "cadastro" and calculadora_cfg:
-                    coluna_preco_base = str(calculadora_cfg.get("coluna_preco_base", "") or "").strip()
-
-                    if coluna_preco_base and coluna_preco_base in df_origem.columns:
-                        if "custo" not in df_saida.columns:
-                            df_saida["custo"] = df_origem[coluna_preco_base]
-
-                        df_saida = calcular_preco_venda_df(
-                            df=df_saida,
-                            coluna_preco_base="custo",
-                            percentual_impostos=float(calculadora_cfg.get("impostos", 0.0)),
-                            margem_lucro=float(calculadora_cfg.get("margem", 0.0)),
-                            custo_fixo=float(calculadora_cfg.get("custo_fixo", 0.0)),
-                            taxa_extra=float(calculadora_cfg.get("taxa_extra", 0.0)),
-                            nome_coluna_saida="preco",
-                        )
-
-                        st.session_state["preco_compra_modulo_precificacao"] = float(
-                            calcular_preco_compra_automatico_df(pd.DataFrame({"custo": df_saida["custo"]}))
-                        )
 
                 mapa_para_memoria = {}
                 for destino, origem in mapeamento_manual.items():
@@ -730,9 +937,9 @@ def render_origem_dados() -> None:
                 except Exception as e:
                     _log(f"Falha ao salvar memória de mapeamento: {e}")
 
-                excel_bytes = df_to_excel_bytes(df_saida)
+                excel_bytes = df_to_excel_bytes(df_saida_final)
 
-                st.session_state["df_saida"] = df_saida.copy()
+                st.session_state["df_saida"] = df_saida_final.copy()
                 st.session_state["df_saida_preview_hash"] = origem_hash
                 st.session_state["excel_saida_bytes"] = excel_bytes
                 st.session_state["excel_saida_nome"] = arquivo_saida
@@ -743,7 +950,7 @@ def render_origem_dados() -> None:
                 st.error(f"Erro ao gerar preview final: {e}")
                 _log(f"Erro ao gerar preview final: {e}")
 
-    with col2:
+    with b2:
         if st.button("Limpar mapeamento", width="stretch"):
             st.session_state[state_key] = {}
             st.session_state.pop("df_saida", None)
