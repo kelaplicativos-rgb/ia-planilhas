@@ -34,7 +34,13 @@ OPCOES_PRECO = [
     "Selecionar coluna da planilha",
 ]
 
-OPCOES_MAPEAMENTO = [
+# Lista padrão ampliada.
+# Se em outro ponto do sistema existir:
+# - st.session_state["colunas_modelo_cadastro"]
+# ou
+# - st.session_state["df_modelo_cadastro"]
+# essas colunas terão prioridade e aparecerão no painel fixo.
+CAMPOS_CADASTRO_BLING_PADRAO = [
     "",
     "codigo",
     "nome",
@@ -42,21 +48,82 @@ OPCOES_MAPEAMENTO = [
     "descricao_complementar",
     "marca",
     "categoria",
+    "subcategoria",
+    "grupo_produto",
     "fornecedor",
+    "fabricante",
+    "modelo",
+    "colecao",
+    "genero",
+    "linha",
+    "material",
+    "garantia",
+    "localizacao",
+    "situacao",
+    "tipo",
+    "origem",
     "ncm",
     "cest",
     "gtin",
+    "gtin_embalagem",
+    "codigo_fabricante",
+    "referencia_fabricante",
+    "referencia_fornecedor",
     "unidade",
+    "unidade_medida",
     "preco",
+    "preco_promocional",
     "preco_custo",
+    "custo",
+    "lucro",
     "estoque",
+    "estoque_minimo",
+    "estoque_maximo",
+    "deposito_id",
     "peso_liquido",
+    "peso_bruto",
     "altura",
     "largura",
     "comprimento",
+    "diametro",
+    "formato_embalagem",
+    "volume",
+    "itens_caixa",
+    "volumes",
+    "dias_preparacao",
+    "dias_garantia",
+    "condicao",
+    "frete_gratis",
+    "descricao_html",
+    "descricao_completa",
+    "seo_title",
+    "seo_description",
+    "palavras_chave",
+    "slug",
+    "link_externo",
+    "video",
+    "url_video",
+    "observacoes",
+    "imagem_1",
+    "imagem_2",
+    "imagem_3",
+    "imagem_4",
+    "imagem_5",
+    "imagem_6",
+    "imagem_7",
+    "imagem_8",
+    "imagem_9",
+    "imagem_10",
+    "variacao_nome",
+    "variacao_valor",
+    "tributacao",
+    "classe_fiscal",
+    "tipo_producao",
+    "departamento",
 ]
 
 CHAVE_MAPEAMENTO_PREVIEW = "mapeamento_preview_editor"
+CHAVE_OPCOES_MAPEAMENTO = "opcoes_mapeamento_preview"
 
 
 # =========================
@@ -67,6 +134,7 @@ def normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.fillna("")
     df.columns = [str(c).strip() for c in df.columns]
 
+    # Corrigir cabeçalho errado
     if len(df.columns) > 0 and all(str(c).isdigit() for c in df.columns):
         df.columns = df.iloc[0]
         df = df.iloc[1:].reset_index(drop=True)
@@ -108,37 +176,64 @@ def carregar_planilha(file) -> pd.DataFrame:
     return normalizar_df(df)
 
 
-def _texto_preview(valor, limite=60):
+def _texto_preview(valor, limite=34):
     texto = str(valor or "").replace("\n", " ").replace("\r", " ").strip()
     if len(texto) <= limite:
         return texto
     return texto[:limite].rstrip() + "..."
 
 
-def _inicializar_mapeamento_preview(colunas: List[str]) -> Dict[str, str]:
+def _obter_campos_modelo_bling() -> List[str]:
+    """
+    Prioridade:
+    1) st.session_state["colunas_modelo_cadastro"]
+    2) st.session_state["df_modelo_cadastro"].columns
+    3) lista padrão ampliada
+    """
+    colunas_modelo = st.session_state.get("colunas_modelo_cadastro")
+    if isinstance(colunas_modelo, list) and colunas_modelo:
+        opcoes = [""] + [str(c).strip() for c in colunas_modelo if str(c).strip()]
+        return list(dict.fromkeys(opcoes))
+
+    df_modelo = st.session_state.get("df_modelo_cadastro")
+    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
+        opcoes = [""] + [str(c).strip() for c in df_modelo.columns if str(c).strip()]
+        return list(dict.fromkeys(opcoes))
+
+    return list(dict.fromkeys(CAMPOS_CADASTRO_BLING_PADRAO))
+
+
+def _inicializar_mapeamento_preview(
+    colunas_fornecedor: List[str],
+    opcoes_mapeamento: List[str],
+) -> Dict[str, str]:
     atual = st.session_state.get(CHAVE_MAPEAMENTO_PREVIEW, {}) or {}
     novo = {}
 
-    for col in colunas:
-        valor = atual.get(col, "")
-        if valor not in OPCOES_MAPEAMENTO:
+    for col in colunas_fornecedor:
+        valor = str(atual.get(col, "") or "").strip()
+        if valor not in opcoes_mapeamento:
             valor = ""
         novo[col] = valor
 
     st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo
+    st.session_state[CHAVE_OPCOES_MAPEAMENTO] = opcoes_mapeamento
     return novo
 
 
-def _aplicar_sugestoes_iniciais(colunas: List[str]) -> Dict[str, str]:
-    atual = _inicializar_mapeamento_preview(colunas).copy()
+def _aplicar_sugestoes_iniciais(
+    colunas_fornecedor: List[str],
+    opcoes_mapeamento: List[str],
+) -> Dict[str, str]:
+    atual = _inicializar_mapeamento_preview(colunas_fornecedor, opcoes_mapeamento).copy()
     usados = {v for v in atual.values() if v}
 
-    for col in colunas:
+    for col in colunas_fornecedor:
         if atual.get(col):
             continue
 
         sugestao = sugestao_automatica(col)
-        if sugestao in OPCOES_MAPEAMENTO and sugestao not in usados:
+        if sugestao in opcoes_mapeamento and sugestao not in usados:
             atual[col] = sugestao
             usados.add(sugestao)
 
@@ -168,105 +263,24 @@ def _get_preview_rows(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    qtd = min(2, len(df))
+    qtd = min(1, len(df))
     preview = df.head(qtd).copy()
 
     for col in preview.columns:
         preview[col] = preview[col].apply(_texto_preview)
 
-    preview.index = [f"Linha {i+1}" for i in range(len(preview))]
+    preview.index = [f"Linha {i + 1}" for i in range(len(preview))]
     return preview
 
 
-def _limpar_mapeamento_preview(colunas: List[str]) -> None:
-    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = {col: "" for col in colunas}
+def _limpar_mapeamento_preview(colunas_fornecedor: List[str]) -> None:
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = {col: "" for col in colunas_fornecedor}
     if "editor_relacionar_preview" in st.session_state:
         del st.session_state["editor_relacionar_preview"]
 
 
-def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
-    colunas = list(df.columns)
-    mapeamento_atual = _aplicar_sugestoes_iniciais(colunas).copy()
-    preview_rows = _get_preview_rows(df)
-
-    st.markdown("### Preview (fixo)")
-    st.dataframe(
-        preview_rows,
-        width="stretch",
-        height=140,
-    )
-    st.caption(
-        "Relacione cada coluna do fornecedor diretamente na terceira linha."
-    )
-
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        st.info(f"Colunas detectadas: {len(colunas)}")
-    with c2:
-        st.info(f"Campos do painel: {len([x for x in OPCOES_MAPEAMENTO if x])}")
-    with c3:
-        st.info(f"Mapeados: {len([v for v in mapeamento_atual.values() if v])}")
-
-    if st.button("Limpar mapeamento", use_container_width=True):
-        _limpar_mapeamento_preview(colunas)
-        st.rerun()
-
-    df_relacionar = pd.DataFrame(
-        [[mapeamento_atual.get(col, "") for col in colunas]],
-        columns=colunas,
-        index=["Relacionar"],
-    )
-
-    column_config = {}
-    for col in colunas:
-        valor_atual = mapeamento_atual.get(col, "")
-        usados_por_outros = {
-            v for chave, v in mapeamento_atual.items() if chave != col and v
-        }
-
-        opcoes_filtradas = [
-            o
-            for o in OPCOES_MAPEAMENTO
-            if o == "" or o == valor_atual or o not in usados_por_outros
-        ]
-
-        column_config[col] = st.column_config.SelectboxColumn(
-            label=col,
-            options=opcoes_filtradas,
-            required=False,
-            width="medium",
-        )
-
-    df_relacionar_editado = st.data_editor(
-        df_relacionar,
-        width="stretch",
-        height=90,
-        hide_index=False,
-        num_rows="fixed",
-        column_config=column_config,
-        key="editor_relacionar_preview",
-    )
-
-    novo_mapeamento = {}
-    linha_editada = df_relacionar_editado.iloc[0].to_dict()
-
-    for col in colunas:
-        valor = str(linha_editada.get(col, "") or "").strip()
-        if valor not in OPCOES_MAPEAMENTO:
-            valor = ""
-        novo_mapeamento[col] = valor
-
-    novo_mapeamento = _resolver_duplicados(novo_mapeamento)
-    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo_mapeamento
-
-    return novo_mapeamento
-
-
 def _mostrar_resumo_xml(df: pd.DataFrame) -> None:
-    if df.empty:
-        return
-
-    if "origem_tipo" not in df.columns:
+    if df.empty or "origem_tipo" not in df.columns:
         return
 
     origem_tipos = {str(v).strip().lower() for v in df["origem_tipo"].dropna().tolist()}
@@ -275,7 +289,7 @@ def _mostrar_resumo_xml(df: pd.DataFrame) -> None:
 
     st.success("XML NF-e detectado e lido com sucesso.")
 
-    colunas_resumo = [
+    campos_resumo = [
         "numero_nfe",
         "serie_nfe",
         "data_emissao",
@@ -286,25 +300,113 @@ def _mostrar_resumo_xml(df: pd.DataFrame) -> None:
         "valor_produtos_nfe",
     ]
 
-    dados = {}
-    for coluna in colunas_resumo:
-        if coluna in df.columns:
-            valor = df[coluna].iloc[0]
-            if str(valor).strip():
-                dados[coluna] = valor
+    resumo = []
+    for campo in campos_resumo:
+        if campo in df.columns:
+            valor = str(df[campo].iloc[0]).strip()
+            if valor:
+                resumo.append({"Campo": campo, "Valor": valor})
 
-    if dados:
+    if resumo:
         with st.expander("Resumo do XML", expanded=False):
-            resumo_df = pd.DataFrame(
-                [{"Campo": chave, "Valor": valor} for chave, valor in dados.items()]
+            st.dataframe(
+                pd.DataFrame(resumo),
+                use_container_width=True,
+                hide_index=True,
+                height=260,
             )
-            st.dataframe(resumo_df, width="stretch", hide_index=True)
 
     if "preco_compra_xml" in df.columns:
         st.caption(
-            "O XML já trouxe o custo unitário calculado em `preco_compra_xml` "
-            "e também em `preco_custo`."
+            "O XML trouxe o custo calculado em `preco_compra_xml` e também em `preco_custo`."
         )
+
+
+def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
+    colunas_fornecedor = list(df.columns)
+    opcoes_mapeamento = _obter_campos_modelo_bling()
+    mapeamento_atual = _aplicar_sugestoes_iniciais(colunas_fornecedor, opcoes_mapeamento).copy()
+    preview_rows = _get_preview_rows(df)
+
+    st.markdown("### Preview compacto")
+
+    resumo_1, resumo_2, resumo_3 = st.columns(3)
+    with resumo_1:
+        st.metric("Colunas", len(colunas_fornecedor))
+    with resumo_2:
+        st.metric("Campos Bling", len([x for x in opcoes_mapeamento if x]))
+    with resumo_3:
+        st.metric("Mapeados", len([v for v in mapeamento_atual.values() if v]))
+
+    st.caption(
+        "A primeira linha mostra uma amostra compacta da planilha. "
+        "Na linha de baixo, relacione cada coluna do fornecedor diretamente no preview."
+    )
+
+    if not preview_rows.empty:
+        st.dataframe(
+            preview_rows,
+            use_container_width=True,
+            height=95,
+        )
+
+    if st.button("Limpar mapeamento", use_container_width=True):
+        _limpar_mapeamento_preview(colunas_fornecedor)
+        st.rerun()
+
+    df_relacionar = pd.DataFrame(
+        [[mapeamento_atual.get(col, "") for col in colunas_fornecedor]],
+        columns=colunas_fornecedor,
+        index=["Relacionar"],
+    )
+
+    column_config = {}
+    for col in colunas_fornecedor:
+        valor_atual = mapeamento_atual.get(col, "")
+        usados_por_outros = {
+            v for chave, v in mapeamento_atual.items() if chave != col and v
+        }
+
+        opcoes_filtradas = [
+            o
+            for o in opcoes_mapeamento
+            if o == "" or o == valor_atual or o not in usados_por_outros
+        ]
+
+        column_config[col] = st.column_config.SelectboxColumn(
+            label=col,
+            options=opcoes_filtradas,
+            required=False,
+            width="small",
+        )
+
+    df_relacionar_editado = st.data_editor(
+        df_relacionar,
+        use_container_width=True,
+        height=82,
+        hide_index=False,
+        num_rows="fixed",
+        column_config=column_config,
+        key="editor_relacionar_preview",
+    )
+
+    novo_mapeamento = {}
+    linha_editada = df_relacionar_editado.iloc[0].to_dict()
+
+    for col in colunas_fornecedor:
+        valor = str(linha_editada.get(col, "") or "").strip()
+        if valor not in opcoes_mapeamento:
+            valor = ""
+        novo_mapeamento[col] = valor
+
+    novo_mapeamento = _resolver_duplicados(novo_mapeamento)
+    st.session_state[CHAVE_MAPEAMENTO_PREVIEW] = novo_mapeamento
+
+    with st.expander("Ver todos os campos disponíveis do painel fixo", expanded=False):
+        campos_visiveis = [campo for campo in opcoes_mapeamento if campo]
+        st.write(campos_visiveis)
+
+    return novo_mapeamento
 
 
 # =========================
@@ -354,12 +456,11 @@ def render_origem_dados():
     )
 
     coluna_preco = None
-    colunas_disponiveis = list(df.columns)
 
     if modo_preco == OPCOES_PRECO[1]:
         coluna_preco = st.selectbox(
             "Selecione a coluna de preço",
-            colunas_disponiveis,
+            list(df.columns),
         )
         st.session_state["coluna_preco_manual"] = coluna_preco
     else:
@@ -392,16 +493,24 @@ def render_origem_dados():
 
     df_final = pd.DataFrame(resultado)
     st.markdown("### ✅ Mapeamento final")
-    st.dataframe(df_final, width="stretch")
+    st.dataframe(
+        df_final,
+        use_container_width=True,
+        height=220,
+    )
 
+    # compatibilidade com o restante do sistema
     st.session_state.mapeamento_manual = mapeamento
     st.session_state.mapeamento_final = {
         item["Campo painel"]: item["Origem"] for item in resultado
     }
 
+    # =========================
+    # DOWNLOAD
+    # =========================
     st.download_button(
         "Baixar entrada tratada",
         data=df_to_excel_bytes(df),
         file_name="entrada.xlsx",
-        width="stretch",
+        use_container_width=True,
     )
