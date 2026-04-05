@@ -2,7 +2,7 @@ import traceback
 
 import streamlit as st
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 from bling_app_zero.ui.state import init_state
 from bling_app_zero.ui import origem_dados as origem_dados_ui
