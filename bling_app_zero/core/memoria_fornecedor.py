@@ -1,21 +1,36 @@
-# bling_app_zero/core/memoria_fornecedor.py
+import hashlib
+from typing import Dict, List
 
-from typing import Dict
 
-
-def gerar_hash_fornecedor(colunas: list) -> str:
+def gerar_hash_fornecedor(colunas: List[str]) -> str:
     """
-    Gera uma assinatura do fornecedor baseada nas colunas
+    Gera uma assinatura estável do fornecedor baseada nas colunas.
+    Usa md5 para que a mesma estrutura gere sempre a mesma chave,
+    mesmo após reiniciar o app.
     """
-    base = "|".join(sorted([str(c).lower() for c in colunas]))
-    return str(abs(hash(base)))
+    colunas_normalizadas = sorted(str(c).strip().lower() for c in colunas if c is not None)
+    base = "|".join(colunas_normalizadas)
+    return hashlib.md5(base.encode("utf-8")).hexdigest()
 
 
-def salvar_mapeamento(memoria: Dict, colunas: list, mapeamento: Dict):
+def salvar_mapeamento(memoria: Dict, colunas: List[str], mapeamento: Dict) -> None:
+    """
+    Salva o mapeamento na memória usando a chave estável do fornecedor.
+    """
+    if memoria is None:
+        return
+
     chave = gerar_hash_fornecedor(colunas)
-    memoria[chave] = mapeamento
+    memoria[chave] = dict(mapeamento or {})
 
 
-def recuperar_mapeamento(memoria: Dict, colunas: list) -> Dict:
+def recuperar_mapeamento(memoria: Dict, colunas: List[str]) -> Dict:
+    """
+    Recupera o mapeamento salvo para a estrutura de colunas informada.
+    """
+    if not memoria:
+        return {}
+
     chave = gerar_hash_fornecedor(colunas)
-    return memoria.get(chave, {})
+    mapeamento = memoria.get(chave, {})
+    return dict(mapeamento or {})
