@@ -41,7 +41,7 @@ COLUNAS_DESTINO = [
 
 def tela_origem_dados():
 
-    st.title("📥 Origem dos Dados")
+    st.title("🤖 Modo Automático Inteligente")
 
     arquivo = st.file_uploader(
         "Anexar planilha ou XML",
@@ -72,101 +72,82 @@ def tela_origem_dados():
     colunas_origem = list(df.columns)
 
     # =========================
-    # IA MAPEAMENTO
+    # IA MAPEAMENTO AUTOMÁTICO
     # =========================
 
     mapa_ia = mapear_colunas_ia(colunas_origem, COLUNAS_DESTINO)
 
-    # estado persistente
-    if "mapeamento" not in st.session_state:
-        st.session_state.mapeamento = {}
+    mapeamento_auto = {}
+
+    for col, dados in mapa_ia.items():
+        destino = dados.get("destino")
+        score = dados.get("score", 0)
+
+        # só aceita se confiança alta
+        if destino and score >= 0.6:
+            mapeamento_auto[col] = destino
 
     # =========================
-    # PREVIEW COMPACTO (MOBILE)
+    # PREVIEW INTELIGENTE
     # =========================
 
-    st.subheader("⚡ Preview inteligente (toque para mapear)")
+    st.subheader("⚡ Resultado automático")
 
-    df_preview = df.head(1)
+    if mapeamento_auto:
 
-    for col in colunas_origem:
+        df_preview = pd.DataFrame()
 
-        sugestao = mapa_ia.get(col, {})
-        destino_sugerido = sugestao.get("destino")
-        score = sugestao.get("score", 0)
+        for origem, destino in mapeamento_auto.items():
+            df_preview[destino] = df[origem]
 
-        valor_preview = str(df_preview[col].iloc[0]) if col in df_preview else ""
+        st.dataframe(df_preview.head(3), use_container_width=True)
 
-        with st.container():
+        st.success(f"{len(mapeamento_auto)} campos mapeados automaticamente")
 
-            c1, c2, c3 = st.columns([2, 3, 1])
-
-            # COLUNA ORIGEM
-            with c1:
-                st.caption("Origem")
-                st.write(f"**{col}**")
-                st.caption(valor_preview[:40])
-
-            # MAPEAMENTO
-            with c2:
-                st.caption("Destino")
-
-                escolha = st.selectbox(
-                    "",
-                    [""] + COLUNAS_DESTINO,
-                    index=(COLUNAS_DESTINO.index(destino_sugerido) + 1)
-                    if destino_sugerido in COLUNAS_DESTINO else 0,
-                    key=f"map_{col}"
-                )
-
-                if escolha:
-                    st.session_state.mapeamento[col] = escolha
-
-            # SCORE IA
-            with c3:
-                st.caption("IA")
-                st.write(f"{int(score*100)}%")
+    else:
+        st.warning("Nenhum mapeamento automático confiável encontrado")
 
     # =========================
-    # LIMPAR
-    # =========================
-
-    if st.button("🧹 Limpar tudo"):
-        st.session_state.mapeamento = {}
-        st.experimental_rerun()
-
-    # =========================
-    # GERAR PLANILHA
+    # BOTÃO GERAR DIRETO
     # =========================
 
     st.divider()
 
     if st.button("🚀 Gerar planilha automática"):
 
-        if not st.session_state.mapeamento:
-            st.warning("Nenhum campo mapeado")
+        if not mapeamento_auto:
+            st.warning("Não foi possível mapear automaticamente")
             return
 
         df_saida = pd.DataFrame()
 
-        for origem, destino in st.session_state.mapeamento.items():
+        for origem, destino in mapeamento_auto.items():
             df_saida[destino] = df[origem]
 
-        # campos fixos
+        # =========================
+        # CAMPOS FIXOS
+        # =========================
+
         for campo, valor in CAMPOS_FIXOS.items():
             df_saida[campo] = valor
 
-        # IA preço
+        # =========================
+        # IA DE PREÇO
+        # =========================
+
         df_saida = calcular_preco_compra_automatico_df(df_saida)
 
-        # download
+        # =========================
+        # DOWNLOAD
+        # =========================
+
         excel_bytes = df_to_excel_bytes(df_saida)
 
         st.download_button(
-            "📥 Baixar planilha",
+            "📥 Baixar planilha pronta",
             data=excel_bytes,
-            file_name="bling_importacao.xlsx",
+            file_name="bling_importacao_auto.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Planilha pronta 🔥")
+        st.success("🔥 Processo 100% automático concluído")
