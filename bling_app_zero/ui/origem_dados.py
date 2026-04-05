@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import io
 import xml.etree.ElementTree as ET
@@ -48,8 +49,8 @@ def _find_child_text(element: ET.Element, child_name: str) -> str:
 
 def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     root = ET.fromstring(xml_bytes)
-
     itens = []
+
     for det in root.iter():
         if _local_name(det.tag) != "det":
             continue
@@ -95,11 +96,117 @@ def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
 
     df = pd.DataFrame(itens)
 
-    # Ajustes para o restante do sistema entender melhor o XML
     if "vuncom" in df.columns and "custo_total_item_xml" not in df.columns:
         df["custo_total_item_xml"] = df["vuncom"]
 
     return df
+
+
+def _detectar_encoding(raw_bytes: bytes) -> str:
+    candidatos = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
+
+    for enc in candidatos:
+        try:
+            raw_bytes.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+
+    return "latin1"
+
+
+def _detectar_separador(texto: str) -> str:
+    amostra = "\n".join(texto.splitlines()[:20]).strip()
+
+    if not amostra:
+        return ","
+
+    try:
+        dialect = csv.Sniffer().sniff(amostra, delimiters=[",", ";", "\t", "|"])
+        return dialect.delimiter
+    except Exception:
+        contagens = {
+            ";": amostra.count(";"),
+            ",": amostra.count(","),
+            "\t": amostra.count("\t"),
+            "|": amostra.count("|"),
+        }
+        return max(contagens, key=contagens.get) if any(contagens.values()) else ","
+
+
+def _normalizar_df_csv(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    colunas_invalidas = [col for col in df.columns if str(col).startswith("Unnamed:")]
+    if colunas_invalidas and len(colunas_invalidas) == len(df.columns):
+        df.columns = [f"coluna_{i + 1}" for i in range(len(df.columns))]
+
+    df = df.dropna(axis=0, how="all")
+    df = df.dropna(axis=1, how="all")
+
+    return df
+
+
+def _ler_csv_robusto(arquivo) -> pd.DataFrame:
+    raw_bytes = arquivo.getvalue()
+    if not raw_bytes:
+        raise ValueError("O CSV enviado está vazio.")
+
+    encoding = _detectar_encoding(raw_bytes)
+    texto = raw_bytes.decode(encoding, errors="replace")
+    separador = _detectar_separador(texto)
+
+    tentativas = [
+        {
+            "sep": separador,
+            "engine": "python",
+            "dtype": str,
+            "keep_default_na": False,
+            "on_bad_lines": "warn",
+            "quotechar": '"',
+            "skip_blank_lines": True,
+        },
+        {
+            "sep": separador,
+            "engine": "python",
+            "dtype": str,
+            "keep_default_na": False,
+            "on_bad_lines": "skip",
+            "quotechar": '"',
+            "skip_blank_lines": True,
+        },
+        {
+            "sep": None,
+            "engine": "python",
+            "dtype": str,
+            "keep_default_na": False,
+            "on_bad_lines": "warn",
+            "quotechar": '"',
+            "skip_blank_lines": True,
+        },
+    ]
+
+    ultimo_erro = None
+
+    for kwargs in tentativas:
+        try:
+            df = pd.read_csv(io.StringIO(texto), **kwargs)
+            df = _normalizar_df_csv(df)
+
+            if df is not None and not df.empty and len(df.columns) > 0:
+                st.session_state["csv_encoding_detectado"] = encoding
+                st.session_state["csv_separador_detectado"] = (
+                    kwargs["sep"] if kwargs["sep"] is not None else "auto"
+                )
+                return df
+        except Exception as e:
+            ultimo_erro = e
+
+    raise ValueError(
+        "Não foi possível ler o CSV automaticamente. "
+        f"Separador detectado: '{separador}' | encoding: '{encoding}'. "
+        f"Detalhe técnico: {ultimo_erro}"
+    )
 
 
 def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
@@ -107,22 +214,16 @@ def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
 
     if nome_arquivo.endswith(".xml"):
         xml_bytes = arquivo.getvalue()
-
         try:
             return _parse_nfe_xml_produtos(xml_bytes), "XML NF-e"
         except Exception:
-            arquivo.seek(0)
             try:
                 return pd.read_xml(io.BytesIO(xml_bytes)), "XML genérico"
             except Exception as e:
                 raise ValueError(f"Não foi possível ler o XML: {e}") from e
 
     if nome_arquivo.endswith(".csv"):
-        try:
-            return pd.read_csv(arquivo), "CSV"
-        except UnicodeDecodeError:
-            arquivo.seek(0)
-            return pd.read_csv(arquivo, encoding="latin1"), "CSV"
+        return _ler_csv_robusto(arquivo), "CSV"
 
     return pd.read_excel(arquivo), "Planilha"
 
@@ -155,8 +256,16 @@ def render_origem_dados() -> None:
     st.session_state["origem_atual"] = origem_atual
     st.session_state["origem_arquivo_nome"] = nome_arquivo
 
-    colunas_origem = list(df.columns)
+    if origem_atual == "CSV":
+        encoding_detectado = st.session_state.get("csv_encoding_detectado")
+        separador_detectado = st.session_state.get("csv_separador_detectado")
+        if encoding_detectado or separador_detectado:
+            st.caption(
+                f"CSV lido com encoding `{encoding_detectado or 'n/d'}` "
+                f"e separador `{separador_detectado or 'n/d'}`."
+            )
 
+    colunas_origem = list(df.columns)
     memoria = st.session_state.get("mapeamento_memoria", {})
     mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
 
@@ -170,7 +279,6 @@ def render_origem_dados() -> None:
         for col, dados in mapa_ia.items():
             destino = dados.get("destino")
             score = float(dados.get("score", 0) or 0)
-
             if destino and score >= 0.6:
                 mapeamento_final[col] = destino
 
@@ -192,6 +300,7 @@ def render_origem_dados() -> None:
         st.dataframe(df_preview.head(3), use_container_width=True)
     else:
         st.info("Nenhum campo foi mapeado automaticamente até o momento.")
+        st.dataframe(df.head(5), use_container_width=True)
 
     if st.button("Gerar automático", use_container_width=True):
         try:
@@ -234,6 +343,7 @@ def render_origem_dados() -> None:
             )
 
             st.success("Aprendido e gerado automaticamente.")
+
         except Exception as e:
             st.error(f"Erro ao gerar arquivo: {e}")
 
