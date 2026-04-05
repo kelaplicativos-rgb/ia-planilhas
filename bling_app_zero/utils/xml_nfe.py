@@ -1,3 +1,5 @@
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
 
@@ -97,7 +99,6 @@ def _calcular_custo_item(prod: ET.Element, det: ET.Element) -> Dict[str, float]:
     desconto = _to_float(_safe_text(prod, "vDesc"), 0.0)
 
     imposto = _find_first(det, "imposto")
-
     valor_ipi = _find_tax_value_anywhere(imposto, ["vIPI"])
     valor_icms_st = _find_tax_value_anywhere(imposto, ["vICMSST", "vST"])
     valor_fcp_st = _find_tax_value_anywhere(imposto, ["vFCPST"])
@@ -114,10 +115,7 @@ def _calcular_custo_item(prod: ET.Element, det: ET.Element) -> Dict[str, float]:
         - desconto
     )
 
-    if quantidade > 0:
-        custo_unitario = custo_total_item / quantidade
-    else:
-        custo_unitario = 0.0
+    custo_unitario = (custo_total_item / quantidade) if quantidade > 0 else 0.0
 
     return {
         "quantidade_float": quantidade,
@@ -136,6 +134,320 @@ def _calcular_custo_item(prod: ET.Element, det: ET.Element) -> Dict[str, float]:
     }
 
 
+def _strip_accents(texto: str) -> str:
+    texto = str(texto or "")
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c)
+    )
+
+
+def _texto_normalizado(texto: str) -> str:
+    texto = _strip_accents(texto).upper()
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
+
+def _titulo_limpo(texto: str) -> str:
+    texto = str(texto or "").strip()
+    texto = re.sub(r"\s+", " ", texto)
+    return texto
+
+
+def _gtin_valido(valor: str) -> str:
+    valor = re.sub(r"\D", "", str(valor or ""))
+    if valor in {"", "0", "SEMGTIN", "SEM GTIN"}:
+        return ""
+
+    if len(valor) not in {8, 12, 13, 14}:
+        return ""
+
+    return valor
+
+
+def _extrair_cor(descricao: str) -> str:
+    desc = _texto_normalizado(descricao)
+
+    cores = [
+        "PRETO",
+        "BRANCO",
+        "AZUL",
+        "VERMELHO",
+        "VERDE",
+        "AMARELO",
+        "ROSA",
+        "ROXO",
+        "LILAS",
+        "CINZA",
+        "BEGE",
+        "MARROM",
+        "DOURADO",
+        "PRATA",
+        "LARANJA",
+        "VINHO",
+        "NUDE",
+        "OFF WHITE",
+    ]
+
+    for cor in sorted(cores, key=len, reverse=True):
+        if cor in desc:
+            return cor.title()
+
+    return ""
+
+
+def _extrair_tamanho(descricao: str) -> str:
+    desc = _texto_normalizado(descricao)
+
+    padroes = [
+        r"\b(XXG|XGG|EXG|EXGG|GG|G|M|P|PP|XG)\b",
+        r"\b(\d{2,3})\b",
+        r"\b(TAM\s*\d{1,3})\b",
+        r"\b(NUMERO\s*\d{1,3})\b",
+    ]
+
+    for padrao in padroes:
+        encontrado = re.search(padrao, desc)
+        if encontrado:
+            return encontrado.group(1).strip()
+
+    return ""
+
+
+def _extrair_marca(descricao: str, fornecedor: str) -> str:
+    texto_original = _titulo_limpo(descricao)
+    desc = _texto_normalizado(descricao)
+
+    padroes = [
+        r"\bMARCA[:\s-]+([A-Z0-9&\.\-\/]{2,30})",
+        r"\bFABRICANTE[:\s-]+([A-Z0-9&\.\-\/]{2,30})",
+    ]
+
+    for padrao in padroes:
+        encontrado = re.search(padrao, desc)
+        if encontrado:
+            return encontrado.group(1).strip().title()
+
+    # Heurística: pega o primeiro trecho antes de "-" se for curto
+    primeiros = re.split(r"[-|/]", texto_original)
+    if primeiros:
+        primeiro = primeiros[0].strip()
+        if 2 <= len(primeiro) <= 24 and len(primeiro.split()) <= 3:
+            if primeiro.upper() not in {
+                "PRODUTO",
+                "ITEM",
+                "UNIDADE",
+                "PECAS",
+                "PECA",
+                "KIT",
+            }:
+                return primeiro
+
+    fornecedor = _titulo_limpo(fornecedor)
+    if fornecedor and len(fornecedor) <= 30:
+        return fornecedor
+
+    return ""
+
+
+def _extrair_genero(descricao: str) -> str:
+    desc = _texto_normalizado(descricao)
+
+    if any(x in desc for x in ["FEMININ", "FEM ", "FEM."]):
+        return "FEMININO"
+    if any(x in desc for x in ["MASCULIN", "MASC ", "MASC."]):
+        return "MASCULINO"
+    if any(x in desc for x in ["INFANTIL", "BEBE", "KIDS", "JUVENIL"]):
+        return "INFANTIL"
+
+    return "UNISSEX"
+
+
+def _extrair_material(descricao: str) -> str:
+    desc = _texto_normalizado(descricao)
+
+    materiais = {
+        "ALGODAO": "Algodão",
+        "POLIESTER": "Poliéster",
+        "COURO": "Couro",
+        "PLASTICO": "Plástico",
+        "BORRACHA": "Borracha",
+        "METAL": "Metal",
+        "ACO": "Aço",
+        "ALUMINIO": "Alumínio",
+        "MADEIRA": "Madeira",
+        "PVC": "PVC",
+        "SILICONE": "Silicone",
+        "TECIDO": "Tecido",
+        "JEANS": "Jeans",
+        "LYCRA": "Lycra",
+    }
+
+    for chave, valor in materiais.items():
+        if chave in desc:
+            return valor
+
+    return ""
+
+
+def _extrair_categoria(descricao: str) -> str:
+    desc = _texto_normalizado(descricao)
+
+    mapa = {
+        "CAMISETA": "Camisetas",
+        "CAMISA": "Camisas",
+        "CALCA": "Calças",
+        "BERMUDA": "Bermudas",
+        "SHORT": "Shorts",
+        "BLUSA": "Blusas",
+        "VESTIDO": "Vestidos",
+        "TENIS": "Tênis",
+        "SAPATO": "Sapatos",
+        "SANDALIA": "Sandálias",
+        "CHINELO": "Chinelos",
+        "BOTA": "Botas",
+        "BOLSA": "Bolsas",
+        "MOCHILA": "Mochilas",
+        "CARTEIRA": "Carteiras",
+        "BONÉ": "Bonés",
+        "BONE": "Bonés",
+        "OCULOS": "Óculos",
+        "RELOGIO": "Relógios",
+        "ANEL": "Anéis",
+        "COLAR": "Colares",
+        "BRINCO": "Brincos",
+        "PULSEIRA": "Pulseiras",
+        "KIT": "Kits",
+        "CONJUNTO": "Conjuntos",
+        "JAQUETA": "Jaquetas",
+        "CASACO": "Casacos",
+        "MEIA": "Meias",
+        "CUECA": "Cuecas",
+        "CALCINHA": "Calcinha",
+        "SUTIA": "Sutiãs",
+        "TOP": "Tops",
+        "BODY": "Bodies",
+        "SAIA": "Saias",
+        "REGATA": "Regatas",
+        "CROPPED": "Cropped",
+    }
+
+    for chave, valor in mapa.items():
+        if chave in desc:
+            return valor
+
+    return "Geral"
+
+
+def _extrair_modelo(descricao: str) -> str:
+    texto = _titulo_limpo(descricao)
+
+    padroes = [
+        r"\bMODELO[:\s-]+([A-Za-z0-9\-\._/ ]{2,40})",
+        r"\bREF[:\s-]+([A-Za-z0-9\-\._/]{2,30})",
+        r"\bREFERENCIA[:\s-]+([A-Za-z0-9\-\._/]{2,30})",
+    ]
+
+    for padrao in padroes:
+        encontrado = re.search(padrao, texto, flags=re.IGNORECASE)
+        if encontrado:
+            return encontrado.group(1).strip()
+
+    return ""
+
+
+def _gerar_codigo_fallback(numero_nfe: str, item: str, descricao: str) -> str:
+    base_desc = re.sub(r"[^A-Z0-9]", "", _texto_normalizado(descricao))[:12]
+    numero_nfe = re.sub(r"\D", "", str(numero_nfe or ""))
+    item = re.sub(r"\D", "", str(item or ""))
+
+    partes = [x for x in [numero_nfe, item, base_desc] if x]
+    return "-".join(partes) if partes else base_desc or "ITEM-XML"
+
+
+def _enriquecer_item_xml(linha: Dict[str, object]) -> Dict[str, object]:
+    descricao = _titulo_limpo(linha.get("descricao") or linha.get("descricao_curta") or "")
+    fornecedor = _titulo_limpo(linha.get("fornecedor") or "")
+    gtin = _gtin_valido(str(linha.get("gtin") or ""))
+
+    codigo = _titulo_limpo(str(linha.get("codigo") or ""))
+    if not codigo:
+        codigo = _gerar_codigo_fallback(
+            str(linha.get("numero_nfe") or ""),
+            str(linha.get("item") or ""),
+            descricao,
+        )
+
+    marca = _extrair_marca(descricao, fornecedor)
+    categoria = _extrair_categoria(descricao)
+    modelo = _extrair_modelo(descricao)
+    material = _extrair_material(descricao)
+    genero = _extrair_genero(descricao)
+    cor = _extrair_cor(descricao)
+    tamanho = _extrair_tamanho(descricao)
+
+    linha["codigo"] = codigo
+    linha["nome"] = descricao
+    linha["descricao_curta"] = descricao
+    linha["descricao_completa"] = descricao
+    linha["descricao_html"] = descricao
+    linha["gtin"] = gtin
+    linha["marca_inferida"] = marca
+    linha["categoria_inferida"] = categoria
+    linha["modelo_inferido"] = modelo
+    linha["material_inferido"] = material
+    linha["genero_inferido"] = genero
+    linha["cor_inferida"] = cor
+    linha["tamanho_inferido"] = tamanho
+
+    linha["marca"] = marca
+    linha["categoria"] = categoria
+    linha["modelo"] = modelo
+    linha["material"] = material
+    linha["genero"] = genero
+
+    linha["estoque"] = linha.get("quantidade", "")
+    linha["custo"] = linha.get("preco_custo", "")
+    linha["referencia_fornecedor"] = codigo
+    linha["codigo_fabricante"] = codigo
+    linha["fornecedor"] = fornecedor
+    linha["origem"] = "0"
+    linha["tipo"] = "P"
+    linha["situacao"] = "A"
+    linha["condicao"] = "NOVO"
+    linha["frete_gratis"] = "NÃO"
+    linha["departamento"] = "ADULTO UNISSEX"
+    linha["unidade_medida"] = "CENTIMETROS"
+    linha["volume"] = 1
+    linha["itens_caixa"] = 1
+
+    if cor:
+        linha["variacao_nome"] = "Cor"
+        linha["variacao_valor"] = cor
+    elif tamanho:
+        linha["variacao_nome"] = "Tamanho"
+        linha["variacao_valor"] = tamanho
+    else:
+        linha["variacao_nome"] = ""
+        linha["variacao_valor"] = ""
+
+    linha["imagem_1"] = ""
+    linha["imagem_2"] = ""
+    linha["imagem_3"] = ""
+    linha["imagem_4"] = ""
+    linha["imagem_5"] = ""
+    linha["imagem_6"] = ""
+    linha["imagem_7"] = ""
+    linha["imagem_8"] = ""
+    linha["imagem_9"] = ""
+    linha["imagem_10"] = ""
+    linha["link_externo"] = ""
+    linha["video"] = ""
+    linha["url_video"] = ""
+    linha["observacoes"] = ""
+
+    return linha
+
+
 def arquivo_parece_xml_nfe(arquivo) -> bool:
     if arquivo is None:
         return False
@@ -147,14 +459,17 @@ def arquivo_parece_xml_nfe(arquivo) -> bool:
     try:
         xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
         trecho = xml_bytes[:5000].decode("utf-8", errors="ignore").lower()
-        return (
-            "<nfeproc" in trecho
-            or "<nfe" in trecho
-            or "<infnfe" in trecho
-            or "portalfiscal.inf.br/nfe" in trecho
-        )
+
+        marcadores = [
+            "<nfeproc",
+            "<procnfe",
+            "<nfe",
+            "<infnfe",
+            "http://www.portalfiscal.inf.br/nfe",
+        ]
+        return any(m in trecho for m in marcadores)
     except Exception:
-        return True
+        return False
 
 
 def ler_xml_nfe(arquivo) -> pd.DataFrame:
@@ -163,6 +478,7 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
         return pd.DataFrame()
 
     root = ET.fromstring(xml_bytes)
+
     inf_nfe = _find_first(root, "infNFe")
     if inf_nfe is None:
         return pd.DataFrame()
@@ -224,6 +540,7 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
             "preco": _safe_text(prod, "vUnCom"),
             "preco_compra_xml": round(custos["custo_unitario_float"], 6),
             "preco_custo": round(custos["custo_unitario_float"], 6),
+            "custo": round(custos["custo_unitario_float"], 6),
             "custo_total_item_xml": round(custos["custo_total_item_float"], 6),
             "valor_total_item": _safe_text(prod, "vProd"),
             "unidade_tributavel": _safe_text(prod, "uTrib"),
@@ -242,6 +559,11 @@ def ler_xml_nfe(arquivo) -> pd.DataFrame:
             "total_impostos_item": round(custos["total_impostos_float"], 6),
         }
 
+        linha = _enriquecer_item_xml(linha)
         linhas.append(linha)
 
-    return pd.DataFrame(linhas)
+    if not linhas:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(linhas)
+    return df.fillna("")
