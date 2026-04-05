@@ -57,11 +57,31 @@ class BlingAuthManager:
             stock_write_path=str(cfg.get("stock_write_path", "/estoques")).strip(),
         )
 
+    def _is_placeholder(self, value: str) -> bool:
+        normalized = str(value or "").strip().upper()
+        return (
+            not normalized
+            or "SEU_CLIENT_ID" in normalized
+            or "SEU_CLIENT_SECRET" in normalized
+            or "SEU-APP.STREAMLIT.APP" in normalized
+            or "SEU_APP" in normalized
+        )
+
     def is_configured(self) -> bool:
         return bool(
             self.settings.client_id
             and self.settings.client_secret
             and self.settings.redirect_uri
+        ) and not (
+            self._is_placeholder(self.settings.client_id)
+            or self._is_placeholder(self.settings.client_secret)
+            or self._is_placeholder(self.settings.redirect_uri)
+        )
+
+    def get_missing_config_message(self) -> str:
+        return (
+            "Credenciais do Bling não configuradas corretamente. "
+            "Preencha client_id, client_secret e redirect_uri reais no secrets."
         )
 
     def _basic_auth_header(self) -> str:
@@ -89,13 +109,7 @@ class BlingAuthManager:
 
     def _clear_oauth_query_params(self) -> None:
         try:
-            current_params = dict(st.query_params)
-            for key in ("code", "state", "error", "error_description"):
-                if key in current_params:
-                    del current_params[key]
             st.query_params.clear()
-            for key, value in current_params.items():
-                st.query_params[key] = value
         except Exception:
             pass
 
@@ -113,10 +127,7 @@ class BlingAuthManager:
                 )
             )
             self._clear_oauth_query_params()
-            return {
-                "status": "error",
-                "message": f"Falha na autorização do Bling: {msg}",
-            }
+            return {"status": "error", "message": f"Falha na autorização do Bling: {msg}"}
 
         if not self.is_configured():
             self._clear_oauth_query_params()
@@ -136,17 +147,11 @@ class BlingAuthManager:
 
         if not expected_state or incoming_state != expected_state:
             self._clear_oauth_query_params()
-            return {
-                "status": "error",
-                "message": "State inválido na autenticação com o Bling.",
-            }
+            return {"status": "error", "message": "State inválido na autenticação com o Bling."}
 
         if created_at and (int(time.time()) - created_at) > 15 * 60:
             self._clear_oauth_query_params()
-            return {
-                "status": "error",
-                "message": "State expirado. Gere uma nova autenticação.",
-            }
+            return {"status": "error", "message": "State expirado. Gere uma nova autenticação."}
 
         ok, msg = self.exchange_code_for_token(code)
         self._clear_oauth_query_params()
@@ -171,22 +176,20 @@ class BlingAuthManager:
         }
 
         try:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.post(self.settings.token_url, headers=headers, data=data)
-                payload = (
-                    resp.json()
-                    if "application/json" in resp.headers.get("content-type", "")
-                    else {"raw": resp.text}
-                )
 
-                if resp.status_code >= 400:
-                    return (
-                        False,
-                        f"Erro ao trocar code por token: HTTP {resp.status_code} | {payload}",
-                    )
+            payload = (
+                resp.json()
+                if "application/json" in resp.headers.get("content-type", "")
+                else {"raw": resp.text}
+            )
 
-                self.store.save_token_payload(payload, user_key=self.user_key)
-                return True, "OK"
+            if resp.status_code >= 400:
+                return False, f"Erro ao trocar code por token: HTTP {resp.status_code} | {payload}"
+
+            self.store.save_token_payload(payload, user_key=self.user_key)
+            return True, "OK"
         except Exception as exc:
             return False, f"Erro ao autenticar com o Bling: {exc}"
 
@@ -209,20 +212,21 @@ class BlingAuthManager:
         }
 
         try:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.post(self.settings.token_url, headers=headers, data=data)
-                payload = (
-                    resp.json()
-                    if "application/json" in resp.headers.get("content-type", "")
-                    else {"raw": resp.text}
-                )
 
-                if resp.status_code >= 400:
-                    return False, f"Erro ao renovar token: HTTP {resp.status_code} | {payload}"
+            payload = (
+                resp.json()
+                if "application/json" in resp.headers.get("content-type", "")
+                else {"raw": resp.text}
+            )
 
-                self.store.save_token_payload(payload, user_key=self.user_key)
-                self._hydrate_company_name_from_jwt()
-                return True, "Token renovado."
+            if resp.status_code >= 400:
+                return False, f"Erro ao renovar token: HTTP {resp.status_code} | {payload}"
+
+            self.store.save_token_payload(payload, user_key=self.user_key)
+            self._hydrate_company_name_from_jwt()
+            return True, "Token renovado."
         except Exception as exc:
             return False, f"Falha ao renovar token: {exc}"
 
@@ -256,8 +260,8 @@ class BlingAuthManager:
         if not current:
             return True, "Conta já estava desconectada."
 
-        token_to_revoke = str(current.get("refresh_token") or current.get("access_token") or "").strip()
-        if not token_to_revoke:
+        access_token = str(current.get("access_token", "")).strip()
+        if not access_token:
             return True, "Conta já estava desconectada."
 
         headers = {
@@ -265,20 +269,23 @@ class BlingAuthManager:
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
         }
-        data = {"token": token_to_revoke}
+        data = {"token": access_token}
 
         try:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.post(self.settings.revoke_url, headers=headers, data=data)
-                if resp.status_code >= 400:
-                    return False, f"Erro ao revogar token: HTTP {resp.status_code} | {resp.text}"
-                return True, "Token revogado no Bling."
+
+            if resp.status_code >= 400:
+                return False, f"Erro ao revogar token: HTTP {resp.status_code} | {resp.text}"
+
+            return True, "Token revogado no Bling."
         except Exception as exc:
             return False, f"Falha ao revogar token: {exc}"
 
     def disconnect(self) -> Tuple[bool, str]:
         revoke_ok, revoke_msg = self.revoke_token()
         self.store.delete(self.user_key)
+
         if revoke_ok:
             return True, "Conta Bling desconectada com sucesso."
         return False, revoke_msg
