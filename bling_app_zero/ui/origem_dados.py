@@ -1,6 +1,5 @@
 # bling_app_zero/ui/origem_dados.py
 
-from typing import Dict, List
 import pandas as pd
 import streamlit as st
 
@@ -10,7 +9,7 @@ from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
 # =========================
-# CONFIG FIXA DO SISTEMA
+# CONFIG
 # =========================
 
 CAMPOS_FIXOS = {
@@ -22,9 +21,22 @@ CAMPOS_FIXOS = {
     "departamento": "GERAL"
 }
 
+COLUNAS_DESTINO = [
+    "nome",
+    "preco",
+    "custo",
+    "sku",
+    "gtin",
+    "ncm",
+    "marca",
+    "estoque",
+    "categoria",
+    "peso"
+]
+
 
 # =========================
-# FUNÇÃO PRINCIPAL UI
+# UI PRINCIPAL
 # =========================
 
 def tela_origem_dados():
@@ -40,7 +52,7 @@ def tela_origem_dados():
         return
 
     # =========================
-    # LEITURA DE ARQUIVO
+    # LEITURA
     # =========================
 
     try:
@@ -55,43 +67,27 @@ def tela_origem_dados():
         st.error(f"Erro ao ler arquivo: {e}")
         return
 
-    st.success("Arquivo carregado com sucesso!")
-
-    # =========================
-    # PREVIEW
-    # =========================
-
-    st.subheader("👀 Preview dos dados")
-    st.dataframe(df.head(5), use_container_width=True)
+    st.success("Arquivo carregado")
 
     colunas_origem = list(df.columns)
 
     # =========================
-    # CAMPOS DESTINO (BLING)
+    # IA MAPEAMENTO
     # =========================
 
-    colunas_destino = [
-        "nome",
-        "preco",
-        "custo",
-        "sku",
-        "gtin",
-        "ncm",
-        "marca",
-        "estoque",
-        "categoria",
-        "peso"
-    ]
+    mapa_ia = mapear_colunas_ia(colunas_origem, COLUNAS_DESTINO)
+
+    # estado persistente
+    if "mapeamento" not in st.session_state:
+        st.session_state.mapeamento = {}
 
     # =========================
-    # IA DE MAPEAMENTO
+    # PREVIEW COMPACTO (MOBILE)
     # =========================
 
-    st.subheader("🧠 Mapeamento Inteligente (IA)")
+    st.subheader("⚡ Preview inteligente (toque para mapear)")
 
-    mapa_ia = mapear_colunas_ia(colunas_origem, colunas_destino)
-
-    mapeamento_final = {}
+    df_preview = df.head(1)
 
     for col in colunas_origem:
 
@@ -99,63 +95,78 @@ def tela_origem_dados():
         destino_sugerido = sugestao.get("destino")
         score = sugestao.get("score", 0)
 
-        col1, col2, col3 = st.columns([3, 3, 1])
+        valor_preview = str(df_preview[col].iloc[0]) if col in df_preview else ""
 
-        with col1:
-            st.write(f"**{col}**")
+        with st.container():
 
-        with col2:
-            escolha = st.selectbox(
-                f"Mapear {col}",
-                [""] + colunas_destino,
-                index=(colunas_destino.index(destino_sugerido) + 1)
-                if destino_sugerido in colunas_destino else 0,
-                key=f"map_{col}"
-            )
+            c1, c2, c3 = st.columns([2, 3, 1])
 
-        with col3:
-            st.write(f"{int(score * 100)}%")
+            # COLUNA ORIGEM
+            with c1:
+                st.caption("Origem")
+                st.write(f"**{col}**")
+                st.caption(valor_preview[:40])
 
-        if escolha:
-            mapeamento_final[col] = escolha
+            # MAPEAMENTO
+            with c2:
+                st.caption("Destino")
+
+                escolha = st.selectbox(
+                    "",
+                    [""] + COLUNAS_DESTINO,
+                    index=(COLUNAS_DESTINO.index(destino_sugerido) + 1)
+                    if destino_sugerido in COLUNAS_DESTINO else 0,
+                    key=f"map_{col}"
+                )
+
+                if escolha:
+                    st.session_state.mapeamento[col] = escolha
+
+            # SCORE IA
+            with c3:
+                st.caption("IA")
+                st.write(f"{int(score*100)}%")
 
     # =========================
-    # BOTÃO LIMPAR
+    # LIMPAR
     # =========================
 
-    if st.button("🧹 Limpar mapeamento"):
+    if st.button("🧹 Limpar tudo"):
+        st.session_state.mapeamento = {}
         st.experimental_rerun()
 
     # =========================
-    # GERAÇÃO FINAL
+    # GERAR PLANILHA
     # =========================
 
-    if st.button("🚀 Gerar planilha final"):
+    st.divider()
 
-        if not mapeamento_final:
-            st.warning("Faça pelo menos um mapeamento")
+    if st.button("🚀 Gerar planilha automática"):
+
+        if not st.session_state.mapeamento:
+            st.warning("Nenhum campo mapeado")
             return
 
         df_saida = pd.DataFrame()
 
-        for origem, destino in mapeamento_final.items():
+        for origem, destino in st.session_state.mapeamento.items():
             df_saida[destino] = df[origem]
 
-        # aplicar campos fixos
+        # campos fixos
         for campo, valor in CAMPOS_FIXOS.items():
             df_saida[campo] = valor
 
-        # precificação automática
+        # IA preço
         df_saida = calcular_preco_compra_automatico_df(df_saida)
 
         # download
         excel_bytes = df_to_excel_bytes(df_saida)
 
         st.download_button(
-            label="📥 Baixar planilha",
+            "📥 Baixar planilha",
             data=excel_bytes,
             file_name="bling_importacao.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Planilha gerada com sucesso!")
+        st.success("Planilha pronta 🔥")
