@@ -85,6 +85,7 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "calc_custo_fixo",
         "validacao_erros_saida",
         "validacao_avisos_saida",
+        "logs_gtin_saida",
     ]:
         st.session_state.pop(chave, None)
 
@@ -353,6 +354,143 @@ def _ler_planilha_modelo(upload_modelo, modo: str) -> Tuple[pd.DataFrame | None,
 # ==========================================================
 # GTIN
 # ==========================================================
+GS1_PREFIXOS_VALIDOS: tuple[tuple[int, int], ...] = (
+    (0, 19),
+    (30, 39),
+    (40, 49),
+    (50, 59),
+    (60, 99),
+    (100, 139),
+    (200, 299),
+    (300, 379),
+    (380, 380),
+    (383, 383),
+    (385, 385),
+    (387, 387),
+    (389, 389),
+    (400, 440),
+    (450, 459),
+    (460, 469),
+    (470, 470),
+    (471, 471),
+    (474, 474),
+    (475, 475),
+    (476, 476),
+    (477, 477),
+    (478, 478),
+    (479, 479),
+    (480, 480),
+    (481, 481),
+    (482, 482),
+    (484, 484),
+    (485, 485),
+    (486, 486),
+    (487, 487),
+    (488, 488),
+    (489, 489),
+    (490, 499),
+    (500, 509),
+    (520, 521),
+    (528, 528),
+    (529, 529),
+    (530, 530),
+    (531, 531),
+    (535, 535),
+    (539, 539),
+    (540, 549),
+    (560, 560),
+    (569, 569),
+    (570, 579),
+    (590, 590),
+    (594, 594),
+    (599, 599),
+    (600, 601),
+    (603, 603),
+    (608, 608),
+    (609, 609),
+    (611, 611),
+    (613, 613),
+    (615, 615),
+    (616, 616),
+    (618, 618),
+    (619, 619),
+    (620, 620),
+    (621, 621),
+    (622, 622),
+    (623, 623),
+    (624, 624),
+    (625, 625),
+    (626, 626),
+    (627, 627),
+    (628, 628),
+    (629, 629),
+    (630, 630),
+    (631, 631),
+    (640, 649),
+    (680, 681),
+    (690, 699),
+    (700, 709),
+    (729, 729),
+    (730, 739),
+    (740, 740),
+    (741, 741),
+    (742, 742),
+    (743, 743),
+    (744, 744),
+    (745, 745),
+    (746, 746),
+    (750, 750),
+    (754, 755),
+    (759, 759),
+    (760, 769),
+    (770, 771),
+    (773, 773),
+    (775, 775),
+    (777, 777),
+    (778, 779),
+    (780, 780),
+    (784, 784),
+    (786, 786),
+    (789, 790),
+    (800, 839),
+    (840, 849),
+    (850, 850),
+    (858, 858),
+    (859, 859),
+    (860, 860),
+    (865, 865),
+    (867, 867),
+    (868, 869),
+    (870, 879),
+    (880, 880),
+    (883, 883),
+    (884, 884),
+    (885, 885),
+    (888, 888),
+    (890, 890),
+    (893, 893),
+    (896, 896),
+    (899, 899),
+    (900, 919),
+    (930, 939),
+    (940, 949),
+    (950, 951),
+    (955, 955),
+    (958, 958),
+    (960, 969),
+    (977, 977),
+    (978, 979),
+    (980, 980),
+    (981, 984),
+    (990, 999),
+)
+
+GS1_PREFIXOS_BLOQUEADOS: set[int] = {
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    952,
+}
+
+
 def _somente_digitos(valor: str) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
@@ -379,12 +517,61 @@ def _gtin_checksum_valido(gtin: str) -> bool:
     return calculado == check
 
 
+def _gtin_sequencial_ou_repetitivo(gtin: str) -> bool:
+    if not gtin:
+        return True
+
+    if len(set(gtin)) == 1:
+        return True
+
+    crescente = "012345678901234567890123456789"
+    decrescente = "987654321098765432109876543210"
+
+    corpo = gtin[:-1]
+    if corpo and (corpo in crescente or corpo in decrescente):
+        return True
+
+    return False
+
+
+def _prefixo_gs1_valido(gtin: str) -> bool:
+    if len(gtin) == 8:
+        return True
+
+    if len(gtin) == 12:
+        prefixo = int(gtin[:1])
+        return 0 <= prefixo <= 9
+
+    prefixo = int(gtin[:3])
+    if prefixo in GS1_PREFIXOS_BLOQUEADOS:
+        return False
+
+    for inicio, fim in GS1_PREFIXOS_VALIDOS:
+        if inicio <= prefixo <= fim:
+            return True
+    return False
+
+
+def _gtin_estruturalmente_valido(gtin: str) -> bool:
+    if not gtin:
+        return False
+    if len(gtin) not in (8, 12, 13, 14):
+        return False
+    if _gtin_sequencial_ou_repetitivo(gtin):
+        return False
+    if not _gtin_checksum_valido(gtin):
+        return False
+    if not _prefixo_gs1_valido(gtin):
+        return False
+    return True
+
+
 def _limpar_gtin_invalido_serie(serie: pd.Series) -> pd.Series:
     def _limpar(valor: str) -> str:
         codigo = _somente_digitos(valor)
         if not codigo:
             return ""
-        if _gtin_checksum_valido(codigo):
+        if _gtin_estruturalmente_valido(codigo):
             return codigo
         return ""
 
@@ -404,12 +591,32 @@ def _coluna_parece_gtin_ou_ean(nome_coluna: str) -> bool:
         "cod barras",
         "cod de barras",
         "barcode",
+        "cean",
+        "ceantrib",
+        "ean tributario",
+        "gtin tributario",
     }
 
     if nome in termos:
         return True
 
     return any(termo in nome for termo in termos)
+
+
+def _gerar_logs_limpeza_gtin(df_antes: pd.DataFrame, df_depois: pd.DataFrame) -> List[str]:
+    logs: List[str] = []
+
+    for col in df_depois.columns:
+        if not _coluna_parece_gtin_ou_ean(col):
+            continue
+
+        antes = _serie_texto(df_antes, col)
+        depois = _serie_texto(df_depois, col)
+        qtd = int(((antes != "") & (depois == "")).sum())
+        if qtd > 0:
+            logs.append(f"Coluna '{col}': {qtd} GTIN/EAN inválido(s) foram deixados em branco.")
+
+    return logs
 
 
 # ==========================================================
@@ -426,7 +633,7 @@ def _sugerir_por_nome_modelo(colunas_origem: List[str], colunas_modelo: List[str
         "ncm": ["ncm"],
         "marca": ["marca", "fabricante"],
         "categoria": ["categoria", "departamento", "grupo"],
-        "gtin": ["gtin", "ean", "codigo barras", "codigo de barras"],
+        "gtin": ["gtin", "ean", "codigo barras", "codigo de barras", "cean", "ceantrib"],
         "preco unitario": ["preco", "preço", "valor", "valor venda", "preco venda", "preco de venda"],
         "preco de custo": ["custo", "preco custo", "preço custo", "valor custo", "preco de custo"],
         "balanco": ["estoque", "quantidade", "qtd", "saldo", "balanco", "balanço"],
@@ -794,7 +1001,7 @@ def _montar_df_saida_exato_modelo(
         if coluna_deposito:
             df_saida[coluna_deposito] = deposito_nome
 
-    # Limpeza de GTIN inválido em qualquer coluna GTIN/EAN do modelo
+    # Limpeza automática de GTIN/EAN em qualquer coluna do modelo
     for col in df_saida.columns:
         if _coluna_parece_gtin_ou_ean(col):
             df_saida[col] = _limpar_gtin_invalido_serie(_serie_texto(df_saida, col))
@@ -802,7 +1009,8 @@ def _montar_df_saida_exato_modelo(
     return df_saida
 
 
-def _aplicar_limpeza_gtin_ean_df_saida(df_saida: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+def _aplicar_limpeza_gtin_ean_df_saida(df_saida: pd.DataFrame) -> tuple[pd.DataFrame, int, List[str]]:
+    df_antes = df_saida.copy()
     df_saida = df_saida.copy()
     total_limpados = 0
 
@@ -815,7 +1023,8 @@ def _aplicar_limpeza_gtin_ean_df_saida(df_saida: pd.DataFrame) -> tuple[pd.DataF
         total_limpados += int(((serie_original != "") & (serie_limpa == "")).sum())
         df_saida[col] = serie_limpa
 
-    return df_saida, total_limpados
+    logs = _gerar_logs_limpeza_gtin(df_antes, df_saida)
+    return df_saida, total_limpados, logs
 
 
 # ==========================================================
@@ -892,7 +1101,21 @@ def _exportar_df_exato_para_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name="Produtos")
         ws = writer.sheets["Produtos"]
 
-        texto_alvos = {"codigo", "código", "ean", "gtin", "ncm", "codigo de barras", "código de barras"}
+        texto_alvos = {
+            "codigo",
+            "código",
+            "ean",
+            "gtin",
+            "ncm",
+            "codigo de barras",
+            "código de barras",
+            "cean",
+            "ceantrib",
+            "ean tributario",
+            "ean tributário",
+            "gtin tributario",
+            "gtin tributário",
+        }
         texto_alvos_normalizados = {_normalizar_texto(x) for x in texto_alvos}
         mapa_headers = {cell.value: cell.column_letter for cell in ws[1]}
 
@@ -1066,9 +1289,11 @@ def render_origem_dados() -> None:
                     modo=modo,
                 )
 
+                df_saida_final, total_limpados, logs_gtin = _aplicar_limpeza_gtin_ean_df_saida(df_saida_final)
                 erros_final, avisos_final = _validar_saida_bling(df_saida_final, modo)
                 st.session_state["validacao_erros_saida"] = erros_final
                 st.session_state["validacao_avisos_saida"] = avisos_final
+                st.session_state["logs_gtin_saida"] = logs_gtin
 
                 if erros_final:
                     st.error("Não foi possível liberar o download porque ainda existem pendências.")
@@ -1081,7 +1306,10 @@ def render_origem_dados() -> None:
                 st.session_state["excel_saida_bytes"] = excel_bytes
                 st.session_state["excel_saida_nome"] = arquivo_saida
 
-                st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar.")
+                if total_limpados > 0:
+                    st.success(f"Preview final gerado com sucesso. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco.")
+                else:
+                    st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar.")
 
             except Exception as e:
                 st.error(f"Erro ao gerar preview final: {e}")
@@ -1098,11 +1326,12 @@ def render_origem_dados() -> None:
                     estoque_cfg=estoque_cfg,
                     modo=modo,
                 )
-                df_saida_limpa, total_limpados = _aplicar_limpeza_gtin_ean_df_saida(df_saida_limpa)
+                df_saida_limpa, total_limpados, logs_gtin = _aplicar_limpeza_gtin_ean_df_saida(df_saida_limpa)
 
                 erros_final, avisos_final = _validar_saida_bling(df_saida_limpa, modo)
                 st.session_state["validacao_erros_saida"] = erros_final
                 st.session_state["validacao_avisos_saida"] = avisos_final
+                st.session_state["logs_gtin_saida"] = logs_gtin
 
                 if erros_final:
                     st.error("A limpeza foi aplicada, mas ainda existem pendências antes do download.")
@@ -1131,7 +1360,14 @@ def render_origem_dados() -> None:
             st.session_state.pop("df_saida_preview_hash", None)
             st.session_state.pop("excel_saida_bytes", None)
             st.session_state.pop("excel_saida_nome", None)
+            st.session_state.pop("logs_gtin_saida", None)
             st.rerun()
+
+    logs_gtin_saida = st.session_state.get("logs_gtin_saida", [])
+    if logs_gtin_saida:
+        st.caption("Validação de GTIN/EAN aplicada no arquivo final:")
+        for linha in logs_gtin_saida:
+            st.caption(f"- {linha}")
 
     df_saida_state = st.session_state.get("df_saida")
     df_saida_hash = st.session_state.get("df_saida_preview_hash")
