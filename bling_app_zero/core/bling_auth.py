@@ -79,8 +79,6 @@ class BlingAuthManager:
         params = {
             "response_type": "code",
             "client_id": self.settings.client_id,
-            # No Bling o redirect_uri pode ser opcional quando já está cadastrado,
-            # mas enviá-lo aqui reduz ambiguidades entre ambiente local e produção.
             "redirect_uri": self.settings.redirect_uri,
             "state": state,
         }
@@ -91,18 +89,19 @@ class BlingAuthManager:
 
     def _clear_oauth_query_params(self) -> None:
         try:
-            query_params = st.query_params
+            current_params = dict(st.query_params)
             for key in ("code", "state", "error", "error_description"):
-                if key in query_params:
-                    del query_params[key]
+                if key in current_params:
+                    del current_params[key]
+            st.query_params.clear()
+            for key, value in current_params.items():
+                st.query_params[key] = value
         except Exception:
-            try:
-                st.query_params.clear()
-            except Exception:
-                pass
+            pass
 
     def handle_oauth_callback(self) -> Dict[str, str]:
         query_params = st.query_params
+
         if "code" not in query_params and "error" not in query_params:
             return {"status": "idle", "message": ""}
 
@@ -137,7 +136,10 @@ class BlingAuthManager:
 
         if not expected_state or incoming_state != expected_state:
             self._clear_oauth_query_params()
-            return {"status": "error", "message": "State inválido na autenticação com o Bling."}
+            return {
+                "status": "error",
+                "message": "State inválido na autenticação com o Bling.",
+            }
 
         if created_at and (int(time.time()) - created_at) > 15 * 60:
             self._clear_oauth_query_params()
@@ -148,6 +150,7 @@ class BlingAuthManager:
 
         ok, msg = self.exchange_code_for_token(code)
         self._clear_oauth_query_params()
+
         if not ok:
             return {"status": "error", "message": msg}
 
@@ -164,23 +167,24 @@ class BlingAuthManager:
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            # No Bling é opcional quando já está cadastrado, mas manter igual ajuda
-            # em homologação e em cenários com múltiplos ambientes.
             "redirect_uri": self.settings.redirect_uri,
         }
+
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 resp = client.post(self.settings.token_url, headers=headers, data=data)
                 payload = (
                     resp.json()
                     if "application/json" in resp.headers.get("content-type", "")
                     else {"raw": resp.text}
                 )
+
                 if resp.status_code >= 400:
                     return (
                         False,
                         f"Erro ao trocar code por token: HTTP {resp.status_code} | {payload}",
                     )
+
                 self.store.save_token_payload(payload, user_key=self.user_key)
                 return True, "OK"
         except Exception as exc:
@@ -189,6 +193,7 @@ class BlingAuthManager:
     def refresh_access_token(self) -> Tuple[bool, str]:
         current = self.store.get(self.user_key)
         refresh_token = (current or {}).get("refresh_token", "")
+
         if not refresh_token:
             return False, "Refresh token não encontrado. Reconecte a conta."
 
@@ -202,16 +207,19 @@ class BlingAuthManager:
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         }
+
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 resp = client.post(self.settings.token_url, headers=headers, data=data)
                 payload = (
                     resp.json()
                     if "application/json" in resp.headers.get("content-type", "")
                     else {"raw": resp.text}
                 )
+
                 if resp.status_code >= 400:
                     return False, f"Erro ao renovar token: HTTP {resp.status_code} | {payload}"
+
                 self.store.save_token_payload(payload, user_key=self.user_key)
                 self._hydrate_company_name_from_jwt()
                 return True, "Token renovado."
@@ -220,6 +228,7 @@ class BlingAuthManager:
 
     def get_valid_access_token(self) -> Tuple[bool, str]:
         current = self.store.get(self.user_key)
+
         if not current:
             return False, "Conta Bling ainda não conectada."
 
@@ -247,8 +256,8 @@ class BlingAuthManager:
         if not current:
             return True, "Conta já estava desconectada."
 
-        access_token = str(current.get("access_token", "")).strip()
-        if not access_token:
+        token_to_revoke = str(current.get("refresh_token") or current.get("access_token") or "").strip()
+        if not token_to_revoke:
             return True, "Conta já estava desconectada."
 
         headers = {
@@ -256,10 +265,10 @@ class BlingAuthManager:
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
         }
-        data = {"token": access_token}
+        data = {"token": token_to_revoke}
 
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 resp = client.post(self.settings.revoke_url, headers=headers, data=data)
                 if resp.status_code >= 400:
                     return False, f"Erro ao revogar token: HTTP {resp.status_code} | {resp.text}"
@@ -279,6 +288,7 @@ class BlingAuthManager:
             parts = token.split(".")
             if len(parts) < 2:
                 return {}
+
             payload = parts[1]
             padding = "=" * (-len(payload) % 4)
             decoded = base64.urlsafe_b64decode(payload + padding)
