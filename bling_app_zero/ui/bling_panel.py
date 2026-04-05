@@ -21,6 +21,7 @@ def render_bling_panel() -> None:
 
     auth = BlingAuthManager()
     callback = auth.handle_oauth_callback()
+
     if callback.get("status") == "success":
         st.success(callback.get("message", "Conta conectada com sucesso."))
     elif callback.get("status") == "error":
@@ -84,33 +85,23 @@ def render_bling_panel() -> None:
         if status.get("expires_at"):
             st.write(f"Expira em: {status.get('expires_at')}")
 
-    with st.expander("Configuração do OAuth / homologação", expanded=False):
-        st.code(
-            """
-1) Configure .streamlit/secrets.toml com client_id, client_secret e redirect_uri.
-2) No cadastro do app no Bling, use exatamente a mesma redirect_uri.
-3) Conecte a conta pelo botão acima.
-4) Rode o teste de homologação abaixo para validar o fluxo oficial.
-            """.strip(),
-            language="text",
-        )
+    st.markdown("#### Homologação do Bling")
+    if st.button(
+        "Executar teste de homologação",
+        use_container_width=True,
+        disabled=not status.get("connected"),
+    ):
+        service = BlingHomologacaoService()
+        ok, logs = service.run()
+        st.session_state["bling_homologacao_logs"] = logs
+        if ok:
+            st.success("Homologação executada com sucesso.")
+        else:
+            st.error("A homologação retornou falha. Veja o log abaixo.")
 
-        if st.button(
-            "Rodar teste de homologação do Bling",
-            use_container_width=True,
-            disabled=not status.get("connected"),
-        ):
-            service = BlingHomologacaoService()
-            ok, logs = service.run()
-            st.session_state["bling_homologacao_logs"] = logs
-            if ok:
-                st.success("Teste de homologação concluído com sucesso.")
-            else:
-                st.error("Teste de homologação falhou. Confira o log detalhado abaixo.")
-
-        logs = st.session_state.get("bling_homologacao_logs")
-        if isinstance(logs, list) and logs:
-            st.dataframe(pd.DataFrame(logs), use_container_width=True, height=220)
+    logs = st.session_state.get("bling_homologacao_logs")
+    if isinstance(logs, list) and logs:
+        st.json(logs)
 
 
 def render_bling_import_panel() -> None:
@@ -118,7 +109,6 @@ def render_bling_import_panel() -> None:
 
     auth = BlingAuthManager()
     status = auth.get_connection_status()
-
     if not status.get("connected"):
         st.info("Conecte primeiro a conta do Bling para importar produtos e estoque.")
         return
