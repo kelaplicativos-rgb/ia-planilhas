@@ -5,6 +5,7 @@ import streamlit as st
 
 from bling_app_zero.core.bling_api import BlingAPIClient
 from bling_app_zero.core.bling_auth import BlingAuthManager
+from bling_app_zero.core.bling_homologacao import BlingHomologacaoService
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
@@ -64,7 +65,11 @@ def render_bling_panel() -> None:
             st.rerun()
 
     with c3:
-        if st.button("Desconectar", use_container_width=True, disabled=not status.get("connected")):
+        if st.button(
+            "Desconectar",
+            use_container_width=True,
+            disabled=not status.get("connected"),
+        ):
             ok, msg = auth.disconnect()
             if ok:
                 st.success(msg)
@@ -78,6 +83,34 @@ def render_bling_panel() -> None:
             st.write(f"Última autenticação: {status.get('last_auth_at')}")
         if status.get("expires_at"):
             st.write(f"Expira em: {status.get('expires_at')}")
+
+    with st.expander("Configuração do OAuth / homologação", expanded=False):
+        st.code(
+            """
+1) Configure .streamlit/secrets.toml com client_id, client_secret e redirect_uri.
+2) No cadastro do app no Bling, use exatamente a mesma redirect_uri.
+3) Conecte a conta pelo botão acima.
+4) Rode o teste de homologação abaixo para validar o fluxo oficial.
+            """.strip(),
+            language="text",
+        )
+
+        if st.button(
+            "Rodar teste de homologação do Bling",
+            use_container_width=True,
+            disabled=not status.get("connected"),
+        ):
+            service = BlingHomologacaoService()
+            ok, logs = service.run()
+            st.session_state["bling_homologacao_logs"] = logs
+            if ok:
+                st.success("Teste de homologação concluído com sucesso.")
+            else:
+                st.error("Teste de homologação falhou. Confira o log detalhado abaixo.")
+
+        logs = st.session_state.get("bling_homologacao_logs")
+        if isinstance(logs, list) and logs:
+            st.dataframe(pd.DataFrame(logs), use_container_width=True, height=220)
 
 
 def render_bling_import_panel() -> None:
