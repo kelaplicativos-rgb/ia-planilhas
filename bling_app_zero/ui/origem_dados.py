@@ -802,6 +802,22 @@ def _montar_df_saida_exato_modelo(
     return df_saida
 
 
+def _aplicar_limpeza_gtin_ean_df_saida(df_saida: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    df_saida = df_saida.copy()
+    total_limpados = 0
+
+    for col in df_saida.columns:
+        if not _coluna_parece_gtin_ou_ean(col):
+            continue
+
+        serie_original = _serie_texto(df_saida, col)
+        serie_limpa = _limpar_gtin_invalido_serie(serie_original)
+        total_limpados += int(((serie_original != "") & (serie_limpa == "")).sum())
+        df_saida[col] = serie_limpa
+
+    return df_saida, total_limpados
+
+
 # ==========================================================
 # VALIDAÇÃO
 # ==========================================================
@@ -1036,7 +1052,7 @@ def render_origem_dados() -> None:
     else:
         st.success("Preview válido para gerar o arquivo final.")
 
-    b1, b2 = st.columns(2)
+    b1, b2, b3 = st.columns(3)
 
     with b1:
         if st.button("Gerar preview final", width="stretch"):
@@ -1072,6 +1088,43 @@ def render_origem_dados() -> None:
                 _log(f"Erro ao gerar preview final: {e}")
 
     with b2:
+        if st.button("Limpar GTIN/EAN inválido", width="stretch"):
+            try:
+                df_saida_limpa = _montar_df_saida_exato_modelo(
+                    df_origem=df_origem,
+                    colunas_modelo=colunas_modelo_ativas,
+                    mapeamento_manual=mapeamento_manual,
+                    calculadora_cfg=calculadora_cfg,
+                    estoque_cfg=estoque_cfg,
+                    modo=modo,
+                )
+                df_saida_limpa, total_limpados = _aplicar_limpeza_gtin_ean_df_saida(df_saida_limpa)
+
+                erros_final, avisos_final = _validar_saida_bling(df_saida_limpa, modo)
+                st.session_state["validacao_erros_saida"] = erros_final
+                st.session_state["validacao_avisos_saida"] = avisos_final
+
+                if erros_final:
+                    st.error("A limpeza foi aplicada, mas ainda existem pendências antes do download.")
+                    return
+
+                excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_limpa)
+
+                st.session_state["df_saida"] = df_saida_limpa.copy()
+                st.session_state["df_saida_preview_hash"] = origem_hash
+                st.session_state["excel_saida_bytes"] = excel_bytes
+                st.session_state["excel_saida_nome"] = arquivo_saida
+
+                if total_limpados > 0:
+                    st.success(f"Limpeza concluída. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco.")
+                else:
+                    st.success("Limpeza concluída. Nenhum GTIN/EAN inválido foi encontrado para zerar.")
+
+            except Exception as e:
+                st.error(f"Erro ao limpar GTIN/EAN inválido: {e}")
+                _log(f"Erro ao limpar GTIN/EAN inválido: {e}")
+
+    with b3:
         if st.button("Limpar mapeamento", width="stretch"):
             st.session_state[state_key] = {}
             st.session_state.pop("df_saida", None)
