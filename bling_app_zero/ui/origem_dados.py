@@ -391,6 +391,27 @@ def _limpar_gtin_invalido_serie(serie: pd.Series) -> pd.Series:
     return serie.apply(_limpar).astype("string")
 
 
+def _coluna_parece_gtin_ou_ean(nome_coluna: str) -> bool:
+    nome = _normalizar_texto(nome_coluna)
+    if not nome:
+        return False
+
+    termos = {
+        "gtin",
+        "ean",
+        "codigo de barras",
+        "codigo barras",
+        "cod barras",
+        "cod de barras",
+        "barcode",
+    }
+
+    if nome in termos:
+        return True
+
+    return any(termo in nome for termo in termos)
+
+
 # ==========================================================
 # SUGESTÕES / MAPEAMENTO
 # ==========================================================
@@ -775,8 +796,7 @@ def _montar_df_saida_exato_modelo(
 
     # Limpeza de GTIN inválido em qualquer coluna GTIN/EAN do modelo
     for col in df_saida.columns:
-        col_norm = _normalizar_texto(col)
-        if "gtin" in col_norm or "ean" in col_norm:
+        if _coluna_parece_gtin_ou_ean(col):
             df_saida[col] = _limpar_gtin_invalido_serie(_serie_texto(df_saida, col))
 
     return df_saida
@@ -856,11 +876,13 @@ def _exportar_df_exato_para_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name="Produtos")
         ws = writer.sheets["Produtos"]
 
-        texto_alvos = {"codigo", "código", "ean", "gtin", "ncm"}
+        texto_alvos = {"codigo", "código", "ean", "gtin", "ncm", "codigo de barras", "código de barras"}
+        texto_alvos_normalizados = {_normalizar_texto(x) for x in texto_alvos}
         mapa_headers = {cell.value: cell.column_letter for cell in ws[1]}
 
         for header, col_letter in mapa_headers.items():
-            if _normalizar_texto(header) in {_normalizar_texto(x) for x in texto_alvos}:
+            header_normalizado = _normalizar_texto(header)
+            if header_normalizado in texto_alvos_normalizados or _coluna_parece_gtin_ou_ean(header):
                 for cell in ws[col_letter]:
                     cell.number_format = numbers.FORMAT_TEXT
 
