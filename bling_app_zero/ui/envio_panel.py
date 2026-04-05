@@ -7,6 +7,11 @@ import streamlit as st
 
 from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.core.bling_sync import sync_products, sync_stocks
+from bling_app_zero.core.bling_user_session import (
+    ensure_current_user_defaults,
+    get_current_user_key,
+    get_current_user_label,
+)
 from bling_app_zero.utils.numeros import normalize_value, safe_float
 
 
@@ -188,14 +193,21 @@ def render_send_panel() -> None:
         st.info("Carregue primeiro uma origem de dados.")
         return
 
-    auth = BlingAuthManager()
+    ensure_current_user_defaults()
+    user_key = get_current_user_key()
+    user_label = get_current_user_label()
+
+    auth = BlingAuthManager(user_key=user_key)
     conectado = bool(auth.get_connection_status().get("connected"))
+
+    st.caption(f"Usuário atual do envio Bling: {user_label} ({user_key})")
 
     tab1, tab2 = st.tabs(["Preparar cadastro", "Preparar estoque"])
 
     with tab1:
         rows = build_product_rows(df, mapeamento)
         validos, invalidos = validar_produtos(rows)
+
         st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
 
         if st.button("Gerar preview de cadastro", use_container_width=True):
@@ -203,6 +215,7 @@ def render_send_panel() -> None:
                 "tipo": "cadastro",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
+                "user_key": user_key,
             }
 
         _mostrar_resumo_validacao(
@@ -218,12 +231,14 @@ def render_send_panel() -> None:
                 use_container_width=True,
                 disabled=not bool(validos),
             ):
-                sucessos, erros = sync_products(validos)
+                sucessos, erros = sync_products(validos, user_key=user_key)
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "cadastro_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
+                    "user_key": user_key,
                 }
+
                 if sucessos:
                     st.success(f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling.")
                 if erros:
@@ -235,8 +250,8 @@ def render_send_panel() -> None:
     with tab2:
         rows = build_stock_rows(df, mapeamento)
         validos, invalidos = validar_estoque(rows)
-        st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
 
+        st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
         st.text_input(
             "Depósito / ID do depósito",
             key="deposito_nome_manual",
@@ -248,6 +263,7 @@ def render_send_panel() -> None:
                 "tipo": "estoque",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
+                "user_key": user_key,
             }
 
         _mostrar_resumo_validacao(
@@ -263,12 +279,14 @@ def render_send_panel() -> None:
                 use_container_width=True,
                 disabled=not bool(validos),
             ):
-                sucessos, erros = sync_stocks(validos)
+                sucessos, erros = sync_stocks(validos, user_key=user_key)
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "estoque_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
+                    "user_key": user_key,
                 }
+
                 if sucessos:
                     st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
                 if erros:
