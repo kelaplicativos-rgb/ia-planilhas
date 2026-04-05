@@ -1,20 +1,26 @@
+# bling_app_zero/ui/state.py
+
 import streamlit as st
 
 
-def init_state() -> None:
-    defaults = {
-        "df_origem": None,
-        "origem_atual": "",
-        "modo_operacao": "Cadastro de produtos",
-        "mapeamento_manual": {},
-        "preco_compra_modulo_precificacao": 0.0,
-        "bling_produtos_df": None,
-        "bling_estoque_df": None,
-        "ultimo_log_envio": [],
-        "deposito_padrao": "",
-        "origem_urls_texto": "",
-    }
+def init_state():
+    if "logs" not in st.session_state:
+        st.session_state["logs"] = []
 
-    for chave, valor in defaults.items():
-        if chave not in st.session_state:
-            st.session_state[chave] = valor
+    if "df_saida" not in st.session_state:
+        st.session_state["df_saida"] = None
+
+    if "validacao_erros" not in st.session_state:
+        st.session_state["validacao_erros"] = []
+
+    if "validacao_avisos" not in st.session_state:
+        st.session_state["validacao_avisos"] = []
+
+    if "validacao_ok" not in st.session_state:
+        st.session_state["validacao_ok"] = False
+
+    if "ultima_chave_arquivo" not in st.session_state:
+        st.session_state["ultima_chave_arquivo"] = None
+
+    if "mapeamento_memoria" not in st.session_state:
+        st.session_state["mapeamento_memoria"] = {}
