@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import io
 import xml.etree.ElementTree as ET
@@ -5,6 +6,7 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
+from pandas.errors import ParserError
 
 from bling_app_zero.core.mapeamento_ia import mapear_colunas_ia
 from bling_app_zero.core.memoria_fornecedor import (
@@ -49,11 +51,23 @@ OPERACOES = {
 
 
 # ==========================================================
-# LEITURA / XML
+# UTILITÁRIOS
 # ==========================================================
+def _log(msg: str) -> None:
+    if "logs" not in st.session_state:
+        st.session_state["logs"] = []
+    st.session_state["logs"].append(str(msg))
+
+
 def _gerar_hash_arquivo(df: pd.DataFrame, nome_arquivo: str) -> str:
     base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
     return hashlib.md5(base.encode("utf-8")).hexdigest()
+
+
+def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+    return df
 
 
 def _local_name(tag: str) -> str:
@@ -69,6 +83,9 @@ def _find_child_text(element: ET.Element, child_name: str) -> str:
     return ""
 
 
+# ==========================================================
+# XML
+# ==========================================================
 def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     root = ET.fromstring(xml_bytes)
     itens = []
@@ -121,9 +138,128 @@ def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
     if "vuncom" in df.columns and "custo_total_item_xml" not in df.columns:
         df["custo_total_item_xml"] = df["vuncom"]
 
-    return df
+    return _normalizar_colunas(df)
 
 
+# ==========================================================
+# CSV ROBUSTO
+# ==========================================================
+def _detectar_encoding(raw_bytes: bytes) -> str:
+    candidatos = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
+
+    for enc in candidatos:
+        try:
+            raw_bytes.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+
+    return "latin1"
+
+
+def _detectar_separador(texto: str) -> str | None:
+    amostra = "\n".join(texto.splitlines()[:20]).strip()
+    if not amostra:
+        return None
+
+    try:
+        dialect = csv.Sniffer().sniff(amostra, delimiters=[",", ";", "\t", "|"])
+        return dialect.delimiter
+    except Exception:
+        pass
+
+    contagens = {
+        ";": amostra.count(";"),
+        ",": amostra.count(","),
+        "\t": amostra.count("\t"),
+        "|": amostra.count("|"),
+    }
+
+    melhor = max(contagens, key=contagens.get)
+    if contagens[melhor] > 0:
+        return melhor
+
+    return None
+
+
+def _tentar_ler_csv_com_config(
+    texto: str,
+    sep: str | None,
+    tolerante: bool = False,
+) -> pd.DataFrame:
+    kwargs = {
+        "engine": "python",
+        "dtype": str,
+        "keep_default_na": False,
+    }
+
+    if sep:
+        kwargs["sep"] = sep
+    else:
+        kwargs["sep"] = None
+
+    if tolerante:
+        kwargs["on_bad_lines"] = "skip"
+
+    return pd.read_csv(io.StringIO(texto), **kwargs)
+
+
+def _ler_csv_robusto(arquivo) -> Tuple[pd.DataFrame, str]:
+    raw_bytes = arquivo.getvalue()
+    encoding = _detectar_encoding(raw_bytes)
+    texto = raw_bytes.decode(encoding, errors="replace")
+    separador = _detectar_separador(texto)
+
+    tentativas = []
+
+    configuracoes = [
+        {"sep": separador, "tolerante": False, "rotulo": "detecção automática"},
+        {"sep": ";", "tolerante": False, "rotulo": "separador ;"},
+        {"sep": ",", "tolerante": False, "rotulo": "separador ,"},
+        {"sep": "\t", "tolerante": False, "rotulo": "separador TAB"},
+        {"sep": "|", "tolerante": False, "rotulo": "separador |"},
+        {"sep": separador, "tolerante": True, "rotulo": "modo tolerante"},
+        {"sep": ";", "tolerante": True, "rotulo": "modo tolerante ;"},
+        {"sep": ",", "tolerante": True, "rotulo": "modo tolerante ,"},
+    ]
+
+    melhor_df = None
+    melhor_rotulo = ""
+
+    for cfg in configuracoes:
+        try:
+            df = _tentar_ler_csv_com_config(
+                texto=texto,
+                sep=cfg["sep"],
+                tolerante=cfg["tolerante"],
+            )
+            df = _normalizar_colunas(df)
+
+            if df is not None and not df.empty and len(df.columns) >= 2:
+                melhor_df = df
+                melhor_rotulo = cfg["rotulo"]
+                break
+
+        except ParserError as e:
+            tentativas.append(f"{cfg['rotulo']}: {e}")
+        except Exception as e:
+            tentativas.append(f"{cfg['rotulo']}: {e}")
+
+    if melhor_df is None or melhor_df.empty:
+        detalhes = " | ".join(tentativas[-4:]) if tentativas else "sem detalhes"
+        raise ValueError(f"Não foi possível ler o CSV. Tentativas: {detalhes}")
+
+    _log(
+        f"CSV lido com encoding {encoding} e estratégia {melhor_rotulo}"
+        + (f" | separador detectado: {repr(separador)}" if separador else "")
+    )
+
+    return melhor_df, f"CSV ({encoding})"
+
+
+# ==========================================================
+# LEITURA DE ARQUIVO
+# ==========================================================
 def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
     nome_arquivo = str(getattr(arquivo, "name", "")).lower()
 
@@ -135,34 +271,34 @@ def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
         except Exception:
             arquivo.seek(0)
             try:
-                return pd.read_xml(io.BytesIO(xml_bytes)), "XML genérico"
+                df_xml = pd.read_xml(io.BytesIO(xml_bytes))
+                return _normalizar_colunas(df_xml), "XML genérico"
             except Exception as e:
                 raise ValueError(f"Não foi possível ler o XML: {e}") from e
 
     if nome_arquivo.endswith(".csv"):
-        try:
-            return pd.read_csv(arquivo), "CSV"
-        except UnicodeDecodeError:
-            arquivo.seek(0)
-            return pd.read_csv(arquivo, encoding="latin1"), "CSV"
+        return _ler_csv_robusto(arquivo)
 
-    return pd.read_excel(arquivo), "Planilha"
+    df_excel = pd.read_excel(arquivo, dtype=str)
+    return _normalizar_colunas(df_excel), "Planilha"
 
 
 # ==========================================================
 # MAPEAMENTO / GERAÇÃO
 # ==========================================================
-def _limpar_estado_geracao() -> None:
-    chaves = [
+def _limpar_estado_geracao(modo: str | None = None) -> None:
+    chaves_base = [
         "df_saida",
         "df_saida_preview_hash",
         "excel_saida_bytes",
         "excel_saida_nome",
-        "mapeamento_manual",
         "df_origem_hash",
     ]
-    for chave in chaves:
+    for chave in chaves_base:
         st.session_state.pop(chave, None)
+
+    if modo:
+        st.session_state.pop(f"mapeamento_manual_{modo}", None)
 
 
 def _montar_df_saida(
@@ -172,11 +308,10 @@ def _montar_df_saida(
     defaults: Dict[str, object] | None = None,
 ) -> pd.DataFrame:
     defaults = defaults or {}
-
     df_saida = pd.DataFrame(index=df_origem.index)
 
     for destino in colunas_destino:
-        origem_selecionada = mapeamento_manual.get(destino, "")
+        origem_selecionada = str(mapeamento_manual.get(destino, "") or "").strip()
 
         if origem_selecionada and origem_selecionada in df_origem.columns:
             df_saida[destino] = df_origem[origem_selecionada]
@@ -194,14 +329,22 @@ def _sugerir_mapeamento_inicial(
 ) -> Dict[str, str]:
     mapeamento_manual: Dict[str, str] = {}
 
-    mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
+    try:
+        mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
+    except Exception:
+        mapeamento_memoria = {}
+
     if mapeamento_memoria:
         for origem, destino in mapeamento_memoria.items():
             if destino in colunas_destino and origem in colunas_origem:
                 if destino not in mapeamento_manual:
                     mapeamento_manual[destino] = origem
 
-    mapa_ia = mapear_colunas_ia(colunas_origem, colunas_destino)
+    try:
+        mapa_ia = mapear_colunas_ia(colunas_origem, colunas_destino)
+    except Exception:
+        mapa_ia = {}
+
     for origem, dados in mapa_ia.items():
         destino = str(dados.get("destino", "") or "").strip()
         score = float(dados.get("score", 0) or 0)
@@ -210,7 +353,7 @@ def _sugerir_mapeamento_inicial(
             destino
             and destino in colunas_destino
             and origem in colunas_origem
-            and score >= 0.6
+            and score >= 0.60
             and destino not in mapeamento_manual
         ):
             mapeamento_manual[destino] = origem
@@ -223,64 +366,60 @@ def _render_mapeamento_manual(
     colunas_destino: List[str],
     state_key: str,
 ) -> Dict[str, str]:
-    st.subheader("Mapeamento manual antes de gerar")
-    st.caption("Escolha manualmente qual coluna do arquivo de origem alimenta cada coluna do arquivo final.")
+    st.subheader("Mapeamento manual")
+    st.caption("Defina manualmente o que vai para o arquivo final antes de gerar o preview final.")
 
-    opcoes_base = [""] + list(df_origem.columns)
-    mapeamento = st.session_state.get(state_key, {}).copy()
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {}
 
-    preview_cols = st.columns([1.1, 1.7, 2.2])
+    mapeamento = dict(st.session_state.get(state_key, {}))
+    colunas_origem = list(df_origem.columns)
 
-    with preview_cols[0]:
+    cab1, cab2, cab3 = st.columns([1.2, 1.8, 2.0])
+    with cab1:
         st.markdown("**Coluna final**")
-    with preview_cols[1]:
+    with cab2:
         st.markdown("**Coluna da origem**")
-    with preview_cols[2]:
+    with cab3:
         st.markdown("**Exemplo**")
 
     usados = set()
 
     for destino in colunas_destino:
-        cols = st.columns([1.1, 1.7, 2.2])
-
-        atual = mapeamento.get(destino, "")
+        atual = str(mapeamento.get(destino, "") or "").strip()
         if atual:
             usados.add(atual)
 
-        with cols[0]:
+        c1, c2, c3 = st.columns([1.2, 1.8, 2.0])
+
+        with c1:
             st.markdown(f"`{destino}`")
 
-        with cols[1]:
-            # Permite manter o valor atual selecionado e evitar duplicidade visual
-            opcoes_dinamicas = [""]
-            for col in df_origem.columns:
+        with c2:
+            opcoes = [""]
+            for col in colunas_origem:
                 if col == atual or col not in (usados - ({atual} if atual else set())):
-                    opcoes_dinamicas.append(col)
+                    opcoes.append(col)
 
-            try:
-                indice = opcoes_dinamicas.index(atual) if atual in opcoes_dinamicas else 0
-            except Exception:
-                indice = 0
+            index = opcoes.index(atual) if atual in opcoes else 0
 
             novo_valor = st.selectbox(
                 f"Origem para {destino}",
-                opcoes_dinamicas,
-                index=indice,
+                opcoes,
+                index=index,
                 key=f"map_{state_key}_{destino}",
                 label_visibility="collapsed",
             )
 
-            if novo_valor:
-                mapeamento[destino] = novo_valor
-            else:
-                mapeamento[destino] = ""
+            mapeamento[destino] = novo_valor or ""
 
-        with cols[2]:
+        with c3:
             origem_exemplo = mapeamento.get(destino, "")
             if origem_exemplo and origem_exemplo in df_origem.columns:
-                serie = df_origem[origem_exemplo].dropna().astype(str)
+                serie = df_origem[origem_exemplo].astype(str).replace("nan", "").replace("None", "")
+                serie = serie[serie.str.strip() != ""]
                 exemplo = serie.iloc[0] if not serie.empty else ""
-                st.caption(str(exemplo)[:120])
+                st.caption(str(exemplo)[:120] if exemplo else "—")
             else:
                 st.caption("—")
 
@@ -325,6 +464,7 @@ def render_origem_dados() -> None:
         df_origem, origem_atual = _ler_arquivo_upload(arquivo)
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
+        _log(f"Erro ao ler arquivo {getattr(arquivo, 'name', 'arquivo')}: {e}")
         return
 
     if df_origem is None or df_origem.empty:
@@ -336,6 +476,7 @@ def render_origem_dados() -> None:
 
     if st.session_state.get("df_origem_hash") != origem_hash:
         _limpar_estado_geracao()
+        st.session_state.pop(f"mapeamento_manual_{modo}", None)
 
     st.session_state["df_origem"] = df_origem.copy()
     st.session_state["origem_atual"] = origem_atual
@@ -390,30 +531,31 @@ def render_origem_dados() -> None:
                     st.warning("Nenhum dado foi gerado.")
                     return
 
-                # custo automático, quando fizer sentido
                 try:
                     preco_compra = calcular_preco_compra_automatico_df(df_saida)
                     st.session_state["preco_compra_modulo_precificacao"] = float(preco_compra or 0.0)
-                    if "custo" in df_saida.columns:
-                        custo_vazio = df_saida["custo"].astype(str).str.strip().eq("").all()
-                        if custo_vazio and preco_compra:
-                            df_saida["custo"] = float(preco_compra)
-                except Exception:
-                    # Não bloqueia a geração se a precificação falhar
-                    pass
 
-                # salva memória no formato já aceito pelo módulo atual: origem -> destino
+                    if "custo" in df_saida.columns:
+                        custo_serie = df_saida["custo"].astype(str).fillna("").str.strip()
+                        if custo_serie.eq("").all() and preco_compra:
+                            df_saida["custo"] = float(preco_compra)
+                except Exception as e:
+                    _log(f"Falha na precificação automática: {e}")
+
                 mapa_para_memoria = {}
                 for destino, origem in mapeamento_manual.items():
                     if origem:
                         mapa_para_memoria[origem] = destino
 
-                salvar_mapeamento(
-                    memoria,
-                    list(df_origem.columns),
-                    mapa_para_memoria,
-                )
-                st.session_state["mapeamento_memoria"] = memoria
+                try:
+                    salvar_mapeamento(
+                        memoria,
+                        list(df_origem.columns),
+                        mapa_para_memoria,
+                    )
+                    st.session_state["mapeamento_memoria"] = memoria
+                except Exception as e:
+                    _log(f"Falha ao salvar memória de mapeamento: {e}")
 
                 excel_bytes = df_to_excel_bytes(df_saida)
 
@@ -426,6 +568,7 @@ def render_origem_dados() -> None:
 
             except Exception as e:
                 st.error(f"Erro ao gerar preview final: {e}")
+                _log(f"Erro ao gerar preview final: {e}")
 
     with col2:
         if st.button("Limpar mapeamento", width="stretch"):
