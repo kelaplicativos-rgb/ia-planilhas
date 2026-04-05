@@ -14,7 +14,7 @@ from bling_app_zero.ui.bling_panel import (
     render_bling_panel,
 )
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.1"
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kelaplicativos-rgb/ia-planilhas/main/version.json"
 UPDATE_CHECK_TIMEOUT_SECONDS = 3
 AUTO_RERUN_LIMIT = 2
@@ -72,8 +72,8 @@ def _buscar_versao_remota() -> Optional[Dict[str, Any]]:
         )
         with urllib.request.urlopen(req, timeout=UPDATE_CHECK_TIMEOUT_SECONDS) as resp:
             payload = resp.read().decode("utf-8")
+            data = json.loads(payload)
 
-        data = json.loads(payload)
         if not isinstance(data, dict):
             return None
 
@@ -85,6 +85,7 @@ def _buscar_versao_remota() -> Optional[Dict[str, Any]]:
             "version": versao,
             "message": str(data.get("message", "")).strip(),
         }
+
     except (
         urllib.error.URLError,
         urllib.error.HTTPError,
@@ -128,7 +129,6 @@ def _render_verificacao_de_atualizacao() -> None:
 def _obter_render_origem_dados():
     if hasattr(origem_dados_ui, "render_origem_dados"):
         return origem_dados_ui.render_origem_dados
-
     if hasattr(origem_dados_ui, "tela_origem_dados"):
         return origem_dados_ui.tela_origem_dados
 
@@ -173,16 +173,17 @@ def main() -> None:
 
     with aba2:
         executar_seguro(render_bling_panel, "Painel Bling")
-        st.divider()
-        executar_seguro(render_bling_import_panel, "Importação Bling")
-        st.divider()
 
-        with st.expander("Logs do sistema"):
-            logs = st.session_state.get("logs", [])
-            if logs:
-                st.text_area("Logs", "\n".join(logs), height=200)
-            else:
-                st.write("Sem logs ainda.")
+    st.divider()
+    executar_seguro(render_bling_import_panel, "Importação Bling")
+
+    st.divider()
+    with st.expander("Logs do sistema"):
+        logs = st.session_state.get("logs", [])
+        if logs:
+            st.text_area("Logs", "\n".join(logs), height=200)
+        else:
+            st.write("Sem logs ainda.")
 
 
 if __name__ == "__main__":
