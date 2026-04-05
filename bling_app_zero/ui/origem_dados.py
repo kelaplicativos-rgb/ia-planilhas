@@ -11,7 +11,13 @@ import streamlit as st
 from openpyxl.styles import numbers
 from pandas.errors import ParserError
 
-from bling_app_zero.scrapers.site_crawler import extrair_produtos_de_site
+
+def _importar_extrator_site():
+    try:
+        from bling_app_zero.scrapers.site_crawler import extrair_produtos_de_site
+        return extrair_produtos_de_site, None
+    except Exception as e:
+        return None, e
 
 
 OPERACOES = {
@@ -1223,8 +1229,14 @@ def render_origem_dados() -> None:
         st.rerun()
 
     if buscar_site:
-        if not str(url_site or '').strip():
+        if not str(url_site or "").strip():
             st.error("Informe a URL do site para iniciar a varredura.")
+            return
+
+        extrair_produtos_de_site, erro_import_site = _importar_extrator_site()
+        if erro_import_site is not None or extrair_produtos_de_site is None:
+            st.error(f"Erro ao carregar o módulo de busca por site: {erro_import_site}")
+            _log(f"Erro ao carregar o módulo de busca por site: {erro_import_site}")
             return
 
         with st.spinner("Varrendo o site, categorias e páginas de produto..."):
