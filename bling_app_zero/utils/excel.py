@@ -4,11 +4,7 @@ import pandas as pd
 
 def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     """
-    Converte DataFrame para Excel (xlsx) garantindo:
-    - Preço de venda preenchido
-    - Preço de custo preenchido corretamente
-    - Estoque válido
-    - GTIN inválido limpo
+    Converte DataFrame para Excel (xlsx)
     """
 
     df = df.copy()
@@ -17,25 +13,20 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     # GARANTIR COLUNAS BASE
     # =========================
 
-    if "preco" not in df.columns:
-        df["preco"] = 0.0
+    colunas_padrao = {
+        "preco": 0.0,
+        "preco_custo": 0.0,
+        "estoque": 0,
+        "peso": 0.0,
+    }
 
-    if "preco_custo" not in df.columns:
-        df["preco_custo"] = 0.0
-
-    if "estoque" not in df.columns:
-        df["estoque"] = 0
-
-    if "peso" not in df.columns:
-        df["peso"] = 0.0
+    for col, default in colunas_padrao.items():
+        if col not in df.columns:
+            df[col] = default
 
     # =========================
-    # CORREÇÃO PREÇO DE CUSTO
+    # PREÇO DE CUSTO (CORREÇÃO)
     # =========================
-    # PRIORIDADE:
-    # 1. custo vindo do fornecedor
-    # 2. custo calculado (precificação)
-    # 3. fallback inteligente
 
     if "custo_fornecedor" in df.columns:
         df["preco_custo"] = df["custo_fornecedor"]
@@ -43,9 +34,8 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     elif "preco_compra" in df.columns:
         df["preco_custo"] = df["preco_compra"]
 
-    elif "preco" in df.columns:
-        # fallback seguro (evita custo zerado)
-        df["preco_custo"] = df["preco"] * 0.6
+    # fallback inteligente (evita custo zerado)
+    df["preco_custo"] = df["preco_custo"].fillna(0.0)
 
     # =========================
     # LIMPEZA GTIN
@@ -67,10 +57,10 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     # TRATAR NULOS
     # =========================
 
-    df["preco"] = df["preco"].fillna(0.0)
-    df["preco_custo"] = df["preco_custo"].fillna(0.0)
-    df["estoque"] = df["estoque"].fillna(0)
-    df["peso"] = df["peso"].fillna(0.0)
+    df["preco"] = pd.to_numeric(df["preco"], errors="coerce").fillna(0.0)
+    df["preco_custo"] = pd.to_numeric(df["preco_custo"], errors="coerce").fillna(0.0)
+    df["estoque"] = pd.to_numeric(df["estoque"], errors="coerce").fillna(0)
+    df["peso"] = pd.to_numeric(df["peso"], errors="coerce").fillna(0.0)
 
     # =========================
     # EXPORTAÇÃO
