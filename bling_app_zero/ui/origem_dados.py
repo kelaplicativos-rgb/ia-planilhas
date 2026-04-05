@@ -4,44 +4,23 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_ia import mapear_colunas_ia
+from bling_app_zero.core.memoria_fornecedor import (
+    salvar_mapeamento,
+    recuperar_mapeamento,
+)
 from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
-# =========================
-# CONFIG
-# =========================
-
-CAMPOS_FIXOS = {
-    "condicao": "NOVO",
-    "frete_gratis": "NÃO",
-    "volume": 1,
-    "itens_caixa": 1,
-    "unidade_medida": "CENTIMETROS",
-    "departamento": "GERAL"
-}
-
 COLUNAS_DESTINO = [
-    "nome",
-    "preco",
-    "custo",
-    "sku",
-    "gtin",
-    "ncm",
-    "marca",
-    "estoque",
-    "categoria",
-    "peso"
+    "nome", "preco", "custo", "sku", "gtin",
+    "ncm", "marca", "estoque", "categoria", "peso"
 ]
 
 
-# =========================
-# UI PRINCIPAL
-# =========================
-
 def tela_origem_dados():
 
-    st.title("🤖 Modo Automático Inteligente")
+    st.title("🤖 IA Automática com Memória")
 
     arquivo = st.file_uploader(
         "Anexar planilha ou XML",
@@ -51,10 +30,7 @@ def tela_origem_dados():
     if not arquivo:
         return
 
-    # =========================
-    # LEITURA
-    # =========================
-
+    # leitura
     try:
         if arquivo.name.endswith(".xml"):
             df = pd.read_xml(arquivo)
@@ -62,92 +38,69 @@ def tela_origem_dados():
             df = pd.read_csv(arquivo)
         else:
             df = pd.read_excel(arquivo)
-
     except Exception as e:
-        st.error(f"Erro ao ler arquivo: {e}")
+        st.error(f"Erro ao ler: {e}")
         return
-
-    st.success("Arquivo carregado")
 
     colunas_origem = list(df.columns)
 
     # =========================
-    # IA MAPEAMENTO AUTOMÁTICO
+    # MEMÓRIA PRIMEIRO
     # =========================
 
-    mapa_ia = mapear_colunas_ia(colunas_origem, COLUNAS_DESTINO)
+    memoria = st.session_state.get("mapeamento_memoria", {})
 
-    mapeamento_auto = {}
+    mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
 
-    for col, dados in mapa_ia.items():
-        destino = dados.get("destino")
-        score = dados.get("score", 0)
-
-        # só aceita se confiança alta
-        if destino and score >= 0.6:
-            mapeamento_auto[col] = destino
-
-    # =========================
-    # PREVIEW INTELIGENTE
-    # =========================
-
-    st.subheader("⚡ Resultado automático")
-
-    if mapeamento_auto:
-
-        df_preview = pd.DataFrame()
-
-        for origem, destino in mapeamento_auto.items():
-            df_preview[destino] = df[origem]
-
-        st.dataframe(df_preview.head(3), use_container_width=True)
-
-        st.success(f"{len(mapeamento_auto)} campos mapeados automaticamente")
-
+    if mapeamento_memoria:
+        st.success("⚡ Mapeamento recuperado automaticamente (memória)")
+        mapeamento_final = mapeamento_memoria
     else:
-        st.warning("Nenhum mapeamento automático confiável encontrado")
+        # =========================
+        # IA
+        # =========================
+        mapa_ia = mapear_colunas_ia(colunas_origem, COLUNAS_DESTINO)
+
+        mapeamento_final = {}
+
+        for col, dados in mapa_ia.items():
+            if dados.get("destino") and dados.get("score", 0) >= 0.6:
+                mapeamento_final[col] = dados["destino"]
 
     # =========================
-    # BOTÃO GERAR DIRETO
+    # PREVIEW
     # =========================
 
-    st.divider()
+    df_preview = pd.DataFrame()
 
-    if st.button("🚀 Gerar planilha automática"):
+    for origem, destino in mapeamento_final.items():
+        df_preview[destino] = df[origem]
 
-        if not mapeamento_auto:
-            st.warning("Não foi possível mapear automaticamente")
-            return
+    st.dataframe(df_preview.head(3), use_container_width=True)
+
+    # =========================
+    # GERAR
+    # =========================
+
+    if st.button("🚀 Gerar automático"):
 
         df_saida = pd.DataFrame()
 
-        for origem, destino in mapeamento_auto.items():
+        for origem, destino in mapeamento_final.items():
             df_saida[destino] = df[origem]
-
-        # =========================
-        # CAMPOS FIXOS
-        # =========================
-
-        for campo, valor in CAMPOS_FIXOS.items():
-            df_saida[campo] = valor
-
-        # =========================
-        # IA DE PREÇO
-        # =========================
 
         df_saida = calcular_preco_compra_automatico_df(df_saida)
 
-        # =========================
-        # DOWNLOAD
-        # =========================
+        # salva memória
+        salvar_mapeamento(memoria, colunas_origem, mapeamento_final)
+        st.session_state["mapeamento_memoria"] = memoria
 
         excel_bytes = df_to_excel_bytes(df_saida)
 
         st.download_button(
-            "📥 Baixar planilha pronta",
+            "📥 Baixar",
             data=excel_bytes,
-            file_name="bling_importacao_auto.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            file_name="bling_auto.xlsx"
         )
 
-        st.success("🔥 Processo 100% automático concluído")
+        st.success("🔥 Aprendido e gerado automaticamente")
