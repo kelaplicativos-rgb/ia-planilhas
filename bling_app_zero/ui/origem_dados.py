@@ -67,11 +67,6 @@ def _gerar_hash_texto(texto: str) -> str:
     return hashlib.md5(texto.encode("utf-8")).hexdigest()
 
 
-def _gerar_hash_arquivo_df(df: pd.DataFrame, nome_arquivo: str) -> str:
-    base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
-    return _gerar_hash_texto(base)
-
-
 def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(col).strip() for col in df.columns]
@@ -89,6 +84,18 @@ def _find_child_text(element: ET.Element, child_name: str) -> str:
         if _local_name(child.tag) == child_name:
             return (child.text or "").strip()
     return ""
+
+
+def _render_lista_colunas_simples(colunas: List[str]) -> None:
+    """
+    Mostra somente os nomes das colunas, sem índices e sem estrutura de lista Python.
+    """
+    if not colunas:
+        st.caption("Sem colunas para exibir.")
+        return
+
+    texto = "\n".join(str(col) for col in colunas if str(col).strip())
+    st.code(texto, language=None)
 
 
 # ==========================================================
@@ -569,7 +576,11 @@ def _render_calculadora_cadastro(
 
     with csel1:
         opcoes_preco_origem = [""] + colunas_origem
-        idx_origem = opcoes_preco_origem.index(coluna_preco_base_default) if coluna_preco_base_default in opcoes_preco_origem else 0
+        idx_origem = (
+            opcoes_preco_origem.index(coluna_preco_base_default)
+            if coluna_preco_base_default in opcoes_preco_origem
+            else 0
+        )
         coluna_preco_base = st.selectbox(
             "Coluna da fornecedora usada como preço base",
             options=opcoes_preco_origem,
@@ -579,7 +590,11 @@ def _render_calculadora_cadastro(
 
     with csel2:
         opcoes_preco_destino = [""] + colunas_destino_ativas
-        idx_destino = opcoes_preco_destino.index(coluna_preco_destino_default) if coluna_preco_destino_default in opcoes_preco_destino else 0
+        idx_destino = (
+            opcoes_preco_destino.index(coluna_preco_destino_default)
+            if coluna_preco_destino_default in opcoes_preco_destino
+            else 0
+        )
         coluna_preco_destino = st.selectbox(
             "Coluna do modelo final que receberá o preço de venda",
             options=opcoes_preco_destino,
@@ -712,8 +727,6 @@ def _aplicar_preco_no_df_saida(
 # UI
 # ==========================================================
 def render_origem_dados() -> None:
-    st.title("Origem dos dados")
-
     st.subheader("Planilhas modelo para o download")
     st.caption(
         "Anexe os modelos oficiais. O arquivo final será montado com as mesmas colunas e na mesma ordem do modelo correspondente."
@@ -778,9 +791,7 @@ def render_origem_dados() -> None:
             f"({origem_modelo_ativo}) com **{len(colunas_destino_ativas)}** colunas."
         )
         with st.expander("Ver colunas do modelo ativo"):
-            st.write(colunas_destino_ativas)
-            if df_modelo_ativo is not None and not df_modelo_ativo.empty:
-                st.dataframe(df_modelo_ativo.head(5), width="stretch")
+            _render_lista_colunas_simples(colunas_destino_ativas)
     else:
         st.warning(
             "Nenhuma planilha modelo foi anexada para essa operação. "
