@@ -45,14 +45,11 @@ def aplicar_estilo_global() -> None:
 def _normalizar_versao(valor: str) -> list[int]:
     partes = str(valor or "").strip().split(".")
     numeros: list[int] = []
-
     for parte in partes:
         digitos = "".join(ch for ch in parte if ch.isdigit())
         numeros.append(int(digitos or "0"))
-
     while len(numeros) < 3:
         numeros.append(0)
-
     return numeros[:3]
 
 
@@ -73,19 +70,17 @@ def _buscar_versao_remota() -> Optional[Dict[str, Any]]:
         with urllib.request.urlopen(req, timeout=UPDATE_CHECK_TIMEOUT_SECONDS) as resp:
             payload = resp.read().decode("utf-8")
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                return None
 
-        if not isinstance(data, dict):
-            return None
+            versao = str(data.get("version", "")).strip()
+            if not versao:
+                return None
 
-        versao = str(data.get("version", "")).strip()
-        if not versao:
-            return None
-
-        return {
-            "version": versao,
-            "message": str(data.get("message", "")).strip(),
-        }
-
+            return {
+                "version": versao,
+                "message": str(data.get("message", "")).strip(),
+            }
     except (
         urllib.error.URLError,
         urllib.error.HTTPError,
@@ -135,7 +130,7 @@ def _obter_render_origem_dados():
     nomes_disponiveis = [nome for nome in dir(origem_dados_ui) if not nome.startswith("_")]
     raise AttributeError(
         "O módulo 'bling_app_zero.ui.origem_dados' não possui "
-        "'render_origem_dados' nem 'tela_origem_dados'. "
+        "'render_origem_dados' nem 'tela_origem_dados'.\n"
         f"Nomes encontrados: {nomes_disponiveis}"
     )
 
