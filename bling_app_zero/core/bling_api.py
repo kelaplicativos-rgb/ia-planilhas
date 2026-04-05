@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
+import pandas as pd
 
 from bling_app_zero.core.bling_auth import BlingAuthManager
 
@@ -19,23 +20,6 @@ class BlingAPIClient:
             "Content-Type": "application/json",
             "enable-jwt": "1",
         }
-
-    @staticmethod
-    def _unwrap_data(payload: Any) -> Any:
-        if isinstance(payload, dict) and "data" in payload:
-            return payload["data"]
-        return payload
-
-    @staticmethod
-    def _as_list(payload: Any) -> List[Dict[str, Any]]:
-        data = BlingAPIClient._unwrap_data(payload)
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        if isinstance(data, dict):
-            if isinstance(data.get("data"), list):
-                return [item for item in data["data"] if isinstance(item, dict)]
-            return [data]
-        return []
 
     def request(
         self,
@@ -54,7 +38,7 @@ class BlingAPIClient:
         headers = self._headers(token_or_msg)
 
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.request(
                     method.upper(),
                     url,
@@ -81,192 +65,235 @@ class BlingAPIClient:
                         json=json,
                     )
 
-            content_type = resp.headers.get("content-type", "")
-            payload = (
-                resp.json() if "application/json" in content_type else {"raw": resp.text}
-            )
+                content_type = resp.headers.get("content-type", "")
+                payload = resp.json() if "application/json" in content_type else resp.text
 
-            if resp.status_code >= 400:
-                return False, {
-                    "status_code": resp.status_code,
-                    "error": payload,
-                    "url": url,
-                    "params": params,
-                    "body": json,
-                }
+                if resp.status_code >= 400:
+                    return False, {
+                        "status_code": resp.status_code,
+                        "error": payload,
+                        "url": url,
+                        "params": params,
+                        "json": json,
+                    }
 
-            return True, payload
+                return True, payload
         except Exception as exc:
             return False, f"Erro de comunicação com o Bling: {exc}"
 
-    def paginate(
+    @staticmethod
+    def _data_list(payload: Any) -> List[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+            if isinstance(data, dict):
+                return [data]
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _data_dict(payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, dict):
+                return data
+            return payload
+        return {}
+
+    @staticmethod
+    def _pick(d: Dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            if key in d and d.get(key) not in (None, ""):
+                return d.get(key)
+        return None
+
+    def _collect_pages(
         self,
         path: str,
         *,
         page_size: int = 100,
-        max_pages: int = 10,
+        max_pages: int = 5,
         extra_params: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, List[Dict[str, Any]]]:
-        itens: List[Dict[str, Any]] = []
+        items: List[Dict[str, Any]] = []
         params_base = dict(extra_params or {})
-        pagina = 1
 
-        while pagina <= max_pages:
-            params = {"pagina": pagina, "limite": page_size, **params_base}
+        for page in range(1, max_pages + 1):
+            params = dict(params_base)
+            params["pagina"] = page
+            params["limite"] = page_size
+
             ok, payload = self.request("GET", path, params=params)
             if not ok:
                 return False, payload
 
-            lote = self._as_list(payload)
-            if not lote:
-                break
-
-            itens.extend(lote)
+            lote = self._data_list(payload)
+            items.extend(lote)
 
             if len(lote) < page_size:
                 break
-            pagina += 1
 
-        return True, itens
+        return True, items
 
-    def list_products(
-        self,
-        *,
-        page_size: int = 100,
-        max_pages: int = 5,
-    ) -> Tuple[bool, List[Dict[str, Any]]]:
-        return self.paginate("/produtos", page_size=page_size, max_pages=max_pages)
+    def list_products(self, page_size: int = 100, max_pages: int = 5) -> Tuple[bool, Any]:
+        return self._collect_pages("/produtos", page_size=page_size, max_pages=max_pages)
 
-    def list_stocks(
-        self,
-        *,
-        page_size: int = 100,
-        max_pages: int = 5,
-    ) -> Tuple[bool, List[Dict[str, Any]]]:
+    def list_stocks(self, page_size: int = 100, max_pages: int = 5) -> Tuple[bool, Any]:
         ok, produtos = self.list_products(page_size=page_size, max_pages=max_pages)
         if not ok:
             return False, produtos
 
-        linhas: List[Dict[str, Any]] = []
-        for item in produtos:
-            produto = item.get("produto") if isinstance(item.get("produto"), dict) else item
-            if not isinstance(produto, dict):
+        rows: List[Dict[str, Any]] = []
+        for produto in produtos:
+            pid = self._pick(produto, "id")
+            if pid in (None, ""):
                 continue
 
-            codigo = produto.get("codigo")
-            nome = produto.get("nome")
-            estoque = (
-                produto.get("estoque")
-                or produto.get("saldo")
-                or produto.get("estoqueAtual")
-                or produto.get("saldoVirtualTotal")
-            )
-            linhas.append(
+            ok_item, payload_item = self.request("GET", f"/produtos/{pid}")
+            if not ok_item:
+                detalhe = {"id": pid, "erro": payload_item}
+                rows.append(detalhe)
+                continue
+
+            detalhe = self._data_dict(payload_item)
+            produto_info = detalhe.get("produto") if isinstance(detalhe.get("produto"), dict) else detalhe
+            estoque_info = detalhe.get("estoque") if isinstance(detalhe.get("estoque"), list) else []
+
+            if estoque_info:
+                for estoque in estoque_info:
+                    if not isinstance(estoque, dict):
+                        continue
+                    rows.append(
+                        {
+                            "id_produto": self._pick(produto_info, "id", "idProduto"),
+                            "codigo": self._pick(produto_info, "codigo", "codigoProduto"),
+                            "nome": self._pick(produto_info, "nome", "descricao"),
+                            "deposito_id": self._pick(estoque, "idDeposito", "deposito_id", "deposito"),
+                            "deposito": self._pick(estoque, "deposito", "nomeDeposito"),
+                            "saldo": self._pick(estoque, "saldoVirtualTotal", "saldoFisicoTotal", "saldo", "estoque"),
+                        }
+                    )
+            else:
+                rows.append(
+                    {
+                        "id_produto": self._pick(produto_info, "id", "idProduto"),
+                        "codigo": self._pick(produto_info, "codigo", "codigoProduto"),
+                        "nome": self._pick(produto_info, "nome", "descricao"),
+                        "deposito_id": None,
+                        "deposito": None,
+                        "saldo": self._pick(produto_info, "estoque", "saldo"),
+                    }
+                )
+
+        return True, rows
+
+    def products_to_dataframe(self, payload: Any) -> pd.DataFrame:
+        items = self._data_list(payload) if not isinstance(payload, list) else payload
+        rows: List[Dict[str, Any]] = []
+        for item in items:
+            rows.append(
                 {
-                    "id": produto.get("id"),
-                    "codigo": codigo,
-                    "nome": nome,
-                    "estoque": estoque,
+                    "id": self._pick(item, "id"),
+                    "codigo": self._pick(item, "codigo"),
+                    "nome": self._pick(item, "nome", "descricao"),
+                    "preco": self._pick(item, "preco", "precoVenda", "valor"),
+                    "situacao": self._pick(item, "situacao", "status"),
+                    "marca": self._pick(item, "marca"),
+                    "categoria": self._pick(item, "categoria", "descricaoCategoria"),
                 }
             )
-        return True, linhas
+        return pd.DataFrame(rows)
 
-    def get_product_by_code(self, codigo: str) -> Tuple[bool, Any]:
-        codigo = str(codigo or "").strip()
-        if not codigo:
-            return False, "Código vazio para consulta de produto."
-
-        tentativas = [
-            {"codigo": codigo},
-            {"criterio": 2, "tipo": 2, "valor": codigo},
-        ]
-        for params in tentativas:
-            ok, payload = self.request("GET", "/produtos", params=params)
-            if ok:
-                itens = self._as_list(payload)
-                for item in itens:
-                    produto = item.get("produto") if isinstance(item.get("produto"), dict) else item
-                    if not isinstance(produto, dict):
-                        continue
-                    cod_item = str(produto.get("codigo", "")).strip()
-                    if cod_item == codigo:
-                        return True, produto
-        return False, f"Produto com código '{codigo}' não encontrado."
-
-    @staticmethod
-    def _first_non_empty(*values: Any) -> Any:
-        for value in values:
-            if value is None:
+    def stocks_to_dataframe(self, payload: Any) -> pd.DataFrame:
+        items = payload if isinstance(payload, list) else self._data_list(payload)
+        rows: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
                 continue
-            if isinstance(value, str) and not value.strip():
-                continue
-            return value
-        return None
+            rows.append(
+                {
+                    "id_produto": self._pick(item, "id_produto", "id"),
+                    "codigo": self._pick(item, "codigo"),
+                    "nome": self._pick(item, "nome", "descricao"),
+                    "deposito_id": self._pick(item, "deposito_id", "idDeposito"),
+                    "deposito": self._pick(item, "deposito", "nomeDeposito"),
+                    "saldo": self._pick(item, "saldo", "estoque"),
+                }
+            )
+        return pd.DataFrame(rows)
 
-    def _produto_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        codigo = self._first_non_empty(row.get("codigo"), row.get("sku"), "")
-        nome = self._first_non_empty(row.get("nome"), "")
-        descricao_curta = self._first_non_empty(row.get("descricao_curta"), "")
-        descricao = self._first_non_empty(row.get("descricao"), descricao_curta, nome, "")
-        preco = float(row.get("preco") or 0)
-        preco_custo = row.get("preco_custo")
-        estoque = row.get("estoque")
-        gtin = self._first_non_empty(row.get("gtin"), "")
-        marca = self._first_non_empty(row.get("marca"), "")
-        categoria = self._first_non_empty(row.get("categoria"), "")
+    def _normalize_product_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        nome = str(
+            self._pick(row, "nome", "descricao", "descricao_curta") or ""
+        ).strip()
+        codigo = str(self._pick(row, "codigo", "sku") or "").strip()
+        preco = self._pick(row, "preco", "preco_venda", "valor")
+        unidade = str(self._pick(row, "unidade", "unidade_medida") or "UN").strip() or "UN"
+        situacao = str(self._pick(row, "situacao") or "A").strip() or "A"
+        tipo = str(self._pick(row, "tipo") or "P").strip() or "P"
+        formato = str(self._pick(row, "formato") or "S").strip() or "S"
 
         payload: Dict[str, Any] = {
-            "codigo": str(codigo).strip(),
-            "nome": str(nome).strip(),
-            "tipo": "P",
-            "situacao": "A",
-            "formato": "S",
-            "preco": preco,
-            "descricaoCurta": str(descricao_curta).strip(),
-            "descricaoComplementar": str(descricao).strip(),
+            "nome": nome,
+            "codigo": codigo,
+            "tipo": tipo,
+            "formato": formato,
+            "situacao": situacao,
+            "unidade": unidade,
         }
 
-        if preco_custo is not None:
+        if preco not in (None, ""):
             try:
-                payload["precoCusto"] = float(preco_custo)
+                payload["preco"] = float(preco)
             except Exception:
                 pass
 
-        if estoque is not None:
-            try:
-                payload["estoque"] = float(estoque)
-            except Exception:
-                pass
-
-        if gtin:
+        gtin = self._pick(row, "gtin", "ean")
+        if gtin not in (None, ""):
             payload["gtin"] = str(gtin).strip()
 
-        if marca:
+        marca = self._pick(row, "marca")
+        if marca not in (None, ""):
             payload["marca"] = str(marca).strip()
-
-        if categoria:
-            payload["descricaoCategoria"] = str(categoria).strip()
 
         return payload
 
-    def create_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
-        payload = self._produto_payload(row)
-        return self.request("POST", "/produtos", json=payload)
+    def find_product_by_code(self, codigo: str) -> Tuple[bool, Any]:
+        codigo = str(codigo or "").strip()
+        if not codigo:
+            return False, "Código vazio."
 
-    def update_product(self, product_id: Any, row: Dict[str, Any]) -> Tuple[bool, Any]:
-        payload = self._produto_payload(row)
-        return self.request("PUT", f"/produtos/{product_id}", json=payload)
+        ok, payload = self.request("GET", "/produtos", params={"codigo": codigo, "limite": 1})
+        if not ok:
+            return False, payload
+
+        items = self._data_list(payload)
+        if not items:
+            return True, None
+        return True, items[0]
 
     def upsert_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
-        codigo = str(row.get("codigo") or row.get("sku") or "").strip()
+        codigo = str(self._pick(row, "codigo", "sku") or "").strip()
+        payload = self._normalize_product_payload(row)
+
+        if not payload.get("nome"):
+            return False, "Nome do produto ausente."
         if not codigo:
-            return False, "Produto sem código para envio."
+            return False, "Código do produto ausente."
 
-        ok, produto = self.get_product_by_code(codigo)
-        if ok and isinstance(produto, dict) and produto.get("id"):
-            return self.update_product(produto["id"], row)
+        ok_find, found = self.find_product_by_code(codigo)
+        if not ok_find:
+            return False, found
 
-        return self.create_product(row)
+        if found:
+            product_id = self._pick(found, "id")
+            if product_id in (None, ""):
+                return False, {"erro": "Produto localizado sem id.", "produto": found}
+            return self.request("PUT", f"/produtos/{product_id}", json=payload)
+
+        return self.request("POST", "/produtos", json=payload)
 
     def update_stock(
         self,
@@ -276,64 +303,45 @@ class BlingAPIClient:
         deposito_id: Optional[str] = None,
         preco: Optional[float] = None,
     ) -> Tuple[bool, Any]:
-        ok, produto = self.get_product_by_code(codigo)
-        if not ok:
-            return False, produto
+        codigo = str(codigo or "").strip()
+        if not codigo:
+            return False, "Código do produto ausente para atualização de estoque."
 
-        product_id = produto.get("id")
-        if not product_id:
-            return False, f"Produto '{codigo}' encontrado sem ID."
+        ok_find, found = self.find_product_by_code(codigo)
+        if not ok_find:
+            return False, found
+        if not found:
+            return False, f"Produto com código {codigo} não encontrado no Bling."
 
-        payloads: List[Tuple[str, str, Dict[str, Any]]] = []
+        product_id = self._pick(found, "id")
+        if product_id in (None, ""):
+            return False, {"erro": "Produto localizado sem id.", "produto": found}
 
-        body_a: Dict[str, Any] = {"estoque": float(estoque)}
-        if deposito_id:
-            body_a["deposito"] = {"id": int(str(deposito_id))}
-        if preco is not None:
-            body_a["preco"] = float(preco)
-        payloads.append(("PATCH", f"/produtos/{product_id}/estoques", body_a))
+        body: Dict[str, Any] = {
+            "produto": {"id": product_id},
+            "saldo": float(estoque),
+        }
+        if deposito_id not in (None, ""):
+            body["deposito"] = {"id": str(deposito_id).strip()}
+        if preco not in (None, ""):
+            body["preco"] = float(preco)
 
-        body_b: Dict[str, Any] = {"quantidade": float(estoque)}
-        if deposito_id:
-            body_b["deposito"] = {"id": int(str(deposito_id))}
-        if preco is not None:
-            body_b["preco"] = float(preco)
-        payloads.append(("POST", f"/estoques", {"produto": {"id": product_id}, **body_b}))
+        candidates: Iterable[str] = (
+            self.auth.settings.stock_write_path or "/estoques",
+            "/estoques",
+            "/produtos/estoques",
+            f"/produtos/{product_id}/estoques",
+        )
 
-        ultimo_erro: Any = None
-        for method, path, body in payloads:
-            ok_req, payload = self.request(method, path, json=body)
-            if ok_req:
+        tried: List[Any] = []
+        for path in candidates:
+            ok, payload = self.request("POST", path, json=body)
+            if ok:
                 return True, payload
-            ultimo_erro = payload
+            tried.append({"path": path, "resultado": payload})
 
-        return False, ultimo_erro
-
-    @staticmethod
-    def products_to_dataframe(items: Iterable[Dict[str, Any]]):
-        import pandas as pd
-
-        linhas: List[Dict[str, Any]] = []
-        for item in items:
-            produto = item.get("produto") if isinstance(item.get("produto"), dict) else item
-            if not isinstance(produto, dict):
-                continue
-            linhas.append(
-                {
-                    "id": produto.get("id"),
-                    "codigo": produto.get("codigo"),
-                    "nome": produto.get("nome"),
-                    "preco": produto.get("preco"),
-                    "marca": produto.get("marca"),
-                    "gtin": produto.get("gtin"),
-                    "categoria": produto.get("descricaoCategoria") or produto.get("categoria"),
-                    "situacao": produto.get("situacao"),
-                }
-            )
-        return pd.DataFrame(linhas)
-
-    @staticmethod
-    def stocks_to_dataframe(items: Iterable[Dict[str, Any]]):
-        import pandas as pd
-
-        return pd.DataFrame(list(items))
+        return False, {
+            "erro": "Falha ao atualizar estoque nas rotas testadas.",
+            "tentativas": tried,
+            "body": body,
+        }
