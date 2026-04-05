@@ -1,4 +1,6 @@
 import hashlib
+import io
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import streamlit as st
@@ -27,22 +29,93 @@ COLUNAS_DESTINO = [
 
 
 def _gerar_hash_arquivo(df: pd.DataFrame, nome_arquivo: str) -> str:
-    """
-    Gera uma assinatura estável da origem carregada para evitar
-    reaproveitar mapeamento manual de outro arquivo.
-    """
     base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
     return hashlib.md5(base.encode("utf-8")).hexdigest()
 
 
+def _local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.split("}", 1)[1]
+    return tag
+
+
+def _find_child_text(element: ET.Element, child_name: str) -> str:
+    for child in list(element):
+        if _local_name(child.tag) == child_name:
+            return (child.text or "").strip()
+    return ""
+
+
+def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
+    root = ET.fromstring(xml_bytes)
+
+    itens = []
+    for det in root.iter():
+        if _local_name(det.tag) != "det":
+            continue
+
+        prod = None
+        imposto = None
+
+        for child in list(det):
+            nome = _local_name(child.tag)
+            if nome == "prod":
+                prod = child
+            elif nome == "imposto":
+                imposto = child
+
+        if prod is None:
+            continue
+
+        item = {
+            "cprod": _find_child_text(prod, "cProd"),
+            "cean": _find_child_text(prod, "cEAN"),
+            "xprod": _find_child_text(prod, "xProd"),
+            "ncm": _find_child_text(prod, "NCM"),
+            "cfop": _find_child_text(prod, "CFOP"),
+            "ucom": _find_child_text(prod, "uCom"),
+            "qcom": _find_child_text(prod, "qCom"),
+            "vuncom": _find_child_text(prod, "vUnCom"),
+            "vprod": _find_child_text(prod, "vProd"),
+            "ceantrib": _find_child_text(prod, "cEANTrib"),
+            "utrib": _find_child_text(prod, "uTrib"),
+            "qtrib": _find_child_text(prod, "qTrib"),
+            "vuntrib": _find_child_text(prod, "vUnTrib"),
+        }
+
+        if imposto is not None:
+            item["vtottrib"] = _find_child_text(imposto, "vTotTrib")
+        else:
+            item["vtottrib"] = ""
+
+        itens.append(item)
+
+    if not itens:
+        raise ValueError("Nenhum produto foi encontrado no XML da NF-e.")
+
+    df = pd.DataFrame(itens)
+
+    # Ajustes para o restante do sistema entender melhor o XML
+    if "vuncom" in df.columns and "custo_total_item_xml" not in df.columns:
+        df["custo_total_item_xml"] = df["vuncom"]
+
+    return df
+
+
 def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
-    """
-    Lê planilha ou XML e também informa o tipo de origem.
-    """
     nome_arquivo = str(getattr(arquivo, "name", "")).lower()
 
     if nome_arquivo.endswith(".xml"):
-        return pd.read_xml(arquivo), "XML NF-e"
+        xml_bytes = arquivo.getvalue()
+
+        try:
+            return _parse_nfe_xml_produtos(xml_bytes), "XML NF-e"
+        except Exception:
+            arquivo.seek(0)
+            try:
+                return pd.read_xml(io.BytesIO(xml_bytes)), "XML genérico"
+            except Exception as e:
+                raise ValueError(f"Não foi possível ler o XML: {e}") from e
 
     if nome_arquivo.endswith(".csv"):
         try:
@@ -101,8 +174,6 @@ def render_origem_dados() -> None:
             if destino and score >= 0.6:
                 mapeamento_final[col] = destino
 
-    # Só atualiza o mapeamento manual quando for um novo arquivo/origem.
-    # Isso evita misturar um fornecedor antigo com o atual.
     if (
         "mapeamento_manual" not in st.session_state
         or st.session_state.get("df_origem_hash") != origem_hash
@@ -144,8 +215,13 @@ def render_origem_dados() -> None:
             if "custo" not in df_saida.columns and preco_compra:
                 df_saida["custo"] = float(preco_compra)
 
-            salvar_mapeamento(memoria, colunas_origem, st.session_state["mapeamento_manual"])
+            salvar_mapeamento(
+                memoria,
+                colunas_origem,
+                st.session_state["mapeamento_manual"],
+            )
             st.session_state["mapeamento_memoria"] = memoria
+            st.session_state["df_saida"] = df_saida.copy()
 
             excel_bytes = df_to_excel_bytes(df_saida)
 
