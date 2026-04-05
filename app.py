@@ -2,7 +2,7 @@ import traceback
 
 import streamlit as st
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 from bling_app_zero.ui.state import init_state
 from bling_app_zero.ui import origem_dados as origem_dados_ui
@@ -30,8 +30,6 @@ def log(msg):
 def aplicar_estilo_global() -> None:
     st.markdown(
         """
-        <style>
-        </style>
         """,
         unsafe_allow_html=True,
     )
