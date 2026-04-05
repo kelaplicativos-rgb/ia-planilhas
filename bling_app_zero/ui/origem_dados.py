@@ -11,6 +11,8 @@ import streamlit as st
 from openpyxl.styles import numbers
 from pandas.errors import ParserError
 
+from bling_app_zero.scrapers.site_crawler import extrair_produtos_de_site
+
 
 OPERACOES = {
     "cadastro": {
@@ -1199,21 +1201,72 @@ def render_origem_dados() -> None:
         key=f"upload_origem_{modo}",
     )
 
-    if not arquivo:
-        return
+    url_site = st.text_input(
+        "Campo de site da fornecedora / e-commerce",
+        key=f"url_site_fornecedor_{modo}",
+        placeholder="https://loja-do-fornecedor.com.br",
+        help="Cole a URL da loja. O sistema tenta varrer categorias e páginas de produto para extrair nome, preço, GTIN, código, categoria, imagens e demais dados disponíveis.",
+    )
 
-    try:
-        df_origem, origem_atual = _ler_arquivo_upload(arquivo)
-    except Exception as e:
-        st.error(f"Erro ao ler arquivo: {e}")
-        _log(f"Erro ao ler arquivo {getattr(arquivo, 'name', 'arquivo')}: {e}")
+    ac1, ac2 = st.columns([1, 1])
+    with ac1:
+        buscar_site = st.button("Buscar produtos do site", width="stretch", key=f"btn_buscar_site_{modo}")
+    with ac2:
+        limpar_site = st.button("Limpar site carregado", width="stretch", key=f"btn_limpar_site_{modo}")
+
+    site_df_key = f"site_df_origem_{modo}"
+    site_url_key = f"site_url_origem_{modo}"
+
+    if limpar_site:
+        st.session_state.pop(site_df_key, None)
+        st.session_state.pop(site_url_key, None)
+        st.rerun()
+
+    if buscar_site:
+        if not str(url_site or '').strip():
+            st.error("Informe a URL do site para iniciar a varredura.")
+            return
+
+        with st.spinner("Varrendo o site, categorias e páginas de produto..."):
+            try:
+                df_site = extrair_produtos_de_site(str(url_site).strip())
+                if df_site is None or df_site.empty:
+                    st.error("A varredura terminou sem produtos válidos.")
+                    return
+                st.session_state[site_df_key] = df_site.copy()
+                st.session_state[site_url_key] = str(url_site).strip()
+                _limpar_estado_geracao(modo)
+                st.success(f"Varredura concluída com sucesso. {len(df_site)} produto(s) encontrados no site.")
+            except Exception as e:
+                st.error(f"Erro ao varrer o site: {e}")
+                _log(f"Erro ao varrer o site {url_site}: {e}")
+                return
+
+    df_origem = None
+    origem_atual = ""
+    nome_arquivo = ""
+
+    if arquivo is not None:
+        try:
+            df_origem, origem_atual = _ler_arquivo_upload(arquivo)
+            nome_arquivo = str(getattr(arquivo, "name", "arquivo"))
+            st.session_state.pop(site_df_key, None)
+            st.session_state.pop(site_url_key, None)
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo: {e}")
+            _log(f"Erro ao ler arquivo {getattr(arquivo, 'name', 'arquivo')}: {e}")
+            return
+    elif site_df_key in st.session_state:
+        df_origem = st.session_state.get(site_df_key)
+        origem_atual = "Site da fornecedora"
+        nome_arquivo = str(st.session_state.get(site_url_key, "site"))
+
+    if df_origem is None:
         return
 
     if df_origem is None or df_origem.empty:
-        st.warning("O arquivo foi lido, mas não possui dados para processar.")
+        st.warning("A origem foi lida, mas não possui dados para processar.")
         return
-
-    nome_arquivo = str(getattr(arquivo, "name", "arquivo"))
     assinatura_modelo = f"{modo}|{nome_modelo_ativo}|{'|'.join(colunas_modelo_ativas)}"
     origem_hash = _gerar_hash_texto(
         f"{nome_arquivo}|{'|'.join(map(str, df_origem.columns))}|{len(df_origem)}|{assinatura_modelo}"
@@ -1228,7 +1281,7 @@ def render_origem_dados() -> None:
     st.session_state["origem_arquivo_nome"] = nome_arquivo
     st.session_state["df_origem_hash"] = origem_hash
 
-    st.caption(f"Arquivo lido: `{nome_arquivo}` | Origem detectada: `{origem_atual}`")
+    st.caption(f"Origem lida: `{nome_arquivo}` | Origem detectada: `{origem_atual}`")
 
     st.subheader("Preview da origem")
     st.dataframe(df_origem.head(10), width="stretch")
