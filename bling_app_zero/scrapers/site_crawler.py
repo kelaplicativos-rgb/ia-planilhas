@@ -8,7 +8,12 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import pandas as pd
 from bs4 import BeautifulSoup
 
-from .ai_enriquecimento import enriquecer_produto_com_ia
+try:
+    from .ai_enriquecimento import enriquecer_produto_com_ia
+except ModuleNotFoundError:
+    def enriquecer_produto_com_ia(dados, html="", url=""):
+        return dados
+
 from .extrator_produto import classificar_pagina, extrair_produto_html
 from .fetcher import baixar_html
 
