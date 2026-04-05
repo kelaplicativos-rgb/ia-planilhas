@@ -1,17 +1,15 @@
-import streamlit as st
 import traceback
+
+import streamlit as st
 
 from bling_app_zero.ui.state import init_state
 from bling_app_zero.ui import origem_dados as origem_dados_ui
 from bling_app_zero.ui.bling_panel import (
-    render_bling_panel,
     render_bling_import_panel,
+    render_bling_panel,
 )
 
 
-# =========================
-# CONFIG
-# =========================
 st.set_page_config(
     page_title="Bling Manual PRO",
     layout="wide",
@@ -19,18 +17,12 @@ st.set_page_config(
 )
 
 
-# =========================
-# LOG GLOBAL
-# =========================
 def log(msg):
     if "logs" not in st.session_state:
         st.session_state["logs"] = []
     st.session_state["logs"].append(str(msg))
 
 
-# =========================
-# ESTILO
-# =========================
 def aplicar_estilo_global() -> None:
     st.markdown(
         """
@@ -68,14 +60,7 @@ def aplicar_estilo_global() -> None:
     )
 
 
-# =========================
-# RESOLUÇÃO SEGURA DE ORIGEM
-# =========================
 def _obter_render_origem_dados():
-    """
-    Evita quebrar a aplicação caso o módulo de origem esteja exportando
-    'tela_origem_dados' em vez de 'render_origem_dados'.
-    """
     if hasattr(origem_dados_ui, "render_origem_dados"):
         return origem_dados_ui.render_origem_dados
 
@@ -90,9 +75,6 @@ def _obter_render_origem_dados():
     )
 
 
-# =========================
-# EXECUTOR SEGURO
-# =========================
 def executar_seguro(func, nome):
     try:
         func()
@@ -106,9 +88,6 @@ def executar_seguro(func, nome):
             st.code(traceback.format_exc())
 
 
-# =========================
-# MAIN
-# =========================
 def main() -> None:
     init_state()
     aplicar_estilo_global()
@@ -142,8 +121,5 @@ def main() -> None:
             st.write("Sem logs ainda.")
 
 
-# =========================
-# START
-# =========================
 if __name__ == "__main__":
     main()
