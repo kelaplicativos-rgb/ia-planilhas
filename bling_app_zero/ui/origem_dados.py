@@ -11,7 +11,68 @@ import streamlit as st
 from openpyxl.styles import numbers
 from pandas.errors import ParserError
 
-from bling_app_zero.scrapers.site_crawler import extrair_produtos_de_site
+if buscar_site:
+    if not str(url_site or "").strip():
+        st.error("Informe a URL do site para iniciar a varredura.")
+        return
+
+    progresso_box = st.container()
+    barra = progresso_box.progress(0, text="Preparando varredura do site...")
+    status_placeholder = progresso_box.empty()
+    detalhes_placeholder = progresso_box.empty()
+
+    def _atualizar_progresso(percentual: int, etapa: str, meta: dict) -> None:
+        percentual = max(0, min(100, int(percentual or 0)))
+        barra.progress(percentual, text=f"{percentual}%")
+        status_placeholder.caption(etapa or "Processando...")
+
+        meta = meta or {}
+        partes = []
+
+        if meta.get("url"):
+            partes.append(f"URL: `{meta['url']}`")
+        if meta.get("paginas_processadas") is not None:
+            partes.append(f"Páginas: **{meta['paginas_processadas']}**")
+        if meta.get("categorias_detectadas") is not None:
+            partes.append(f"Categorias: **{meta['categorias_detectadas']}**")
+        if meta.get("produtos_encontrados") is not None:
+            partes.append(f"Produtos: **{meta['produtos_encontrados']}**")
+        if meta.get("erros") is not None:
+            partes.append(f"Erros: **{meta['erros']}**")
+
+        detalhes_placeholder.markdown(" | ".join(partes) if partes else "")
+
+    try:
+        _atualizar_progresso(1, "Iniciando varredura...", {"url": str(url_site).strip()})
+
+        df_site = extrair_produtos_de_site(
+            str(url_site).strip(),
+            progress_callback=_atualizar_progresso,
+        )
+
+        if df_site is None or df_site.empty:
+            barra.progress(100, text="100%")
+            status_placeholder.caption("A varredura terminou sem produtos válidos.")
+            st.error("A varredura terminou sem produtos válidos.")
+            return
+
+        st.session_state[site_df_key] = df_site.copy()
+        st.session_state[site_url_key] = str(url_site).strip()
+        _limpar_estado_geracao(modo)
+
+        barra.progress(100, text="100%")
+        status_placeholder.caption("Varredura concluída com sucesso.")
+        detalhes_placeholder.markdown(
+            f"Produtos encontrados: **{len(df_site)}** | URL base: `{str(url_site).strip()}`"
+        )
+        st.success(f"Varredura concluída com sucesso. {len(df_site)} produto(s) encontrados no site.")
+
+    except Exception as e:
+        barra.progress(100, text="100%")
+        status_placeholder.caption("Falha durante a varredura.")
+        st.error(f"Erro ao varrer o site: {e}")
+        _log(f"Erro ao varrer o site {url_site}: {e}")
+        return
 
 
 OPERACOES = {
