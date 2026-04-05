@@ -1,10 +1,12 @@
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_ia import mapear_colunas_ia
 from bling_app_zero.core.memoria_fornecedor import (
-    salvar_mapeamento,
     recuperar_mapeamento,
+    salvar_mapeamento,
 )
 from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
 from bling_app_zero.utils.excel import df_to_excel_bytes
@@ -24,6 +26,34 @@ COLUNAS_DESTINO = [
 ]
 
 
+def _gerar_hash_arquivo(df: pd.DataFrame, nome_arquivo: str) -> str:
+    """
+    Gera uma assinatura estável da origem carregada para evitar
+    reaproveitar mapeamento manual de outro arquivo.
+    """
+    base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
+    return hashlib.md5(base.encode("utf-8")).hexdigest()
+
+
+def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
+    """
+    Lê planilha ou XML e também informa o tipo de origem.
+    """
+    nome_arquivo = str(getattr(arquivo, "name", "")).lower()
+
+    if nome_arquivo.endswith(".xml"):
+        return pd.read_xml(arquivo), "XML NF-e"
+
+    if nome_arquivo.endswith(".csv"):
+        try:
+            return pd.read_csv(arquivo), "CSV"
+        except UnicodeDecodeError:
+            arquivo.seek(0)
+            return pd.read_csv(arquivo, encoding="latin1"), "CSV"
+
+    return pd.read_excel(arquivo), "Planilha"
+
+
 def render_origem_dados() -> None:
     st.title("IA Automática com Memória")
 
@@ -36,17 +66,7 @@ def render_origem_dados() -> None:
         return
 
     try:
-        nome_arquivo = str(arquivo.name).lower()
-
-        if nome_arquivo.endswith(".xml"):
-            df = pd.read_xml(arquivo)
-            st.session_state["origem_atual"] = "XML NF-e"
-        elif nome_arquivo.endswith(".csv"):
-            df = pd.read_csv(arquivo)
-            st.session_state["origem_atual"] = "CSV"
-        else:
-            df = pd.read_excel(arquivo)
-            st.session_state["origem_atual"] = "Planilha"
+        df, origem_atual = _ler_arquivo_upload(arquivo)
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
         return
@@ -55,7 +75,12 @@ def render_origem_dados() -> None:
         st.warning("O arquivo foi lido, mas não possui dados para processar.")
         return
 
+    nome_arquivo = str(getattr(arquivo, "name", "arquivo"))
+    origem_hash = _gerar_hash_arquivo(df, nome_arquivo)
+
     st.session_state["df_origem"] = df.copy()
+    st.session_state["origem_atual"] = origem_atual
+    st.session_state["origem_arquivo_nome"] = nome_arquivo
 
     colunas_origem = list(df.columns)
 
@@ -76,12 +101,19 @@ def render_origem_dados() -> None:
             if destino and score >= 0.6:
                 mapeamento_final[col] = destino
 
-    st.session_state["mapeamento_manual"] = dict(mapeamento_final)
+    # Só atualiza o mapeamento manual quando for um novo arquivo/origem.
+    # Isso evita misturar um fornecedor antigo com o atual.
+    if (
+        "mapeamento_manual" not in st.session_state
+        or st.session_state.get("df_origem_hash") != origem_hash
+    ):
+        st.session_state["mapeamento_manual"] = dict(mapeamento_final)
+        st.session_state["df_origem_hash"] = origem_hash
 
     st.subheader("Preview do mapeamento")
 
     df_preview = pd.DataFrame()
-    for origem, destino in mapeamento_final.items():
+    for origem, destino in st.session_state.get("mapeamento_manual", {}).items():
         if origem in df.columns:
             df_preview[destino] = df[origem]
 
@@ -94,21 +126,25 @@ def render_origem_dados() -> None:
         try:
             df_saida = pd.DataFrame()
 
-            for origem, destino in mapeamento_final.items():
+            for origem, destino in st.session_state.get("mapeamento_manual", {}).items():
                 if origem in df.columns:
                     df_saida[destino] = df[origem]
 
             if df_saida.empty:
-                st.warning("Nenhum dado pôde ser gerado porque não houve mapeamento válido.")
+                st.warning(
+                    "Nenhum dado pôde ser gerado porque não houve mapeamento válido."
+                )
                 return
 
             preco_compra = calcular_preco_compra_automatico_df(df_saida)
-            st.session_state["preco_compra_modulo_precificacao"] = float(preco_compra or 0.0)
+            st.session_state["preco_compra_modulo_precificacao"] = float(
+                preco_compra or 0.0
+            )
 
             if "custo" not in df_saida.columns and preco_compra:
                 df_saida["custo"] = float(preco_compra)
 
-            salvar_mapeamento(memoria, colunas_origem, mapeamento_final)
+            salvar_mapeamento(memoria, colunas_origem, st.session_state["mapeamento_manual"])
             st.session_state["mapeamento_memoria"] = memoria
 
             excel_bytes = df_to_excel_bytes(df_saida)
