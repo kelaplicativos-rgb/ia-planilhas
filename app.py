@@ -42,12 +42,13 @@ def aplicar_estilo_global() -> None:
 
 
 # =========================
-# RESOLUÇÃO SEGURA DE FUNÇÃO
+# RESOLUÇÃO SEGURA DE ORIGEM
 # =========================
-def _resolver_render_origem_dados():
+def _obter_render_origem_dados():
     """
-    Evita quebra total do app caso o módulo exporte apenas um dos nomes
-    em algum deploy intermediário.
+    Evita quebrar a aplicação caso o módulo de origem esteja exportando
+    'tela_origem_dados' em vez de 'render_origem_dados' em algum deploy
+    intermediário ou cache antigo do ambiente.
     """
     if hasattr(origem_dados_ui, "render_origem_dados"):
         return origem_dados_ui.render_origem_dados
@@ -55,9 +56,11 @@ def _resolver_render_origem_dados():
     if hasattr(origem_dados_ui, "tela_origem_dados"):
         return origem_dados_ui.tela_origem_dados
 
+    nomes_disponiveis = [nome for nome in dir(origem_dados_ui) if not nome.startswith("_")]
     raise AttributeError(
-        "O módulo bling_app_zero.ui.origem_dados não expõe "
-        "'render_origem_dados' nem 'tela_origem_dados'."
+        "O módulo 'bling_app_zero.ui.origem_dados' não possui "
+        "'render_origem_dados' nem 'tela_origem_dados'. "
+        f"Nomes encontrados: {nomes_disponiveis}"
     )
 
 
@@ -95,10 +98,13 @@ def main() -> None:
         ]
     )
 
-    render_origem_dados_func = _resolver_render_origem_dados()
+    render_origem = _obter_render_origem_dados()
 
+    # =========================
+    # ABAS COM PROTEÇÃO
+    # =========================
     with aba1:
-        executar_seguro(render_origem_dados_func, "Origem dos dados")
+        executar_seguro(render_origem, "Origem dos dados")
 
     with aba2:
         executar_seguro(render_bling_panel, "Painel Bling")
@@ -111,6 +117,9 @@ def main() -> None:
     with aba4:
         executar_seguro(render_send_panel, "Envio")
 
+    # =========================
+    # LOGS VISÍVEIS
+    # =========================
     st.divider()
     with st.expander(" Logs do sistema"):
         logs = st.session_state.get("logs", [])
