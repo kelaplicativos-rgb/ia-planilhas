@@ -16,13 +16,11 @@ def render_bling_panel() -> None:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.button("Conectar com Bling", width="stretch", disabled=True)
-
+        st.button("Conectar com Bling", use_container_width=True, disabled=True)
     with c2:
-        st.button("Atualizar status", width="stretch", disabled=True)
-
+        st.button("Atualizar status", use_container_width=True, disabled=True)
     with c3:
-        st.button("Desconectar", width="stretch", disabled=True)
+        st.button("Desconectar", use_container_width=True, disabled=True)
 
     with st.expander("Status da conexão", expanded=False):
         st.write("Status atual: módulo ainda em preparação.")
@@ -34,7 +32,7 @@ def render_bling_import_panel() -> None:
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
-        if st.button("Simular produtos do Bling", width="stretch"):
+        if st.button("Simular produtos do Bling", use_container_width=True):
             df = pd.DataFrame(
                 [
                     {"codigo": "BLG-001", "nome": "Produto Bling 1", "preco": 19.90},
@@ -45,17 +43,21 @@ def render_bling_import_panel() -> None:
 
         df_prod = st.session_state.get("bling_produtos_df")
         if isinstance(df_prod, pd.DataFrame) and not df_prod.empty:
-            st.dataframe(df_prod, width="stretch")
+            st.dataframe(
+                df_prod,
+                use_container_width=True,
+                height=190,
+            )
             st.download_button(
                 "Baixar produtos do Bling em Excel",
                 data=df_to_excel_bytes(df_prod, "produtos_bling"),
                 file_name="produtos_bling.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
+                use_container_width=True,
             )
 
     with tab2:
-        if st.button("Simular estoque do Bling", width="stretch"):
+        if st.button("Simular estoque do Bling", use_container_width=True):
             df = pd.DataFrame(
                 [
                     {"codigo": "BLG-001", "estoque": 12, "deposito_id": "1"},
@@ -66,11 +68,15 @@ def render_bling_import_panel() -> None:
 
         df_est = st.session_state.get("bling_estoque_df")
         if isinstance(df_est, pd.DataFrame) and not df_est.empty:
-            st.dataframe(df_est, width="stretch")
+            st.dataframe(
+                df_est,
+                use_container_width=True,
+                height=190,
+            )
             st.download_button(
                 "Baixar estoque do Bling em Excel",
                 data=df_to_excel_bytes(df_est, "estoque_bling"),
                 file_name="estoque_bling.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
+                use_container_width=True,
             )
