@@ -27,11 +27,12 @@ class BlingHomologacaoService:
 
         url = f"{self.base_url}/{path.lstrip('/')}"
         headers = self.client._headers(token_or_msg)
+
         if previous_hash:
             headers["x-bling-homologacao"] = previous_hash
 
         try:
-            with httpx.Client(timeout=timeout) as session:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as session:
                 resp = session.request(
                     method.upper(),
                     url,
@@ -59,27 +60,33 @@ class BlingHomologacaoService:
                         json=json_body,
                     )
 
-            content_type = resp.headers.get("content-type", "")
-            payload = (
-                resp.json() if "application/json" in content_type else {"raw": resp.text}
-            )
-            next_hash = resp.headers.get("x-bling-homologacao")
-
-            if resp.status_code >= 400:
-                return (
-                    False,
-                    {
-                        "status_code": resp.status_code,
-                        "error": payload,
-                        "url": url,
-                        "body": json_body,
-                    },
-                    next_hash,
+                content_type = resp.headers.get("content-type", "")
+                payload = (
+                    resp.json()
+                    if "application/json" in content_type
+                    else {"raw": resp.text}
                 )
+                next_hash = resp.headers.get("x-bling-homologacao")
 
-            return True, payload, next_hash
+                if resp.status_code >= 400:
+                    return (
+                        False,
+                        {
+                            "status_code": resp.status_code,
+                            "error": payload,
+                            "url": url,
+                            "body": json_body,
+                        },
+                        next_hash,
+                    )
+
+                return True, payload, next_hash
         except Exception as exc:
-            return False, f"Erro de comunicação com a homologação do Bling: {exc}", None
+            return (
+                False,
+                f"Erro de comunicação com a homologação do Bling: {exc}",
+                None,
+            )
 
     @staticmethod
     def _extract_data(payload: Any) -> Dict[str, Any]:
@@ -92,7 +99,7 @@ class BlingHomologacaoService:
 
     @staticmethod
     def _coerce_id(payload: Dict[str, Any]) -> Optional[Any]:
-        for key in ("id", "produto", "produto_id"):
+        for key in ("id", "produto", "produto_id", "idProduto"):
             value = payload.get(key)
             if value not in (None, ""):
                 return value
@@ -102,7 +109,6 @@ class BlingHomologacaoService:
         logs: List[Dict[str, Any]] = []
         next_hash: Optional[str] = None
 
-        # 1) GET dados para criação
         ok, payload_get, next_hash = self._request(
             "GET",
             "/homologacao/produtos",
@@ -132,7 +138,6 @@ class BlingHomologacaoService:
             )
             return False, logs
 
-        # 2) POST cria produto simulado na homologação
         ok, payload_post, next_hash = self._request(
             "POST",
             "/homologacao/produtos",
@@ -164,10 +169,10 @@ class BlingHomologacaoService:
             )
             return False, logs
 
-        # 3) PUT altera descrição para Copo, conforme fluxo oficial
         body_put = dict(produto_base)
         body_put["descricao"] = "Copo"
-        body_put["nome"] = body_put.get("nome") or body_put.get("descricao") or "Copo"
+        if "nome" in body_put or "descricao" in body_put:
+            body_put["nome"] = "Copo"
 
         ok, payload_put, next_hash = self._request(
             "PUT",
@@ -187,7 +192,6 @@ class BlingHomologacaoService:
         if not ok:
             return False, logs
 
-        # 4) DELETE remove o produto da homologação, prática comum no fluxo de validação
         ok, payload_delete, next_hash = self._request(
             "DELETE",
             f"/homologacao/produtos/{produto_id}",
@@ -202,5 +206,4 @@ class BlingHomologacaoService:
                 "hash_retorno": next_hash,
             }
         )
-
         return ok, logs
