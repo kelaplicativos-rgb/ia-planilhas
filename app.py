@@ -1,4 +1,5 @@
 import streamlit as st
+import traceback
 
 from bling_app_zero.ui.state import init_state
 from bling_app_zero.ui.origem_dados import render_origem_dados
@@ -10,6 +11,9 @@ from bling_app_zero.ui.precificacao_panel import render_precificacao_panel
 from bling_app_zero.ui.envio_panel import render_send_panel
 
 
+# =========================
+# CONFIG
+# =========================
 st.set_page_config(
     page_title="Bling Manual PRO",
     layout="wide",
@@ -17,11 +21,23 @@ st.set_page_config(
 )
 
 
+# =========================
+# LOG GLOBAL
+# =========================
+def log(msg):
+    if "logs" not in st.session_state:
+        st.session_state["logs"] = []
+
+    st.session_state["logs"].append(str(msg))
+
+
+# =========================
+# ESTILO
+# =========================
 def aplicar_estilo_global() -> None:
     st.markdown(
         """
         <style>
-        /* ===== Espaçamento geral ===== */
         .block-container{
             padding-top: 0.8rem;
             padding-bottom: 1rem;
@@ -30,13 +46,11 @@ def aplicar_estilo_global() -> None:
             max-width: 100%;
         }
 
-        /* ===== Título ===== */
         h1, h2, h3{
             margin-top: 0.2rem !important;
             margin-bottom: 0.6rem !important;
         }
 
-        /* ===== Botões padronizados ===== */
         div.stButton > button,
         div.stDownloadButton > button {
             width: 100%;
@@ -48,7 +62,6 @@ def aplicar_estilo_global() -> None:
             padding: 0 0.8rem;
         }
 
-        /* ===== Inputs mais compactos ===== */
         div[data-testid="stNumberInput"] input,
         div[data-testid="stTextInput"] input,
         div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
@@ -56,26 +69,22 @@ def aplicar_estilo_global() -> None:
             min-height: 40px;
         }
 
-        /* ===== Tabs ===== */
         div[data-testid="stTabs"] button {
             border-radius: 10px;
             min-height: 40px;
             font-weight: 600;
         }
 
-        /* ===== Expander ===== */
         details {
             border-radius: 10px;
         }
 
-        /* ===== Dataframes e editors ===== */
         div[data-testid="stDataFrame"],
         div[data-testid="stDataEditor"] {
             border-radius: 10px;
             overflow: hidden;
         }
 
-        /* ===== Celular ===== */
         @media (max-width: 768px) {
             .block-container{
                 padding-top: 0.55rem;
@@ -84,18 +93,9 @@ def aplicar_estilo_global() -> None:
                 padding-right: 0.45rem;
             }
 
-            h1{
-                font-size: 1.35rem !important;
-                line-height: 1.2 !important;
-            }
-
-            h2{
-                font-size: 1.10rem !important;
-            }
-
-            h3{
-                font-size: 1rem !important;
-            }
+            h1{ font-size: 1.35rem !important; }
+            h2{ font-size: 1.10rem !important; }
+            h3{ font-size: 1rem !important; }
 
             div.stButton > button,
             div.stDownloadButton > button {
@@ -103,22 +103,11 @@ def aplicar_estilo_global() -> None:
                 height: 38px;
                 font-size: 0.88rem;
                 border-radius: 9px;
-                padding: 0 0.55rem;
             }
 
             div[data-testid="stTabs"] button {
                 min-height: 38px;
                 font-size: 0.82rem;
-                padding-left: 0.55rem;
-                padding-right: 0.55rem;
-            }
-
-            div[data-testid="stMetricValue"]{
-                font-size: 1rem !important;
-            }
-
-            div[data-testid="stMetricLabel"]{
-                font-size: 0.78rem !important;
             }
 
             p, label, .stCaption {
@@ -131,6 +120,25 @@ def aplicar_estilo_global() -> None:
     )
 
 
+# =========================
+# EXECUTOR SEGURO
+# =========================
+def executar_seguro(func, nome):
+    try:
+        func()
+    except Exception as e:
+        erro = f"Erro em {nome}: {e}"
+        log(erro)
+        log(traceback.format_exc())
+
+        st.error(f"❌ {erro}")
+        with st.expander("Detalhes do erro"):
+            st.code(traceback.format_exc())
+
+
+# =========================
+# MAIN
+# =========================
 def main() -> None:
     init_state()
     aplicar_estilo_global()
@@ -146,20 +154,39 @@ def main() -> None:
         ]
     )
 
+    # =========================
+    # ABAS COM PROTEÇÃO
+    # =========================
+
     with aba1:
-        render_origem_dados()
+        executar_seguro(render_origem_dados, "Origem dos dados")
 
     with aba2:
-        render_bling_panel()
+        executar_seguro(render_bling_panel, "Painel Bling")
         st.divider()
-        render_bling_import_panel()
+        executar_seguro(render_bling_import_panel, "Importação Bling")
 
     with aba3:
-        render_precificacao_panel()
+        executar_seguro(render_precificacao_panel, "Precificação")
 
     with aba4:
-        render_send_panel()
+        executar_seguro(render_send_panel, "Envio")
+
+    # =========================
+    # LOGS VISÍVEIS
+    # =========================
+    st.divider()
+
+    with st.expander("📄 Logs do sistema"):
+        logs = st.session_state.get("logs", [])
+        if logs:
+            st.text_area("Logs", "\n".join(logs), height=200)
+        else:
+            st.write("Sem logs ainda.")
 
 
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
     main()
