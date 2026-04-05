@@ -40,10 +40,13 @@ def render_origem_dados() -> None:
 
         if nome_arquivo.endswith(".xml"):
             df = pd.read_xml(arquivo)
+            st.session_state["origem_atual"] = "XML NF-e"
         elif nome_arquivo.endswith(".csv"):
             df = pd.read_csv(arquivo)
+            st.session_state["origem_atual"] = "CSV"
         else:
             df = pd.read_excel(arquivo)
+            st.session_state["origem_atual"] = "Planilha"
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
         return
@@ -51,6 +54,8 @@ def render_origem_dados() -> None:
     if df is None or df.empty:
         st.warning("O arquivo foi lido, mas não possui dados para processar.")
         return
+
+    st.session_state["df_origem"] = df.copy()
 
     colunas_origem = list(df.columns)
 
@@ -66,10 +71,12 @@ def render_origem_dados() -> None:
 
         for col, dados in mapa_ia.items():
             destino = dados.get("destino")
-            score = dados.get("score", 0)
+            score = float(dados.get("score", 0) or 0)
 
             if destino and score >= 0.6:
                 mapeamento_final[col] = destino
+
+    st.session_state["mapeamento_manual"] = dict(mapeamento_final)
 
     st.subheader("Preview do mapeamento")
 
@@ -95,7 +102,11 @@ def render_origem_dados() -> None:
                 st.warning("Nenhum dado pôde ser gerado porque não houve mapeamento válido.")
                 return
 
-            df_saida = calcular_preco_compra_automatico_df(df_saida)
+            preco_compra = calcular_preco_compra_automatico_df(df_saida)
+            st.session_state["preco_compra_modulo_precificacao"] = float(preco_compra or 0.0)
+
+            if "custo" not in df_saida.columns and preco_compra:
+                df_saida["custo"] = float(preco_compra)
 
             salvar_mapeamento(memoria, colunas_origem, mapeamento_final)
             st.session_state["mapeamento_memoria"] = memoria
