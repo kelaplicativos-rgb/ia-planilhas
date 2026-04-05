@@ -156,7 +156,7 @@ def carregar_planilha(file):
     return normalizar_df(df)
 
 
-def _texto_preview(valor, limite=60):
+def _texto_preview(valor, limite=34):
     texto = str(valor or "").replace("\n", " ").replace("\r", " ").strip()
     if len(texto) <= limite:
         return texto
@@ -243,13 +243,13 @@ def _get_preview_rows(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    qtd = min(2, len(df))
+    qtd = min(1, len(df))
     preview = df.head(qtd).copy()
 
     for col in preview.columns:
         preview[col] = preview[col].apply(_texto_preview)
 
-    preview.index = [f"Linha {i+1}" for i in range(len(preview))]
+    preview.index = [f"Linha {i + 1}" for i in range(len(preview))]
     return preview
 
 
@@ -265,33 +265,29 @@ def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
     mapeamento_atual = _aplicar_sugestoes_iniciais(colunas_fornecedor, opcoes_mapeamento).copy()
     preview_rows = _get_preview_rows(df)
 
-    st.markdown("### Preview (fixo)")
-    st.dataframe(
-        preview_rows,
-        width="stretch",
-        height=140,
-    )
+    st.markdown("### Preview compacto")
+
+    resumo_1, resumo_2, resumo_3 = st.columns(3)
+    with resumo_1:
+        st.metric("Colunas", len(colunas_fornecedor))
+    with resumo_2:
+        st.metric("Campos Bling", len([x for x in opcoes_mapeamento if x]))
+    with resumo_3:
+        st.metric("Mapeados", len([v for v in mapeamento_atual.values() if v]))
 
     st.caption(
-        "Relacione cada coluna do fornecedor diretamente na terceira linha. "
-        "O painel fixo usa todas as colunas disponíveis do cadastro do Bling "
-        "que estiverem disponíveis no sistema."
+        "A primeira linha mostra uma amostra compacta da planilha. "
+        "Na linha de baixo, relacione cada coluna do fornecedor diretamente no preview."
     )
 
-    c1, c2, c3 = st.columns([1, 1, 1])
+    if not preview_rows.empty:
+        st.dataframe(
+            preview_rows,
+            use_container_width=True,
+            height=95,
+        )
 
-    with c1:
-        st.info(f"Colunas do fornecedor: {len(colunas_fornecedor)}")
-
-    with c2:
-        qtd_campos_bling = len([x for x in opcoes_mapeamento if x])
-        st.info(f"Campos do Bling no painel: {qtd_campos_bling}")
-
-    with c3:
-        qtd_relacionados = len([v for v in mapeamento_atual.values() if v])
-        st.info(f"Mapeados: {qtd_relacionados}")
-
-    if st.button("🧹 Limpar mapeamento", use_container_width=True):
+    if st.button("Limpar mapeamento", use_container_width=True):
         _limpar_mapeamento_preview(colunas_fornecedor)
         st.rerun()
 
@@ -318,13 +314,13 @@ def _render_preview_com_terceira_linha(df: pd.DataFrame) -> Dict[str, str]:
             label=col,
             options=opcoes_filtradas,
             required=False,
-            width="medium",
+            width="small",
         )
 
     df_relacionar_editado = st.data_editor(
         df_relacionar,
-        width="stretch",
-        height=90,
+        use_container_width=True,
+        height=82,
         hide_index=False,
         num_rows="fixed",
         column_config=column_config,
@@ -416,7 +412,11 @@ def render_origem_dados():
     df_final = pd.DataFrame(resultado)
 
     st.markdown("### ✅ Mapeamento final")
-    st.dataframe(df_final, width="stretch")
+    st.dataframe(
+        df_final,
+        use_container_width=True,
+        height=220,
+    )
 
     # compatibilidade com o restante do sistema
     st.session_state.mapeamento_manual = mapeamento
@@ -432,5 +432,5 @@ def render_origem_dados():
         "Baixar entrada tratada",
         data=df_to_excel_bytes(df),
         file_name="entrada.xlsx",
-        width="stretch",
+        use_container_width=True,
     )
