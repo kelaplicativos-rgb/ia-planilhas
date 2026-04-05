@@ -1,9 +1,8 @@
+import streamlit as st
 import traceback
 
-import streamlit as st
-
 from bling_app_zero.ui.state import init_state
-from bling_app_zero.ui.origem_dados import tela_origem_dados
+from bling_app_zero.ui import origem_dados as origem_dados_ui
 from bling_app_zero.ui.bling_panel import (
     render_bling_panel,
     render_bling_import_panel,
@@ -25,7 +24,7 @@ st.set_page_config(
 # =========================
 # LOG GLOBAL
 # =========================
-def log(msg: str) -> None:
+def log(msg):
     if "logs" not in st.session_state:
         st.session_state["logs"] = []
     st.session_state["logs"].append(str(msg))
@@ -37,36 +36,35 @@ def log(msg: str) -> None:
 def aplicar_estilo_global() -> None:
     st.markdown(
         """
-        <style>
-        .block-container{
-            padding-top: 0.8rem;
-            padding-bottom: 1rem;
-            padding-left: 0.7rem;
-            padding-right: 0.7rem;
-            max-width: 100%;
-        }
-
-        div[data-testid="stTabs"] button {
-            min-height: 42px;
-        }
-
-        @media (max-width: 768px) {
-            .block-container{
-                padding-top: 0.5rem;
-                padding-left: 0.45rem;
-                padding-right: 0.45rem;
-            }
-        }
-        </style>
         """,
         unsafe_allow_html=True,
     )
 
 
 # =========================
+# RESOLUÇÃO SEGURA DE FUNÇÃO
+# =========================
+def _resolver_render_origem_dados():
+    """
+    Evita quebra total do app caso o módulo exporte apenas um dos nomes
+    em algum deploy intermediário.
+    """
+    if hasattr(origem_dados_ui, "render_origem_dados"):
+        return origem_dados_ui.render_origem_dados
+
+    if hasattr(origem_dados_ui, "tela_origem_dados"):
+        return origem_dados_ui.tela_origem_dados
+
+    raise AttributeError(
+        "O módulo bling_app_zero.ui.origem_dados não expõe "
+        "'render_origem_dados' nem 'tela_origem_dados'."
+    )
+
+
+# =========================
 # EXECUTOR SEGURO
 # =========================
-def executar_seguro(func, nome: str) -> None:
+def executar_seguro(func, nome):
     try:
         func()
     except Exception as e:
@@ -97,8 +95,10 @@ def main() -> None:
         ]
     )
 
+    render_origem_dados_func = _resolver_render_origem_dados()
+
     with aba1:
-        executar_seguro(tela_origem_dados, "Origem dos dados")
+        executar_seguro(render_origem_dados_func, "Origem dos dados")
 
     with aba2:
         executar_seguro(render_bling_panel, "Painel Bling")
@@ -112,8 +112,7 @@ def main() -> None:
         executar_seguro(render_send_panel, "Envio")
 
     st.divider()
-
-    with st.expander("Logs do sistema"):
+    with st.expander(" Logs do sistema"):
         logs = st.session_state.get("logs", [])
         if logs:
             st.text_area("Logs", "\n".join(logs), height=200)
