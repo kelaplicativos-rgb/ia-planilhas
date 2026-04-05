@@ -7,8 +7,6 @@ from bling_app_zero.ui.bling_panel import (
     render_bling_panel,
     render_bling_import_panel,
 )
-from bling_app_zero.ui.precificacao_panel import render_precificacao_panel
-from bling_app_zero.ui.envio_panel import render_send_panel
 
 
 # =========================
@@ -36,6 +34,35 @@ def log(msg):
 def aplicar_estilo_global() -> None:
     st.markdown(
         """
+        <style>
+        .block-container{
+            padding-top: 0.8rem;
+            padding-bottom: 1rem;
+            padding-left: 0.7rem;
+            padding-right: 0.7rem;
+            max-width: 1400px;
+        }
+
+        .stTabs [data-baseweb="tab-list"]{
+            gap: 0.35rem;
+            flex-wrap: wrap;
+        }
+
+        .stTabs [data-baseweb="tab"]{
+            height: auto;
+            white-space: nowrap;
+            padding: 0.55rem 0.9rem;
+            border-radius: 0.7rem;
+        }
+
+        @media (max-width: 768px){
+            .block-container{
+                padding-top: 0.5rem;
+                padding-left: 0.45rem;
+                padding-right: 0.45rem;
+            }
+        }
+        </style>
         """,
         unsafe_allow_html=True,
     )
@@ -47,8 +74,7 @@ def aplicar_estilo_global() -> None:
 def _obter_render_origem_dados():
     """
     Evita quebrar a aplicação caso o módulo de origem esteja exportando
-    'tela_origem_dados' em vez de 'render_origem_dados' em algum deploy
-    intermediário ou cache antigo do ambiente.
+    'tela_origem_dados' em vez de 'render_origem_dados'.
     """
     if hasattr(origem_dados_ui, "render_origem_dados"):
         return origem_dados_ui.render_origem_dados
@@ -89,20 +115,15 @@ def main() -> None:
 
     st.title("Bling Manual PRO")
 
-    aba1, aba2, aba3, aba4 = st.tabs(
+    aba1, aba2 = st.tabs(
         [
             "Origem dos dados",
             "Integração Bling",
-            "Precificação",
-            "Envio",
         ]
     )
 
     render_origem = _obter_render_origem_dados()
 
-    # =========================
-    # ABAS COM PROTEÇÃO
-    # =========================
     with aba1:
         executar_seguro(render_origem, "Origem dos dados")
 
@@ -111,17 +132,9 @@ def main() -> None:
         st.divider()
         executar_seguro(render_bling_import_panel, "Importação Bling")
 
-    with aba3:
-        executar_seguro(render_precificacao_panel, "Precificação")
-
-    with aba4:
-        executar_seguro(render_send_panel, "Envio")
-
-    # =========================
-    # LOGS VISÍVEIS
-    # =========================
     st.divider()
-    with st.expander(" Logs do sistema"):
+
+    with st.expander("Logs do sistema"):
         logs = st.session_state.get("logs", [])
         if logs:
             st.text_area("Logs", "\n".join(logs), height=200)
