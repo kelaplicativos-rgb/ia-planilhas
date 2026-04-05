@@ -1,6 +1,7 @@
 import hashlib
 import io
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -14,20 +15,42 @@ from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
-COLUNAS_DESTINO = [
-    "nome",
-    "preco",
-    "custo",
-    "sku",
-    "gtin",
-    "ncm",
-    "marca",
-    "estoque",
-    "categoria",
-    "peso",
-]
+# ==========================================================
+# CONFIGURAÇÃO DAS OPERAÇÕES
+# ==========================================================
+OPERACOES = {
+    "cadastro": {
+        "label": "Cadastro de produtos",
+        "arquivo_saida": "bling_cadastro.xlsx",
+        "colunas_destino": [
+            "sku",
+            "nome",
+            "gtin",
+            "ncm",
+            "marca",
+            "categoria",
+            "preco",
+            "custo",
+            "estoque",
+            "peso",
+        ],
+        "defaults": {},
+    },
+    "estoque": {
+        "label": "Atualização de estoque",
+        "arquivo_saida": "bling_estoque.xlsx",
+        "colunas_destino": [
+            "sku",
+            "estoque",
+        ],
+        "defaults": {},
+    },
+}
 
 
+# ==========================================================
+# LEITURA / XML
+# ==========================================================
 def _gerar_hash_arquivo(df: pd.DataFrame, nome_arquivo: str) -> str:
     base = f"{nome_arquivo}|{'|'.join(map(str, df.columns))}|{len(df)}"
     return hashlib.md5(base.encode("utf-8")).hexdigest()
@@ -95,14 +118,13 @@ def _parse_nfe_xml_produtos(xml_bytes: bytes) -> pd.DataFrame:
 
     df = pd.DataFrame(itens)
 
-    # Ajustes para o restante do sistema entender melhor o XML
     if "vuncom" in df.columns and "custo_total_item_xml" not in df.columns:
         df["custo_total_item_xml"] = df["vuncom"]
 
     return df
 
 
-def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
+def _ler_arquivo_upload(arquivo) -> Tuple[pd.DataFrame, str]:
     nome_arquivo = str(getattr(arquivo, "name", "")).lower()
 
     if nome_arquivo.endswith(".xml"):
@@ -127,138 +149,297 @@ def _ler_arquivo_upload(arquivo) -> tuple[pd.DataFrame, str]:
     return pd.read_excel(arquivo), "Planilha"
 
 
-def _montar_df_saida(df_origem: pd.DataFrame, mapeamento_manual: dict) -> pd.DataFrame:
-    df_saida = pd.DataFrame()
+# ==========================================================
+# MAPEAMENTO / GERAÇÃO
+# ==========================================================
+def _limpar_estado_geracao() -> None:
+    chaves = [
+        "df_saida",
+        "df_saida_preview_hash",
+        "excel_saida_bytes",
+        "excel_saida_nome",
+        "mapeamento_manual",
+        "df_origem_hash",
+    ]
+    for chave in chaves:
+        st.session_state.pop(chave, None)
 
-    for origem, destino in mapeamento_manual.items():
-        if origem in df_origem.columns and destino:
-            df_saida[destino] = df_origem[origem]
+
+def _montar_df_saida(
+    df_origem: pd.DataFrame,
+    colunas_destino: List[str],
+    mapeamento_manual: Dict[str, str],
+    defaults: Dict[str, object] | None = None,
+) -> pd.DataFrame:
+    defaults = defaults or {}
+
+    df_saida = pd.DataFrame(index=df_origem.index)
+
+    for destino in colunas_destino:
+        origem_selecionada = mapeamento_manual.get(destino, "")
+
+        if origem_selecionada and origem_selecionada in df_origem.columns:
+            df_saida[destino] = df_origem[origem_selecionada]
+        else:
+            valor_padrao = defaults.get(destino, "")
+            df_saida[destino] = valor_padrao
 
     return df_saida
 
 
-def _limpar_estado_geracao() -> None:
-    st.session_state.pop("df_saida", None)
-    st.session_state.pop("df_saida_preview_hash", None)
-    st.session_state.pop("excel_saida_bytes", None)
-    st.session_state.pop("excel_saida_nome", None)
+def _sugerir_mapeamento_inicial(
+    colunas_origem: List[str],
+    colunas_destino: List[str],
+    memoria: Dict,
+) -> Dict[str, str]:
+    mapeamento_manual: Dict[str, str] = {}
+
+    mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
+    if mapeamento_memoria:
+        for origem, destino in mapeamento_memoria.items():
+            if destino in colunas_destino and origem in colunas_origem:
+                if destino not in mapeamento_manual:
+                    mapeamento_manual[destino] = origem
+
+    mapa_ia = mapear_colunas_ia(colunas_origem, colunas_destino)
+    for origem, dados in mapa_ia.items():
+        destino = str(dados.get("destino", "") or "").strip()
+        score = float(dados.get("score", 0) or 0)
+
+        if (
+            destino
+            and destino in colunas_destino
+            and origem in colunas_origem
+            and score >= 0.6
+            and destino not in mapeamento_manual
+        ):
+            mapeamento_manual[destino] = origem
+
+    return mapeamento_manual
 
 
+def _render_mapeamento_manual(
+    df_origem: pd.DataFrame,
+    colunas_destino: List[str],
+    state_key: str,
+) -> Dict[str, str]:
+    st.subheader("Mapeamento manual antes de gerar")
+    st.caption("Escolha manualmente qual coluna do arquivo de origem alimenta cada coluna do arquivo final.")
+
+    opcoes_base = [""] + list(df_origem.columns)
+    mapeamento = st.session_state.get(state_key, {}).copy()
+
+    preview_cols = st.columns([1.1, 1.7, 2.2])
+
+    with preview_cols[0]:
+        st.markdown("**Coluna final**")
+    with preview_cols[1]:
+        st.markdown("**Coluna da origem**")
+    with preview_cols[2]:
+        st.markdown("**Exemplo**")
+
+    usados = set()
+
+    for destino in colunas_destino:
+        cols = st.columns([1.1, 1.7, 2.2])
+
+        atual = mapeamento.get(destino, "")
+        if atual:
+            usados.add(atual)
+
+        with cols[0]:
+            st.markdown(f"`{destino}`")
+
+        with cols[1]:
+            # Permite manter o valor atual selecionado e evitar duplicidade visual
+            opcoes_dinamicas = [""]
+            for col in df_origem.columns:
+                if col == atual or col not in (usados - ({atual} if atual else set())):
+                    opcoes_dinamicas.append(col)
+
+            try:
+                indice = opcoes_dinamicas.index(atual) if atual in opcoes_dinamicas else 0
+            except Exception:
+                indice = 0
+
+            novo_valor = st.selectbox(
+                f"Origem para {destino}",
+                opcoes_dinamicas,
+                index=indice,
+                key=f"map_{state_key}_{destino}",
+                label_visibility="collapsed",
+            )
+
+            if novo_valor:
+                mapeamento[destino] = novo_valor
+            else:
+                mapeamento[destino] = ""
+
+        with cols[2]:
+            origem_exemplo = mapeamento.get(destino, "")
+            if origem_exemplo and origem_exemplo in df_origem.columns:
+                serie = df_origem[origem_exemplo].dropna().astype(str)
+                exemplo = serie.iloc[0] if not serie.empty else ""
+                st.caption(str(exemplo)[:120])
+            else:
+                st.caption("—")
+
+    st.session_state[state_key] = mapeamento
+    return mapeamento
+
+
+# ==========================================================
+# UI
+# ==========================================================
 def render_origem_dados() -> None:
-    st.title("IA Automática com Memória")
+    st.title("Origem dos dados")
+
+    modo = st.radio(
+        "Selecione a operação antes de tudo",
+        options=["cadastro", "estoque"],
+        format_func=lambda x: OPERACOES[x]["label"],
+        horizontal=True,
+        key="tipo_operacao_bling",
+    )
+
+    config = OPERACOES[modo]
+    colunas_destino = config["colunas_destino"]
+    arquivo_saida = config["arquivo_saida"]
+    defaults = config.get("defaults", {})
+
+    st.info(
+        f"Operação selecionada: **{config['label']}**. "
+        "Você vai mapear manualmente, gerar o preview final e só depois baixar."
+    )
 
     arquivo = st.file_uploader(
         "Anexar planilha ou XML",
         type=["xlsx", "xls", "csv", "xml"],
+        key=f"upload_{modo}",
     )
 
     if not arquivo:
         return
 
     try:
-        df, origem_atual = _ler_arquivo_upload(arquivo)
+        df_origem, origem_atual = _ler_arquivo_upload(arquivo)
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
         return
 
-    if df is None or df.empty:
+    if df_origem is None or df_origem.empty:
         st.warning("O arquivo foi lido, mas não possui dados para processar.")
         return
 
     nome_arquivo = str(getattr(arquivo, "name", "arquivo"))
-    origem_hash = _gerar_hash_arquivo(df, nome_arquivo)
+    origem_hash = _gerar_hash_arquivo(df_origem, f"{modo}|{nome_arquivo}")
 
-    # Se mudou o arquivo, limpa a geração anterior
     if st.session_state.get("df_origem_hash") != origem_hash:
         _limpar_estado_geracao()
 
-    st.session_state["df_origem"] = df.copy()
+    st.session_state["df_origem"] = df_origem.copy()
     st.session_state["origem_atual"] = origem_atual
     st.session_state["origem_arquivo_nome"] = nome_arquivo
+    st.session_state["df_origem_hash"] = origem_hash
 
-    colunas_origem = list(df.columns)
+    st.caption(f"Arquivo lido: `{nome_arquivo}` | Origem detectada: `{origem_atual}`")
+
+    st.subheader("Preview da origem")
+    st.dataframe(df_origem.head(10), width="stretch")
+
     memoria = st.session_state.get("mapeamento_memoria", {})
-    mapeamento_memoria = recuperar_mapeamento(memoria, colunas_origem)
+    state_key = f"mapeamento_manual_{modo}"
 
-    if mapeamento_memoria:
-        st.success("⚡ Mapeamento recuperado automaticamente (memória)")
-        mapeamento_final = dict(mapeamento_memoria)
-    else:
-        mapa_ia = mapear_colunas_ia(colunas_origem, COLUNAS_DESTINO)
-        mapeamento_final = {}
+    if state_key not in st.session_state:
+        st.session_state[state_key] = _sugerir_mapeamento_inicial(
+            colunas_origem=list(df_origem.columns),
+            colunas_destino=colunas_destino,
+            memoria=memoria,
+        )
 
-        for col, dados in mapa_ia.items():
-            destino = dados.get("destino")
-            score = float(dados.get("score", 0) or 0)
-
-            if destino and score >= 0.6:
-                mapeamento_final[col] = destino
-
-    if (
-        "mapeamento_manual" not in st.session_state
-        or st.session_state.get("df_origem_hash") != origem_hash
-    ):
-        st.session_state["mapeamento_manual"] = dict(mapeamento_final)
-        st.session_state["df_origem_hash"] = origem_hash
-
-    st.subheader("Preview do mapeamento")
-
-    df_preview = _montar_df_saida(
-        df_origem=df,
-        mapeamento_manual=st.session_state.get("mapeamento_manual", {}),
+    mapeamento_manual = _render_mapeamento_manual(
+        df_origem=df_origem,
+        colunas_destino=colunas_destino,
+        state_key=state_key,
     )
 
-    if not df_preview.empty:
-        st.dataframe(df_preview.head(3), use_container_width=True)
-    else:
-        st.info("Nenhum campo foi mapeado automaticamente até o momento.")
+    st.divider()
 
-    if st.button("Gerar automático", use_container_width=True):
-        try:
-            df_saida = _montar_df_saida(
-                df_origem=df,
-                mapeamento_manual=st.session_state.get("mapeamento_manual", {}),
-            )
+    st.subheader("Preview do que será baixado")
+    df_preview_saida = _montar_df_saida(
+        df_origem=df_origem,
+        colunas_destino=colunas_destino,
+        mapeamento_manual=mapeamento_manual,
+        defaults=defaults,
+    )
+    st.dataframe(df_preview_saida.head(20), width="stretch")
 
-            if df_saida.empty:
-                st.warning(
-                    "Nenhum dado pôde ser gerado porque não houve mapeamento válido."
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Gerar preview final", width="stretch"):
+            try:
+                df_saida = _montar_df_saida(
+                    df_origem=df_origem,
+                    colunas_destino=colunas_destino,
+                    mapeamento_manual=mapeamento_manual,
+                    defaults=defaults,
                 )
-                _limpar_estado_geracao()
-                return
 
-            preco_compra = calcular_preco_compra_automatico_df(df_saida)
-            st.session_state["preco_compra_modulo_precificacao"] = float(
-                preco_compra or 0.0
-            )
+                if df_saida.empty:
+                    st.warning("Nenhum dado foi gerado.")
+                    return
 
-            if "custo" not in df_saida.columns and preco_compra:
-                df_saida["custo"] = float(preco_compra)
+                # custo automático, quando fizer sentido
+                try:
+                    preco_compra = calcular_preco_compra_automatico_df(df_saida)
+                    st.session_state["preco_compra_modulo_precificacao"] = float(preco_compra or 0.0)
+                    if "custo" in df_saida.columns:
+                        custo_vazio = df_saida["custo"].astype(str).str.strip().eq("").all()
+                        if custo_vazio and preco_compra:
+                            df_saida["custo"] = float(preco_compra)
+                except Exception:
+                    # Não bloqueia a geração se a precificação falhar
+                    pass
 
-            salvar_mapeamento(
-                memoria,
-                colunas_origem,
-                st.session_state["mapeamento_manual"],
-            )
-            st.session_state["mapeamento_memoria"] = memoria
+                # salva memória no formato já aceito pelo módulo atual: origem -> destino
+                mapa_para_memoria = {}
+                for destino, origem in mapeamento_manual.items():
+                    if origem:
+                        mapa_para_memoria[origem] = destino
 
-            excel_bytes = df_to_excel_bytes(df_saida)
+                salvar_mapeamento(
+                    memoria,
+                    list(df_origem.columns),
+                    mapa_para_memoria,
+                )
+                st.session_state["mapeamento_memoria"] = memoria
 
-            st.session_state["df_saida"] = df_saida.copy()
-            st.session_state["df_saida_preview_hash"] = origem_hash
-            st.session_state["excel_saida_bytes"] = excel_bytes
-            st.session_state["excel_saida_nome"] = "bling_auto.xlsx"
+                excel_bytes = df_to_excel_bytes(df_saida)
 
-            st.success("Arquivo gerado. Confira o preview final antes de baixar.")
+                st.session_state["df_saida"] = df_saida.copy()
+                st.session_state["df_saida_preview_hash"] = origem_hash
+                st.session_state["excel_saida_bytes"] = excel_bytes
+                st.session_state["excel_saida_nome"] = arquivo_saida
 
-        except Exception as e:
-            st.error(f"Erro ao gerar arquivo: {e}")
-            _limpar_estado_geracao()
+                st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar.")
+
+            except Exception as e:
+                st.error(f"Erro ao gerar preview final: {e}")
+
+    with col2:
+        if st.button("Limpar mapeamento", width="stretch"):
+            st.session_state[state_key] = {}
+            st.session_state.pop("df_saida", None)
+            st.session_state.pop("df_saida_preview_hash", None)
+            st.session_state.pop("excel_saida_bytes", None)
+            st.session_state.pop("excel_saida_nome", None)
+            st.rerun()
 
     df_saida_state = st.session_state.get("df_saida")
     df_saida_hash = st.session_state.get("df_saida_preview_hash")
     excel_saida_bytes = st.session_state.get("excel_saida_bytes")
-    excel_saida_nome = st.session_state.get("excel_saida_nome", "bling_auto.xlsx")
+    excel_saida_nome = st.session_state.get("excel_saida_nome", arquivo_saida)
 
     if (
         isinstance(df_saida_state, pd.DataFrame)
@@ -266,18 +447,17 @@ def render_origem_dados() -> None:
         and df_saida_hash == origem_hash
         and excel_saida_bytes
     ):
-        st.subheader("Preview final do arquivo que será baixado")
-        st.caption(
-            f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas"
-        )
-        st.dataframe(df_saida_state.head(20), use_container_width=True)
+        st.divider()
+        st.subheader("Preview final validado para download")
+        st.caption(f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas")
+        st.dataframe(df_saida_state.head(50), width="stretch")
 
         st.download_button(
-            "Baixar arquivo final",
+            f"Baixar arquivo de {config['label']}",
             data=excel_saida_bytes,
             file_name=excel_saida_nome,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
 
 
