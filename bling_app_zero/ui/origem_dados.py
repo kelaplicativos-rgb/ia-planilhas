@@ -85,6 +85,8 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "calc_custo_fixo",
         "validacao_erros_saida",
         "validacao_avisos_saida",
+        "gtin_logs_saida",
+        "gtin_invalidos_saida",
     ]:
         st.session_state.pop(chave, None)
 
@@ -353,6 +355,10 @@ def _ler_planilha_modelo(upload_modelo, modo: str) -> Tuple[pd.DataFrame | None,
 # ==========================================================
 # GTIN
 # ==========================================================
+PREFIXOS_GTIN_REJEITADOS_BLING = {
+    "687",  # prefixo rejeitado pelo importador do Bling no caso real validado
+}
+
 def _somente_digitos(valor: str) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
@@ -379,16 +385,55 @@ def _gtin_checksum_valido(gtin: str) -> bool:
     return calculado == check
 
 
-def _limpar_gtin_invalido_serie(serie: pd.Series) -> pd.Series:
-    def _limpar(valor: str) -> str:
-        codigo = _somente_digitos(valor)
+def _gtin_prefixo_rejeitado_bling(gtin: str) -> bool:
+    if not gtin:
+        return False
+
+    for prefixo in PREFIXOS_GTIN_REJEITADOS_BLING:
+        if gtin.startswith(prefixo):
+            return True
+
+    return False
+
+
+def _limpar_gtin_invalido_serie(
+    serie: pd.Series,
+    nome_coluna: str = "GTIN/EAN",
+) -> Tuple[pd.Series, List[str], int]:
+    logs: List[str] = []
+    total_invalidos = 0
+
+    def _limpar(valor: str, linha_idx: int) -> str:
+        nonlocal total_invalidos
+
+        texto_original = _to_text(valor)
+        codigo = _somente_digitos(texto_original)
+
         if not codigo:
             return ""
+
+        if _gtin_prefixo_rejeitado_bling(codigo):
+            total_invalidos += 1
+            logs.append(
+                f"Linha {linha_idx}: coluna '{nome_coluna}' removida por prefixo rejeitado pelo Bling ({codigo})"
+            )
+            return ""
+
         if _gtin_checksum_valido(codigo):
             return codigo
+
+        total_invalidos += 1
+        logs.append(
+            f"Linha {linha_idx}: coluna '{nome_coluna}' removida por GTIN/EAN inválido ({codigo})"
+        )
         return ""
 
-    return serie.apply(_limpar).astype("string")
+    valores = [
+        _limpar(valor, idx + 1)
+        for idx, valor in enumerate(serie.tolist())
+    ]
+
+    return pd.Series(valores, index=serie.index, dtype="string"), logs, total_invalidos
 
 
 # ==========================================================
@@ -765,6 +810,13 @@ def _montar_df_saida_exato_modelo(
                 else 0.0
             )
 
+            coluna_custo_modelo = _buscar_coluna_por_alias(
+                colunas_modelo,
+                ["preco de custo", "preço de custo", "custo", "valor custo"],
+            )
+            if coluna_custo_modelo:
+                df_saida[coluna_custo_modelo] = base
+
     # Depósito manual no estoque
     if modo == "estoque" and estoque_cfg:
         coluna_deposito = str(estoque_cfg.get("coluna_deposito", "") or "").strip()
@@ -774,10 +826,22 @@ def _montar_df_saida_exato_modelo(
             df_saida[coluna_deposito] = deposito_nome
 
     # Limpeza de GTIN inválido em qualquer coluna GTIN/EAN do modelo
+    gtin_logs: List[str] = []
+    total_gtins_invalidos = 0
+
     for col in df_saida.columns:
         col_norm = _normalizar_texto(col)
         if "gtin" in col_norm or "ean" in col_norm:
-            df_saida[col] = _limpar_gtin_invalido_serie(_serie_texto(df_saida, col))
+            serie_limpa, logs_coluna, total_invalidos_coluna = _limpar_gtin_invalido_serie(
+                _serie_texto(df_saida, col),
+                nome_coluna=col,
+            )
+            df_saida[col] = serie_limpa
+            gtin_logs.extend(logs_coluna)
+            total_gtins_invalidos += total_invalidos_coluna
+
+    st.session_state["gtin_logs_saida"] = gtin_logs
+    st.session_state["gtin_invalidos_saida"] = total_gtins_invalidos
 
     return df_saida
 
@@ -842,6 +906,13 @@ def _validar_saida_bling(df_saida: pd.DataFrame, modo: str) -> Tuple[List[str], 
         vazios = int((serie == "").sum())
         if vazios > 0:
             erros.append(f"Coluna obrigatória '{col_real}' possui {vazios} linha(s) vazia(s).")
+
+    total_gtins_invalidos = int(st.session_state.get("gtin_invalidos_saida", 0) or 0)
+    if total_gtins_invalidos > 0:
+        erros.append(
+            f"Foram detectados {total_gtins_invalidos} GTIN/EAN inválido(s) removido(s). "
+            "Revise o preview antes de liberar o download."
+        )
 
     return erros, avisos
 
@@ -1013,6 +1084,11 @@ def render_origem_dados() -> None:
         st.warning("Avisos:\n\n- " + "\n- ".join(avisos_preview))
     else:
         st.success("Preview válido para gerar o arquivo final.")
+
+    gtin_logs_preview = st.session_state.get("gtin_logs_saida", []) or []
+    if gtin_logs_preview:
+        with st.expander("Ver ocorrências de GTIN/EAN limpos no preview"):
+            st.code("\n".join(gtin_logs_preview), language=None)
 
     b1, b2 = st.columns(2)
 
