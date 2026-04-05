@@ -29,7 +29,6 @@ def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dic
     categoria_col = get_column_by_mapped_name(df, mapeamento, "categoria")
 
     rows = []
-
     for _, row in df.iterrows():
         payload = {
             "codigo": normalize_value(row[codigo_col]) if codigo_col else None,
@@ -54,7 +53,6 @@ def build_stock_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]
     deposito_col = get_column_by_mapped_name(df, mapeamento, "deposito_id")
 
     rows = []
-
     for _, row in df.iterrows():
         payload = {
             "codigo": normalize_value(row[codigo_col]) if codigo_col else None,
@@ -83,7 +81,7 @@ def render_send_panel() -> None:
         rows = build_product_rows(df, mapeamento)
         st.write(f"Linhas preparadas para cadastro: **{len(rows)}**")
 
-        if st.button("Gerar preview de cadastro", width="stretch"):
+        if st.button("Gerar preview de cadastro", use_container_width=True):
             st.session_state.ultimo_log_envio = rows[:50]
 
         if st.session_state.get("ultimo_log_envio"):
@@ -94,7 +92,7 @@ def render_send_panel() -> None:
         rows = build_stock_rows(df, mapeamento)
         st.write(f"Linhas preparadas para estoque: **{len(rows)}**")
 
-        if st.button("Gerar preview de estoque", width="stretch"):
+        if st.button("Gerar preview de estoque", use_container_width=True):
             st.session_state.ultimo_log_envio = rows[:50]
 
         if st.session_state.get("ultimo_log_envio"):
