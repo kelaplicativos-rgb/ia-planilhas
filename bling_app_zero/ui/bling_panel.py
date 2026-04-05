@@ -5,7 +5,6 @@ import streamlit as st
 
 from bling_app_zero.core.bling_api import BlingAPIClient
 from bling_app_zero.core.bling_auth import BlingAuthManager
-from bling_app_zero.core.bling_homologacao import BlingHomologacaoService
 from bling_app_zero.utils.excel import df_to_excel_bytes
 
 
@@ -32,10 +31,7 @@ def render_bling_panel() -> None:
     conectar_url = auth.build_authorize_url() if configurado else None
 
     if not configurado:
-        st.warning(
-            "Credenciais do Bling não encontradas no secrets. "
-            "Preencha client_id, client_secret e redirect_uri."
-        )
+        st.warning(auth.get_missing_config_message())
 
     c1, c2, c3 = st.columns(3)
 
@@ -85,35 +81,19 @@ def render_bling_panel() -> None:
         if status.get("expires_at"):
             st.write(f"Expira em: {status.get('expires_at')}")
 
-    st.markdown("#### Homologação do Bling")
-    if st.button(
-        "Executar teste de homologação",
-        use_container_width=True,
-        disabled=not status.get("connected"),
-    ):
-        service = BlingHomologacaoService()
-        ok, logs = service.run()
-        st.session_state["bling_homologacao_logs"] = logs
-        if ok:
-            st.success("Homologação executada com sucesso.")
-        else:
-            st.error("A homologação retornou falha. Veja o log abaixo.")
-
-    logs = st.session_state.get("bling_homologacao_logs")
-    if isinstance(logs, list) and logs:
-        st.json(logs)
-
 
 def render_bling_import_panel() -> None:
     st.subheader("Importar dados do Bling")
 
     auth = BlingAuthManager()
     status = auth.get_connection_status()
+
     if not status.get("connected"):
         st.info("Conecte primeiro a conta do Bling para importar produtos e estoque.")
         return
 
     client = BlingAPIClient()
+
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
