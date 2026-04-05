@@ -6,25 +6,6 @@ import pandas as pd
 
 
 # =========================
-# MODELO PADRÃO BLING
-# =========================
-COLUNAS_PADRAO_BLING = [
-    "codigo",
-    "nome",
-    "descricao_curta",
-    "descricao_complementar",
-    "marca",
-    "categoria",
-    "preco",
-    "preco_custo",
-    "estoque",
-    "peso",
-    "gtin",
-    "ncm",
-]
-
-
-# =========================
 # NORMALIZAÇÃO
 # =========================
 def normalizar_texto(texto: str) -> str:
@@ -54,6 +35,7 @@ def ler_planilha(arquivo) -> pd.DataFrame:
                 return pd.read_csv(arquivo, encoding="latin1")
 
         return pd.read_excel(arquivo)
+
     except Exception as e:
         raise Exception(f"Erro ao ler planilha: {e}") from e
 
@@ -81,46 +63,19 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================
-# PADRONIZAÇÃO FINAL BLING
-# =========================
-def padronizar_dataframe_bling(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame(columns=COLUNAS_PADRAO_BLING)
-
-    df = df.copy()
-
-    rename_map = {
-        "sku": "codigo",
-        "custo": "preco_custo",
-        "descricao_html": "descricao_complementar",
-    }
-
-    df = df.rename(columns=rename_map)
-
-    # Garante todas as colunas do modelo
-    for col in COLUNAS_PADRAO_BLING:
-        if col not in df.columns:
-            df[col] = None
-
-    # Remove colunas extras e fixa ordem final
-    df = df[COLUNAS_PADRAO_BLING]
-
-    return df
-
-
-# =========================
 # EXPORTAR PARA EXCEL
 # =========================
 def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
-    df_final = padronizar_dataframe_bling(df)
-
     output = BytesIO()
 
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_final.to_excel(writer, index=False, sheet_name="Produtos")
+    try:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Dados")
+        output.seek(0)
+        return output.getvalue()
 
-    output.seek(0)
-    return output.getvalue()
+    except Exception as e:
+        raise Exception(f"Erro ao gerar Excel: {e}") from e
 
 
 # =========================
