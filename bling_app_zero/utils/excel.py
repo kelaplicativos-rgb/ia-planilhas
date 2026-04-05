@@ -7,7 +7,7 @@ from openpyxl.styles import numbers
 
 
 # =========================
-# MODELO PADRÃO BLING
+# MODELOS PADRÃO BLING
 # =========================
 COLUNAS_PADRAO_BLING = [
     "codigo",
@@ -40,6 +40,12 @@ def normalizar_texto(texto: str) -> str:
     return texto
 
 
+def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [normalizar_texto(col) for col in df.columns]
+    return df
+
+
 # =========================
 # LEITURA PLANILHA
 # =========================
@@ -49,12 +55,12 @@ def ler_planilha(arquivo) -> pd.DataFrame:
 
         if nome.endswith(".csv"):
             try:
-                return pd.read_csv(arquivo)
+                return pd.read_csv(arquivo, dtype=str)
             except UnicodeDecodeError:
                 arquivo.seek(0)
-                return pd.read_csv(arquivo, encoding="latin1")
+                return pd.read_csv(arquivo, encoding="latin1", dtype=str)
 
-        return pd.read_excel(arquivo)
+        return pd.read_excel(arquivo, dtype=str)
 
     except Exception as e:
         raise Exception(f"Erro ao ler planilha: {e}") from e
@@ -74,26 +80,19 @@ def limpar_valores(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================
-# NORMALIZAR COLUNAS
-# =========================
-def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [normalizar_texto(col) for col in df.columns]
-    return df
-
-
-# =========================
-# AJUSTES DE VALORES
+# CONVERSORES
 # =========================
 def _to_text(value) -> str:
     if value is None:
         return ""
 
-    if pd.isna(value):
-        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
 
     texto = str(value).strip()
-
     if texto.lower() == "nan":
         return ""
 
@@ -101,23 +100,26 @@ def _to_text(value) -> str:
 
 
 def _to_num(value):
-    if value is None or pd.isna(value):
+    if value is None:
         return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
 
     texto = str(value).strip()
     if not texto:
         return None
 
-    texto = texto.replace("R$", "").replace(" ", "")
+    texto = texto.replace("R$", "").replace("r$", "").replace(" ", "")
 
-    # Se vier no padrão BR com milhar e decimal
     if "," in texto and "." in texto:
         if texto.rfind(",") > texto.rfind("."):
             texto = texto.replace(".", "").replace(",", ".")
         else:
             texto = texto.replace(",", "")
-
-    # Se vier só com vírgula, assume decimal BR
     elif "," in texto:
         texto = texto.replace(".", "").replace(",", ".")
 
@@ -125,6 +127,39 @@ def _to_num(value):
         return float(texto)
     except Exception:
         return None
+
+
+def _serie_texto(df: pd.DataFrame, coluna: str) -> pd.Series:
+    if coluna not in df.columns:
+        return pd.Series([""] * len(df), index=df.index, dtype="string")
+
+    return (
+        df[coluna]
+        .apply(_to_text)
+        .astype("string")
+        .fillna("")
+        .str.strip()
+    )
+
+
+def _serie_float(df: pd.DataFrame, coluna: str, default: float = 0.0) -> pd.Series:
+    if coluna not in df.columns:
+        return pd.Series([default] * len(df), index=df.index, dtype="float64")
+
+    serie = df[coluna].apply(_to_num)
+    serie = pd.to_numeric(serie, errors="coerce")
+    serie = serie.fillna(default)
+    return serie.astype("float64")
+
+
+def _serie_int(df: pd.DataFrame, coluna: str, default: int = 0) -> pd.Series:
+    if coluna not in df.columns:
+        return pd.Series([default] * len(df), index=df.index, dtype="int64")
+
+    serie = df[coluna].apply(_to_num)
+    serie = pd.to_numeric(serie, errors="coerce")
+    serie = serie.fillna(default)
+    return serie.round(0).astype("int64")
 
 
 # =========================
@@ -143,21 +178,20 @@ def padronizar_dataframe_bling(df: pd.DataFrame) -> pd.DataFrame:
     }
     df = df.rename(columns=rename_map)
 
-    # Garante colunas mínimas
     for col in COLUNAS_PADRAO_BLING:
         if col not in df.columns:
             df[col] = ""
 
-    # Descrição curta padrão baseada no nome, se não existir
     if "descricao_curta" in df.columns:
-        vazia = df["descricao_curta"].fillna("").astype(str).str.strip() == ""
-        df.loc[vazia, "descricao_curta"] = df.loc[vazia, "nome"].fillna("").astype(str)
+        nome_serie = _serie_texto(df, "nome")
+        desc_curta = _serie_texto(df, "descricao_curta")
+        vazia = desc_curta.eq("")
+        desc_curta.loc[vazia] = nome_serie.loc[vazia]
+        df["descricao_curta"] = desc_curta
 
-    # Descrição complementar padrão
     if "descricao_complementar" in df.columns:
-        df["descricao_complementar"] = df["descricao_complementar"].fillna("").astype(str)
+        df["descricao_complementar"] = _serie_texto(df, "descricao_complementar")
 
-    # Campos texto importantes
     colunas_texto = [
         "codigo",
         "nome",
@@ -169,30 +203,23 @@ def padronizar_dataframe_bling(df: pd.DataFrame) -> pd.DataFrame:
         "ncm",
     ]
     for col in colunas_texto:
-        df[col] = df[col].apply(_to_text)
+        df[col] = _serie_texto(df, col)
 
-    # Evita perder zeros/códigos e remove .0 final em textos numéricos
     for col in ["codigo", "gtin", "ncm"]:
         df[col] = (
             df[col]
-            .astype(str)
+            .astype("string")
             .str.replace(r"\.0$", "", regex=True)
             .str.strip()
+            .fillna("")
         )
 
-    # Campos numéricos
-    for col in ["preco", "preco_custo", "estoque", "peso"]:
-        df[col] = df[col].apply(_to_num)
+    df["preco"] = _serie_float(df, "preco", default=0.0)
+    df["preco_custo"] = _serie_float(df, "preco_custo", default=0.0)
+    df["estoque"] = _serie_int(df, "estoque", default=0)
+    df["peso"] = _serie_float(df, "peso", default=0.0)
 
-    # Valores padrão seguros
-    df["preco"] = df["preco"].fillna(0.0)
-    df["preco_custo"] = df["preco_custo"].fillna(0.0)
-    df["estoque"] = df["estoque"].fillna(0)
-    df["peso"] = df["peso"].fillna(0.0)
-
-    # Ordem final exata do modelo
     df = df[COLUNAS_PADRAO_BLING]
-
     return df
 
 
@@ -206,16 +233,13 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     try:
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_final.to_excel(writer, index=False, sheet_name="Produtos")
-
             ws = writer.sheets["Produtos"]
 
-            # Força como texto para o Excel/Bling não deformarem códigos
             colunas_texto = {"A", "K", "L"}  # codigo, gtin, ncm
             for col_letter in colunas_texto:
                 for cell in ws[col_letter]:
                     cell.number_format = numbers.FORMAT_TEXT
 
-            # Cabeçalho
             for cell in ws[1]:
                 cell.number_format = numbers.FORMAT_TEXT
 
