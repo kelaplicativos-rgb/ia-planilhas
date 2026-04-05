@@ -73,12 +73,12 @@ def render_precificacao_panel() -> None:
 
     st.markdown("---")
 
-    colA, colB = st.columns(2)
+    col_a, col_b = st.columns(2)
 
-    with colA:
+    with col_a:
         st.metric("Preço de custo", f"R$ {preco_compra:.2f}")
 
-    with colB:
+    with col_b:
         st.metric("Preço de venda sugerido", f"R$ {preco_venda:.2f}")
 
     if preco_venda <= 0:
