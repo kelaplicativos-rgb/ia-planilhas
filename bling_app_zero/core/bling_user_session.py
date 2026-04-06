@@ -60,14 +60,19 @@ def set_pending_oauth_user(identifier: str, display_name: Optional[str] = None) 
 
 
 def get_pending_oauth_user_key() -> str:
-    return normalize_user_key(
-        str(st.session_state.get(SESSION_OAUTH_PENDING_USER_KEY, "default"))
-    )
+    valor = st.session_state.get(SESSION_OAUTH_PENDING_USER_KEY, "")
+    if not str(valor).strip():
+        return ""
+    return normalize_user_key(str(valor))
 
 
 def get_pending_oauth_user_label() -> str:
     label = str(st.session_state.get(SESSION_OAUTH_PENDING_USER_LABEL, "")).strip()
-    return label or get_pending_oauth_user_key()
+    if label:
+        return label
+
+    pending_key = get_pending_oauth_user_key()
+    return pending_key or ""
 
 
 def clear_pending_oauth_user() -> None:
