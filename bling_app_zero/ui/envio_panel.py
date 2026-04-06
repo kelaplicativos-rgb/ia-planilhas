@@ -72,11 +72,11 @@ def _find_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
 
 
 def _base_df() -> Optional[pd.DataFrame]:
-    df = st.session_state.get("df_saida_api")
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        df = st.session_state.get("df_saida")
-    if isinstance(df, pd.DataFrame) and not df.empty:
-        return df.copy()
+    # Prioriza preview/final da API, depois saída final, por último origem.
+    for key in ("df_saida_api", "df_saida", "df_origem"):
+        df = st.session_state.get(key)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df.copy()
     return None
 
 
@@ -92,6 +92,7 @@ def _csv_bytes_from_records(records: List[Dict]) -> bytes:
     df = pd.DataFrame(records or [])
     if df.empty:
         df = pd.DataFrame([{"info": "sem_dados"}])
+
     output = io.StringIO()
     df.to_csv(output, index=False)
     return output.getvalue().encode("utf-8")
@@ -103,7 +104,6 @@ def _salvar_log_envio(log_data: Dict) -> None:
 
 def _render_exportacao_logs() -> None:
     log_data = st.session_state.get("ultimo_log_envio_api")
-
     if not isinstance(log_data, dict) or not log_data:
         return
 
@@ -129,15 +129,15 @@ def _render_exportacao_logs() -> None:
 
     if log_data.get("invalidos"):
         with st.expander("Linhas com pendência", expanded=False):
-            st.dataframe(pd.DataFrame(log_data["invalidos"]), width="stretch", height=220)
+            st.dataframe(pd.DataFrame(log_data["invalidos"]), use_container_width=True, height=220)
 
     if log_data.get("sucessos"):
         with st.expander("Sucessos", expanded=False):
-            st.dataframe(pd.DataFrame(log_data["sucessos"]), width="stretch", height=220)
+            st.dataframe(pd.DataFrame(log_data["sucessos"]), use_container_width=True, height=220)
 
     if log_data.get("erros"):
         with st.expander("Erros", expanded=False):
-            st.dataframe(pd.DataFrame(log_data["erros"]), width="stretch", height=220)
+            st.dataframe(pd.DataFrame(log_data["erros"]), use_container_width=True, height=220)
 
     nome_base = f"log_{tipo}_{timestamp}"
 
@@ -149,15 +149,18 @@ def _render_exportacao_logs() -> None:
             data=_json_bytes(log_data),
             file_name=f"{nome_base}.json",
             mime="application/json",
-            width="stretch",
+            use_container_width=True,
         )
 
     with c2:
         registros_csv = []
+
         for item in log_data.get("invalidos", []):
             registros_csv.append({"grupo": "invalidos", **item})
+
         for item in log_data.get("sucessos", []):
             registros_csv.append({"grupo": "sucessos", **item})
+
         for item in log_data.get("erros", []):
             registros_csv.append({"grupo": "erros", **item})
 
@@ -169,11 +172,11 @@ def _render_exportacao_logs() -> None:
             data=_csv_bytes_from_records(registros_csv),
             file_name=f"{nome_base}.csv",
             mime="text/csv",
-            width="stretch",
+            use_container_width=True,
         )
 
     with c3:
-        if st.button("Limpar log atual", width="stretch"):
+        if st.button("Limpar log atual", use_container_width=True):
             st.session_state.pop("ultimo_log_envio_api", None)
             st.rerun()
 
@@ -229,6 +232,7 @@ def build_stock_rows(df: pd.DataFrame) -> List[Dict]:
     deposito_col = _find_column(df, ["deposito", "depósito", "deposito id", "depósito id"])
 
     deposito_manual = str(st.session_state.get("deposito_nome_manual_api", "")).strip()
+
     rows: List[Dict] = []
 
     for _, row in df.iterrows():
@@ -237,9 +241,7 @@ def build_stock_rows(df: pd.DataFrame) -> List[Dict]:
             "estoque": safe_float(row[estoque_col]) if estoque_col else None,
             "preco": safe_float(row[preco_col]) if preco_col else None,
             "deposito_id": (
-                normalize_value(row[deposito_col])
-                if deposito_col
-                else deposito_manual or None
+                normalize_value(row[deposito_col]) if deposito_col else deposito_manual or None
             ),
         }
         rows.append(payload)
@@ -314,6 +316,7 @@ def _mostrar_resumo_validacao(
 
     with c1:
         st.metric("Linhas válidas", len(validos))
+
     with c2:
         st.metric("Linhas com pendência", len(invalidos))
 
@@ -324,12 +327,84 @@ def _mostrar_resumo_validacao(
         )
         df_invalidos = pd.DataFrame(invalidos)
         with st.expander(titulo_erro, expanded=False):
-            st.dataframe(df_invalidos, width="stretch", height=220)
+            st.dataframe(df_invalidos, use_container_width=True, height=220)
 
     if validos:
         st.success(f"{len(validos)} linha(s) prontas para uso.")
         with st.expander(titulo_ok, expanded=False):
             st.json(validos[:50])
+
+
+def _executar_envio_produtos(validos: List[Dict], user_key: str) -> None:
+    total = len(validos)
+    progresso = st.progress(0)
+    status = st.empty()
+
+    status.info("Iniciando envio de cadastro para o Bling...")
+    progresso.progress(15)
+
+    sucessos, erros = sync_products(validos, user_key=user_key)
+
+    progresso.progress(100)
+    status.success("Envio de cadastro concluído.")
+
+    log_data = {
+        "tipo": "cadastro_real",
+        "timestamp": _agora_str(),
+        "modo": "cadastro",
+        "user_key": user_key,
+        "total_linhas": total,
+        "total_validos": total,
+        "total_invalidos": 0,
+        "total_sucessos": len(sucessos),
+        "total_erros": len(erros),
+        "invalidos": [],
+        "sucessos": sucessos[:300],
+        "erros": erros[:300],
+    }
+    _salvar_log_envio(log_data)
+
+    if sucessos:
+        st.success(f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) com sucesso no Bling.")
+    if erros:
+        st.error(f"{len(erros)} produto(s) falharam no envio.")
+        st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
+
+
+def _executar_envio_estoque(validos: List[Dict], user_key: str) -> None:
+    total = len(validos)
+    progresso = st.progress(0)
+    status = st.empty()
+
+    status.info("Iniciando envio de estoque para o Bling...")
+    progresso.progress(15)
+
+    sucessos, erros = sync_stocks(validos, user_key=user_key)
+
+    progresso.progress(100)
+    status.success("Envio de estoque concluído.")
+
+    log_data = {
+        "tipo": "estoque_real",
+        "timestamp": _agora_str(),
+        "modo": "estoque",
+        "user_key": user_key,
+        "total_linhas": total,
+        "total_validos": total,
+        "total_invalidos": 0,
+        "total_sucessos": len(sucessos),
+        "total_erros": len(erros),
+        "invalidos": [],
+        "sucessos": sucessos[:300],
+        "erros": erros[:300],
+    }
+    _salvar_log_envio(log_data)
+
+    if sucessos:
+        st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) com sucesso no Bling.")
+    if erros:
+        st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
+        st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
 
 
 def render_send_panel() -> None:
@@ -340,8 +415,7 @@ def render_send_panel() -> None:
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         st.info(
-            "Gere primeiro o preview final e o arquivo na aba 'Origem dos dados'. "
-            "Esta aba usa apenas uma cópia do DataFrame final preparada para API e não interfere no download."
+            "Gere primeiro o preview final e o arquivo na aba 'Origem dos dados'."
         )
         _render_exportacao_logs()
         return
@@ -350,109 +424,53 @@ def render_send_panel() -> None:
     auth = BlingAuthManager(user_key=user_key)
     conectado = bool(auth.get_connection_status().get("connected"))
 
-    st.caption(
-        f"Operação atual: **{'Cadastro / atualização de produtos' if modo == 'cadastro' else 'Atualização de estoque'}**"
-    )
-    st.caption(
-        "Esta aba não recalcula o arquivo final e não altera o DataFrame usado no download."
-    )
+    if conectado:
+        st.success("Bling conectado. O envio real está liberado.")
+    else:
+        st.info("Conecte o Bling para liberar o envio real.")
 
-    if modo == "cadastro":
+    tab1, tab2 = st.tabs(["Preparar cadastro", "Preparar estoque"])
+
+    with tab1:
         rows = build_product_rows(df)
         validos, invalidos = validar_produtos(rows)
 
         st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
 
-        if st.button("Gerar preview da API de cadastro", width="stretch"):
+        if st.button("Gerar preview de cadastro", use_container_width=True):
             log_data = {
                 "tipo": "cadastro_preview",
                 "timestamp": _agora_str(),
-                "modo": modo,
+                "modo": "cadastro",
                 "user_key": user_key,
                 "total_linhas": len(rows),
                 "total_validos": len(validos),
                 "total_invalidos": len(invalidos),
                 "total_sucessos": 0,
                 "total_erros": 0,
-                "validos": validos[:50],
-                "invalidos": invalidos[:200],
+                "validos": validos[:300],
+                "invalidos": invalidos[:300],
                 "sucessos": [],
                 "erros": [],
             }
             _salvar_log_envio(log_data)
-            _mostrar_resumo_validacao(
-                "Preview de cadastro válido",
-                "Linhas de cadastro com pendência",
-                validos,
-                invalidos,
-            )
+
+        _mostrar_resumo_validacao(
+            "Preview de cadastro válido",
+            "Linhas de cadastro com pendência",
+            validos,
+            invalidos,
+        )
 
         if conectado:
             if st.button(
                 "Enviar cadastro real para o Bling",
-                width="stretch",
+                use_container_width=True,
                 disabled=not bool(validos),
             ):
-                progress = st.progress(0, text="Preparando envio de cadastro...")
-                status = st.empty()
+                _executar_envio_produtos(validos, user_key=user_key)
 
-                try:
-                    progress.progress(20, text="Validando linhas de cadastro...")
-                    status.info("Enviando produtos para o Bling...")
-
-                    sucessos, erros = sync_products(validos, user_key=user_key)
-
-                    progress.progress(100, text="Envio de cadastro concluído")
-                    log_data = {
-                        "tipo": "cadastro_real",
-                        "timestamp": _agora_str(),
-                        "modo": modo,
-                        "user_key": user_key,
-                        "total_linhas": len(rows),
-                        "total_validos": len(validos),
-                        "total_invalidos": len(invalidos),
-                        "total_sucessos": len(sucessos),
-                        "total_erros": len(erros),
-                        "validos": validos[:50],
-                        "invalidos": invalidos[:200],
-                        "sucessos": sucessos[:500],
-                        "erros": erros[:500],
-                    }
-                    _salvar_log_envio(log_data)
-
-                    if sucessos:
-                        st.success(
-                            f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling."
-                        )
-                    if erros:
-                        st.error(f"{len(erros)} produto(s) falharam no envio.")
-                        st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
-                except Exception as e:
-                    progress.progress(100, text="Erro no envio de cadastro")
-                    erro_dict = {
-                        "mensagem": str(e),
-                    }
-                    log_data = {
-                        "tipo": "cadastro_real_erro",
-                        "timestamp": _agora_str(),
-                        "modo": modo,
-                        "user_key": user_key,
-                        "total_linhas": len(rows),
-                        "total_validos": len(validos),
-                        "total_invalidos": len(invalidos),
-                        "total_sucessos": 0,
-                        "total_erros": 1,
-                        "validos": validos[:50],
-                        "invalidos": invalidos[:200],
-                        "sucessos": [],
-                        "erros": [erro_dict],
-                    }
-                    _salvar_log_envio(log_data)
-                    st.error(f"Erro no envio de cadastro: {e}")
-        else:
-            st.info("Conecte o Bling para liberar o envio real de cadastro.")
-
-    else:
+    with tab2:
         rows = build_stock_rows(df)
         validos, invalidos = validar_estoque(rows)
 
@@ -461,94 +479,40 @@ def render_send_panel() -> None:
         st.text_input(
             "Depósito / ID do depósito",
             key="deposito_nome_manual_api",
-            help="Use este campo somente para o envio por API quando a planilha final não possuir coluna de depósito.",
+            help="Use este campo quando a planilha não possuir uma coluna de depósito.",
         )
 
-        if st.button("Gerar preview da API de estoque", width="stretch"):
+        if st.button("Gerar preview de estoque", use_container_width=True):
             log_data = {
                 "tipo": "estoque_preview",
                 "timestamp": _agora_str(),
-                "modo": modo,
+                "modo": "estoque",
                 "user_key": user_key,
                 "total_linhas": len(rows),
                 "total_validos": len(validos),
                 "total_invalidos": len(invalidos),
                 "total_sucessos": 0,
                 "total_erros": 0,
-                "validos": validos[:50],
-                "invalidos": invalidos[:200],
+                "validos": validos[:300],
+                "invalidos": invalidos[:300],
                 "sucessos": [],
                 "erros": [],
             }
             _salvar_log_envio(log_data)
-            _mostrar_resumo_validacao(
-                "Preview de estoque válido",
-                "Linhas de estoque com pendência",
-                validos,
-                invalidos,
-            )
+
+        _mostrar_resumo_validacao(
+            "Preview de estoque válido",
+            "Linhas de estoque com pendência",
+            validos,
+            invalidos,
+        )
 
         if conectado:
             if st.button(
                 "Enviar estoque real para o Bling",
-                width="stretch",
+                use_container_width=True,
                 disabled=not bool(validos),
             ):
-                progress = st.progress(0, text="Preparando envio de estoque...")
-                status = st.empty()
-
-                try:
-                    progress.progress(20, text="Validando linhas de estoque...")
-                    status.info("Enviando estoque para o Bling...")
-
-                    sucessos, erros = sync_stocks(validos, user_key=user_key)
-
-                    progress.progress(100, text="Envio de estoque concluído")
-                    log_data = {
-                        "tipo": "estoque_real",
-                        "timestamp": _agora_str(),
-                        "modo": modo,
-                        "user_key": user_key,
-                        "total_linhas": len(rows),
-                        "total_validos": len(validos),
-                        "total_invalidos": len(invalidos),
-                        "total_sucessos": len(sucessos),
-                        "total_erros": len(erros),
-                        "validos": validos[:50],
-                        "invalidos": invalidos[:200],
-                        "sucessos": sucessos[:500],
-                        "erros": erros[:500],
-                    }
-                    _salvar_log_envio(log_data)
-
-                    if sucessos:
-                        st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
-                    if erros:
-                        st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
-                        st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
-                except Exception as e:
-                    progress.progress(100, text="Erro no envio de estoque")
-                    erro_dict = {
-                        "mensagem": str(e),
-                    }
-                    log_data = {
-                        "tipo": "estoque_real_erro",
-                        "timestamp": _agora_str(),
-                        "modo": modo,
-                        "user_key": user_key,
-                        "total_linhas": len(rows),
-                        "total_validos": len(validos),
-                        "total_invalidos": len(invalidos),
-                        "total_sucessos": 0,
-                        "total_erros": 1,
-                        "validos": validos[:50],
-                        "invalidos": invalidos[:200],
-                        "sucessos": [],
-                        "erros": [erro_dict],
-                    }
-                    _salvar_log_envio(log_data)
-                    st.error(f"Erro no envio de estoque: {e}")
-        else:
-            st.info("Conecte o Bling para liberar o envio real de estoque.")
+                _executar_envio_estoque(validos, user_key=user_key)
 
     _render_exportacao_logs()
