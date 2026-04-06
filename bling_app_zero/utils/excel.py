@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from io import BytesIO
 import csv
+import re
+import unicodedata
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import numbers
 
 
 ENCODINGS_CSV = ("utf-8", "utf-8-sig", "latin1", "cp1252")
@@ -39,13 +42,21 @@ def _ler_csv_bytes(conteudo: bytes) -> pd.DataFrame:
             amostra = texto[:4096]
             try:
                 dialect = csv.Sniffer().sniff(amostra, delimiters=";,\t|")
-                candidatos = [dialect.delimiter] + [s for s in SEPARADORES_CSV if s != dialect.delimiter]
+                candidatos = [dialect.delimiter] + [
+                    s for s in SEPARADORES_CSV if s != dialect.delimiter
+                ]
             except Exception:
                 candidatos = list(SEPARADORES_CSV)
 
             for sep in candidatos:
                 try:
-                    df = pd.read_csv(BytesIO(conteudo), sep=sep, encoding=encoding, dtype=str)
+                    df = pd.read_csv(
+                        BytesIO(conteudo),
+                        sep=sep,
+                        encoding=encoding,
+                        dtype=str,
+                        keep_default_na=False,
+                    )
                     if df is not None and len(df.columns) > 0:
                         return df
                 except Exception as e:
@@ -101,49 +112,80 @@ def bloco_toggle(label: str, key: str) -> bool:
     return st.checkbox(label, value=False, key=f"toggle_{key}")
 
 
-def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
+def _normalizar_texto(texto: str) -> str:
+    texto = str(texto or "").strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = texto.encode("ascii", "ignore").decode("utf-8")
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _coluna_parece_codigo(header: str) -> bool:
+    nome = _normalizar_texto(header)
+    termos = {
+        "codigo",
+        "codigo produto",
+        "id produto",
+        "sku",
+        "gtin",
+        "ean",
+        "codigo de barras",
+        "ncm",
+        "cean",
+        "ceantrib",
+        "deposito",
+        "deposito obrigatorio",
+        "deposito id",
+        "data",
+    }
+    if nome in termos:
+        return True
+
+    return any(
+        termo in nome
+        for termo in [
+            "codigo",
+            "sku",
+            "gtin",
+            "ean",
+            "barras",
+            "ncm",
+            "deposito",
+            "data",
+        ]
+    )
+
+
+def df_to_excel_bytes(
+    df: pd.DataFrame,
+    *,
+    sheet_name: str = "Produtos",
+) -> bytes:
     """
-    Converte DataFrame para Excel (xlsx)
+    Exporta o DataFrame exatamente como recebido, preservando ordem das colunas
+    e nomes originais, sem adicionar campos extras.
     """
+
+    if df is None:
+        df = pd.DataFrame()
 
     df = df.copy()
-
-    colunas_padrao = {
-        "preco": 0.0,
-        "preco_custo": 0.0,
-        "estoque": 0,
-        "peso": 0.0,
-    }
-
-    for col, default in colunas_padrao.items():
-        if col not in df.columns:
-            df[col] = default
-
-    if "custo_fornecedor" in df.columns:
-        df["preco_custo"] = df["custo_fornecedor"]
-    elif "preco_compra" in df.columns:
-        df["preco_custo"] = df["preco_compra"]
-
-    df["preco_custo"] = pd.to_numeric(df["preco_custo"], errors="coerce").fillna(0.0)
-
-    if "gtin" in df.columns:
-        def limpar_gtin(valor) -> str:
-            valor = "" if valor is None else str(valor).strip()
-            if not valor.isdigit():
-                return ""
-            if len(valor) not in [8, 12, 13, 14]:
-                return ""
-            return valor
-
-        df["gtin"] = df["gtin"].apply(limpar_gtin)
-
-    df["preco"] = pd.to_numeric(df["preco"], errors="coerce").fillna(0.0)
-    df["preco_custo"] = pd.to_numeric(df["preco_custo"], errors="coerce").fillna(0.0)
-    df["estoque"] = pd.to_numeric(df["estoque"], errors="coerce").fillna(0)
-    df["peso"] = pd.to_numeric(df["peso"], errors="coerce").fillna(0.0)
+    df = limpar_valores_vazios(df)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        ws = writer.sheets[sheet_name]
 
+        if ws.max_row >= 1:
+            for cell in ws[1]:
+                header = str(cell.value or "").strip()
+                if not header:
+                    continue
+
+                if _coluna_parece_codigo(header):
+                    for body_cell in ws[cell.column_letter]:
+                        body_cell.number_format = numbers.FORMAT_TEXT
+
+    output.seek(0)
     return output.getvalue()
