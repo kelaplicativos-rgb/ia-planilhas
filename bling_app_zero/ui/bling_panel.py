@@ -30,6 +30,12 @@ def _has_callback_params() -> bool:
     return "code" in st.query_params or "error" in st.query_params
 
 
+def _coerce_dataframe(df) -> pd.DataFrame:
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    return pd.DataFrame()
+
+
 def _render_usuario_bling() -> str:
     ensure_current_user_defaults()
 
@@ -56,9 +62,17 @@ def _render_usuario_bling() -> str:
             )
 
         if st.button("Usar este usuário", use_container_width=True):
-            set_current_user(identificador, apelido)
-            st.success("Usuário atual do Bling atualizado.")
-            st.rerun()
+            identificador_limpo = str(identificador or "").strip()
+            apelido_limpo = str(apelido or "").strip()
+
+            if not identificador_limpo:
+                st.error("Informe o identificador do usuário.")
+            else:
+                if not apelido_limpo:
+                    apelido_limpo = identificador_limpo
+                set_current_user(identificador_limpo, apelido_limpo)
+                st.success("Usuário atual do Bling atualizado.")
+                st.rerun()
 
         st.caption(
             f"Usuário atual do token: {get_current_user_label()} ({get_current_user_key()})"
@@ -94,12 +108,14 @@ def render_bling_panel() -> None:
 
     user_key = get_current_user_key()
     user_label = get_current_user_label()
+
     auth = BlingAuthManager(user_key=user_key)
     status = auth.get_connection_status()
     configurado = auth.is_configured()
 
     if not configurado:
         st.warning(auth.get_missing_config_message())
+
         c1, c2, c3 = st.columns(3)
         with c1:
             st.button("Conectar com Bling", use_container_width=True, disabled=True)
@@ -117,7 +133,9 @@ def render_bling_panel() -> None:
     with c1:
         if conectar_url:
             st.link_button(
-                "Conectar com Bling" if not status.get("connected") else "Reconectar com Bling",
+                "Conectar com Bling"
+                if not status.get("connected")
+                else "Reconectar com Bling",
                 url=conectar_url,
                 use_container_width=True,
             )
@@ -152,23 +170,29 @@ def render_bling_panel() -> None:
     with st.expander("Status da conexão", expanded=False):
         st.write(f"Usuário atual: {user_label} ({user_key})")
         st.write(f"Status atual: {_status_texto(status)}")
-
         if status.get("last_auth_at"):
             st.write(f"Última autenticação: {status.get('last_auth_at')}")
-
         if status.get("expires_at"):
             st.write(f"Expira em: {status.get('expires_at')}")
 
     if status.get("connected"):
         with st.expander("Homologação do Bling", expanded=False):
             if st.button("Rodar teste de homologação", use_container_width=True):
-                service = BlingHomologacaoService(user_key=user_key)
-                ok, resultado = service.run()
-                st.session_state["bling_homologacao_resultado"] = resultado
-                if ok:
-                    st.success("Homologação executada.")
-                else:
-                    st.error("Homologação retornou falhas.")
+                progresso = st.progress(0, text="Preparando homologação...")
+                try:
+                    progresso.progress(30, text="Conectando ao Bling...")
+                    service = BlingHomologacaoService(user_key=user_key)
+                    progresso.progress(70, text="Executando testes...")
+                    ok, resultado = service.run()
+                    st.session_state["bling_homologacao_resultado"] = resultado
+                    progresso.progress(100, text="Homologação concluída")
+                    if ok:
+                        st.success("Homologação executada.")
+                    else:
+                        st.error("Homologação retornou falhas.")
+                except Exception as e:
+                    progresso.progress(100, text="Erro na homologação")
+                    st.error(f"Erro ao rodar homologação: {e}")
 
             resultado = st.session_state.get("bling_homologacao_resultado")
             if isinstance(resultado, dict) and resultado:
@@ -188,20 +212,31 @@ def render_bling_import_panel() -> None:
         return
 
     client = BlingAPIClient(user_key=user_key)
+
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
         if st.button("Importar produtos do Bling", use_container_width=True):
-            ok, payload = client.list_products(page_size=100, max_pages=5)
-            if ok:
-                df = client.products_to_dataframe(payload)
-                st.session_state["bling_produtos_df"] = df
-                st.success(f"{len(df)} produto(s) importado(s) do Bling.")
-            else:
-                st.error(f"Falha ao importar produtos: {payload}")
+            progresso = st.progress(0, text="Preparando importação de produtos...")
+            try:
+                progresso.progress(25, text="Conectando ao Bling...")
+                ok, payload = client.list_products(page_size=100, max_pages=5)
+                progresso.progress(70, text="Transformando produtos em planilha...")
 
-        df_prod = st.session_state.get("bling_produtos_df")
-        if isinstance(df_prod, pd.DataFrame) and not df_prod.empty:
+                if ok:
+                    df = _coerce_dataframe(client.products_to_dataframe(payload))
+                    st.session_state["bling_produtos_df"] = df
+                    progresso.progress(100, text="Importação de produtos concluída")
+                    st.success(f"{len(df)} produto(s) importado(s) do Bling.")
+                else:
+                    progresso.progress(100, text="Falha na importação de produtos")
+                    st.error(f"Falha ao importar produtos: {payload}")
+            except Exception as e:
+                progresso.progress(100, text="Erro na importação de produtos")
+                st.error(f"Erro ao importar produtos do Bling: {e}")
+
+        df_prod = _coerce_dataframe(st.session_state.get("bling_produtos_df"))
+        if not df_prod.empty:
             st.dataframe(df_prod, use_container_width=True, height=190)
             st.download_button(
                 "Baixar produtos do Bling em Excel",
@@ -213,16 +248,26 @@ def render_bling_import_panel() -> None:
 
     with tab2:
         if st.button("Importar estoque do Bling", use_container_width=True):
-            ok, payload = client.list_stocks(page_size=100, max_pages=5)
-            if ok:
-                df = client.stocks_to_dataframe(payload)
-                st.session_state["bling_estoque_df"] = df
-                st.success(f"{len(df)} linha(s) de estoque importada(s) do Bling.")
-            else:
-                st.error(f"Falha ao importar estoque: {payload}")
+            progresso = st.progress(0, text="Preparando importação de estoque...")
+            try:
+                progresso.progress(25, text="Conectando ao Bling...")
+                ok, payload = client.list_stocks(page_size=100, max_pages=5)
+                progresso.progress(70, text="Transformando estoque em planilha...")
 
-        df_est = st.session_state.get("bling_estoque_df")
-        if isinstance(df_est, pd.DataFrame) and not df_est.empty:
+                if ok:
+                    df = _coerce_dataframe(client.stocks_to_dataframe(payload))
+                    st.session_state["bling_estoque_df"] = df
+                    progresso.progress(100, text="Importação de estoque concluída")
+                    st.success(f"{len(df)} linha(s) de estoque importada(s) do Bling.")
+                else:
+                    progresso.progress(100, text="Falha na importação de estoque")
+                    st.error(f"Falha ao importar estoque: {payload}")
+            except Exception as e:
+                progresso.progress(100, text="Erro na importação de estoque")
+                st.error(f"Erro ao importar estoque do Bling: {e}")
+
+        df_est = _coerce_dataframe(st.session_state.get("bling_estoque_df"))
+        if not df_est.empty:
             st.dataframe(df_est, use_container_width=True, height=190)
             st.download_button(
                 "Baixar estoque do Bling em Excel",
