@@ -15,7 +15,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 
 # =========================
 # LOG
@@ -61,41 +61,52 @@ st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
 # =========================
-# FLUXO
+# CONTROLE DE ETAPA
 # =========================
 etapa = st.session_state.get("etapa_origem", "upload")
 
-# ORIGEM
-render_origem_dados()
+# =========================
+# 🔥 ETAPA 1 — ORIGEM + CALCULADORA
+# =========================
+if etapa in ["upload", None]:
+    render_origem_dados()
 
-etapa = st.session_state.get("etapa_origem", "upload")
-
-# MAPEAMENTO
+# =========================
+# 🔥 ETAPA 2 — MAPEAMENTO
+# =========================
 if etapa == "mapeamento":
     st.divider()
     st.subheader("Mapeamento")
     render_origem_mapeamento()
 
-# FLUXO FINAL
+# =========================
+# 🔥 ETAPA 3 — FINAL
+# =========================
 df_fluxo = _get_df_fluxo()
 
 if df_fluxo is not None:
     st.divider()
     st.subheader("Preview final")
 
-    # 🔥 COLAPSADO
+    # PREVIEW COLAPSADO
     with st.expander("📦 Ver dados finais", expanded=False):
         st.dataframe(df_fluxo.head(20), width="stretch")
 
+    # =========================
     # 🔥 LIMPEZA GTIN
+    # =========================
     df_fluxo = limpar_gtin_invalido(df_fluxo)
 
-    # 🔥 VALIDAÇÃO
+    # =========================
+    # 🔥 VALIDAÇÃO OBRIGATÓRIA
+    # =========================
     if not validar_campos_obrigatorios(df_fluxo):
         st.error("Preencha os campos obrigatórios antes do download")
         st.stop()
 
+    # =========================
     # 🔥 DOWNLOAD
+    # =========================
     excel_bytes = exportar_excel_bytes(df_fluxo)
 
     st.download_button(
@@ -106,10 +117,9 @@ if df_fluxo is not None:
         use_container_width=True,
     )
 
-# =========================
-# BLING PANEL
-# =========================
-if df_fluxo is not None:
+    # =========================
+    # 🔥 BLING PANEL (ISOLADO)
+    # =========================
     st.divider()
     st.subheader("Integração com Bling")
     render_bling_panel()
