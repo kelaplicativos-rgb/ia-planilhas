@@ -12,7 +12,7 @@ st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 # =========================
 # VERSIONAMENTO
 # =========================
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 
 
 # =========================
@@ -101,12 +101,11 @@ def _get_df_saida() -> pd.DataFrame | None:
 
 
 def _get_df_final() -> pd.DataFrame | None:
-    # compatibilidade com versões anteriores
     return _safe_df_from_state("df_final")
 
 
 def _get_df_fluxo() -> pd.DataFrame | None:
-    # padrão atual do projeto: df_saida
+    # 🔥 CORREÇÃO CRÍTICA (sem usar OR com DataFrame)
     df_saida = _get_df_saida()
     if df_saida is not None:
         return df_saida
@@ -193,8 +192,8 @@ if etapa_origem == "mapeamento":
 etapa_origem = st.session_state.get("etapa_origem", "upload")
 df_fluxo = _get_df_fluxo()
 
-# 3) BLING
-if df_fluxo is not None and etapa_origem != "upload":
+# 3) BLING (E PRECIFICAÇÃO VOLTA A FUNCIONAR AQUI)
+if df_fluxo is not None and not df_fluxo.empty and etapa_origem != "upload":
     st.divider()
     st.subheader("Integração com Bling")
 
