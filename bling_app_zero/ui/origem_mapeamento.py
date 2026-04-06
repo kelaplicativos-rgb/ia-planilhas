@@ -6,7 +6,7 @@ import streamlit as st
 
 
 def _get_modelo():
-    if st.session_state.get("tipo_operacao") == "Cadastro de Produtos":
+    if st.session_state.get("tipo_operacao_bling") == "cadastro":
         return st.session_state.get("df_modelo_cadastro")
     return st.session_state.get("df_modelo_estoque")
 
@@ -30,23 +30,18 @@ def render_origem_mapeamento():
 
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
-    df_preparado = st.session_state.get("df_saida")
+    df_preparado = st.session_state.get("df_saida")  # preço já calculado
 
     if df_origem is None or df_modelo is None:
         return
 
     st.markdown("### 🔗 Mapeamento")
 
-    # =========================
-    # 🔥 PREVIEW FORNECEDOR (NOVO)
-    # =========================
-    with st.expander("📄 Dados do fornecedor", expanded=False):
-        st.dataframe(df_origem.head(10), width="stretch")
-
     deposito = _get_deposito()
     bloqueios = st.session_state.get("bloquear_campos_auto", {})
 
     mapping = {}
+
     colunas = list(df_modelo.columns)
 
     # =========================
@@ -75,6 +70,7 @@ def render_origem_mapeamento():
                     mapping[col] = None
                     continue
 
+                # 🔥 NORMAL
                 mapping[col] = st.selectbox(
                     col,
                     [""] + list(df_origem.columns),
@@ -83,7 +79,7 @@ def render_origem_mapeamento():
                 )
 
     # =========================
-    # 🔥 MONTA DF FINAL
+    # 🔥 MONTA DF
     # =========================
     df_saida = pd.DataFrame()
 
@@ -91,7 +87,7 @@ def render_origem_mapeamento():
 
         origem = mapping.get(col)
 
-        # 🔥 PRIORIDADE → PREÇO / DEPÓSITO AUTOMÁTICO
+        # 🔥 PRIORIDADE → AUTO (PREÇO / DEPÓSITO)
         if df_preparado is not None and col in df_preparado.columns:
             if _is_coluna_preco(col) or _is_coluna_deposito(col):
                 df_saida[col] = df_preparado[col]
@@ -119,32 +115,24 @@ def render_origem_mapeamento():
             df_saida["Depósito"] = deposito
 
     # =========================
-    # 🔥 SALVA (SEM AVANÇAR)
+    # 🔥 SALVA SEM AVANÇAR FLUXO
     # =========================
     st.session_state["df_saida"] = df_saida
 
     # =========================
-    # 🔥 PREVIEW FINAL
+    # 🔥 PREVIEW
     # =========================
     with st.expander("📦 Preview final", expanded=False):
         st.dataframe(df_saida.head(20), width="stretch")
 
     # =========================
-    # 🔥 BOTÃO DE AVANÇO (NOVO)
-    # =========================
-    if st.button("✅ Finalizar e gerar planilha", use_container_width=True):
-        st.session_state["df_final"] = df_saida.copy()
-        st.session_state["etapa_origem"] = "final"
-        st.rerun()
-
-    # =========================
-    # 🔥 DOWNLOAD OPCIONAL
+    # 🔥 DOWNLOAD (OPCIONAL)
     # =========================
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
 
     st.download_button(
-        "⬇️ Baixar (teste)",
+        "⬇️ Baixar",
         buffer.getvalue(),
         "bling.xlsx",
         use_container_width=True,
