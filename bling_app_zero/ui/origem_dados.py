@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import streamlit as st
 
 from bling_app_zero.ui.origem_dados_helpers import (
@@ -12,17 +13,16 @@ from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
 
 def _safe_df_dados(df):
     try:
-        if df is None:
-            return False
-        if not hasattr(df, "columns"):
-            return False
-        if len(df.columns) == 0:
-            return False
-        if df.empty:
-            return False
-        return True
+        return df is not None and hasattr(df, "columns") and len(df.columns) > 0 and not df.empty
     except Exception:
         return False
+
+
+def _hash_df(df):
+    try:
+        return hashlib.md5(str(df.head(50).values).encode()).hexdigest()
+    except Exception:
+        return None
 
 
 def _coletar_parametros_precificacao():
@@ -38,11 +38,7 @@ def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
     kwargs = _coletar_parametros_precificacao()
 
     try:
-        return aplicar_precificacao_automatica(
-            df_base,
-            coluna_preco=coluna_preco,
-            **kwargs,
-        )
+        return aplicar_precificacao_automatica(df_base, coluna_preco=coluna_preco, **kwargs)
     except TypeError:
         return aplicar_precificacao_automatica(df_base, **kwargs)
 
@@ -77,10 +73,7 @@ def _render_precificacao(df_base):
         if _safe_df_dados(df_precificado):
             st.session_state["df_precificado"] = df_precificado.copy()
             st.session_state["df_saida"] = df_precificado.copy()
-
-            st.session_state["bloquear_campos_auto"] = {
-                "preco": True
-            }
+            st.session_state["bloquear_campos_auto"] = {"preco": True}
 
             with st.expander("👁️ Prévia da precificação", expanded=False):
                 st.dataframe(df_precificado.head(10), width="stretch")
@@ -103,31 +96,18 @@ def render_origem_dados() -> None:
         key="tipo_operacao",
     )
 
-    if operacao == "Cadastro de Produtos":
-        st.session_state["tipo_operacao_bling"] = "cadastro"
-    else:
-        st.session_state["tipo_operacao_bling"] = "estoque"
+    st.session_state["tipo_operacao_bling"] = (
+        "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
+    )
 
     st.markdown("### Modelos Bling")
 
     if operacao == "Cadastro de Produtos":
-        st.file_uploader(
-            "Anexar modelo de cadastro",
-            type=["xlsx", "xls"],
-            key="modelo_cadastro",
-        )
+        st.file_uploader("Anexar modelo de cadastro", type=["xlsx", "xls"], key="modelo_cadastro")
     else:
-        st.file_uploader(
-            "Anexar modelo de estoque",
-            type=["xlsx", "xls"],
-            key="modelo_estoque",
-        )
+        st.file_uploader("Anexar modelo de estoque", type=["xlsx", "xls"], key="modelo_estoque")
 
-    origem = st.selectbox(
-        "Selecione a origem",
-        ["Planilha", "XML", "Site"],
-        key="origem_tipo",
-    )
+    origem = st.selectbox("Selecione a origem", ["Planilha", "XML", "Site"], key="origem_tipo")
 
     df_origem = None
 
@@ -136,7 +116,6 @@ def render_origem_dados() -> None:
             "Envie a planilha",
             type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
         )
-
         if arquivo:
             df_origem = ler_planilha_segura(arquivo)
 
@@ -152,9 +131,16 @@ def render_origem_dados() -> None:
 
     st.session_state["df_origem"] = df_origem
 
-    # 🔥 GARANTE FLUXO MESMO SEM PRECIFICAÇÃO
-    if "df_saida" not in st.session_state:
+    # 🔥 DETECTA MUDANÇA DE ORIGEM
+    hash_atual = _hash_df(df_origem)
+    hash_antigo = st.session_state.get("hash_origem")
+
+    if hash_atual != hash_antigo:
         st.session_state["df_saida"] = df_origem.copy()
+        st.session_state["df_precificado"] = None
+        st.session_state["bloquear_campos_auto"] = {}
+        st.session_state["hash_origem"] = hash_atual
+        log_debug("Nova origem detectada — resetando estado")
 
     with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
         st.dataframe(df_origem.head(10), width="stretch")
