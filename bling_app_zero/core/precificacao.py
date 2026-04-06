@@ -37,7 +37,7 @@ def _to_float(valor) -> float:
 
 
 # ==========================================================
-# DETECÇÃO AUTOMÁTICA DE COLUNA DE CUSTO (🔥 MELHORADO)
+# DETECÇÃO AUTOMÁTICA DE COLUNA DE CUSTO
 # ==========================================================
 def _detectar_coluna_preco(df: pd.DataFrame) -> str:
     prioridades = [
@@ -60,7 +60,7 @@ def _detectar_coluna_preco(df: pd.DataFrame) -> str:
 
 
 # ==========================================================
-# DETECTAR COLUNA DE VENDA (🔥 FORÇADO PADRÃO BLING)
+# DETECTAR COLUNA DE VENDA
 # ==========================================================
 def _detectar_coluna_venda(df: pd.DataFrame) -> str:
     for col in df.columns:
@@ -103,10 +103,11 @@ def calcular_preco_venda(
 
 
 # ==========================================================
-# APLICAÇÃO AUTOMÁTICA NO DF (🔥 ROBUSTO)
+# APLICAÇÃO AUTOMÁTICA NO DF (🔥 CORRIGIDO)
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
+    coluna_preco: str = None,  # 🔥 NOVO
     percentual_impostos: float = 0.0,
     margem_lucro: float = 0.0,
     custo_fixo: float = 0.0,
@@ -118,11 +119,13 @@ def aplicar_precificacao_automatica(
 
     df_saida = df.copy()
 
-    # 🔥 detectar custo
-    coluna_base = _detectar_coluna_preco(df_saida)
+    # 🔥 PRIORIDADE: usar coluna vinda da UI
+    if coluna_preco and coluna_preco in df_saida.columns:
+        coluna_base = coluna_preco
+    else:
+        coluna_base = _detectar_coluna_preco(df_saida)
 
     if not coluna_base:
-        # não quebra mais o fluxo
         return df_saida
 
     precos_base = df_saida[coluna_base].apply(_to_float)
