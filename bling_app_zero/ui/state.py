@@ -1,25 +1,29 @@
+import secrets
+
 import streamlit as st
 
 
 def init_state() -> None:
-    estados_padrao = {
-        "logs": [],
-        "df_saida": None,
+    defaults = {
         "df_origem": None,
-        "df_origem_hash": None,
         "origem_atual": "",
-        "origem_arquivo_nome": "",
-        "validacao_erros": [],
-        "validacao_avisos": [],
-        "validacao_ok": False,
-        "ultima_chave_arquivo": None,
-        "mapeamento_memoria": {},
+        "modo_operacao": "Cadastro de produtos",
         "mapeamento_manual": {},
         "preco_compra_modulo_precificacao": 0.0,
-        "preco_venda_calculado": 0.0,
+        "bling_produtos_df": None,
+        "bling_estoque_df": None,
         "ultimo_log_envio": [],
+        "deposito_padrao": "",
+        "origem_urls_texto": "",
+        "bling_user_key": "",
+        "bling_account_label": "",
+        "bling_last_message": "",
+        "bling_last_message_type": "",
     }
 
-    for chave, valor_padrao in estados_padrao.items():
+    for chave, valor in defaults.items():
         if chave not in st.session_state:
-            st.session_state[chave] = valor_padrao
+            st.session_state[chave] = valor
+
+    if not st.session_state.get("bling_user_key"):
+        st.session_state["bling_user_key"] = f"bling_user_{secrets.token_hex(8)}"
