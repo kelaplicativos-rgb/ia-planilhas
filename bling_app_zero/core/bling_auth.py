@@ -29,7 +29,7 @@ class BlingSettings:
 
 class BlingAuthManager:
     def __init__(self, user_key: str = "default") -> None:
-        self.user_key = (user_key or "default").strip() or "default"
+        self.user_key = str(user_key or "default").strip() or "default"
         self.settings = self._load_settings()
         self.store = BlingTokenStore(self.settings.token_store_path)
 
@@ -57,11 +57,31 @@ class BlingAuthManager:
             stock_write_path=str(cfg.get("stock_write_path", "/estoques")).strip(),
         )
 
+    def _is_placeholder(self, value: str) -> bool:
+        normalized = str(value or "").strip().upper()
+        return (
+            not normalized
+            or "SEU_CLIENT_ID" in normalized
+            or "SEU_CLIENT_SECRET" in normalized
+            or "SEU-APP.STREAMLIT.APP" in normalized
+            or "SEU_APP" in normalized
+        )
+
     def is_configured(self) -> bool:
         return bool(
             self.settings.client_id
             and self.settings.client_secret
             and self.settings.redirect_uri
+        ) and not (
+            self._is_placeholder(self.settings.client_id)
+            or self._is_placeholder(self.settings.client_secret)
+            or self._is_placeholder(self.settings.redirect_uri)
+        )
+
+    def get_missing_config_message(self) -> str:
+        return (
+            "Credenciais do Bling não configuradas corretamente. "
+            "Preencha client_id, client_secret e redirect_uri reais no secrets."
         )
 
     def _basic_auth_header(self) -> str:
@@ -89,16 +109,13 @@ class BlingAuthManager:
         return f"{self.settings.authorize_url}?{urlencode(params)}"
 
     def _clear_oauth_query_params(self) -> None:
-        """
-        Remove apenas os parâmetros do callback OAuth e preserva os demais,
-        como o identificador da instalação/navegador.
-        """
         try:
-            current = dict(st.query_params)
+            current_params = dict(st.query_params)
             for key in ("code", "state", "error", "error_description"):
-                current.pop(key, None)
+                current_params.pop(key, None)
+
             st.query_params.clear()
-            for key, value in current.items():
+            for key, value in current_params.items():
                 st.query_params[key] = value
         except Exception:
             pass
@@ -117,16 +134,13 @@ class BlingAuthManager:
                 )
             )
             self._clear_oauth_query_params()
-            return {
-                "status": "error",
-                "message": f"Falha na autorização do Bling: {msg}",
-            }
+            return {"status": "error", "message": f"Falha na autorização do Bling: {msg}"}
 
         if not self.is_configured():
             self._clear_oauth_query_params()
             return {
                 "status": "error",
-                "message": "OAuth recebido, mas a configuração fixa do app não foi preenchida.",
+                "message": "OAuth recebido, mas a configuração fixa do app ainda não está preenchida.",
             }
 
         code = str(query_params.get("code", "")).strip()
@@ -144,10 +158,7 @@ class BlingAuthManager:
 
         if created_at and (int(time.time()) - created_at) > 15 * 60:
             self._clear_oauth_query_params()
-            return {
-                "status": "error",
-                "message": "State expirado. Gere uma nova autenticação.",
-            }
+            return {"status": "error", "message": "State expirado. Gere uma nova autenticação."}
 
         ok, msg = self.exchange_code_for_token(code)
         self._clear_oauth_query_params()
@@ -228,7 +239,7 @@ class BlingAuthManager:
             return False, f"Falha ao renovar token: {exc}"
 
     def get_valid_access_token(self) -> Tuple[bool, str]:
-        current = self.store.get(self.user_key)
+        current = self.store.get(self.user_key) or {}
 
         if not current:
             return False, "Conta Bling ainda não conectada."
