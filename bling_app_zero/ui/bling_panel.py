@@ -18,6 +18,19 @@ from bling_app_zero.core.bling_user_session import (
 
 
 # ==========================================================
+# BLOQUEIO DE FLUXO
+# ==========================================================
+def _bloquear_se_em_fluxo():
+    etapa = st.session_state.get("etapa_origem")
+
+    if etapa == "mapeamento":
+        # 🔥 PARA TUDO AQUI — NÃO DEIXA PASSAR
+        return True
+
+    return False
+
+
+# ==========================================================
 # HELPERS
 # ==========================================================
 def _status_texto(status: dict) -> str:
@@ -65,7 +78,7 @@ def _render_usuario_bling():
             key="bling_user_apelido",
         )
 
-        if st.button("Aplicar usuário", use_container_width=True, key="bling_aplicar_usuario"):
+        if st.button("Aplicar usuário", use_container_width=True):
             if not identificador.strip():
                 st.error("Informe o identificador.")
                 return
@@ -86,6 +99,11 @@ def _render_usuario_bling():
 # PANEL PRINCIPAL
 # ==========================================================
 def render_bling_panel():
+
+    # 🔥 BLOQUEIO TOTAL DURANTE MAPEAMENTO
+    if _bloquear_se_em_fluxo():
+        return
+
     st.markdown("### Integração com Bling")
 
     try:
@@ -94,9 +112,6 @@ def render_bling_panel():
         st.error(f"Erro ao carregar usuário: {e}")
         return
 
-    # =========================
-    # CALLBACK
-    # =========================
     try:
         if _has_callback_params():
             user_key = get_pending_oauth_user_key() or get_current_user_key()
@@ -122,9 +137,6 @@ def render_bling_panel():
         st.error(f"Erro OAuth: {e}")
         return
 
-    # =========================
-    # STATUS
-    # =========================
     try:
         user_key = get_current_user_key()
         auth = BlingAuthManager(user_key=user_key)
@@ -146,9 +158,6 @@ def render_bling_panel():
         force_reauth=bool(status.get("connected"))
     )
 
-    # =========================
-    # BOTÕES
-    # =========================
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -162,7 +171,7 @@ def render_bling_panel():
             )
 
     with col2:
-        if st.button("Atualizar", use_container_width=True, key="bling_atualizar_token"):
+        if st.button("Atualizar", use_container_width=True):
             ok, msg = auth.get_valid_access_token()
             if ok:
                 st.success("Token OK")
@@ -175,7 +184,6 @@ def render_bling_panel():
             "Desconectar",
             use_container_width=True,
             disabled=not status.get("connected"),
-            key="bling_desconectar",
         ):
             ok, msg = auth.disconnect()
             if ok:
@@ -184,17 +192,19 @@ def render_bling_panel():
                 st.error(msg)
             st.rerun()
 
-    # =========================
-    # STATUS VISUAL
-    # =========================
     with st.expander("Status da conexão"):
         st.write(_status_texto(status))
 
 
 # ==========================================================
-# IMPORTAÇÃO (SEGURA)
+# IMPORTAÇÃO
 # ==========================================================
 def render_bling_import_panel():
+
+    # 🔥 BLOQUEIO TAMBÉM AQUI
+    if _bloquear_se_em_fluxo():
+        return
+
     st.markdown("### Importar do Bling")
 
     try:
@@ -217,35 +227,29 @@ def render_bling_import_panel():
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
-        if st.button("Importar produtos", key="bling_importar_produtos"):
-            try:
-                ok, payload = client.list_products()
-                if ok:
-                    df = _safe_df(client.products_to_dataframe(payload))
-                    st.session_state["bling_produtos_df"] = df
-                    st.success(f"{len(df)} produtos")
-                else:
-                    st.error(payload)
-            except Exception as e:
-                st.error(e)
+        if st.button("Importar produtos"):
+            ok, payload = client.list_products()
+            if ok:
+                df = _safe_df(client.products_to_dataframe(payload))
+                st.session_state["bling_produtos_df"] = df
+                st.success(f"{len(df)} produtos")
+            else:
+                st.error(payload)
 
         df = _safe_df(st.session_state.get("bling_produtos_df"))
         if not df.empty:
-            st.dataframe(df, height=200, use_container_width=True)
+            st.dataframe(df, height=200, width="stretch")
 
     with tab2:
-        if st.button("Importar estoque", key="bling_importar_estoque"):
-            try:
-                ok, payload = client.list_stocks()
-                if ok:
-                    df = _safe_df(client.stocks_to_dataframe(payload))
-                    st.session_state["bling_estoque_df"] = df
-                    st.success(f"{len(df)} registros")
-                else:
-                    st.error(payload)
-            except Exception as e:
-                st.error(e)
+        if st.button("Importar estoque"):
+            ok, payload = client.list_stocks()
+            if ok:
+                df = _safe_df(client.stocks_to_dataframe(payload))
+                st.session_state["bling_estoque_df"] = df
+                st.success(f"{len(df)} registros")
+            else:
+                st.error(payload)
 
         df = _safe_df(st.session_state.get("bling_estoque_df"))
         if not df.empty:
-            st.dataframe(df, height=200, use_container_width=True)
+            st.dataframe(df, height=200, width="stretch")
