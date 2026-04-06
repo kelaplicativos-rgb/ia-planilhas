@@ -8,6 +8,8 @@ from bling_app_zero.ui.origem_dados_helpers import (
 )
 from bling_app_zero.ui.origem_dados_site import render_origem_site
 
+from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
+
 
 def _safe_df_dados(df):
     try:
@@ -33,76 +35,34 @@ def _safe_df_modelo(df):
         return None
 
 
-def _normalizar_texto(valor: str) -> str:
-    try:
-        return str(valor or "").strip().lower()
-    except Exception:
-        return ""
-
-
+# 🔥 DETECTA COLUNA DEPÓSITO
 def _detectar_coluna_deposito(df):
-    try:
-        if df is None or len(df.columns) == 0:
-            return None
-
-        candidatos_exatos = {
-            "depósito",
-            "deposito",
-            "nome do depósito",
-            "nome do deposito",
-            "depósito padrão",
-            "deposito padrao",
-            "depósito padrão",
-            "depósito estoque",
-            "deposito estoque",
-        }
-
-        for col in df.columns:
-            nome = _normalizar_texto(col)
-            if nome in candidatos_exatos:
-                return col
-
-        for col in df.columns:
-            nome = _normalizar_texto(col)
-            if "deposit" in nome or "depós" in nome:
-                return col
-
-        return None
-    except Exception:
-        return None
+    for col in df.columns:
+        nome = str(col).lower()
+        if "deposit" in nome or "depós" in nome:
+            return col
+    return None
 
 
-def _aplicar_deposito_manual(df, deposito_nome):
-    try:
-        if df is None:
-            return df
-
-        deposito_nome = str(deposito_nome or "").strip()
-        if not deposito_nome:
-            return df
-
-        df_saida = df.copy()
-
-        coluna_deposito = _detectar_coluna_deposito(df_saida)
-        if coluna_deposito:
-            df_saida[coluna_deposito] = deposito_nome
-        else:
-            # cria uma coluna padrão já pronta para o fluxo seguinte
-            df_saida["Depósito"] = deposito_nome
-
-        return df_saida
-    except Exception as e:
-        log_debug(f"Erro ao aplicar depósito manual: {e}")
+# 🔥 APLICA DEPÓSITO
+def _aplicar_deposito(df, deposito):
+    if not deposito:
         return df
 
+    df_saida = df.copy()
 
-def _obter_df_modelo_ativo(tipo: str):
-    if tipo == "cadastro":
-        return st.session_state.get("df_modelo_cadastro")
-    return st.session_state.get("df_modelo_estoque")
+    col_dep = _detectar_coluna_deposito(df_saida)
+
+    if col_dep:
+        df_saida[col_dep] = deposito
+    else:
+        df_saida["Depósito"] = deposito
+
+    return df_saida
 
 
 def render_origem_dados() -> None:
+
     if st.session_state.get("etapa_origem") == "mapeamento":
         return
 
@@ -116,6 +76,9 @@ def render_origem_dados() -> None:
 
     df_origem = None
 
+    # =========================
+    # ORIGEM
+    # =========================
     if origem == "Planilha":
         arquivo = st.file_uploader(
             "Envie a planilha",
@@ -124,126 +87,106 @@ def render_origem_dados() -> None:
         )
 
         if arquivo:
-            try:
-                df_origem = ler_planilha_segura(arquivo)
-            except Exception as e:
-                log_debug(f"Erro ao ler planilha de origem: {e}")
-                st.error("Erro ao ler planilha.")
-                return
+            df_origem = ler_planilha_segura(arquivo)
 
             if _safe_df_dados(df_origem) is None:
-                st.error("Erro ao ler planilha.")
+                st.error("Erro ao ler planilha")
                 return
 
-    elif origem == "XML":
-        st.info("Envio por XML ainda depende do fluxo complementar do projeto.")
-        return
-
     elif origem == "Site":
-        try:
-            df_origem = render_origem_site()
-        except Exception as e:
-            log_debug(f"Erro em render_origem_site: {e}")
-            st.error("Erro ao buscar dados do site.")
-            return
+        df_origem = render_origem_site()
 
     if _safe_df_dados(df_origem) is None:
         return
 
     st.session_state["df_origem"] = df_origem
 
+    # 🔥 PREVIEW COLAPSADO
     with st.expander("👁️ Pré-visualização dos dados", expanded=False):
-        try:
-            st.dataframe(df_origem.head(10), width="stretch")
-        except Exception:
-            st.dataframe(df_origem.head(10))
+        st.dataframe(df_origem.head(10), width="stretch")
 
+    # =========================
+    # OPERAÇÃO
+    # =========================
     op = st.radio(
         "Operação",
         ["Cadastro", "Estoque"],
         horizontal=True,
-        key="operacao_origem_dados",
     )
 
     tipo = "cadastro" if op == "Cadastro" else "estoque"
     st.session_state["tipo_operacao_bling"] = tipo
 
-    modelo_valido = None
-    deposito_nome = ""
+    # =========================
+    # MODELO
+    # =========================
+    deposito = ""
 
     if tipo == "cadastro":
         modelo = st.file_uploader(
             "Modelo Cadastro",
-            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
+            type=["xlsx", "xls", "csv"],
             key="modelo_cadastro",
         )
 
         if modelo:
-            try:
-                df_modelo = ler_planilha_segura(modelo)
-                if _safe_df_modelo(df_modelo) is None:
-                    st.error("Modelo de cadastro inválido.")
-                    return
-                st.session_state["df_modelo_cadastro"] = df_modelo
-            except Exception as e:
-                log_debug(f"Erro ao ler modelo de cadastro: {e}")
-                st.error("Erro ao ler modelo de cadastro.")
-                return
-
-        modelo_valido = _safe_df_modelo(_obter_df_modelo_ativo("cadastro"))
+            df_modelo = ler_planilha_segura(modelo)
+            st.session_state["df_modelo_cadastro"] = df_modelo
 
     else:
         modelo = st.file_uploader(
             "Modelo Estoque",
-            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
+            type=["xlsx", "xls", "csv"],
             key="modelo_estoque",
         )
 
         if modelo:
-            try:
-                df_modelo = ler_planilha_segura(modelo)
-                if _safe_df_modelo(df_modelo) is None:
-                    st.error("Modelo de estoque inválido.")
-                    return
-                st.session_state["df_modelo_estoque"] = df_modelo
-            except Exception as e:
-                log_debug(f"Erro ao ler modelo de estoque: {e}")
-                st.error("Erro ao ler modelo de estoque.")
-                return
+            df_modelo = ler_planilha_segura(modelo)
+            st.session_state["df_modelo_estoque"] = df_modelo
 
-        deposito_nome = st.text_input(
-            "Nome do depósito",
-            key="deposito_nome_manual",
-            placeholder="Ex.: ifood",
-        ).strip()
+        deposito = st.text_input("Nome do depósito", key="deposito_nome_manual")
 
-        st.session_state["deposito_nome_manual"] = deposito_nome
-        modelo_valido = _safe_df_modelo(_obter_df_modelo_ativo("estoque"))
+    # =========================
+    # VALIDAÇÃO
+    # =========================
+    modelo_ok = (
+        _safe_df_modelo(st.session_state.get("df_modelo_cadastro"))
+        if tipo == "cadastro"
+        else _safe_df_modelo(st.session_state.get("df_modelo_estoque"))
+    )
 
-    pode_avancar = _safe_df_dados(df_origem) is not None and modelo_valido is not None
-
-    if tipo == "estoque" and pode_avancar and not deposito_nome:
-        st.warning("Informe o nome do depósito para continuar no fluxo de estoque.")
+    if tipo == "estoque" and modelo_ok and not deposito:
+        st.warning("Informe o nome do depósito")
         return
 
-    if pode_avancar:
-        try:
-            df_saida = df_origem.copy()
+    # =========================
+    # 🔥 AUTO FLUXO CORRIGIDO
+    # =========================
+    if _safe_df_dados(df_origem) and modelo_ok:
 
-            if tipo == "estoque":
-                df_saida = _aplicar_deposito_manual(df_saida, deposito_nome)
+        df_saida = df_origem.copy()
 
-            st.session_state["df_saida"] = df_saida
-            st.session_state["etapa_origem"] = "mapeamento"
+        # 🔥 APLICA DEPÓSITO
+        if tipo == "estoque":
+            df_saida = _aplicar_deposito(df_saida, deposito)
 
-            log_debug(
-                f"Fluxo origem -> mapeamento | origem={origem} | tipo={tipo} | "
-                f"linhas={len(df_saida)} | colunas={len(df_saida.columns)}"
-            )
+        # 🔥 APLICA PRECIFICAÇÃO
+        df_saida = aplicar_precificacao_automatica(
+            df_saida,
+            percentual_impostos=st.session_state.get("perc_impostos", 0),
+            margem_lucro=st.session_state.get("margem_lucro", 0),
+            custo_fixo=st.session_state.get("custo_fixo", 0),
+            taxa_extra=st.session_state.get("taxa_extra", 0),
+        )
 
-            st.rerun()
-
-        except Exception as e:
-            log_debug(f"Erro ao preparar df_saida para mapeamento: {e}")
-            st.error("Erro ao preparar os dados para o mapeamento.")
+        # 🔥 VALIDAÇÃO IA (BLOQUEIO)
+        if df_saida is None or df_saida.empty:
+            st.error("Erro nos dados. Não é possível continuar.")
             return
+
+        st.session_state["df_saida"] = df_saida
+        st.session_state["etapa_origem"] = "mapeamento"
+
+        log_debug("Fluxo OK → indo para mapeamento")
+
+        st.rerun()
