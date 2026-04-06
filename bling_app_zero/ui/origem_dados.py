@@ -54,7 +54,11 @@ def render_origem_dados() -> None:
     if origem == "Planilha":
         arquivo = st.file_uploader("Envie a planilha", type=["xlsx", "csv"])
         if arquivo:
-            df_origem = pd.read_excel(arquivo)
+            try:
+                df_origem = pd.read_excel(arquivo)
+            except Exception as e:
+                st.error(f"Erro ao ler planilha: {e}")
+                return
 
     elif origem == "XML":
         arquivo = st.file_uploader("Envie o XML", type=["xml"])
@@ -116,10 +120,14 @@ def render_origem_dados() -> None:
     opcoes = [""] + list(df_origem.columns)
 
     for col in colunas_modelo_ativas:
+        valor = mapa.get(col, "")
+        if valor not in opcoes:
+            valor = ""
+
         mapa[col] = st.selectbox(
             col,
             opcoes,
-            index=opcoes.index(mapa.get(col, "")) if mapa.get(col, "") in opcoes else 0,
+            index=opcoes.index(valor),
             key=f"map_{col}",
         )
 
@@ -138,7 +146,8 @@ def render_origem_dados() -> None:
 
         for col in colunas_modelo_ativas:
             origem_col = mapa.get(col)
-            if origem_col in df_origem.columns:
+
+            if origem_col and origem_col in df_origem.columns:
                 df_saida[col] = df_origem[origem_col]
             else:
                 df_saida[col] = ""
@@ -155,7 +164,7 @@ def render_origem_dados() -> None:
     st.dataframe(_safe_preview(df_preview), width="stretch")
 
     # =========================
-    # BOTÕES
+    # BOTÃO
     # =========================
     if st.button("Gerar arquivo", width="stretch"):
         try:
