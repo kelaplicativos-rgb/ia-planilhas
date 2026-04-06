@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from io import BytesIO
 from typing import Any
 
@@ -9,7 +10,6 @@ import streamlit as st
 
 from bling_app_zero.core.mapeamento_auto import sugestao_automatica
 from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
-from bling_app_zero.utils.gtin import aplicar_limpeza_gtin_ean_df_saida
 
 
 def _hash_df(df: pd.DataFrame) -> str:
@@ -29,24 +29,173 @@ def _exportar_df_exato_para_excel_bytes(df: pd.DataFrame) -> bytes:
     return buffer.read()
 
 
+def _somente_digitos(valor: Any) -> str:
+    return re.sub(r"\D+", "", str(valor or ""))
+
+
+def _validar_gtin_checksum(gtin: str) -> bool:
+    if not gtin or not gtin.isdigit():
+        return False
+
+    if len(gtin) not in {8, 12, 13, 14}:
+        return False
+
+    digitos = [int(d) for d in gtin]
+    digito_verificador = digitos[-1]
+    corpo = digitos[:-1]
+
+    soma = 0
+    peso = 3
+    for numero in reversed(corpo):
+        soma += numero * peso
+        peso = 1 if peso == 3 else 3
+
+    calculado = (10 - (soma % 10)) % 10
+    return calculado == digito_verificador
+
+
+def _aplicar_limpeza_gtin_ean_df_saida(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, int, list[str]]:
+    if df is None or df.empty:
+        return pd.DataFrame(), 0, []
+
+    df_saida = df.copy()
+    logs: list[str] = []
+    total_limpados = 0
+
+    colunas_alvo = [
+        col
+        for col in df_saida.columns
+        if str(col).strip().lower()
+        in {
+            "gtin",
+            "ean",
+            "codigo de barras",
+            "código de barras",
+            "gtin/ean",
+            "cean",
+            "ceantrib",
+            "gtin tributário",
+            "gtin tributario",
+        }
+    ]
+
+    if not colunas_alvo:
+        return df_saida, 0, logs
+
+    for coluna in colunas_alvo:
+        novos_valores: list[str] = []
+
+        for idx, valor in enumerate(df_saida[coluna].tolist(), start=1):
+            gtin = _somente_digitos(valor)
+
+            if not gtin:
+                novos_valores.append("")
+                continue
+
+            if _validar_gtin_checksum(gtin):
+                novos_valores.append(gtin)
+            else:
+                novos_valores.append("")
+                total_limpados += 1
+                logs.append(f"Linha {idx} | Coluna {coluna}: GTIN inválido zerado ({valor})")
+
+        df_saida[coluna] = novos_valores
+
+    return df_saida, total_limpados, logs
+
+
 def _ler_arquivo_tabela(arquivo) -> pd.DataFrame:
     nome = (getattr(arquivo, "name", "") or "").lower()
 
+    if hasattr(arquivo, "seek"):
+        arquivo.seek(0)
+
     if nome.endswith(".csv"):
         try:
-            return pd.read_csv(arquivo)
+            return pd.read_csv(arquivo, dtype=str, keep_default_na=False)
         except Exception:
-            arquivo.seek(0)
-            return pd.read_csv(arquivo, sep=";", encoding="utf-8")
+            if hasattr(arquivo, "seek"):
+                arquivo.seek(0)
+            return pd.read_csv(
+                arquivo,
+                sep=";",
+                encoding="utf-8",
+                dtype=str,
+                keep_default_na=False,
+            )
 
-    arquivo.seek(0)
-    return pd.read_excel(arquivo)
+    if hasattr(arquivo, "seek"):
+        arquivo.seek(0)
+
+    return pd.read_excel(arquivo, dtype=str).fillna("")
 
 
 def _safe_dataframe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     return df.head(rows).copy()
+
+
+def _normalizar_nome_coluna(valor: str) -> str:
+    texto = str(valor or "").strip().lower()
+    texto = re.sub(r"[^a-z0-9]+", "_", texto)
+    return re.sub(r"_+", "_", texto).strip("_")
+
+
+def _gerar_sugestoes_mapeamento(
+    df_origem: pd.DataFrame,
+    colunas_modelo_ativas: list[str],
+) -> dict[str, str]:
+    if df_origem is None or df_origem.empty or not colunas_modelo_ativas:
+        return {}
+
+    sugestoes: dict[str, str] = {}
+
+    mapa_slug_para_origem: dict[str, str] = {}
+    for coluna_origem in df_origem.columns:
+        try:
+            slug = sugestao_automatica(str(coluna_origem))
+        except Exception:
+            slug = ""
+        if slug and slug not in mapa_slug_para_origem:
+            mapa_slug_para_origem[slug] = coluna_origem
+
+    aliases_destino = {
+        "codigo": {"codigo", "código", "sku", "referencia", "referência"},
+        "nome": {"nome", "descricao", "descrição", "titulo", "título", "produto"},
+        "descricao_curta": {"descricao_curta", "descrição_curta", "descricao curta", "descrição curta"},
+        "preco": {"preco", "preço", "preco_venda", "preço_venda", "preco de venda", "preço de venda"},
+        "preco_custo": {"preco_custo", "preço_custo", "custo", "preco de custo", "preço de custo", "compra"},
+        "estoque": {"estoque", "saldo", "quantidade", "qtd"},
+        "gtin": {"gtin", "ean", "codigo de barras", "código de barras"},
+        "marca": {"marca", "fabricante"},
+        "categoria": {"categoria", "departamento", "seção", "secao"},
+        "ncm": {"ncm"},
+        "cest": {"cest"},
+        "cfop": {"cfop"},
+        "unidade": {"unidade", "und", "un"},
+        "fornecedor": {"fornecedor"},
+        "cnpj_fornecedor": {"cnpj", "cnpj_fornecedor"},
+        "numero_nfe": {"nfe", "nf-e", "numero_nfe", "número_nfe", "nota"},
+        "data_emissao": {"data_emissao", "data_emissão", "emissao", "emissão"},
+        "imagens": {"imagem", "imagens", "foto"},
+        "deposito_id": {"deposito", "depósito", "deposito_id", "depósito_id"},
+        "origem": {"origem"},
+    }
+
+    for coluna_destino in colunas_modelo_ativas:
+        destino_norm = _normalizar_nome_coluna(coluna_destino)
+
+        for slug, nomes_aceitos in aliases_destino.items():
+            if destino_norm in {_normalizar_nome_coluna(x) for x in nomes_aceitos}:
+                coluna_origem = mapa_slug_para_origem.get(slug)
+                if coluna_origem:
+                    sugestoes[coluna_destino] = coluna_origem
+                break
+
+    return sugestoes
 
 
 def render_origem_dados() -> None:
@@ -114,13 +263,13 @@ def render_origem_dados() -> None:
 
     if modo == "cadastro" and modelo_cadastro:
         try:
-            df_modelo = pd.read_excel(modelo_cadastro)
+            df_modelo = pd.read_excel(modelo_cadastro, dtype=str).fillna("")
         except Exception as e:
             st.error(f"Erro ao ler o modelo de cadastro: {e}")
             return
     elif modo == "estoque" and modelo_estoque:
         try:
-            df_modelo = pd.read_excel(modelo_estoque)
+            df_modelo = pd.read_excel(modelo_estoque, dtype=str).fillna("")
         except Exception as e:
             st.error(f"Erro ao ler o modelo de estoque: {e}")
             return
@@ -130,19 +279,13 @@ def render_origem_dados() -> None:
 
     colunas_modelo_ativas = list(df_modelo.columns)
 
-    try:
-        sugestoes = sugestao_automatica(df_origem, colunas_modelo_ativas)
-    except Exception:
-        sugestoes = {}
+    sugestoes = _gerar_sugestoes_mapeamento(df_origem, colunas_modelo_ativas)
 
     if not isinstance(st.session_state.get("mapeamento_manual"), dict):
         st.session_state["mapeamento_manual"] = {}
 
     if sugestoes and not st.session_state["mapeamento_manual"]:
-        try:
-            st.session_state["mapeamento_manual"] = dict(sugestoes)
-        except Exception:
-            st.session_state["mapeamento_manual"] = {}
+        st.session_state["mapeamento_manual"] = dict(sugestoes)
 
     st.markdown("### Preview da origem")
     st.dataframe(_safe_dataframe_preview(df_origem, 10), width="stretch")
@@ -217,22 +360,31 @@ def render_origem_dados() -> None:
         if modo_atual == "estoque" and estoque_cfg:
             if "Depósito" in df_saida.columns:
                 df_saida["Depósito"] = estoque_cfg.get("deposito", "")
+            elif "Deposito" in df_saida.columns:
+                df_saida["Deposito"] = estoque_cfg.get("deposito", "")
 
         return df_saida[colunas_modelo].copy()
 
-    def validar_saida_bling(df_validacao: pd.DataFrame, modo_atual: str) -> tuple[list[str], list[str]]:
+    def validar_saida_bling(
+        df_validacao: pd.DataFrame,
+        modo_atual: str,
+    ) -> tuple[list[str], list[str]]:
         erros: list[str] = []
         avisos: list[str] = []
 
         if df_validacao is None or df_validacao.empty:
             erros.append("Arquivo vazio.")
 
-        if modo_atual == "estoque" and "Depósito" in df_validacao.columns:
-            if (
-                "deposito_nome" in st.session_state
-                and not str(st.session_state.get("deposito_nome", "")).strip()
-            ):
-                avisos.append("O campo de depósito está vazio.")
+        if modo_atual == "estoque":
+            coluna_deposito = None
+            if "Depósito" in df_validacao.columns:
+                coluna_deposito = "Depósito"
+            elif "Deposito" in df_validacao.columns:
+                coluna_deposito = "Deposito"
+
+            if coluna_deposito:
+                if not str(st.session_state.get("deposito_nome", "")).strip():
+                    avisos.append("O campo de depósito está vazio.")
 
         return erros, avisos
 
@@ -303,17 +455,9 @@ def render_origem_dados() -> None:
         total_limpados = 0
 
         try:
-            resultado_limpeza = aplicar_limpeza_gtin_ean_df_saida(df_saida_final)
-
-            if isinstance(resultado_limpeza, tuple):
-                if len(resultado_limpeza) >= 1 and isinstance(resultado_limpeza[0], pd.DataFrame):
-                    df_saida_final = resultado_limpeza[0]
-                if len(resultado_limpeza) >= 2 and isinstance(resultado_limpeza[1], int):
-                    total_limpados = resultado_limpeza[1]
-                if len(resultado_limpeza) >= 3 and isinstance(resultado_limpeza[2], list):
-                    logs_gtin = resultado_limpeza[2]
-            elif isinstance(resultado_limpeza, pd.DataFrame):
-                df_saida_final = resultado_limpeza
+            df_saida_final, total_limpados, logs_gtin = _aplicar_limpeza_gtin_ean_df_saida(
+                df_saida_final
+            )
         except Exception as e:
             st.error(f"Erro ao limpar GTIN/EAN inválido: {e}")
             return
