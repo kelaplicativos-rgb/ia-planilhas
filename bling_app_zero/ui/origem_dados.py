@@ -94,6 +94,7 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "validacao_erros_saida",
         "validacao_avisos_saida",
         "logs_gtin_saida",
+        "df_saida_api",
     ]:
         st.session_state.pop(chave, None)
 
@@ -1260,6 +1261,7 @@ def render_origem_dados() -> None:
                 excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_final)
 
                 st.session_state["df_saida"] = df_saida_final.copy()
+                st.session_state["df_saida_api"] = df_saida_final.copy()
                 st.session_state["df_saida_preview_hash"] = origem_hash
                 st.session_state["excel_saida_bytes"] = excel_bytes
                 st.session_state["excel_saida_nome"] = arquivo_saida
@@ -1298,6 +1300,7 @@ def render_origem_dados() -> None:
                 excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_limpa)
 
                 st.session_state["df_saida"] = df_saida_limpa.copy()
+                st.session_state["df_saida_api"] = df_saida_limpa.copy()
                 st.session_state["df_saida_preview_hash"] = origem_hash
                 st.session_state["excel_saida_bytes"] = excel_bytes
                 st.session_state["excel_saida_nome"] = arquivo_saida
@@ -1315,6 +1318,7 @@ def render_origem_dados() -> None:
         if st.button("Limpar mapeamento", width="stretch"):
             st.session_state[state_key] = {}
             st.session_state.pop("df_saida", None)
+            st.session_state.pop("df_saida_api", None)
             st.session_state.pop("df_saida_preview_hash", None)
             st.session_state.pop("excel_saida_bytes", None)
             st.session_state.pop("excel_saida_nome", None)
