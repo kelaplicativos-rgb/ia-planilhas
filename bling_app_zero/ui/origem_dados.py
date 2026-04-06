@@ -208,7 +208,7 @@ def _render_precificacao(df_base):
             )
 
             with st.expander("👁️ Prévia da precificação", expanded=False):
-                st.dataframe(df_precificado.head(10), use_container_width=True)
+                st.dataframe(df_precificado.head(10), width="stretch")
         else:
             st.session_state["preco_gerado"] = False
             st.session_state["df_precificado"] = None
@@ -219,7 +219,9 @@ def _render_precificacao(df_base):
 
 
 def render_origem_dados() -> None:
-    if st.session_state.get("etapa_origem") == "mapeamento":
+    etapa_atual = st.session_state.get("etapa_origem")
+
+    if etapa_atual in ["mapeamento", "final"]:
         return
 
     st.subheader("Origem dos dados")
@@ -267,10 +269,15 @@ def render_origem_dados() -> None:
             "preco": False,
         }
 
-        if assinatura_atual != assinatura_usada:
-            st.session_state["assinatura_precificacao_aplicada_fluxo"] = assinatura_atual
-            st.session_state["etapa_origem"] = "mapeamento"
-            log_debug(
-                "Fluxo automático ativado → precificação recalculada e avanço automático para mapeamento"
-            )
-            st.rerun()
+        etapa_atual = st.session_state.get("etapa_origem", "upload")
+
+        # Só avança automaticamente uma vez, saindo do fluxo inicial para o mapeamento.
+        # Não força avanço novamente se já estiver em mapeamento ou final.
+        if etapa_atual not in ["mapeamento", "final"]:
+            if assinatura_atual != assinatura_usada:
+                st.session_state["assinatura_precificacao_aplicada_fluxo"] = assinatura_atual
+                st.session_state["etapa_origem"] = "mapeamento"
+                log_debug(
+                    "Fluxo automático → avançando para mapeamento (controle corrigido)"
+                )
+                st.rerun()
