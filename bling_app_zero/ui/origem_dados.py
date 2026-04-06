@@ -18,73 +18,104 @@ from bling_app_zero.ui.origem_dados_site import render_origem_site
 def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
 
-    origem = st.selectbox(
-        "Selecione a origem",
-        ["Planilha", "XML", "Site"],
-        key="origem_tipo",
-    )
+    # 🔥 CONTROLE DE ETAPA
+    etapa = st.session_state.get("etapa_origem", "upload")
 
-    df_origem = None
+    # ==========================================================
+    # ETAPA: UPLOAD
+    # ==========================================================
+    if etapa == "upload":
 
-    # =========================
-    # PLANILHA
-    # =========================
-    if origem == "Planilha":
-        arquivo = st.file_uploader(
-            "Envie a planilha",
-            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
-            key="upload_planilha_origem",
+        origem = st.selectbox(
+            "Selecione a origem",
+            ["Planilha", "XML", "Site"],
+            key="origem_tipo",
         )
 
-        if arquivo:
-            log_debug("Iniciando leitura da planilha")
-            df_origem = ler_planilha_segura(arquivo)
+        df_origem = None
 
-            if df_origem is None or df_origem.empty:
-                log_debug("Erro planilha", "ERROR")
-                st.error("Erro ao ler planilha")
-                return
+        # =========================
+        # PLANILHA
+        # =========================
+        if origem == "Planilha":
+            arquivo = st.file_uploader(
+                "Envie a planilha",
+                type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
+                key="upload_planilha_origem",
+            )
 
-    # =========================
-    # XML
-    # =========================
-    elif origem == "XML":
-        st.warning("XML ainda em construção")
-        return
+            if arquivo:
+                log_debug("Iniciando leitura da planilha")
+                df_origem = ler_planilha_segura(arquivo)
 
-    # =========================
-    # SITE
-    # =========================
-    elif origem == "Site":
-        df_origem = render_origem_site()
+                if df_origem is None or df_origem.empty:
+                    log_debug("Erro planilha", "ERROR")
+                    st.error("Erro ao ler planilha")
+                    return
 
-    if df_origem is None or df_origem.empty:
-        return
+        # =========================
+        # XML
+        # =========================
+        elif origem == "XML":
+            st.warning("XML ainda em construção")
+            return
 
-    # mantém compatibilidade com o resto do sistema
-    st.session_state["df_origem"] = df_origem
+        # =========================
+        # SITE
+        # =========================
+        elif origem == "Site":
+            df_origem = render_origem_site()
+
+        if df_origem is None or df_origem.empty:
+            return
+
+        # mantém compatibilidade com o resto do sistema
+        st.session_state["df_origem"] = df_origem
+
+        # ==========================================================
+        # PREVIEW
+        # ==========================================================
+        st.divider()
+
+        st.subheader("Pré-visualização dos dados")
+
+        try:
+            st.dataframe(
+                df_origem.head(10),
+                use_container_width=True
+            )
+
+            st.success(f"{len(df_origem)} registros carregados")
+
+        except Exception:
+            st.error("Erro ao gerar preview")
+
+        # ==========================================================
+        # BOTÃO PRÓXIMA ETAPA
+        # ==========================================================
+        if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
 
     # ==========================================================
-    # 🔥 CONTINUAÇÃO DO FLUXO (ESSENCIAL)
+    # ETAPA: MAPEAMENTO
     # ==========================================================
-    st.divider()
+    elif etapa == "mapeamento":
 
-    st.subheader("Pré-visualização dos dados")
+        st.subheader("Mapeamento de colunas")
 
-    try:
-        st.dataframe(
-            df_origem.head(10),
-            use_container_width=True
-        )
+        df = st.session_state.get("df_origem")
 
-        st.success(f"{len(df_origem)} registros carregados")
+        if df is None or df.empty:
+            st.warning("Nenhum dado encontrado")
+            return
 
-    except Exception as e:
-        st.error("Erro ao gerar preview")
+        st.success("Você está na etapa de mapeamento")
 
-    # ==========================================================
-    # BOTÃO PRÓXIMA ETAPA
-    # ==========================================================
-    if st.button("➡️ Continuar para mapeamento", use_container_width=True):
-        st.session_state["ir_para_mapeamento"] = True
-        st.success("Pronto para próxima etapa")
+        # 🔥 AQUI VAI ENTRAR SEU SISTEMA DE MAPEAMENTO REAL
+        st.dataframe(df.head(5), use_container_width=True)
+
+        # BOTÃO VOLTAR (IMPORTANTE)
+        if st.button("⬅️ Voltar"):
+            st.session_state["etapa_origem"] = "upload"
+            st.rerun()
