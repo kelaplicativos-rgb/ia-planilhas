@@ -14,8 +14,9 @@ def _get_modelo():
     return st.session_state.get("df_modelo_estoque")
 
 
+# 🔥 CORRIGIDO AQUI
 def _get_deposito():
-    return st.session_state.get("deposito_nome_manual", "")
+    return st.session_state.get("deposito_nome", "")
 
 
 def render_origem_mapeamento():
@@ -40,28 +41,43 @@ def render_origem_mapeamento():
             key=f"map_{col}",
         )
 
-    df_saida = pd.DataFrame(columns=df_modelo.columns)
+    # 🔥 CRIA DF BASEADO NO MODELO
+    df_saida = pd.DataFrame()
 
     for col in df_modelo.columns:
         origem = mapping.get(col)
+
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
+        else:
+            # 🔥 GARANTE COLUNA EXISTENTE
+            df_saida[col] = ""
 
-    # 🔥 DEPÓSITO GARANTIDO
+    # 🔥 DEPÓSITO GARANTIDO (CORREÇÃO PRINCIPAL)
     deposito = _get_deposito()
+
     if deposito:
+        col_dep = None
+
         for col in df_saida.columns:
-            if "deposito" in col.lower():
-                df_saida[col] = deposito
+            if "deposit" in col.lower() or "depós" in col.lower():
+                col_dep = col
+                break
+
+        if col_dep:
+            df_saida[col_dep] = deposito
+        else:
+            # 🔥 cria se não existir
+            df_saida["Depósito"] = deposito
 
     # 🔥 PRECIFICAÇÃO
     df_saida = aplicar_precificacao_automatica(df_saida)
 
     st.session_state["df_saida"] = df_saida
 
-    # 🔥 PREVIEW COLAPSADO
+    # 🔥 PREVIEW COLAPSADO (mantido)
     with st.expander("📦 Preview final", expanded=False):
-        st.dataframe(df_saida.head(20), use_container_width=True)
+        st.dataframe(df_saida.head(20), width="stretch")
 
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
@@ -70,5 +86,5 @@ def render_origem_mapeamento():
         "⬇️ Baixar",
         buffer.getvalue(),
         "bling.xlsx",
-        use_container_width=True,
+        width="stretch",
     )
