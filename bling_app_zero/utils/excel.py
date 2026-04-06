@@ -1,191 +1,126 @@
 from __future__ import annotations
 
-import csv
-import re
-import unicodedata
 from io import BytesIO
+from typing import Any
 
 import pandas as pd
-import streamlit as st
-from openpyxl.styles import numbers
 
 
-ENCODINGS_CSV = ("utf-8", "utf-8-sig", "latin1", "cp1252")
-SEPARADORES_CSV = (",", ";", "\t", "|")
-
-
-def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(col).strip() for col in df.columns]
-    return df
-
-
-def limpar_valores_vazios(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None:
-        return pd.DataFrame()
-    df = df.copy()
-    df = df.replace({pd.NA: "", "nan": "", "NaN": "", "None": ""})
-    return df.fillna("")
-
-
-def _ler_csv_bytes(conteudo: bytes) -> pd.DataFrame:
-    ultimo_erro: Exception | None = None
-
-    for encoding in ENCODINGS_CSV:
-        try:
-            texto = conteudo.decode(encoding)
-        except Exception as e:
-            ultimo_erro = e
-            continue
-
-        try:
-            amostra = texto[:4096]
-            try:
-                dialect = csv.Sniffer().sniff(amostra, delimiters=";,\t|")
-                candidatos = [dialect.delimiter] + [
-                    s for s in SEPARADORES_CSV if s != dialect.delimiter
-                ]
-            except Exception:
-                candidatos = list(SEPARADORES_CSV)
-
-            for sep in candidatos:
-                try:
-                    df = pd.read_csv(
-                        BytesIO(conteudo),
-                        sep=sep,
-                        encoding=encoding,
-                        dtype=str,
-                        keep_default_na=False,
-                    )
-                    if df is not None and len(df.columns) > 0:
-                        return df
-                except Exception as e:
-                    ultimo_erro = e
-                    continue
-        except Exception as e:
-            ultimo_erro = e
-            continue
-
-    if ultimo_erro is not None:
-        raise ultimo_erro
-    raise ValueError("Não foi possível ler o CSV informado.")
-
-
-def ler_planilha(arquivo) -> pd.DataFrame:
-    if arquivo is None:
-        return pd.DataFrame()
-
-    nome = str(getattr(arquivo, "name", "")).lower().strip()
-
-    if hasattr(arquivo, "seek"):
-        arquivo.seek(0)
-    conteudo = arquivo.read()
-    if hasattr(arquivo, "seek"):
-        arquivo.seek(0)
-
-    if not conteudo:
-        return pd.DataFrame()
-
-    if nome.endswith(".csv"):
-        df = _ler_csv_bytes(conteudo)
-    elif nome.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(BytesIO(conteudo), dtype=str)
+def _to_dataframe(df: Any) -> pd.DataFrame:
+    """
+    Garante que a entrada seja um DataFrame válido.
+    """
+    if isinstance(df, pd.DataFrame):
+        out = df.copy()
+    elif df is None:
+        out = pd.DataFrame()
     else:
-        try:
-            df = pd.read_excel(BytesIO(conteudo), dtype=str)
-        except Exception:
-            df = _ler_csv_bytes(conteudo)
+        out = pd.DataFrame(df)
 
-    df = normalizar_colunas(df)
-    df = limpar_valores_vazios(df)
-    return df
+    return out
 
 
-def gerar_preview(df: pd.DataFrame, linhas: int = 5) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    linhas = max(1, int(linhas or 1))
-    return df.head(linhas).copy()
+def _normalizar_para_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normaliza o DataFrame antes da exportação:
+    - preserva colunas e ordem
+    - remove NaN/None
+    - converte listas/dicts em texto
+    """
+    out = _to_dataframe(df)
+
+    if out.empty:
+        return out
+
+    out = out.copy()
+
+    for col in out.columns:
+        out[col] = out[col].apply(_normalizar_valor_celula)
+
+    out = out.fillna("")
+    return out
 
 
-def bloco_toggle(label: str, key: str) -> bool:
-    return st.checkbox(label, value=False, key=f"toggle_{key}")
+def _normalizar_valor_celula(valor: Any) -> Any:
+    """
+    Ajusta valores problemáticos para gravação no Excel.
+    """
+    if valor is None:
+        return ""
 
+    if isinstance(valor, float) and pd.isna(valor):
+        return ""
 
-def _normalizar_texto(texto: str) -> str:
-    texto = str(texto or "").strip().lower()
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = texto.encode("ascii", "ignore").decode("utf-8")
-    texto = re.sub(r"[^a-z0-9]+", " ", texto)
-    return re.sub(r"\s+", " ", texto).strip()
+    if isinstance(valor, (list, tuple, set)):
+        return " | ".join("" if v is None else str(v) for v in valor)
 
+    if isinstance(valor, dict):
+        partes = []
+        for k, v in valor.items():
+            partes.append(f"{k}: {'' if v is None else v}")
+        return " | ".join(map(str, partes))
 
-def _coluna_parece_codigo(header: str) -> bool:
-    nome = _normalizar_texto(header)
-    termos = {
-        "codigo",
-        "codigo produto",
-        "id produto",
-        "sku",
-        "gtin",
-        "ean",
-        "codigo de barras",
-        "ncm",
-        "cean",
-        "ceantrib",
-        "deposito",
-        "deposito obrigatorio",
-        "deposito id",
-        "data",
-    }
-    if nome in termos:
-        return True
-
-    return any(
-        termo in nome
-        for termo in [
-            "codigo",
-            "sku",
-            "gtin",
-            "ean",
-            "barras",
-            "ncm",
-            "deposito",
-            "data",
-        ]
-    )
+    return valor
 
 
 def df_to_excel_bytes(
     df: pd.DataFrame,
-    *,
-    sheet_name: str = "Produtos",
+    sheet_name: str = "Planilha",
 ) -> bytes:
     """
-    Exporta o DataFrame exatamente como recebido, preservando ordem das colunas
-    e nomes originais, sem adicionar campos extras.
+    Exporta um DataFrame para bytes Excel (.xlsx).
+    Compatível com imports já usados no projeto.
     """
-
-    if df is None:
-        df = pd.DataFrame()
-
-    df = df.copy()
-    df = limpar_valores_vazios(df)
+    df_final = _normalizar_para_excel(df)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-        ws = writer.sheets[sheet_name]
-
-        if ws.max_row >= 1:
-            for cell in ws[1]:
-                header = str(cell.value or "").strip()
-                if not header:
-                    continue
-
-                if _coluna_parece_codigo(header):
-                    for body_cell in ws[cell.column_letter]:
-                        body_cell.number_format = numbers.FORMAT_TEXT
+        df_final.to_excel(writer, sheet_name=sheet_name, index=False)
 
     output.seek(0)
     return output.getvalue()
+
+
+def exportar_df_exato_para_excel_bytes(
+    df: pd.DataFrame,
+    sheet_name: str = "Planilha",
+) -> bytes:
+    """
+    Alias compatível com o nome usado por partes novas do projeto.
+    """
+    return df_to_excel_bytes(df=df, sheet_name=sheet_name)
+
+
+def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
+    """
+    Lê XLSX/XLS/CSV com fallback simples.
+    """
+    nome = str(getattr(uploaded_file, "name", "") or "").lower()
+
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+
+    if nome.endswith(".csv"):
+        try:
+            df = pd.read_csv(uploaded_file, dtype=str, keep_default_na=False)
+        except Exception:
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(0)
+            df = pd.read_csv(
+                uploaded_file,
+                sep=";",
+                dtype=str,
+                keep_default_na=False,
+                encoding="utf-8",
+            )
+    else:
+        df = pd.read_excel(uploaded_file, dtype=str)
+
+    return _normalizar_para_excel(df)
+
+
+__all__ = [
+    "df_to_excel_bytes",
+    "exportar_df_exato_para_excel_bytes",
+    "ler_planilha_excel",
+]
