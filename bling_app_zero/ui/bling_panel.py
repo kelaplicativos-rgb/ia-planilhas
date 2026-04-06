@@ -27,18 +27,23 @@ def _get_etapa_fluxo() -> str:
         return ""
 
 
-def _bloquear_se_em_fluxo() -> bool:
+def _bloquear_painel_principal() -> bool:
     """
-    Bloqueia os módulos do Bling durante o fluxo principal de origem/mapeamento,
-    evitando interferência visual e de estado enquanto o usuário estiver no
-    processo de preparação da planilha.
+    Bloqueia o painel principal do Bling somente durante o mapeamento.
+    Na etapa final ele deve aparecer normalmente, pois o app.py o chama
+    dentro do preview final.
     """
     etapa = _get_etapa_fluxo()
+    return etapa == "mapeamento"
 
-    if etapa in {"mapeamento", "final"}:
-        return True
 
-    return False
+def _bloquear_importacao() -> bool:
+    """
+    A importação do Bling deve ficar bloqueada durante o fluxo principal
+    para não interferir no preparo da planilha.
+    """
+    etapa = _get_etapa_fluxo()
+    return etapa in {"mapeamento", "final"}
 
 
 # ==========================================================
@@ -74,10 +79,6 @@ def _safe_df(df):
     return pd.DataFrame()
 
 
-def _mensagem_bloqueio():
-    st.info("O módulo Bling fica temporariamente oculto durante o mapeamento e a etapa final do fluxo principal.")
-
-
 # ==========================================================
 # USUÁRIO
 # ==========================================================
@@ -100,7 +101,11 @@ def _render_usuario_bling():
             key="bling_user_apelido",
         )
 
-        if st.button("Aplicar usuário", use_container_width=True, key="btn_aplicar_usuario_bling"):
+        if st.button(
+            "Aplicar usuário",
+            use_container_width=True,
+            key="btn_aplicar_usuario_bling",
+        ):
             identificador_limpo = (identificador or "").strip()
             apelido_limpo = (apelido or "").strip()
 
@@ -118,11 +123,48 @@ def _render_usuario_bling():
         st.caption(f"Atual: {get_current_user_label()} ({get_current_user_key()})")
 
 
+def _processar_callback_oauth() -> bool:
+    """
+    Processa callback OAuth quando existir.
+    Retorna True se o fluxo foi tratado e houve rerun/saída lógica.
+    """
+    try:
+        if not _has_callback_params():
+            return False
+
+        user_key = get_pending_oauth_user_key() or get_current_user_key()
+        user_label = get_pending_oauth_user_label() or get_current_user_label()
+
+        auth_callback = BlingAuthManager(user_key=user_key)
+        result = auth_callback.handle_oauth_callback()
+
+        if result.get("status") == "success":
+            set_current_user(user_key, user_label)
+            clear_pending_oauth_user()
+            _clear_callback_params()
+            st.success("Conectado com sucesso.")
+            st.rerun()
+            return True
+
+        if result.get("status") == "error":
+            clear_pending_oauth_user()
+            _clear_callback_params()
+            st.error(result.get("message", "Erro OAuth"))
+            st.rerun()
+            return True
+
+    except Exception as e:
+        st.error(f"Erro OAuth: {e}")
+        return True
+
+    return False
+
+
 # ==========================================================
 # PAINEL PRINCIPAL
 # ==========================================================
 def render_bling_panel():
-    if _bloquear_se_em_fluxo():
+    if _bloquear_painel_principal():
         return
 
     st.markdown("### Integração com Bling")
@@ -133,29 +175,7 @@ def render_bling_panel():
         st.error(f"Erro ao carregar usuário: {e}")
         return
 
-    try:
-        if _has_callback_params():
-            user_key = get_pending_oauth_user_key() or get_current_user_key()
-            user_label = get_pending_oauth_user_label() or get_current_user_label()
-
-            auth_callback = BlingAuthManager(user_key=user_key)
-            result = auth_callback.handle_oauth_callback()
-
-            if result.get("status") == "success":
-                set_current_user(user_key, user_label)
-                clear_pending_oauth_user()
-                _clear_callback_params()
-                st.success("Conectado com sucesso.")
-                st.rerun()
-
-            if result.get("status") == "error":
-                clear_pending_oauth_user()
-                _clear_callback_params()
-                st.error(result.get("message", "Erro OAuth"))
-                st.rerun()
-
-    except Exception as e:
-        st.error(f"Erro OAuth: {e}")
+    if _processar_callback_oauth():
         return
 
     try:
@@ -239,7 +259,7 @@ def render_bling_panel():
 # IMPORTAÇÃO
 # ==========================================================
 def render_bling_import_panel():
-    if _bloquear_se_em_fluxo():
+    if _bloquear_importacao():
         return
 
     st.markdown("### Importar do Bling")
