@@ -60,7 +60,7 @@ def render_origem_dados() -> None:
     if _safe_df(df_origem) is None:
         return
 
-    # mantém padrão do sistema
+    # 🔥 PADRÃO REAL DO SISTEMA
     st.session_state["df_origem"] = df_origem
 
     # ==========================================================
@@ -73,7 +73,7 @@ def render_origem_dados() -> None:
     st.success(f"{len(df_origem)} registros carregados")
 
     # ==========================================================
-    # 🔥 FLUXO ORIGINAL (CORRETO)
+    # 🔥 RESTAURA FLUXO ORIGINAL
     # ==========================================================
     st.divider()
     st.subheader("Selecione a operação")
@@ -97,7 +97,7 @@ def render_origem_dados() -> None:
 
     escolha_valor = opcoes[escolha_label]
 
-    # 🔥 AQUI ESTÁ A CORREÇÃO REAL
+    # 🔥 PADRÃO DO STATE.PY
     st.session_state["tipo_operacao_bling"] = escolha_valor
 
     if escolha_valor == "cadastro":
@@ -106,12 +106,18 @@ def render_origem_dados() -> None:
         st.info("Modo: Atualização de estoque")
 
     # ==========================================================
-    # BOTÃO CONTINUAR
+    # BOTÃO CONTINUAR (CORRIGIDO)
     # ==========================================================
     if st.button("➡️ Continuar para mapeamento", use_container_width=True):
-        st.session_state["df_saida"] = df_origem.copy()
+        try:
+            # 🔥 IMPORTANTE: usar df_saida (não df_final)
+            st.session_state["df_saida"] = df_origem.copy()
 
-        # 🔥 SEM USAR etapa_origem
-        st.session_state["ir_para_mapeamento"] = True
+            # 🔥 AQUI ESTÁ O PONTO QUE FALTAVA
+            st.session_state["etapa_origem"] = "mapeamento"
 
-        st.rerun()
+            st.rerun()
+
+        except Exception as e:
+            log_debug(f"Erro ao ir para mapeamento: {e}", "ERROR")
+            st.error("Erro ao avançar")
