@@ -61,8 +61,7 @@ def _find_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
     for col in df.columns:
         col_norm = _normalizar_nome_coluna(col)
         for alias in aliases:
-            alias_norm = _normalizar_nome_coluna(alias)
-            if alias_norm in col_norm:
+            if _normalizar_nome_coluna(alias) in col_norm:
                 return col
 
     return None
@@ -77,26 +76,13 @@ def _base_df() -> Optional[pd.DataFrame]:
     return None
 
 
+# =========================
+# PRODUTOS
+# =========================
 def build_product_rows(df: pd.DataFrame) -> List[Dict]:
     sku_col = _find_column(df, ["codigo", "sku", "referencia", "ref"])
-    nome_col = _find_column(df, ["nome", "descricao", "descrição", "produto", "titulo"])
-    desc_col = _find_column(
-        df,
-        ["descricao_curta", "descricao_html", "descricao", "descrição", "complemento"],
-    )
-    preco_col = _find_column(
-        df,
-        ["preco", "preço", "preco venda", "preço venda", "valor de venda"],
-    )
-    custo_col = _find_column(
-        df,
-        ["preco de custo", "preço de custo", "custo", "preco_custo"],
-    )
-    estoque_col = _find_column(df, ["estoque", "saldo", "quantidade", "balanco", "balanço"])
-    gtin_col = _find_column(df, ["gtin", "ean", "codigo de barras", "código de barras", "cean"])
-    marca_col = _find_column(df, ["marca", "fabricante"])
-    categoria_col = _find_column(df, ["categoria", "departamento", "grupo"])
-    ncm_col = _find_column(df, ["ncm"])
+    nome_col = _find_column(df, ["nome", "descricao", "produto"])
+    preco_col = _find_column(df, ["preco", "valor"])
 
     rows: List[Dict] = []
 
@@ -104,241 +90,141 @@ def build_product_rows(df: pd.DataFrame) -> List[Dict]:
         payload = {
             "codigo": normalize_value(row[sku_col]) if sku_col else None,
             "nome": normalize_value(row[nome_col]) if nome_col else None,
-            "descricao_curta": normalize_value(row[desc_col]) if desc_col else None,
             "preco": safe_float(row[preco_col]) if preco_col else None,
-            "preco_custo": safe_float(row[custo_col]) if custo_col else None,
-            "estoque": safe_float(row[estoque_col]) if estoque_col else None,
-            "gtin": normalize_value(row[gtin_col]) if gtin_col else None,
-            "marca": normalize_value(row[marca_col]) if marca_col else None,
-            "categoria": normalize_value(row[categoria_col]) if categoria_col else None,
-            "ncm": normalize_value(row[ncm_col]) if ncm_col else None,
         }
         rows.append(payload)
 
     return rows
 
 
+# =========================
+# ESTOQUE (CORRIGIDO)
+# =========================
 def build_stock_rows(df: pd.DataFrame) -> List[Dict]:
-    sku_col = _find_column(df, ["codigo", "sku", "referencia", "ref"])
-    estoque_col = _find_column(df, ["estoque", "saldo", "quantidade", "balanco", "balanço"])
-    preco_col = _find_column(
-        df,
-        ["preco unitario", "preço unitário", "preco", "preço", "valor"],
-    )
-    deposito_col = _find_column(df, ["deposito", "depósito", "deposito id", "depósito id"])
+    sku_col = _find_column(df, ["codigo", "sku", "referencia"])
+    estoque_col = _find_column(df, ["estoque", "saldo", "quantidade"])
+    deposito_col = _find_column(df, ["deposito"])
 
     deposito_manual = str(st.session_state.get("deposito_nome_manual_api", "")).strip()
+
     rows: List[Dict] = []
 
     for _, row in df.iterrows():
+        estoque = safe_float(row[estoque_col]) if estoque_col else 0
+
+        if estoque is None or estoque < 0:
+            estoque = 0
+
+        deposito = (
+            normalize_value(row[deposito_col])
+            if deposito_col
+            else deposito_manual or "Geral"
+        )
+
         payload = {
             "codigo": normalize_value(row[sku_col]) if sku_col else None,
-            "estoque": safe_float(row[estoque_col]) if estoque_col else None,
-            "preco": safe_float(row[preco_col]) if preco_col else None,
-            "deposito_id": (
-                normalize_value(row[deposito_col])
-                if deposito_col
-                else deposito_manual or None
-            ),
+            "estoque": int(estoque),
+            "deposito_id": deposito,
         }
+
         rows.append(payload)
 
     return rows
 
 
-def validar_produtos(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    validos: List[Dict] = []
-    invalidos: List[Dict] = []
-
-    for indice, row in enumerate(rows, start=1):
-        faltando: List[str] = []
-
-        if not row.get("codigo"):
-            faltando.append("codigo")
-        if not row.get("nome"):
-            faltando.append("nome")
-        if row.get("preco") is None or float(row.get("preco") or 0) <= 0:
-            faltando.append("preco")
-
-        if faltando:
-            invalidos.append(
-                {
-                    "linha": indice,
-                    "codigo": row.get("codigo"),
-                    "nome": row.get("nome"),
-                    "faltando": ", ".join(faltando),
-                    "payload": row,
-                }
-            )
-        else:
-            validos.append(row)
-
-    return validos, invalidos
-
-
-def validar_estoque(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    validos: List[Dict] = []
-    invalidos: List[Dict] = []
-
-    for indice, row in enumerate(rows, start=1):
-        faltando: List[str] = []
-
-        if not row.get("codigo"):
-            faltando.append("codigo")
-        if row.get("estoque") is None:
-            faltando.append("estoque")
-
-        if faltando:
-            invalidos.append(
-                {
-                    "linha": indice,
-                    "codigo": row.get("codigo"),
-                    "faltando": ", ".join(faltando),
-                    "payload": row,
-                }
-            )
-        else:
-            validos.append(row)
-
-    return validos, invalidos
-
-
-def _mostrar_resumo_validacao(
-    titulo_ok: str,
-    titulo_erro: str,
-    validos: List[Dict],
-    invalidos: List[Dict],
-) -> None:
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.metric("Linhas válidas", len(validos))
-    with c2:
-        st.metric("Linhas com pendência", len(invalidos))
-
-    if invalidos:
-        st.warning(
-            f"{len(invalidos)} linha(s) estão com campos obrigatórios faltando e "
-            f"precisam de conferência antes do envio."
-        )
-        df_invalidos = pd.DataFrame(invalidos)
-        with st.expander(titulo_erro, expanded=False):
-            st.dataframe(df_invalidos, width="stretch", height=220)
-
-    if validos:
-        st.success(f"{len(validos)} linha(s) prontas para uso.")
-        with st.expander(titulo_ok, expanded=False):
-            st.json(validos[:50])
-
-
+# =========================
+# UI
+# =========================
 def render_send_panel() -> None:
     st.subheader("Envio por API")
 
     df = _base_df()
-    modo = str(st.session_state.get("tipo_operacao_bling", "cadastro")).strip().lower()
+    modo = str(st.session_state.get("tipo_operacao_bling", "cadastro")).lower()
 
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        st.info(
-            "Gere primeiro o preview final e o arquivo na aba 'Origem dos dados'. "
-            "Esta aba usa apenas uma cópia do DataFrame final preparada para API e não interfere no download."
-        )
+    if df is None or df.empty:
+        st.info("Gere primeiro o preview.")
         return
 
     user_key = _get_current_bling_user_key()
     auth = BlingAuthManager(user_key=user_key)
     conectado = bool(auth.get_connection_status().get("connected"))
 
-    st.caption(
-        f"Operação atual: **{'Cadastro / atualização de produtos' if modo == 'cadastro' else 'Atualização de estoque'}**"
-    )
-    st.caption(
-        "Esta aba não recalcula o arquivo final e não altera o DataFrame usado no download."
-    )
-
     if modo == "cadastro":
+
         rows = build_product_rows(df)
-        validos, invalidos = validar_produtos(rows)
-
-        st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
-
-        if st.button("Gerar preview da API de cadastro", width="stretch"):
-            st.session_state["ultimo_log_envio_api"] = {
-                "tipo": "cadastro",
-                "validos": validos[:50],
-                "invalidos": invalidos[:50],
-            }
-            _mostrar_resumo_validacao(
-                "Preview de cadastro válido",
-                "Linhas de cadastro com pendência",
-                validos,
-                invalidos,
-            )
 
         if conectado:
-            if st.button(
-                "Enviar cadastro real para o Bling",
-                width="stretch",
-                disabled=not bool(validos),
-            ):
-                sucessos, erros = sync_products(validos, user_key=user_key)
-                st.session_state["ultimo_log_envio_api"] = {
-                    "tipo": "cadastro_real",
-                    "sucessos": sucessos[:100],
-                    "erros": erros[:100],
-                }
+            if st.button("Enviar cadastro", width="stretch"):
 
-                if sucessos:
-                    st.success(
-                        f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling."
-                    )
-                if erros:
-                    st.error(f"{len(erros)} produto(s) falharam no envio.")
-                    st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
-        else:
-            st.info("Conecte o Bling para liberar o envio real de cadastro.")
+                progress = st.progress(0, text="Preparando envio...")
+
+                try:
+                    total = len(rows)
+                    enviados = 0
+
+                    sucessos = []
+                    erros = []
+
+                    for r in rows:
+                        enviados += 1
+
+                        p = int((enviados / total) * 100)
+                        progress.progress(p, text=f"Enviando {enviados}/{total}")
+
+                        ok, msg = sync_products([r], user_key=user_key)
+
+                        if ok:
+                            sucessos.append(r)
+                        else:
+                            erros.append({"row": r, "erro": msg})
+
+                    progress.progress(100, text="Concluído")
+
+                    st.success(f"{len(sucessos)} enviados")
+                    if erros:
+                        st.error(f"{len(erros)} erros")
+                        st.dataframe(pd.DataFrame(erros))
+
+                except Exception as e:
+                    st.error(e)
 
     else:
+
         rows = build_stock_rows(df)
-        validos, invalidos = validar_estoque(rows)
 
-        st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
-
-        st.text_input(
-            "Depósito / ID do depósito",
-            key="deposito_nome_manual_api",
-            help="Use este campo somente para o envio por API quando a planilha final não possuir coluna de depósito.",
-        )
-
-        if st.button("Gerar preview da API de estoque", width="stretch"):
-            st.session_state["ultimo_log_envio_api"] = {
-                "tipo": "estoque",
-                "validos": validos[:50],
-                "invalidos": invalidos[:50],
-            }
-            _mostrar_resumo_validacao(
-                "Preview de estoque válido",
-                "Linhas de estoque com pendência",
-                validos,
-                invalidos,
-            )
+        st.text_input("Depósito", key="deposito_nome_manual_api")
 
         if conectado:
-            if st.button(
-                "Enviar estoque real para o Bling",
-                width="stretch",
-                disabled=not bool(validos),
-            ):
-                sucessos, erros = sync_stocks(validos, user_key=user_key)
-                st.session_state["ultimo_log_envio_api"] = {
-                    "tipo": "estoque_real",
-                    "sucessos": sucessos[:100],
-                    "erros": erros[:100],
-                }
+            if st.button("Enviar estoque", width="stretch"):
 
-                if sucessos:
-                    st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
-                if erros:
-                    st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
-                    st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
-        else:
-            st.info("Conecte o Bling para liberar o envio real de estoque.")
+                progress = st.progress(0, text="Preparando envio...")
+
+                try:
+                    total = len(rows)
+                    enviados = 0
+
+                    sucessos = []
+                    erros = []
+
+                    for r in rows:
+                        enviados += 1
+
+                        p = int((enviados / total) * 100)
+                        progress.progress(p, text=f"Enviando {enviados}/{total}")
+
+                        ok, msg = sync_stocks([r], user_key=user_key)
+
+                        if ok:
+                            sucessos.append(r)
+                        else:
+                            erros.append({"row": r, "erro": msg})
+
+                    progress.progress(100, text="Concluído")
+
+                    st.success(f"{len(sucessos)} enviados")
+                    if erros:
+                        st.error(f"{len(erros)} erros")
+                        st.dataframe(pd.DataFrame(erros))
+
+                except Exception as e:
+                    st.error(e)
