@@ -5,14 +5,11 @@ from typing import Optional
 
 import streamlit as st
 
-
 SESSION_USER_KEY = "bling_current_user_key"
 SESSION_USER_LABEL = "bling_current_user_label"
 
 SESSION_OAUTH_PENDING_USER_KEY = "bling_oauth_pending_user_key"
 SESSION_OAUTH_PENDING_USER_LABEL = "bling_oauth_pending_user_label"
-SESSION_OAUTH_STATE = "bling_oauth_state"
-SESSION_OAUTH_STATE_CREATED_AT = "bling_oauth_state_created_at"
 
 
 def _slugify(value: str) -> str:
@@ -48,6 +45,7 @@ def get_current_user_label() -> str:
 def ensure_current_user_defaults() -> None:
     if SESSION_USER_KEY not in st.session_state:
         st.session_state[SESSION_USER_KEY] = "default"
+
     if SESSION_USER_LABEL not in st.session_state:
         st.session_state[SESSION_USER_LABEL] = "Operação padrão"
 
