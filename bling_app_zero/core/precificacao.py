@@ -58,6 +58,33 @@ def _detectar_coluna_preco(df: pd.DataFrame) -> str:
 
 
 # ==========================================================
+# DETECTAR COLUNA DE VENDA (🔥 MELHORADO)
+# ==========================================================
+def _detectar_coluna_venda(df: pd.DataFrame) -> str:
+    prioridades = [
+        "preço de venda",
+        "preco de venda",
+        "preço venda",
+        "preco venda",
+        "valor de venda",
+    ]
+
+    # match exato primeiro
+    for col in df.columns:
+        nome = str(col).lower().strip()
+        if nome in prioridades:
+            return col
+
+    # match parcial
+    for col in df.columns:
+        nome = str(col).lower()
+        if "preco" in nome and "venda" in nome:
+            return col
+
+    return ""
+
+
+# ==========================================================
 # CÁLCULO BASE
 # ==========================================================
 def calcular_preco_venda(
@@ -89,7 +116,7 @@ def calcular_preco_venda(
 
 
 # ==========================================================
-# APLICAÇÃO AUTOMÁTICA NO DF (🔥 PRINCIPAL)
+# APLICAÇÃO AUTOMÁTICA NO DF (🔥 PRINCIPAL CORRIGIDO)
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -104,31 +131,20 @@ def aplicar_precificacao_automatica(
 
     df_saida = df.copy()
 
-    # 🔥 detecta automaticamente a coluna de custo
+    # 🔥 coluna de custo
     coluna_base = _detectar_coluna_preco(df_saida)
-
     if not coluna_base:
         return df_saida
 
     precos_base = df_saida[coluna_base].apply(_to_float)
 
-    # 🔥 tenta detectar coluna de venda no modelo
-    coluna_destino = None
+    # 🔥 coluna correta de venda (modelo Bling)
+    coluna_destino = _detectar_coluna_venda(df_saida)
 
-    for col in df_saida.columns:
-        nome = str(col).lower()
-
-        if "preco" in nome and "venda" in nome:
-            coluna_destino = col
-            break
-
-        if nome.strip() in ["preco", "valor"]:
-            coluna_destino = col
-
-    # fallback
+    # 🔥 se não existir, cria padrão correto
     if not coluna_destino:
-        coluna_destino = "Preco de venda"
-        df_saida[coluna_destino] = ""
+        coluna_destino = "Preço de venda"
+        df_saida[coluna_destino] = 0.0
 
     df_saida[coluna_destino] = precos_base.apply(
         lambda valor: round(
@@ -149,7 +165,7 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# COMPATIBILIDADE ANTIGA (NÃO QUEBRA SISTEMA)
+# COMPATIBILIDADE ANTIGA (MANTIDO)
 # ==========================================================
 def calcular_preco_venda_df(
     df: pd.DataFrame,
