@@ -4,6 +4,11 @@ import streamlit as st
 from datetime import datetime
 
 # =========================
+# CONFIG (TEM QUE SER O PRIMEIRO)
+# =========================
+st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
+
+# =========================
 # 🔥 VERSIONAMENTO
 # =========================
 APP_VERSION = "1.0.12"
@@ -96,10 +101,8 @@ except Exception as e:
 
 
 # =========================
-# CONFIG
+# UI
 # =========================
-st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
-
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
