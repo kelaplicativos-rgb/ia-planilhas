@@ -53,13 +53,36 @@ def _normalizar_para_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
+# 🔥 GARANTIA DE ESTRUTURA (NÃO PERDER COLUNAS)
+# ==========================================================
+def _garantir_estrutura_modelo(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante que nenhuma coluna seja perdida e mantém ordem.
+    """
+    df = _to_dataframe(df)
+
+    if df.empty:
+        return df
+
+    # força colunas como string
+    df.columns = [str(c) for c in df.columns]
+
+    return df
+
+
+# ==========================================================
 # EXPORTAÇÃO
 # ==========================================================
 def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
 
+    # 🔥 IMPORTANTE: preservar estrutura antes de normalizar
+    df = _garantir_estrutura_modelo(df)
+
+    # normalização leve (sem quebrar estrutura)
     df = _normalizar_para_excel(df)
 
     output = BytesIO()
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=sheet_name, index=False)
 
@@ -67,12 +90,26 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
     return output.getvalue()
 
 
-def exportar_df_exato_para_excel_bytes(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
-    return df_to_excel_bytes(df, sheet_name)
+def exportar_df_exato_para_excel_bytes(
+    df: pd.DataFrame,
+    sheet_name: str = "Planilha"
+) -> bytes:
+    """
+    Exporta EXATAMENTE como está (sem alterar estrutura)
+    """
+    df = _garantir_estrutura_modelo(df)
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    output.seek(0)
+    return output.getvalue()
 
 
 # ==========================================================
-# 🔥 LEITURA ROBUSTA (CORREÇÃO PRINCIPAL)
+# 🔥 LEITURA ROBUSTA
 # ==========================================================
 def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
 
@@ -104,7 +141,7 @@ def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
                     )
 
                     if df is not None and not df.empty:
-                        return _normalizar_para_excel(df)
+                        return _garantir_estrutura_modelo(_normalizar_para_excel(df))
 
                 except Exception:
                     continue
@@ -118,19 +155,19 @@ def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
         df = pd.read_excel(uploaded_file, dtype=str)
 
         if df is not None and not df.empty:
-            return _normalizar_para_excel(df)
+            return _garantir_estrutura_modelo(_normalizar_para_excel(df))
 
     except Exception:
         pass
 
-    # 🔥 fallback total
+    # fallback total
     try:
         if hasattr(uploaded_file, "seek"):
             uploaded_file.seek(0)
 
         df = pd.read_excel(uploaded_file)
 
-        return _normalizar_para_excel(df)
+        return _garantir_estrutura_modelo(_normalizar_para_excel(df))
 
     except Exception:
         return pd.DataFrame()
