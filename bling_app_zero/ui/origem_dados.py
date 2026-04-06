@@ -33,7 +33,71 @@ def _safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
 
 
 # ==========================================================
-# 🔥 LIMPEZA COLUNAS
+# 🔥 INTELIGÊNCIA DE COLUNAS (NOVO)
+# ==========================================================
+def _eh_coluna_estoque(nome_coluna: str) -> bool:
+    nome = str(nome_coluna).lower()
+
+    palavras = [
+        "estoque",
+        "saldo",
+        "quantidade",
+        "qtd",
+        "qty",
+        "disponivel",
+        "disponível",
+        "inventory",
+        "stock",
+    ]
+
+    return any(p in nome for p in palavras)
+
+
+def _normalizar_estoque(valor, padrao=0):
+    try:
+        texto = str(valor).strip().lower()
+
+        if "esgotado" in texto or "indisponivel" in texto or "indisponível" in texto:
+            return 0
+
+        if texto == "" or texto == "nan":
+            return padrao
+
+        return int(float(valor))
+    except Exception:
+        return padrao
+
+
+# ==========================================================
+# GTIN
+# ==========================================================
+def _normalizar_gtin(valor) -> str:
+    if pd.isna(valor):
+        return ""
+
+    texto = str(valor).strip()
+
+    if texto.endswith(".0"):
+        texto = texto[:-2]
+
+    texto = "".join(ch for ch in texto if ch.isdigit())
+
+    if len(texto) in (8, 12, 13, 14):
+        return texto
+
+    return ""
+
+
+def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        nome_col = str(col).lower()
+        if "gtin" in nome_col or "ean" in nome_col:
+            df[col] = df[col].apply(_normalizar_gtin)
+    return df
+
+
+# ==========================================================
+# LIMPEZA COLUNAS
 # ==========================================================
 def _limpar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
     novas = []
@@ -59,44 +123,30 @@ def _limpar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
-# 🔥 DETECÇÃO HEADER AUTOMÁTICA
-# ==========================================================
-def _detectar_header(df_raw):
-    melhor_linha = 0
-    maior_score = 0
-
-    for i in range(min(10, len(df_raw))):
-        linha = df_raw.iloc[i].astype(str).tolist()
-
-        score = sum(
-            1 for x in linha
-            if str(x).strip() != "" and str(x).strip().lower() != "nan"
-        )
-
-        if score > maior_score:
-            maior_score = score
-            melhor_linha = i
-
-    return melhor_linha
-
-
-# ==========================================================
-# 🔥 LEITURA EXCEL (XLSX / XLS)
+# LEITURA INTELIGENTE
 # ==========================================================
 def _ler_excel_seguro(arquivo):
     try:
         arquivo.seek(0)
+        df_raw = pd.read_excel(arquivo, header=None)
 
-        # lê bruto
-        df_raw = pd.read_excel(arquivo, header=None, engine=None)
+        melhor_linha = 0
+        maior_score = 0
 
-        if df_raw is None or df_raw.empty:
-            return None
+        for i in range(min(5, len(df_raw))):
+            linha = df_raw.iloc[i].astype(str).tolist()
 
-        header = _detectar_header(df_raw)
+            score = sum(
+                1 for x in linha
+                if str(x).strip() != "" and str(x).strip().lower() != "nan"
+            )
+
+            if score > maior_score:
+                maior_score = score
+                melhor_linha = i
 
         arquivo.seek(0)
-        df = pd.read_excel(arquivo, header=header, engine=None)
+        df = pd.read_excel(arquivo, header=melhor_linha)
 
         return _limpar_nomes_colunas(df)
 
@@ -105,116 +155,64 @@ def _ler_excel_seguro(arquivo):
         return None
 
 
-# ==========================================================
-# 🔥 LEITURA CSV (FORTE)
-# ==========================================================
 def _ler_csv_seguro(arquivo):
-    tentativas = [
-        {"sep": ";", "encoding": "utf-8"},
-        {"sep": ",", "encoding": "utf-8"},
-        {"sep": ";", "encoding": "latin1"},
-        {"sep": ",", "encoding": "latin1"},
-        {"sep": None, "engine": "python", "encoding": "utf-8"},
-        {"sep": None, "engine": "python", "encoding": "latin1"},
-    ]
-
-    for tentativa in tentativas:
-        try:
-            arquivo.seek(0)
-            df_raw = pd.read_csv(arquivo, header=None, **tentativa)
-
-            if df_raw is None or df_raw.empty:
-                continue
-
-            header = _detectar_header(df_raw)
-
-            arquivo.seek(0)
-            df = pd.read_csv(arquivo, header=header, **tentativa)
-
-            return _limpar_nomes_colunas(df)
-
-        except Exception:
-            continue
-
-    st.error("Não foi possível ler o CSV")
-    return None
-
-
-# ==========================================================
-# 🔥 DETECTAR ESTOQUE
-# ==========================================================
-def _eh_coluna_estoque(nome):
-    nome = str(nome).lower()
-
-    palavras = [
-        "estoque",
-        "saldo",
-        "quantidade",
-        "qtd",
-        "qty",
-        "disponivel",
-        "disponível",
-        "stock",
-        "inventory",
-    ]
-
-    return any(p in nome for p in palavras)
-
-
-def _normalizar_estoque(valor):
     try:
-        texto = str(valor).strip().lower()
-
-        if "esgotado" in texto or "indisponivel" in texto:
-            return 0
-
-        if texto == "" or texto == "nan":
-            return 0
-
-        return int(float(valor))
-
-    except Exception:
-        return 0
+        arquivo.seek(0)
+        df = pd.read_csv(arquivo, sep=None, engine="python")
+        return _limpar_nomes_colunas(df)
+    except Exception as e:
+        st.error(f"Erro ao ler CSV: {e}")
+        return None
 
 
 # ==========================================================
 # MAIN
 # ==========================================================
-def render_origem_dados():
+def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
 
-    arquivo = st.file_uploader(
-        "Envie a planilha",
-        type=["xlsx", "xls", "csv"],
-    )
+    arquivo = st.file_uploader("Envie a planilha", type=["xlsx", "csv"])
 
     if not arquivo:
         return
 
-    nome = arquivo.name.lower()
-
-    if nome.endswith(".csv"):
-        df = _ler_csv_seguro(arquivo)
+    if arquivo.name.endswith(".csv"):
+        df_origem = _ler_csv_seguro(arquivo)
     else:
-        df = _ler_excel_seguro(arquivo)
+        df_origem = _ler_excel_seguro(arquivo)
 
-    if df is None or df.empty:
-        st.error("Erro ao ler a planilha")
+    if df_origem is None or df_origem.empty:
         return
 
-    st.dataframe(_safe_preview(df), width="stretch")
+    st.markdown("### Preview")
+    st.dataframe(_safe_preview(df_origem), width="stretch")
 
-    # detectar estoque automático
-    for col in df.columns:
+    st.markdown("### Mapeamento automático inteligente")
+
+    # 🔥 Detectar coluna de estoque automaticamente
+    coluna_estoque_detectada = None
+
+    for col in df_origem.columns:
         if _eh_coluna_estoque(col):
-            df[col] = df[col].apply(_normalizar_estoque)
-            st.success(f"Estoque detectado automaticamente: {col}")
+            coluna_estoque_detectada = col
             break
 
-    excel = _exportar_df_exato_para_excel_bytes(df)
+    if coluna_estoque_detectada:
+        st.success(f"Coluna de estoque detectada: {coluna_estoque_detectada}")
+
+        df_origem[coluna_estoque_detectada] = df_origem[
+            coluna_estoque_detectada
+        ].apply(lambda x: _normalizar_estoque(x, 10))
+
+    else:
+        st.warning("Nenhuma coluna de estoque detectada automaticamente")
+
+    df_origem = _limpar_gtin(df_origem)
+
+    excel = _exportar_df_exato_para_excel_bytes(df_origem)
 
     st.download_button(
-        "Baixar",
+        "Baixar planilha tratada",
         data=excel,
         file_name="saida.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
