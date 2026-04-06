@@ -31,13 +31,17 @@ def main():
         render_bling_import_panel,
         render_bling_panel,
     )
+    from bling_app_zero.ui.envio_panel import render_send_panel
 
     aplicar_estilo_global()
     init_state()
 
-    # 🔥 AGORA SOMENTE 2 ABAS
-    tab1, tab2 = st.tabs(
-        ["Origem dos dados", "Integração Bling"]
+    # AGORA COM 3 ABAS:
+    # 1) Origem dos dados
+    # 2) Integração Bling
+    # 3) Envio por API
+    tab1, tab2, tab3 = st.tabs(
+        ["Origem dos dados", "Integração Bling", "Envio por API"]
     )
 
     # =========================
@@ -46,25 +50,32 @@ def main():
     with tab1:
         try:
             from bling_app_zero.ui import origem_dados as origem_dados_ui
-
             origem_dados_ui.render_origem_dados()
-
         except Exception as e:
             st.error(f"Erro na tela Origem dos dados: {e}")
             log(f"Erro Origem dos dados: {traceback.format_exc()}")
 
     # =========================
-    # BLING (APENAS SUPORTE/API)
+    # BLING (CONEXÃO / IMPORTAÇÃO)
     # =========================
     with tab2:
         try:
             render_bling_panel()
             st.markdown("---")
             render_bling_import_panel()
-
         except Exception as e:
             st.error(f"Erro no painel Bling: {e}")
             log(f"Erro Painel Bling: {traceback.format_exc()}")
+
+    # =========================
+    # ENVIO POR API
+    # =========================
+    with tab3:
+        try:
+            render_send_panel()
+        except Exception as e:
+            st.error(f"Erro na aba Envio por API: {e}")
+            log(f"Erro Envio por API: {traceback.format_exc()}")
 
     # =========================
     # RODAPÉ
