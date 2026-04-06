@@ -15,7 +15,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.18"
+APP_VERSION = "1.0.19"  # 🔥 versão ajustada
 
 # =========================
 # LOG
@@ -44,7 +44,10 @@ def _safe_df(key):
 
 
 def _get_df_fluxo():
-    return _safe_df("df_final") or _safe_df("df_saida")
+    df = _safe_df("df_final")
+    if df is None:
+        df = _safe_df("df_saida")
+    return df
 
 
 # =========================
@@ -53,7 +56,7 @@ def _get_df_fluxo():
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.bling_panel import render_bling_panel
-from bling_app_zero.ui.precificacao_panel import render_precificacao_panel  # 🔥 NOVO (JÁ EXISTE NO PROJETO)
+from bling_app_zero.ui.precificacao_panel import render_precificacao_panel
 
 # =========================
 # UI
@@ -72,8 +75,10 @@ etapa = st.session_state.get("etapa_origem", "upload")
 if etapa in ["upload", None]:
     render_origem_dados()
 
-    # 🔥 PRECIFICAÇÃO ENTRA AQUI (SEM QUEBRAR NADA)
-    df_origem = _safe_df("df_final") or _safe_df("df_origem")
+    # 🔥 CORREÇÃO CRÍTICA AQUI (SEM USAR OR COM DATAFRAME)
+    df_origem = _safe_df("df_final")
+    if df_origem is None:
+        df_origem = _safe_df("df_origem")
 
     if df_origem is not None:
         st.divider()
@@ -88,7 +93,6 @@ if etapa in ["upload", None]:
             try:
                 df = df_origem.copy()
 
-                # só cria se não existir
                 if "Preço de venda" not in df.columns:
                     df["Preço de venda"] = None
 
@@ -120,25 +124,15 @@ elif etapa == "final":
         st.divider()
         st.subheader("Preview final")
 
-        # PREVIEW COLAPSADO
         with st.expander("📦 Ver dados finais", expanded=False):
             st.dataframe(df_fluxo.head(20), width="stretch")
 
-        # =========================
-        # 🔥 LIMPEZA GTIN
-        # =========================
         df_fluxo = limpar_gtin_invalido(df_fluxo)
 
-        # =========================
-        # 🔥 VALIDAÇÃO OBRIGATÓRIA
-        # =========================
         if not validar_campos_obrigatorios(df_fluxo):
             st.error("Preencha os campos obrigatórios antes do download")
             st.stop()
 
-        # =========================
-        # 🔥 DOWNLOAD
-        # =========================
         excel_bytes = exportar_excel_bytes(df_fluxo)
 
         st.download_button(
@@ -149,9 +143,6 @@ elif etapa == "final":
             use_container_width=True,
         )
 
-        # =========================
-        # 🔥 BLING PANEL (ISOLADO)
-        # =========================
         st.divider()
         st.subheader("Integração com Bling")
         render_bling_panel()
