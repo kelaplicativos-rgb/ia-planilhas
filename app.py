@@ -4,19 +4,21 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.origem_dados_helpers import (
+    limpar_gtin_invalido,
+    validar_campos_obrigatorios,
+    exportar_excel_bytes,
+)
+
 # =========================
-# CONFIG (TEM QUE SER O PRIMEIRO)
+# CONFIG
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-# =========================
-# VERSIONAMENTO
-# =========================
-APP_VERSION = "1.0.14"
-
+APP_VERSION = "1.0.15"
 
 # =========================
-# LOG GLOBAL
+# LOG
 # =========================
 if "logs" not in st.session_state:
     st.session_state["logs"] = []
@@ -32,116 +34,25 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 
 
 # =========================
-# IA DEBUG
+# HELPERS
 # =========================
-def analisar_logs_com_ia(logs: list[str]) -> dict:
-    if not logs:
-        return {
-            "tipo": "Sem logs",
-            "problema": "Nenhum evento registrado ainda.",
-            "solucao": "-"
-        }
-
-    texto = "\n".join(logs[-50:]).lower()
-
-    if "unicode" in texto:
-        return {
-            "tipo": "Erro CSV",
-            "problema": "Encoding inválido",
-            "solucao": "Salvar como UTF-8"
-        }
-
-    if "empty" in texto:
-        return {
-            "tipo": "Planilha vazia",
-            "problema": "Sem dados",
-            "solucao": "Verifique o arquivo"
-        }
-
-    if "gtin" in texto:
-        return {
-            "tipo": "GTIN inválido",
-            "problema": "Código inválido",
-            "solucao": "Sistema limpa automaticamente"
-        }
-
-    if "excel" in texto and "erro" in texto:
-        return {
-            "tipo": "Erro Excel",
-            "problema": "Falha ao ler modelo",
-            "solucao": "Verifique formato XLSX"
-        }
-
-    return {
-        "tipo": "Não identificado",
-        "problema": "Verifique manualmente",
-        "solucao": "-"
-    }
-
-
-# =========================
-# HELPERS DE ESTADO
-# =========================
-def _safe_df_from_state(key: str) -> pd.DataFrame | None:
-    try:
-        valor = st.session_state.get(key)
-        if isinstance(valor, pd.DataFrame) and not valor.empty:
-            return valor
-    except Exception:
-        pass
+def _safe_df(key):
+    df = st.session_state.get(key)
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df
     return None
 
 
-def _get_df_origem() -> pd.DataFrame | None:
-    return _safe_df_from_state("df_origem")
-
-
-def _get_df_saida() -> pd.DataFrame | None:
-    return _safe_df_from_state("df_saida")
-
-
-def _get_df_final() -> pd.DataFrame | None:
-    return _safe_df_from_state("df_final")
-
-
-def _get_df_fluxo() -> pd.DataFrame | None:
-    # 🔥 CORREÇÃO CRÍTICA (sem usar OR com DataFrame)
-    df_saida = _get_df_saida()
-    if df_saida is not None:
-        return df_saida
-
-    df_final = _get_df_final()
-    if df_final is not None:
-        return df_final
-
-    return None
+def _get_df_fluxo():
+    return _safe_df("df_final") or _safe_df("df_saida")
 
 
 # =========================
-# IMPORTS SEGUROS
+# IMPORTS
 # =========================
-render_origem_dados = None
-render_origem_mapeamento = None
-render_bling_panel = None
-
-try:
-    from bling_app_zero.ui.origem_dados import render_origem_dados
-    log_debug("Import origem_dados OK")
-except Exception as e:
-    log_debug(f"Erro origem_dados: {e}", "ERROR")
-
-try:
-    from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
-    log_debug("Import origem_mapeamento OK")
-except Exception as e:
-    log_debug(f"Erro origem_mapeamento: {e}", "ERROR")
-
-try:
-    from bling_app_zero.ui.bling_panel import render_bling_panel
-    log_debug("Import bling_panel OK")
-except Exception as e:
-    log_debug(f"Erro bling_panel: {e}", "ERROR")
-
+from bling_app_zero.ui.origem_dados import render_origem_dados
+from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
+from bling_app_zero.ui.bling_panel import render_bling_panel
 
 # =========================
 # UI
@@ -149,86 +60,71 @@ except Exception as e:
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
-
 # =========================
-# FLUXO PRINCIPAL
+# FLUXO
 # =========================
-etapa_origem = st.session_state.get("etapa_origem", "upload")
-df_origem = _get_df_origem()
-df_fluxo = _get_df_fluxo()
+etapa = st.session_state.get("etapa_origem", "upload")
 
-# 1) ORIGEM
-if render_origem_dados:
-    try:
-        log_debug("Iniciando: Origem dos Dados")
-        render_origem_dados()
-        log_debug("Finalizado: Origem dos Dados", "SUCCESS")
-    except Exception as e:
-        log_debug(f"Erro execução origem_dados: {e}", "ERROR")
-        st.error("Erro na origem dos dados")
-else:
-    st.error("Erro ao carregar módulo origem_dados")
+# ORIGEM
+render_origem_dados()
 
-# Recarrega após origem
-etapa_origem = st.session_state.get("etapa_origem", "upload")
-df_origem = _get_df_origem()
-df_fluxo = _get_df_fluxo()
+etapa = st.session_state.get("etapa_origem", "upload")
 
-# 2) MAPEAMENTO
-if etapa_origem == "mapeamento":
+# MAPEAMENTO
+if etapa == "mapeamento":
     st.divider()
-    st.subheader("Mapeamento e validação")
+    st.subheader("Mapeamento")
+    render_origem_mapeamento()
 
-    if render_origem_mapeamento:
-        try:
-            render_origem_mapeamento()
-        except Exception as e:
-            log_debug(f"Erro mapeamento: {e}", "ERROR")
-            st.error("Erro no mapeamento")
-    else:
-        st.warning("Módulo de mapeamento não carregado")
-
-# Recarrega após mapeamento
-etapa_origem = st.session_state.get("etapa_origem", "upload")
+# FLUXO FINAL
 df_fluxo = _get_df_fluxo()
 
-# 3) BLING (E PRECIFICAÇÃO VOLTA A FUNCIONAR AQUI)
-if df_fluxo is not None and not df_fluxo.empty and etapa_origem != "upload":
+if df_fluxo is not None:
+    st.divider()
+    st.subheader("Preview final")
+
+    # 🔥 COLAPSADO
+    with st.expander("📦 Ver dados finais", expanded=False):
+        st.dataframe(df_fluxo.head(20), width="stretch")
+
+    # 🔥 LIMPEZA GTIN
+    df_fluxo = limpar_gtin_invalido(df_fluxo)
+
+    # 🔥 VALIDAÇÃO
+    if not validar_campos_obrigatorios(df_fluxo):
+        st.error("Preencha os campos obrigatórios antes do download")
+        st.stop()
+
+    # 🔥 DOWNLOAD
+    excel_bytes = exportar_excel_bytes(df_fluxo)
+
+    st.download_button(
+        "⬇️ Baixar planilha final",
+        excel_bytes,
+        "bling_final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+# =========================
+# BLING PANEL
+# =========================
+if df_fluxo is not None:
     st.divider()
     st.subheader("Integração com Bling")
-
-    if render_bling_panel:
-        try:
-            render_bling_panel()
-        except Exception as e:
-            log_debug(f"Erro bling panel: {e}", "ERROR")
-            st.error("Erro na integração Bling")
-    else:
-        st.warning("Módulo Bling não carregado")
-
+    render_bling_panel()
 
 # =========================
 # DEBUG
 # =========================
-with st.expander("🔍 Debug do sistema"):
+with st.expander("🔍 Debug"):
     logs = st.session_state.get("logs", [])
 
     for l in reversed(logs[-50:]):
         st.text(l)
 
-    log_texto = "\n".join(logs)
-
     st.download_button(
-        "Baixar log",
-        log_texto,
+        "📥 Baixar log",
+        "\n".join(logs),
         "debug.txt",
-        key="download_debug_log",
     )
-
-    st.markdown("### 🧠 IA Debug")
-
-    diag = analisar_logs_com_ia(logs)
-
-    st.warning(diag.get("tipo", "Não identificado"))
-    st.write(diag.get("problema", "-"))
-    st.success(diag.get("solucao", "-"))
