@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import streamlit as st
 
 from bling_app_zero.ui.origem_dados_helpers import (
@@ -79,7 +78,6 @@ def _render_precificacao(df_base):
             st.session_state["df_precificado"] = df_precificado.copy()
             st.session_state["df_saida"] = df_precificado.copy()
 
-            # 🔥 ATIVA BLOQUEIO DO PREÇO
             st.session_state["bloquear_campos_auto"] = {
                 "preco": True
             }
@@ -99,20 +97,17 @@ def render_origem_dados() -> None:
 
     st.subheader("Origem dos dados")
 
-    # 🔥 OPERAÇÃO
     operacao = st.radio(
         "Selecione a operação",
         ["Cadastro de Produtos", "Atualização de Estoque"],
         key="tipo_operacao",
     )
 
-    # 🔥 SINCRONIZA COM MAPEAMENTO
     if operacao == "Cadastro de Produtos":
         st.session_state["tipo_operacao_bling"] = "cadastro"
     else:
         st.session_state["tipo_operacao_bling"] = "estoque"
 
-    # 🔥 MODELOS
     st.markdown("### Modelos Bling")
 
     if operacao == "Cadastro de Produtos":
@@ -157,16 +152,18 @@ def render_origem_dados() -> None:
 
     st.session_state["df_origem"] = df_origem
 
+    # 🔥 GARANTE FLUXO MESMO SEM PRECIFICAÇÃO
+    if "df_saida" not in st.session_state:
+        st.session_state["df_saida"] = df_origem.copy()
+
     with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
         st.dataframe(df_origem.head(10), width="stretch")
 
-    # 🔥 PRECIFICAÇÃO
     _render_precificacao(df_origem)
 
     df_saida = st.session_state.get("df_saida")
 
     if _safe_df_dados(df_saida):
-
         if st.button("➡️ Continuar para mapeamento", use_container_width=True):
             st.session_state["df_final"] = df_saida.copy()
             st.session_state["etapa_origem"] = "mapeamento"
