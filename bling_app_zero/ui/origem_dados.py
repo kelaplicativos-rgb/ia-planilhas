@@ -9,9 +9,6 @@ from bling_app_zero.ui.origem_dados_helpers import (
 from bling_app_zero.ui.origem_dados_site import render_origem_site
 
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 def _safe_df(df):
     try:
         if df is None or df.empty:
@@ -21,46 +18,6 @@ def _safe_df(df):
         return None
 
 
-def _render_preview_compacto(df_origem) -> None:
-    try:
-        st.dataframe(
-            df_origem.head(10),
-            use_container_width=True,
-            height=260,
-        )
-    except Exception as e:
-        log_debug(f"Erro no preview compacto: {e}", "ERROR")
-        st.dataframe(df_origem.head(10), use_container_width=True)
-
-
-def _reset_fluxo_origem() -> None:
-    for chave in [
-        "df_origem",
-        "df_final",
-        "etapa_origem",
-        "operacao_tipo",
-        "operacao_label",
-        "mapeamento_origem",
-        "mapeamento_origem_confirmado",
-        "mapeamento_origem_hash",
-    ]:
-        if chave in st.session_state:
-            del st.session_state[chave]
-
-
-def _salvar_operacao_escolhida(valor: str) -> None:
-    st.session_state["operacao_tipo"] = valor
-    if valor == "cadastro":
-        st.session_state["operacao_label"] = "Cadastro / atualização de produtos"
-    elif valor == "estoque":
-        st.session_state["operacao_label"] = "Atualização de estoque"
-    else:
-        st.session_state["operacao_label"] = ""
-
-
-# ==========================================================
-# MAIN UI
-# ==========================================================
 def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
 
@@ -83,59 +40,45 @@ def render_origem_dados() -> None:
         )
 
         if arquivo:
-            log_debug("Iniciando leitura da planilha")
             df_origem = ler_planilha_segura(arquivo)
 
             if _safe_df(df_origem) is None:
-                log_debug("Erro planilha", "ERROR")
                 st.error("Erro ao ler planilha")
                 return
 
-    # =========================
-    # XML
-    # =========================
     elif origem == "XML":
         st.warning("XML ainda em construção")
         return
 
-    # =========================
-    # SITE
-    # =========================
     elif origem == "Site":
         try:
             df_origem = render_origem_site()
-        except Exception as e:
-            log_debug(f"Erro na origem por site: {e}", "ERROR")
+        except Exception:
             st.error("Erro ao buscar dados do site")
             return
 
     if _safe_df(df_origem) is None:
         return
 
-    # mantém compatibilidade com o resto do sistema
+    # mantém padrão do sistema
     st.session_state["df_origem"] = df_origem
 
     # ==========================================================
-    # PRÉ-VISUALIZAÇÃO
+    # PREVIEW
     # ==========================================================
     st.divider()
     st.subheader("Pré-visualização dos dados")
 
-    try:
-        _render_preview_compacto(df_origem)
-        st.success(f"{len(df_origem)} registros carregados")
-    except Exception as e:
-        log_debug(f"Erro ao gerar preview: {e}", "ERROR")
-        st.error("Erro ao gerar preview")
-        return
+    st.dataframe(df_origem.head(10), use_container_width=True)
+    st.success(f"{len(df_origem)} registros carregados")
 
     # ==========================================================
-    # FLUXO ORIGINAL APÓS ANEXAR PLANILHA
+    # 🔥 FLUXO ORIGINAL (CORRETO)
     # ==========================================================
     st.divider()
-    st.subheader("Selecione a operação antes de tudo")
+    st.subheader("Selecione a operação")
 
-    valor_atual = st.session_state.get("operacao_tipo", "cadastro")
+    valor_atual = st.session_state.get("tipo_operacao_bling", "cadastro")
 
     opcoes = {
         "Cadastro / atualização de produtos": "cadastro",
@@ -143,52 +86,32 @@ def render_origem_dados() -> None:
     }
 
     labels = list(opcoes.keys())
-    indice_padrao = 0 if valor_atual != "estoque" else 1
+    indice = 0 if valor_atual != "estoque" else 1
 
     escolha_label = st.radio(
         "O que será feito?",
         options=labels,
-        index=indice_padrao,
-        key="operacao_radio_fluxo",
+        index=indice,
+        key="radio_operacao_bling",
     )
 
     escolha_valor = opcoes[escolha_label]
-    _salvar_operacao_escolhida(escolha_valor)
+
+    # 🔥 AQUI ESTÁ A CORREÇÃO REAL
+    st.session_state["tipo_operacao_bling"] = escolha_valor
 
     if escolha_valor == "cadastro":
-        st.info("Fluxo selecionado: Cadastro / atualização de produtos")
+        st.info("Modo: Cadastro de produtos")
     else:
-        st.info("Fluxo selecionado: Atualização de estoque")
+        st.info("Modo: Atualização de estoque")
 
     # ==========================================================
-    # AÇÕES
+    # BOTÃO CONTINUAR
     # ==========================================================
-    col1, col2 = st.columns(2)
+    if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+        st.session_state["df_saida"] = df_origem.copy()
 
-    with col1:
-        if st.button(
-            "➡️ Continuar para mapeamento",
-            use_container_width=True,
-            key="btn_continuar_mapeamento",
-        ):
-            try:
-                st.session_state["df_final"] = df_origem.copy()
-                st.session_state["etapa_origem"] = "mapeamento"
-                log_debug(
-                    f"Fluxo liberado para mapeamento | operação={st.session_state.get('operacao_tipo', '')}",
-                    "SUCCESS",
-                )
-                st.rerun()
-            except Exception as e:
-                log_debug(f"Erro ao preparar mapeamento: {e}", "ERROR")
-                st.error("Erro ao avançar para o mapeamento")
+        # 🔥 SEM USAR etapa_origem
+        st.session_state["ir_para_mapeamento"] = True
 
-    with col2:
-        if st.button(
-            "🧹 Limpar dados carregados",
-            use_container_width=True,
-            key="btn_limpar_origem",
-        ):
-            _reset_fluxo_origem()
-            log_debug("Fluxo de origem resetado", "INFO")
-            st.rerun()
+        st.rerun()
