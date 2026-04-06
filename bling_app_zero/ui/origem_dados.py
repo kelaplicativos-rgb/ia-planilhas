@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.core.mapeamento_auto import sugestao_automatica
 from bling_app_zero.ui.origem_dados_helpers import (
     log_debug,
     ler_planilha_segura,
@@ -25,168 +24,114 @@ def _obter_df_origem():
     return df
 
 
-def _obter_colunas_modelo_ativo(df_origem=None) -> list[str]:
-    """
-    🔥 AGORA COM FALLBACK INTELIGENTE
-    """
-    candidatos = [
-        st.session_state.get("colunas_modelo_ativo"),
-        st.session_state.get("colunas_modelo"),
-        st.session_state.get("modelo_ativo_colunas"),
-        st.session_state.get("colunas_bling_modelo"),
-    ]
-
-    for item in candidatos:
-        if isinstance(item, list) and item:
-            return [str(x) for x in item if str(x).strip()]
-
-    dfs_candidatos = [
-        st.session_state.get("df_modelo_ativo"),
-        st.session_state.get("df_modelo_cadastro"),
-        st.session_state.get("df_modelo_estoque"),
-        st.session_state.get("modelo_ativo_df"),
-    ]
-
-    for df in dfs_candidatos:
-        try:
-            if df is not None and not df.empty:
-                return [str(c) for c in df.columns]
-        except Exception:
-            continue
-
-    # 🔥 FALLBACK FINAL — NÃO TRAVA MAIS
-    if df_origem is not None:
-        return list(df_origem.columns)
-
-    return []
-
-
-def _obter_mapeamento_inicial(df_origem, colunas_alvo: list[str]) -> dict[str, str]:
-    mapeamento: dict[str, str] = {}
-
-    if df_origem is None or df_origem.empty:
-        return mapeamento
-
-    if not colunas_alvo:
-        return mapeamento
-
-    try:
-        sugestoes = sugestao_automatica(df_origem, colunas_alvo)
-
-        if isinstance(sugestoes, dict):
-            for k, v in sugestoes.items():
-                if k and v:
-                    if k in df_origem.columns:
-                        mapeamento[k] = v
-
-    except Exception as e:
-        log_debug(f"Erro IA mapeamento: {e}", "WARNING")
-
-    return mapeamento
-
-
 def _render_preview_compacto(df_origem) -> None:
-    st.dataframe(df_origem.head(10), use_container_width=True, height=260)
-
-
-# ==========================================================
-# MAPEAMENTO
-# ==========================================================
-def _render_mapeamento(df_origem) -> None:
-    st.subheader("Mapeamento de colunas")
-
-    colunas_alvo = _obter_colunas_modelo_ativo(df_origem)
-
-    # 🔥 NÃO TRAVA MAIS
-    if not colunas_alvo:
-        st.warning("Modo automático ativado (sem modelo)")
-
-    mapeamento = _obter_mapeamento_inicial(df_origem, colunas_alvo)
-
-    st.markdown("### Preview")
-    _render_preview_compacto(df_origem)
-
-    st.markdown("### Mapeamento")
-
-    resultado = {}
-
-    for col in df_origem.columns:
-        escolha = st.selectbox(
-            f"{col}",
-            [""] + colunas_alvo,
-            key=f"map_{col}",
+    try:
+        st.dataframe(
+            df_origem.head(10),
+            use_container_width=True,
+            height=260,
         )
-        if escolha:
-            resultado[col] = escolha
+    except Exception as e:
+        log_debug(f"Erro no preview compacto: {e}", "ERROR")
+        st.dataframe(df_origem.head(10), use_container_width=True)
 
-    st.session_state["mapeamento_origem"] = resultado
 
-    if st.button("✅ Confirmar mapeamento", use_container_width=True):
-        st.session_state["mapeamento_origem_confirmado"] = True
-
-        # 🔥 CRIA DF FINAL AQUI
-        st.session_state["df_final"] = df_origem.copy()
-
-        st.success("Mapeamento confirmado")
+def _reset_fluxo_origem() -> None:
+    for chave in [
+        "df_origem",
+        "etapa_origem",
+        "mapeamento_origem",
+        "mapeamento_origem_confirmado",
+        "mapeamento_origem_hash",
+    ]:
+        if chave in st.session_state:
+            del st.session_state[chave]
 
 
 # ==========================================================
-# MAIN
+# MAIN UI
 # ==========================================================
 def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
 
-    etapa = st.session_state.get("etapa_origem", "upload")
+    origem = st.selectbox(
+        "Selecione a origem",
+        ["Planilha", "XML", "Site"],
+        key="origem_tipo",
+    )
+
+    df_origem = None
 
     # =========================
-    # UPLOAD
+    # PLANILHA
     # =========================
-    if etapa == "upload":
-
-        origem = st.selectbox(
-            "Selecione a origem",
-            ["Planilha", "XML", "Site"],
+    if origem == "Planilha":
+        arquivo = st.file_uploader(
+            "Envie a planilha",
+            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
+            key="upload_planilha_origem",
         )
 
-        df_origem = None
+        if arquivo:
+            log_debug("Iniciando leitura da planilha")
+            df_origem = ler_planilha_segura(arquivo)
 
-        if origem == "Planilha":
-            arquivo = st.file_uploader(
-                "Envie a planilha",
-                type=["xlsx", "xls", "csv"],
-            )
+            if df_origem is None or df_origem.empty:
+                log_debug("Erro planilha", "ERROR")
+                st.error("Erro ao ler planilha")
+                return
 
-            if arquivo:
-                df_origem = ler_planilha_segura(arquivo)
+    # =========================
+    # XML
+    # =========================
+    elif origem == "XML":
+        st.warning("XML ainda em construção")
+        return
 
-        elif origem == "Site":
+    # =========================
+    # SITE
+    # =========================
+    elif origem == "Site":
+        try:
             df_origem = render_origem_site()
-
-        if df_origem is None or df_origem.empty:
+        except Exception as e:
+            log_debug(f"Erro na origem por site: {e}", "ERROR")
+            st.error("Erro ao buscar dados do site")
             return
 
-        st.session_state["df_origem"] = df_origem
+    if df_origem is None or df_origem.empty:
+        return
 
-        st.subheader("Pré-visualização")
+    # mantém compatibilidade com o resto do sistema
+    st.session_state["df_origem"] = df_origem
+
+    st.divider()
+    st.subheader("Pré-visualização dos dados")
+
+    try:
         _render_preview_compacto(df_origem)
+        st.success(f"{len(df_origem)} registros carregados")
+    except Exception as e:
+        log_debug(f"Erro ao gerar preview: {e}", "ERROR")
+        st.error("Erro ao gerar preview")
+        return
 
-        if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+    col1, col2 = st.columns(2)
 
-            # 🔥 ESSENCIAL
-            st.session_state["df_final"] = df_origem.copy()
+    with col1:
+        if st.button("➡️ Continuar para mapeamento", use_container_width=True, key="btn_continuar_mapeamento"):
+            try:
+                # libera o fluxo original do app.py
+                st.session_state["df_final"] = df_origem.copy()
+                st.session_state["etapa_origem"] = "mapeamento"
+                log_debug("Fluxo liberado para mapeamento", "SUCCESS")
+                st.rerun()
+            except Exception as e:
+                log_debug(f"Erro ao preparar mapeamento: {e}", "ERROR")
+                st.error("Erro ao avançar para o mapeamento")
 
-            st.session_state["etapa_origem"] = "mapeamento"
+    with col2:
+        if st.button("🧹 Limpar dados carregados", use_container_width=True, key="btn_limpar_origem"):
+            _reset_fluxo_origem()
+            log_debug("Fluxo de origem resetado", "INFO")
             st.rerun()
-
-    # =========================
-    # MAPEAMENTO
-    # =========================
-    elif etapa == "mapeamento":
-
-        df_origem = _obter_df_origem()
-
-        if df_origem is None:
-            st.warning("Sem dados")
-            return
-
-        _render_mapeamento(df_origem)
