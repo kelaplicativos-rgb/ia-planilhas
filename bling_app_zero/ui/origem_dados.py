@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_auto import sugestao_automatica
-from bling_app_zero.core.precificacao import calcular_preco_compra_automatico_df
 
 
 # ==========================================================
@@ -46,7 +46,6 @@ def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
 # MAIN UI
 # ==========================================================
 def render_origem_dados() -> None:
-
     st.subheader("Origem dos dados")
 
     origem = st.selectbox(
@@ -61,7 +60,11 @@ def render_origem_dados() -> None:
     # INPUT
     # =========================
     if origem == "Planilha":
-        arquivo = st.file_uploader("Envie a planilha", type=["xlsx", "csv"])
+        arquivo = st.file_uploader(
+            "Envie a planilha",
+            type=["xlsx", "csv"],
+            key="upload_planilha_origem",
+        )
         if arquivo:
             try:
                 if arquivo.name.lower().endswith(".csv"):
@@ -73,13 +76,17 @@ def render_origem_dados() -> None:
                 return
 
     elif origem == "XML":
-        arquivo = st.file_uploader("Envie o XML", type=["xml"])
+        arquivo = st.file_uploader(
+            "Envie o XML",
+            type=["xml"],
+            key="upload_xml_origem",
+        )
         if arquivo:
             st.warning("Leitura de XML em processamento...")
             return
 
     elif origem == "Site":
-        url = st.text_input("URL do site")
+        url = st.text_input("URL do site", key="url_site_origem")
         if url:
             st.info("Captura do site em processamento...")
             return
@@ -102,6 +109,7 @@ def render_origem_dados() -> None:
         "Selecione a operação",
         ["cadastro", "estoque"],
         horizontal=True,
+        key="modo_operacao_origem",
     )
 
     # =========================
@@ -111,14 +119,30 @@ def render_origem_dados() -> None:
     modelo_estoque = None
 
     if modo == "cadastro":
-        modelo_cadastro = st.file_uploader("Modelo Cadastro", type=["xlsx"])
+        modelo_cadastro = st.file_uploader(
+            "Modelo Cadastro",
+            type=["xlsx"],
+            key="upload_modelo_cadastro",
+        )
     else:
-        modelo_estoque = st.file_uploader("Modelo Estoque", type=["xlsx"])
+        modelo_estoque = st.file_uploader(
+            "Modelo Estoque",
+            type=["xlsx"],
+            key="upload_modelo_estoque",
+        )
 
     if modo == "cadastro" and modelo_cadastro:
-        df_modelo = pd.read_excel(modelo_cadastro)
+        try:
+            df_modelo = pd.read_excel(modelo_cadastro)
+        except Exception as e:
+            st.error(f"Erro ao ler modelo de cadastro: {e}")
+            return
     elif modo == "estoque" and modelo_estoque:
-        df_modelo = pd.read_excel(modelo_estoque)
+        try:
+            df_modelo = pd.read_excel(modelo_estoque)
+        except Exception as e:
+            st.error(f"Erro ao ler modelo de estoque: {e}")
+            return
     else:
         st.warning("Anexe o modelo correspondente.")
         return
@@ -130,7 +154,10 @@ def render_origem_dados() -> None:
     # =========================
     sugestoes = sugestao_automatica(df_origem, colunas_modelo_ativas)
 
-    if "mapeamento_manual" not in st.session_state or not st.session_state["mapeamento_manual"]:
+    if (
+        "mapeamento_manual" not in st.session_state
+        or not st.session_state["mapeamento_manual"]
+    ):
         st.session_state["mapeamento_manual"] = sugestoes or {}
 
     mapa = st.session_state["mapeamento_manual"]
@@ -139,6 +166,10 @@ def render_origem_dados() -> None:
     st.dataframe(_safe_preview(df_origem), width="stretch")
 
     st.markdown("### Mapeamento")
+
+    if st.button("Limpar mapeamento", width="stretch"):
+        st.session_state["mapeamento_manual"] = {}
+        st.rerun()
 
     opcoes = [""] + list(df_origem.columns)
 
@@ -159,7 +190,10 @@ def render_origem_dados() -> None:
     # =========================
     deposito = ""
     if modo == "estoque":
-        deposito = st.text_input("Nome do depósito")
+        deposito = st.text_input(
+            "Nome do depósito",
+            key="nome_deposito_estoque",
+        )
 
     # =========================
     # MONTAGEM
