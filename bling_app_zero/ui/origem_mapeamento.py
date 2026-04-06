@@ -14,13 +14,9 @@ def _safe_dataframe_preview(df: pd.DataFrame, rows: int = 20):
     return df.head(rows)
 
 
-# ==========================================================
-# LOG
-# ==========================================================
 def _build_log():
     logs = st.session_state.get("logs", [])
-    texto = "\n".join(logs) if logs else "Sem logs"
-    return texto
+    return "\n".join(logs) if logs else "Sem logs"
 
 
 # ==========================================================
@@ -28,24 +24,50 @@ def _build_log():
 # ==========================================================
 def render_origem_mapeamento():
 
-    # 🔥 PUXAR DO SESSION STATE (ESSA É A CORREÇÃO)
     df = st.session_state.get("df_final")
 
     if df is None or df.empty:
         st.warning("Nenhum dado disponível para mapeamento.")
         return
 
-    st.markdown("### Preview da saída")
-    st.dataframe(_safe_dataframe_preview(df), width="stretch")
+    operacao = st.session_state.get("operacao_tipo", "")
+    operacao_label = st.session_state.get("operacao_label", "")
+
+    # ==========================================================
+    # HEADER FLUXO
+    # ==========================================================
+    if operacao_label:
+        st.success(f"Fluxo selecionado: {operacao_label}")
+    else:
+        st.warning("Nenhuma operação selecionada")
 
     st.divider()
 
-    col1, col2 = st.columns(2)
+    # ==========================================================
+    # PREVIEW
+    # ==========================================================
+    st.markdown("### Pré-visualização dos dados finais")
+    st.dataframe(_safe_dataframe_preview(df), use_container_width=True)
+
+    st.divider()
+
+    # ==========================================================
+    # AÇÕES
+    # ==========================================================
+    col1, col2, col3 = st.columns(3)
+
+    # =========================
+    # VOLTAR
+    # =========================
+    with col1:
+        if st.button("⬅️ Voltar", use_container_width=True):
+            st.session_state["etapa_origem"] = "upload"
+            st.rerun()
 
     # =========================
     # DOWNLOAD
     # =========================
-    with col1:
+    with col2:
         try:
             from io import BytesIO
 
@@ -54,7 +76,7 @@ def render_origem_mapeamento():
             buffer.seek(0)
 
             st.download_button(
-                "Baixar planilha",
+                "⬇️ Baixar planilha",
                 buffer,
                 "saida.xlsx",
                 use_container_width=True,
@@ -63,14 +85,35 @@ def render_origem_mapeamento():
             st.error(f"Erro ao gerar Excel: {e}")
 
     # =========================
-    # LOG DOWNLOAD
+    # LOG
     # =========================
-    with col2:
-        log_texto = _build_log()
-
+    with col3:
         st.download_button(
-            "Baixar log",
-            log_texto,
+            "📄 Baixar log",
+            _build_log(),
             "log.txt",
             use_container_width=True,
         )
+
+    st.divider()
+
+    # ==========================================================
+    # PRÓXIMO PASSO (FLUXO)
+    # ==========================================================
+    st.markdown("### Próxima etapa")
+
+    if operacao == "cadastro":
+        st.info("Pronto para gerar planilha de CADASTRO para o Bling")
+
+    elif operacao == "estoque":
+        st.info("Pronto para gerar planilha de ESTOQUE para o Bling")
+
+    else:
+        st.warning("Selecione uma operação na etapa anterior")
+
+    if st.button("🚀 Gerar saída final", use_container_width=True):
+        try:
+            # 🔥 aqui futuramente entra geração real Bling
+            st.success("Fluxo pronto — integração final preparada")
+        except Exception as e:
+            st.error(f"Erro na geração final: {e}")
