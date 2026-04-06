@@ -9,28 +9,47 @@ from bling_app_zero.ui.origem_dados_helpers import (
 from bling_app_zero.ui.origem_dados_site import render_origem_site
 
 
-def _safe_df(df):
+def _safe_df_dados(df):
+    """
+    Para arquivos de DADOS:
+    precisa existir e ter pelo menos 1 linha.
+    """
     try:
-        if df is None or df.empty:
+        if df is None:
+            return None
+        if len(df.columns) == 0:
+            return None
+        if df.empty:
             return None
         return df
     except Exception:
         return None
 
 
-def _limpar_modelos_estado() -> None:
-    for chave in [
-        "df_modelo_cadastro",
-        "df_modelo_estoque",
-        "modelo_cadastro_nome",
-        "modelo_estoque_nome",
-    ]:
-        if chave in st.session_state:
-            del st.session_state[chave]
+def _safe_df_modelo(df):
+    """
+    Para PLANILHAS MODELO:
+    aceita arquivo com 0 linhas, desde que tenha colunas.
+    Isso é o comportamento esperado de modelos oficiais vazios.
+    """
+    try:
+        if df is None:
+            return None
+        if len(df.columns) == 0:
+            return None
+        return df
+    except Exception:
+        return None
+
+
+def _nome_modelo_esperado(tipo_operacao: str) -> str:
+    if tipo_operacao == "estoque":
+        return "Estoque"
+    return "Cadastro"
 
 
 def render_origem_dados() -> None:
-    # não renderiza a origem quando já estiver na etapa seguinte
+    # não renderiza a origem quando já estiver no mapeamento
     if st.session_state.get("etapa_origem") == "mapeamento":
         return
 
@@ -57,7 +76,7 @@ def render_origem_dados() -> None:
         if arquivo:
             df_origem = ler_planilha_segura(arquivo)
 
-            if _safe_df(df_origem) is None:
+            if _safe_df_dados(df_origem) is None:
                 st.error("Erro ao ler planilha")
                 return
 
@@ -79,7 +98,7 @@ def render_origem_dados() -> None:
             st.error("Erro ao buscar dados do site")
             return
 
-    if _safe_df(df_origem) is None:
+    if _safe_df_dados(df_origem) is None:
         return
 
     st.session_state["df_origem"] = df_origem
@@ -139,13 +158,16 @@ def render_origem_dados() -> None:
 
         if modelo_cadastro is not None:
             df_modelo_cadastro = ler_planilha_segura(modelo_cadastro)
-            if _safe_df(df_modelo_cadastro) is None:
+
+            if _safe_df_modelo(df_modelo_cadastro) is None:
                 st.error("Erro ao ler o modelo de cadastro")
                 return
 
             st.session_state["df_modelo_cadastro"] = df_modelo_cadastro
             st.session_state["modelo_cadastro_nome"] = modelo_cadastro.name
-            st.success(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
+            st.success(
+                f"Modelo de {_nome_modelo_esperado(escolha_valor)} carregado: {modelo_cadastro.name}"
+            )
 
     else:
         modelo_estoque = st.file_uploader(
@@ -156,13 +178,16 @@ def render_origem_dados() -> None:
 
         if modelo_estoque is not None:
             df_modelo_estoque = ler_planilha_segura(modelo_estoque)
-            if _safe_df(df_modelo_estoque) is None:
+
+            if _safe_df_modelo(df_modelo_estoque) is None:
                 st.error("Erro ao ler o modelo de estoque")
                 return
 
             st.session_state["df_modelo_estoque"] = df_modelo_estoque
             st.session_state["modelo_estoque_nome"] = modelo_estoque.name
-            st.success(f"Modelo de estoque carregado: {modelo_estoque.name}")
+            st.success(
+                f"Modelo de {_nome_modelo_esperado(escolha_valor)} carregado: {modelo_estoque.name}"
+            )
 
         st.text_input(
             "Nome do depósito",
