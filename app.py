@@ -36,12 +36,12 @@ def main():
     aplicar_estilo_global()
     init_state()
 
-    # AGORA COM 3 ABAS:
+    # ORDEM AJUSTADA:
     # 1) Origem dos dados
-    # 2) Integração Bling
-    # 3) Envio por API
+    # 2) Envio por API
+    # 3) Integração Bling
     tab1, tab2, tab3 = st.tabs(
-        ["Origem dos dados", "Integração Bling", "Envio por API"]
+        ["Origem dos dados", "Envio por API", "Integração Bling"]
     )
 
     # =========================
@@ -56,9 +56,19 @@ def main():
             log(f"Erro Origem dos dados: {traceback.format_exc()}")
 
     # =========================
-    # BLING (CONEXÃO / IMPORTAÇÃO)
+    # ENVIO POR API
     # =========================
     with tab2:
+        try:
+            render_send_panel()
+        except Exception as e:
+            st.error(f"Erro na aba Envio por API: {e}")
+            log(f"Erro Envio por API: {traceback.format_exc()}")
+
+    # =========================
+    # INTEGRAÇÃO BLING
+    # =========================
+    with tab3:
         try:
             render_bling_panel()
             st.markdown("---")
@@ -66,16 +76,6 @@ def main():
         except Exception as e:
             st.error(f"Erro no painel Bling: {e}")
             log(f"Erro Painel Bling: {traceback.format_exc()}")
-
-    # =========================
-    # ENVIO POR API
-    # =========================
-    with tab3:
-        try:
-            render_send_panel()
-        except Exception as e:
-            st.error(f"Erro na aba Envio por API: {e}")
-            log(f"Erro Envio por API: {traceback.format_exc()}")
 
     # =========================
     # RODAPÉ
