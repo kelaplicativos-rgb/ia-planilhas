@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -60,6 +62,86 @@ def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
         )
 
 
+def _fingerprint_df(df) -> str:
+    """
+    Gera uma assinatura simples do DataFrame para detectar troca de origem
+    e evitar reaproveitamento silencioso de estado antigo.
+    """
+    try:
+        if not _safe_df_dados(df):
+            return ""
+        base = f"{list(df.columns)}|{len(df)}"
+        return hashlib.md5(base.encode("utf-8")).hexdigest()
+    except Exception:
+        return ""
+
+
+def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
+    """
+    Limpa estados transitórios do fluxo sem mexer desnecessariamente
+    na estrutura geral da aplicação.
+    """
+    chaves_reset = [
+        "df_origem",
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "bloquear_campos_auto",
+        "mapeamento_automatico",
+        "mapeamento_manual",
+        "coluna_preco_base",
+        "origem_dados_fingerprint",
+    ]
+
+    for chave in chaves_reset:
+        st.session_state.pop(chave, None)
+
+    if not manter_modelos:
+        st.session_state.pop("df_modelo_cadastro", None)
+        st.session_state.pop("modelo_cadastro_nome", None)
+        st.session_state.pop("df_modelo_estoque", None)
+        st.session_state.pop("modelo_estoque_nome", None)
+
+
+def _controlar_troca_operacao(operacao: str) -> None:
+    """
+    Quando troca Cadastro/Estoque, limpa o fluxo para não vazar estado antigo.
+    """
+    operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
+    if operacao_anterior is None:
+        st.session_state["_operacao_anterior_origem_dados"] = operacao
+        return
+
+    if operacao_anterior != operacao:
+        log_debug(
+            f"Operação alterada de '{operacao_anterior}' para '{operacao}'. "
+            "Resetando estados transitórios do fluxo."
+        )
+        _resetar_estado_fluxo(manter_modelos=True)
+        st.session_state["etapa_origem"] = None
+        st.session_state["_operacao_anterior_origem_dados"] = operacao
+
+
+def _controlar_troca_origem(origem: str) -> None:
+    """
+    Quando troca a origem (Planilha/XML/Site), limpa o fluxo para evitar
+    reaproveitar df antigo sem perceber.
+    """
+    origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
+    if origem_anterior is None:
+        st.session_state["_origem_anterior_origem_dados"] = origem
+        return
+
+    if origem_anterior != origem:
+        log_debug(
+            f"Origem alterada de '{origem_anterior}' para '{origem}'. "
+            "Resetando estados transitórios do fluxo."
+        )
+        _resetar_estado_fluxo(manter_modelos=True)
+        st.session_state["etapa_origem"] = None
+        st.session_state["_origem_anterior_origem_dados"] = origem
+
+
 def _carregar_modelo_bling(arquivo, tipo_modelo: str) -> bool:
     """
     Lê o modelo anexado e salva no session_state na chave esperada
@@ -105,6 +187,13 @@ def _obter_modelo_ativo():
     return st.session_state.get("df_modelo_estoque")
 
 
+def _modelo_ativo_esta_ok() -> bool:
+    tipo = st.session_state.get("tipo_operacao_bling")
+    if tipo == "cadastro":
+        return _safe_df_dados(st.session_state.get("df_modelo_cadastro"))
+    return _safe_df_dados(st.session_state.get("df_modelo_estoque"))
+
+
 def _render_modelo_bling(operacao: str) -> None:
     st.markdown("### Modelos Bling")
 
@@ -146,6 +235,8 @@ def _render_origem_entrada():
         key="origem_tipo",
     )
 
+    _controlar_troca_origem(origem)
+
     df_origem = None
 
     if origem == "Planilha":
@@ -180,6 +271,35 @@ def _render_origem_entrada():
         return None
 
     return df_origem
+
+
+def _sincronizar_estado_com_origem(df_origem) -> None:
+    """
+    Mantém df_origem/df_saida/df_final consistentes quando a origem muda.
+    Evita reaproveitar precificação ou saída antiga em outra planilha/site.
+    """
+    if not _safe_df_dados(df_origem):
+        return
+
+    novo_fingerprint = _fingerprint_df(df_origem)
+    fingerprint_atual = st.session_state.get("origem_dados_fingerprint", "")
+
+    if fingerprint_atual != novo_fingerprint:
+        log_debug("Nova origem detectada. Sincronizando estados do fluxo.")
+        st.session_state["origem_dados_fingerprint"] = novo_fingerprint
+        st.session_state["df_origem"] = df_origem.copy()
+        st.session_state["df_saida"] = df_origem.copy()
+        st.session_state["df_final"] = df_origem.copy()
+        st.session_state.pop("df_precificado", None)
+        st.session_state["bloquear_campos_auto"] = {}
+    else:
+        st.session_state["df_origem"] = df_origem.copy()
+
+        if not _safe_df_dados(st.session_state.get("df_saida")):
+            st.session_state["df_saida"] = df_origem.copy()
+
+        if not _safe_df_dados(st.session_state.get("df_final")):
+            st.session_state["df_final"] = st.session_state["df_saida"].copy()
 
 
 def _render_precificacao(df_base):
@@ -246,6 +366,9 @@ def _render_precificacao(df_base):
                 log_debug(
                     f"Precificação aplicada com sucesso usando a coluna '{coluna_preco}'"
                 )
+            else:
+                st.error("A precificação não retornou dados válidos.")
+                log_debug("Precificação retornou DataFrame inválido", "ERRO")
 
         except Exception as e:
             log_debug(f"Erro na precificação: {e}", "ERRO")
@@ -255,6 +378,25 @@ def _render_precificacao(df_base):
     if _safe_df_dados(df_preview_precificacao):
         with st.expander("👁️ Prévia da precificação", expanded=False):
             st.dataframe(df_preview_precificacao.head(10), width="stretch")
+
+
+def _validar_antes_mapeamento() -> tuple[bool, list[str]]:
+    erros = []
+
+    if not _safe_df_dados(st.session_state.get("df_origem")):
+        erros.append("A origem dos dados não está carregada.")
+
+    if not _safe_df_dados(st.session_state.get("df_saida")):
+        erros.append("A base de saída ainda não foi preparada.")
+
+    if not _modelo_ativo_esta_ok():
+        tipo = st.session_state.get("tipo_operacao_bling")
+        if tipo == "cadastro":
+            erros.append("Anexe o modelo oficial de cadastro do Bling.")
+        else:
+            erros.append("Anexe o modelo oficial de estoque do Bling.")
+
+    return len(erros) == 0, erros
 
 
 def render_origem_dados() -> None:
@@ -271,6 +413,8 @@ def render_origem_dados() -> None:
         key="tipo_operacao",
     )
 
+    _controlar_troca_operacao(operacao)
+
     if operacao == "Cadastro de Produtos":
         st.session_state["tipo_operacao_bling"] = "cadastro"
     else:
@@ -283,21 +427,13 @@ def render_origem_dados() -> None:
     if not _safe_df_dados(df_origem):
         return
 
-    st.session_state["df_origem"] = df_origem.copy()
-
-    # garante fluxo mesmo antes da precificação
-    if not _safe_df_dados(st.session_state.get("df_saida")):
-        st.session_state["df_saida"] = df_origem.copy()
-
-    if not _safe_df_dados(st.session_state.get("df_final")):
-        st.session_state["df_final"] = st.session_state["df_saida"].copy()
+    _sincronizar_estado_com_origem(df_origem)
 
     with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
         st.dataframe(df_origem.head(10), width="stretch")
 
     _render_precificacao(df_origem)
 
-    # se ainda não houve precificação, segue com df_origem
     df_saida = st.session_state.get("df_saida")
     if not _safe_df_dados(df_saida):
         df_saida = df_origem.copy()
@@ -305,9 +441,14 @@ def render_origem_dados() -> None:
         st.session_state["df_final"] = df_saida.copy()
 
     modelo_ativo = _obter_modelo_ativo()
-
     if not _safe_df_dados(modelo_ativo):
         st.warning("Anexe o modelo oficial do Bling antes de continuar para o mapeamento.")
+        return
+
+    valido, erros = _validar_antes_mapeamento()
+    if not valido:
+        for erro in erros:
+            st.warning(erro)
         return
 
     if st.button("➡️ Continuar para mapeamento", use_container_width=True):
