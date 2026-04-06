@@ -32,6 +32,9 @@ def _safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     return df.head(rows)
 
 
+# ==========================================================
+# GTIN
+# ==========================================================
 def _normalizar_gtin(valor) -> str:
     if pd.isna(valor):
         return ""
@@ -50,6 +53,9 @@ def _normalizar_gtin(valor) -> str:
 
 
 def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
     for col in df.columns:
         nome_col = str(col).lower()
         if "gtin" in nome_col or "ean" in nome_col:
@@ -57,21 +63,9 @@ def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _colunas_ruins(df: pd.DataFrame) -> bool:
-    if df is None or df.empty:
-        return True
-
-    nomes = [str(c).strip() for c in df.columns]
-
-    if not nomes:
-        return True
-
-    qtd_unnamed = sum(1 for c in nomes if c.lower().startswith("unnamed"))
-    qtd_vazios = sum(1 for c in nomes if c == "" or c.lower() == "nan")
-
-    return (qtd_unnamed + qtd_vazios) >= max(1, len(nomes) // 2)
-
-
+# ==========================================================
+# LEITURA ROBUSTA DE ARQUIVOS
+# ==========================================================
 def _limpar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -98,85 +92,151 @@ def _limpar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _ler_csv_com_header(arquivo, header_idx: int | None, params: dict):
-    arquivo.seek(0)
-    return pd.read_csv(arquivo, header=header_idx, **params)
+def _detectar_header(df_raw: pd.DataFrame) -> int:
+    melhor_linha = 0
+    maior_score = -1
+
+    if df_raw is None or df_raw.empty:
+        return 0
+
+    limite = min(10, len(df_raw))
+
+    for i in range(limite):
+        linha = df_raw.iloc[i].astype(str).tolist()
+
+        score = sum(
+            1 for x in linha
+            if str(x).strip() != "" and str(x).strip().lower() != "nan"
+        )
+
+        if score > maior_score:
+            maior_score = score
+            melhor_linha = i
+
+    return melhor_linha
+
+
+def _ler_excel_seguro(arquivo):
+    motores = [None, "openpyxl", "xlrd"]
+
+    for engine in motores:
+        try:
+            arquivo.seek(0)
+            kwargs_raw = {"header": None}
+            if engine:
+                kwargs_raw["engine"] = engine
+
+            df_raw = pd.read_excel(arquivo, **kwargs_raw)
+
+            if df_raw is None or df_raw.empty:
+                continue
+
+            header = _detectar_header(df_raw)
+
+            arquivo.seek(0)
+            kwargs = {"header": header}
+            if engine:
+                kwargs["engine"] = engine
+
+            df = pd.read_excel(arquivo, **kwargs)
+
+            if df is not None and not df.empty:
+                df = _limpar_nomes_colunas(df)
+                return df
+
+        except Exception:
+            continue
+
+    return None
 
 
 def _ler_csv_seguro(arquivo):
     tentativas = [
-        {"sep": ",", "encoding": "utf-8"},
         {"sep": ";", "encoding": "utf-8"},
+        {"sep": ",", "encoding": "utf-8"},
         {"sep": ";", "encoding": "latin1"},
         {"sep": ",", "encoding": "latin1"},
         {"sep": None, "engine": "python", "encoding": "utf-8", "on_bad_lines": "skip"},
         {"sep": None, "engine": "python", "encoding": "latin1", "on_bad_lines": "skip"},
     ]
 
-    for params in tentativas:
-        for header_idx in [0, 1, 2, 3]:
-            try:
-                df = _ler_csv_com_header(arquivo, header_idx, params)
-                if df is not None and not df.empty:
-                    df = _limpar_nomes_colunas(df)
-                    if not _colunas_ruins(df):
-                        return df
-            except Exception:
+    for tentativa in tentativas:
+        try:
+            arquivo.seek(0)
+            df_raw = pd.read_csv(arquivo, header=None, **tentativa)
+
+            if df_raw is None or df_raw.empty:
                 continue
 
+            header = _detectar_header(df_raw)
+
+            arquivo.seek(0)
+            df = pd.read_csv(arquivo, header=header, **tentativa)
+
+            if df is not None and not df.empty:
+                df = _limpar_nomes_colunas(df)
+                return df
+
+        except Exception:
+            continue
+
+    return None
+
+
+def _ler_planilha_segura(arquivo):
+    nome = str(arquivo.name).lower()
+
+    if nome.endswith(".csv"):
+        return _ler_csv_seguro(arquivo)
+
+    if nome.endswith(".xlsx") or nome.endswith(".xls"):
+        return _ler_excel_seguro(arquivo)
+
+    return None
+
+
+# ==========================================================
+# ESTOQUE / MAPEAMENTO
+# ==========================================================
+def _eh_coluna_estoque(nome: str) -> bool:
+    nome = str(nome).lower()
+
+    palavras = [
+        "estoque",
+        "saldo",
+        "quantidade",
+        "qtd",
+        "qty",
+        "disponivel",
+        "disponível",
+        "stock",
+        "inventory",
+        "balanco",
+        "balanço",
+    ]
+
+    return any(p in nome for p in palavras)
+
+
+def _normalizar_estoque_site(valor, padrao_disponivel=10):
     try:
-        arquivo.seek(0)
-        df = pd.read_csv(
-            arquivo,
-            sep=None,
-            engine="python",
-            encoding="latin1",
-            on_bad_lines="skip",
-        )
-        df = _limpar_nomes_colunas(df)
-        return df
-    except Exception as e:
-        st.error(f"Erro ao ler CSV: {e}")
-        return None
+        texto = str(valor).strip().lower()
 
+        if (
+            "esgotado" in texto
+            or "indisponivel" in texto
+            or "indisponível" in texto
+            or "out of stock" in texto
+        ):
+            return 0
 
-def _ler_excel_seguro(arquivo):
-    try:
-        arquivo.seek(0)
-        df_raw = pd.read_excel(arquivo, header=None)
+        if texto == "" or texto == "nan":
+            return padrao_disponivel
 
-        if df_raw is None or df_raw.empty:
-            return None
+        return int(float(valor))
 
-        melhor_linha = 0
-        maior_score = 0
-
-        limite = min(5, len(df_raw))
-
-        for i in range(limite):
-            linha = df_raw.iloc[i].astype(str).tolist()
-
-            score = sum(
-                1 for x in linha
-                if str(x).strip() != "" and str(x).strip().lower() != "nan"
-            )
-
-            if score > maior_score:
-                maior_score = score
-                melhor_linha = i
-
-        arquivo.seek(0)
-        df = pd.read_excel(arquivo, header=melhor_linha)
-
-        if df is None or df.empty:
-            return None
-
-        df = _limpar_nomes_colunas(df)
-        return df
-
-    except Exception as e:
-        st.error(f"Erro ao ler Excel: {e}")
-        return None
+    except Exception:
+        return padrao_disponivel
 
 
 def _gerar_sugestoes(df_origem, colunas_modelo):
@@ -218,15 +278,15 @@ def render_origem_dados() -> None:
     if origem == "Planilha":
         arquivo = st.file_uploader(
             "Envie a planilha",
-            type=["xlsx", "csv"],
+            type=["xlsx", "xls", "csv"],
             key="upload_planilha_origem",
         )
 
         if arquivo:
-            if arquivo.name.lower().endswith(".csv"):
-                df_origem = _ler_csv_seguro(arquivo)
-            else:
-                df_origem = _ler_excel_seguro(arquivo)
+            df_origem = _ler_planilha_segura(arquivo)
+            if df_origem is None or df_origem.empty:
+                st.error("Erro ao ler a planilha.")
+                return
 
     elif origem == "XML":
         st.warning("XML ainda em construção")
@@ -270,13 +330,13 @@ def render_origem_dados() -> None:
     if modo == "cadastro":
         modelo = st.file_uploader(
             "Modelo Cadastro",
-            type=["xlsx"],
+            type=["xlsx", "xls"],
             key="upload_modelo_cadastro",
         )
     else:
         modelo = st.file_uploader(
             "Modelo Estoque",
-            type=["xlsx"],
+            type=["xlsx", "xls"],
             key="upload_modelo_estoque",
         )
 
@@ -284,7 +344,7 @@ def render_origem_dados() -> None:
         st.warning("Anexe o modelo correspondente.")
         return
 
-    df_modelo = _ler_excel_seguro(modelo)
+    df_modelo = _ler_planilha_segura(modelo)
 
     if df_modelo is None or df_modelo.empty:
         st.error("Não foi possível ler o modelo.")
@@ -352,44 +412,19 @@ def render_origem_dados() -> None:
             else:
                 df_saida[col] = ""
 
-        # REGRA ESTOQUE SITE
         if origem == "Site":
             for col in df_saida.columns:
-                nome_col = col.lower()
-                if (
-                    "estoque" in nome_col
-                    or "saldo" in nome_col
-                    or "balanço" in nome_col
-                    or "balanco" in nome_col
-                ):
+                if _eh_coluna_estoque(col):
+                    df_saida[col] = df_saida[col].apply(
+                        lambda x: _normalizar_estoque_site(x, estoque_padrao_site)
+                    )
 
-                    def definir_estoque(valor):
-                        texto = str(valor).strip().lower()
-
-                        if (
-                            "esgotado" in texto
-                            or "indisponivel" in texto
-                            or "indisponível" in texto
-                        ):
-                            return 0
-
-                        if texto == "" or texto == "nan":
-                            return estoque_padrao_site
-
-                        try:
-                            return int(float(valor))
-                        except Exception:
-                            return estoque_padrao_site
-
-                    df_saida[col] = df_saida[col].apply(definir_estoque)
-
-        # DEPÓSITO DIGITÁVEL
         if modo == "estoque":
             if not deposito:
                 return None
 
             for col in df_saida.columns:
-                nome_col = col.lower()
+                nome_col = str(col).lower()
                 if "deposito" in nome_col or "depósito" in nome_col:
                     df_saida[col] = deposito
 
@@ -411,7 +446,6 @@ def render_origem_dados() -> None:
         st.session_state["df_final"] = df_final.copy()
 
         excel = _exportar_df_exato_para_excel_bytes(df_final)
-
         nome_arquivo = "cadastro.xlsx" if modo == "cadastro" else "estoque.xlsx"
 
         st.download_button(
