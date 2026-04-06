@@ -109,6 +109,32 @@ class BlingAPIClient:
                 return d.get(key)
         return None
 
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+
+        try:
+            if isinstance(value, str):
+                texto = value.strip()
+                if not texto:
+                    return None
+                texto = (
+                    texto.replace("R$", "")
+                    .replace("r$", "")
+                    .replace(" ", "")
+                    .replace("\u00a0", "")
+                )
+                if "," in texto:
+                    texto = texto.replace(".", "").replace(",", ".")
+                else:
+                    texto = texto.replace(",", "")
+                return float(texto)
+
+            return float(value)
+        except Exception:
+            return None
+
     def _collect_pages(
         self,
         path: str,
@@ -153,8 +179,7 @@ class BlingAPIClient:
 
             ok_item, payload_item = self.request("GET", f"/produtos/{pid}")
             if not ok_item:
-                detalhe = {"id": pid, "erro": payload_item}
-                rows.append(detalhe)
+                rows.append({"id_produto": pid, "erro": payload_item})
                 continue
 
             detalhe = self._data_dict(payload_item)
@@ -172,7 +197,13 @@ class BlingAPIClient:
                             "nome": self._pick(produto_info, "nome", "descricao"),
                             "deposito_id": self._pick(estoque, "idDeposito", "deposito_id", "deposito"),
                             "deposito": self._pick(estoque, "deposito", "nomeDeposito"),
-                            "saldo": self._pick(estoque, "saldoVirtualTotal", "saldoFisicoTotal", "saldo", "estoque"),
+                            "saldo": self._pick(
+                                estoque,
+                                "saldoVirtualTotal",
+                                "saldoFisicoTotal",
+                                "saldo",
+                                "estoque",
+                            ),
                         }
                     )
             else:
@@ -192,7 +223,11 @@ class BlingAPIClient:
     def products_to_dataframe(self, payload: Any) -> pd.DataFrame:
         items = self._data_list(payload) if not isinstance(payload, list) else payload
         rows: List[Dict[str, Any]] = []
+
         for item in items:
+            if not isinstance(item, dict):
+                continue
+
             rows.append(
                 {
                     "id": self._pick(item, "id"),
@@ -204,14 +239,17 @@ class BlingAPIClient:
                     "categoria": self._pick(item, "categoria", "descricaoCategoria"),
                 }
             )
+
         return pd.DataFrame(rows)
 
     def stocks_to_dataframe(self, payload: Any) -> pd.DataFrame:
         items = payload if isinstance(payload, list) else self._data_list(payload)
         rows: List[Dict[str, Any]] = []
+
         for item in items:
             if not isinstance(item, dict):
                 continue
+
             rows.append(
                 {
                     "id_produto": self._pick(item, "id_produto", "id"),
@@ -222,6 +260,7 @@ class BlingAPIClient:
                     "saldo": self._pick(item, "saldo", "estoque"),
                 }
             )
+
         return pd.DataFrame(rows)
 
     def _normalize_product_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -229,7 +268,7 @@ class BlingAPIClient:
             self._pick(row, "nome", "descricao", "descricao_curta") or ""
         ).strip()
         codigo = str(self._pick(row, "codigo", "sku") or "").strip()
-        preco = self._pick(row, "preco", "preco_venda", "valor")
+        preco = self._pick(row, "preco", "preco_venda", "valor", "preco de venda", "Preço de venda")
         unidade = str(self._pick(row, "unidade", "unidade_medida") or "UN").strip() or "UN"
         situacao = str(self._pick(row, "situacao") or "A").strip() or "A"
         tipo = str(self._pick(row, "tipo") or "P").strip() or "P"
@@ -244,11 +283,9 @@ class BlingAPIClient:
             "unidade": unidade,
         }
 
-        if preco not in (None, ""):
-            try:
-                payload["preco"] = float(preco)
-            except Exception:
-                pass
+        preco_float = self._to_float(preco)
+        if preco_float is not None:
+            payload["preco"] = preco_float
 
         gtin = self._pick(row, "gtin", "ean")
         if gtin not in (None, ""):
@@ -257,6 +294,10 @@ class BlingAPIClient:
         marca = self._pick(row, "marca")
         if marca not in (None, ""):
             payload["marca"] = str(marca).strip()
+
+        descricao_curta = self._pick(row, "descricao_curta", "descrição curta")
+        if descricao_curta not in (None, ""):
+            payload["descricaoCurta"] = str(descricao_curta).strip()
 
         return payload
 
@@ -275,6 +316,9 @@ class BlingAPIClient:
         return True, items[0]
 
     def upsert_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
+        if not isinstance(row, dict):
+            return False, "Linha do produto inválida."
+
         codigo = str(self._pick(row, "codigo", "sku") or "").strip()
         payload = self._normalize_product_payload(row)
 
@@ -317,14 +361,21 @@ class BlingAPIClient:
         if product_id in (None, ""):
             return False, {"erro": "Produto localizado sem id.", "produto": found}
 
+        estoque_float = self._to_float(estoque)
+        if estoque_float is None:
+            estoque_float = 0.0
+
         body: Dict[str, Any] = {
             "produto": {"id": product_id},
-            "saldo": float(estoque),
+            "saldo": estoque_float,
         }
+
         if deposito_id not in (None, ""):
             body["deposito"] = {"id": str(deposito_id).strip()}
-        if preco not in (None, ""):
-            body["preco"] = float(preco)
+
+        preco_float = self._to_float(preco)
+        if preco_float is not None:
+            body["preco"] = preco_float
 
         candidates: Iterable[str] = (
             self.auth.settings.stock_write_path or "/estoques",
