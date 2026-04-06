@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import streamlit as st
 from datetime import datetime
+
+import pandas as pd
+import streamlit as st
 
 # =========================
 # CONFIG (TEM QUE SER O PRIMEIRO)
@@ -35,7 +37,11 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 # =========================
 def analisar_logs_com_ia(logs: list[str]) -> dict:
     if not logs:
-        return {}
+        return {
+            "tipo": "Sem logs",
+            "problema": "Nenhum evento registrado ainda.",
+            "solucao": "-"
+        }
 
     texto = "\n".join(logs[-50:]).lower()
 
@@ -69,9 +75,38 @@ def analisar_logs_com_ia(logs: list[str]) -> dict:
 
     return {
         "tipo": "Não identificado",
-        "problema": "Verifique manual",
+        "problema": "Verifique manualmente",
         "solucao": "-"
     }
+
+
+# =========================
+# HELPERS DE ESTADO
+# =========================
+def _safe_df_from_state(key: str) -> pd.DataFrame | None:
+    try:
+        valor = st.session_state.get(key)
+        if isinstance(valor, pd.DataFrame) and not valor.empty:
+            return valor
+    except Exception:
+        pass
+    return None
+
+
+def _get_df_origem() -> pd.DataFrame | None:
+    return _safe_df_from_state("df_origem")
+
+
+def _get_df_final() -> pd.DataFrame | None:
+    return _safe_df_from_state("df_final")
+
+
+def _has_dados_para_mapear() -> bool:
+    return _get_df_origem() is not None or _get_df_final() is not None
+
+
+def _has_dados_finais() -> bool:
+    return _get_df_final() is not None
 
 
 # =========================
@@ -124,8 +159,15 @@ else:
     st.error("Erro ao carregar módulo origem_dados")
 
 
+# Atualiza leituras após render da origem
+df_origem = _get_df_origem()
+df_final = _get_df_final()
+etapa_origem = st.session_state.get("etapa_origem", "upload")
+
 # 2️⃣ MAPEAMENTO
-if "df_final" in st.session_state and st.session_state["df_final"] is not None:
+# Mostra o módulo externo de mapeamento quando houver dados carregados,
+# mas evita duplicidade caso a própria origem_dados já esteja na tela interna de mapeamento.
+if _has_dados_para_mapear() and etapa_origem != "mapeamento":
     st.divider()
     st.subheader("Mapeamento e validação")
 
@@ -140,7 +182,7 @@ if "df_final" in st.session_state and st.session_state["df_final"] is not None:
 
 
 # 3️⃣ BLING
-if "df_final" in st.session_state and st.session_state["df_final"] is not None:
+if _has_dados_finais():
     st.divider()
     st.subheader("Integração com Bling")
 
@@ -158,7 +200,6 @@ if "df_final" in st.session_state and st.session_state["df_final"] is not None:
 # 🔍 DEBUG
 # =========================
 with st.expander("🔍 Debug do sistema"):
-
     logs = st.session_state.get("logs", [])
 
     for l in reversed(logs[-50:]):
@@ -169,13 +210,14 @@ with st.expander("🔍 Debug do sistema"):
     st.download_button(
         "Baixar log",
         log_texto,
-        "debug.txt"
+        "debug.txt",
+        key="download_debug_log",
     )
 
     st.markdown("### 🧠 IA Debug")
 
     diag = analisar_logs_com_ia(logs)
 
-    st.warning(diag["tipo"])
-    st.write(diag["problema"])
-    st.success(diag["solucao"])
+    st.warning(diag.get("tipo", "Não identificado"))
+    st.write(diag.get("problema", "-"))
+    st.success(diag.get("solucao", "-"))
