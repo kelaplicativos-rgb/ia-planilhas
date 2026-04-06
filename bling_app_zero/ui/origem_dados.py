@@ -14,25 +14,25 @@ from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
 def _safe_df_dados(df):
     try:
         if df is None:
-            return None
+            return False
         if len(df.columns) == 0:
-            return None
+            return False
         if df.empty:
-            return None
-        return df
+            return False
+        return True
     except Exception:
-        return None
+        return False
 
 
 def _safe_df_modelo(df):
     try:
         if df is None:
-            return None
+            return False
         if len(df.columns) == 0:
-            return None
-        return df
+            return False
+        return True
     except Exception:
-        return None
+        return False
 
 
 # 🔥 DETECTA COLUNA DEPÓSITO
@@ -89,14 +89,14 @@ def render_origem_dados() -> None:
         if arquivo:
             df_origem = ler_planilha_segura(arquivo)
 
-            if _safe_df_dados(df_origem) is None:
+            if not _safe_df_dados(df_origem):
                 st.error("Erro ao ler planilha")
                 return
 
     elif origem == "Site":
         df_origem = render_origem_site()
 
-    if _safe_df_dados(df_origem) is None:
+    if not _safe_df_dados(df_origem):
         return
 
     st.session_state["df_origem"] = df_origem
