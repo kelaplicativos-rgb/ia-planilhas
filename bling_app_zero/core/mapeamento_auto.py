@@ -1,34 +1,48 @@
-import re
+from __future__ import annotations
+
+import pandas as pd
 
 
-def sugestao_automatica(nome_coluna: str) -> str:
-    nome = (nome_coluna or "").strip().lower()
+def sugestao_automatica(df: pd.DataFrame, colunas_destino: list[str] | None = None) -> dict:
+    """
+    Gera sugestões automáticas de mapeamento entre colunas da origem e destino.
 
-    regras = [
-        (r"codigo|código|sku|ref|referencia|referência", "codigo"),
-        (r"descri.*curta|desc.*curta", "descricao_curta"),
-        (r"nome|titulo|título|produto|descricao|descrição", "nome"),
-        (r"preco.*custo|preço.*custo|custo|compra", "preco_custo"),
-        (r"preco|preço|valor", "preco"),
-        (r"estoque|saldo|qtd|quantidade", "estoque"),
-        (r"gtin|ean|barcode|cbarra|codigobarras", "gtin"),
-        (r"marca|fabricante", "marca"),
-        (r"categoria|departamento|secao|seção", "categoria"),
-        (r"ncm", "ncm"),
-        (r"cest", "cest"),
-        (r"cfop", "cfop"),
-        (r"unidade|und|un", "unidade"),
-        (r"fornecedor", "fornecedor"),
-        (r"cnpj", "cnpj_fornecedor"),
-        (r"numero.*nfe|nfe|nf-e|nota", "numero_nfe"),
-        (r"data.*emissao|data.*emissão|emissao|emissão", "data_emissao"),
-        (r"imagem|foto|image|img", "imagens"),
-        (r"deposito|depósito", "deposito_id"),
-        (r"origem", "origem"),
-    ]
+    Compatível com:
+    - chamada antiga: sugestao_automatica(df)
+    - chamada nova: sugestao_automatica(df, colunas_destino)
 
-    for padrao, destino in regras:
-        if re.search(padrao, nome):
-            return destino
+    Retorna:
+        dict {coluna_destino: coluna_origem}
+    """
 
-    return ""
+    if df is None or df.empty:
+        return {}
+
+    colunas_origem = list(df.columns)
+
+    # Se não tiver colunas destino → usa as mesmas da origem
+    if not colunas_destino:
+        return {col: col for col in colunas_origem}
+
+    sugestoes = {}
+
+    for destino in colunas_destino:
+        destino_lower = destino.lower()
+
+        melhor_match = None
+
+        for origem in colunas_origem:
+            origem_lower = origem.lower()
+
+            # 🔥 regra simples mas eficiente
+            if destino_lower == origem_lower:
+                melhor_match = origem
+                break
+
+            if destino_lower in origem_lower:
+                melhor_match = origem
+
+        if melhor_match:
+            sugestoes[destino] = melhor_match
+
+    return sugestoes
