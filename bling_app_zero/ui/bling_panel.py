@@ -27,13 +27,18 @@ def _render_usuario_bling() -> str:
 
     with st.expander("Usuário / operação do Bling", expanded=True):
         c1, c2 = st.columns(2)
+
         with c1:
             identificador = st.text_input(
                 "Identificador do usuário",
                 value=get_current_user_key(),
                 key="bling_user_identifier_input",
-                help="Ex.: email, nome da loja ou código interno. Cada identificador mantém um token separado.",
+                help=(
+                    "Ex.: email, nome da loja ou código interno. "
+                    "Cada identificador mantém um token separado."
+                ),
             )
+
         with c2:
             apelido = st.text_input(
                 "Nome exibido",
@@ -47,7 +52,9 @@ def _render_usuario_bling() -> str:
             st.success("Usuário atual do Bling atualizado.")
             st.rerun()
 
-        st.caption(f"Usuário atual do token: {get_current_user_label()} ({get_current_user_key()})")
+        st.caption(
+            f"Usuário atual do token: {get_current_user_label()} ({get_current_user_key()})"
+        )
 
     return get_current_user_key()
 
@@ -56,17 +63,27 @@ def render_bling_panel() -> None:
     st.subheader("Integração com o Bling")
 
     user_key = _render_usuario_bling()
+    user_label = get_current_user_label()
+
     auth = BlingAuthManager(user_key=user_key)
     callback = auth.handle_oauth_callback()
 
     if callback.get("status") == "success":
+        callback_user_key = str(callback.get("user_key", user_key)).strip() or user_key
+        set_current_user(callback_user_key, user_label)
         st.success(callback.get("message", "Conta conectada com sucesso."))
+        st.rerun()
+
     elif callback.get("status") == "error":
         st.error(callback.get("message", "Falha na autenticação com o Bling."))
 
-    status = auth.get_connection_status()
+    status = auth.get_connection_status(user_key=user_key)
     configurado = auth.is_configured()
-    conectar_url = auth.build_authorize_url() if configurado else None
+    conectar_url = (
+        auth.build_authorize_url(user_key=user_key, user_label=user_label)
+        if configurado
+        else None
+    )
 
     if not configurado:
         st.warning(
@@ -93,7 +110,7 @@ def render_bling_panel() -> None:
     with c2:
         if st.button("Atualizar status", use_container_width=True):
             if status.get("connected"):
-                ok, msg = auth.refresh_access_token()
+                ok, msg = auth.refresh_access_token(user_key=user_key)
                 if ok:
                     st.success(msg)
                 else:
@@ -108,7 +125,7 @@ def render_bling_panel() -> None:
             use_container_width=True,
             disabled=not status.get("connected"),
         ):
-            ok, msg = auth.disconnect()
+            ok, msg = auth.disconnect(user_key=user_key)
             if ok:
                 st.success(msg)
             else:
@@ -133,6 +150,7 @@ def render_bling_panel() -> None:
                     st.success("Homologação executada.")
                 else:
                     st.error("Homologação retornou falhas.")
+
             resultado = st.session_state.get("bling_homologacao_resultado")
             if isinstance(resultado, dict) and resultado:
                 st.json(resultado)
@@ -143,15 +161,15 @@ def render_bling_import_panel() -> None:
 
     ensure_current_user_defaults()
     user_key = get_current_user_key()
+
     auth = BlingAuthManager(user_key=user_key)
-    status = auth.get_connection_status()
+    status = auth.get_connection_status(user_key=user_key)
 
     if not status.get("connected"):
         st.info("Conecte primeiro a conta do Bling para importar produtos e estoque.")
         return
 
     client = BlingAPIClient(user_key=user_key)
-
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
