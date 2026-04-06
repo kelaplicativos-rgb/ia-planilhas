@@ -32,6 +32,14 @@ def _safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     return df.head(rows)
 
 
+def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        if "gtin" in col.lower():
+            df[col] = df[col].astype(str)
+            df[col] = df[col].apply(lambda x: x if x.isdigit() and len(x) in [8, 12, 13, 14] else "")
+    return df
+
+
 # ==========================================================
 # MAIN UI
 # ==========================================================
@@ -76,6 +84,11 @@ def render_origem_dados() -> None:
 
     origem_hash = _hash_df(df_origem)
 
+    # RESET MAPEAMENTO SE MUDAR PLANILHA
+    if st.session_state.get("origem_hash") != origem_hash:
+        st.session_state["origem_hash"] = origem_hash
+        st.session_state["mapeamento_manual"] = {}
+
     # =========================
     # MODO
     # =========================
@@ -88,8 +101,13 @@ def render_origem_dados() -> None:
     # =========================
     # MODELOS
     # =========================
-    modelo_cadastro = st.file_uploader("Modelo Cadastro", type=["xlsx"])
-    modelo_estoque = st.file_uploader("Modelo Estoque", type=["xlsx"])
+    modelo_cadastro = None
+    modelo_estoque = None
+
+    if modo == "cadastro":
+        modelo_cadastro = st.file_uploader("Modelo Cadastro", type=["xlsx"])
+    else:
+        modelo_estoque = st.file_uploader("Modelo Estoque", type=["xlsx"])
 
     if modo == "cadastro" and modelo_cadastro:
         df_modelo = pd.read_excel(modelo_cadastro)
@@ -106,7 +124,7 @@ def render_origem_dados() -> None:
     # =========================
     sugestoes = sugestao_automatica(df_origem, colunas_modelo_ativas)
 
-    if "mapeamento_manual" not in st.session_state:
+    if "mapeamento_manual" not in st.session_state or not st.session_state["mapeamento_manual"]:
         st.session_state["mapeamento_manual"] = sugestoes or {}
 
     mapa = st.session_state["mapeamento_manual"]
@@ -151,8 +169,15 @@ def render_origem_dados() -> None:
             else:
                 df_saida[col] = ""
 
-        if modo == "estoque" and "Depósito" in df_saida.columns:
-            df_saida["Depósito"] = deposito
+        if modo == "estoque":
+            if not deposito:
+                st.error("Informe o nome do depósito")
+                return None
+
+            if "Depósito" in df_saida.columns:
+                df_saida["Depósito"] = deposito
+
+        df_saida = _limpar_gtin(df_saida)
 
         return df_saida
 
@@ -160,27 +185,22 @@ def render_origem_dados() -> None:
     st.markdown("### Preview saída")
 
     df_preview = montar_df()
-    st.dataframe(_safe_preview(df_preview), width="stretch")
+    if df_preview is not None:
+        st.dataframe(_safe_preview(df_preview), width="stretch")
 
     # =========================
     # DOWNLOAD
     # =========================
-    if st.button("Gerar arquivo", width="stretch"):
-        try:
-            df_final = montar_df()
-            excel = _exportar_df_exato_para_excel_bytes(df_final)
+    df_final = montar_df()
 
-            nome = "cadastro.xlsx" if modo == "cadastro" else "estoque.xlsx"
+    if df_final is not None:
+        excel = _exportar_df_exato_para_excel_bytes(df_final)
+        nome = "cadastro.xlsx" if modo == "cadastro" else "estoque.xlsx"
 
-            st.download_button(
-                "Baixar",
-                data=excel,
-                file_name=nome,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
-            )
-
-            st.success("Arquivo gerado com sucesso")
-
-        except Exception as e:
-            st.error(f"Erro ao gerar: {e}")
+        st.download_button(
+            "Baixar arquivo",
+            data=excel,
+            file_name=nome,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
