@@ -36,7 +36,9 @@ def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         if "gtin" in col.lower():
             df[col] = df[col].astype(str)
-            df[col] = df[col].apply(lambda x: x if x.isdigit() and len(x) in [8, 12, 13, 14] else "")
+            df[col] = df[col].apply(
+                lambda x: x if x.isdigit() and len(x) in [8, 12, 13, 14] else ""
+            )
     return df
 
 
@@ -62,7 +64,10 @@ def render_origem_dados() -> None:
         arquivo = st.file_uploader("Envie a planilha", type=["xlsx", "csv"])
         if arquivo:
             try:
-                df_origem = pd.read_excel(arquivo)
+                if arquivo.name.lower().endswith(".csv"):
+                    df_origem = pd.read_csv(arquivo)
+                else:
+                    df_origem = pd.read_excel(arquivo)
             except Exception as e:
                 st.error(f"Erro ao ler planilha: {e}")
                 return
@@ -88,6 +93,7 @@ def render_origem_dados() -> None:
     if st.session_state.get("origem_hash") != origem_hash:
         st.session_state["origem_hash"] = origem_hash
         st.session_state["mapeamento_manual"] = {}
+        st.session_state["df_final"] = None
 
     # =========================
     # MODO
@@ -171,7 +177,6 @@ def render_origem_dados() -> None:
 
         if modo == "estoque":
             if not deposito:
-                st.error("Informe o nome do depósito")
                 return None
 
             if "Depósito" in df_saida.columns:
@@ -185,7 +190,9 @@ def render_origem_dados() -> None:
     st.markdown("### Preview saída")
 
     df_preview = montar_df()
-    if df_preview is not None:
+    if modo == "estoque" and not deposito:
+        st.warning("Informe o nome do depósito para gerar a planilha de estoque.")
+    elif df_preview is not None:
         st.dataframe(_safe_preview(df_preview), width="stretch")
 
     # =========================
@@ -194,6 +201,10 @@ def render_origem_dados() -> None:
     df_final = montar_df()
 
     if df_final is not None:
+        # SALVA O DF FINAL PARA A ABA DE ENVIO USAR,
+        # SEM INTERFERIR NO DOWNLOAD
+        st.session_state["df_final"] = df_final.copy()
+
         excel = _exportar_df_exato_para_excel_bytes(df_final)
         nome = "cadastro.xlsx" if modo == "cadastro" else "estoque.xlsx"
 
@@ -204,3 +215,5 @@ def render_origem_dados() -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
         )
+    else:
+        st.session_state["df_final"] = None
