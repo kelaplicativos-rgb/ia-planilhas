@@ -63,3 +63,28 @@ def render_origem_dados() -> None:
 
     # mantém compatibilidade com o resto do sistema
     st.session_state["df_origem"] = df_origem
+
+    # ==========================================================
+    # 🔥 CONTINUAÇÃO DO FLUXO (ESSENCIAL)
+    # ==========================================================
+    st.divider()
+
+    st.subheader("Pré-visualização dos dados")
+
+    try:
+        st.dataframe(
+            df_origem.head(10),
+            use_container_width=True
+        )
+
+        st.success(f"{len(df_origem)} registros carregados")
+
+    except Exception as e:
+        st.error("Erro ao gerar preview")
+
+    # ==========================================================
+    # BOTÃO PRÓXIMA ETAPA
+    # ==========================================================
+    if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+        st.session_state["ir_para_mapeamento"] = True
+        st.success("Pronto para próxima etapa")
