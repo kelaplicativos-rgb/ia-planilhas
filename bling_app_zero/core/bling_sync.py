@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Tuple
 
 from bling_app_zero.core.bling_api import BlingAPIClient
+
+
+MAX_RETRY = 3
+RETRY_DELAY = 1.5
 
 
 class BlingSyncService:
@@ -10,6 +15,9 @@ class BlingSyncService:
         self.user_key = user_key
         self.client = BlingAPIClient(user_key=user_key)
 
+    # =========================
+    # PRODUTOS
+    # =========================
     def sync_products(
         self,
         rows: List[Dict[str, Any]],
@@ -18,21 +26,43 @@ class BlingSyncService:
         erros: List[Dict[str, Any]] = []
 
         for indice, row in enumerate(rows, start=1):
-            ok, payload = self.client.upsert_product(row)
-            item = {
-                "linha": indice,
-                "codigo": row.get("codigo"),
-                "nome": row.get("nome"),
-            }
-            if ok:
-                item["retorno"] = payload
-                sucessos.append(item)
-            else:
-                item["erro"] = payload
-                erros.append(item)
+            tentativa = 0
+            ultimo_erro = None
+
+            while tentativa < MAX_RETRY:
+                tentativa += 1
+
+                ok, payload = self.client.upsert_product(row)
+
+                if ok:
+                    sucessos.append(
+                        {
+                            "linha": indice,
+                            "codigo": row.get("codigo"),
+                            "nome": row.get("nome"),
+                            "retorno": payload,
+                        }
+                    )
+                    break
+                else:
+                    ultimo_erro = payload
+                    time.sleep(RETRY_DELAY)
+
+            if tentativa == MAX_RETRY and ultimo_erro:
+                erros.append(
+                    {
+                        "linha": indice,
+                        "codigo": row.get("codigo"),
+                        "nome": row.get("nome"),
+                        "erro": ultimo_erro,
+                    }
+                )
 
         return sucessos, erros
 
+    # =========================
+    # ESTOQUE (CORRIGIDO)
+    # =========================
     def sync_stocks(
         self,
         rows: List[Dict[str, Any]],
@@ -42,45 +72,69 @@ class BlingSyncService:
 
         for indice, row in enumerate(rows, start=1):
             codigo = str(row.get("codigo") or "").strip()
-            estoque = row.get("estoque")
-            deposito_id = row.get("deposito_id")
-            preco = row.get("preco")
 
+            # 🔥 GARANTIR ESTOQUE
             try:
-                estoque_float = float(estoque or 0)
+                estoque = int(float(row.get("estoque") or 0))
             except (TypeError, ValueError):
-                estoque_float = 0.0
+                estoque = 0
 
+            # 🔥 GARANTIR DEPÓSITO
+            deposito_id = str(row.get("deposito_id") or "").strip()
+            if not deposito_id:
+                deposito_id = "Geral"
+
+            # 🔥 PREÇO OPCIONAL
             try:
-                preco_float = float(preco) if preco not in (None, "") else None
+                preco = float(row.get("preco")) if row.get("preco") else None
             except (TypeError, ValueError):
-                preco_float = None
+                preco = None
 
-            ok, payload = self.client.update_stock(
-                codigo=codigo,
-                estoque=estoque_float,
-                deposito_id=str(deposito_id).strip()
-                if deposito_id not in (None, "")
-                else None,
-                preco=preco_float,
-            )
+            tentativa = 0
+            ultimo_erro = None
 
-            item = {
-                "linha": indice,
-                "codigo": codigo,
-                "estoque": estoque,
-                "deposito_id": deposito_id,
-            }
-            if ok:
-                item["retorno"] = payload
-                sucessos.append(item)
-            else:
-                item["erro"] = payload
-                erros.append(item)
+            while tentativa < MAX_RETRY:
+                tentativa += 1
+
+                ok, payload = self.client.update_stock(
+                    codigo=codigo,
+                    estoque=estoque,
+                    deposito_id=deposito_id,
+                    preco=preco,
+                )
+
+                if ok:
+                    sucessos.append(
+                        {
+                            "linha": indice,
+                            "codigo": codigo,
+                            "estoque": estoque,
+                            "deposito_id": deposito_id,
+                            "retorno": payload,
+                        }
+                    )
+                    break
+                else:
+                    ultimo_erro = payload
+                    time.sleep(RETRY_DELAY)
+
+            if tentativa == MAX_RETRY and ultimo_erro:
+                erros.append(
+                    {
+                        "linha": indice,
+                        "codigo": codigo,
+                        "estoque": estoque,
+                        "deposito_id": deposito_id,
+                        "erro": ultimo_erro,
+                    }
+                )
 
         return sucessos, erros
 
 
+# =========================
+# WRAPPERS
+# =========================
 def sync_products(
     rows: List[Dict[str, Any]],
     *,
