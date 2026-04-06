@@ -36,7 +36,7 @@ def main():
     aplicar_estilo_global()
     init_state()
 
-    # ORDEM AJUSTADA:
+    # ORDEM CORRIGIDA:
     # 1) Origem dos dados
     # 2) Envio por API
     # 3) Integração Bling
@@ -50,6 +50,7 @@ def main():
     with tab1:
         try:
             from bling_app_zero.ui import origem_dados as origem_dados_ui
+
             origem_dados_ui.render_origem_dados()
         except Exception as e:
             st.error(f"Erro na tela Origem dos dados: {e}")
@@ -66,7 +67,7 @@ def main():
             log(f"Erro Envio por API: {traceback.format_exc()}")
 
     # =========================
-    # INTEGRAÇÃO BLING
+    # BLING (CONEXÃO / IMPORTAÇÃO)
     # =========================
     with tab3:
         try:
