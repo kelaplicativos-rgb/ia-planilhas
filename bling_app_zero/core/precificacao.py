@@ -1,14 +1,10 @@
 import pandas as pd
 
 
+# ==========================================================
+# BASE
+# ==========================================================
 def _to_float(valor) -> float:
-    """
-    Converte valores diversos para float com tolerância a:
-    - strings vazias
-    - separador decimal com vírgula
-    - milhares com ponto
-    - símbolos monetários
-    """
     if valor is None:
         return 0.0
 
@@ -29,11 +25,9 @@ def _to_float(valor) -> float:
         .replace("\u00a0", "")
     )
 
-    # Se tiver vírgula, assume padrão BR e remove pontos de milhar.
     if "," in texto:
         texto = texto.replace(".", "").replace(",", ".")
     else:
-        # sem vírgula, tenta limpar eventual lixo mantendo ponto decimal
         texto = texto.replace(",", "")
 
     try:
@@ -42,33 +36,30 @@ def _to_float(valor) -> float:
         return 0.0
 
 
-def calcular_preco_compra_automatico_df(df: pd.DataFrame) -> float:
-    """
-    Detecta automaticamente um preço de compra médio
-    a partir das colunas mais prováveis do dataframe.
-    """
-    if df is None or df.empty:
-        return 0.0
-
+# ==========================================================
+# DETECÇÃO AUTOMÁTICA DE COLUNA DE CUSTO
+# ==========================================================
+def _detectar_coluna_preco(df: pd.DataFrame) -> str:
     colunas_prioridade = [
-        "custo",
         "preco_custo",
-        "custo_total_item_xml",
+        "custo",
         "valor_unitario",
         "valor",
         "preco",
     ]
 
-    for col in colunas_prioridade:
-        if col in df.columns:
-            serie = df[col].apply(_to_float)
-            serie = serie[serie > 0]
-            if not serie.empty:
-                return float(serie.mean())
+    for col in df.columns:
+        nome = str(col).lower()
+        for alvo in colunas_prioridade:
+            if alvo in nome:
+                return col
 
-    return 0.0
+    return ""
 
 
+# ==========================================================
+# CÁLCULO BASE
+# ==========================================================
 def calcular_preco_venda(
     preco_compra: float,
     percentual_impostos: float,
@@ -76,17 +67,6 @@ def calcular_preco_venda(
     custo_fixo: float,
     taxa_extra: float,
 ) -> float:
-    """
-    Calcula preço de venda considerando:
-    - preço de compra
-    - impostos (%)
-    - margem de lucro (%)
-    - custo fixo (R$)
-    - taxa extra (%)
-
-    Fórmula:
-    venda = (compra + custo_fixo) / (1 - impostos - lucro - taxa_extra)
-    """
     try:
         base = float(preco_compra or 0.0) + float(custo_fixo or 0.0)
         impostos = float(percentual_impostos or 0.0) / 100.0
@@ -98,14 +78,79 @@ def calcular_preco_venda(
             return 0.0
 
         resultado = base / denominador
+
         if resultado < 0:
             return 0.0
 
         return float(resultado)
+
     except Exception:
         return 0.0
 
 
+# ==========================================================
+# APLICAÇÃO AUTOMÁTICA NO DF (🔥 PRINCIPAL)
+# ==========================================================
+def aplicar_precificacao_automatica(
+    df: pd.DataFrame,
+    percentual_impostos: float = 0.0,
+    margem_lucro: float = 0.0,
+    custo_fixo: float = 0.0,
+    taxa_extra: float = 0.0,
+) -> pd.DataFrame:
+
+    if df is None or df.empty:
+        return df
+
+    df_saida = df.copy()
+
+    # 🔥 detecta automaticamente a coluna de custo
+    coluna_base = _detectar_coluna_preco(df_saida)
+
+    if not coluna_base:
+        return df_saida
+
+    precos_base = df_saida[coluna_base].apply(_to_float)
+
+    # 🔥 tenta detectar coluna de venda no modelo
+    coluna_destino = None
+
+    for col in df_saida.columns:
+        nome = str(col).lower()
+
+        if "preco" in nome and "venda" in nome:
+            coluna_destino = col
+            break
+
+        if nome.strip() in ["preco", "valor"]:
+            coluna_destino = col
+
+    # fallback
+    if not coluna_destino:
+        coluna_destino = "Preco de venda"
+        df_saida[coluna_destino] = ""
+
+    df_saida[coluna_destino] = precos_base.apply(
+        lambda valor: round(
+            calcular_preco_venda(
+                preco_compra=valor,
+                percentual_impostos=percentual_impostos,
+                margem_lucro=margem_lucro,
+                custo_fixo=custo_fixo,
+                taxa_extra=taxa_extra,
+            ),
+            2,
+        )
+        if _to_float(valor) > 0
+        else 0.0
+    )
+
+    return df_saida
+
+
+# ==========================================================
+# COMPATIBILIDADE ANTIGA (NÃO QUEBRA SISTEMA)
+# ==========================================================
 def calcular_preco_venda_df(
     df: pd.DataFrame,
     coluna_preco_base: str,
@@ -116,18 +161,13 @@ def calcular_preco_venda_df(
     nome_coluna_saida: str = "preco",
     arredondar: int = 2,
 ) -> pd.DataFrame:
-    """
-    Calcula o preço de venda por linha usando a coluna de custo/preço base
-    vinda da planilha do fornecedor e grava o resultado na coluna final.
-    """
+
     if df is None:
         return pd.DataFrame()
 
     df_saida = df.copy()
 
     if coluna_preco_base not in df_saida.columns:
-        if nome_coluna_saida not in df_saida.columns:
-            df_saida[nome_coluna_saida] = ""
         return df_saida
 
     precos_base = df_saida[coluna_preco_base].apply(_to_float)
