@@ -16,20 +16,90 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
         if "logs" not in st.session_state:
             st.session_state["logs"] = []
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         linha = f"[{timestamp}] [{nivel}] {msg}"
+
         st.session_state["logs"].append(linha)
     except Exception:
         pass
+
+
+def baixar_logs_txt() -> bytes:
+    try:
+        logs = st.session_state.get("logs", [])
+        return "\n".join(logs).encode("utf-8")
+    except Exception:
+        return b""
+
+
+# ==========================================================
+# GTIN LIMPEZA (🔥 CRÍTICO PRA BLING)
+# ==========================================================
+def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if df is None or df.empty:
+            return df
+
+        df = df.copy()
+
+        for col in df.columns:
+            nome = str(col).lower()
+
+            if "gtin" in nome or "ean" in nome:
+
+                def validar(v):
+                    v = str(v).strip()
+
+                    if not v or v.lower() in ["nan", "none"]:
+                        return ""
+
+                    if not v.isdigit():
+                        return ""
+
+                    if len(v) not in [8, 12, 13, 14]:
+                        return ""
+
+                    return v
+
+                df[col] = df[col].apply(validar)
+
+        log_debug("GTIN inválido limpo com sucesso", "SUCCESS")
+        return df
+
+    except Exception as e:
+        log_debug(f"Erro ao limpar GTIN: {e}", "ERROR")
+        return df
+
+
+# ==========================================================
+# VALIDAÇÃO OBRIGATÓRIA (🔥 BLOQUEIO DOWNLOAD)
+# ==========================================================
+def validar_campos_obrigatorios(df: pd.DataFrame) -> bool:
+    try:
+        if df is None or df.empty:
+            return False
+
+        obrigatorios = ["descricao", "preco"]
+
+        colunas = [str(c).lower() for c in df.columns]
+
+        for campo in obrigatorios:
+            if not any(campo in c for c in colunas):
+                st.error(f"Campo obrigatório ausente: {campo}")
+                return False
+
+        return True
+
+    except Exception as e:
+        log_debug(f"Erro validação: {e}", "ERROR")
+        return False
 
 
 # ==========================================================
 # DETECÇÃO CSV QUEBROU
 # ==========================================================
 def _corrigir_coluna_unica(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Se o CSV vier em uma única coluna, tenta reconstruir automaticamente.
-    """
     try:
         if df is None or df.empty:
             return df
@@ -37,11 +107,10 @@ def _corrigir_coluna_unica(df: pd.DataFrame) -> pd.DataFrame:
         if len(df.columns) > 1:
             return df
 
-        log_debug("Detectado CSV em coluna única - tentando correção automática", "WARNING")
+        log_debug("CSV em coluna única detectado", "WARNING")
 
         col = df.columns[0]
 
-        # tenta identificar separador
         sample = df[col].dropna().astype(str).head(5).tolist()
         texto = "\n".join(sample)
 
@@ -52,30 +121,24 @@ def _corrigir_coluna_unica(df: pd.DataFrame) -> pd.DataFrame:
         else:
             sep = ","
 
-        log_debug(f"Reprocessando com sep='{sep}'", "INFO")
-
         novo_df = df[col].str.split(sep, expand=True)
-
-        # primeira linha vira header
         novo_df.columns = novo_df.iloc[0]
         novo_df = novo_df[1:].reset_index(drop=True)
 
         return novo_df
 
     except Exception as e:
-        log_debug(f"Erro ao corrigir coluna única: {e}", "ERROR")
+        log_debug(f"Erro CSV coluna única: {e}", "ERROR")
         return df
 
 
 # ==========================================================
-# TEXTO / ENCODING
+# TEXTO
 # ==========================================================
 _MOJIBAKE_TOKENS = ("Ã", "Â", "â€™", "â€œ", "â€", "�")
 
 
 def _texto_parece_mojibake(texto: str) -> bool:
-    if not texto:
-        return False
     return any(token in texto for token in _MOJIBAKE_TOKENS)
 
 
@@ -93,16 +156,13 @@ def _normalizar_texto(valor):
         except Exception:
             pass
 
-    texto = re.sub(r"[ \t]+", " ", texto).strip()
-    return texto
+    return re.sub(r"[ \t]+", " ", texto).strip()
 
 
 def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
     try:
-        if df is None or df.empty:
-            return df
-
         df = df.copy()
+
         df.columns = [_normalizar_texto(str(col)) for col in df.columns]
 
         for col in df.select_dtypes(include=["object"]).columns:
@@ -111,7 +171,7 @@ def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     except Exception as e:
-        log_debug(f"Erro normalização texto: {e}", "ERROR")
+        log_debug(f"Erro normalização: {e}", "ERROR")
         return df
 
 
@@ -121,36 +181,22 @@ def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
 def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
     conteudo = arquivo.getvalue()
 
-    tentativas = [
-        ("utf-8-sig", None),
-        ("utf-8", None),
-        ("cp1252", None),
-        ("latin1", None),
-    ]
-
-    for encoding, _ in tentativas:
+    for encoding in ["utf-8-sig", "utf-8", "cp1252", "latin1"]:
         try:
-            buffer = BytesIO(conteudo)
-
             df = pd.read_csv(
-                buffer,
+                BytesIO(conteudo),
                 encoding=encoding,
-                sep=None,           # 🔥 AUTO DETECÇÃO REAL
-                engine="python",    # 🔥 ESSENCIAL
+                sep=None,
+                engine="python",
             )
 
             if df is not None and not df.empty:
-                log_debug(f"CSV lido com sucesso ({encoding})", "SUCCESS")
-
-                # 🔥 CORREÇÃO AUTOMÁTICA
-                df = _corrigir_coluna_unica(df)
-
-                return df
+                log_debug(f"CSV OK ({encoding})", "SUCCESS")
+                return _corrigir_coluna_unica(df)
 
         except Exception:
             continue
 
-    log_debug("Falha total ao ler CSV", "ERROR")
     return None
 
 
@@ -167,7 +213,7 @@ def ler_planilha_segura(arquivo):
 
         elif nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb")):
             df = pd.read_excel(arquivo)
-            log_debug("Excel lido com sucesso", "SUCCESS")
+            log_debug("Excel OK", "SUCCESS")
 
         else:
             st.error("Formato não suportado")
@@ -185,20 +231,14 @@ def ler_planilha_segura(arquivo):
         return df
 
     except Exception as e:
-        log_debug(f"Erro leitura planilha: {e}", "ERROR")
+        log_debug(f"Erro leitura: {e}", "ERROR")
         st.error("Erro ao ler arquivo")
         return None
 
 
 # ==========================================================
-# HELPERS
+# EXPORT
 # ==========================================================
-def hash_df(df: pd.DataFrame) -> str:
-    return hashlib.md5(
-        pd.util.hash_pandas_object(df, index=True).values.tobytes()
-    ).hexdigest()
-
-
 def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
     try:
         buffer = BytesIO()
@@ -215,9 +255,7 @@ def safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     try:
         if df is None or df.empty:
             return pd.DataFrame()
-
         return df.head(rows)
-
     except Exception as e:
         log_debug(f"Erro preview: {e}", "ERROR")
         return pd.DataFrame()
