@@ -70,10 +70,9 @@ def render_origem_dados() -> None:
 
     st.session_state["df_origem"] = df_origem
 
-    # 🔥 PREVIEW COM EXPANDER (FECHADO)
+    # 🔥 PREVIEW COLAPSADO
     with st.expander("👁️ Pré-visualização dos dados", expanded=False):
-        st.dataframe(df_origem.head(10), width="stretch")
-        st.success(f"{len(df_origem)} registros")
+        st.dataframe(df_origem.head(10), use_container_width=True)
 
     # =========================
     # OPERAÇÃO
@@ -114,7 +113,7 @@ def render_origem_dados() -> None:
 
         st.text_input("Nome do depósito", key="deposito_nome_manual")
 
-    # 🔥 AUTO AVANÇO (SEM BOTÃO)
+    # 🔥 AUTO FLUXO
     if (
         _safe_df_dados(df_origem)
         and (
