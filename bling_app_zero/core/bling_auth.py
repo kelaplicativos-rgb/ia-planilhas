@@ -1,5 +1,3 @@
-# 🔥 VERSÃO CORRIGIDA - STATE PERSISTENTE + USER_KEY VIA QUERY PARAM (?bi=...)
-
 from __future__ import annotations
 
 import base64
@@ -33,8 +31,8 @@ def save_state(user_key: str, state: str) -> None:
     except Exception:
         data = {}
 
-    data[user_key] = {
-        "state": state,
+    data[str(user_key).strip() or "default"] = {
+        "state": str(state).strip(),
         "created_at": int(time.time()),
     }
 
@@ -58,7 +56,7 @@ def load_state(user_key: str) -> Optional[Dict[str, Any]]:
         if not isinstance(data, dict):
             return None
 
-        value = data.get(user_key)
+        value = data.get(str(user_key).strip() or "default")
         return value if isinstance(value, dict) else None
     except Exception:
         return None
@@ -77,8 +75,9 @@ def clear_state(user_key: str) -> None:
         if not isinstance(data, dict):
             return
 
-        if user_key in data:
-            data.pop(user_key, None)
+        chave = str(user_key).strip() or "default"
+        if chave in data:
+            data.pop(chave, None)
             STATE_PATH.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -102,19 +101,18 @@ class BlingSettings:
 
 class BlingAuthManager:
     def __init__(self, user_key: str = "default") -> None:
-        # 🔥 pega user da URL (?bi=...) quando existir, para o state ser salvo/lido
-        # com a mesma chave no ida e volta do OAuth
         query_user = st.query_params.get("bi")
 
         if isinstance(query_user, list):
             query_user = query_user[0] if query_user else ""
 
         query_user = str(query_user or "").strip()
+        user_key = str(user_key or "").strip()
 
         if query_user:
             self.user_key = query_user
         else:
-            self.user_key = str(user_key or "default").strip() or "default"
+            self.user_key = user_key or "default"
 
         self.settings = self._load_settings()
         self.store = BlingTokenStore(self.settings.token_store_path)
@@ -159,14 +157,16 @@ class BlingAuthManager:
             return None
 
         state = secrets.token_hex(24)
-
-        # 🔥 salva em arquivo com a mesma user_key usada no retorno
         save_state(self.user_key, state)
+
+        redirect_uri = self.settings.redirect_uri
+        separador = "&" if "?" in redirect_uri else "?"
+        redirect_uri_com_user = f"{redirect_uri}{separador}bi={self.user_key}"
 
         params = {
             "response_type": "code",
             "client_id": self.settings.client_id,
-            "redirect_uri": self.settings.redirect_uri,
+            "redirect_uri": redirect_uri_com_user,
             "state": state,
         }
 
@@ -245,6 +245,10 @@ class BlingAuthManager:
         return {"status": "success", "message": "Conta Bling conectada com sucesso."}
 
     def exchange_code_for_token(self, code: str) -> Tuple[bool, str]:
+        redirect_uri = self.settings.redirect_uri
+        separador = "&" if "?" in redirect_uri else "?"
+        redirect_uri_com_user = f"{redirect_uri}{separador}bi={self.user_key}"
+
         headers = {
             "Authorization": self._basic_auth_header(),
             "Content-Type": "application/x-www-form-urlencoded",
@@ -254,7 +258,7 @@ class BlingAuthManager:
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": self.settings.redirect_uri,
+            "redirect_uri": redirect_uri_com_user,
         }
 
         try:
@@ -271,6 +275,7 @@ class BlingAuthManager:
                 return False, f"Erro ao trocar code por token: HTTP {resp.status_code} | {payload}"
 
             self.store.save_token_payload(payload, user_key=self.user_key)
+            self._hydrate_company_name_from_jwt()
             return True, "OK"
         except Exception as exc:
             return False, f"Erro ao autenticar com o Bling: {exc}"
@@ -282,6 +287,10 @@ class BlingAuthManager:
         if not refresh_token:
             return False, "Refresh token não encontrado. Reconecte a conta."
 
+        redirect_uri = self.settings.redirect_uri
+        separador = "&" if "?" in redirect_uri else "?"
+        redirect_uri_com_user = f"{redirect_uri}{separador}bi={self.user_key}"
+
         headers = {
             "Authorization": self._basic_auth_header(),
             "Content-Type": "application/x-www-form-urlencoded",
@@ -291,7 +300,7 @@ class BlingAuthManager:
         data = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "redirect_uri": self.settings.redirect_uri,
+            "redirect_uri": redirect_uri_com_user,
         }
 
         try:
@@ -364,6 +373,7 @@ class BlingAuthManager:
         self.store.delete(self.user_key)
 
         if revoke_ok:
+            clear_state(self.user_key)
             return True, "Conta Bling desconectada com sucesso."
 
         return False, revoke_msg
