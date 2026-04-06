@@ -6,7 +6,7 @@ from datetime import datetime
 # =========================
 # 🔥 VERSIONAMENTO
 # =========================
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.12"
 
 
 # =========================
