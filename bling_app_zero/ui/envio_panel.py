@@ -1,7 +1,7 @@
 import traceback
 import streamlit as st
 
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 
 
 st.set_page_config(
@@ -36,16 +36,13 @@ def main():
     aplicar_estilo_global()
     init_state()
 
-    # ORDEM CORRIGIDA:
-    # 1) Origem dos dados
-    # 2) Envio por API
-    # 3) Integração Bling
+    # 🔥 ORDEM CORRETA DO SISTEMA
     tab1, tab2, tab3 = st.tabs(
-        ["Origem dos dados", "Envio por API", "Integração Bling"]
+        ["Origem dos dados", "Integração Bling", "Envio por API"]
     )
 
     # =========================
-    # ORIGEM DOS DADOS (FLUXO PRINCIPAL)
+    # ORIGEM DOS DADOS (CORE)
     # =========================
     with tab1:
         try:
@@ -57,19 +54,9 @@ def main():
             log(f"Erro Origem dos dados: {traceback.format_exc()}")
 
     # =========================
-    # ENVIO POR API
+    # BLING (CONEXÃO)
     # =========================
     with tab2:
-        try:
-            render_send_panel()
-        except Exception as e:
-            st.error(f"Erro na aba Envio por API: {e}")
-            log(f"Erro Envio por API: {traceback.format_exc()}")
-
-    # =========================
-    # BLING (CONEXÃO / IMPORTAÇÃO)
-    # =========================
-    with tab3:
         try:
             render_bling_panel()
             st.markdown("---")
@@ -77,6 +64,20 @@ def main():
         except Exception as e:
             st.error(f"Erro no painel Bling: {e}")
             log(f"Erro Painel Bling: {traceback.format_exc()}")
+
+    # =========================
+    # ENVIO (ISOLADO)
+    # =========================
+    with tab3:
+        try:
+            # 🔒 PROTEÇÃO: só permite envio se existir DF final
+            if "df_final" not in st.session_state or st.session_state["df_final"] is None:
+                st.warning("Gere a planilha primeiro na aba Origem dos dados")
+            else:
+                render_send_panel()
+        except Exception as e:
+            st.error(f"Erro na aba Envio por API: {e}")
+            log(f"Erro Envio por API: {traceback.format_exc()}")
 
     # =========================
     # RODAPÉ
