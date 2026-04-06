@@ -51,7 +51,8 @@ def _normalizar_gtin(valor) -> str:
 
 def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
-        if "gtin" in str(col).lower() or "ean" in str(col).lower():
+        nome_col = str(col).lower()
+        if "gtin" in nome_col or "ean" in nome_col:
             df[col] = df[col].apply(_normalizar_gtin)
     return df
 
@@ -80,6 +81,7 @@ def _limpar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in df.columns:
         nome = str(col).strip()
+
         if nome == "" or nome.lower() == "nan":
             nome = "SEM_NOME"
 
@@ -122,7 +124,6 @@ def _ler_csv_seguro(arquivo):
             except Exception:
                 continue
 
-    # fallback final
     try:
         arquivo.seek(0)
         df = pd.read_csv(
@@ -140,22 +141,39 @@ def _ler_csv_seguro(arquivo):
 
 
 def _ler_excel_seguro(arquivo):
-    for header_idx in [0, 1, 2, 3]:
-        try:
-            arquivo.seek(0)
-            df = pd.read_excel(arquivo, header=header_idx)
-            if df is not None and not df.empty:
-                df = _limpar_nomes_colunas(df)
-                if not _colunas_ruins(df):
-                    return df
-        except Exception:
-            continue
-
     try:
         arquivo.seek(0)
-        df = pd.read_excel(arquivo)
+        df_raw = pd.read_excel(arquivo, header=None)
+
+        if df_raw is None or df_raw.empty:
+            return None
+
+        melhor_linha = 0
+        maior_score = 0
+
+        limite = min(5, len(df_raw))
+
+        for i in range(limite):
+            linha = df_raw.iloc[i].astype(str).tolist()
+
+            score = sum(
+                1 for x in linha
+                if str(x).strip() != "" and str(x).strip().lower() != "nan"
+            )
+
+            if score > maior_score:
+                maior_score = score
+                melhor_linha = i
+
+        arquivo.seek(0)
+        df = pd.read_excel(arquivo, header=melhor_linha)
+
+        if df is None or df.empty:
+            return None
+
         df = _limpar_nomes_colunas(df)
         return df
+
     except Exception as e:
         st.error(f"Erro ao ler Excel: {e}")
         return None
@@ -281,7 +299,9 @@ def render_origem_dados() -> None:
         or not isinstance(st.session_state["mapeamento_manual"], dict)
         or not st.session_state["mapeamento_manual"]
     ):
-        st.session_state["mapeamento_manual"] = sugestoes.copy() if isinstance(sugestoes, dict) else {}
+        st.session_state["mapeamento_manual"] = (
+            sugestoes.copy() if isinstance(sugestoes, dict) else {}
+        )
 
     mapa = st.session_state["mapeamento_manual"]
 
@@ -335,12 +355,22 @@ def render_origem_dados() -> None:
         # REGRA ESTOQUE SITE
         if origem == "Site":
             for col in df_saida.columns:
-                if "estoque" in col.lower() or "saldo" in col.lower() or "balanço" in col.lower() or "balanco" in col.lower():
+                nome_col = col.lower()
+                if (
+                    "estoque" in nome_col
+                    or "saldo" in nome_col
+                    or "balanço" in nome_col
+                    or "balanco" in nome_col
+                ):
 
                     def definir_estoque(valor):
                         texto = str(valor).strip().lower()
 
-                        if "esgotado" in texto or "indisponivel" in texto or "indisponível" in texto:
+                        if (
+                            "esgotado" in texto
+                            or "indisponivel" in texto
+                            or "indisponível" in texto
+                        ):
                             return 0
 
                         if texto == "" or texto == "nan":
