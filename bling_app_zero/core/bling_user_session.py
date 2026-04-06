@@ -9,6 +9,11 @@ import streamlit as st
 SESSION_USER_KEY = "bling_current_user_key"
 SESSION_USER_LABEL = "bling_current_user_label"
 
+SESSION_OAUTH_PENDING_USER_KEY = "bling_oauth_pending_user_key"
+SESSION_OAUTH_PENDING_USER_LABEL = "bling_oauth_pending_user_label"
+SESSION_OAUTH_STATE = "bling_oauth_state"
+SESSION_OAUTH_STATE_CREATED_AT = "bling_oauth_state_created_at"
+
 
 def _slugify(value: str) -> str:
     text = str(value or "").strip().lower()
@@ -24,8 +29,10 @@ def normalize_user_key(value: str) -> str:
 
 def set_current_user(identifier: str, display_name: Optional[str] = None) -> str:
     user_key = normalize_user_key(identifier)
+    label = str(display_name or identifier or user_key).strip() or user_key
+
     st.session_state[SESSION_USER_KEY] = user_key
-    st.session_state[SESSION_USER_LABEL] = (display_name or identifier or user_key).strip()
+    st.session_state[SESSION_USER_LABEL] = label
     return user_key
 
 
@@ -43,3 +50,28 @@ def ensure_current_user_defaults() -> None:
         st.session_state[SESSION_USER_KEY] = "default"
     if SESSION_USER_LABEL not in st.session_state:
         st.session_state[SESSION_USER_LABEL] = "Operação padrão"
+
+
+def set_pending_oauth_user(identifier: str, display_name: Optional[str] = None) -> str:
+    user_key = normalize_user_key(identifier)
+    label = str(display_name or identifier or user_key).strip() or user_key
+
+    st.session_state[SESSION_OAUTH_PENDING_USER_KEY] = user_key
+    st.session_state[SESSION_OAUTH_PENDING_USER_LABEL] = label
+    return user_key
+
+
+def get_pending_oauth_user_key() -> str:
+    return normalize_user_key(
+        str(st.session_state.get(SESSION_OAUTH_PENDING_USER_KEY, "default"))
+    )
+
+
+def get_pending_oauth_user_label() -> str:
+    label = str(st.session_state.get(SESSION_OAUTH_PENDING_USER_LABEL, "")).strip()
+    return label or get_pending_oauth_user_key()
+
+
+def clear_pending_oauth_user() -> None:
+    st.session_state.pop(SESSION_OAUTH_PENDING_USER_KEY, None)
+    st.session_state.pop(SESSION_OAUTH_PENDING_USER_LABEL, None)
