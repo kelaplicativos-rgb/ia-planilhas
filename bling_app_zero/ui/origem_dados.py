@@ -70,9 +70,6 @@ def render_origem_dados() -> None:
 
     df_origem = None
 
-    # =========================
-    # INPUT
-    # =========================
     if origem == "Planilha":
         arquivo = st.file_uploader(
             "Envie a planilha",
@@ -127,7 +124,11 @@ def render_origem_dados() -> None:
     df_modelo = pd.read_excel(modelo)
     colunas_modelo_ativas = list(df_modelo.columns)
 
-    sugestoes = sugestao_automatica(df_origem, colunas_modelo_ativas)
+    # 🔥 CORREÇÃO AQUI
+    try:
+        sugestoes = sugestao_automatica(df_origem)
+    except:
+        sugestoes = {}
 
     if "mapeamento_manual" not in st.session_state:
         st.session_state["mapeamento_manual"] = sugestoes or {}
