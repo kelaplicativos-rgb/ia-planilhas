@@ -17,6 +17,10 @@ try:
 except Exception:
     _exportar_excel_robusto = None
 
+from bling_app_zero.ui.bling_panel import render_bling_panel
+from bling_app_zero.ui.origem_dados import render_origem_dados
+from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
+
 
 # =========================
 # CONFIG
@@ -48,7 +52,7 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 def _safe_df(key: str) -> pd.DataFrame | None:
     df = st.session_state.get(key)
     if isinstance(df, pd.DataFrame) and not df.empty:
-        return df
+        return df.copy()
     return None
 
 
@@ -88,7 +92,10 @@ def _normalizar_validacao_obrigatorios(resultado_validacao) -> bool:
         if resultado_validacao is None:
             return True
 
-        if isinstance(resultado_validacao, (list, tuple, set, dict)):
+        if isinstance(resultado_validacao, dict):
+            return len(resultado_validacao) == 0
+
+        if isinstance(resultado_validacao, (list, tuple, set)):
             return len(resultado_validacao) == 0
 
         return bool(resultado_validacao)
@@ -108,21 +115,12 @@ def _exportar_download_bytes(df: pd.DataFrame) -> bytes:
             if isinstance(retorno, bytes):
                 return retorno
 
-            # caso algum helper retorne buffer/BytesIO
             if hasattr(retorno, "getvalue"):
                 return retorno.getvalue()
         except Exception as e:
             log_debug(f"Falha no exportador robusto: {e}", "ERRO")
 
     return exportar_excel_bytes(df)
-
-
-# =========================
-# IMPORTS
-# =========================
-from bling_app_zero.ui.bling_panel import render_bling_panel
-from bling_app_zero.ui.origem_dados import render_origem_dados
-from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 
 
 # =========================
@@ -184,33 +182,34 @@ elif etapa == "final":
             log_debug(f"Erro ao limpar GTIN inválido: {e}", "ERRO")
             df_download = df_fluxo.copy()
 
-        validacao = True
+        validacao_ok = True
+        excel_bytes = None
+
         try:
-            validacao = _normalizar_validacao_obrigatorios(
+            validacao_ok = _normalizar_validacao_obrigatorios(
                 validar_campos_obrigatorios(df_download)
             )
         except Exception as e:
             log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
-            validacao = True
+            validacao_ok = True
 
-        if not validacao:
+        if not validacao_ok:
             st.error("Preencha os campos obrigatórios antes do download.")
-            st.stop()
+        else:
+            try:
+                excel_bytes = _exportar_download_bytes(df_download)
+            except Exception as e:
+                log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
+                st.error("Não foi possível gerar a planilha final.")
 
-        try:
-            excel_bytes = _exportar_download_bytes(df_download)
-        except Exception as e:
-            log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
-            st.error("Não foi possível gerar a planilha final.")
-            st.stop()
-
-        st.download_button(
-            "⬇️ Baixar planilha final",
-            excel_bytes,
-            "bling_final.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        if excel_bytes is not None:
+            st.download_button(
+                "⬇️ Baixar planilha final",
+                excel_bytes,
+                "bling_final.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
         st.divider()
         st.subheader("Integração com Bling")
