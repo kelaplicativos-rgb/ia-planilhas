@@ -69,7 +69,9 @@ def _find_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
 
 
 def _base_df() -> Optional[pd.DataFrame]:
-    df = st.session_state.get("df_saida")
+    df = st.session_state.get("df_saida_api")
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        df = st.session_state.get("df_saida")
     if isinstance(df, pd.DataFrame) and not df.empty:
         return df.copy()
     return None
@@ -125,7 +127,7 @@ def build_stock_rows(df: pd.DataFrame) -> List[Dict]:
     )
     deposito_col = _find_column(df, ["deposito", "depósito", "deposito id", "depósito id"])
 
-    deposito_manual = str(st.session_state.get("deposito_nome_manual", "")).strip()
+    deposito_manual = str(st.session_state.get("deposito_nome_manual_api", "")).strip()
     rows: List[Dict] = []
 
     for _, row in df.iterrows():
@@ -221,7 +223,7 @@ def _mostrar_resumo_validacao(
         )
         df_invalidos = pd.DataFrame(invalidos)
         with st.expander(titulo_erro, expanded=False):
-            st.dataframe(df_invalidos, use_container_width=True, height=220)
+            st.dataframe(df_invalidos, width="stretch", height=220)
 
     if validos:
         st.success(f"{len(validos)} linha(s) prontas para uso.")
@@ -238,7 +240,7 @@ def render_send_panel() -> None:
     if not isinstance(df, pd.DataFrame) or df.empty:
         st.info(
             "Gere primeiro o preview final e o arquivo na aba 'Origem dos dados'. "
-            "A aba Envio usa apenas o DataFrame final já preparado para API."
+            "Esta aba usa apenas uma cópia do DataFrame final preparada para API e não interfere no download."
         )
         return
 
@@ -259,8 +261,8 @@ def render_send_panel() -> None:
 
         st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
 
-        if st.button("Gerar preview da API de cadastro", use_container_width=True):
-            st.session_state["ultimo_log_envio"] = {
+        if st.button("Gerar preview da API de cadastro", width="stretch"):
+            st.session_state["ultimo_log_envio_api"] = {
                 "tipo": "cadastro",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
@@ -275,11 +277,11 @@ def render_send_panel() -> None:
         if conectado:
             if st.button(
                 "Enviar cadastro real para o Bling",
-                use_container_width=True,
+                width="stretch",
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_products(validos, user_key=user_key)
-                st.session_state["ultimo_log_envio"] = {
+                st.session_state["ultimo_log_envio_api"] = {
                     "tipo": "cadastro_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
@@ -291,7 +293,7 @@ def render_send_panel() -> None:
                     )
                 if erros:
                     st.error(f"{len(erros)} produto(s) falharam no envio.")
-                    st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
+                    st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
         else:
             st.info("Conecte o Bling para liberar o envio real de cadastro.")
 
@@ -303,12 +305,12 @@ def render_send_panel() -> None:
 
         st.text_input(
             "Depósito / ID do depósito",
-            key="deposito_nome_manual",
+            key="deposito_nome_manual_api",
             help="Use este campo somente para o envio por API quando a planilha final não possuir coluna de depósito.",
         )
 
-        if st.button("Gerar preview da API de estoque", use_container_width=True):
-            st.session_state["ultimo_log_envio"] = {
+        if st.button("Gerar preview da API de estoque", width="stretch"):
+            st.session_state["ultimo_log_envio_api"] = {
                 "tipo": "estoque",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
@@ -323,11 +325,11 @@ def render_send_panel() -> None:
         if conectado:
             if st.button(
                 "Enviar estoque real para o Bling",
-                use_container_width=True,
+                width="stretch",
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_stocks(validos, user_key=user_key)
-                st.session_state["ultimo_log_envio"] = {
+                st.session_state["ultimo_log_envio_api"] = {
                     "tipo": "estoque_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
@@ -337,6 +339,6 @@ def render_send_panel() -> None:
                     st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
                 if erros:
                     st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
-                    st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
+                    st.dataframe(pd.DataFrame(erros), width="stretch", height=220)
         else:
             st.info("Conecte o Bling para liberar o envio real de estoque.")
