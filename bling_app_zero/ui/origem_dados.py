@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import re
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
@@ -95,6 +96,7 @@ def _limpar_estado_geracao(modo: str | None = None) -> None:
         "validacao_avisos_saida",
         "logs_gtin_saida",
         "df_saida_api",
+        "acao_final_origem",
     ]:
         st.session_state.pop(chave, None)
 
@@ -778,13 +780,40 @@ def _render_calculadora(
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        margem = st.number_input("Lucro (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.get("calc_margem_lucro", 30.0)), step=1.0, key="calc_margem_lucro")
+        margem = st.number_input(
+            "Lucro (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(st.session_state.get("calc_margem_lucro", 30.0)),
+            step=1.0,
+            key="calc_margem_lucro",
+        )
     with c2:
-        impostos = st.number_input("Impostos (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.get("calc_impostos", 0.0)), step=1.0, key="calc_impostos")
+        impostos = st.number_input(
+            "Impostos (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(st.session_state.get("calc_impostos", 0.0)),
+            step=1.0,
+            key="calc_impostos",
+        )
     with c3:
-        taxa_extra = st.number_input("Taxas extras (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.get("calc_taxa_extra", 15.0)), step=1.0, key="calc_taxa_extra")
+        taxa_extra = st.number_input(
+            "Taxas extras (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(st.session_state.get("calc_taxa_extra", 15.0)),
+            step=1.0,
+            key="calc_taxa_extra",
+        )
     with c4:
-        custo_fixo = st.number_input("Custo fixo (R$)", min_value=0.0, value=float(st.session_state.get("calc_custo_fixo", 0.0)), step=1.0, key="calc_custo_fixo")
+        custo_fixo = st.number_input(
+            "Custo fixo (R$)",
+            min_value=0.0,
+            value=float(st.session_state.get("calc_custo_fixo", 0.0)),
+            step=1.0,
+            key="calc_custo_fixo",
+        )
 
     preco_sugerido = _calcular_preco_venda_unitario(
         preco_compra=preco_base_medio,
@@ -859,6 +888,45 @@ def _render_campos_fixos_estoque(colunas_modelo: List[str]) -> Dict[str, str]:
 # ==========================================================
 # MONTAGEM DA SAÍDA
 # ==========================================================
+def _buscar_coluna_por_alias(colunas: List[str], aliases: List[str]) -> str:
+    mapa = _mapa_colunas_normalizadas(colunas)
+    for alias in aliases:
+        alias_norm = _normalizar_texto(alias)
+        if alias_norm in mapa:
+            return mapa[alias_norm]
+
+    for col in colunas:
+        cl = _normalizar_texto(col)
+        for alias in aliases:
+            alias_norm = _normalizar_texto(alias)
+            if alias_norm in cl:
+                return col
+
+    return ""
+
+
+def _normalizar_campos_estoque_bling(df_saida: pd.DataFrame) -> pd.DataFrame:
+    df_saida = df_saida.copy()
+
+    col_balanco = _buscar_coluna_por_alias(
+        list(df_saida.columns),
+        ["balanco", "balanço", "estoque", "saldo"],
+    )
+    if col_balanco:
+        serie_balanco = _serie_float(df_saida, col_balanco, default=0.0)
+        df_saida[col_balanco] = serie_balanco.fillna(0).round(0).astype("Int64").astype(str).replace("<NA>", "0")
+
+    col_preco_unitario = _buscar_coluna_por_alias(
+        list(df_saida.columns),
+        ["preco unitario", "preço unitário", "preco unitário", "preço unitario"],
+    )
+    if col_preco_unitario:
+        serie_preco = _serie_float(df_saida, col_preco_unitario, default=0.0)
+        df_saida[col_preco_unitario] = serie_preco.map(lambda x: f"{float(x):.2f}")
+
+    return df_saida
+
+
 def _montar_df_saida_exato_modelo(
     df_origem: pd.DataFrame,
     colunas_modelo: List[str],
@@ -899,11 +967,16 @@ def _montar_df_saida_exato_modelo(
         deposito_nome = str(estoque_cfg.get("deposito_nome", "") or "").strip()
 
         if coluna_deposito:
+            if not deposito_nome:
+                deposito_nome = "Geral"
             df_saida[coluna_deposito] = deposito_nome
 
     for col in df_saida.columns:
         if _coluna_parece_gtin_ou_ean(col):
             df_saida[col] = _limpar_gtin_invalido_serie(_serie_texto(df_saida, col))
+
+    if modo == "estoque":
+        df_saida = _normalizar_campos_estoque_bling(df_saida)
 
     return df_saida
 
@@ -929,23 +1002,6 @@ def _aplicar_limpeza_gtin_ean_df_saida(df_saida: pd.DataFrame) -> tuple[pd.DataF
 # ==========================================================
 # VALIDAÇÃO
 # ==========================================================
-def _buscar_coluna_por_alias(colunas: List[str], aliases: List[str]) -> str:
-    mapa = _mapa_colunas_normalizadas(colunas)
-    for alias in aliases:
-        alias_norm = _normalizar_texto(alias)
-        if alias_norm in mapa:
-            return mapa[alias_norm]
-
-    for col in colunas:
-        cl = _normalizar_texto(col)
-        for alias in aliases:
-            alias_norm = _normalizar_texto(alias)
-            if alias_norm in cl:
-                return col
-
-    return ""
-
-
 def _validar_saida_bling(df_saida: pd.DataFrame, modo: str) -> Tuple[List[str], List[str]]:
     erros: List[str] = []
     avisos: List[str] = []
@@ -992,6 +1048,29 @@ def _validar_saida_bling(df_saida: pd.DataFrame, modo: str) -> Tuple[List[str], 
         if vazios > 0:
             erros.append(f"Coluna obrigatória '{col_real}' possui {vazios} linha(s) vazia(s).")
 
+    if modo == "estoque":
+        col_deposito = _buscar_coluna_por_alias(list(df_saida.columns), ["deposito", "depósito"])
+        if col_deposito:
+            serie_dep = _serie_texto(df_saida, col_deposito)
+            if int((serie_dep == "").sum()) > 0:
+                erros.append(f"Coluna obrigatória '{col_deposito}' está vazia em uma ou mais linhas.")
+
+        col_balanco = _buscar_coluna_por_alias(list(df_saida.columns), ["balanco", "balanço", "estoque", "saldo"])
+        if col_balanco:
+            serie_balanco = _serie_texto(df_saida, col_balanco)
+            invalidos = 0
+            for valor in serie_balanco:
+                texto = _to_text(valor)
+                if not texto:
+                    invalidos += 1
+                    continue
+                try:
+                    float(str(texto).replace(",", "."))
+                except Exception:
+                    invalidos += 1
+            if invalidos > 0:
+                erros.append(f"Coluna '{col_balanco}' possui {invalidos} valor(es) inválido(s) para estoque.")
+
     return erros, avisos
 
 
@@ -1031,6 +1110,62 @@ def _exportar_df_exato_para_excel_bytes(df: pd.DataFrame) -> bytes:
 
     output.seek(0)
     return output.getvalue()
+
+
+# ==========================================================
+# PROGRESSO
+# ==========================================================
+def _formatar_segundos(segundos: float) -> str:
+    segundos = max(0, int(segundos))
+    minutos, seg = divmod(segundos, 60)
+    if minutos <= 0:
+        return f"{seg}s"
+    return f"{minutos}m {seg}s"
+
+
+def _progress_ui():
+    if "_origem_progress_bar" not in st.session_state:
+        st.session_state["_origem_progress_bar"] = None
+    if "_origem_progress_status" not in st.session_state:
+        st.session_state["_origem_progress_status"] = None
+    if "_origem_progress_started_at" not in st.session_state:
+        st.session_state["_origem_progress_started_at"] = None
+
+    return (
+        st.empty(),
+        st.empty(),
+    )
+
+
+def _progress_start(bar_placeholder, status_placeholder, texto: str) -> None:
+    st.session_state["_origem_progress_started_at"] = time.time()
+    with bar_placeholder:
+        st.progress(0, text=texto)
+    with status_placeholder:
+        st.caption("Tempo estimado: calculando...")
+
+
+def _progress_update(bar_placeholder, status_placeholder, valor: int, texto: str, estimativa_total: int = 30) -> None:
+    inicio = st.session_state.get("_origem_progress_started_at")
+    restante_txt = "calculando..."
+    if inicio:
+        decorrido = max(0.1, time.time() - inicio)
+        progresso = max(1, valor)
+        estimado_total = max(float(estimativa_total), decorrido * (100.0 / progresso))
+        restante = max(0.0, estimado_total - decorrido)
+        restante_txt = _formatar_segundos(restante)
+
+    with bar_placeholder:
+        st.progress(int(max(0, min(100, valor))), text=texto)
+    with status_placeholder:
+        st.caption(f"Tempo estimado restante: {restante_txt}")
+
+
+def _progress_done(bar_placeholder, status_placeholder, texto: str) -> None:
+    with bar_placeholder:
+        st.progress(100, text=texto)
+    with status_placeholder:
+        st.caption("Concluído.")
 
 
 # ==========================================================
@@ -1080,7 +1215,7 @@ def render_origem_dados() -> None:
 
     st.info(
         f"Operação selecionada: **{config['label']}**. "
-        "Você vai mapear manualmente, gerar o preview final e só depois baixar."
+        "Você vai mapear manualmente, gerar o preview final e só depois escolher entre baixar ou enviar."
     )
 
     if nome_modelo_ativo:
@@ -1121,6 +1256,8 @@ def render_origem_dados() -> None:
         st.session_state.pop(site_url_key, None)
         st.rerun()
 
+    progress_bar_ph, progress_status_ph = _progress_ui()
+
     if buscar_site:
         if not str(url_site or "").strip():
             st.error("Informe a URL do site para iniciar a varredura.")
@@ -1132,20 +1269,31 @@ def render_origem_dados() -> None:
             _log(f"Erro ao carregar o módulo de busca por site: {erro_import_site}")
             return
 
-        with st.spinner("Varrendo o site, categorias e páginas de produto..."):
-            try:
-                df_site = extrair_produtos_de_site(str(url_site).strip())
-                if df_site is None or df_site.empty:
-                    st.error("A varredura terminou sem produtos válidos.")
-                    return
-                st.session_state[site_df_key] = df_site.copy()
-                st.session_state[site_url_key] = str(url_site).strip()
-                _limpar_estado_geracao(modo)
-                st.success(f"Varredura concluída com sucesso. {len(df_site)} produto(s) encontrados no site.")
-            except Exception as e:
-                st.error(f"Erro ao varrer o site: {e}")
-                _log(f"Erro ao varrer o site {url_site}: {e}")
+        try:
+            _progress_start(progress_bar_ph, progress_status_ph, "Iniciando varredura do site...")
+            _progress_update(progress_bar_ph, progress_status_ph, 10, "Conectando ao site...", estimativa_total=40)
+            _progress_update(progress_bar_ph, progress_status_ph, 35, "Lendo categorias e páginas de produto...", estimativa_total=40)
+
+            df_site = extrair_produtos_de_site(str(url_site).strip())
+
+            _progress_update(progress_bar_ph, progress_status_ph, 80, "Processando produtos encontrados...", estimativa_total=40)
+
+            if df_site is None or df_site.empty:
+                _progress_done(progress_bar_ph, progress_status_ph, "Finalizado sem produtos válidos")
+                st.error("A varredura terminou sem produtos válidos.")
                 return
+
+            st.session_state[site_df_key] = df_site.copy()
+            st.session_state[site_url_key] = str(url_site).strip()
+            _limpar_estado_geracao(modo)
+
+            _progress_done(progress_bar_ph, progress_status_ph, "Varredura concluída")
+            st.success(f"Varredura concluída com sucesso. {len(df_site)} produto(s) encontrados no site.")
+        except Exception as e:
+            _progress_done(progress_bar_ph, progress_status_ph, "Erro na varredura")
+            st.error(f"Erro ao varrer o site: {e}")
+            _log(f"Erro ao varrer o site {url_site}: {e}")
+            return
 
     df_origem = None
     origem_atual = ""
@@ -1228,7 +1376,7 @@ def render_origem_dados() -> None:
     st.dataframe(df_preview_saida.head(20), width="stretch")
 
     if erros_preview:
-        st.error("Pendências antes do download:\n\n- " + "\n- ".join(erros_preview))
+        st.error("Pendências antes do preview final:\n\n- " + "\n- ".join(erros_preview))
     elif avisos_preview:
         st.warning("Avisos:\n\n- " + "\n- ".join(avisos_preview))
     else:
@@ -1255,7 +1403,7 @@ def render_origem_dados() -> None:
                 st.session_state["logs_gtin_saida"] = logs_gtin
 
                 if erros_final:
-                    st.error("Não foi possível liberar o download porque ainda existem pendências.")
+                    st.error("Não foi possível liberar a ação final porque ainda existem pendências.")
                     return
 
                 excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_final)
@@ -1269,7 +1417,7 @@ def render_origem_dados() -> None:
                 if total_limpados > 0:
                     st.success(f"Preview final gerado com sucesso. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco.")
                 else:
-                    st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar.")
+                    st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar ou enviar.")
 
             except Exception as e:
                 st.error(f"Erro ao gerar preview final: {e}")
@@ -1294,7 +1442,7 @@ def render_origem_dados() -> None:
                 st.session_state["logs_gtin_saida"] = logs_gtin
 
                 if erros_final:
-                    st.error("A limpeza foi aplicada, mas ainda existem pendências antes do download.")
+                    st.error("A limpeza foi aplicada, mas ainda existem pendências antes da ação final.")
                     return
 
                 excel_bytes = _exportar_df_exato_para_excel_bytes(df_saida_limpa)
@@ -1323,6 +1471,7 @@ def render_origem_dados() -> None:
             st.session_state.pop("excel_saida_bytes", None)
             st.session_state.pop("excel_saida_nome", None)
             st.session_state.pop("logs_gtin_saida", None)
+            st.session_state.pop("acao_final_origem", None)
             st.rerun()
 
     logs_gtin_saida = st.session_state.get("logs_gtin_saida", [])
@@ -1343,17 +1492,35 @@ def render_origem_dados() -> None:
         and excel_saida_bytes
     ):
         st.divider()
-        st.subheader("Preview final validado para download")
+        st.subheader("Preview final validado")
         st.caption(f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas")
         st.dataframe(df_saida_state.head(50), width="stretch")
 
-        st.download_button(
-            f"Baixar arquivo de {config['label']}",
-            data=excel_saida_bytes,
-            file_name=excel_saida_nome,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+        acao_final = st.radio(
+            "Escolha a ação final",
+            options=["download", "enviar"],
+            format_func=lambda x: "Baixar arquivo final" if x == "download" else "Enviar para o Bling",
+            horizontal=True,
+            key="acao_final_origem",
         )
+
+        if acao_final == "download":
+            st.download_button(
+                f"Baixar arquivo de {config['label']}",
+                data=excel_saida_bytes,
+                file_name=excel_saida_nome,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+            )
+        else:
+            st.info("Fluxo de envio por API aberto abaixo, usando o mesmo DataFrame final validado.")
+
+            try:
+                from bling_app_zero.ui.envio_panel import render_send_panel
+                render_send_panel()
+            except Exception as e:
+                st.error(f"Não foi possível abrir o envio por API dentro da Home: {e}")
+                _log(f"Erro ao abrir envio por API dentro da Home: {e}")
 
 
 def tela_origem_dados() -> None:
