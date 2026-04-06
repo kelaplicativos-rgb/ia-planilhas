@@ -15,7 +15,6 @@ def _get_deposito():
     return st.session_state.get("deposito_nome", "")
 
 
-# 🔥 DETECTORES
 def _is_coluna_deposito(nome):
     nome = str(nome).lower()
     return "deposit" in nome or "depós" in nome
@@ -30,7 +29,7 @@ def render_origem_mapeamento():
 
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
-    df_preparado = st.session_state.get("df_saida")  # preço já calculado
+    df_preparado = st.session_state.get("df_saida")  # 🔥 BASE REAL
 
     if df_origem is None or df_modelo is None:
         return
@@ -41,11 +40,10 @@ def render_origem_mapeamento():
     bloqueios = st.session_state.get("bloquear_campos_auto", {})
 
     mapping = {}
-
     colunas = list(df_modelo.columns)
 
     # =========================
-    # 🔥 UI COMPACTA
+    # UI COMPACTA
     # =========================
     for i in range(0, len(colunas), 2):
         cols = st.columns(2)
@@ -70,7 +68,6 @@ def render_origem_mapeamento():
                     mapping[col] = None
                     continue
 
-                # 🔥 NORMAL
                 mapping[col] = st.selectbox(
                     col,
                     [""] + list(df_origem.columns),
@@ -79,43 +76,55 @@ def render_origem_mapeamento():
                 )
 
     # =========================
-    # 🔥 MONTA DF
+    # 🔥 BASE SEGURA
     # =========================
-    df_saida = pd.DataFrame()
+    if df_preparado is not None:
+        df_saida = df_preparado.copy()
+    else:
+        df_saida = pd.DataFrame(index=df_origem.index)
 
+    # =========================
+    # 🔥 APLICA MAPEAMENTO SEM DESTRUIR
+    # =========================
     for col in df_modelo.columns:
 
         origem = mapping.get(col)
 
         # 🔥 PRIORIDADE → AUTO (PREÇO / DEPÓSITO)
-        if df_preparado is not None and col in df_preparado.columns:
-            if _is_coluna_preco(col) or _is_coluna_deposito(col):
-                df_saida[col] = df_preparado[col]
-                continue
+        if _is_coluna_preco(col) and bloqueios.get("preco"):
+            continue
+
+        if _is_coluna_deposito(col) and deposito:
+            df_saida[col] = deposito
+            continue
 
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
-        else:
+        elif col not in df_saida.columns:
             df_saida[col] = ""
 
     # =========================
-    # 🔥 GARANTE DEPÓSITO
+    # 🔥 GARANTE DEPÓSITO FINAL
     # =========================
     if deposito:
-        col_dep = None
+        encontrou = False
 
         for col in df_saida.columns:
             if _is_coluna_deposito(col):
-                col_dep = col
+                df_saida[col] = deposito
+                encontrou = True
                 break
 
-        if col_dep:
-            df_saida[col_dep] = deposito
-        else:
+        if not encontrou:
             df_saida["Depósito"] = deposito
 
     # =========================
-    # 🔥 SALVA SEM AVANÇAR FLUXO
+    # 🔥 ORDENA IGUAL MODELO
+    # =========================
+    df_saida = df_saida.reindex(columns=df_modelo.columns, fill_value="")
+
+    # =========================
+    # 🔥 SALVA
     # =========================
     st.session_state["df_saida"] = df_saida
 
@@ -126,7 +135,7 @@ def render_origem_mapeamento():
         st.dataframe(df_saida.head(20), width="stretch")
 
     # =========================
-    # 🔥 DOWNLOAD (OPCIONAL)
+    # 🔥 DOWNLOAD
     # =========================
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
