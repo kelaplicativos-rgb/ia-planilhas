@@ -33,8 +33,76 @@ def _safe_df_modelo(df):
         return None
 
 
-def render_origem_dados() -> None:
+def _normalizar_texto(valor: str) -> str:
+    try:
+        return str(valor or "").strip().lower()
+    except Exception:
+        return ""
 
+
+def _detectar_coluna_deposito(df):
+    try:
+        if df is None or len(df.columns) == 0:
+            return None
+
+        candidatos_exatos = {
+            "depósito",
+            "deposito",
+            "nome do depósito",
+            "nome do deposito",
+            "depósito padrão",
+            "deposito padrao",
+            "depósito padrão",
+            "depósito estoque",
+            "deposito estoque",
+        }
+
+        for col in df.columns:
+            nome = _normalizar_texto(col)
+            if nome in candidatos_exatos:
+                return col
+
+        for col in df.columns:
+            nome = _normalizar_texto(col)
+            if "deposit" in nome or "depós" in nome:
+                return col
+
+        return None
+    except Exception:
+        return None
+
+
+def _aplicar_deposito_manual(df, deposito_nome):
+    try:
+        if df is None:
+            return df
+
+        deposito_nome = str(deposito_nome or "").strip()
+        if not deposito_nome:
+            return df
+
+        df_saida = df.copy()
+
+        coluna_deposito = _detectar_coluna_deposito(df_saida)
+        if coluna_deposito:
+            df_saida[coluna_deposito] = deposito_nome
+        else:
+            # cria uma coluna padrão já pronta para o fluxo seguinte
+            df_saida["Depósito"] = deposito_nome
+
+        return df_saida
+    except Exception as e:
+        log_debug(f"Erro ao aplicar depósito manual: {e}")
+        return df
+
+
+def _obter_df_modelo_ativo(tipo: str):
+    if tipo == "cadastro":
+        return st.session_state.get("df_modelo_cadastro")
+    return st.session_state.get("df_modelo_estoque")
+
+
+def render_origem_dados() -> None:
     if st.session_state.get("etapa_origem") == "mapeamento":
         return
 
@@ -56,71 +124,126 @@ def render_origem_dados() -> None:
         )
 
         if arquivo:
-            df_origem = ler_planilha_segura(arquivo)
-
-            if _safe_df_dados(df_origem) is None:
-                st.error("Erro ao ler planilha")
+            try:
+                df_origem = ler_planilha_segura(arquivo)
+            except Exception as e:
+                log_debug(f"Erro ao ler planilha de origem: {e}")
+                st.error("Erro ao ler planilha.")
                 return
 
+            if _safe_df_dados(df_origem) is None:
+                st.error("Erro ao ler planilha.")
+                return
+
+    elif origem == "XML":
+        st.info("Envio por XML ainda depende do fluxo complementar do projeto.")
+        return
+
     elif origem == "Site":
-        df_origem = render_origem_site()
+        try:
+            df_origem = render_origem_site()
+        except Exception as e:
+            log_debug(f"Erro em render_origem_site: {e}")
+            st.error("Erro ao buscar dados do site.")
+            return
 
     if _safe_df_dados(df_origem) is None:
         return
 
     st.session_state["df_origem"] = df_origem
 
-    # 🔥 PREVIEW COLAPSADO
     with st.expander("👁️ Pré-visualização dos dados", expanded=False):
-        st.dataframe(df_origem.head(10), use_container_width=True)
+        try:
+            st.dataframe(df_origem.head(10), width="stretch")
+        except Exception:
+            st.dataframe(df_origem.head(10))
 
-    # =========================
-    # OPERAÇÃO
-    # =========================
     op = st.radio(
         "Operação",
         ["Cadastro", "Estoque"],
         horizontal=True,
+        key="operacao_origem_dados",
     )
 
     tipo = "cadastro" if op == "Cadastro" else "estoque"
     st.session_state["tipo_operacao_bling"] = tipo
 
-    # =========================
-    # MODELO
-    # =========================
+    modelo_valido = None
+    deposito_nome = ""
+
     if tipo == "cadastro":
         modelo = st.file_uploader(
             "Modelo Cadastro",
-            type=["xlsx", "xls", "csv"],
+            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
             key="modelo_cadastro",
         )
 
         if modelo:
-            df_modelo = ler_planilha_segura(modelo)
-            st.session_state["df_modelo_cadastro"] = df_modelo
+            try:
+                df_modelo = ler_planilha_segura(modelo)
+                if _safe_df_modelo(df_modelo) is None:
+                    st.error("Modelo de cadastro inválido.")
+                    return
+                st.session_state["df_modelo_cadastro"] = df_modelo
+            except Exception as e:
+                log_debug(f"Erro ao ler modelo de cadastro: {e}")
+                st.error("Erro ao ler modelo de cadastro.")
+                return
+
+        modelo_valido = _safe_df_modelo(_obter_df_modelo_ativo("cadastro"))
 
     else:
         modelo = st.file_uploader(
             "Modelo Estoque",
-            type=["xlsx", "xls", "csv"],
+            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
             key="modelo_estoque",
         )
 
         if modelo:
-            df_modelo = ler_planilha_segura(modelo)
-            st.session_state["df_modelo_estoque"] = df_modelo
+            try:
+                df_modelo = ler_planilha_segura(modelo)
+                if _safe_df_modelo(df_modelo) is None:
+                    st.error("Modelo de estoque inválido.")
+                    return
+                st.session_state["df_modelo_estoque"] = df_modelo
+            except Exception as e:
+                log_debug(f"Erro ao ler modelo de estoque: {e}")
+                st.error("Erro ao ler modelo de estoque.")
+                return
 
-        st.text_input("Nome do depósito", key="deposito_nome_manual")
+        deposito_nome = st.text_input(
+            "Nome do depósito",
+            key="deposito_nome_manual",
+            placeholder="Ex.: ifood",
+        ).strip()
 
-    # 🔥 AUTO FLUXO
-    if (
-        _safe_df_dados(df_origem)
-        and (
-            (tipo == "cadastro" and _safe_df_modelo(st.session_state.get("df_modelo_cadastro")))
-            or (tipo == "estoque" and _safe_df_modelo(st.session_state.get("df_modelo_estoque")))
-        )
-    ):
-        st.session_state["df_saida"] = df_origem.copy()
-        st.session_state["etapa_origem"] = "mapeamento"
-        st.rerun()
+        st.session_state["deposito_nome_manual"] = deposito_nome
+        modelo_valido = _safe_df_modelo(_obter_df_modelo_ativo("estoque"))
+
+    pode_avancar = _safe_df_dados(df_origem) is not None and modelo_valido is not None
+
+    if tipo == "estoque" and pode_avancar and not deposito_nome:
+        st.warning("Informe o nome do depósito para continuar no fluxo de estoque.")
+        return
+
+    if pode_avancar:
+        try:
+            df_saida = df_origem.copy()
+
+            if tipo == "estoque":
+                df_saida = _aplicar_deposito_manual(df_saida, deposito_nome)
+
+            st.session_state["df_saida"] = df_saida
+            st.session_state["etapa_origem"] = "mapeamento"
+
+            log_debug(
+                f"Fluxo origem -> mapeamento | origem={origem} | tipo={tipo} | "
+                f"linhas={len(df_saida)} | colunas={len(df_saida.columns)}"
+            )
+
+            st.rerun()
+
+        except Exception as e:
+            log_debug(f"Erro ao preparar df_saida para mapeamento: {e}")
+            st.error("Erro ao preparar os dados para o mapeamento.")
+            return
