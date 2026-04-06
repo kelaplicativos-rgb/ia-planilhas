@@ -32,7 +32,6 @@ def render_origem_mapeamento():
 
     mapping = {}
 
-    # 🔥 layout compacto (mobile)
     for col in df_modelo.columns:
         mapping[col] = st.selectbox(
             col,
@@ -41,7 +40,6 @@ def render_origem_mapeamento():
             key=f"map_{col}",
         )
 
-    # 🔥 montar DF
     df_saida = pd.DataFrame(columns=df_modelo.columns)
 
     for col in df_modelo.columns:
@@ -49,23 +47,22 @@ def render_origem_mapeamento():
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
 
-    # 🔥 depósito FORÇADO
+    # 🔥 DEPÓSITO GARANTIDO
     deposito = _get_deposito()
     if deposito:
         for col in df_saida.columns:
             if "deposito" in col.lower():
                 df_saida[col] = deposito
 
-    # 🔥 PRECIFICAÇÃO AUTOMÁTICA
+    # 🔥 PRECIFICAÇÃO
     df_saida = aplicar_precificacao_automatica(df_saida)
 
     st.session_state["df_saida"] = df_saida
 
-    # 🔥 PREVIEW FINAL (COLAPSADO)
+    # 🔥 PREVIEW COLAPSADO
     with st.expander("📦 Preview final", expanded=False):
-        st.dataframe(df_saida.head(20), width="stretch")
+        st.dataframe(df_saida.head(20), use_container_width=True)
 
-    # DOWNLOAD
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
 
@@ -73,5 +70,5 @@ def render_origem_mapeamento():
         "⬇️ Baixar",
         buffer.getvalue(),
         "bling.xlsx",
-        width="stretch",
+        use_container_width=True,
     )
