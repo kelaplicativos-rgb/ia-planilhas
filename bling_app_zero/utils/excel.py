@@ -30,6 +30,17 @@ def _detectar_coluna_deposito(df: pd.DataFrame):
 
 
 # ==========================================================
+# 🔥 DETECTA COLUNA PREÇO
+# ==========================================================
+def _detectar_coluna_preco(df: pd.DataFrame):
+    for col in df.columns:
+        nome = str(col).lower()
+        if "preço" in nome or "preco" in nome:
+            return col
+    return None
+
+
+# ==========================================================
 # 🔥 GARANTE DEPÓSITO FINAL
 # ==========================================================
 def _garantir_deposito(df: pd.DataFrame) -> pd.DataFrame:
@@ -48,6 +59,28 @@ def _garantir_deposito(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["Depósito"] = deposito
 
+    return df
+
+
+# ==========================================================
+# 🔥 GARANTE PREÇO FINAL (NÃO SOBRESCREVE)
+# ==========================================================
+def _garantir_preco(df: pd.DataFrame) -> pd.DataFrame:
+
+    bloqueios = st.session_state.get("bloquear_campos_auto", {})
+
+    if not bloqueios.get("preco"):
+        return df
+
+    df = df.copy()
+
+    col_preco = _detectar_coluna_preco(df)
+
+    # se não tem coluna, não faz nada
+    if not col_preco:
+        return df
+
+    # 🔥 NÃO ALTERA (já veio da calculadora)
     return df
 
 
@@ -107,8 +140,11 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
 
     df = _garantir_estrutura_modelo(df)
 
-    # 🔥 GARANTE DEPÓSITO ANTES DE EXPORTAR
+    # 🔥 GARANTE DEPÓSITO
     df = _garantir_deposito(df)
+
+    # 🔥 GARANTE PREÇO
+    df = _garantir_preco(df)
 
     df = _normalizar_para_excel(df)
 
@@ -128,8 +164,11 @@ def exportar_df_exato_para_excel_bytes(
 
     df = _garantir_estrutura_modelo(df)
 
-    # 🔥 GARANTE DEPÓSITO TAMBÉM AQUI
+    # 🔥 GARANTE DEPÓSITO
     df = _garantir_deposito(df)
+
+    # 🔥 GARANTE PREÇO
+    df = _garantir_preco(df)
 
     output = BytesIO()
 
