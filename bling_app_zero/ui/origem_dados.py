@@ -26,61 +26,6 @@ def _safe_df_dados(df):
         return False
 
 
-def _safe_df_modelo(df):
-    try:
-        if df is None:
-            return False
-        if not hasattr(df, "columns"):
-            return False
-        if len(df.columns) == 0:
-            return False
-        return True
-    except Exception:
-        return False
-
-
-def _detectar_coluna_deposito(df):
-    for col in df.columns:
-        nome = str(col).lower().strip()
-        if "deposit" in nome or "depós" in nome or "deposito" in nome:
-            return col
-    return None
-
-
-def _aplicar_deposito(df, deposito):
-    if not deposito:
-        return df
-
-    df_saida = df.copy()
-    col_dep = _detectar_coluna_deposito(df_saida)
-
-    if col_dep:
-        df_saida[col_dep] = deposito
-    else:
-        df_saida["Depósito"] = deposito
-
-    return df_saida
-
-
-def _normalizar_coluna_numerica(df, coluna):
-    if coluna not in df.columns:
-        return df
-
-    df_saida = df.copy()
-
-    try:
-        serie = df_saida[coluna].astype(str).str.strip()
-        serie = serie.str.replace("R$", "", regex=False)
-        serie = serie.str.replace(".", "", regex=False)
-        serie = serie.str.replace(",", ".", regex=False)
-
-        df_saida[coluna] = serie.astype(float)
-    except Exception:
-        pass
-
-    return df_saida
-
-
 def _coletar_parametros_precificacao():
     return {
         "percentual_impostos": float(st.session_state.get("perc_impostos", 0) or 0),
@@ -91,18 +36,16 @@ def _coletar_parametros_precificacao():
 
 
 def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
-    df_temp = _normalizar_coluna_numerica(df_base, coluna_preco)
-
     kwargs = _coletar_parametros_precificacao()
 
     try:
         return aplicar_precificacao_automatica(
-            df_temp,
+            df_base,
             coluna_preco=coluna_preco,
             **kwargs,
         )
     except TypeError:
-        return aplicar_precificacao_automatica(df_temp, **kwargs)
+        return aplicar_precificacao_automatica(df_base, **kwargs)
 
 
 def _render_precificacao(df_base):
@@ -136,6 +79,11 @@ def _render_precificacao(df_base):
             st.session_state["df_precificado"] = df_precificado.copy()
             st.session_state["df_saida"] = df_precificado.copy()
 
+            # 🔥 ATIVA BLOQUEIO DO PREÇO
+            st.session_state["bloquear_campos_auto"] = {
+                "preco": True
+            }
+
             with st.expander("👁️ Prévia da precificação", expanded=False):
                 st.dataframe(df_precificado.head(10), width="stretch")
 
@@ -151,36 +99,35 @@ def render_origem_dados() -> None:
 
     st.subheader("Origem dos dados")
 
-    # 🔥 NOVO — TIPO DE OPERAÇÃO
+    # 🔥 OPERAÇÃO
     operacao = st.radio(
         "Selecione a operação",
         ["Cadastro de Produtos", "Atualização de Estoque"],
         key="tipo_operacao",
     )
 
-    # 🔥 NOVO — MODELOS
+    # 🔥 SINCRONIZA COM MAPEAMENTO
+    if operacao == "Cadastro de Produtos":
+        st.session_state["tipo_operacao_bling"] = "cadastro"
+    else:
+        st.session_state["tipo_operacao_bling"] = "estoque"
+
+    # 🔥 MODELOS
     st.markdown("### Modelos Bling")
 
-    modelo_cadastro = None
-    modelo_estoque = None
-
     if operacao == "Cadastro de Produtos":
-        modelo_cadastro = st.file_uploader(
+        st.file_uploader(
             "Anexar modelo de cadastro",
             type=["xlsx", "xls"],
             key="modelo_cadastro",
         )
-
     else:
-        modelo_estoque = st.file_uploader(
+        st.file_uploader(
             "Anexar modelo de estoque",
             type=["xlsx", "xls"],
             key="modelo_estoque",
         )
 
-    # =========================
-    # ORIGEM
-    # =========================
     origem = st.selectbox(
         "Selecione a origem",
         ["Planilha", "XML", "Site"],
@@ -210,20 +157,16 @@ def render_origem_dados() -> None:
 
     st.session_state["df_origem"] = df_origem
 
-    # 🔥 NOVO — PREVIEW FORNECEDOR
     with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
         st.dataframe(df_origem.head(10), width="stretch")
 
-    # =========================
-    # PRECIFICAÇÃO
-    # =========================
+    # 🔥 PRECIFICAÇÃO
     _render_precificacao(df_origem)
 
     df_saida = st.session_state.get("df_saida")
 
     if _safe_df_dados(df_saida):
 
-        # 🔥 BOTÃO PARA AVANÇAR (SEM AUTO FLUXO)
         if st.button("➡️ Continuar para mapeamento", use_container_width=True):
             st.session_state["df_final"] = df_saida.copy()
             st.session_state["etapa_origem"] = "mapeamento"
