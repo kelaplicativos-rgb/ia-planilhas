@@ -352,12 +352,19 @@ def render_origem_dados() -> None:
     # AÇÃO PARA SEGUIR AO MAPEAMENTO
     # =========================
     if st.button("Continuar para o mapeamento", key="btn_continuar_mapeamento", use_container_width=True):
-        # usa o DF precificado se já foi gerado, senão segue com o original
-        df_saida = st.session_state.get("df_precificado")
-        if not _safe_df_dados(df_saida):
-            df_saida = df_origem.copy()
-        else:
+        # PRIORIDADE TOTAL PARA DF PRECIFICADO
+        if st.session_state.get("preco_gerado"):
+            df_saida = st.session_state.get("df_precificado")
+
+            if not _safe_df_dados(df_saida):
+                st.error("Erro: precificação foi gerada mas os dados são inválidos.")
+                return
+
             df_saida = df_saida.copy()
+
+        else:
+            st.warning("⚠️ Gere a precificação antes de continuar.")
+            return
 
         # 1) Depósito antes do mapeamento
         deposito_final = st.session_state.get("deposito_nome", "").strip()
