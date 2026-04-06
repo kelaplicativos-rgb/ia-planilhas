@@ -15,7 +15,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 
 # =========================
 # LOG
@@ -74,7 +74,7 @@ if etapa in ["upload", None]:
 # =========================
 # 🔥 ETAPA 2 — MAPEAMENTO
 # =========================
-if etapa == "mapeamento":
+elif etapa == "mapeamento":
     st.divider()
     st.subheader("Mapeamento")
     render_origem_mapeamento()
@@ -82,47 +82,48 @@ if etapa == "mapeamento":
 # =========================
 # 🔥 ETAPA 3 — FINAL
 # =========================
-df_fluxo = _get_df_fluxo()
+elif etapa == "final":
+    df_fluxo = _get_df_fluxo()
 
-if df_fluxo is not None:
-    st.divider()
-    st.subheader("Preview final")
+    if df_fluxo is not None:
+        st.divider()
+        st.subheader("Preview final")
 
-    # PREVIEW COLAPSADO
-    with st.expander("📦 Ver dados finais", expanded=False):
-        st.dataframe(df_fluxo.head(20), width="stretch")
+        # PREVIEW COLAPSADO
+        with st.expander("📦 Ver dados finais", expanded=False):
+            st.dataframe(df_fluxo.head(20), width="stretch")
 
-    # =========================
-    # 🔥 LIMPEZA GTIN
-    # =========================
-    df_fluxo = limpar_gtin_invalido(df_fluxo)
+        # =========================
+        # 🔥 LIMPEZA GTIN
+        # =========================
+        df_fluxo = limpar_gtin_invalido(df_fluxo)
 
-    # =========================
-    # 🔥 VALIDAÇÃO OBRIGATÓRIA
-    # =========================
-    if not validar_campos_obrigatorios(df_fluxo):
-        st.error("Preencha os campos obrigatórios antes do download")
-        st.stop()
+        # =========================
+        # 🔥 VALIDAÇÃO OBRIGATÓRIA
+        # =========================
+        if not validar_campos_obrigatorios(df_fluxo):
+            st.error("Preencha os campos obrigatórios antes do download")
+            st.stop()
 
-    # =========================
-    # 🔥 DOWNLOAD
-    # =========================
-    excel_bytes = exportar_excel_bytes(df_fluxo)
+        # =========================
+        # 🔥 DOWNLOAD
+        # =========================
+        excel_bytes = exportar_excel_bytes(df_fluxo)
 
-    st.download_button(
-        "⬇️ Baixar planilha final",
-        excel_bytes,
-        "bling_final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+        st.download_button(
+            "⬇️ Baixar planilha final",
+            excel_bytes,
+            "bling_final.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
-    # =========================
-    # 🔥 BLING PANEL (ISOLADO)
-    # =========================
-    st.divider()
-    st.subheader("Integração com Bling")
-    render_bling_panel()
+        # =========================
+        # 🔥 BLING PANEL (ISOLADO)
+        # =========================
+        st.divider()
+        st.subheader("Integração com Bling")
+        render_bling_panel()
 
 # =========================
 # DEBUG
