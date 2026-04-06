@@ -31,6 +31,15 @@ def _has_callback_params() -> bool:
     return "code" in st.query_params or "error" in st.query_params
 
 
+def _clear_callback_params() -> None:
+    try:
+        for chave in ["code", "state", "error", "error_description"]:
+            if chave in st.query_params:
+                del st.query_params[chave]
+    except Exception:
+        pass
+
+
 def _safe_df(df):
     if isinstance(df, pd.DataFrame):
         return df
@@ -47,14 +56,16 @@ def _render_usuario_bling():
         identificador = st.text_input(
             "ID do usuário",
             value=get_current_user_key(),
+            key="bling_user_identificador",
         )
 
         apelido = st.text_input(
             "Nome exibido",
             value=get_current_user_label(),
+            key="bling_user_apelido",
         )
 
-        if st.button("Aplicar usuário", use_container_width=True):
+        if st.button("Aplicar usuário", use_container_width=True, key="bling_aplicar_usuario"):
             if not identificador.strip():
                 st.error("Informe o identificador.")
                 return
@@ -75,7 +86,6 @@ def _render_usuario_bling():
 # PANEL PRINCIPAL
 # ==========================================================
 def render_bling_panel():
-
     st.markdown("### Integração com Bling")
 
     try:
@@ -89,8 +99,8 @@ def render_bling_panel():
     # =========================
     try:
         if _has_callback_params():
-            user_key = get_pending_oauth_user_key()
-            user_label = get_pending_oauth_user_label()
+            user_key = get_pending_oauth_user_key() or get_current_user_key()
+            user_label = get_pending_oauth_user_label() or get_current_user_label()
 
             auth = BlingAuthManager(user_key=user_key)
             result = auth.handle_oauth_callback()
@@ -98,11 +108,15 @@ def render_bling_panel():
             if result.get("status") == "success":
                 set_current_user(user_key, user_label)
                 clear_pending_oauth_user()
+                _clear_callback_params()
                 st.success("Conectado com sucesso")
+                st.rerun()
 
             elif result.get("status") == "error":
                 clear_pending_oauth_user()
+                _clear_callback_params()
                 st.error(result.get("message", "Erro OAuth"))
+                st.rerun()
 
     except Exception as e:
         st.error(f"Erro OAuth: {e}")
@@ -144,11 +158,11 @@ def render_bling_panel():
                 if not status.get("connected")
                 else "Reconectar",
                 conectar_url,
-                use_container_width=True
+                use_container_width=True,
             )
 
     with col2:
-        if st.button("Atualizar", use_container_width=True):
+        if st.button("Atualizar", use_container_width=True, key="bling_atualizar_token"):
             ok, msg = auth.get_valid_access_token()
             if ok:
                 st.success("Token OK")
@@ -160,7 +174,8 @@ def render_bling_panel():
         if st.button(
             "Desconectar",
             use_container_width=True,
-            disabled=not status.get("connected")
+            disabled=not status.get("connected"),
+            key="bling_desconectar",
         ):
             ok, msg = auth.disconnect()
             if ok:
@@ -180,7 +195,6 @@ def render_bling_panel():
 # IMPORTAÇÃO (SEGURA)
 # ==========================================================
 def render_bling_import_panel():
-
     st.markdown("### Importar do Bling")
 
     try:
@@ -203,7 +217,7 @@ def render_bling_import_panel():
     tab1, tab2 = st.tabs(["Produtos", "Estoque"])
 
     with tab1:
-        if st.button("Importar produtos"):
+        if st.button("Importar produtos", key="bling_importar_produtos"):
             try:
                 ok, payload = client.list_products()
                 if ok:
@@ -217,10 +231,10 @@ def render_bling_import_panel():
 
         df = _safe_df(st.session_state.get("bling_produtos_df"))
         if not df.empty:
-            st.dataframe(df, height=200)
+            st.dataframe(df, height=200, use_container_width=True)
 
     with tab2:
-        if st.button("Importar estoque"):
+        if st.button("Importar estoque", key="bling_importar_estoque"):
             try:
                 ok, payload = client.list_stocks()
                 if ok:
@@ -234,4 +248,4 @@ def render_bling_import_panel():
 
         df = _safe_df(st.session_state.get("bling_estoque_df"))
         if not df.empty:
-            st.dataframe(df, height=200)
+            st.dataframe(df, height=200, use_container_width=True)
