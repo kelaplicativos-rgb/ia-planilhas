@@ -12,16 +12,16 @@ from bling_app_zero.utils.numeros import normalize_value, safe_float
 
 def _get_current_bling_user_key() -> str:
     session_key = str(st.session_state.get("bling_user_key", "")).strip()
-
     query_key_raw = st.query_params.get("bi", "")
+
     if isinstance(query_key_raw, list):
         query_key = str(query_key_raw[0]).strip() if query_key_raw else ""
     else:
         query_key = str(query_key_raw).strip()
 
     final_key = session_key or query_key or "default"
-
     st.session_state["bling_user_key"] = final_key
+
     try:
         st.query_params["bi"] = final_key
     except Exception:
@@ -30,51 +30,71 @@ def _get_current_bling_user_key() -> str:
     return final_key
 
 
-def get_column_by_mapped_name(
-    df: pd.DataFrame,
-    mapeamento: Dict[str, str],
-    nomes_mapeados: List[str],
-) -> Optional[str]:
-    for nome_mapeado in nomes_mapeados:
-        for col_origem, destino in mapeamento.items():
-            if destino == nome_mapeado and col_origem in df.columns:
-                return col_origem
+def _normalizar_nome_coluna(nome: str) -> str:
+    return (
+        str(nome or "")
+        .strip()
+        .lower()
+        .replace("ç", "c")
+        .replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+    )
+
+
+def _find_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
+    normalized = {_normalizar_nome_coluna(col): col for col in df.columns}
+
+    for alias in aliases:
+        alias_norm = _normalizar_nome_coluna(alias)
+        if alias_norm in normalized:
+            return normalized[alias_norm]
+
+    for col in df.columns:
+        col_norm = _normalizar_nome_coluna(col)
+        for alias in aliases:
+            alias_norm = _normalizar_nome_coluna(alias)
+            if alias_norm in col_norm:
+                return col
+
     return None
 
 
 def _base_df() -> Optional[pd.DataFrame]:
-    for key in ("df_saida", "df_origem"):
-        df = st.session_state.get(key)
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            return df
+    df = st.session_state.get("df_saida")
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.copy()
     return None
 
 
-def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]:
-    sku_col = get_column_by_mapped_name(df, mapeamento, ["sku", "codigo"])
-    nome_col = get_column_by_mapped_name(df, mapeamento, ["nome"])
-    desc_col = get_column_by_mapped_name(
+def build_product_rows(df: pd.DataFrame) -> List[Dict]:
+    sku_col = _find_column(df, ["codigo", "sku", "referencia", "ref"])
+    nome_col = _find_column(df, ["nome", "descricao", "descrição", "produto", "titulo"])
+    desc_col = _find_column(
         df,
-        mapeamento,
-        ["descricao_curta", "descricao_html", "descricao"],
+        ["descricao_curta", "descricao_html", "descricao", "descrição", "complemento"],
     )
-    preco_col = get_column_by_mapped_name(df, mapeamento, ["preco"])
-    custo_col = get_column_by_mapped_name(df, mapeamento, ["custo", "preco_custo"])
-    estoque_col = get_column_by_mapped_name(df, mapeamento, ["estoque"])
-    gtin_col = get_column_by_mapped_name(df, mapeamento, ["gtin"])
-    marca_col = get_column_by_mapped_name(df, mapeamento, ["marca"])
-    categoria_col = get_column_by_mapped_name(df, mapeamento, ["categoria"])
-
-    if not sku_col and "codigo" in df.columns:
-        sku_col = "codigo"
-    if not nome_col and "nome" in df.columns:
-        nome_col = "nome"
-    if not preco_col and "preco" in df.columns:
-        preco_col = "preco"
-    if not estoque_col and "estoque" in df.columns:
-        estoque_col = "estoque"
-    if not gtin_col and "gtin" in df.columns:
-        gtin_col = "gtin"
+    preco_col = _find_column(
+        df,
+        ["preco", "preço", "preco venda", "preço venda", "valor de venda"],
+    )
+    custo_col = _find_column(
+        df,
+        ["preco de custo", "preço de custo", "custo", "preco_custo"],
+    )
+    estoque_col = _find_column(df, ["estoque", "saldo", "quantidade", "balanco", "balanço"])
+    gtin_col = _find_column(df, ["gtin", "ean", "codigo de barras", "código de barras", "cean"])
+    marca_col = _find_column(df, ["marca", "fabricante"])
+    categoria_col = _find_column(df, ["categoria", "departamento", "grupo"])
+    ncm_col = _find_column(df, ["ncm"])
 
     rows: List[Dict] = []
 
@@ -89,27 +109,23 @@ def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dic
             "gtin": normalize_value(row[gtin_col]) if gtin_col else None,
             "marca": normalize_value(row[marca_col]) if marca_col else None,
             "categoria": normalize_value(row[categoria_col]) if categoria_col else None,
+            "ncm": normalize_value(row[ncm_col]) if ncm_col else None,
         }
         rows.append(payload)
 
     return rows
 
 
-def build_stock_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]:
-    sku_col = get_column_by_mapped_name(df, mapeamento, ["sku", "codigo"])
-    estoque_col = get_column_by_mapped_name(df, mapeamento, ["estoque"])
-    preco_col = get_column_by_mapped_name(df, mapeamento, ["preco"])
-    deposito_col = get_column_by_mapped_name(df, mapeamento, ["deposito_id", "deposito"])
-
-    if not sku_col and "codigo" in df.columns:
-        sku_col = "codigo"
-    if not estoque_col and "estoque" in df.columns:
-        estoque_col = "estoque"
-    if not preco_col and "preco" in df.columns:
-        preco_col = "preco"
+def build_stock_rows(df: pd.DataFrame) -> List[Dict]:
+    sku_col = _find_column(df, ["codigo", "sku", "referencia", "ref"])
+    estoque_col = _find_column(df, ["estoque", "saldo", "quantidade", "balanco", "balanço"])
+    preco_col = _find_column(
+        df,
+        ["preco unitario", "preço unitário", "preco", "preço", "valor"],
+    )
+    deposito_col = _find_column(df, ["deposito", "depósito", "deposito id", "depósito id"])
 
     deposito_manual = str(st.session_state.get("deposito_nome_manual", "")).strip()
-
     rows: List[Dict] = []
 
     for _, row in df.iterrows():
@@ -195,7 +211,6 @@ def _mostrar_resumo_validacao(
 
     with c1:
         st.metric("Linhas válidas", len(validos))
-
     with c2:
         st.metric("Linhas com pendência", len(invalidos))
 
@@ -215,34 +230,41 @@ def _mostrar_resumo_validacao(
 
 
 def render_send_panel() -> None:
-    st.subheader("Enviar dados")
+    st.subheader("Envio por API")
 
     df = _base_df()
-    mapeamento = st.session_state.get("mapeamento_manual") or {}
+    modo = str(st.session_state.get("tipo_operacao_bling", "cadastro")).strip().lower()
 
     if not isinstance(df, pd.DataFrame) or df.empty:
-        st.info("Carregue primeiro uma origem de dados.")
+        st.info(
+            "Gere primeiro o preview final e o arquivo na aba 'Origem dos dados'. "
+            "A aba Envio usa apenas o DataFrame final já preparado para API."
+        )
         return
 
     user_key = _get_current_bling_user_key()
     auth = BlingAuthManager(user_key=user_key)
     conectado = bool(auth.get_connection_status().get("connected"))
 
-    tab1, tab2 = st.tabs(["Preparar cadastro", "Preparar estoque"])
+    st.caption(
+        f"Operação atual: **{'Cadastro / atualização de produtos' if modo == 'cadastro' else 'Atualização de estoque'}**"
+    )
+    st.caption(
+        "Esta aba não recalcula o arquivo final e não altera o DataFrame usado no download."
+    )
 
-    with tab1:
-        rows = build_product_rows(df, mapeamento)
+    if modo == "cadastro":
+        rows = build_product_rows(df)
         validos, invalidos = validar_produtos(rows)
 
         st.write(f"Linhas analisadas para cadastro: **{len(rows)}**")
 
-        if st.button("Gerar preview de cadastro", use_container_width=True):
+        if st.button("Gerar preview da API de cadastro", use_container_width=True):
             st.session_state["ultimo_log_envio"] = {
                 "tipo": "cadastro",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
             }
-
             _mostrar_resumo_validacao(
                 "Preview de cadastro válido",
                 "Linhas de cadastro com pendência",
@@ -257,7 +279,6 @@ def render_send_panel() -> None:
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_products(validos, user_key=user_key)
-
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "cadastro_real",
                     "sucessos": sucessos[:100],
@@ -268,15 +289,14 @@ def render_send_panel() -> None:
                     st.success(
                         f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling."
                     )
-
                 if erros:
                     st.error(f"{len(erros)} produto(s) falharam no envio.")
                     st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
         else:
             st.info("Conecte o Bling para liberar o envio real de cadastro.")
 
-    with tab2:
-        rows = build_stock_rows(df, mapeamento)
+    else:
+        rows = build_stock_rows(df)
         validos, invalidos = validar_estoque(rows)
 
         st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
@@ -284,16 +304,15 @@ def render_send_panel() -> None:
         st.text_input(
             "Depósito / ID do depósito",
             key="deposito_nome_manual",
-            help="Use este campo quando a planilha não possuir uma coluna de depósito.",
+            help="Use este campo somente para o envio por API quando a planilha final não possuir coluna de depósito.",
         )
 
-        if st.button("Gerar preview de estoque", use_container_width=True):
+        if st.button("Gerar preview da API de estoque", use_container_width=True):
             st.session_state["ultimo_log_envio"] = {
                 "tipo": "estoque",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
             }
-
             _mostrar_resumo_validacao(
                 "Preview de estoque válido",
                 "Linhas de estoque com pendência",
@@ -308,7 +327,6 @@ def render_send_panel() -> None:
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_stocks(validos, user_key=user_key)
-
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "estoque_real",
                     "sucessos": sucessos[:100],
@@ -317,7 +335,6 @@ def render_send_panel() -> None:
 
                 if sucessos:
                     st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
-
                 if erros:
                     st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
                     st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
