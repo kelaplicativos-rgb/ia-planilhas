@@ -11,12 +11,20 @@ from bling_app_zero.ui.origem_dados_helpers import (
     validar_campos_obrigatorios,
 )
 
+# tenta usar exportador mais robusto, sem quebrar se não existir
+try:
+    from bling_app_zero.utils.excel import exportar_dataframe_para_excel as _exportar_excel_robusto
+except Exception:
+    _exportar_excel_robusto = None
+
+
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.21"
+APP_VERSION = "1.0.20"
+
 
 # =========================
 # LOG
@@ -45,11 +53,68 @@ def _safe_df(key: str) -> pd.DataFrame | None:
 
 
 def _get_df_fluxo() -> pd.DataFrame | None:
-    for key in ["df_saida", "df_precificado", "df_origem"]:
+    """
+    Ordem de prioridade do fluxo final:
+    1) df_saida        -> normalmente o mais próximo do arquivo final
+    2) df_final        -> consolidado do fluxo
+    3) df_precificado  -> fallback quando a precificação já foi gerada
+    4) df_origem       -> último recurso para não quebrar a UI
+    """
+    for key in ["df_saida", "df_final", "df_precificado", "df_origem"]:
         df = _safe_df(key)
         if df is not None:
             return df
     return None
+
+
+def _sincronizar_df_final() -> None:
+    """
+    Mantém um espelho estável em df_final sem sobrescrever incorretamente
+    o melhor DataFrame do fluxo.
+    """
+    df_fluxo = _get_df_fluxo()
+    if df_fluxo is not None:
+        st.session_state["df_final"] = df_fluxo.copy()
+
+
+def _normalizar_validacao_obrigatorios(resultado_validacao) -> bool:
+    """
+    Aceita bool direto ou estruturas mais complexas retornadas pelo helper.
+    """
+    try:
+        if isinstance(resultado_validacao, bool):
+            return resultado_validacao
+
+        if resultado_validacao is None:
+            return True
+
+        if isinstance(resultado_validacao, (list, tuple, set, dict)):
+            return len(resultado_validacao) == 0
+
+        return bool(resultado_validacao)
+    except Exception:
+        return True
+
+
+def _exportar_download_bytes(df: pd.DataFrame) -> bytes:
+    """
+    Tenta primeiro um exportador robusto. Se não existir ou falhar,
+    cai no exportador atual do projeto.
+    """
+    if _exportar_excel_robusto is not None:
+        try:
+            retorno = _exportar_excel_robusto(df)
+
+            if isinstance(retorno, bytes):
+                return retorno
+
+            # caso algum helper retorne buffer/BytesIO
+            if hasattr(retorno, "getvalue"):
+                return retorno.getvalue()
+        except Exception as e:
+            log_debug(f"Falha no exportador robusto: {e}", "ERRO")
+
+    return exportar_excel_bytes(df)
 
 
 # =========================
@@ -59,55 +124,85 @@ from bling_app_zero.ui.bling_panel import render_bling_panel
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 
+
 # =========================
 # UI
 # =========================
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
-etapa = st.session_state.get("etapa_origem", "upload")
 
 # =========================
-# ETAPA 1
+# CONTROLE DE ETAPA
+# =========================
+etapa = st.session_state.get("etapa_origem", "upload")
+
+
+# =========================
+# ETAPA 1 — ORIGEM
 # =========================
 if etapa in ["upload", None]:
     render_origem_dados()
+    _sincronizar_df_final()
+
 
 # =========================
-# ETAPA 2
+# ETAPA 2 — MAPEAMENTO
 # =========================
 elif etapa == "mapeamento":
-    st.subheader("Mapeamento")
-    render_origem_mapeamento()
-
     st.divider()
+    st.subheader("Mapeamento")
 
-    # 🔥 BOTÃO REAL PARA IR PRO FINAL
-    if st.button("➡️ Ir para revisão final", use_container_width=True):
-        st.session_state["etapa_origem"] = "final"
-        st.rerun()
+    render_origem_mapeamento()
+    _sincronizar_df_final()
+
 
 # =========================
-# ETAPA 3 (FINAL REAL)
+# ETAPA 3 — FINAL
 # =========================
 elif etapa == "final":
-
+    _sincronizar_df_final()
     df_fluxo = _get_df_fluxo()
 
     if df_fluxo is not None:
+        try:
+            log_debug(
+                f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
+            )
+        except Exception:
+            pass
 
+        st.divider()
         st.subheader("Preview final")
 
-        with st.expander("📦 Ver dados finais", expanded=True):
+        with st.expander("📦 Ver dados finais", expanded=False):
             st.dataframe(df_fluxo.head(20), width="stretch")
 
-        df_download = limpar_gtin_invalido(df_fluxo.copy())
+        try:
+            df_download = limpar_gtin_invalido(df_fluxo.copy())
+        except Exception as e:
+            log_debug(f"Erro ao limpar GTIN inválido: {e}", "ERRO")
+            df_download = df_fluxo.copy()
 
-        if not validar_campos_obrigatorios(df_download):
-            st.error("Preencha os campos obrigatórios antes do download")
+        validacao = True
+        try:
+            validacao = _normalizar_validacao_obrigatorios(
+                validar_campos_obrigatorios(df_download)
+            )
+        except Exception as e:
+            log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
+            validacao = True
+
+        if not validacao:
+            st.error("Preencha os campos obrigatórios antes do download.")
             st.stop()
 
-        excel_bytes = exportar_excel_bytes(df_download)
+        try:
+            excel_bytes = _exportar_download_bytes(df_download)
+        except Exception as e:
+            log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
+            st.error("Não foi possível gerar a planilha final.")
+            st.stop()
 
         st.download_button(
             "⬇️ Baixar planilha final",
@@ -118,24 +213,31 @@ elif etapa == "final":
         )
 
         st.divider()
-
-        if st.button("⬅️ Voltar para mapeamento"):
-            st.session_state["etapa_origem"] = "mapeamento"
-            st.rerun()
-
         st.subheader("Integração com Bling")
         render_bling_panel()
 
     else:
         st.warning("Nenhum dado disponível para o preview final.")
+        log_debug("Etapa final sem DataFrame disponível", "ERRO")
+
+
+# =========================
+# FALLBACK DE ETAPA DESCONHECIDA
+# =========================
+else:
+    log_debug(f"Etapa desconhecida recebida: {etapa}", "ERRO")
+    st.warning("Etapa do fluxo inválida. Retornando para a origem.")
+    st.session_state["etapa_origem"] = "upload"
+    st.rerun()
+
 
 # =========================
 # DEBUG
 # =========================
-with st.expander("🔍 Debug"):
+with st.expander("🔍 Debug", expanded=False):
     logs = st.session_state.get("logs", [])
 
-    for linha in reversed(logs[-50:]):
+    for linha in reversed(logs[-100:]):
         st.text(linha)
 
     st.download_button(
