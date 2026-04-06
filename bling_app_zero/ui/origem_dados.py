@@ -39,22 +39,19 @@ def _safe_df_modelo(df):
         return False
 
 
-# 🔥 DETECTA COLUNA DEPÓSITO
 def _detectar_coluna_deposito(df):
     for col in df.columns:
-        nome = str(col).lower()
-        if "deposit" in nome or "depós" in nome:
+        nome = str(col).lower().strip()
+        if "deposit" in nome or "depós" in nome or "deposito" in nome:
             return col
     return None
 
 
-# 🔥 APLICA DEPÓSITO
 def _aplicar_deposito(df, deposito):
     if not deposito:
         return df
 
     df_saida = df.copy()
-
     col_dep = _detectar_coluna_deposito(df_saida)
 
     if col_dep:
@@ -65,8 +62,64 @@ def _aplicar_deposito(df, deposito):
     return df_saida
 
 
-def render_origem_dados() -> None:
+def _render_precificacao(df_base):
+    """
+    Renderiza a calculadora ANTES do mapeamento manual.
+    Mantém os valores em session_state para o fluxo seguinte.
+    """
+    st.markdown("### Precificação")
 
+    with st.expander("💰 Abrir calculadora de precificação", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input(
+                "Margem de lucro (%)",
+                min_value=0.0,
+                step=0.1,
+                key="margem_lucro",
+            )
+            st.number_input(
+                "Impostos (%)",
+                min_value=0.0,
+                step=0.1,
+                key="perc_impostos",
+            )
+
+        with col2:
+            st.number_input(
+                "Custo fixo (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="custo_fixo",
+            )
+            st.number_input(
+                "Taxa extra (%)",
+                min_value=0.0,
+                step=0.1,
+                key="taxa_extra",
+            )
+
+        df_preview = None
+        try:
+            df_preview = aplicar_precificacao_automatica(
+                df_base.copy(),
+                percentual_impostos=st.session_state.get("perc_impostos", 0),
+                margem_lucro=st.session_state.get("margem_lucro", 0),
+                custo_fixo=st.session_state.get("custo_fixo", 0),
+                taxa_extra=st.session_state.get("taxa_extra", 0),
+            )
+        except Exception as e:
+            log_debug(f"Erro ao montar preview da precificação: {e}")
+            df_preview = None
+
+        if _safe_df_dados(df_preview):
+            with st.expander("👁️ Prévia da precificação", expanded=False):
+                st.dataframe(df_preview.head(10), width="stretch")
+        else:
+            st.info("Configure a calculadora para preparar o preço antes do mapeamento manual.")
+
+
+def render_origem_dados() -> None:
     if st.session_state.get("etapa_origem") == "mapeamento":
         return
 
@@ -100,12 +153,15 @@ def render_origem_dados() -> None:
     elif origem == "Site":
         df_origem = render_origem_site()
 
+    elif origem == "XML":
+        st.info("Origem XML ainda não está disponível nesta tela.")
+        return
+
     if not _safe_df_dados(df_origem):
         return
 
     st.session_state["df_origem"] = df_origem
 
-    # 🔥 PREVIEW COLAPSADO
     with st.expander("👁️ Pré-visualização dos dados", expanded=False):
         st.dataframe(df_origem.head(10), width="stretch")
 
@@ -129,29 +185,40 @@ def render_origem_dados() -> None:
     if tipo == "cadastro":
         modelo = st.file_uploader(
             "Modelo Cadastro",
-            type=["xlsx", "xls", "csv"],
+            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
             key="modelo_cadastro",
         )
 
         if modelo:
             df_modelo = ler_planilha_segura(modelo)
-            st.session_state["df_modelo_cadastro"] = df_modelo
+            if _safe_df_modelo(df_modelo):
+                st.session_state["df_modelo_cadastro"] = df_modelo
+            else:
+                st.error("Erro ao ler o modelo de cadastro")
+                return
 
     else:
         modelo = st.file_uploader(
             "Modelo Estoque",
-            type=["xlsx", "xls", "csv"],
+            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
             key="modelo_estoque",
         )
 
         if modelo:
             df_modelo = ler_planilha_segura(modelo)
-            st.session_state["df_modelo_estoque"] = df_modelo
+            if _safe_df_modelo(df_modelo):
+                st.session_state["df_modelo_estoque"] = df_modelo
+            else:
+                st.error("Erro ao ler o modelo de estoque")
+                return
 
         deposito = st.text_input("Nome do depósito", key="deposito_nome_manual")
-
-        # 🔥 GARANTE QUE NUNCA SE PERCA
         st.session_state["deposito_nome"] = deposito
+
+    # =========================
+    # CALCULADORA ANTES DO MAPEAMENTO
+    # =========================
+    _render_precificacao(df_origem)
 
     # =========================
     # VALIDAÇÃO
@@ -162,53 +229,53 @@ def render_origem_dados() -> None:
         else _safe_df_modelo(st.session_state.get("df_modelo_estoque"))
     )
 
-    if tipo == "estoque" and modelo_ok and not st.session_state.get("deposito_nome"):
+    if not modelo_ok:
+        st.warning("Anexe o modelo oficial para continuar.")
+        return
+
+    if tipo == "estoque" and not st.session_state.get("deposito_nome"):
         st.warning("Informe o nome do depósito")
         return
 
     # =========================
-    # 🔥 AUTO FLUXO FINAL (CORRIGIDO)
+    # AÇÃO PARA SEGUIR AO MAPEAMENTO
     # =========================
-    if _safe_df_dados(df_origem) and modelo_ok:
-
+    if st.button("Continuar para o mapeamento", key="btn_continuar_mapeamento", use_container_width=True):
         df_saida = df_origem.copy()
 
-        # =========================
-        # 🔥 1. APLICA DEPÓSITO PRIMEIRO
-        # =========================
-        deposito_final = st.session_state.get("deposito_nome")
-
+        # 1) Depósito antes do mapeamento
+        deposito_final = st.session_state.get("deposito_nome", "").strip()
         if tipo == "estoque":
             df_saida = _aplicar_deposito(df_saida, deposito_final)
 
-        # =========================
-        # 🔥 2. APLICA PRECIFICAÇÃO (ANTES DO MAPEAMENTO)
-        # =========================
-        df_saida = aplicar_precificacao_automatica(
-            df_saida,
-            percentual_impostos=st.session_state.get("perc_impostos", 0),
-            margem_lucro=st.session_state.get("margem_lucro", 0),
-            custo_fixo=st.session_state.get("custo_fixo", 0),
-            taxa_extra=st.session_state.get("taxa_extra", 0),
-        )
+        # 2) Precificação antes do mapeamento
+        try:
+            df_saida = aplicar_precificacao_automatica(
+                df_saida,
+                percentual_impostos=st.session_state.get("perc_impostos", 0),
+                margem_lucro=st.session_state.get("margem_lucro", 0),
+                custo_fixo=st.session_state.get("custo_fixo", 0),
+                taxa_extra=st.session_state.get("taxa_extra", 0),
+            )
+        except Exception as e:
+            st.error(f"Erro ao aplicar precificação: {e}")
+            log_debug(f"Erro ao aplicar precificação automática: {e}")
+            return
 
-        if df_saida is None or df_saida.empty:
+        if df_saida is None or not _safe_df_dados(df_saida):
             st.error("Erro nos dados. Não é possível continuar.")
             return
 
-        # =========================
-        # 🔥 3. SALVA FINAL (PRONTO PARA MAPEAMENTO)
-        # =========================
         st.session_state["df_saida"] = df_saida
 
-        # 🔥 FLAG PARA BLOQUEAR CAMPOS NO MAPEAMENTO
+        # Campos preenchidos automaticamente devem ficar bloqueados no mapeamento
         st.session_state["bloquear_campos_auto"] = {
             "deposito": bool(deposito_final),
-            "preco": True,  # sempre veio da calculadora
+            "preco": True,
         }
 
         st.session_state["etapa_origem"] = "mapeamento"
 
-        log_debug("Fluxo OK → depósito e preço aplicados antes do mapeamento")
+        log_debug("Fluxo OK → calculadora exibida antes do mapeamento, depósito e preço aplicados antes de seguir")
 
         st.rerun()
