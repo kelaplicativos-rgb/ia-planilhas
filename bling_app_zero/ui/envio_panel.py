@@ -7,12 +7,27 @@ import streamlit as st
 
 from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.core.bling_sync import sync_products, sync_stocks
-from bling_app_zero.core.bling_user_session import (
-    ensure_current_user_defaults,
-    get_current_user_key,
-    get_current_user_label,
-)
 from bling_app_zero.utils.numeros import normalize_value, safe_float
+
+
+def _get_current_bling_user_key() -> str:
+    session_key = str(st.session_state.get("bling_user_key", "")).strip()
+
+    query_key_raw = st.query_params.get("bi", "")
+    if isinstance(query_key_raw, list):
+        query_key = str(query_key_raw[0]).strip() if query_key_raw else ""
+    else:
+        query_key = str(query_key_raw).strip()
+
+    final_key = session_key or query_key or "default"
+
+    st.session_state["bling_user_key"] = final_key
+    try:
+        st.query_params["bi"] = final_key
+    except Exception:
+        pass
+
+    return final_key
 
 
 def get_column_by_mapped_name(
@@ -38,7 +53,11 @@ def _base_df() -> Optional[pd.DataFrame]:
 def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]:
     sku_col = get_column_by_mapped_name(df, mapeamento, ["sku", "codigo"])
     nome_col = get_column_by_mapped_name(df, mapeamento, ["nome"])
-    desc_col = get_column_by_mapped_name(df, mapeamento, ["descricao_curta", "descricao_html", "descricao"])
+    desc_col = get_column_by_mapped_name(
+        df,
+        mapeamento,
+        ["descricao_curta", "descricao_html", "descricao"],
+    )
     preco_col = get_column_by_mapped_name(df, mapeamento, ["preco"])
     custo_col = get_column_by_mapped_name(df, mapeamento, ["custo", "preco_custo"])
     estoque_col = get_column_by_mapped_name(df, mapeamento, ["estoque"])
@@ -58,6 +77,7 @@ def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dic
         gtin_col = "gtin"
 
     rows: List[Dict] = []
+
     for _, row in df.iterrows():
         payload = {
             "codigo": normalize_value(row[sku_col]) if sku_col else None,
@@ -71,6 +91,7 @@ def build_product_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dic
             "categoria": normalize_value(row[categoria_col]) if categoria_col else None,
         }
         rows.append(payload)
+
     return rows
 
 
@@ -90,14 +111,20 @@ def build_stock_rows(df: pd.DataFrame, mapeamento: Dict[str, str]) -> List[Dict]
     deposito_manual = str(st.session_state.get("deposito_nome_manual", "")).strip()
 
     rows: List[Dict] = []
+
     for _, row in df.iterrows():
         payload = {
             "codigo": normalize_value(row[sku_col]) if sku_col else None,
             "estoque": safe_float(row[estoque_col]) if estoque_col else None,
             "preco": safe_float(row[preco_col]) if preco_col else None,
-            "deposito_id": normalize_value(row[deposito_col]) if deposito_col else deposito_manual or None,
+            "deposito_id": (
+                normalize_value(row[deposito_col])
+                if deposito_col
+                else deposito_manual or None
+            ),
         }
         rows.append(payload)
+
     return rows
 
 
@@ -107,6 +134,7 @@ def validar_produtos(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
 
     for indice, row in enumerate(rows, start=1):
         faltando: List[str] = []
+
         if not row.get("codigo"):
             faltando.append("codigo")
         if not row.get("nome"):
@@ -136,6 +164,7 @@ def validar_estoque(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
 
     for indice, row in enumerate(rows, start=1):
         faltando: List[str] = []
+
         if not row.get("codigo"):
             faltando.append("codigo")
         if row.get("estoque") is None:
@@ -163,8 +192,10 @@ def _mostrar_resumo_validacao(
     invalidos: List[Dict],
 ) -> None:
     c1, c2 = st.columns(2)
+
     with c1:
         st.metric("Linhas válidas", len(validos))
+
     with c2:
         st.metric("Linhas com pendência", len(invalidos))
 
@@ -193,14 +224,9 @@ def render_send_panel() -> None:
         st.info("Carregue primeiro uma origem de dados.")
         return
 
-    ensure_current_user_defaults()
-    user_key = get_current_user_key()
-    user_label = get_current_user_label()
-
+    user_key = _get_current_bling_user_key()
     auth = BlingAuthManager(user_key=user_key)
     conectado = bool(auth.get_connection_status().get("connected"))
-
-    st.caption(f"Usuário atual do envio Bling: {user_label} ({user_key})")
 
     tab1, tab2 = st.tabs(["Preparar cadastro", "Preparar estoque"])
 
@@ -215,15 +241,14 @@ def render_send_panel() -> None:
                 "tipo": "cadastro",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
-                "user_key": user_key,
             }
 
-        _mostrar_resumo_validacao(
-            "Preview de cadastro válido",
-            "Linhas de cadastro com pendência",
-            validos,
-            invalidos,
-        )
+            _mostrar_resumo_validacao(
+                "Preview de cadastro válido",
+                "Linhas de cadastro com pendência",
+                validos,
+                invalidos,
+            )
 
         if conectado:
             if st.button(
@@ -232,15 +257,18 @@ def render_send_panel() -> None:
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_products(validos, user_key=user_key)
+
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "cadastro_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
-                    "user_key": user_key,
                 }
 
                 if sucessos:
-                    st.success(f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling.")
+                    st.success(
+                        f"{len(sucessos)} produto(s) enviado(s)/atualizado(s) no Bling."
+                    )
+
                 if erros:
                     st.error(f"{len(erros)} produto(s) falharam no envio.")
                     st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
@@ -252,6 +280,7 @@ def render_send_panel() -> None:
         validos, invalidos = validar_estoque(rows)
 
         st.write(f"Linhas analisadas para estoque: **{len(rows)}**")
+
         st.text_input(
             "Depósito / ID do depósito",
             key="deposito_nome_manual",
@@ -263,15 +292,14 @@ def render_send_panel() -> None:
                 "tipo": "estoque",
                 "validos": validos[:50],
                 "invalidos": invalidos[:50],
-                "user_key": user_key,
             }
 
-        _mostrar_resumo_validacao(
-            "Preview de estoque válido",
-            "Linhas de estoque com pendência",
-            validos,
-            invalidos,
-        )
+            _mostrar_resumo_validacao(
+                "Preview de estoque válido",
+                "Linhas de estoque com pendência",
+                validos,
+                invalidos,
+            )
 
         if conectado:
             if st.button(
@@ -280,15 +308,16 @@ def render_send_panel() -> None:
                 disabled=not bool(validos),
             ):
                 sucessos, erros = sync_stocks(validos, user_key=user_key)
+
                 st.session_state["ultimo_log_envio"] = {
                     "tipo": "estoque_real",
                     "sucessos": sucessos[:100],
                     "erros": erros[:100],
-                    "user_key": user_key,
                 }
 
                 if sucessos:
                     st.success(f"{len(sucessos)} linha(s) de estoque enviada(s) ao Bling.")
+
                 if erros:
                     st.error(f"{len(erros)} linha(s) falharam no envio do estoque.")
                     st.dataframe(pd.DataFrame(erros), use_container_width=True, height=220)
