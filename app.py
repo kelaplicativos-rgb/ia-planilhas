@@ -6,7 +6,7 @@ from datetime import datetime
 # =========================
 # 🔥 VERSIONAMENTO
 # =========================
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 
 # =========================
@@ -55,6 +55,13 @@ def analisar_logs_com_ia(logs: list[str]) -> dict:
             "solucao": "Sistema limpa automaticamente"
         }
 
+    if "excel" in texto and "erro" in texto:
+        return {
+            "tipo": "Erro Excel",
+            "problema": "Falha ao ler modelo",
+            "solucao": "Verifique formato XLSX"
+        }
+
     return {
         "tipo": "Não identificado",
         "problema": "Verifique manual",
@@ -63,20 +70,27 @@ def analisar_logs_com_ia(logs: list[str]) -> dict:
 
 
 # =========================
-# 🔥 IMPORTS
+# 🔥 IMPORTS SEGUROS
 # =========================
+render_origem_dados = None
+render_origem_mapeamento = None
+render_bling_panel = None
+
 try:
     from bling_app_zero.ui.origem_dados import render_origem_dados
+    log_debug("Import origem_dados OK")
 except Exception as e:
     log_debug(f"Erro origem_dados: {e}", "ERROR")
 
 try:
     from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
+    log_debug("Import origem_mapeamento OK")
 except Exception as e:
     log_debug(f"Erro origem_mapeamento: {e}", "ERROR")
 
 try:
     from bling_app_zero.ui.bling_panel import render_bling_panel
+    log_debug("Import bling_panel OK")
 except Exception as e:
     log_debug(f"Erro bling_panel: {e}", "ERROR")
 
@@ -89,34 +103,52 @@ st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
+
 # =========================
-# 🔥 FLUXO REAL CORRIGIDO
+# 🔥 FLUXO PRINCIPAL
 # =========================
 
 # 1️⃣ ORIGEM
-render_origem_dados()
+if render_origem_dados:
+    try:
+        log_debug("Iniciando: Origem dos Dados")
+        render_origem_dados()
+        log_debug("Finalizado: Origem dos Dados", "SUCCESS")
+    except Exception as e:
+        log_debug(f"Erro execução origem_dados: {e}", "ERROR")
+        st.error("Erro na origem dos dados")
+else:
+    st.error("Erro ao carregar módulo origem_dados")
 
-# 2️⃣ MAPEAMENTO (SÓ SE EXISTIR DF)
+
+# 2️⃣ MAPEAMENTO
 if "df_final" in st.session_state and st.session_state["df_final"] is not None:
     st.divider()
     st.subheader("Mapeamento e validação")
 
-    try:
-        render_origem_mapeamento()
-    except Exception as e:
-        log_debug(f"Erro mapeamento: {e}", "ERROR")
-        st.error("Erro no mapeamento")
+    if render_origem_mapeamento:
+        try:
+            render_origem_mapeamento()
+        except Exception as e:
+            log_debug(f"Erro mapeamento: {e}", "ERROR")
+            st.error("Erro no mapeamento")
+    else:
+        st.warning("Módulo de mapeamento não carregado")
 
-# 3️⃣ BLING PANEL
+
+# 3️⃣ BLING
 if "df_final" in st.session_state and st.session_state["df_final"] is not None:
     st.divider()
     st.subheader("Integração com Bling")
 
-    try:
-        render_bling_panel()
-    except Exception as e:
-        log_debug(f"Erro bling panel: {e}", "ERROR")
-        st.error("Erro na integração Bling")
+    if render_bling_panel:
+        try:
+            render_bling_panel()
+        except Exception as e:
+            log_debug(f"Erro bling panel: {e}", "ERROR")
+            st.error("Erro na integração Bling")
+    else:
+        st.warning("Módulo Bling não carregado")
 
 
 # =========================
