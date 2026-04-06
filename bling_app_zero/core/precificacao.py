@@ -37,20 +37,22 @@ def _to_float(valor) -> float:
 
 
 # ==========================================================
-# DETECÇÃO AUTOMÁTICA DE COLUNA DE CUSTO
+# DETECÇÃO AUTOMÁTICA DE COLUNA DE CUSTO (🔥 MELHORADO)
 # ==========================================================
 def _detectar_coluna_preco(df: pd.DataFrame) -> str:
-    colunas_prioridade = [
-        "preco_custo",
+    prioridades = [
+        "preco custo",
+        "preço custo",
         "custo",
+        "valor custo",
+        "preco_compra",
+        "preço compra",
         "valor_unitario",
-        "valor",
-        "preco",
     ]
 
     for col in df.columns:
         nome = str(col).lower()
-        for alvo in colunas_prioridade:
+        for alvo in prioridades:
             if alvo in nome:
                 return col
 
@@ -58,27 +60,12 @@ def _detectar_coluna_preco(df: pd.DataFrame) -> str:
 
 
 # ==========================================================
-# DETECTAR COLUNA DE VENDA (🔥 MELHORADO)
+# DETECTAR COLUNA DE VENDA (🔥 FORÇADO PADRÃO BLING)
 # ==========================================================
 def _detectar_coluna_venda(df: pd.DataFrame) -> str:
-    prioridades = [
-        "preço de venda",
-        "preco de venda",
-        "preço venda",
-        "preco venda",
-        "valor de venda",
-    ]
-
-    # match exato primeiro
-    for col in df.columns:
-        nome = str(col).lower().strip()
-        if nome in prioridades:
-            return col
-
-    # match parcial
     for col in df.columns:
         nome = str(col).lower()
-        if "preco" in nome and "venda" in nome:
+        if "preço de venda" in nome or "preco de venda" in nome:
             return col
 
     return ""
@@ -116,7 +103,7 @@ def calcular_preco_venda(
 
 
 # ==========================================================
-# APLICAÇÃO AUTOMÁTICA NO DF (🔥 PRINCIPAL CORRIGIDO)
+# APLICAÇÃO AUTOMÁTICA NO DF (🔥 ROBUSTO)
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -131,21 +118,23 @@ def aplicar_precificacao_automatica(
 
     df_saida = df.copy()
 
-    # 🔥 coluna de custo
+    # 🔥 detectar custo
     coluna_base = _detectar_coluna_preco(df_saida)
+
     if not coluna_base:
+        # não quebra mais o fluxo
         return df_saida
 
     precos_base = df_saida[coluna_base].apply(_to_float)
 
-    # 🔥 coluna correta de venda (modelo Bling)
+    # 🔥 garantir coluna padrão Bling
     coluna_destino = _detectar_coluna_venda(df_saida)
 
-    # 🔥 se não existir, cria padrão correto
     if not coluna_destino:
         coluna_destino = "Preço de venda"
         df_saida[coluna_destino] = 0.0
 
+    # 🔥 cálculo
     df_saida[coluna_destino] = precos_base.apply(
         lambda valor: round(
             calcular_preco_venda(
@@ -165,7 +154,7 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# COMPATIBILIDADE ANTIGA (MANTIDO)
+# COMPATIBILIDADE ANTIGA
 # ==========================================================
 def calcular_preco_venda_df(
     df: pd.DataFrame,
