@@ -107,7 +107,15 @@ def _get_df_final() -> pd.DataFrame | None:
 
 def _get_df_fluxo() -> pd.DataFrame | None:
     # padrão atual do projeto: df_saida
-    return _get_df_saida() or _get_df_final()
+    df_saida = _get_df_saida()
+    if df_saida is not None:
+        return df_saida
+
+    df_final = _get_df_final()
+    if df_final is not None:
+        return df_final
+
+    return None
 
 
 # =========================
