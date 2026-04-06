@@ -2,503 +2,338 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
+from collections import defaultdict
+from typing import Iterable
 
-import pandas as pd
+try:
+    import pandas as pd
+except Exception:  # pragma: no cover
+    pd = None
 
 
 # ==========================================================
 # NORMALIZAÇÃO
 # ==========================================================
-def _normalizar_texto(valor: Any) -> str:
-    texto = str(valor or "").strip().lower()
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
-    texto = re.sub(r"[^a-z0-9]+", " ", texto).strip()
+def _strip_accents(texto: str) -> str:
+    texto = unicodedata.normalize("NFKD", texto or "")
+    return "".join(ch for ch in texto if not unicodedata.combining(ch))
+
+
+def _normalizar(texto: str) -> str:
+    texto = _strip_accents(str(texto or "").strip().lower())
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
     return texto
 
 
-def _tokens(valor: Any) -> set[str]:
-    texto = _normalizar_texto(valor)
-    if not texto:
+def _tokens(texto: str) -> set[str]:
+    normalizado = _normalizar(texto)
+    if not normalizado:
         return set()
-    return {t for t in texto.split() if t}
-
-
-def _serie_texto(serie: pd.Series, limite: int = 40) -> pd.Series:
-    try:
-        s = serie.copy()
-        s = s.dropna()
-        s = s.astype(str).map(str.strip)
-        s = s[s != ""]
-        return s.head(limite)
-    except Exception:
-        return pd.Series(dtype="object")
+    return {t for t in normalizado.split(" ") if t}
 
 
 # ==========================================================
-# MAPA INTELIGENTE
+# BASE DE SINÔNIMOS
 # ==========================================================
-ALIASES_INTELIGENTES = {
-    "descricao": [
-        "descricao",
-        "descrição",
-        "nome",
-        "nome produto",
-        "produto",
-        "titulo",
-        "título",
-        "descricao produto",
-        "descrição produto",
-        "nome do produto",
-        "item",
+CAMPO_SINONIMOS: dict[str, list[str]] = {
+    "codigo": [
+        "codigo", "codigo produto", "cod", "sku", "ref", "referencia",
+        "id produto", "codigo interno", "codigo item", "part number", "pn"
     ],
-    "descricao curta": [
-        "descricao curta",
-        "descrição curta",
-        "resumo",
-        "detalhe",
-        "detalhes",
-        "short description",
+    "descricao_curta": [
+        "descricao curta", "desc curta", "descricao resumida", "resumo",
+        "descricao pequena", "texto curto", "short description"
+    ],
+    "nome": [
+        "nome", "titulo", "produto", "descricao", "descricao produto",
+        "nome produto", "title", "product name"
+    ],
+    "preco_custo": [
+        "preco custo", "preco de custo", "custo", "valor custo",
+        "preco compra", "preco de compra", "compra", "cost"
     ],
     "preco": [
-        "preco",
-        "preço",
-        "valor",
-        "price",
-        "vlr",
-        "preco venda",
-        "preço venda",
-        "valor venda",
-    ],
-    "preco de venda": [
-        "preco",
-        "preço",
-        "valor",
-        "price",
-        "preco venda",
-        "preço venda",
-        "valor venda",
-    ],
-    "preco de custo": [
-        "custo",
-        "preco custo",
-        "preço custo",
-        "preco de custo",
-        "preço de custo",
-        "valor custo",
-        "compra",
-        "preco compra",
-        "preço compra",
-    ],
-    "preco de compra": [
-        "compra",
-        "preco compra",
-        "preço compra",
-        "preco de compra",
-        "preço de compra",
-        "custo",
-        "preco custo",
-        "preço custo",
+        "preco", "preco venda", "valor", "valor venda", "price",
+        "preco final", "valor final"
     ],
     "estoque": [
-        "estoque",
-        "quantidade",
-        "qtd",
-        "saldo",
-        "stock",
-        "inventory",
-        "disponivel",
-        "disponível",
-    ],
-    "saldo": [
-        "estoque",
-        "quantidade",
-        "qtd",
-        "saldo",
-        "stock",
-        "inventory",
-        "disponivel",
-        "disponível",
+        "estoque", "saldo", "qtd", "quantidade", "quant", "inventory",
+        "stock", "saldo estoque", "disponivel"
     ],
     "gtin": [
-        "gtin",
-        "ean",
-        "codigo de barras",
-        "código de barras",
-        "barcode",
-        "gtin ean",
-    ],
-    "ean": [
-        "ean",
-        "gtin",
-        "codigo de barras",
-        "código de barras",
-        "barcode",
-        "gtin ean",
+        "gtin", "ean", "codigo barras", "cod barras", "barcode",
+        "cbarra", "codigo de barras"
     ],
     "marca": [
-        "marca",
-        "brand",
-        "fabricante",
+        "marca", "fabricante", "brand", "manufacturer"
     ],
     "categoria": [
-        "categoria",
-        "departamento",
-        "grupo",
-        "grupo produto",
-        "grupo de produtos",
-        "setor",
+        "categoria", "departamento", "secao", "sessao", "grupo",
+        "category", "tipo"
     ],
     "ncm": [
-        "ncm",
-        "classificacao fiscal",
-        "classificação fiscal",
+        "ncm", "classificacao fiscal", "classificacao"
     ],
-    "sku": [
-        "sku",
-        "referencia",
-        "referência",
-        "ref",
-        "codigo",
-        "código",
-        "codigo produto",
-        "código produto",
-        "cod",
+    "cest": [
+        "cest"
     ],
-    "codigo": [
-        "codigo",
-        "código",
-        "sku",
-        "referencia",
-        "referência",
-        "ref",
-        "cod",
-        "id",
+    "cfop": [
+        "cfop"
     ],
-    "imagem": [
-        "imagem",
-        "imagens",
-        "foto",
-        "fotos",
-        "image",
-        "images",
-        "url imagem",
-        "url imagens",
+    "unidade": [
+        "unidade", "und", "un", "u m", "unid", "unit"
     ],
-    "url imagens externas": [
-        "imagem",
-        "imagens",
-        "foto",
-        "fotos",
-        "image",
-        "images",
-        "url imagem",
-        "url imagens",
-        "url imagens externas",
+    "fornecedor": [
+        "fornecedor", "supplier", "vendor"
     ],
-    "link externo": [
-        "link",
-        "url",
-        "site",
-        "url produto",
-        "produto url",
-        "link externo",
+    "cnpj_fornecedor": [
+        "cnpj", "cnpj fornecedor", "documento fornecedor"
     ],
-    "peso liquido": [
-        "peso liquido",
-        "peso líquido",
-        "peso",
-        "peso liq",
+    "numero_nfe": [
+        "numero nfe", "nfe", "nf e", "nota fiscal", "numero nota"
     ],
-    "peso bruto": [
-        "peso bruto",
-        "peso br",
-        "peso",
+    "data_emissao": [
+        "data emissao", "emissao", "data nota", "issue date", "date"
     ],
-    "largura": [
-        "largura",
-        "width",
+    "imagens": [
+        "imagem", "imagens", "foto", "fotos", "image", "img", "url imagem"
     ],
-    "altura": [
-        "altura",
-        "height",
+    "deposito_id": [
+        "deposito", "depósito", "warehouse", "local estoque", "almoxarifado"
     ],
-    "profundidade": [
-        "profundidade",
-        "comprimento",
-        "length",
-    ],
-    "deposito": [
-        "deposito",
-        "depósito",
-        "armazem",
-        "armazém",
-        "warehouse",
+    "origem": [
+        "origem", "nacionalidade", "source"
     ],
 }
 
+# aliases diretos para reforço
+ALIASES_DIRETOS: dict[str, str] = {}
+for campo, sinonimos in CAMPO_SINONIMOS.items():
+    for item in sinonimos:
+        ALIASES_DIRETOS[_normalizar(item)] = campo
+
 
 # ==========================================================
-# HEURÍSTICAS DE NOME
+# HEURÍSTICAS
 # ==========================================================
-def _score_nome_coluna(destino: str, origem: str) -> int:
-    destino_norm = _normalizar_texto(destino)
-    origem_norm = _normalizar_texto(origem)
+def _score_textos(texto_a: str, texto_b: str) -> float:
+    a = _normalizar(texto_a)
+    b = _normalizar(texto_b)
 
-    if not destino_norm or not origem_norm:
-        return 0
+    if not a or not b:
+        return 0.0
 
-    score = 0
+    if a == b:
+        return 100.0
 
-    if destino_norm == origem_norm:
-        score += 200
+    score = 0.0
 
-    if destino_norm in origem_norm:
-        score += 80
+    # match direto de alias conhecido
+    alias_a = ALIASES_DIRETOS.get(a)
+    alias_b = ALIASES_DIRETOS.get(b)
+    if alias_a and alias_b and alias_a == alias_b:
+        score += 90.0
+    elif alias_a and alias_a == b:
+        score += 95.0
+    elif alias_b and alias_b == a:
+        score += 95.0
 
-    if origem_norm in destino_norm and len(origem_norm) > 2:
-        score += 50
+    # contém o outro
+    if a in b or b in a:
+        score += 35.0
 
-    tokens_destino = _tokens(destino_norm)
-    tokens_origem = _tokens(origem_norm)
-    intersec = len(tokens_destino.intersection(tokens_origem))
-    if intersec > 0:
-        score += intersec * 20
+    # interseção de tokens
+    ta = _tokens(a)
+    tb = _tokens(b)
+    if ta and tb:
+        inter = len(ta & tb)
+        union = len(ta | tb)
+        score += (inter / max(union, 1)) * 40.0
 
-    aliases = []
-    for chave, lista in ALIASES_INTELIGENTES.items():
-        if chave in destino_norm:
-            aliases.extend(lista)
+    # reforço por tokens importantes
+    pesos = {
+        "sku": 22.0,
+        "codigo": 18.0,
+        "ean": 22.0,
+        "gtin": 22.0,
+        "ncm": 22.0,
+        "cest": 20.0,
+        "cfop": 20.0,
+        "marca": 18.0,
+        "categoria": 18.0,
+        "preco": 18.0,
+        "custo": 18.0,
+        "estoque": 20.0,
+        "quantidade": 16.0,
+        "unidade": 18.0,
+        "descricao": 16.0,
+        "titulo": 16.0,
+        "imagem": 16.0,
+        "fornecedor": 18.0,
+        "cnpj": 22.0,
+        "origem": 14.0,
+        "deposito": 18.0,
+        "nota": 14.0,
+        "nfe": 20.0,
+        "emissao": 18.0,
+    }
 
-    for alias in aliases:
-        alias_norm = _normalizar_texto(alias)
-        if not alias_norm:
-            continue
-        if alias_norm == origem_norm:
-            score += 140
-        elif alias_norm in origem_norm:
-            score += 70
-        else:
-            alias_tokens = _tokens(alias_norm)
-            if alias_tokens:
-                score += len(alias_tokens.intersection(tokens_origem)) * 18
+    for token, peso in pesos.items():
+        if token in ta and token in tb:
+            score += peso
 
     return score
 
 
-# ==========================================================
-# HEURÍSTICAS DE VALORES
-# ==========================================================
-def _score_numerico(serie: pd.Series) -> int:
-    try:
-        s = (
-            serie.astype(str)
-            .str.replace(".", "", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        nums = pd.to_numeric(s, errors="coerce")
-        validos = nums.notna().sum()
-        if validos == 0:
-            return 0
-        return int((validos / max(len(serie), 1)) * 100)
-    except Exception:
-        return 0
+def _sugerir_campo_padrao(nome_coluna: str) -> str:
+    nome = _normalizar(nome_coluna)
+    if not nome:
+        return ""
+
+    if nome in ALIASES_DIRETOS:
+        return ALIASES_DIRETOS[nome]
+
+    melhor_campo = ""
+    melhor_score = 0.0
+
+    for campo, sinonimos in CAMPO_SINONIMOS.items():
+        score_campo = _score_textos(nome, campo)
+
+        for sinonimo in sinonimos:
+            score_campo = max(score_campo, _score_textos(nome, sinonimo))
+
+        if score_campo > melhor_score:
+            melhor_score = score_campo
+            melhor_campo = campo
+
+    # limiar conservador para evitar chute ruim
+    if melhor_score >= 26.0:
+        return melhor_campo
+
+    return ""
 
 
-def _score_gtin(serie: pd.Series) -> int:
-    try:
-        s = serie.astype(str).str.replace(r"\D", "", regex=True)
-        validos = s.map(lambda x: len(x) in (8, 12, 13, 14)).sum()
-        if validos == 0:
-            return 0
-        return int((validos / max(len(s), 1)) * 100)
-    except Exception:
-        return 0
+def _preparar_alvos(colunas_alvo: Iterable[str]) -> list[str]:
+    vistos = set()
+    saida = []
+    for col in colunas_alvo or []:
+        col_str = str(col).strip()
+        if col_str and col_str not in vistos:
+            vistos.add(col_str)
+            saida.append(col_str)
+    return saida
 
 
-def _score_ncm(serie: pd.Series) -> int:
-    try:
-        s = serie.astype(str).str.replace(r"\D", "", regex=True)
-        validos = s.map(lambda x: len(x) == 8).sum()
-        if validos == 0:
-            return 0
-        return int((validos / max(len(s), 1)) * 100)
-    except Exception:
-        return 0
+def _sugerir_para_alvos(nome_coluna: str, colunas_alvo: list[str]) -> str:
+    if not colunas_alvo:
+        return _sugerir_campo_padrao(nome_coluna)
 
+    melhor_alvo = ""
+    melhor_score = 0.0
 
-def _score_url(serie: pd.Series) -> int:
-    try:
-        s = _serie_texto(serie, limite=50)
-        if s.empty:
-            return 0
-        validos = s.str.contains(r"http|www\.", case=False, regex=True).sum()
-        return int((validos / max(len(s), 1)) * 100)
-    except Exception:
-        return 0
+    campo_padrao = _sugerir_campo_padrao(nome_coluna)
 
+    for alvo in colunas_alvo:
+        score = _score_textos(nome_coluna, alvo)
 
-def _score_texto_longo(serie: pd.Series) -> int:
-    try:
-        s = _serie_texto(serie, limite=40)
-        if s.empty:
-            return 0
-        media = s.map(len).mean()
-        if media >= 80:
-            return 100
-        if media >= 40:
-            return 70
-        if media >= 20:
-            return 35
-        return 0
-    except Exception:
-        return 0
+        alvo_norm = _normalizar(alvo)
+        if campo_padrao:
+            score = max(score, _score_textos(campo_padrao, alvo_norm) + 8.0)
 
+            # reforço por família semântica
+            if ALIASES_DIRETOS.get(alvo_norm) == campo_padrao:
+                score += 20.0
 
-def _score_texto_curto(serie: pd.Series) -> int:
-    try:
-        s = _serie_texto(serie, limite=40)
-        if s.empty:
-            return 0
-        media = s.map(len).mean()
-        if 3 <= media <= 25:
-            return 80
-        if media <= 40:
-            return 40
-        return 0
-    except Exception:
-        return 0
+        if score > melhor_score:
+            melhor_score = score
+            melhor_alvo = alvo
 
+    if melhor_score >= 18.0:
+        return melhor_alvo
 
-def _score_valores(destino: str, origem: str, serie: pd.Series) -> int:
-    destino_norm = _normalizar_texto(destino)
-    origem_norm = _normalizar_texto(origem)
-    score = 0
-
-    if any(x in destino_norm for x in ["preco", "preço", "valor", "custo", "compra"]):
-        score += int(_score_numerico(serie) * 0.7)
-
-    if any(x in destino_norm for x in ["estoque", "saldo", "quantidade", "qtd"]):
-        score += int(_score_numerico(serie) * 0.8)
-
-    if any(x in destino_norm for x in ["gtin", "ean"]):
-        score += int(_score_gtin(serie) * 1.4)
-
-    if "ncm" in destino_norm:
-        score += int(_score_ncm(serie) * 1.4)
-
-    if any(x in destino_norm for x in ["imagem", "foto", "url imagens", "url imagem"]):
-        score += int(_score_url(serie) * 1.2)
-
-    if "link externo" in destino_norm or destino_norm == "link":
-        score += int(_score_url(serie) * 1.2)
-
-    if "descricao curta" in destino_norm:
-        score += int(_score_texto_longo(serie) * 0.8)
-
-    if destino_norm == "descricao" or "descricao" in destino_norm or "descrição" in destino_norm:
-        score += int(_score_texto_longo(serie) * 0.5)
-        score += int(_score_texto_curto(serie) * 0.5)
-
-    if any(x in destino_norm for x in ["sku", "codigo", "código", "referencia", "referência"]):
-        score += int(_score_texto_curto(serie) * 0.6)
-
-    if "marca" in destino_norm:
-        score += int(_score_texto_curto(serie) * 0.4)
-
-    if any(x in origem_norm for x in ["ean", "gtin", "barcode"]):
-        score += 25
-
-    if any(x in origem_norm for x in ["ncm"]):
-        score += 25
-
-    if any(x in origem_norm for x in ["preco", "preço", "valor", "custo"]):
-        score += 15
-
-    if any(x in origem_norm for x in ["estoque", "saldo", "qtd", "quantidade"]):
-        score += 15
-
-    return score
+    return ""
 
 
 # ==========================================================
-# CONFIANÇA / RESOLUÇÃO
+# API PÚBLICA
 # ==========================================================
-def _limite_minimo(destino: str) -> int:
-    destino_norm = _normalizar_texto(destino)
-
-    if any(x in destino_norm for x in ["gtin", "ean", "ncm"]):
-        return 60
-
-    if any(x in destino_norm for x in ["preco", "preço", "estoque", "saldo"]):
-        return 50
-
-    if any(x in destino_norm for x in ["imagem", "foto", "link"]):
-        return 45
-
-    return 40
-
-
-def _score_total(destino: str, origem: str, serie: pd.Series) -> int:
-    return _score_nome_coluna(destino, origem) + _score_valores(destino, origem, serie)
-
-
-# ==========================================================
-# IA PRINCIPAL
-# ==========================================================
-def sugestao_automatica(
-    df: pd.DataFrame,
-    colunas_destino: list[str] | None = None,
-) -> dict:
+def sugestao_automatica(entrada, colunas_alvo: list[str] | None = None):
     """
-    Gera sugestões automáticas de mapeamento entre colunas da origem e destino.
+    Compatível com os dois usos do projeto:
 
-    Compatível com:
-    - chamada antiga: sugestao_automatica(df)
-    - chamada nova: sugestao_automatica(df, colunas_destino)
+    1) sugestao_automatica("nome da coluna") -> "campo_sugerido"
+    2) sugestao_automatica(df_origem, colunas_alvo) -> {col_origem: col_alvo}
 
-    Retorna:
-        dict {coluna_destino: coluna_origem}
+    Isso ativa IA offline sem mexer no layout.
     """
+    # modo 1: coluna única -> campo padrão
+    if isinstance(entrada, str):
+        if colunas_alvo:
+            return _sugerir_para_alvos(entrada, _preparar_alvos(colunas_alvo))
+        return _sugerir_campo_padrao(entrada)
 
-    if df is None or df.empty:
-        return {}
+    # modo 2: DataFrame -> dict origem -> alvo
+    if pd is not None and isinstance(entrada, pd.DataFrame):
+        df_origem = entrada
+        alvos = _preparar_alvos(colunas_alvo or [])
 
-    colunas_origem = list(df.columns)
+        sugestoes: dict[str, str] = {}
+        alvos_usados: set[str] = set()
 
-    if not colunas_destino:
-        return {col: col for col in colunas_origem}
+        for coluna in df_origem.columns:
+            melhor = _sugerir_para_alvos(str(coluna), alvos)
 
-    sugestoes: dict[str, str] = {}
-    usadas: set[str] = set()
-
-    ranking_global: list[tuple[str, str, int]] = []
-
-    for destino in colunas_destino:
-        for origem in colunas_origem:
-            try:
-                serie = df[origem]
-            except Exception:
+            # evita duplicação quando houver lista de alvos
+            if melhor and melhor not in alvos_usados:
+                sugestoes[str(coluna)] = melhor
+                alvos_usados.add(melhor)
                 continue
 
-            score = _score_total(destino, origem, serie)
-            ranking_global.append((destino, origem, score))
+            # fallback sem duplicar: tenta próximo melhor por score
+            candidatos_rank = []
+            for alvo in alvos:
+                if alvo in alvos_usados:
+                    continue
+                score = _score_textos(str(coluna), alvo)
+                campo_padrao = _sugerir_campo_padrao(str(coluna))
+                if campo_padrao:
+                    score = max(score, _score_textos(campo_padrao, alvo) + 8.0)
+                candidatos_rank.append((score, alvo))
 
-    ranking_global.sort(key=lambda x: x[2], reverse=True)
+            candidatos_rank.sort(reverse=True, key=lambda x: x[0])
 
-    destinos_preenchidos: set[str] = set()
+            if candidatos_rank and candidatos_rank[0][0] >= 18.0:
+                sugestoes[str(coluna)] = candidatos_rank[0][1]
+                alvos_usados.add(candidatos_rank[0][1])
 
-    for destino, origem, score in ranking_global:
-        if destino in destinos_preenchidos:
-            continue
-        if origem in usadas:
-            continue
-        if score < _limite_minimo(destino):
-            continue
+        return sugestoes
 
-        sugestoes[destino] = origem
-        destinos_preenchidos.add(destino)
-        usadas.add(origem)
+    return ""
 
-    return sugestoes
+
+# ==========================================================
+# DEBUG OPCIONAL
+# ==========================================================
+def diagnostico_mapeamento(colunas_origem: list[str], colunas_alvo: list[str]) -> dict[str, list[dict[str, str]]]:
+    """
+    Função auxiliar opcional para debug local do mapeamento IA offline.
+    Não interfere no layout.
+    """
+    alvos = _preparar_alvos(colunas_alvo)
+    detalhes = []
+
+    for col in colunas_origem or []:
+        campo_padrao = _sugerir_campo_padrao(str(col))
+        alvo = _sugerir_para_alvos(str(col), alvos)
+        detalhes.append(
+            {
+                "origem": str(col),
+                "campo_padrao": campo_padrao,
+                "alvo_sugerido": alvo,
+            }
+        )
+
+    agrupado = defaultdict(list)
+    agrupado["itens"] = detalhes
+    return dict(agrupado)
