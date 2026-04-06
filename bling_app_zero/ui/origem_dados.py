@@ -1,6 +1,6 @@
-# (código completo — já corrigido com precificação automática)
-
 from __future__ import annotations
+
+import json
 
 import streamlit as st
 
@@ -9,7 +9,6 @@ from bling_app_zero.ui.origem_dados_helpers import (
     ler_planilha_segura,
 )
 from bling_app_zero.ui.origem_dados_site import render_origem_site
-
 from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
 
 
@@ -73,15 +72,64 @@ def _normalizar_coluna_numerica(df, coluna):
     try:
         serie = df_saida[coluna].astype(str).str.strip()
         serie = serie.str.replace("R$", "", regex=False)
+        serie = serie.str.replace("r$", "", regex=False)
         serie = serie.str.replace(" ", "", regex=False)
         serie = serie.str.replace(".", "", regex=False)
         serie = serie.str.replace(",", ".", regex=False)
 
         df_saida[coluna] = serie.astype(float)
     except Exception:
-        pass
+        try:
+            df_saida[coluna] = (
+                df_saida[coluna]
+                .astype(str)
+                .str.replace("R$", "", regex=False)
+                .str.replace("r$", "", regex=False)
+                .str.replace(" ", "", regex=False)
+                .str.replace(",", ".", regex=False)
+                .astype(float)
+            )
+        except Exception:
+            pass
 
     return df_saida
+
+
+def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
+    df_temp = df_base.copy()
+    df_temp = _normalizar_coluna_numerica(df_temp, coluna_preco)
+
+    kwargs = {
+        "percentual_impostos": st.session_state.get("perc_impostos", 0),
+        "margem_lucro": st.session_state.get("margem_lucro", 0),
+        "custo_fixo": st.session_state.get("custo_fixo", 0),
+        "taxa_extra": st.session_state.get("taxa_extra", 0),
+    }
+
+    try:
+        return aplicar_precificacao_automatica(
+            df_temp,
+            coluna_preco=coluna_preco,
+            **kwargs,
+        )
+    except TypeError:
+        return aplicar_precificacao_automatica(
+            df_temp,
+            **kwargs,
+        )
+
+
+def _assinatura_fluxo_precificacao(df_base, coluna_preco):
+    payload = {
+        "coluna_preco": str(coluna_preco),
+        "margem_lucro": float(st.session_state.get("margem_lucro", 0) or 0),
+        "perc_impostos": float(st.session_state.get("perc_impostos", 0) or 0),
+        "custo_fixo": float(st.session_state.get("custo_fixo", 0) or 0),
+        "taxa_extra": float(st.session_state.get("taxa_extra", 0) or 0),
+        "linhas": int(len(df_base)) if hasattr(df_base, "__len__") else 0,
+        "colunas": [str(c) for c in getattr(df_base, "columns", [])],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _render_precificacao(df_base):
@@ -89,48 +137,84 @@ def _render_precificacao(df_base):
 
     if not _safe_df_dados(df_base):
         st.session_state["preco_gerado"] = False
+        st.session_state["df_precificado"] = None
         return
 
     colunas = list(df_base.columns)
+    if not colunas:
+        st.session_state["preco_gerado"] = False
+        st.session_state["df_precificado"] = None
+        return
+
+    coluna_sugerida = 0
+    for i, col in enumerate(colunas):
+        nome = str(col).lower().strip()
+        if (
+            "preco" in nome
+            or "preço" in nome
+            or "valor" in nome
+            or "custo" in nome
+            or "compra" in nome
+        ):
+            coluna_sugerida = i
+            break
 
     coluna_preco = st.selectbox(
         "Selecione a coluna de PREÇO DE CUSTO",
         options=colunas,
+        index=coluna_sugerida,
         key="coluna_preco_base",
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.number_input("Margem (%)", key="margem_lucro")
-        st.number_input("Impostos (%)", key="perc_impostos")
+        st.number_input(
+            "Margem (%)",
+            min_value=0.0,
+            step=0.1,
+            key="margem_lucro",
+        )
+        st.number_input(
+            "Impostos (%)",
+            min_value=0.0,
+            step=0.1,
+            key="perc_impostos",
+        )
 
     with col2:
-        st.number_input("Custo fixo", key="custo_fixo")
-        st.number_input("Taxa extra (%)", key="taxa_extra")
+        st.number_input(
+            "Custo fixo",
+            min_value=0.0,
+            step=0.01,
+            key="custo_fixo",
+        )
+        st.number_input(
+            "Taxa extra (%)",
+            min_value=0.0,
+            step=0.1,
+            key="taxa_extra",
+        )
 
     try:
-        df_temp = df_base.copy()
-        df_temp = _normalizar_coluna_numerica(df_temp, coluna_preco)
-
-        df_precificado = aplicar_precificacao_automatica(
-            df_temp,
-            coluna_preco=coluna_preco,
-            percentual_impostos=st.session_state.get("perc_impostos", 0),
-            margem_lucro=st.session_state.get("margem_lucro", 0),
-            custo_fixo=st.session_state.get("custo_fixo", 0),
-            taxa_extra=st.session_state.get("taxa_extra", 0),
-        )
+        df_precificado = _aplicar_precificacao_com_fallback(df_base, coluna_preco)
 
         if _safe_df_dados(df_precificado):
             st.session_state["df_precificado"] = df_precificado
             st.session_state["preco_gerado"] = True
+            st.session_state["coluna_preco_base_aplicada"] = coluna_preco
+            st.session_state["assinatura_precificacao_atual"] = _assinatura_fluxo_precificacao(
+                df_base, coluna_preco
+            )
 
             with st.expander("👁️ Prévia da precificação", expanded=False):
                 st.dataframe(df_precificado.head(10), use_container_width=True)
-
+        else:
+            st.session_state["preco_gerado"] = False
+            st.session_state["df_precificado"] = None
     except Exception as e:
         st.session_state["preco_gerado"] = False
+        st.session_state["df_precificado"] = None
         log_debug(f"Erro na precificação automática: {e}")
 
 
@@ -152,6 +236,7 @@ def render_origem_dados() -> None:
         arquivo = st.file_uploader(
             "Envie a planilha",
             type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
+            key="upload_planilha_origem",
         )
 
         if arquivo:
@@ -160,6 +245,10 @@ def render_origem_dados() -> None:
     elif origem == "Site":
         df_origem = render_origem_site()
 
+    elif origem == "XML":
+        st.info("Origem XML ainda não está disponível nesta tela.")
+        return
+
     if not _safe_df_dados(df_origem):
         return
 
@@ -167,15 +256,21 @@ def render_origem_dados() -> None:
 
     _render_precificacao(df_origem)
 
-    if st.button("Continuar para o mapeamento", use_container_width=True):
+    df_precificado = st.session_state.get("df_precificado")
+    assinatura_atual = st.session_state.get("assinatura_precificacao_atual")
+    assinatura_usada = st.session_state.get("assinatura_precificacao_aplicada_fluxo")
 
-        if not st.session_state.get("preco_gerado"):
-            st.warning("⚠️ Ajuste a precificação primeiro")
-            return
+    if _safe_df_dados(df_precificado):
+        st.session_state["df_saida"] = df_precificado.copy()
+        st.session_state["bloquear_campos_auto"] = {
+            "deposito": False,
+            "preco": False,
+        }
 
-        df_saida = st.session_state.get("df_precificado").copy()
-
-        st.session_state["df_saida"] = df_saida
-        st.session_state["etapa_origem"] = "mapeamento"
-
-        st.rerun()
+        if assinatura_atual != assinatura_usada:
+            st.session_state["assinatura_precificacao_aplicada_fluxo"] = assinatura_atual
+            st.session_state["etapa_origem"] = "mapeamento"
+            log_debug(
+                "Fluxo automático ativado → precificação recalculada e avanço automático para mapeamento"
+            )
+            st.rerun()
