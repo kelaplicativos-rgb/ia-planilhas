@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import datetime
 from io import BytesIO
@@ -19,7 +18,6 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         linha = f"[{timestamp}] [{nivel}] {msg}"
-
         st.session_state["logs"].append(linha)
     except Exception:
         pass
@@ -34,38 +32,113 @@ def baixar_logs_txt() -> bytes:
 
 
 # ==========================================================
+# HELPERS GERAIS
+# ==========================================================
+def _safe_df(df: pd.DataFrame | None) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _valor_vazio(valor) -> bool:
+    try:
+        if valor is None:
+            return True
+
+        if pd.isna(valor):
+            return True
+
+        texto = str(valor).strip().lower()
+        return texto in {"", "nan", "none", "null", "<na>"}
+    except Exception:
+        return True
+
+
+def _normalizar_nome_coluna(nome: str) -> str:
+    try:
+        return str(nome).strip().lower()
+    except Exception:
+        return ""
+
+
+# ==========================================================
 # GTIN LIMPEZA (🔥 CRÍTICO PRA BLING)
 # ==========================================================
+def _apenas_digitos(valor) -> str:
+    try:
+        if _valor_vazio(valor):
+            return ""
+        return re.sub(r"\D+", "", str(valor))
+    except Exception:
+        return ""
+
+
+def _ean_checksum_valido(numero: str) -> bool:
+    """
+    Valida GTIN-8 / GTIN-12 / GTIN-13 / GTIN-14.
+    """
+    try:
+        if not numero or not numero.isdigit():
+            return False
+
+        if len(numero) not in {8, 12, 13, 14}:
+            return False
+
+        corpo = numero[:-1]
+        digito_informado = int(numero[-1])
+
+        soma = 0
+        peso_tres = True
+
+        for dig in reversed(corpo):
+            soma += int(dig) * (3 if peso_tres else 1)
+            peso_tres = not peso_tres
+
+        digito_calculado = (10 - (soma % 10)) % 10
+        return digito_calculado == digito_informado
+    except Exception:
+        return False
+
+
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
-        if df is None or df.empty:
+        if not _safe_df(df) or df.empty:
             return df
 
-        df = df.copy()
+        df_limpo = df.copy()
+        colunas_gtin = []
 
-        for col in df.columns:
-            nome = str(col).lower()
-
+        for col in df_limpo.columns:
+            nome = _normalizar_nome_coluna(col)
             if "gtin" in nome or "ean" in nome:
+                colunas_gtin.append(col)
 
-                def validar(v):
-                    v = str(v).strip()
+        if not colunas_gtin:
+            return df_limpo
 
-                    if not v or v.lower() in ["nan", "none"]:
-                        return ""
+        for col in colunas_gtin:
+            def validar(v):
+                numero = _apenas_digitos(v)
 
-                    if not v.isdigit():
-                        return ""
+                if not numero:
+                    return ""
 
-                    if len(v) not in [8, 12, 13, 14]:
-                        return ""
+                if len(numero) not in {8, 12, 13, 14}:
+                    return ""
 
-                    return v
+                if not _ean_checksum_valido(numero):
+                    return ""
 
-                df[col] = df[col].apply(validar)
+                return numero
 
-        log_debug("GTIN inválido limpo com sucesso", "SUCCESS")
-        return df
+            df_limpo[col] = df_limpo[col].apply(validar)
+
+        log_debug(
+            f"GTIN inválido limpo com sucesso em {len(colunas_gtin)} coluna(s)",
+            "SUCCESS",
+        )
+        return df_limpo
 
     except Exception as e:
         log_debug(f"Erro ao limpar GTIN: {e}", "ERROR")
@@ -77,16 +150,62 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 def validar_campos_obrigatorios(df: pd.DataFrame) -> bool:
     try:
-        if df is None or df.empty:
+        if not _safe_df(df) or df.empty:
+            st.error("A planilha final está vazia.")
             return False
 
-        obrigatorios = ["descricao", "preco"]
+        colunas_originais = list(df.columns)
+        colunas_norm = [_normalizar_nome_coluna(c) for c in colunas_originais]
 
-        colunas = [str(c).lower() for c in df.columns]
+        def encontrar_coluna(candidatos: list[str]) -> str | None:
+            for idx, nome in enumerate(colunas_norm):
+                for candidato in candidatos:
+                    if candidato in nome:
+                        return colunas_originais[idx]
+            return None
 
-        for campo in obrigatorios:
-            if not any(campo in c for c in colunas):
-                st.error(f"Campo obrigatório ausente: {campo}")
+        coluna_descricao = encontrar_coluna(["descricao", "descrição"])
+        coluna_preco = encontrar_coluna(
+            [
+                "preco de venda",
+                "preço de venda",
+                "preco",
+                "preço",
+                "valor",
+            ]
+        )
+
+        faltantes_estrutura = []
+        if coluna_descricao is None:
+            faltantes_estrutura.append("Descrição")
+        if coluna_preco is None:
+            faltantes_estrutura.append("Preço")
+
+        if faltantes_estrutura:
+            st.error(
+                "Campo obrigatório ausente: " + ", ".join(faltantes_estrutura)
+            )
+            return False
+
+        if coluna_descricao is not None:
+            serie_desc = df[coluna_descricao]
+            if serie_desc.apply(_valor_vazio).all():
+                st.error("O campo obrigatório 'Descrição' está vazio.")
+                return False
+
+        if coluna_preco is not None:
+            serie_preco = (
+                df[coluna_preco]
+                .astype(str)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+                .str.replace(r"[^\d\.\-]", "", regex=True)
+                .str.strip()
+            )
+
+            valores_validos = pd.to_numeric(serie_preco, errors="coerce")
+            if valores_validos.isna().all():
+                st.error("O campo obrigatório de preço está vazio ou inválido.")
                 return False
 
         return True
@@ -110,21 +229,26 @@ def _corrigir_coluna_unica(df: pd.DataFrame) -> pd.DataFrame:
         log_debug("CSV em coluna única detectado", "WARNING")
 
         col = df.columns[0]
-
         sample = df[col].dropna().astype(str).head(5).tolist()
         texto = "\n".join(sample)
 
         if texto.count(";") > texto.count(","):
             sep = ";"
-        elif texto.count("\t") > 0:
+        elif "\t" in texto:
             sep = "\t"
         else:
             sep = ","
 
-        novo_df = df[col].str.split(sep, expand=True)
-        novo_df.columns = novo_df.iloc[0]
+        novo_df = df[col].astype(str).str.split(sep, expand=True)
+
+        if novo_df.empty:
+            return df
+
+        cabecalho = novo_df.iloc[0].fillna("").astype(str).tolist()
+        novo_df.columns = cabecalho
         novo_df = novo_df[1:].reset_index(drop=True)
 
+        novo_df = novo_df.dropna(how="all")
         return novo_df
 
     except Exception as e:
@@ -161,14 +285,14 @@ def _normalizar_texto(valor):
 
 def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
     try:
-        df = df.copy()
+        df_normalizado = df.copy()
 
-        df.columns = [_normalizar_texto(str(col)) for col in df.columns]
+        df_normalizado.columns = [_normalizar_texto(str(col)) for col in df_normalizado.columns]
 
-        for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].map(_normalizar_texto)
+        for col in df_normalizado.select_dtypes(include=["object"]).columns:
+            df_normalizado[col] = df_normalizado[col].map(_normalizar_texto)
 
-        return df
+        return df_normalizado
 
     except Exception as e:
         log_debug(f"Erro normalização: {e}", "ERROR")
@@ -179,7 +303,10 @@ def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
 # CSV ROBUSTO
 # ==========================================================
 def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
-    conteudo = arquivo.getvalue()
+    try:
+        conteudo = arquivo.getvalue()
+    except Exception:
+        return None
 
     for encoding in ["utf-8-sig", "utf-8", "cp1252", "latin1"]:
         try:
@@ -205,8 +332,8 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
 # ==========================================================
 def ler_planilha_segura(arquivo):
     try:
-        nome = arquivo.name.lower()
-        log_debug(f"Lendo arquivo: {nome}")
+        nome = str(getattr(arquivo, "name", "")).lower().strip()
+        log_debug(f"Lendo arquivo: {nome or 'arquivo_sem_nome'}")
 
         if nome.endswith(".csv"):
             df = _ler_csv_tentativas(arquivo)
@@ -216,23 +343,22 @@ def ler_planilha_segura(arquivo):
             log_debug("Excel OK", "SUCCESS")
 
         else:
-            st.error("Formato não suportado")
+            st.error("Formato não suportado.")
             return None
 
         if df is None:
-            st.error("Erro ao ler arquivo")
+            st.error("Erro ao ler arquivo.")
             return None
 
         df = df.dropna(how="all")
         df = _normalizar_df_texto(df)
 
         log_debug(f"Shape final: {df.shape}", "INFO")
-
         return df
 
     except Exception as e:
         log_debug(f"Erro leitura: {e}", "ERROR")
-        st.error("Erro ao ler arquivo")
+        st.error("Erro ao ler arquivo.")
         return None
 
 
@@ -241,11 +367,17 @@ def ler_planilha_segura(arquivo):
 # ==========================================================
 def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
     try:
+        if df is None:
+            return b""
+
+        df_export = df.copy()
+
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False)
+            df_export.to_excel(writer, index=False)
         buffer.seek(0)
         return buffer.read()
+
     except Exception as e:
         log_debug(f"Erro exportar excel: {e}", "ERROR")
         return b""
@@ -255,7 +387,7 @@ def safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     try:
         if df is None or df.empty:
             return pd.DataFrame()
-        return df.head(rows)
+        return df.head(rows).copy()
     except Exception as e:
         log_debug(f"Erro preview: {e}", "ERROR")
         return pd.DataFrame()
