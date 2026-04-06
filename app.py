@@ -6,7 +6,7 @@ from datetime import datetime
 # =========================
 # 🔥 VERSIONAMENTO
 # =========================
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 
 # =========================
@@ -17,15 +17,65 @@ if "logs" not in st.session_state:
 
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
-    """
-    Logger global do sistema
-    """
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         linha = f"[{timestamp}] [{nivel}] {msg}"
         st.session_state["logs"].append(linha)
     except Exception:
         pass
+
+
+# =========================
+# 🔥 IA DEBUG
+# =========================
+def analisar_logs_com_ia(logs: list[str]) -> dict:
+    if not logs:
+        return {}
+
+    texto = "\n".join(logs[-50:]).lower()
+
+    diagnostico = {
+        "tipo": "",
+        "problema": "",
+        "solucao": ""
+    }
+
+    if "unicode" in texto or "decode" in texto:
+        diagnostico["tipo"] = "Erro de encoding (CSV)"
+        diagnostico["problema"] = "Arquivo CSV com encoding incompatível"
+        diagnostico["solucao"] = "Salvar CSV como UTF-8"
+
+    elif "vazia" in texto or "empty" in texto:
+        diagnostico["tipo"] = "Planilha vazia"
+        diagnostico["problema"] = "Arquivo sem dados válidos"
+        diagnostico["solucao"] = "Verifique conteúdo da planilha"
+
+    elif "colunas" in texto and "erro" in texto:
+        diagnostico["tipo"] = "Erro de colunas"
+        diagnostico["problema"] = "Cabeçalho não identificado"
+        diagnostico["solucao"] = "Revisar cabeçalho da planilha"
+
+    elif "gtin" in texto or "ean" in texto:
+        diagnostico["tipo"] = "Problema com GTIN/EAN"
+        diagnostico["problema"] = "Valores inválidos detectados"
+        diagnostico["solucao"] = "Sistema limpa automaticamente"
+
+    elif "excel" in texto and "erro" in texto:
+        diagnostico["tipo"] = "Erro ao gerar Excel"
+        diagnostico["problema"] = "Falha na exportação"
+        diagnostico["solucao"] = "Verifique dados inválidos"
+
+    elif "import" in texto and "erro" in texto:
+        diagnostico["tipo"] = "Erro de importação"
+        diagnostico["problema"] = "Falha em módulos do sistema"
+        diagnostico["solucao"] = "Verificar arquivos do projeto"
+
+    else:
+        diagnostico["tipo"] = "Não identificado"
+        diagnostico["problema"] = "IA não detectou erro claro"
+        diagnostico["solucao"] = "Verifique o log manual"
+
+    return diagnostico
 
 
 # =========================
@@ -106,7 +156,7 @@ with st.expander("🔍 Debug do sistema", expanded=False):
 
     st.markdown("---")
 
-    # 🔥 DOWNLOAD DO LOG DIRETO DO APP (EXTRA)
+    # DOWNLOAD LOG
     log_texto = "\n".join(logs) if logs else "Sem logs disponíveis"
 
     st.download_button(
@@ -116,3 +166,17 @@ with st.expander("🔍 Debug do sistema", expanded=False):
         mime="text/plain",
         use_container_width=True,
     )
+
+    st.markdown("---")
+
+    # =========================
+    # 🧠 IA DEBUG
+    # =========================
+    st.markdown("### 🧠 Diagnóstico automático")
+
+    diagnostico = analisar_logs_com_ia(logs)
+
+    if diagnostico:
+        st.warning(f"Tipo: {diagnostico.get('tipo')}")
+        st.write(f"Problema: {diagnostico.get('problema')}")
+        st.success(f"Solução: {diagnostico.get('solucao')}")
