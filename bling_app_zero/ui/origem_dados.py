@@ -62,6 +62,11 @@ def _salvar_operacao_escolhida(valor: str) -> None:
 # MAIN UI
 # ==========================================================
 def render_origem_dados() -> None:
+    # se já estiver no mapeamento, não redesenha o bloco de origem
+    etapa_origem = st.session_state.get("etapa_origem", "upload")
+    if etapa_origem != "upload":
+        return
+
     st.subheader("Origem dos dados")
 
     origem = st.selectbox(
@@ -112,7 +117,6 @@ def render_origem_dados() -> None:
     if _safe_df(df_origem) is None:
         return
 
-    # mantém compatibilidade com o resto do sistema
     st.session_state["df_origem"] = df_origem
 
     # ==========================================================
@@ -130,12 +134,12 @@ def render_origem_dados() -> None:
         return
 
     # ==========================================================
-    # FLUXO APÓS ANEXAR PLANILHA FORNECEDORA
+    # FLUXO ORIGINAL APÓS ANEXAR PLANILHA
     # ==========================================================
     st.divider()
-    st.subheader("O que você deseja fazer agora?")
+    st.subheader("Selecione a operação antes de tudo")
 
-    valor_atual = st.session_state.get("operacao_tipo", "")
+    valor_atual = st.session_state.get("operacao_tipo", "cadastro")
 
     opcoes = {
         "Cadastro / atualização de produtos": "cadastro",
@@ -143,17 +147,13 @@ def render_origem_dados() -> None:
     }
 
     labels = list(opcoes.keys())
-
-    indice_padrao = 0
-    if valor_atual == "estoque":
-        indice_padrao = 1
+    indice_padrao = 0 if valor_atual != "estoque" else 1
 
     escolha_label = st.radio(
-        "Selecione a operação",
+        "O que será feito?",
         options=labels,
         index=indice_padrao,
         key="operacao_radio_fluxo",
-        horizontal=False,
     )
 
     escolha_valor = opcoes[escolha_label]
@@ -161,7 +161,7 @@ def render_origem_dados() -> None:
 
     if escolha_valor == "cadastro":
         st.info("Fluxo selecionado: Cadastro / atualização de produtos")
-    elif escolha_valor == "estoque":
+    else:
         st.info("Fluxo selecionado: Atualização de estoque")
 
     # ==========================================================
