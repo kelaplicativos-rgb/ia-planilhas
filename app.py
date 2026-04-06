@@ -15,7 +15,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 
 # =========================
 # LOG
@@ -53,6 +53,7 @@ def _get_df_fluxo():
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.bling_panel import render_bling_panel
+from bling_app_zero.ui.precificacao_panel import render_precificacao_panel  # 🔥 NOVO (JÁ EXISTE NO PROJETO)
 
 # =========================
 # UI
@@ -66,10 +67,39 @@ st.caption(f"Versão: {APP_VERSION}")
 etapa = st.session_state.get("etapa_origem", "upload")
 
 # =========================
-# 🔥 ETAPA 1 — ORIGEM + CALCULADORA
+# 🔥 ETAPA 1 — ORIGEM
 # =========================
 if etapa in ["upload", None]:
     render_origem_dados()
+
+    # 🔥 PRECIFICAÇÃO ENTRA AQUI (SEM QUEBRAR NADA)
+    df_origem = _safe_df("df_final") or _safe_df("df_origem")
+
+    if df_origem is not None:
+        st.divider()
+        st.subheader("Precificação")
+
+        render_precificacao_panel()
+
+        # 🔥 APLICAR PREÇO NO DATAFRAME
+        preco_calc = st.session_state.get("preco_venda_calculado")
+
+        if preco_calc is not None:
+            try:
+                df = df_origem.copy()
+
+                # só cria se não existir
+                if "Preço de venda" not in df.columns:
+                    df["Preço de venda"] = None
+
+                df["Preço de venda"] = preco_calc
+
+                st.session_state["df_final"] = df
+
+                log_debug("Preço aplicado ao DataFrame")
+
+            except Exception as e:
+                log_debug(f"Erro ao aplicar preço: {e}", "ERRO")
 
 # =========================
 # 🔥 ETAPA 2 — MAPEAMENTO
@@ -77,6 +107,7 @@ if etapa in ["upload", None]:
 elif etapa == "mapeamento":
     st.divider()
     st.subheader("Mapeamento")
+
     render_origem_mapeamento()
 
 # =========================
