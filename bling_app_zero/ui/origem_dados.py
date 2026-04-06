@@ -12,40 +12,50 @@ from bling_app_zero.ui.origem_dados_site import render_origem_site
 # ==========================================================
 # HELPERS
 # ==========================================================
-def _obter_df_origem():
-    df = st.session_state.get("df_origem")
-    if df is None:
-        return None
+def _safe_df(df):
     try:
-        if df.empty:
+        if df is None or df.empty:
             return None
+        return df
     except Exception:
         return None
-    return df
 
 
-def _render_preview_compacto(df_origem) -> None:
+def _render_preview(df) -> None:
     try:
         st.dataframe(
-            df_origem.head(10),
+            df.head(10),
             use_container_width=True,
             height=260,
         )
     except Exception as e:
-        log_debug(f"Erro no preview compacto: {e}", "ERROR")
-        st.dataframe(df_origem.head(10), use_container_width=True)
+        log_debug(f"Erro ao renderizar preview: {e}", "ERROR")
+        st.dataframe(df.head(10), use_container_width=True)
 
 
 def _reset_fluxo_origem() -> None:
     for chave in [
         "df_origem",
+        "df_final",
         "etapa_origem",
+        "operacao_tipo",
+        "operacao_label",
         "mapeamento_origem",
         "mapeamento_origem_confirmado",
         "mapeamento_origem_hash",
     ]:
         if chave in st.session_state:
             del st.session_state[chave]
+
+
+def _salvar_operacao_escolhida(valor: str) -> None:
+    st.session_state["operacao_tipo"] = valor
+    if valor == "cadastro":
+        st.session_state["operacao_label"] = "Cadastro / atualização de produtos"
+    elif valor == "estoque":
+        st.session_state["operacao_label"] = "Atualização de estoque"
+    else:
+        st.session_state["operacao_label"] = ""
 
 
 # ==========================================================
@@ -76,7 +86,7 @@ def render_origem_dados() -> None:
             log_debug("Iniciando leitura da planilha")
             df_origem = ler_planilha_segura(arquivo)
 
-            if df_origem is None or df_origem.empty:
+            if _safe_df(df_origem) is None:
                 log_debug("Erro planilha", "ERROR")
                 st.error("Erro ao ler planilha")
                 return
@@ -99,39 +109,90 @@ def render_origem_dados() -> None:
             st.error("Erro ao buscar dados do site")
             return
 
-    if df_origem is None or df_origem.empty:
+    if _safe_df(df_origem) is None:
         return
 
     # mantém compatibilidade com o resto do sistema
     st.session_state["df_origem"] = df_origem
 
+    # ==========================================================
+    # PREVIEW
+    # ==========================================================
     st.divider()
     st.subheader("Pré-visualização dos dados")
 
     try:
-        _render_preview_compacto(df_origem)
+        _render_preview(df_origem)
         st.success(f"{len(df_origem)} registros carregados")
     except Exception as e:
         log_debug(f"Erro ao gerar preview: {e}", "ERROR")
         st.error("Erro ao gerar preview")
         return
 
+    # ==========================================================
+    # FLUXO APÓS ANEXAR PLANILHA FORNECEDORA
+    # ==========================================================
+    st.divider()
+    st.subheader("O que você deseja fazer agora?")
+
+    valor_atual = st.session_state.get("operacao_tipo", "")
+
+    opcoes = {
+        "Cadastro / atualização de produtos": "cadastro",
+        "Atualização de estoque": "estoque",
+    }
+
+    labels = list(opcoes.keys())
+
+    indice_padrao = 0
+    if valor_atual == "estoque":
+        indice_padrao = 1
+
+    escolha_label = st.radio(
+        "Selecione a operação",
+        options=labels,
+        index=indice_padrao,
+        key="operacao_radio_fluxo",
+        horizontal=False,
+    )
+
+    escolha_valor = opcoes[escolha_label]
+    _salvar_operacao_escolhida(escolha_valor)
+
+    if escolha_valor == "cadastro":
+        st.info("Fluxo selecionado: Cadastro / atualização de produtos")
+    elif escolha_valor == "estoque":
+        st.info("Fluxo selecionado: Atualização de estoque")
+
+    # ==========================================================
+    # AÇÕES
+    # ==========================================================
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("➡️ Continuar para mapeamento", use_container_width=True, key="btn_continuar_mapeamento"):
+        if st.button(
+            "➡️ Continuar para mapeamento",
+            use_container_width=True,
+            key="btn_continuar_mapeamento",
+        ):
             try:
-                # libera o fluxo original do app.py
                 st.session_state["df_final"] = df_origem.copy()
                 st.session_state["etapa_origem"] = "mapeamento"
-                log_debug("Fluxo liberado para mapeamento", "SUCCESS")
+                log_debug(
+                    f"Fluxo liberado para mapeamento | operação={st.session_state.get('operacao_tipo', '')}",
+                    "SUCCESS",
+                )
                 st.rerun()
             except Exception as e:
                 log_debug(f"Erro ao preparar mapeamento: {e}", "ERROR")
                 st.error("Erro ao avançar para o mapeamento")
 
     with col2:
-        if st.button("🧹 Limpar dados carregados", use_container_width=True, key="btn_limpar_origem"):
+        if st.button(
+            "🧹 Limpar dados carregados",
+            use_container_width=True,
+            key="btn_limpar_origem",
+        ):
             _reset_fluxo_origem()
             log_debug("Fluxo de origem resetado", "INFO")
             st.rerun()
