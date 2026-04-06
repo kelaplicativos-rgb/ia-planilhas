@@ -198,7 +198,10 @@ def _ler_excel_com_engine(arquivo, engine=None):
 
 
 def _ler_excel_seguro(arquivo):
-    motores = [None, "openpyxl", "xlrd", "pyxlsb"]
+    # Compatível com o ambiente atual do Streamlit:
+    # prioriza openpyxl e evita depender de xlrd/pyxlsb,
+    # que estavam derrubando a leitura do modelo.
+    motores = ["openpyxl", None]
 
     for engine in motores:
         df = _ler_excel_com_engine(arquivo, engine=engine)
@@ -209,13 +212,13 @@ def _ler_excel_seguro(arquivo):
 
     try:
         arquivo.seek(0)
-        df = pd.read_excel(arquivo)
+        df = pd.read_excel(arquivo, engine="openpyxl")
         if df is not None and not df.empty:
             df = _ajustar_colunas_pos_leitura(df)
-            log_debug("Excel lido com sucesso usando fallback final", "SUCCESS")
+            log_debug("Excel lido com fallback openpyxl", "SUCCESS")
             return df
     except Exception as e:
-        log_debug(f"Falha no fallback final do Excel: {e}", "ERROR")
+        log_debug(f"Falha total ao ler Excel: {e}", "ERROR")
 
     return None
 
