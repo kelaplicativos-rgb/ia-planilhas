@@ -13,9 +13,16 @@ from bling_app_zero.core.mapeamento_auto import sugestao_automatica
 # HELPERS
 # ==========================================================
 def _safe_dataframe_preview(df: pd.DataFrame, rows: int = 20):
-    if df is None or df.empty:
+    if df is None:
         return pd.DataFrame()
-    return df.head(rows)
+    try:
+        if len(df.columns) == 0:
+            return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame(columns=df.columns)
+        return df.head(rows)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _build_log():
@@ -24,9 +31,32 @@ def _build_log():
     return texto
 
 
-def _safe_df(df):
+def _safe_df_dados(df):
+    """
+    Para dataframes de dados reais:
+    exige pelo menos 1 linha.
+    """
     try:
-        if df is None or df.empty:
+        if df is None:
+            return None
+        if len(df.columns) == 0:
+            return None
+        if df.empty:
+            return None
+        return df
+    except Exception:
+        return None
+
+
+def _safe_df_modelo(df):
+    """
+    Para planilha modelo:
+    aceita 0 linhas desde que existam colunas.
+    """
+    try:
+        if df is None:
+            return None
+        if len(df.columns) == 0:
             return None
         return df
     except Exception:
@@ -42,8 +72,8 @@ def _normalizar_nome(texto: str) -> str:
 def _obter_modelo_ativo() -> pd.DataFrame | None:
     operacao = st.session_state.get("tipo_operacao_bling", "cadastro")
     if operacao == "cadastro":
-        return _safe_df(st.session_state.get("df_modelo_cadastro"))
-    return _safe_df(st.session_state.get("df_modelo_estoque"))
+        return _safe_df_modelo(st.session_state.get("df_modelo_cadastro"))
+    return _safe_df_modelo(st.session_state.get("df_modelo_estoque"))
 
 
 def _obter_nome_modelo_ativo() -> str:
@@ -118,8 +148,8 @@ def _montar_saida_no_formato_modelo(
 # MAIN
 # ==========================================================
 def render_origem_mapeamento():
-    df_origem = _safe_df(st.session_state.get("df_origem"))
-    df_fluxo = _safe_df(st.session_state.get("df_saida"))
+    df_origem = _safe_df_dados(st.session_state.get("df_origem"))
+    df_fluxo = _safe_df_dados(st.session_state.get("df_saida"))
     df_modelo = _obter_modelo_ativo()
     operacao = st.session_state.get("tipo_operacao_bling", "cadastro")
     operacao_label = (
@@ -208,7 +238,7 @@ def render_origem_mapeamento():
             st.session_state["etapa_origem"] = "upload"
             st.rerun()
 
-    df_saida_final = _safe_df(st.session_state.get("df_saida"))
+    df_saida_final = _safe_df_modelo(st.session_state.get("df_saida"))
 
     if df_saida_final is not None:
         st.divider()
