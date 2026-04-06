@@ -95,28 +95,34 @@ def _normalizar_coluna_numerica(df, coluna):
     return df_saida
 
 
+def _coletar_parametros_precificacao():
+    return {
+        "percentual_impostos": float(st.session_state.get("perc_impostos", 0) or 0),
+        "margem_lucro": float(st.session_state.get("margem_lucro", 0) or 0),
+        "custo_fixo": float(st.session_state.get("custo_fixo", 0) or 0),
+        "taxa_extra": float(st.session_state.get("taxa_extra", 0) or 0),
+    }
+
+
 def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
     df_temp = df_base.copy()
     df_temp = _normalizar_coluna_numerica(df_temp, coluna_preco)
 
-    kwargs = {
-        "percentual_impostos": st.session_state.get("perc_impostos", 0),
-        "margem_lucro": st.session_state.get("margem_lucro", 0),
-        "custo_fixo": st.session_state.get("custo_fixo", 0),
-        "taxa_extra": st.session_state.get("taxa_extra", 0),
-    }
+    kwargs = _coletar_parametros_precificacao()
 
     try:
-        return aplicar_precificacao_automatica(
+        df_resultado = aplicar_precificacao_automatica(
             df_temp,
             coluna_preco=coluna_preco,
             **kwargs,
         )
     except TypeError:
-        return aplicar_precificacao_automatica(
+        df_resultado = aplicar_precificacao_automatica(
             df_temp,
             **kwargs,
         )
+
+    return df_resultado
 
 
 def _assinatura_fluxo_precificacao(df_base, coluna_preco):
@@ -147,17 +153,22 @@ def _render_precificacao(df_base):
         return
 
     coluna_sugerida = 0
-    for i, col in enumerate(colunas):
-        nome = str(col).lower().strip()
-        if (
-            "preco" in nome
-            or "preço" in nome
-            or "valor" in nome
-            or "custo" in nome
-            or "compra" in nome
-        ):
-            coluna_sugerida = i
-            break
+    coluna_preco_salva = st.session_state.get("coluna_preco_base")
+
+    if coluna_preco_salva in colunas:
+        coluna_sugerida = colunas.index(coluna_preco_salva)
+    else:
+        for i, col in enumerate(colunas):
+            nome = str(col).lower().strip()
+            if (
+                "preco" in nome
+                or "preço" in nome
+                or "valor" in nome
+                or "custo" in nome
+                or "compra" in nome
+            ):
+                coluna_sugerida = i
+                break
 
     coluna_preco = st.selectbox(
         "Selecione a coluna de PREÇO DE CUSTO",
@@ -196,22 +207,34 @@ def _render_precificacao(df_base):
             key="taxa_extra",
         )
 
+    assinatura_atual = _assinatura_fluxo_precificacao(df_base, coluna_preco)
+    assinatura_anterior = st.session_state.get("assinatura_precificacao_atual")
+
     try:
         df_precificado = _aplicar_precificacao_com_fallback(df_base, coluna_preco)
 
         if _safe_df_dados(df_precificado):
-            st.session_state["df_precificado"] = df_precificado
+            st.session_state["df_precificado"] = df_precificado.copy()
             st.session_state["preco_gerado"] = True
             st.session_state["coluna_preco_base_aplicada"] = coluna_preco
-            st.session_state["assinatura_precificacao_atual"] = _assinatura_fluxo_precificacao(
-                df_base, coluna_preco
-            )
+            st.session_state["assinatura_precificacao_atual"] = assinatura_atual
+
+            # Garante que a saída usada no restante do fluxo receba sempre a versão mais atual
+            st.session_state["df_saida"] = df_precificado.copy()
+            st.session_state["bloquear_campos_auto"] = {
+                "deposito": False,
+                "preco": False,
+            }
 
             with st.expander("👁️ Prévia da precificação", expanded=False):
-                st.dataframe(df_precificado.head(10), width="stretch")
+                st.dataframe(st.session_state["df_precificado"].head(10), width="stretch")
         else:
-            st.session_state["preco_gerado"] = False
-            st.session_state["df_precificado"] = None
+            # Se a função não retornar um DF válido, limpa o estado para evitar prévia velha
+            if assinatura_anterior != assinatura_atual:
+                st.session_state["df_precificado"] = None
+                st.session_state["preco_gerado"] = False
+                st.session_state["assinatura_precificacao_atual"] = assinatura_atual
+
     except Exception as e:
         st.session_state["preco_gerado"] = False
         st.session_state["df_precificado"] = None
