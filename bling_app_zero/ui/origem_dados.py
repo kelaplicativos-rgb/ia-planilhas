@@ -21,16 +21,16 @@ def _safe_df(df):
         return None
 
 
-def _render_preview(df) -> None:
+def _render_preview_compacto(df_origem) -> None:
     try:
         st.dataframe(
-            df.head(10),
+            df_origem.head(10),
             use_container_width=True,
             height=260,
         )
     except Exception as e:
-        log_debug(f"Erro ao renderizar preview: {e}", "ERROR")
-        st.dataframe(df.head(10), use_container_width=True)
+        log_debug(f"Erro no preview compacto: {e}", "ERROR")
+        st.dataframe(df_origem.head(10), use_container_width=True)
 
 
 def _reset_fluxo_origem() -> None:
@@ -62,11 +62,6 @@ def _salvar_operacao_escolhida(valor: str) -> None:
 # MAIN UI
 # ==========================================================
 def render_origem_dados() -> None:
-    # se já estiver no mapeamento, não redesenha o bloco de origem
-    etapa_origem = st.session_state.get("etapa_origem", "upload")
-    if etapa_origem != "upload":
-        return
-
     st.subheader("Origem dos dados")
 
     origem = st.selectbox(
@@ -117,16 +112,17 @@ def render_origem_dados() -> None:
     if _safe_df(df_origem) is None:
         return
 
+    # mantém compatibilidade com o resto do sistema
     st.session_state["df_origem"] = df_origem
 
     # ==========================================================
-    # PREVIEW
+    # PRÉ-VISUALIZAÇÃO
     # ==========================================================
     st.divider()
     st.subheader("Pré-visualização dos dados")
 
     try:
-        _render_preview(df_origem)
+        _render_preview_compacto(df_origem)
         st.success(f"{len(df_origem)} registros carregados")
     except Exception as e:
         log_debug(f"Erro ao gerar preview: {e}", "ERROR")
