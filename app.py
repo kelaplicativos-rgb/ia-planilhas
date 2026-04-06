@@ -96,8 +96,18 @@ def _get_df_origem() -> pd.DataFrame | None:
     return _safe_df_from_state("df_origem")
 
 
+def _get_df_saida() -> pd.DataFrame | None:
+    return _safe_df_from_state("df_saida")
+
+
 def _get_df_final() -> pd.DataFrame | None:
+    # compatibilidade com versões anteriores
     return _safe_df_from_state("df_final")
+
+
+def _get_df_fluxo() -> pd.DataFrame | None:
+    # padrão atual do projeto: df_saida
+    return _get_df_saida() or _get_df_final()
 
 
 # =========================
@@ -138,7 +148,7 @@ st.caption(f"Versão: {APP_VERSION}")
 # =========================
 etapa_origem = st.session_state.get("etapa_origem", "upload")
 df_origem = _get_df_origem()
-df_final = _get_df_final()
+df_fluxo = _get_df_fluxo()
 
 # 1) ORIGEM
 if render_origem_dados:
@@ -155,7 +165,7 @@ else:
 # Recarrega após origem
 etapa_origem = st.session_state.get("etapa_origem", "upload")
 df_origem = _get_df_origem()
-df_final = _get_df_final()
+df_fluxo = _get_df_fluxo()
 
 # 2) MAPEAMENTO
 if etapa_origem == "mapeamento":
@@ -171,8 +181,12 @@ if etapa_origem == "mapeamento":
     else:
         st.warning("Módulo de mapeamento não carregado")
 
+# Recarrega após mapeamento
+etapa_origem = st.session_state.get("etapa_origem", "upload")
+df_fluxo = _get_df_fluxo()
+
 # 3) BLING
-if df_final is not None and etapa_origem != "upload":
+if df_fluxo is not None and etapa_origem != "upload":
     st.divider()
     st.subheader("Integração com Bling")
 
