@@ -150,9 +150,8 @@ def render_origem_dados() -> None:
 
         deposito = st.text_input("Nome do depósito", key="deposito_nome_manual")
 
-        # 🔥 GUARDA NO STATE (CORREÇÃO PRINCIPAL)
-        if deposito:
-            st.session_state["deposito_nome"] = deposito
+        # 🔥 GARANTE QUE NUNCA SE PERCA
+        st.session_state["deposito_nome"] = deposito
 
     # =========================
     # VALIDAÇÃO
@@ -168,19 +167,23 @@ def render_origem_dados() -> None:
         return
 
     # =========================
-    # 🔥 AUTO FLUXO CORRIGIDO
+    # 🔥 AUTO FLUXO FINAL (CORRIGIDO)
     # =========================
     if _safe_df_dados(df_origem) and modelo_ok:
 
         df_saida = df_origem.copy()
 
-        # 🔥 SEMPRE PUXA DO STATE
+        # =========================
+        # 🔥 1. APLICA DEPÓSITO PRIMEIRO
+        # =========================
         deposito_final = st.session_state.get("deposito_nome")
 
         if tipo == "estoque":
             df_saida = _aplicar_deposito(df_saida, deposito_final)
 
-        # 🔥 APLICA PRECIFICAÇÃO
+        # =========================
+        # 🔥 2. APLICA PRECIFICAÇÃO (ANTES DO MAPEAMENTO)
+        # =========================
         df_saida = aplicar_precificacao_automatica(
             df_saida,
             percentual_impostos=st.session_state.get("perc_impostos", 0),
@@ -193,11 +196,19 @@ def render_origem_dados() -> None:
             st.error("Erro nos dados. Não é possível continuar.")
             return
 
-        # 🔥 GARANTE QUE NÃO PERCA NO FLUXO
+        # =========================
+        # 🔥 3. SALVA FINAL (PRONTO PARA MAPEAMENTO)
+        # =========================
         st.session_state["df_saida"] = df_saida
+
+        # 🔥 FLAG PARA BLOQUEAR CAMPOS NO MAPEAMENTO
+        st.session_state["bloquear_campos_auto"] = {
+            "deposito": bool(deposito_final),
+            "preco": True,  # sempre veio da calculadora
+        }
 
         st.session_state["etapa_origem"] = "mapeamento"
 
-        log_debug("Fluxo OK → indo para mapeamento com depósito aplicado")
+        log_debug("Fluxo OK → depósito e preço aplicados antes do mapeamento")
 
         st.rerun()
