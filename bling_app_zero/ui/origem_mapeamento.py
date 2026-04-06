@@ -112,6 +112,22 @@ def _coluna_modelo_parece_deposito(nome_coluna: str) -> bool:
     return "deposito" in nome or "depósito" in nome
 
 
+def _obter_deposito_manual() -> str:
+    """
+    Busca o depósito manual em chaves compatíveis com versões diferentes do fluxo.
+    """
+    for key in [
+        "deposito_nome_manual",
+        "deposito_manual",
+        "deposito",
+        "nome_deposito",
+    ]:
+        valor = str(st.session_state.get(key, "")).strip()
+        if valor:
+            return valor
+    return ""
+
+
 def _montar_saida_no_formato_modelo(
     df_origem: pd.DataFrame,
     df_modelo: pd.DataFrame,
@@ -135,7 +151,7 @@ def _montar_saida_no_formato_modelo(
             saida[col_destino] = df_origem[col_origem].values
 
     # regra do depósito no modelo de estoque
-    deposito_manual = str(st.session_state.get("deposito_nome_manual", "")).strip()
+    deposito_manual = _obter_deposito_manual().strip()
     if deposito_manual:
         for col in saida.columns:
             if _coluna_modelo_parece_deposito(col):
@@ -178,6 +194,13 @@ def render_origem_mapeamento():
     nome_modelo = _obter_nome_modelo_ativo()
     if nome_modelo:
         st.info(f"Modelo ativo: {nome_modelo}")
+
+    deposito_manual = _obter_deposito_manual()
+    if operacao == "estoque":
+        if deposito_manual:
+            st.info(f"Depósito manual detectado: {deposito_manual}")
+        else:
+            st.warning("O depósito manual ainda não foi identificado no estado da sessão.")
 
     st.markdown("### Preview da origem")
     st.dataframe(_safe_dataframe_preview(df_origem), width="stretch")
