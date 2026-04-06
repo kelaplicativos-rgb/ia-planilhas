@@ -259,8 +259,6 @@ def render_origem_dados() -> None:
     _render_precificacao(df_origem)
 
     df_precificado = st.session_state.get("df_precificado")
-    assinatura_atual = st.session_state.get("assinatura_precificacao_atual")
-    assinatura_usada = st.session_state.get("assinatura_precificacao_aplicada_fluxo")
 
     if _safe_df_dados(df_precificado):
         st.session_state["df_saida"] = df_precificado.copy()
@@ -269,15 +267,5 @@ def render_origem_dados() -> None:
             "preco": False,
         }
 
-        etapa_atual = st.session_state.get("etapa_origem", "upload")
-
-        # Só avança automaticamente uma vez, saindo do fluxo inicial para o mapeamento.
-        # Não força avanço novamente se já estiver em mapeamento ou final.
-        if etapa_atual not in ["mapeamento", "final"]:
-            if assinatura_atual != assinatura_usada:
-                st.session_state["assinatura_precificacao_aplicada_fluxo"] = assinatura_atual
-                st.session_state["etapa_origem"] = "mapeamento"
-                log_debug(
-                    "Fluxo automático → avançando para mapeamento (controle corrigido)"
-                )
-                st.rerun()
+        # AVANÇO AUTOMÁTICO REMOVIDO COMPLETAMENTE
+        # O fluxo não muda mais de etapa sozinho a partir deste arquivo.
