@@ -42,6 +42,20 @@ def _limpar_gtin(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _ler_csv_seguro(arquivo):
+    try:
+        return pd.read_csv(arquivo)
+    except Exception:
+        try:
+            return pd.read_csv(arquivo, sep=";")
+        except Exception:
+            try:
+                return pd.read_csv(arquivo, engine="python", on_bad_lines="skip")
+            except Exception as e:
+                st.error(f"Erro ao ler CSV: {e}")
+                return None
+
+
 # ==========================================================
 # MAIN UI
 # ==========================================================
@@ -65,10 +79,11 @@ def render_origem_dados() -> None:
             type=["xlsx", "csv"],
             key="upload_planilha_origem",
         )
+
         if arquivo:
             try:
                 if arquivo.name.lower().endswith(".csv"):
-                    df_origem = pd.read_csv(arquivo)
+                    df_origem = _ler_csv_seguro(arquivo)
                 else:
                     df_origem = pd.read_excel(arquivo)
             except Exception as e:
@@ -76,17 +91,13 @@ def render_origem_dados() -> None:
                 return
 
     elif origem == "XML":
-        arquivo = st.file_uploader(
-            "Envie o XML",
-            type=["xml"],
-            key="upload_xml_origem",
-        )
+        arquivo = st.file_uploader("Envie o XML", type=["xml"])
         if arquivo:
             st.warning("Leitura de XML em processamento...")
             return
 
     elif origem == "Site":
-        url = st.text_input("URL do site", key="url_site_origem")
+        url = st.text_input("URL do site")
         if url:
             st.info("Captura do site em processamento...")
             return
@@ -96,68 +107,29 @@ def render_origem_dados() -> None:
 
     origem_hash = _hash_df(df_origem)
 
-    # RESET MAPEAMENTO SE MUDAR PLANILHA
     if st.session_state.get("origem_hash") != origem_hash:
         st.session_state["origem_hash"] = origem_hash
         st.session_state["mapeamento_manual"] = {}
         st.session_state["df_final"] = None
 
-    # =========================
-    # MODO
-    # =========================
     modo = st.radio(
         "Selecione a operação",
         ["cadastro", "estoque"],
         horizontal=True,
-        key="modo_operacao_origem",
     )
 
-    # =========================
-    # MODELOS
-    # =========================
-    modelo_cadastro = None
-    modelo_estoque = None
+    modelo = st.file_uploader("Modelo", type=["xlsx"])
 
-    if modo == "cadastro":
-        modelo_cadastro = st.file_uploader(
-            "Modelo Cadastro",
-            type=["xlsx"],
-            key="upload_modelo_cadastro",
-        )
-    else:
-        modelo_estoque = st.file_uploader(
-            "Modelo Estoque",
-            type=["xlsx"],
-            key="upload_modelo_estoque",
-        )
-
-    if modo == "cadastro" and modelo_cadastro:
-        try:
-            df_modelo = pd.read_excel(modelo_cadastro)
-        except Exception as e:
-            st.error(f"Erro ao ler modelo de cadastro: {e}")
-            return
-    elif modo == "estoque" and modelo_estoque:
-        try:
-            df_modelo = pd.read_excel(modelo_estoque)
-        except Exception as e:
-            st.error(f"Erro ao ler modelo de estoque: {e}")
-            return
-    else:
-        st.warning("Anexe o modelo correspondente.")
+    if not modelo:
+        st.warning("Anexe o modelo.")
         return
 
+    df_modelo = pd.read_excel(modelo)
     colunas_modelo_ativas = list(df_modelo.columns)
 
-    # =========================
-    # MAPEAMENTO
-    # =========================
     sugestoes = sugestao_automatica(df_origem, colunas_modelo_ativas)
 
-    if (
-        "mapeamento_manual" not in st.session_state
-        or not st.session_state["mapeamento_manual"]
-    ):
+    if "mapeamento_manual" not in st.session_state:
         st.session_state["mapeamento_manual"] = sugestoes or {}
 
     mapa = st.session_state["mapeamento_manual"]
@@ -167,7 +139,7 @@ def render_origem_dados() -> None:
 
     st.markdown("### Mapeamento")
 
-    if st.button("Limpar mapeamento", width="stretch"):
+    if st.button("Limpar mapeamento"):
         st.session_state["mapeamento_manual"] = {}
         st.rerun()
 
@@ -185,19 +157,6 @@ def render_origem_dados() -> None:
             key=f"map_{col}",
         )
 
-    # =========================
-    # ESTOQUE
-    # =========================
-    deposito = ""
-    if modo == "estoque":
-        deposito = st.text_input(
-            "Nome do depósito",
-            key="nome_deposito_estoque",
-        )
-
-    # =========================
-    # MONTAGEM
-    # =========================
     def montar_df():
         df_saida = pd.DataFrame()
 
@@ -209,45 +168,24 @@ def render_origem_dados() -> None:
             else:
                 df_saida[col] = ""
 
-        if modo == "estoque":
-            if not deposito:
-                return None
+        return _limpar_gtin(df_saida)
 
-            if "Depósito" in df_saida.columns:
-                df_saida["Depósito"] = deposito
-
-        df_saida = _limpar_gtin(df_saida)
-
-        return df_saida
-
-    st.divider()
     st.markdown("### Preview saída")
-
     df_preview = montar_df()
-    if modo == "estoque" and not deposito:
-        st.warning("Informe o nome do depósito para gerar a planilha de estoque.")
-    elif df_preview is not None:
+
+    if df_preview is not None:
         st.dataframe(_safe_preview(df_preview), width="stretch")
 
-    # =========================
-    # DOWNLOAD
-    # =========================
     df_final = montar_df()
 
     if df_final is not None:
-        # SALVA O DF FINAL PARA A ABA DE ENVIO USAR,
-        # SEM INTERFERIR NO DOWNLOAD
         st.session_state["df_final"] = df_final.copy()
 
         excel = _exportar_df_exato_para_excel_bytes(df_final)
-        nome = "cadastro.xlsx" if modo == "cadastro" else "estoque.xlsx"
 
         st.download_button(
             "Baixar arquivo",
             data=excel,
-            file_name=nome,
+            file_name="arquivo.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
         )
-    else:
-        st.session_state["df_final"] = None
