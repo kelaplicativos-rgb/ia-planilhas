@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
 
 import pandas as pd
@@ -23,6 +24,65 @@ def _safe_validation_result(
         avisos = resultado[1] if isinstance(resultado[1], list) else []
         return erros, avisos
     return [], []
+
+
+def _build_log_text(
+    *,
+    modo: str,
+    arquivo_saida: str,
+    origem_hash: str,
+    logs_gtin: list[str] | None,
+    erros: list[str] | None,
+    avisos: list[str] | None,
+) -> str:
+    linhas: list[str] = []
+
+    linhas.append("LOG DE PROCESSAMENTO")
+    linhas.append("=" * 60)
+    linhas.append(f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    linhas.append(f"Modo: {modo}")
+    linhas.append(f"Arquivo de saída: {arquivo_saida}")
+    linhas.append(f"Hash da origem: {origem_hash}")
+    linhas.append("")
+
+    logs_globais = st.session_state.get("logs", [])
+    if isinstance(logs_globais, list) and logs_globais:
+        linhas.append("LOGS GERAIS")
+        linhas.append("-" * 60)
+        for item in logs_globais:
+            try:
+                texto = str(item).strip()
+            except Exception:
+                texto = ""
+            if texto:
+                linhas.append(texto)
+        linhas.append("")
+
+    if erros:
+        linhas.append("ERROS DE VALIDAÇÃO")
+        linhas.append("-" * 60)
+        for item in erros:
+            linhas.append(f"- {item}")
+        linhas.append("")
+
+    if avisos:
+        linhas.append("AVISOS DE VALIDAÇÃO")
+        linhas.append("-" * 60)
+        for item in avisos:
+            linhas.append(f"- {item}")
+        linhas.append("")
+
+    if logs_gtin:
+        linhas.append("LOGS DE LIMPEZA / VALIDAÇÃO GTIN/EAN")
+        linhas.append("-" * 60)
+        for item in logs_gtin:
+            linhas.append(f"- {item}")
+        linhas.append("")
+
+    if len(linhas) <= 6:
+        linhas.append("Nenhum log disponível.")
+
+    return "\n".join(linhas)
 
 
 def render_origem_mapeamento(
@@ -159,7 +219,6 @@ def render_origem_mapeamento(
     erros_preview, avisos_preview = _safe_validation_result(
         validar_saida_bling(df_preview_saida, modo)
     )
-
     st.session_state["validacao_erros_saida"] = erros_preview
     st.session_state["validacao_avisos_saida"] = avisos_preview
 
@@ -173,13 +232,10 @@ def render_origem_mapeamento(
         st.success("Preview válido para gerar o arquivo final.")
 
     c1, c2, c3 = st.columns(3)
-
     with c1:
         gerar_preview_final = st.button("Gerar preview final", width="stretch")
-
     with c2:
         limpar_gtin = st.button("Limpar GTIN/EAN inválido", width="stretch")
-
     with c3:
         limpar_mapeamento = st.button("Limpar mapeamento", width="stretch")
 
@@ -190,6 +246,8 @@ def render_origem_mapeamento(
         st.session_state.pop("excel_saida_bytes", None)
         st.session_state.pop("excel_saida_nome", None)
         st.session_state.pop("logs_gtin_saida", None)
+        st.session_state.pop("log_processamento_texto", None)
+        st.session_state.pop("log_processamento_nome", None)
         st.rerun()
 
     if gerar_preview_final or limpar_gtin:
@@ -248,6 +306,19 @@ def render_origem_mapeamento(
         st.session_state["validacao_avisos_saida"] = avisos_finais
         st.session_state["logs_gtin_saida"] = logs_gtin
 
+        log_texto = _build_log_text(
+            modo=modo,
+            arquivo_saida=arquivo_saida,
+            origem_hash=origem_hash,
+            logs_gtin=logs_gtin,
+            erros=erros_finais,
+            avisos=avisos_finais,
+        )
+        st.session_state["log_processamento_texto"] = log_texto
+        st.session_state["log_processamento_nome"] = (
+            f"log_processamento_{str(modo).lower()}.txt"
+        )
+
         if erros_finais:
             st.error("Ainda existem pendências antes do download.")
             return
@@ -267,14 +338,14 @@ def render_origem_mapeamento(
         if limpar_gtin:
             if total_limpados > 0:
                 st.success(
-                    f"Limpeza concluída. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
+                    f"Limpeza concluída.\n\n{total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
                 )
             else:
                 st.success("Limpeza concluída. Nenhum GTIN/EAN inválido foi encontrado.")
         else:
             if total_limpados > 0:
                 st.success(
-                    f"Preview final gerado com sucesso. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
+                    f"Preview final gerado com sucesso.\n\n{total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
                 )
             else:
                 st.success("Preview final gerado com sucesso.")
@@ -289,6 +360,11 @@ def render_origem_mapeamento(
     df_saida_hash = st.session_state.get("df_saida_preview_hash")
     excel_saida_bytes = st.session_state.get("excel_saida_bytes")
     excel_saida_nome = st.session_state.get("excel_saida_nome", arquivo_saida)
+    log_processamento_texto = st.session_state.get("log_processamento_texto", "")
+    log_processamento_nome = st.session_state.get(
+        "log_processamento_nome",
+        f"log_processamento_{str(modo).lower()}.txt",
+    )
 
     if (
         isinstance(df_saida_state, pd.DataFrame)
@@ -298,15 +374,25 @@ def render_origem_mapeamento(
     ):
         st.divider()
         st.markdown("### Preview final validado para download")
-        st.caption(
-            f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas"
-        )
+        st.caption(f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas")
         st.dataframe(_safe_dataframe_preview(df_saida_state, 50), width="stretch")
 
-        st.download_button(
-            label=f"Baixar arquivo de {config.get('label', 'saída')}",
-            data=excel_saida_bytes,
-            file_name=excel_saida_nome,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
+        d1, d2 = st.columns(2)
+
+        with d1:
+            st.download_button(
+                label=f"Baixar arquivo de {config.get('label', 'saída')}",
+                data=excel_saida_bytes,
+                file_name=excel_saida_nome,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+            )
+
+        with d2:
+            st.download_button(
+                label="Baixar log do processamento",
+                data=str(log_processamento_texto).encode("utf-8"),
+                file_name=log_processamento_nome,
+                mime="text/plain",
+                width="stretch",
+                )
