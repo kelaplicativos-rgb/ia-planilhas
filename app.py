@@ -16,7 +16,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.21"
 
 # =========================
 # LOG
@@ -45,28 +45,11 @@ def _safe_df(key: str) -> pd.DataFrame | None:
 
 
 def _get_df_fluxo() -> pd.DataFrame | None:
-    """
-    Ordem de prioridade do fluxo final:
-    1) df_saida        -> normalmente é o mais perto do arquivo final mapeado
-    2) df_final        -> fallback do fluxo consolidado
-    3) df_precificado  -> fallback quando a precificação já foi gerada no módulo
-    4) df_origem       -> último recurso apenas para não quebrar a UI
-    """
-    for key in ["df_saida", "df_final", "df_precificado", "df_origem"]:
+    for key in ["df_saida", "df_precificado", "df_origem"]:
         df = _safe_df(key)
         if df is not None:
             return df
     return None
-
-
-def _sincronizar_df_final() -> None:
-    """
-    Mantém um espelho estável em df_final sem sobrescrever o fluxo correto.
-    Não cria lógica nova de negócio, apenas sincroniza o melhor DataFrame disponível.
-    """
-    df_fluxo = _get_df_fluxo()
-    if df_fluxo is not None:
-        st.session_state["df_final"] = df_fluxo.copy()
 
 
 # =========================
@@ -82,47 +65,40 @@ from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
-# =========================
-# CONTROLE DE ETAPA
-# =========================
 etapa = st.session_state.get("etapa_origem", "upload")
 
 # =========================
-# ETAPA 1 — ORIGEM
+# ETAPA 1
 # =========================
 if etapa in ["upload", None]:
     render_origem_dados()
-    _sincronizar_df_final()
 
 # =========================
-# ETAPA 2 — MAPEAMENTO
+# ETAPA 2
 # =========================
 elif etapa == "mapeamento":
-    st.divider()
     st.subheader("Mapeamento")
-
     render_origem_mapeamento()
-    _sincronizar_df_final()
+
+    st.divider()
+
+    # 🔥 BOTÃO REAL PARA IR PRO FINAL
+    if st.button("➡️ Ir para revisão final", use_container_width=True):
+        st.session_state["etapa_origem"] = "final"
+        st.rerun()
 
 # =========================
-# ETAPA 3 — FINAL
+# ETAPA 3 (FINAL REAL)
 # =========================
 elif etapa == "final":
-    _sincronizar_df_final()
+
     df_fluxo = _get_df_fluxo()
 
     if df_fluxo is not None:
-        try:
-            log_debug(
-                f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
-            )
-        except Exception:
-            pass
 
-        st.divider()
         st.subheader("Preview final")
 
-        with st.expander("📦 Ver dados finais", expanded=False):
+        with st.expander("📦 Ver dados finais", expanded=True):
             st.dataframe(df_fluxo.head(20), width="stretch")
 
         df_download = limpar_gtin_invalido(df_fluxo.copy())
@@ -142,20 +118,16 @@ elif etapa == "final":
         )
 
         st.divider()
+
+        if st.button("⬅️ Voltar para mapeamento"):
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
+
         st.subheader("Integração com Bling")
         render_bling_panel()
+
     else:
         st.warning("Nenhum dado disponível para o preview final.")
-        log_debug("Etapa final sem DataFrame disponível", "ERRO")
-
-# =========================
-# FALLBACK DE ETAPA DESCONHECIDA
-# =========================
-else:
-    log_debug(f"Etapa desconhecida recebida: {etapa}", "ERRO")
-    st.warning("Etapa do fluxo inválida. Retornando para a origem.")
-    st.session_state["etapa_origem"] = "upload"
-    st.rerun()
 
 # =========================
 # DEBUG
