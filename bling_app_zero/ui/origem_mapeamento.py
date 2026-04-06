@@ -4,9 +4,6 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
-from bling_app_zero.core.mapeamento_auto import sugestao_automatica
-
 
 def _get_modelo():
     if st.session_state.get("tipo_operacao_bling") == "cadastro":
@@ -33,44 +30,53 @@ def render_origem_mapeamento():
 
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
+    df_preparado = st.session_state.get("df_saida")  # 🔥 já vem com preço e depósito
 
     if df_origem is None or df_modelo is None:
         return
 
     st.markdown("### 🔗 Mapeamento")
 
-    sugestoes = sugestao_automatica(df_origem, list(df_modelo.columns))
-
     deposito = _get_deposito()
-
     bloqueios = st.session_state.get("bloquear_campos_auto", {})
 
     mapping = {}
 
     # =========================
-    # 🔥 MAPEAMENTO COM BLOQUEIO
+    # 🔥 UI MAIS COMPACTA (MOBILE)
     # =========================
-    for col in df_modelo.columns:
+    colunas = list(df_modelo.columns)
 
-        # 🔒 BLOQUEIO DEPÓSITO
-        if _is_coluna_deposito(col) and deposito:
-            st.text_input(col, value=deposito, disabled=True)
-            mapping[col] = None
-            continue
+    for i in range(0, len(colunas), 2):
+        cols = st.columns(2)
 
-        # 🔒 BLOQUEIO PREÇO
-        if _is_coluna_preco(col) and bloqueios.get("preco"):
-            st.text_input(col, value="Calculado automaticamente", disabled=True)
-            mapping[col] = None
-            continue
+        for j in range(2):
+            if i + j >= len(colunas):
+                continue
 
-        # 🔥 MAPEAMENTO NORMAL
-        mapping[col] = st.selectbox(
-            col,
-            [""] + list(df_origem.columns),
-            index=0,
-            key=f"map_{col}",
-        )
+            col = colunas[i + j]
+
+            with cols[j]:
+
+                # 🔒 DEPÓSITO
+                if _is_coluna_deposito(col) and deposito:
+                    st.text_input(col, value=deposito, disabled=True)
+                    mapping[col] = None
+                    continue
+
+                # 🔒 PREÇO
+                if _is_coluna_preco(col) and bloqueios.get("preco"):
+                    st.text_input(col, value="Calculado automaticamente", disabled=True)
+                    mapping[col] = None
+                    continue
+
+                # 🔥 NORMAL
+                mapping[col] = st.selectbox(
+                    col,
+                    [""] + list(df_origem.columns),
+                    index=0,
+                    key=f"map_{col}",
+                )
 
     # =========================
     # 🔥 MONTA DF FINAL
@@ -81,6 +87,13 @@ def render_origem_mapeamento():
 
         origem = mapping.get(col)
 
+        # 🔥 PRIORIDADE → DADOS JÁ PREPARADOS (PREÇO / DEPÓSITO)
+        if df_preparado is not None and col in df_preparado.columns:
+            if _is_coluna_preco(col) or _is_coluna_deposito(col):
+                df_saida[col] = df_preparado[col]
+                continue
+
+        # 🔥 MAPEAMENTO NORMAL
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
         else:
@@ -102,10 +115,7 @@ def render_origem_mapeamento():
         else:
             df_saida["Depósito"] = deposito
 
-    # =========================
-    # 🔥 PRECIFICAÇÃO FINAL (PRIORIDADE)
-    # =========================
-    df_saida = aplicar_precificacao_automatica(df_saida)
+    # 🔥 NÃO RECALCULA PREÇO AQUI (JÁ VEIO PRONTO)
 
     st.session_state["df_saida"] = df_saida
 
@@ -125,5 +135,5 @@ def render_origem_mapeamento():
         "⬇️ Baixar",
         buffer.getvalue(),
         "bling.xlsx",
-        width="stretch",
+        use_container_width=True,
     )
