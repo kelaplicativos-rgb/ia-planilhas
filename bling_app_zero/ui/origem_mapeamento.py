@@ -30,7 +30,7 @@ def render_origem_mapeamento():
 
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
-    df_preparado = st.session_state.get("df_saida")  # 🔥 já vem com preço e depósito
+    df_preparado = st.session_state.get("df_saida")  # preço já calculado
 
     if df_origem is None or df_modelo is None:
         return
@@ -42,11 +42,11 @@ def render_origem_mapeamento():
 
     mapping = {}
 
-    # =========================
-    # 🔥 UI MAIS COMPACTA (MOBILE)
-    # =========================
     colunas = list(df_modelo.columns)
 
+    # =========================
+    # 🔥 UI COMPACTA
+    # =========================
     for i in range(0, len(colunas), 2):
         cols = st.columns(2)
 
@@ -79,7 +79,7 @@ def render_origem_mapeamento():
                 )
 
     # =========================
-    # 🔥 MONTA DF FINAL
+    # 🔥 MONTA DF
     # =========================
     df_saida = pd.DataFrame()
 
@@ -87,13 +87,12 @@ def render_origem_mapeamento():
 
         origem = mapping.get(col)
 
-        # 🔥 PRIORIDADE → DADOS JÁ PREPARADOS (PREÇO / DEPÓSITO)
+        # 🔥 PRIORIDADE → AUTO (PREÇO / DEPÓSITO)
         if df_preparado is not None and col in df_preparado.columns:
             if _is_coluna_preco(col) or _is_coluna_deposito(col):
                 df_saida[col] = df_preparado[col]
                 continue
 
-        # 🔥 MAPEAMENTO NORMAL
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
         else:
@@ -115,9 +114,17 @@ def render_origem_mapeamento():
         else:
             df_saida["Depósito"] = deposito
 
-    # 🔥 NÃO RECALCULA PREÇO AQUI (JÁ VEIO PRONTO)
-
+    # =========================
+    # 🔥 SALVA SEM AVANÇAR FLUXO
+    # =========================
     st.session_state["df_saida"] = df_saida
+
+    # =========================
+    # 🔥 DETECTA SE USUÁRIO JÁ MAPEOU
+    # =========================
+    mapeou_algo = any(
+        v not in [None, ""] for v in mapping.values()
+    )
 
     # =========================
     # 🔥 PREVIEW
@@ -126,7 +133,13 @@ def render_origem_mapeamento():
         st.dataframe(df_saida.head(20), width="stretch")
 
     # =========================
-    # 🔥 DOWNLOAD
+    # 🔥 AVANÇO AUTOMÁTICO CONTROLADO
+    # =========================
+    if mapeou_algo:
+        st.session_state["etapa_origem"] = "final"
+
+    # =========================
+    # 🔥 DOWNLOAD (OPCIONAL)
     # =========================
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
