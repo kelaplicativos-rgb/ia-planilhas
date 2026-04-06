@@ -4,6 +4,7 @@ from io import BytesIO
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 
 # ==========================================================
@@ -15,6 +16,39 @@ def _to_dataframe(df: Any) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
     return pd.DataFrame(df)
+
+
+# ==========================================================
+# 🔥 DETECTA COLUNA DEPÓSITO
+# ==========================================================
+def _detectar_coluna_deposito(df: pd.DataFrame):
+    for col in df.columns:
+        nome = str(col).lower()
+        if "deposit" in nome or "depós" in nome:
+            return col
+    return None
+
+
+# ==========================================================
+# 🔥 GARANTE DEPÓSITO FINAL
+# ==========================================================
+def _garantir_deposito(df: pd.DataFrame) -> pd.DataFrame:
+
+    deposito = st.session_state.get("deposito_nome")
+
+    if not deposito:
+        return df
+
+    df = df.copy()
+
+    col_dep = _detectar_coluna_deposito(df)
+
+    if col_dep:
+        df[col_dep] = deposito
+    else:
+        df["Depósito"] = deposito
+
+    return df
 
 
 # ==========================================================
@@ -53,18 +87,14 @@ def _normalizar_para_excel(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
-# 🔥 GARANTIA DE ESTRUTURA (NÃO PERDER COLUNAS)
+# 🔥 GARANTIA DE ESTRUTURA
 # ==========================================================
 def _garantir_estrutura_modelo(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Garante que nenhuma coluna seja perdida e mantém ordem.
-    """
     df = _to_dataframe(df)
 
     if df.empty:
         return df
 
-    # força colunas como string
     df.columns = [str(c) for c in df.columns]
 
     return df
@@ -75,10 +105,11 @@ def _garantir_estrutura_modelo(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
 
-    # 🔥 IMPORTANTE: preservar estrutura antes de normalizar
     df = _garantir_estrutura_modelo(df)
 
-    # normalização leve (sem quebrar estrutura)
+    # 🔥 GARANTE DEPÓSITO ANTES DE EXPORTAR
+    df = _garantir_deposito(df)
+
     df = _normalizar_para_excel(df)
 
     output = BytesIO()
@@ -94,10 +125,11 @@ def exportar_df_exato_para_excel_bytes(
     df: pd.DataFrame,
     sheet_name: str = "Planilha"
 ) -> bytes:
-    """
-    Exporta EXATAMENTE como está (sem alterar estrutura)
-    """
+
     df = _garantir_estrutura_modelo(df)
+
+    # 🔥 GARANTE DEPÓSITO TAMBÉM AQUI
+    df = _garantir_deposito(df)
 
     output = BytesIO()
 
@@ -109,7 +141,7 @@ def exportar_df_exato_para_excel_bytes(
 
 
 # ==========================================================
-# 🔥 LEITURA ROBUSTA
+# LEITURA ROBUSTA
 # ==========================================================
 def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
 
@@ -118,9 +150,6 @@ def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
     if hasattr(uploaded_file, "seek"):
         uploaded_file.seek(0)
 
-    # =========================
-    # CSV ROBUSTO
-    # =========================
     if nome.endswith(".csv"):
 
         encodings = ["utf-8", "latin1", "cp1252"]
@@ -148,9 +177,6 @@ def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
 
         return pd.DataFrame()
 
-    # =========================
-    # EXCEL ROBUSTO
-    # =========================
     try:
         df = pd.read_excel(uploaded_file, dtype=str)
 
@@ -160,7 +186,6 @@ def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
     except Exception:
         pass
 
-    # fallback total
     try:
         if hasattr(uploaded_file, "seek"):
             uploaded_file.seek(0)
