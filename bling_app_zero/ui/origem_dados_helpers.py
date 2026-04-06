@@ -16,7 +16,6 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
         if "logs" not in st.session_state:
             st.session_state["logs"] = []
-
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         linha = f"[{timestamp}] [{nivel}] {msg}"
         st.session_state["logs"].append(linha)
@@ -28,7 +27,12 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 # TEXTO / ENCODING
 # ==========================================================
 _MOJIBAKE_TOKENS = (
-    "Ã", "Â", "â€™", "â€œ", "â€", "�"
+    "Ã",
+    "Â",
+    "â€™",
+    "â€œ",
+    "â€",
+    "�",
 )
 
 
@@ -42,7 +46,6 @@ def _df_parece_mojibake(df: pd.DataFrame) -> bool:
     try:
         if df is None or df.empty:
             return False
-
         amostra = df.head(20).astype(str)
         for col in amostra.columns:
             for valor in amostra[col].tolist():
@@ -56,7 +59,6 @@ def _df_parece_mojibake(df: pd.DataFrame) -> bool:
 def _normalizar_texto(valor):
     if pd.isna(valor):
         return valor
-
     if not isinstance(valor, str):
         return valor
 
@@ -81,7 +83,6 @@ def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
             return df
 
         df = df.copy()
-
         df.columns = [_normalizar_texto(str(col)) for col in df.columns]
 
         colunas_obj = df.select_dtypes(include=["object"]).columns.tolist()
@@ -99,7 +100,6 @@ def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
     conteudo = arquivo.getvalue()
-
     tentativas = [
         ("utf-8-sig", ","),
         ("utf-8-sig", ";"),
@@ -123,7 +123,6 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
         try:
             buffer = BytesIO(conteudo)
             df = pd.read_csv(buffer, encoding=encoding, sep=sep)
-
             if df is None:
                 continue
 
@@ -148,21 +147,20 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
                 melhor_df = df
                 melhor_score = score
                 melhor_info = (encoding, sep)
-
         except Exception:
             continue
 
     if melhor_df is not None and melhor_info is not None:
         log_debug(
             f"CSV lido com encoding={melhor_info[0]} sep={repr(melhor_info[1])}",
-            "INFO"
+            "INFO",
         )
 
     return melhor_df
 
 
 # ==========================================================
-# 🔥 LEITOR UNIVERSAL (ULTRA ROBUSTO)
+# LEITOR UNIVERSAL (ULTRA ROBUSTO)
 # ==========================================================
 def ler_planilha_segura(arquivo):
     try:
@@ -171,7 +169,6 @@ def ler_planilha_segura(arquivo):
 
         if nome.endswith(".csv"):
             df = _ler_csv_tentativas(arquivo)
-
             if df is None:
                 log_debug("Falha em todas as tentativas de leitura CSV", "ERROR")
                 st.error("Erro ao ler CSV")
@@ -219,11 +216,9 @@ def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             df.to_excel(writer, index=False)
-
         buffer.seek(0)
         log_debug("Excel exportado com sucesso", "SUCCESS")
         return buffer.read()
-
     except Exception as e:
         log_debug(f"Erro exportar excel: {e}", "ERROR")
         st.error("Erro ao gerar Excel")
