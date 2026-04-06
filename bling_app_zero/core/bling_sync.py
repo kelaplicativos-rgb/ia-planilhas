@@ -7,7 +7,39 @@ from bling_app_zero.core.bling_api import BlingAPIClient
 
 
 MAX_RETRY = 3
-RETRY_DELAY = 1.5
+RETRY_DELAY_SECONDS = 1.2
+
+
+def _mensagem_padronizada(payload: Any) -> str:
+    if payload is None:
+        return "Sem retorno da API."
+
+    if isinstance(payload, str):
+        texto = payload.strip()
+        return texto or "Retorno vazio da API."
+
+    if isinstance(payload, dict):
+        for chave in [
+            "message",
+            "mensagem",
+            "erro",
+            "error",
+            "detail",
+            "descricao",
+            "description",
+        ]:
+            valor = payload.get(chave)
+            if valor not in (None, ""):
+                return str(valor).strip()
+
+        return str(payload)
+
+    if isinstance(payload, list):
+        if not payload:
+            return "Lista de retorno vazia."
+        return str(payload[0])
+
+    return str(payload)
 
 
 class BlingSyncService:
@@ -15,9 +47,6 @@ class BlingSyncService:
         self.user_key = user_key
         self.client = BlingAPIClient(user_key=user_key)
 
-    # =========================
-    # PRODUTOS
-    # =========================
     def sync_products(
         self,
         rows: List[Dict[str, Any]],
@@ -26,43 +55,53 @@ class BlingSyncService:
         erros: List[Dict[str, Any]] = []
 
         for indice, row in enumerate(rows, start=1):
-            tentativa = 0
-            ultimo_erro = None
+            inicio_item = time.perf_counter()
+            ultima_resposta: Any = None
+            tentativa_final = 0
+            ok_final = False
 
-            while tentativa < MAX_RETRY:
-                tentativa += 1
+            for tentativa in range(1, MAX_RETRY + 1):
+                tentativa_final = tentativa
+                try:
+                    ok, payload = self.client.upsert_product(row)
+                    ultima_resposta = payload
 
-                ok, payload = self.client.upsert_product(row)
-
-                if ok:
-                    sucessos.append(
-                        {
+                    if ok:
+                        duracao = round(time.perf_counter() - inicio_item, 4)
+                        item = {
                             "linha": indice,
                             "codigo": row.get("codigo"),
                             "nome": row.get("nome"),
+                            "tentativas": tentativa,
+                            "tempo_segundos": duracao,
+                            "mensagem": _mensagem_padronizada(payload),
                             "retorno": payload,
                         }
-                    )
-                    break
-                else:
-                    ultimo_erro = payload
-                    time.sleep(RETRY_DELAY)
+                        sucessos.append(item)
+                        ok_final = True
+                        break
 
-            if tentativa == MAX_RETRY and ultimo_erro:
-                erros.append(
-                    {
-                        "linha": indice,
-                        "codigo": row.get("codigo"),
-                        "nome": row.get("nome"),
-                        "erro": ultimo_erro,
-                    }
-                )
+                except Exception as e:
+                    ultima_resposta = {"error": str(e)}
+
+                if tentativa < MAX_RETRY:
+                    time.sleep(RETRY_DELAY_SECONDS)
+
+            if not ok_final:
+                duracao = round(time.perf_counter() - inicio_item, 4)
+                item = {
+                    "linha": indice,
+                    "codigo": row.get("codigo"),
+                    "nome": row.get("nome"),
+                    "tentativas": tentativa_final,
+                    "tempo_segundos": duracao,
+                    "mensagem": _mensagem_padronizada(ultima_resposta),
+                    "erro": ultima_resposta,
+                }
+                erros.append(item)
 
         return sucessos, erros
 
-    # =========================
-    # ESTOQUE (CORRIGIDO)
-    # =========================
     def sync_stocks(
         self,
         rows: List[Dict[str, Any]],
@@ -72,69 +111,83 @@ class BlingSyncService:
 
         for indice, row in enumerate(rows, start=1):
             codigo = str(row.get("codigo") or "").strip()
+            estoque = row.get("estoque")
+            deposito_id = row.get("deposito_id")
+            preco = row.get("preco")
 
-            # 🔥 GARANTIR ESTOQUE
             try:
-                estoque = int(float(row.get("estoque") or 0))
+                estoque_float = float(estoque or 0)
             except (TypeError, ValueError):
-                estoque = 0
+                estoque_float = 0.0
 
-            # 🔥 GARANTIR DEPÓSITO
-            deposito_id = str(row.get("deposito_id") or "").strip()
-            if not deposito_id:
-                deposito_id = "Geral"
-
-            # 🔥 PREÇO OPCIONAL
             try:
-                preco = float(row.get("preco")) if row.get("preco") else None
+                preco_float = float(preco) if preco not in (None, "") else None
             except (TypeError, ValueError):
-                preco = None
+                preco_float = None
 
-            tentativa = 0
-            ultimo_erro = None
+            deposito_final = (
+                str(deposito_id).strip()
+                if deposito_id not in (None, "")
+                else None
+            )
 
-            while tentativa < MAX_RETRY:
-                tentativa += 1
+            inicio_item = time.perf_counter()
+            ultima_resposta: Any = None
+            tentativa_final = 0
+            ok_final = False
 
-                ok, payload = self.client.update_stock(
-                    codigo=codigo,
-                    estoque=estoque,
-                    deposito_id=deposito_id,
-                    preco=preco,
-                )
+            for tentativa in range(1, MAX_RETRY + 1):
+                tentativa_final = tentativa
+                try:
+                    ok, payload = self.client.update_stock(
+                        codigo=codigo,
+                        estoque=estoque_float,
+                        deposito_id=deposito_final,
+                        preco=preco_float,
+                    )
+                    ultima_resposta = payload
 
-                if ok:
-                    sucessos.append(
-                        {
+                    if ok:
+                        duracao = round(time.perf_counter() - inicio_item, 4)
+                        item = {
                             "linha": indice,
                             "codigo": codigo,
-                            "estoque": estoque,
-                            "deposito_id": deposito_id,
+                            "estoque": estoque_float,
+                            "deposito_id": deposito_final,
+                            "preco": preco_float,
+                            "tentativas": tentativa,
+                            "tempo_segundos": duracao,
+                            "mensagem": _mensagem_padronizada(payload),
                             "retorno": payload,
                         }
-                    )
-                    break
-                else:
-                    ultimo_erro = payload
-                    time.sleep(RETRY_DELAY)
+                        sucessos.append(item)
+                        ok_final = True
+                        break
 
-            if tentativa == MAX_RETRY and ultimo_erro:
-                erros.append(
-                    {
-                        "linha": indice,
-                        "codigo": codigo,
-                        "estoque": estoque,
-                        "deposito_id": deposito_id,
-                        "erro": ultimo_erro,
-                    }
-                )
+                except Exception as e:
+                    ultima_resposta = {"error": str(e)}
+
+                if tentativa < MAX_RETRY:
+                    time.sleep(RETRY_DELAY_SECONDS)
+
+            if not ok_final:
+                duracao = round(time.perf_counter() - inicio_item, 4)
+                item = {
+                    "linha": indice,
+                    "codigo": codigo,
+                    "estoque": estoque_float,
+                    "deposito_id": deposito_final,
+                    "preco": preco_float,
+                    "tentativas": tentativa_final,
+                    "tempo_segundos": duracao,
+                    "mensagem": _mensagem_padronizada(ultima_resposta),
+                    "erro": ultima_resposta,
+                }
+                erros.append(item)
 
         return sucessos, erros
 
 
-# =========================
-# WRAPPERS
-# =========================
 def sync_products(
     rows: List[Dict[str, Any]],
     *,
