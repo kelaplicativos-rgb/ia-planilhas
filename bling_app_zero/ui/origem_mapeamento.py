@@ -6,6 +6,25 @@ import pandas as pd
 import streamlit as st
 
 
+def _safe_dataframe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    try:
+        return df.head(rows).copy()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _safe_validation_result(
+    resultado: Any,
+) -> tuple[list[str], list[str]]:
+    if isinstance(resultado, tuple) and len(resultado) >= 2:
+        erros = resultado[0] if isinstance(resultado[0], list) else []
+        avisos = resultado[1] if isinstance(resultado[1], list) else []
+        return erros, avisos
+    return [], []
+
+
 def render_origem_mapeamento(
     *,
     df_origem: pd.DataFrame,
@@ -19,45 +38,91 @@ def render_origem_mapeamento(
     render_calculadora: Callable[..., Any],
     render_campos_fixos_estoque: Callable[..., Any],
     montar_df_saida_exato_modelo: Callable[..., pd.DataFrame],
-    validar_saida_bling: Callable[..., tuple[list[str], list[str]]],
-    aplicar_limpeza_gtin_ean_df_saida: Callable[..., tuple[pd.DataFrame, int, list[str]]],
-    exportar_df_exato_para_excel_bytes: Callable[[pd.DataFrame], bytes],
+    validar_saida_bling: Callable[..., Any],
+    aplicar_limpeza_gtin_ean_df_saida: Callable[..., Any],
+    exportar_df_exato_para_excel_bytes: Callable[..., bytes],
     log_func: Callable[[str], None],
 ) -> None:
     """
-    Bloco modularizado do fluxo de mapeamento/preview/download da origem.
+    Módulo extraído do fluxo de origem/mapeamento.
 
     Objetivo:
-    - manter o mesmo comportamento visual e funcional do fluxo atual;
-    - apenas retirar de origem_dados.py o trecho de mapeamento final;
-    - não alterar campos, textos ou layout base.
+    - centralizar preview, mapeamento, validação e download;
+    - manter o fluxo da home/origem dos dados;
+    - não alterar layout/campos fora do necessário.
     """
 
-    if df_origem is None or df_origem.empty:
-        st.warning("A origem foi lida, mas não possui dados para processar.")
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        st.warning("A origem não possui dados válidos para mapear.")
         return
 
-    st.subheader("Preview da origem")
-    st.dataframe(df_origem.head(10), width="stretch")
+    if not isinstance(colunas_modelo_ativas, list) or not colunas_modelo_ativas:
+        st.warning("O modelo ativo não possui colunas para mapear.")
+        return
 
-    mapeamento_manual = render_mapeamento_manual(
-        df_origem=df_origem,
-        colunas_destino=colunas_modelo_ativas,
-        state_key=state_key,
-    )
+    st.markdown("### Preview da origem")
+    st.dataframe(_safe_dataframe_preview(df_origem, 10), width="stretch")
 
-    calculadora_cfg = render_calculadora(
-        df_origem=df_origem,
-        colunas_destino_ativas=colunas_modelo_ativas,
-        modo=modo,
-    )
+    try:
+        mapeamento_manual = render_mapeamento_manual(
+            df_origem=df_origem,
+            colunas_destino=colunas_modelo_ativas,
+            state_key=state_key,
+        )
+    except TypeError:
+        try:
+            mapeamento_manual = render_mapeamento_manual(
+                df_origem=df_origem,
+                colunas_modelo_ativas=colunas_modelo_ativas,
+                state_key=state_key,
+            )
+        except Exception as e:
+            st.error(f"Erro ao renderizar o mapeamento manual: {e}")
+            log_func(f"Erro ao renderizar o mapeamento manual: {e}")
+            return
+    except Exception as e:
+        st.error(f"Erro ao renderizar o mapeamento manual: {e}")
+        log_func(f"Erro ao renderizar o mapeamento manual: {e}")
+        return
 
-    estoque_cfg = None
-    if modo == "estoque":
-        estoque_cfg = render_campos_fixos_estoque(colunas_modelo_ativas)
+    if not isinstance(mapeamento_manual, dict):
+        mapeamento_manual = {}
+
+    calculadora_cfg: Any = {}
+    try:
+        calculadora_cfg = render_calculadora(
+            df_origem=df_origem,
+            colunas_destino_ativas=colunas_modelo_ativas,
+            modo=modo,
+        )
+    except TypeError:
+        try:
+            calculadora_cfg = render_calculadora(
+                df_origem=df_origem,
+                colunas_modelo_ativas=colunas_modelo_ativas,
+                modo=modo,
+            )
+        except Exception:
+            calculadora_cfg = {}
+    except Exception:
+        calculadora_cfg = {}
+
+    estoque_cfg: Any = None
+    if str(modo).lower() == "estoque":
+        try:
+            estoque_cfg = render_campos_fixos_estoque(colunas_modelo_ativas)
+        except TypeError:
+            try:
+                estoque_cfg = render_campos_fixos_estoque(
+                    colunas_modelo_ativas=colunas_modelo_ativas
+                )
+            except Exception:
+                estoque_cfg = {}
+        except Exception:
+            estoque_cfg = {}
 
     st.divider()
-    st.subheader("Preview do que será baixado")
+    st.markdown("### Preview do que será baixado")
 
     try:
         df_preview_saida = montar_df_saida_exato_modelo(
@@ -68,129 +133,157 @@ def render_origem_mapeamento(
             estoque_cfg=estoque_cfg,
             modo=modo,
         )
+    except TypeError:
+        try:
+            df_preview_saida = montar_df_saida_exato_modelo(
+                df_origem=df_origem,
+                colunas_modelo_ativas=colunas_modelo_ativas,
+                mapeamento_manual=mapeamento_manual,
+                calculadora_cfg=calculadora_cfg,
+                estoque_cfg=estoque_cfg,
+                modo=modo,
+            )
+        except Exception as e:
+            st.error(f"Erro ao montar o preview final: {e}")
+            log_func(f"Erro ao montar o preview final: {e}")
+            return
     except Exception as e:
-        st.error(f"Erro ao montar preview da saída: {e}")
-        log_func(f"Erro ao montar preview da saída: {e}")
+        st.error(f"Erro ao montar o preview final: {e}")
+        log_func(f"Erro ao montar o preview final: {e}")
         return
 
-    erros_preview, avisos_preview = validar_saida_bling(df_preview_saida, modo)
+    if not isinstance(df_preview_saida, pd.DataFrame):
+        st.error("A montagem do preview final não retornou uma planilha válida.")
+        return
+
+    erros_preview, avisos_preview = _safe_validation_result(
+        validar_saida_bling(df_preview_saida, modo)
+    )
+
     st.session_state["validacao_erros_saida"] = erros_preview
     st.session_state["validacao_avisos_saida"] = avisos_preview
 
-    st.dataframe(df_preview_saida.head(20), width="stretch")
+    st.dataframe(_safe_dataframe_preview(df_preview_saida, 20), width="stretch")
 
     if erros_preview:
         st.error("Pendências antes do download:\n\n- " + "\n- ".join(erros_preview))
     elif avisos_preview:
-        st.warning("Avisos:\n\n- " + "\n- ".join(avisos_preview))
+        st.warning("Avisos encontrados:\n\n- " + "\n- ".join(avisos_preview))
     else:
         st.success("Preview válido para gerar o arquivo final.")
 
-    b1, b2, b3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with b1:
-        if st.button("Gerar preview final", width="stretch"):
+    with c1:
+        gerar_preview_final = st.button("Gerar preview final", width="stretch")
+
+    with c2:
+        limpar_gtin = st.button("Limpar GTIN/EAN inválido", width="stretch")
+
+    with c3:
+        limpar_mapeamento = st.button("Limpar mapeamento", width="stretch")
+
+    if limpar_mapeamento:
+        st.session_state[state_key] = {}
+        st.session_state.pop("df_saida", None)
+        st.session_state.pop("df_saida_preview_hash", None)
+        st.session_state.pop("excel_saida_bytes", None)
+        st.session_state.pop("excel_saida_nome", None)
+        st.session_state.pop("logs_gtin_saida", None)
+        st.rerun()
+
+    if gerar_preview_final or limpar_gtin:
+        try:
+            df_saida_final = montar_df_saida_exato_modelo(
+                df_origem=df_origem,
+                colunas_modelo=colunas_modelo_ativas,
+                mapeamento_manual=mapeamento_manual,
+                calculadora_cfg=calculadora_cfg,
+                estoque_cfg=estoque_cfg,
+                modo=modo,
+            )
+        except TypeError:
             try:
                 df_saida_final = montar_df_saida_exato_modelo(
                     df_origem=df_origem,
-                    colunas_modelo=colunas_modelo_ativas,
+                    colunas_modelo_ativas=colunas_modelo_ativas,
                     mapeamento_manual=mapeamento_manual,
                     calculadora_cfg=calculadora_cfg,
                     estoque_cfg=estoque_cfg,
                     modo=modo,
                 )
-
-                df_saida_final, total_limpados, logs_gtin = aplicar_limpeza_gtin_ean_df_saida(
-                    df_saida_final
-                )
-
-                erros_final, avisos_final = validar_saida_bling(df_saida_final, modo)
-                st.session_state["validacao_erros_saida"] = erros_final
-                st.session_state["validacao_avisos_saida"] = avisos_final
-                st.session_state["logs_gtin_saida"] = logs_gtin
-
-                if erros_final:
-                    st.error("Não foi possível liberar o download porque ainda existem pendências.")
-                    return
-
-                excel_bytes = exportar_df_exato_para_excel_bytes(df_saida_final)
-
-                st.session_state["df_saida"] = df_saida_final.copy()
-                st.session_state["df_saida_preview_hash"] = origem_hash
-                st.session_state["excel_saida_bytes"] = excel_bytes
-                st.session_state["excel_saida_nome"] = arquivo_saida
-
-                if total_limpados > 0:
-                    st.success(
-                        f"Preview final gerado com sucesso. "
-                        f"{total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
-                    )
-                else:
-                    st.success("Preview final gerado com sucesso. Revise abaixo antes de baixar.")
-
             except Exception as e:
-                st.error(f"Erro ao gerar preview final: {e}")
-                log_func(f"Erro ao gerar preview final: {e}")
+                st.error(f"Erro ao gerar a saída final: {e}")
+                log_func(f"Erro ao gerar a saída final: {e}")
+                return
+        except Exception as e:
+            st.error(f"Erro ao gerar a saída final: {e}")
+            log_func(f"Erro ao gerar a saída final: {e}")
+            return
 
-    with b2:
-        if st.button("Limpar GTIN/EAN inválido", width="stretch"):
-            try:
-                df_saida_limpa = montar_df_saida_exato_modelo(
-                    df_origem=df_origem,
-                    colunas_modelo=colunas_modelo_ativas,
-                    mapeamento_manual=mapeamento_manual,
-                    calculadora_cfg=calculadora_cfg,
-                    estoque_cfg=estoque_cfg,
-                    modo=modo,
+        logs_gtin: list[str] = []
+        total_limpados = 0
+
+        try:
+            resultado_limpeza = aplicar_limpeza_gtin_ean_df_saida(df_saida_final)
+            if isinstance(resultado_limpeza, tuple):
+                if len(resultado_limpeza) >= 1 and isinstance(resultado_limpeza[0], pd.DataFrame):
+                    df_saida_final = resultado_limpeza[0]
+                if len(resultado_limpeza) >= 2 and isinstance(resultado_limpeza[1], int):
+                    total_limpados = resultado_limpeza[1]
+                if len(resultado_limpeza) >= 3 and isinstance(resultado_limpeza[2], list):
+                    logs_gtin = resultado_limpeza[2]
+            elif isinstance(resultado_limpeza, pd.DataFrame):
+                df_saida_final = resultado_limpeza
+        except Exception as e:
+            st.error(f"Erro ao aplicar limpeza de GTIN/EAN: {e}")
+            log_func(f"Erro ao aplicar limpeza de GTIN/EAN: {e}")
+            return
+
+        erros_finais, avisos_finais = _safe_validation_result(
+            validar_saida_bling(df_saida_final, modo)
+        )
+
+        st.session_state["validacao_erros_saida"] = erros_finais
+        st.session_state["validacao_avisos_saida"] = avisos_finais
+        st.session_state["logs_gtin_saida"] = logs_gtin
+
+        if erros_finais:
+            st.error("Ainda existem pendências antes do download.")
+            return
+
+        try:
+            excel_bytes = exportar_df_exato_para_excel_bytes(df_saida_final)
+        except Exception as e:
+            st.error(f"Erro ao gerar o Excel final: {e}")
+            log_func(f"Erro ao gerar o Excel final: {e}")
+            return
+
+        st.session_state["df_saida"] = df_saida_final.copy()
+        st.session_state["df_saida_preview_hash"] = origem_hash
+        st.session_state["excel_saida_bytes"] = excel_bytes
+        st.session_state["excel_saida_nome"] = arquivo_saida
+
+        if limpar_gtin:
+            if total_limpados > 0:
+                st.success(
+                    f"Limpeza concluída. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
                 )
-
-                df_saida_limpa, total_limpados, logs_gtin = aplicar_limpeza_gtin_ean_df_saida(
-                    df_saida_limpa
+            else:
+                st.success("Limpeza concluída. Nenhum GTIN/EAN inválido foi encontrado.")
+        else:
+            if total_limpados > 0:
+                st.success(
+                    f"Preview final gerado com sucesso. {total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
                 )
-
-                erros_final, avisos_final = validar_saida_bling(df_saida_limpa, modo)
-                st.session_state["validacao_erros_saida"] = erros_final
-                st.session_state["validacao_avisos_saida"] = avisos_final
-                st.session_state["logs_gtin_saida"] = logs_gtin
-
-                if erros_final:
-                    st.error("A limpeza foi aplicada, mas ainda existem pendências antes do download.")
-                    return
-
-                excel_bytes = exportar_df_exato_para_excel_bytes(df_saida_limpa)
-
-                st.session_state["df_saida"] = df_saida_limpa.copy()
-                st.session_state["df_saida_preview_hash"] = origem_hash
-                st.session_state["excel_saida_bytes"] = excel_bytes
-                st.session_state["excel_saida_nome"] = arquivo_saida
-
-                if total_limpados > 0:
-                    st.success(
-                        f"Limpeza concluída. "
-                        f"{total_limpados} GTIN/EAN inválido(s) foram deixados em branco."
-                    )
-                else:
-                    st.success("Limpeza concluída. Nenhum GTIN/EAN inválido foi encontrado para zerar.")
-
-            except Exception as e:
-                st.error(f"Erro ao limpar GTIN/EAN inválido: {e}")
-                log_func(f"Erro ao limpar GTIN/EAN inválido: {e}")
-
-    with b3:
-        if st.button("Limpar mapeamento", width="stretch"):
-            st.session_state[state_key] = {}
-            st.session_state.pop("df_saida", None)
-            st.session_state.pop("df_saida_preview_hash", None)
-            st.session_state.pop("excel_saida_bytes", None)
-            st.session_state.pop("excel_saida_nome", None)
-            st.session_state.pop("logs_gtin_saida", None)
-            st.rerun()
+            else:
+                st.success("Preview final gerado com sucesso.")
 
     logs_gtin_saida = st.session_state.get("logs_gtin_saida", [])
-    if logs_gtin_saida:
-        st.caption("Validação de GTIN/EAN aplicada no arquivo final:")
-        for linha in logs_gtin_saida:
-            st.caption(f"- {linha}")
+    if isinstance(logs_gtin_saida, list) and logs_gtin_saida:
+        st.caption("Validação de GTIN/EAN aplicada na saída:")
+        for item in logs_gtin_saida:
+            st.caption(f"- {item}")
 
     df_saida_state = st.session_state.get("df_saida")
     df_saida_hash = st.session_state.get("df_saida_preview_hash")
@@ -204,12 +297,14 @@ def render_origem_mapeamento(
         and excel_saida_bytes
     ):
         st.divider()
-        st.subheader("Preview final validado para download")
-        st.caption(f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas")
-        st.dataframe(df_saida_state.head(50), width="stretch")
+        st.markdown("### Preview final validado para download")
+        st.caption(
+            f"{len(df_saida_state)} linhas × {len(df_saida_state.columns)} colunas"
+        )
+        st.dataframe(_safe_dataframe_preview(df_saida_state, 50), width="stretch")
 
         st.download_button(
-            f"Baixar arquivo de {config['label']}",
+            label=f"Baixar arquivo de {config.get('label', 'saída')}",
             data=excel_saida_bytes,
             file_name=excel_saida_nome,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
