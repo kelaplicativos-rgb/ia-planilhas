@@ -14,9 +14,19 @@ def _get_modelo():
     return st.session_state.get("df_modelo_estoque")
 
 
-# 🔥 CORRIGIDO AQUI
 def _get_deposito():
     return st.session_state.get("deposito_nome", "")
+
+
+# 🔥 DETECTORES
+def _is_coluna_deposito(nome):
+    nome = str(nome).lower()
+    return "deposit" in nome or "depós" in nome
+
+
+def _is_coluna_preco(nome):
+    nome = str(nome).lower()
+    return "preço" in nome or "preco" in nome
 
 
 def render_origem_mapeamento():
@@ -31,9 +41,30 @@ def render_origem_mapeamento():
 
     sugestoes = sugestao_automatica(df_origem, list(df_modelo.columns))
 
+    deposito = _get_deposito()
+
+    bloqueios = st.session_state.get("bloquear_campos_auto", {})
+
     mapping = {}
 
+    # =========================
+    # 🔥 MAPEAMENTO COM BLOQUEIO
+    # =========================
     for col in df_modelo.columns:
+
+        # 🔒 BLOQUEIO DEPÓSITO
+        if _is_coluna_deposito(col) and deposito:
+            st.text_input(col, value=deposito, disabled=True)
+            mapping[col] = None
+            continue
+
+        # 🔒 BLOQUEIO PREÇO
+        if _is_coluna_preco(col) and bloqueios.get("preco"):
+            st.text_input(col, value="Calculado automaticamente", disabled=True)
+            mapping[col] = None
+            continue
+
+        # 🔥 MAPEAMENTO NORMAL
         mapping[col] = st.selectbox(
             col,
             [""] + list(df_origem.columns),
@@ -41,44 +72,52 @@ def render_origem_mapeamento():
             key=f"map_{col}",
         )
 
-    # 🔥 CRIA DF BASEADO NO MODELO
+    # =========================
+    # 🔥 MONTA DF FINAL
+    # =========================
     df_saida = pd.DataFrame()
 
     for col in df_modelo.columns:
+
         origem = mapping.get(col)
 
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
         else:
-            # 🔥 GARANTE COLUNA EXISTENTE
             df_saida[col] = ""
 
-    # 🔥 DEPÓSITO GARANTIDO (CORREÇÃO PRINCIPAL)
-    deposito = _get_deposito()
-
+    # =========================
+    # 🔥 GARANTE DEPÓSITO
+    # =========================
     if deposito:
         col_dep = None
 
         for col in df_saida.columns:
-            if "deposit" in col.lower() or "depós" in col.lower():
+            if _is_coluna_deposito(col):
                 col_dep = col
                 break
 
         if col_dep:
             df_saida[col_dep] = deposito
         else:
-            # 🔥 cria se não existir
             df_saida["Depósito"] = deposito
 
-    # 🔥 PRECIFICAÇÃO
+    # =========================
+    # 🔥 PRECIFICAÇÃO FINAL (PRIORIDADE)
+    # =========================
     df_saida = aplicar_precificacao_automatica(df_saida)
 
     st.session_state["df_saida"] = df_saida
 
-    # 🔥 PREVIEW COLAPSADO (mantido)
+    # =========================
+    # 🔥 PREVIEW
+    # =========================
     with st.expander("📦 Preview final", expanded=False):
         st.dataframe(df_saida.head(20), width="stretch")
 
+    # =========================
+    # 🔥 DOWNLOAD
+    # =========================
     buffer = BytesIO()
     df_saida.to_excel(buffer, index=False)
 
