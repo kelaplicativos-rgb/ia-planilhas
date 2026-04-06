@@ -18,8 +18,19 @@ def _safe_df(df):
         return None
 
 
+def _limpar_modelos_estado() -> None:
+    for chave in [
+        "df_modelo_cadastro",
+        "df_modelo_estoque",
+        "modelo_cadastro_nome",
+        "modelo_estoque_nome",
+    ]:
+        if chave in st.session_state:
+            del st.session_state[chave]
+
+
 def render_origem_dados() -> None:
-    # 🔥 CORREÇÃO PRINCIPAL
+    # não renderiza a origem quando já estiver na etapa seguinte
     if st.session_state.get("etapa_origem") == "mapeamento":
         return
 
@@ -50,21 +61,27 @@ def render_origem_dados() -> None:
                 st.error("Erro ao ler planilha")
                 return
 
+    # =========================
+    # XML
+    # =========================
     elif origem == "XML":
         st.warning("XML ainda em construção")
         return
 
+    # =========================
+    # SITE
+    # =========================
     elif origem == "Site":
         try:
             df_origem = render_origem_site()
-        except Exception:
+        except Exception as e:
+            log_debug(f"Erro ao buscar dados do site: {e}", "ERROR")
             st.error("Erro ao buscar dados do site")
             return
 
     if _safe_df(df_origem) is None:
         return
 
-    # 🔥 PADRÃO DO SISTEMA
     st.session_state["df_origem"] = df_origem
 
     # ==========================================================
@@ -73,11 +90,11 @@ def render_origem_dados() -> None:
     st.divider()
     st.subheader("Pré-visualização dos dados")
 
-    st.dataframe(df_origem.head(10), use_container_width=True)
+    st.dataframe(df_origem.head(10), width="stretch")
     st.success(f"{len(df_origem)} registros carregados")
 
     # ==========================================================
-    # FLUXO ORIGINAL
+    # OPERAÇÃO
     # ==========================================================
     st.divider()
     st.subheader("Selecione a operação")
@@ -100,7 +117,6 @@ def render_origem_dados() -> None:
     )
 
     escolha_valor = opcoes[escolha_label]
-
     st.session_state["tipo_operacao_bling"] = escolha_valor
 
     if escolha_valor == "cadastro":
@@ -109,17 +125,61 @@ def render_origem_dados() -> None:
         st.info("Modo: Atualização de estoque")
 
     # ==========================================================
+    # MODELO PARA DOWNLOAD
+    # ==========================================================
+    st.divider()
+    st.subheader("Planilha modelo para o download")
+
+    if escolha_valor == "cadastro":
+        modelo_cadastro = st.file_uploader(
+            "Anexe o modelo oficial de Cadastro",
+            type=["xlsx", "xls", "xlsm", "xlsb", "csv"],
+            key="upload_modelo_cadastro",
+        )
+
+        if modelo_cadastro is not None:
+            df_modelo_cadastro = ler_planilha_segura(modelo_cadastro)
+            if _safe_df(df_modelo_cadastro) is None:
+                st.error("Erro ao ler o modelo de cadastro")
+                return
+
+            st.session_state["df_modelo_cadastro"] = df_modelo_cadastro
+            st.session_state["modelo_cadastro_nome"] = modelo_cadastro.name
+            st.success(f"Modelo de cadastro carregado: {modelo_cadastro.name}")
+
+    else:
+        modelo_estoque = st.file_uploader(
+            "Anexe o modelo oficial de Estoque",
+            type=["xlsx", "xls", "xlsm", "xlsb", "csv"],
+            key="upload_modelo_estoque",
+        )
+
+        if modelo_estoque is not None:
+            df_modelo_estoque = ler_planilha_segura(modelo_estoque)
+            if _safe_df(df_modelo_estoque) is None:
+                st.error("Erro ao ler o modelo de estoque")
+                return
+
+            st.session_state["df_modelo_estoque"] = df_modelo_estoque
+            st.session_state["modelo_estoque_nome"] = modelo_estoque.name
+            st.success(f"Modelo de estoque carregado: {modelo_estoque.name}")
+
+        st.text_input(
+            "Nome do depósito",
+            key="deposito_nome_manual",
+            help="Esse valor será usado para preencher a coluna de depósito no modelo de estoque.",
+        )
+
+    # ==========================================================
     # BOTÃO CONTINUAR
     # ==========================================================
-    if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+    st.divider()
+
+    if st.button("➡️ Continuar para mapeamento", width="stretch"):
         try:
             st.session_state["df_saida"] = df_origem.copy()
-
-            # 🔥 CONTROLE DE FLUXO REAL
             st.session_state["etapa_origem"] = "mapeamento"
-
             st.rerun()
-
         except Exception as e:
             log_debug(f"Erro ao ir para mapeamento: {e}", "ERROR")
             st.error("Erro ao avançar")
