@@ -1,5 +1,4 @@
 import traceback
-
 import streamlit as st
 
 APP_VERSION = "1.0.11"
