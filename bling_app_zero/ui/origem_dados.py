@@ -15,6 +15,8 @@ def _safe_df_dados(df):
     try:
         if df is None:
             return False
+        if not hasattr(df, "columns"):
+            return False
         if len(df.columns) == 0:
             return False
         if df.empty:
@@ -27,6 +29,8 @@ def _safe_df_dados(df):
 def _safe_df_modelo(df):
     try:
         if df is None:
+            return False
+        if not hasattr(df, "columns"):
             return False
         if len(df.columns) == 0:
             return False
@@ -146,6 +150,10 @@ def render_origem_dados() -> None:
 
         deposito = st.text_input("Nome do depósito", key="deposito_nome_manual")
 
+        # 🔥 GUARDA NO STATE (CORREÇÃO PRINCIPAL)
+        if deposito:
+            st.session_state["deposito_nome"] = deposito
+
     # =========================
     # VALIDAÇÃO
     # =========================
@@ -155,7 +163,7 @@ def render_origem_dados() -> None:
         else _safe_df_modelo(st.session_state.get("df_modelo_estoque"))
     )
 
-    if tipo == "estoque" and modelo_ok and not deposito:
+    if tipo == "estoque" and modelo_ok and not st.session_state.get("deposito_nome"):
         st.warning("Informe o nome do depósito")
         return
 
@@ -166,9 +174,11 @@ def render_origem_dados() -> None:
 
         df_saida = df_origem.copy()
 
-        # 🔥 APLICA DEPÓSITO
+        # 🔥 SEMPRE PUXA DO STATE
+        deposito_final = st.session_state.get("deposito_nome")
+
         if tipo == "estoque":
-            df_saida = _aplicar_deposito(df_saida, deposito)
+            df_saida = _aplicar_deposito(df_saida, deposito_final)
 
         # 🔥 APLICA PRECIFICAÇÃO
         df_saida = aplicar_precificacao_automatica(
@@ -179,14 +189,15 @@ def render_origem_dados() -> None:
             taxa_extra=st.session_state.get("taxa_extra", 0),
         )
 
-        # 🔥 VALIDAÇÃO IA (BLOQUEIO)
         if df_saida is None or df_saida.empty:
             st.error("Erro nos dados. Não é possível continuar.")
             return
 
+        # 🔥 GARANTE QUE NÃO PERCA NO FLUXO
         st.session_state["df_saida"] = df_saida
+
         st.session_state["etapa_origem"] = "mapeamento"
 
-        log_debug("Fluxo OK → indo para mapeamento")
+        log_debug("Fluxo OK → indo para mapeamento com depósito aplicado")
 
         st.rerun()
