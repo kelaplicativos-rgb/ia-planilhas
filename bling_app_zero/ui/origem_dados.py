@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.mapeamento_auto import sugestao_automatica
-from bling_app_zero.core.site_crawler import executar_crawler  # 🔥 NOVO
+from bling_app_zero.core.site_crawler import executar_crawler
 
 
 # ==========================================================
@@ -24,6 +24,40 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
         st.session_state["logs"].append(linha)
     except Exception:
         pass
+
+
+# ==========================================================
+# 🔥 LEITOR UNIVERSAL DE PLANILHA (CORREÇÃO CRÍTICA)
+# ==========================================================
+def _ler_planilha_segura(arquivo):
+    try:
+        nome = arquivo.name.lower()
+
+        log_debug(f"Lendo arquivo: {nome}")
+
+        if nome.endswith(".csv"):
+            try:
+                df = pd.read_csv(arquivo, encoding="utf-8")
+            except Exception:
+                df = pd.read_csv(arquivo, encoding="latin1")
+
+        elif nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb")):
+            df = pd.read_excel(arquivo)
+
+        else:
+            st.error("Formato não suportado")
+            return None
+
+        df = df.dropna(how="all")  # remove linhas vazias
+
+        log_debug(f"Planilha carregada: {df.shape}")
+
+        return df
+
+    except Exception as e:
+        log_debug(f"Erro leitura planilha: {e}", "ERROR")
+        st.error("Erro ao ler arquivo")
+        return None
 
 
 # ==========================================================
@@ -47,11 +81,6 @@ def _safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     return df.head(rows)
-
-
-# ==========================================================
-# (TODO RESTANTE DO ARQUIVO PERMANECE IGUAL — NÃO ALTEREI NADA)
-# ==========================================================
 
 
 # ==========================================================
@@ -143,4 +172,5 @@ def render_origem_dados() -> None:
     if df_origem is None or df_origem.empty:
         return
 
-    # 🔥 RESTO DO FLUXO CONTINUA IGUAL (NÃO ALTEREI)
+    # mantém compatibilidade com seu fluxo
+    st.session_state["df_origem"] = df_origem
