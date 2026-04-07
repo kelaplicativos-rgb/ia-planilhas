@@ -9,7 +9,6 @@ from bling_app_zero.ui.app_helpers import (
     render_preview_final,
     sincronizar_df_final,
 )
-from bling_app_zero.ui.fornecedores_panel import render_fornecedores_panel
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.utils.init_app import inicializar_app
@@ -39,21 +38,6 @@ st.caption(f"Versão: {APP_VERSION}")
 if st.session_state.get("_cache_log"):
     st.info(st.session_state.get("_cache_log"))
 
-area_app = st.radio(
-    "Área do sistema",
-    ["Fluxo principal", "Fornecedores adaptativos"],
-    horizontal=True,
-    key="area_app",
-)
-
-if area_app == "Fornecedores adaptativos":
-    render_fornecedores_panel()
-    render_debug_panel(
-        download_key="btn_baixar_log_debug_fornecedores",
-        file_name="debug_fornecedores.txt",
-    )
-    st.stop()
-
 
 # =========================
 # CONTROLE DE ETAPA
@@ -75,8 +59,8 @@ if etapa in ["upload", "origem"]:
 
 # =========================
 # ETAPA 2 — ORIGEM + MAPEAMENTO
-# O fluxo real do sistema precisa manter Origem dos dados primeiro
-# e o módulo seguinte abaixo dele.
+# Mantém o fluxo real:
+# origem primeiro e depois mapeamento
 # =========================
 elif etapa == "mapeamento":
     render_origem_dados()
