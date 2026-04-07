@@ -13,7 +13,9 @@ from bling_app_zero.ui.origem_dados_helpers import (
 
 # tenta usar exportador mais robusto, sem quebrar se não existir
 try:
-    from bling_app_zero.utils.excel import exportar_dataframe_para_excel as _exportar_excel_robusto
+    from bling_app_zero.utils.excel import (
+        exportar_dataframe_para_excel as _exportar_excel_robusto,
+    )
 except Exception:
     _exportar_excel_robusto = None
 
@@ -37,7 +39,7 @@ APP_VERSION = "1.0.20"
 if "logs" not in st.session_state:
     st.session_state["logs"] = []
 
-if "etapa_origem" not in st.session_state:
+if "etapa_origem" not in st.session_state or not st.session_state.get("etapa_origem"):
     st.session_state["etapa_origem"] = "upload"
 
 if "area_app" not in st.session_state:
@@ -141,7 +143,8 @@ def _render_preview_final() -> None:
 
     try:
         log_debug(
-            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
+            f"Preview final carregado com {len(df_fluxo)} linha(s) e "
+            f"{len(df_fluxo.columns)} coluna(s)"
         )
     except Exception:
         pass
@@ -155,12 +158,20 @@ def _render_preview_final() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_para_mapeamento_final"):
+        if st.button(
+            "⬅️ Voltar para mapeamento",
+            use_container_width=True,
+            key="btn_voltar_para_mapeamento_final",
+        ):
             st.session_state["etapa_origem"] = "mapeamento"
             st.rerun()
 
     with col2:
-        if st.button("🔄 Atualizar preview", use_container_width=True, key="btn_atualizar_preview_final"):
+        if st.button(
+            "🔄 Atualizar preview",
+            use_container_width=True,
+            key="btn_atualizar_preview_final",
+        ):
             st.session_state["df_final"] = df_fluxo.copy()
             st.rerun()
 
@@ -241,13 +252,17 @@ if area_app == "Fornecedores adaptativos":
 # =========================
 # CONTROLE DE ETAPA
 # =========================
-etapa = st.session_state.get("etapa_origem", "upload")
+etapa = st.session_state.get("etapa_origem")
+
+if not etapa:
+    etapa = "upload"
+    st.session_state["etapa_origem"] = "upload"
 
 
 # =========================
 # ETAPA 1 — ORIGEM
 # =========================
-if etapa in ["upload", None, "origem"]:
+if etapa in ["upload", "origem"]:
     render_origem_dados()
     _sincronizar_df_final()
 
