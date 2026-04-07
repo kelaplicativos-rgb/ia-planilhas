@@ -67,10 +67,28 @@ def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
 
 
 def _fingerprint_df(df) -> str:
+    """
+    Gera uma assinatura mais robusta da origem.
+    Isso evita reaproveitar estado antigo quando o usuário troca
+    o arquivo por outro com mesmas colunas e mesma quantidade de linhas.
+    """
     try:
         if not _safe_df_dados(df):
             return ""
-        base = f"{list(df.columns)}|{len(df)}"
+
+        df_base = df.copy()
+
+        try:
+            head_registros = (
+                df_base.head(10)
+                .fillna("")
+                .astype(str)
+                .to_dict(orient="records")
+            )
+        except Exception:
+            head_registros = []
+
+        base = f"{list(df_base.columns)}|{len(df_base)}|{head_registros}"
         return hashlib.md5(base.encode("utf-8")).hexdigest()
     except Exception:
         return ""
@@ -498,6 +516,7 @@ def render_origem_dados() -> None:
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
     else:
+        df_saida = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
 
     modelo_ativo = _obter_modelo_ativo()
@@ -513,8 +532,8 @@ def render_origem_dados() -> None:
 
     if st.button("➡️ Continuar para mapeamento", use_container_width=True, key="btn_continuar_mapeamento"):
         try:
-            st.session_state["df_final"] = st.session_state.get("df_saida").copy()
-            st.session_state["df_saida"] = st.session_state.get("df_saida").copy()
+            st.session_state["df_final"] = df_saida.copy()
+            st.session_state["df_saida"] = df_saida.copy()
             st.session_state["etapa_origem"] = "mapeamento"
             log_debug("Fluxo enviado para etapa de mapeamento")
             st.rerun()
