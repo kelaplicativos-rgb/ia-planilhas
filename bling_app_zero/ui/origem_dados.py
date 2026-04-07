@@ -69,8 +69,8 @@ def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
 def _fingerprint_df(df) -> str:
     """
     Gera uma assinatura mais robusta da origem.
-    Isso evita reaproveitar estado antigo quando o usuário troca
-    o arquivo por outro com mesmas colunas e mesma quantidade de linhas.
+    Isso evita reaproveitar estado antigo quando o usuário troca o arquivo
+    por outro com mesmas colunas e mesma quantidade de linhas.
     """
     try:
         if not _safe_df_dados(df):
@@ -134,6 +134,7 @@ def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
 
 def _controlar_troca_operacao(operacao: str) -> None:
     operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
+
     if operacao_anterior is None:
         st.session_state["_operacao_anterior_origem_dados"] = operacao
         return
@@ -150,6 +151,7 @@ def _controlar_troca_operacao(operacao: str) -> None:
 
 def _controlar_troca_origem(origem: str) -> None:
     origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
+
     if origem_anterior is None:
         st.session_state["_origem_anterior_origem_dados"] = origem
         return
@@ -177,21 +179,24 @@ def _carregar_modelo_bling(arquivo, tipo_modelo: str) -> bool:
 
         if tipo_modelo == "cadastro":
             st.session_state["df_modelo_cadastro"] = df_modelo.copy()
-            st.session_state["modelo_cadastro_nome"] = getattr(arquivo, "name", "modelo_cadastro")
+            st.session_state["modelo_cadastro_nome"] = getattr(
+                arquivo, "name", "modelo_cadastro"
+            )
             log_debug(
                 f"Modelo de cadastro carregado: {getattr(arquivo, 'name', 'arquivo')} "
                 f"({len(df_modelo)} linha(s), {len(df_modelo.columns)} coluna(s))"
             )
         else:
             st.session_state["df_modelo_estoque"] = df_modelo.copy()
-            st.session_state["modelo_estoque_nome"] = getattr(arquivo, "name", "modelo_estoque")
+            st.session_state["modelo_estoque_nome"] = getattr(
+                arquivo, "name", "modelo_estoque"
+            )
             log_debug(
                 f"Modelo de estoque carregado: {getattr(arquivo, 'name', 'arquivo')} "
                 f"({len(df_modelo)} linha(s), {len(df_modelo.columns)} coluna(s))"
             )
 
         return True
-
     except Exception as e:
         st.error("Erro ao carregar o modelo Bling.")
         log_debug(f"Erro ao carregar modelo Bling ({tipo_modelo}): {e}", "ERRO")
@@ -227,7 +232,7 @@ def _render_modelo_bling(operacao: str) -> None:
 
         df_modelo = st.session_state.get("df_modelo_cadastro")
         if _safe_df_dados(df_modelo):
-            with st.expander("📘 Prévia do modelo de cadastro", expanded=False):
+            with st.expander(" Prévia do modelo de cadastro", expanded=False):
                 st.dataframe(df_modelo.head(5), use_container_width=True)
 
     else:
@@ -242,7 +247,7 @@ def _render_modelo_bling(operacao: str) -> None:
 
         df_modelo = st.session_state.get("df_modelo_estoque")
         if _safe_df_dados(df_modelo):
-            with st.expander("📘 Prévia do modelo de estoque", expanded=False):
+            with st.expander(" Prévia do modelo de estoque", expanded=False):
                 st.dataframe(df_modelo.head(5), use_container_width=True)
 
 
@@ -254,7 +259,8 @@ def _ler_origem_xml(arquivo_xml):
         if not arquivo_parece_xml_nfe(arquivo_xml):
             st.error("O arquivo anexado não parece ser um XML de NFe válido.")
             log_debug(
-                f"Arquivo XML inválido ou não reconhecido: {getattr(arquivo_xml, 'name', 'arquivo_xml')}",
+                f"Arquivo XML inválido ou não reconhecido: "
+                f"{getattr(arquivo_xml, 'name', 'arquivo_xml')}",
                 "ERRO",
             )
             return None
@@ -264,20 +270,18 @@ def _ler_origem_xml(arquivo_xml):
         if not _safe_df_dados(df_xml):
             st.error("Não foi possível extrair dados do XML.")
             log_debug(
-                f"XML sem dados aproveitáveis: {getattr(arquivo_xml, 'name', 'arquivo_xml')}",
+                f"XML sem dados aproveitáveis: "
+                f"{getattr(arquivo_xml, 'name', 'arquivo_xml')}",
                 "ERRO",
             )
             return None
 
         st.session_state["df_origem_xml"] = df_xml.copy()
-
         log_debug(
             f"XML de origem carregado: {getattr(arquivo_xml, 'name', 'arquivo_xml')} "
             f"({len(df_xml)} linha(s), {len(df_xml.columns)} coluna(s))"
         )
-
         return df_xml
-
     except Exception as e:
         log_debug(f"Erro ao ler XML de origem: {e}", "ERRO")
         st.error("Não foi possível ler o XML enviado.")
@@ -292,7 +296,6 @@ def _render_origem_entrada():
     )
 
     _controlar_troca_origem(origem)
-
     df_origem = None
 
     if origem == "Planilha":
@@ -314,7 +317,6 @@ def _render_origem_entrada():
                 else:
                     st.error("Não foi possível ler a planilha enviada.")
                     return None
-
             except Exception as e:
                 log_debug(f"Erro ao ler planilha de origem: {e}", "ERRO")
                 st.error("Não foi possível ler a planilha enviada.")
@@ -395,8 +397,8 @@ def _render_precificacao(df_base):
         "preço",
         "valor",
     ]
-
     colunas_lower = [str(c).strip().lower() for c in colunas]
+
     for candidato in candidatos:
         for i, nome_col in enumerate(colunas_lower):
             if candidato == nome_col or candidato in nome_col:
@@ -424,7 +426,7 @@ def _render_precificacao(df_base):
         st.number_input("Taxa extra (%)", min_value=0.0, key="taxa_extra")
 
     recalcular = st.button(
-        "💲 Aplicar precificação",
+        " Aplicar precificação",
         use_container_width=True,
         key="btn_aplicar_precificacao",
     )
@@ -438,26 +440,24 @@ def _render_precificacao(df_base):
                 st.session_state["df_saida"] = df_precificado.copy()
                 st.session_state["df_final"] = df_precificado.copy()
                 st.session_state["bloquear_campos_auto"] = {"preco": True}
-
                 log_debug(
                     f"Precificação aplicada com sucesso usando a coluna '{coluna_preco}'"
                 )
             else:
                 st.error("A precificação não retornou dados válidos.")
                 log_debug("Precificação retornou DataFrame inválido", "ERRO")
-
         except Exception as e:
             log_debug(f"Erro na precificação: {e}", "ERRO")
             st.error("Erro ao aplicar a precificação.")
 
     df_preview_precificacao = st.session_state.get("df_precificado")
     if _safe_df_dados(df_preview_precificacao):
-        with st.expander("👁️ Prévia da precificação", expanded=False):
+        with st.expander("️ Prévia da precificação", expanded=False):
             st.dataframe(df_preview_precificacao.head(10), use_container_width=True)
 
 
 def _validar_antes_mapeamento() -> tuple[bool, list[str]]:
-    erros = []
+    erros: list[str] = []
 
     if not _safe_df_dados(st.session_state.get("df_origem")):
         erros.append("A origem dos dados não está carregada.")
@@ -477,7 +477,6 @@ def _validar_antes_mapeamento() -> tuple[bool, list[str]]:
 
 def render_origem_dados() -> None:
     etapa_atual = st.session_state.get("etapa_origem")
-
     if etapa_atual in ["mapeamento", "final"]:
         return
 
@@ -499,13 +498,12 @@ def render_origem_dados() -> None:
     _render_modelo_bling(operacao)
 
     df_origem = _render_origem_entrada()
-
     if not _safe_df_dados(df_origem):
         return
 
     _sincronizar_estado_com_origem(df_origem)
 
-    with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
+    with st.expander(" Prévia da planilha do fornecedor", expanded=False):
         st.dataframe(df_origem.head(10), use_container_width=True)
 
     _render_precificacao(df_origem)
@@ -530,7 +528,11 @@ def render_origem_dados() -> None:
             st.warning(erro)
         return
 
-    if st.button("➡️ Continuar para mapeamento", use_container_width=True, key="btn_continuar_mapeamento"):
+    if st.button(
+        "➡️ Continuar para mapeamento",
+        use_container_width=True,
+        key="btn_continuar_mapeamento",
+    ):
         try:
             st.session_state["df_final"] = df_saida.copy()
             st.session_state["df_saida"] = df_saida.copy()
