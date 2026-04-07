@@ -142,7 +142,7 @@ def render_origem_site():
     df_site = st.session_state.get("df_origem_site")
     if _safe_df(df_site):
         with st.expander("🌐 Prévia dos dados do site", expanded=False):
-            st.dataframe(df_site.head(20), width="stretch")
+            st.dataframe(df_site.head(20), use_container_width=True)
         return df_site.copy()
 
     return None
