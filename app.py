@@ -139,6 +139,40 @@ def _exportar_download_bytes(df: pd.DataFrame) -> bytes:
     return exportar_excel_bytes(df)
 
 
+def _gerar_log_bytes() -> bytes:
+    try:
+        logs = st.session_state.get("logs", [])
+
+        if not logs:
+            return b"Nenhum log disponivel."
+
+        conteudo = "\n".join(str(linha) for linha in logs)
+        return conteudo.encode("utf-8", errors="ignore")
+    except Exception as e:
+        return f"Erro ao gerar log: {e}".encode("utf-8", errors="ignore")
+
+
+def _render_download_log_button(
+    label: str,
+    key: str,
+    file_name: str = "debug.txt",
+) -> None:
+    try:
+        log_bytes = _gerar_log_bytes()
+
+        st.download_button(
+            label=label,
+            data=log_bytes,
+            file_name=file_name,
+            mime="text/plain",
+            use_container_width=True,
+            key=key,
+        )
+    except Exception as e:
+        log_debug(f"Erro ao preparar download do log: {e}", "ERRO")
+        st.error("Nao foi possivel preparar o download do log.")
+
+
 def _render_preview_final() -> None:
     _sincronizar_df_final()
     df_fluxo = _get_df_fluxo()
@@ -208,15 +242,18 @@ def _render_preview_final() -> None:
             log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
             st.error("Não foi possível gerar a planilha final.")
 
-    if excel_bytes:
+    if isinstance(excel_bytes, bytes) and excel_bytes:
         st.download_button(
             "⬇️ Baixar planilha final",
-            excel_bytes,
-            "bling_final.xlsx",
+            data=excel_bytes,
+            file_name="bling_final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="btn_baixar_planilha_final",
         )
+    else:
+        if validacao_ok:
+            st.warning("A planilha final ainda não está pronta para download.")
 
     st.divider()
     st.subheader("Integração com Bling")
@@ -246,13 +283,10 @@ if area_app == "Fornecedores adaptativos":
         logs = st.session_state.get("logs", [])
 
         for linha in reversed(logs[-100:]):
-            st.text(linha)
+            st.text(str(linha))
 
-        st.download_button(
-            "📥 Baixar log",
-            "\n".join(logs),
-            "debug.txt",
-            use_container_width=True,
+        _render_download_log_button(
+            label="📥 Baixar log",
             key="btn_baixar_log_debug_fornecedores",
         )
 
@@ -311,12 +345,9 @@ with st.expander("🔍 Debug", expanded=False):
     logs = st.session_state.get("logs", [])
 
     for linha in reversed(logs[-100:]):
-        st.text(linha)
+        st.text(str(linha))
 
-    st.download_button(
-        "📥 Baixar log",
-        "\n".join(logs),
-        "debug.txt",
-        use_container_width=True,
+    _render_download_log_button(
+        label="📥 Baixar log",
         key="btn_baixar_log_debug",
     )
