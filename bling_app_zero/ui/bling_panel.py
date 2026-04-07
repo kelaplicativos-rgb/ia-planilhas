@@ -1,181 +1,45 @@
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.bling_api import BlingAPIClient
 from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.core.bling_user_session import (
-    clear_pending_oauth_user,
     ensure_current_user_defaults,
     get_current_user_key,
     get_current_user_label,
-    get_pending_oauth_user_key,
-    get_pending_oauth_user_label,
-    set_current_user,
     set_pending_oauth_user,
 )
-
-
-# ==========================================================
-# BLOQUEIO DE FLUXO
-# ==========================================================
-def _get_etapa_fluxo() -> str:
-    try:
-        return str(st.session_state.get("etapa_origem", "") or "").strip().lower()
-    except Exception:
-        return ""
-
-
-def _bloquear_painel_principal() -> bool:
-    """
-    Bloqueia o painel principal do Bling somente durante o mapeamento.
-    Na etapa final ele deve aparecer normalmente, pois o app.py o chama
-    dentro do preview final.
-    """
-    etapa = _get_etapa_fluxo()
-    return etapa == "mapeamento"
-
-
-def _bloquear_importacao() -> bool:
-    """
-    A importação do Bling deve ficar bloqueada durante o fluxo principal
-    para não interferir no preparo da planilha.
-    """
-    etapa = _get_etapa_fluxo()
-    return etapa in {"mapeamento", "final"}
-
-
-# ==========================================================
-# HELPERS
-# ==========================================================
-def _status_texto(status: dict) -> str:
-    if not isinstance(status, dict) or not status.get("connected"):
-        return "Desconectado"
-
-    nome = status.get("company_name")
-    return f"Conectado{f' • {nome}' if nome else ''}"
-
-
-def _has_callback_params() -> bool:
-    try:
-        return "code" in st.query_params or "error" in st.query_params
-    except Exception:
-        return False
-
-
-def _clear_callback_params() -> None:
-    try:
-        for chave in ["code", "state", "error", "error_description"]:
-            if chave in st.query_params:
-                del st.query_params[chave]
-    except Exception:
-        pass
-
-
-def _safe_df(df):
-    if isinstance(df, pd.DataFrame):
-        return df.copy()
-    return pd.DataFrame()
-
-
-# ==========================================================
-# USUÁRIO
-# ==========================================================
-def _render_usuario_bling():
-    ensure_current_user_defaults()
-
-    with st.expander("Usuário Bling", expanded=False):
-        identificador_atual = get_current_user_key()
-        apelido_atual = get_current_user_label()
-
-        identificador = st.text_input(
-            "ID do usuário",
-            value=identificador_atual,
-            key="bling_user_identificador",
-        )
-
-        apelido = st.text_input(
-            "Nome exibido",
-            value=apelido_atual,
-            key="bling_user_apelido",
-        )
-
-        if st.button(
-            "Aplicar usuário",
-            use_container_width=True,
-            key="btn_aplicar_usuario_bling",
-        ):
-            identificador_limpo = (identificador or "").strip()
-            apelido_limpo = (apelido or "").strip()
-
-            if not identificador_limpo:
-                st.error("Informe o identificador.")
-                return
-
-            set_current_user(
-                identificador_limpo,
-                apelido_limpo or identificador_limpo,
-            )
-            st.success("Usuário atualizado.")
-            st.rerun()
-
-        st.caption(f"Atual: {get_current_user_label()} ({get_current_user_key()})")
-
-
-def _processar_callback_oauth() -> bool:
-    """
-    Processa callback OAuth quando existir.
-    Retorna True se o fluxo foi tratado e houve rerun/saída lógica.
-    """
-    try:
-        if not _has_callback_params():
-            return False
-
-        user_key = get_pending_oauth_user_key() or get_current_user_key()
-        user_label = get_pending_oauth_user_label() or get_current_user_label()
-
-        auth_callback = BlingAuthManager(user_key=user_key)
-        result = auth_callback.handle_oauth_callback()
-
-        if result.get("status") == "success":
-            set_current_user(user_key, user_label)
-            clear_pending_oauth_user()
-            _clear_callback_params()
-            st.success("Conectado com sucesso.")
-            st.rerun()
-            return True
-
-        if result.get("status") == "error":
-            clear_pending_oauth_user()
-            _clear_callback_params()
-            st.error(result.get("message", "Erro OAuth"))
-            st.rerun()
-            return True
-
-    except Exception as e:
-        st.error(f"Erro OAuth: {e}")
-        return True
-
-    return False
+from bling_app_zero.ui.bling_panel_helpers import (
+    bloquear_importacao,
+    bloquear_painel_principal,
+    clear_callback_params,
+    has_callback_params,
+    safe_df,
+    status_texto,
+)
+from bling_app_zero.ui.bling_panel_usuario import (
+    processar_callback_oauth,
+    render_usuario_bling,
+)
 
 
 # ==========================================================
 # PAINEL PRINCIPAL
 # ==========================================================
 def render_bling_panel():
-    if _bloquear_painel_principal():
+    if bloquear_painel_principal():
         return
 
     st.markdown("### Integração com Bling")
 
     try:
-        _render_usuario_bling()
+        render_usuario_bling()
     except Exception as e:
         st.error(f"Erro ao carregar usuário: {e}")
         return
 
-    if _processar_callback_oauth():
+    if processar_callback_oauth(has_callback_params, clear_callback_params):
         return
 
     try:
@@ -243,7 +107,6 @@ def render_bling_panel():
             try:
                 ok, msg = auth.disconnect()
                 if ok:
-                    clear_pending_oauth_user()
                     st.success(msg)
                 else:
                     st.error(msg)
@@ -252,14 +115,14 @@ def render_bling_panel():
             st.rerun()
 
     with st.expander("Status da conexão", expanded=False):
-        st.write(_status_texto(status))
+        st.write(status_texto(status))
 
 
 # ==========================================================
 # IMPORTAÇÃO
 # ==========================================================
 def render_bling_import_panel():
-    if _bloquear_importacao():
+    if bloquear_importacao():
         return
 
     st.markdown("### Importar do Bling")
@@ -288,7 +151,7 @@ def render_bling_import_panel():
             try:
                 ok, payload = client.list_products()
                 if ok:
-                    df = _safe_df(client.products_to_dataframe(payload))
+                    df = safe_df(client.products_to_dataframe(payload))
                     st.session_state["bling_produtos_df"] = df.copy()
                     st.success(f"{len(df)} produto(s) importado(s).")
                 else:
@@ -296,7 +159,7 @@ def render_bling_import_panel():
             except Exception as e:
                 st.error(f"Erro ao importar produtos: {e}")
 
-        df_produtos = _safe_df(st.session_state.get("bling_produtos_df"))
+        df_produtos = safe_df(st.session_state.get("bling_produtos_df"))
         if not df_produtos.empty:
             st.dataframe(df_produtos, height=200, width="stretch")
 
@@ -305,7 +168,7 @@ def render_bling_import_panel():
             try:
                 ok, payload = client.list_stocks()
                 if ok:
-                    df = _safe_df(client.stocks_to_dataframe(payload))
+                    df = safe_df(client.stocks_to_dataframe(payload))
                     st.session_state["bling_estoque_df"] = df.copy()
                     st.success(f"{len(df)} registro(s) importado(s).")
                 else:
@@ -313,6 +176,6 @@ def render_bling_import_panel():
             except Exception as e:
                 st.error(f"Erro ao importar estoque: {e}")
 
-        df_estoque = _safe_df(st.session_state.get("bling_estoque_df"))
+        df_estoque = safe_df(st.session_state.get("bling_estoque_df"))
         if not df_estoque.empty:
             st.dataframe(df_estoque, height=200, width="stretch")
