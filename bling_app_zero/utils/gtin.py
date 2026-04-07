@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, List, Tuple
 
 import pandas as pd
@@ -85,11 +87,13 @@ def aplicar_validacao_gtin_df(df: pd.DataFrame, coluna: str) -> Tuple[pd.DataFra
     if coluna not in df.columns:
         return df, logs
 
+    df_saida = df.copy()
+
     novos_valores = []
     total_invalidos = 0
     total_validos = 0
 
-    for idx, valor in enumerate(df[coluna].tolist(), start=1):
+    for idx, valor in enumerate(df_saida[coluna].tolist(), start=1):
         texto_original = limpar_texto(valor)
 
         if not texto_original:
@@ -106,11 +110,11 @@ def aplicar_validacao_gtin_df(df: pd.DataFrame, coluna: str) -> Tuple[pd.DataFra
             total_invalidos += 1
             logs.append(f"Linha {idx}: GTIN inválido zerado ({texto_original})")
 
-    df[coluna] = novos_valores
+    df_saida[coluna] = novos_valores
     logs.append(f"GTIN válido: {total_validos}")
     logs.append(f"GTIN inválido zerado: {total_invalidos}")
 
-    return df, logs
+    return df_saida, logs
 
 
 # =========================================================
