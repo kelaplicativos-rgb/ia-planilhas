@@ -147,7 +147,10 @@ def _garantir_preco(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df_saida[col_preco_destino] = ""
             if len(serie_origem) > 0:
-                df_saida.loc[df_saida.index[: len(serie_origem)], col_preco_destino] = serie_origem.values
+                df_saida.loc[
+                    df_saida.index[: len(serie_origem)],
+                    col_preco_destino,
+                ] = serie_origem.values
     except Exception:
         pass
 
@@ -213,16 +216,12 @@ def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
 
     df_saida = df_saida.copy()
 
-    # Remove colunas totalmente vazias
     df_saida = df_saida.dropna(axis=1, how="all")
-
-    # Remove linhas totalmente vazias
     df_saida = df_saida.dropna(axis=0, how="all")
 
     if df_saida.empty:
         return pd.DataFrame()
 
-    # Converte cabeçalhos "Unnamed" / vazios para nomes seguros
     colunas = []
     usados = set()
 
@@ -243,7 +242,6 @@ def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
 
     df_saida.columns = colunas
 
-    # Limpa strings vazias de espaços
     for col in df_saida.columns:
         try:
             df_saida[col] = df_saida[col].apply(
@@ -252,7 +250,6 @@ def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
 
-    # Remove novamente linhas totalmente vazias após strip
     mascara_vazia = df_saida.apply(
         lambda row: all(str(v).strip() == "" for v in row.values), axis=1
     )
@@ -320,7 +317,10 @@ def exportar_df_exato_para_excel_bytes(
     return output.getvalue()
 
 
-def exportar_dataframe_para_excel(df: pd.DataFrame, sheet_name: str = "Planilha") -> bytes:
+def exportar_dataframe_para_excel(
+    df: pd.DataFrame,
+    sheet_name: str = "Planilha",
+) -> bytes:
     """
     Compatibilidade com app.py, que tenta importar:
     exportar_dataframe_para_excel as _exportar_excel_robusto
@@ -387,9 +387,6 @@ def _ler_excel_sheet_por_sheet(uploaded_file: Any) -> pd.DataFrame:
 
         for aba in abas:
             try:
-                if hasattr(uploaded_file, "seek"):
-                    uploaded_file.seek(0)
-
                 df = pd.read_excel(
                     xls,
                     sheet_name=aba,
@@ -399,4 +396,59 @@ def _ler_excel_sheet_por_sheet(uploaded_file: Any) -> pd.DataFrame:
                 score = _score_dataframe(df)
 
                 _log_debug(
-                    f"Excel analisado aba='{str(aba).strip()}' score={score} shape={df.shape if isinstance(df, pd.DataFrame) else (0, 0
+                    f"Excel analisado aba='{str(aba).strip()}' score={score} "
+                    f"shape={df.shape if isinstance(df, pd.DataFrame) else (0, 0)}"
+                )
+
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_df = df
+
+            except Exception as e:
+                _log_debug(
+                    f"Falha ao ler aba '{str(aba).strip()}': {e}",
+                    "WARNING",
+                )
+
+    except Exception as e:
+        _log_debug(f"Falha ao abrir workbook Excel: {e}", "ERROR")
+
+    if not melhor_df.empty:
+        return _garantir_estrutura_modelo(_normalizar_para_excel(melhor_df))
+
+    return pd.DataFrame()
+
+
+def ler_excel_robusto(uploaded_file: Any) -> pd.DataFrame:
+    try:
+        df = _ler_excel_sheet_por_sheet(uploaded_file)
+        if not df.empty:
+            return df
+        return pd.DataFrame()
+    except Exception as e:
+        _log_debug(f"Erro ler_excel_robusto: {e}", "ERROR")
+        return pd.DataFrame()
+
+
+def ler_planilha_robusta(uploaded_file: Any) -> pd.DataFrame:
+    try:
+        nome = str(getattr(uploaded_file, "name", "") or "").lower().strip()
+
+        if nome.endswith(".csv"):
+            return _ler_csv_robusto(uploaded_file)
+
+        if nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb")):
+            return ler_excel_robusto(uploaded_file)
+
+        df_excel = ler_excel_robusto(uploaded_file)
+        if not df_excel.empty:
+            return df_excel
+
+        df_csv = _ler_csv_robusto(uploaded_file)
+        if not df_csv.empty:
+            return df_csv
+
+        return pd.DataFrame()
+    except Exception as e:
+        _log_debug(f"Erro ler_planilha_robusta: {e}", "ERROR")
+        return pd.DataFrame()
