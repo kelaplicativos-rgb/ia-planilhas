@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.origem_dados_helpers import (
+from bling_app_zero.ui.app_helpers import (
     exportar_excel_bytes,
     limpar_gtin_invalido,
     log_debug,
@@ -33,6 +33,25 @@ def _get_df_fluxo() -> pd.DataFrame | None:
     return None
 
 
+def _normalizar_validacao(resultado_validacao) -> bool:
+    try:
+        if isinstance(resultado_validacao, bool):
+            return resultado_validacao
+
+        if resultado_validacao is None:
+            return True
+
+        if isinstance(resultado_validacao, dict):
+            return len(resultado_validacao) == 0
+
+        if isinstance(resultado_validacao, (list, tuple, set)):
+            return len(resultado_validacao) == 0
+
+        return bool(resultado_validacao)
+    except Exception:
+        return False
+
+
 def render_preview_final() -> None:
     st.subheader("Preview final")
 
@@ -60,7 +79,9 @@ def render_preview_final() -> None:
         df_download = df_fluxo.copy()
 
     try:
-        validacao_ok = validar_campos_obrigatorios(df_download)
+        validacao_ok = _normalizar_validacao(
+            validar_campos_obrigatorios(df_download)
+        )
     except Exception as e:
         log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
         validacao_ok = False
@@ -91,11 +112,19 @@ def render_preview_final() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_mapeamento_preview"):
+        if st.button(
+            "⬅️ Voltar para mapeamento",
+            use_container_width=True,
+            key="btn_voltar_mapeamento_preview",
+        ):
             st.session_state["etapa_origem"] = "mapeamento"
             st.rerun()
 
     with col2:
-        if st.button("🔄 Atualizar preview", use_container_width=True, key="btn_atualizar_preview_final"):
+        if st.button(
+            "🔄 Atualizar preview",
+            use_container_width=True,
+            key="btn_atualizar_preview_final",
+        ):
             st.session_state["df_final"] = df_fluxo.copy()
             st.rerun()
