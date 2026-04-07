@@ -87,7 +87,6 @@ def _normalizar_valores_exportacao(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy()
 
 
-# 🔥 NOVO: validação obrigatória
 def _validar_df_para_exportacao(df: pd.DataFrame) -> bool:
     try:
         erros = validar_campos_obrigatorios(df)
@@ -128,6 +127,9 @@ def _preparar_df_exportacao(
         return pd.DataFrame()
 
 
+# =========================
+# EXPORTAÇÃO PRINCIPAL
+# =========================
 def exportar_df_exato_para_excel_bytes(
     df: pd.DataFrame,
     nome_aba: str = "Planilha",
@@ -135,7 +137,6 @@ def exportar_df_exato_para_excel_bytes(
     try:
         df_export = _preparar_df_exportacao(df)
 
-        # 🔥 valida antes de exportar
         if not _validar_df_para_exportacao(df_export):
             return b""
 
@@ -153,6 +154,11 @@ def exportar_df_exato_para_excel_bytes(
 
 def exportar_excel_bytes(df: pd.DataFrame, nome_aba: str = "Planilha") -> bytes:
     return exportar_df_exato_para_excel_bytes(df=df, nome_aba=nome_aba)
+
+
+# 🔥 CORREÇÃO CRÍTICA: alias para compatibilidade com imports antigos
+def df_to_excel_bytes(df: pd.DataFrame, nome_aba: str = "Planilha") -> bytes:
+    return exportar_excel_bytes(df=df, nome_aba=nome_aba)
 
 
 def exportar_dataframe_para_excel(
