@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
@@ -14,6 +15,38 @@ def safe_float(valor, default: float = 0.0) -> float:
         return float(valor)
     except Exception:
         return default
+
+
+def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    try:
+        if not safe_df_dados(df):
+            return df
+
+        df_preview = df.copy()
+
+        for col in df_preview.columns:
+            try:
+                df_preview[col] = df_preview[col].apply(
+                    lambda x: "" if pd.isna(x) else str(x)
+                )
+            except Exception:
+                try:
+                    df_preview[col] = df_preview[col].astype(str)
+                except Exception:
+                    pass
+
+        df_preview = df_preview.replace(
+            {
+                "nan": "",
+                "None": "",
+                "<NA>": "",
+                "NaT": "",
+            }
+        )
+
+        return df_preview
+    except Exception:
+        return df
 
 
 def coletar_parametros_precificacao():
@@ -41,6 +74,39 @@ def aplicar_precificacao_com_fallback(df_base, coluna_preco):
         )
 
 
+def _detectar_coluna_preco_default(colunas: list[str]) -> int:
+    try:
+        candidatos = [
+            "preco de custo",
+            "preço de custo",
+            "preco_custo",
+            "preço_custo",
+            "custo",
+            "valor custo",
+            "valor_custo",
+            "preco compra",
+            "preço compra",
+            "preco_compra_xml",
+            "preço compra xml",
+            "valor unitário",
+            "valor unitario",
+            "preco",
+            "preço",
+            "valor",
+        ]
+
+        colunas_lower = [str(c).strip().lower() for c in colunas]
+
+        for candidato in candidatos:
+            for i, nome_col in enumerate(colunas_lower):
+                if candidato == nome_col or candidato in nome_col:
+                    return i
+
+        return 0
+    except Exception:
+        return 0
+
+
 def render_precificacao(df_base):
     st.markdown("### Precificação")
 
@@ -51,10 +117,12 @@ def render_precificacao(df_base):
     if not colunas:
         return
 
+    coluna_preco_default = _detectar_coluna_preco_default(colunas)
+
     coluna_preco = st.selectbox(
         "Selecione a coluna de PREÇO DE CUSTO",
         options=colunas,
-        index=0,
+        index=coluna_preco_default,
         key="coluna_preco_base",
     )
 
@@ -96,4 +164,14 @@ def render_precificacao(df_base):
     df_preview_precificacao = st.session_state.get("df_precificado")
     if safe_df_dados(df_preview_precificacao):
         with st.expander("Prévia da precificação", expanded=False):
-            st.dataframe(df_preview_precificacao.head(10), use_container_width=True)
+            try:
+                st.dataframe(
+                    _df_preview_seguro(df_preview_precificacao).head(10),
+                    use_container_width=True,
+                )
+            except Exception as e:
+                log_debug(f"Erro ao renderizar prévia da precificação: {e}", "ERRO")
+                try:
+                    st.write(_df_preview_seguro(df_preview_precificacao).head(10))
+                except Exception:
+                    pass
