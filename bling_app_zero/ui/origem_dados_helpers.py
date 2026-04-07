@@ -51,7 +51,7 @@ def _valor_vazio(valor: Any) -> bool:
             return True
 
         texto = str(valor).strip().lower()
-        return texto in {"", "nan", "none", "null"}
+        return texto in {"", "nan", "none", "null", "<na>"}
     except Exception:
         return True
 
@@ -462,19 +462,65 @@ def _ler_excel_com_engine(
         erros.append(msg)
         return None, erros
 
+    melhor_df = pd.DataFrame()
+    melhor_score = (0, 0, 0)
+
     for aba in abas:
         try:
             df = pd.read_excel(BytesIO(conteudo), sheet_name=aba, engine=engine)
-            if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
-                log_debug(f"Excel OK ({engine_label}) aba='{aba}'", "SUCCESS")
-                return df, erros
+            df = _limpar_dataframe_lido(df)
+            score = (
+                len(df),
+                len(df.columns) if isinstance(df, pd.DataFrame) else 0,
+            )
+
+            log_debug(
+                f"Excel OK ({engine_label}) aba='{aba}' shape={df.shape if isinstance(df, pd.DataFrame) else (0, 0)}",
+                "SUCCESS",
+            )
+
+            if isinstance(df, pd.DataFrame) and len(df.columns) > 0 and score > melhor_score:
+                melhor_score = score
+                melhor_df = df
         except Exception as e:
             msg = f"Falha ao ler aba '{aba}' ({engine_label}) em {nome}: {e}"
             log_debug(msg, "WARNING")
             erros.append(msg)
 
+        # tentativa extra sem header
+        try:
+            df_sem_header = pd.read_excel(
+                BytesIO(conteudo),
+                sheet_name=aba,
+                engine=engine,
+                header=None,
+            )
+            df_sem_header = _limpar_dataframe_lido(df_sem_header)
+            score_sem_header = (
+                len(df_sem_header),
+                len(df_sem_header.columns) if isinstance(df_sem_header, pd.DataFrame) else 0,
+            )
+
+            if (
+                isinstance(df_sem_header, pd.DataFrame)
+                and len(df_sem_header.columns) > 0
+                and score_sem_header > melhor_score
+            ):
+                melhor_score = score_sem_header
+                melhor_df = df_sem_header
+                log_debug(
+                    f"Excel OK ({engine_label}) aba='{aba}' sem header shape={df_sem_header.shape}",
+                    "SUCCESS",
+                )
+        except Exception:
+            pass
+
+    if _safe_df(melhor_df):
+        return melhor_df, erros
+
     try:
         df = pd.read_excel(BytesIO(conteudo), engine=engine)
+        df = _limpar_dataframe_lido(df)
         if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
             log_debug(f"Excel OK ({engine_label})", "SUCCESS")
             return df, erros
@@ -611,7 +657,6 @@ def safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
             return pd.DataFrame()
 
         df_preview = df.head(rows).copy()
-
         for col in df_preview.columns:
             try:
                 df_preview[col] = df_preview[col].map(
