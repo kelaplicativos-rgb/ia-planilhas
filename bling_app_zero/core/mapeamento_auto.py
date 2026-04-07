@@ -107,11 +107,11 @@ CAMPO_SINONIMOS: dict[str, list[str]] = {
     ],
 }
 
-# aliases diretos para reforço
 ALIASES_DIRETOS: dict[str, str] = {}
 for campo, sinonimos in CAMPO_SINONIMOS.items():
     for item in sinonimos:
         ALIASES_DIRETOS[_normalizar(item)] = campo
+    ALIASES_DIRETOS[_normalizar(campo)] = campo
 
 
 # ==========================================================
@@ -129,7 +129,6 @@ def _score_textos(texto_a: str, texto_b: str) -> float:
 
     score = 0.0
 
-    # match direto de alias conhecido
     alias_a = ALIASES_DIRETOS.get(a)
     alias_b = ALIASES_DIRETOS.get(b)
     if alias_a and alias_b and alias_a == alias_b:
@@ -139,11 +138,9 @@ def _score_textos(texto_a: str, texto_b: str) -> float:
     elif alias_b and alias_b == a:
         score += 95.0
 
-    # contém o outro
     if a in b or b in a:
         score += 35.0
 
-    # interseção de tokens
     ta = _tokens(a)
     tb = _tokens(b)
     if ta and tb:
@@ -151,7 +148,6 @@ def _score_textos(texto_a: str, texto_b: str) -> float:
         union = len(ta | tb)
         score += (inter / max(union, 1)) * 40.0
 
-    # reforço por tokens importantes
     pesos = {
         "sku": 22.0,
         "codigo": 18.0,
@@ -207,7 +203,6 @@ def _sugerir_campo_padrao(nome_coluna: str) -> str:
             melhor_score = score_campo
             melhor_campo = campo
 
-    # limiar conservador para evitar chute ruim
     if melhor_score >= 26.0:
         return melhor_campo
 
@@ -225,6 +220,31 @@ def _preparar_alvos(colunas_alvo: Iterable[str]) -> list[str]:
     return saida
 
 
+def _familia_semantica_de_alvo(alvo: str) -> str:
+    alvo_norm = _normalizar(alvo)
+
+    if alvo_norm in ALIASES_DIRETOS:
+        return ALIASES_DIRETOS[alvo_norm]
+
+    melhor_campo = ""
+    melhor_score = 0.0
+
+    for campo, sinonimos in CAMPO_SINONIMOS.items():
+        score = _score_textos(alvo_norm, campo)
+
+        for sinonimo in sinonimos:
+            score = max(score, _score_textos(alvo_norm, sinonimo))
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_campo = campo
+
+    if melhor_score >= 18.0:
+        return melhor_campo
+
+    return ""
+
+
 def _sugerir_para_alvos(nome_coluna: str, colunas_alvo: list[str]) -> str:
     if not colunas_alvo:
         return _sugerir_campo_padrao(nome_coluna)
@@ -236,13 +256,13 @@ def _sugerir_para_alvos(nome_coluna: str, colunas_alvo: list[str]) -> str:
 
     for alvo in colunas_alvo:
         score = _score_textos(nome_coluna, alvo)
-
         alvo_norm = _normalizar(alvo)
+
         if campo_padrao:
             score = max(score, _score_textos(campo_padrao, alvo_norm) + 8.0)
 
-            # reforço por família semântica
-            if ALIASES_DIRETOS.get(alvo_norm) == campo_padrao:
+            familia_alvo = _familia_semantica_de_alvo(alvo)
+            if familia_alvo and familia_alvo == campo_padrao:
                 score += 20.0
 
         if score > melhor_score:
@@ -264,19 +284,23 @@ def sugestao_automatica(entrada, colunas_alvo: list[str] | None = None):
 
     1) sugestao_automatica("nome da coluna") -> "campo_sugerido"
     2) sugestao_automatica(df_origem, colunas_alvo) -> {col_origem: col_alvo}
-
-    Isso ativa IA offline sem mexer no layout.
     """
-    # modo 1: coluna única -> campo padrão
     if isinstance(entrada, str):
         if colunas_alvo:
             return _sugerir_para_alvos(entrada, _preparar_alvos(colunas_alvo))
         return _sugerir_campo_padrao(entrada)
 
-    # modo 2: DataFrame -> dict origem -> alvo
     if pd is not None and isinstance(entrada, pd.DataFrame):
         df_origem = entrada
         alvos = _preparar_alvos(colunas_alvo or [])
+
+        if not alvos:
+            sugestoes_padrao: dict[str, str] = {}
+            for coluna in df_origem.columns:
+                campo = _sugerir_campo_padrao(str(coluna))
+                if campo:
+                    sugestoes_padrao[str(coluna)] = campo
+            return sugestoes_padrao
 
         sugestoes: dict[str, str] = {}
         alvos_usados: set[str] = set()
@@ -284,21 +308,27 @@ def sugestao_automatica(entrada, colunas_alvo: list[str] | None = None):
         for coluna in df_origem.columns:
             melhor = _sugerir_para_alvos(str(coluna), alvos)
 
-            # evita duplicação quando houver lista de alvos
             if melhor and melhor not in alvos_usados:
                 sugestoes[str(coluna)] = melhor
                 alvos_usados.add(melhor)
                 continue
 
-            # fallback sem duplicar: tenta próximo melhor por score
             candidatos_rank = []
+            campo_padrao = _sugerir_campo_padrao(str(coluna))
+
             for alvo in alvos:
                 if alvo in alvos_usados:
                     continue
+
                 score = _score_textos(str(coluna), alvo)
-                campo_padrao = _sugerir_campo_padrao(str(coluna))
+
                 if campo_padrao:
                     score = max(score, _score_textos(campo_padrao, alvo) + 8.0)
+
+                    familia_alvo = _familia_semantica_de_alvo(alvo)
+                    if familia_alvo and familia_alvo == campo_padrao:
+                        score += 20.0
+
                 candidatos_rank.append((score, alvo))
 
             candidatos_rank.sort(reverse=True, key=lambda x: x[0])
