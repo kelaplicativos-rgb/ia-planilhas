@@ -11,6 +11,10 @@ from bling_app_zero.ui.origem_dados_helpers import (
     log_debug,
 )
 from bling_app_zero.ui.origem_dados_site import render_origem_site
+from bling_app_zero.utils.xml_nfe import (
+    arquivo_parece_xml_nfe,
+    ler_xml_nfe,
+)
 
 
 def _safe_df_dados(df) -> bool:
@@ -95,6 +99,7 @@ def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
         "coluna_preco_base",
         "origem_dados_fingerprint",
         "df_origem_site",
+        "df_origem_xml",
     ]
 
     for chave in chaves_reset:
@@ -205,7 +210,7 @@ def _render_modelo_bling(operacao: str) -> None:
         df_modelo = st.session_state.get("df_modelo_cadastro")
         if _safe_df_dados(df_modelo):
             with st.expander("📘 Prévia do modelo de cadastro", expanded=False):
-                st.dataframe(df_modelo.head(5), width="stretch")
+                st.dataframe(df_modelo.head(5), use_container_width=True)
 
     else:
         arquivo_modelo = st.file_uploader(
@@ -220,7 +225,45 @@ def _render_modelo_bling(operacao: str) -> None:
         df_modelo = st.session_state.get("df_modelo_estoque")
         if _safe_df_dados(df_modelo):
             with st.expander("📘 Prévia do modelo de estoque", expanded=False):
-                st.dataframe(df_modelo.head(5), width="stretch")
+                st.dataframe(df_modelo.head(5), use_container_width=True)
+
+
+def _ler_origem_xml(arquivo_xml):
+    if arquivo_xml is None:
+        return None
+
+    try:
+        if not arquivo_parece_xml_nfe(arquivo_xml):
+            st.error("O arquivo anexado não parece ser um XML de NFe válido.")
+            log_debug(
+                f"Arquivo XML inválido ou não reconhecido: {getattr(arquivo_xml, 'name', 'arquivo_xml')}",
+                "ERRO",
+            )
+            return None
+
+        df_xml = ler_xml_nfe(arquivo_xml)
+
+        if not _safe_df_dados(df_xml):
+            st.error("Não foi possível extrair dados do XML.")
+            log_debug(
+                f"XML sem dados aproveitáveis: {getattr(arquivo_xml, 'name', 'arquivo_xml')}",
+                "ERRO",
+            )
+            return None
+
+        st.session_state["df_origem_xml"] = df_xml.copy()
+
+        log_debug(
+            f"XML de origem carregado: {getattr(arquivo_xml, 'name', 'arquivo_xml')} "
+            f"({len(df_xml)} linha(s), {len(df_xml.columns)} coluna(s))"
+        )
+
+        return df_xml
+
+    except Exception as e:
+        log_debug(f"Erro ao ler XML de origem: {e}", "ERRO")
+        st.error("Não foi possível ler o XML enviado.")
+        return None
 
 
 def _render_origem_entrada():
@@ -268,8 +311,14 @@ def _render_origem_entrada():
             return None
 
     elif origem == "XML":
-        st.info("XML em construção")
-        return None
+        arquivo_xml = st.file_uploader(
+            "Envie o XML da nota fiscal",
+            type=["xml"],
+            key="arquivo_origem_xml",
+        )
+
+        if arquivo_xml is not None:
+            df_origem = _ler_origem_xml(arquivo_xml)
 
     return df_origem
 
@@ -323,6 +372,7 @@ def _render_precificacao(df_base):
         "valor_custo",
         "preco compra",
         "preço compra",
+        "preco_compra_xml",
         "preco",
         "preço",
         "valor",
@@ -385,7 +435,7 @@ def _render_precificacao(df_base):
     df_preview_precificacao = st.session_state.get("df_precificado")
     if _safe_df_dados(df_preview_precificacao):
         with st.expander("👁️ Prévia da precificação", expanded=False):
-            st.dataframe(df_preview_precificacao.head(10), width="stretch")
+            st.dataframe(df_preview_precificacao.head(10), use_container_width=True)
 
 
 def _validar_antes_mapeamento() -> tuple[bool, list[str]]:
@@ -438,7 +488,7 @@ def render_origem_dados() -> None:
     _sincronizar_estado_com_origem(df_origem)
 
     with st.expander("📄 Prévia da planilha do fornecedor", expanded=False):
-        st.dataframe(df_origem.head(10), width="stretch")
+        st.dataframe(df_origem.head(10), use_container_width=True)
 
     _render_precificacao(df_origem)
 
