@@ -23,9 +23,22 @@ def _to_dataframe(df: Any) -> pd.DataFrame:
 
 def _normalizar_nome_coluna(nome: Any) -> str:
     try:
-        return str(nome).strip().lower().replace("_", " ")
+        return (
+            str(nome)
+            .strip()
+            .lower()
+            .replace("_", " ")
+            .replace("-", " ")
+        )
     except Exception:
         return ""
+
+
+def _safe_session_state_get(chave: str, default=None):
+    try:
+        return st.session_state.get(chave, default)
+    except Exception:
+        return default
 
 
 # ==========================================================
@@ -69,7 +82,7 @@ def _detectar_coluna_preco(df: pd.DataFrame):
 # 🔥 GARANTE DEPÓSITO FINAL
 # ==========================================================
 def _garantir_deposito(df: pd.DataFrame) -> pd.DataFrame:
-    deposito = str(st.session_state.get("deposito_nome", "") or "").strip()
+    deposito = str(_safe_session_state_get("deposito_nome", "") or "").strip()
 
     if not deposito:
         return df
@@ -89,12 +102,12 @@ def _garantir_deposito(df: pd.DataFrame) -> pd.DataFrame:
 # 🔥 GARANTE PREÇO FINAL
 # ==========================================================
 def _garantir_preco(df: pd.DataFrame) -> pd.DataFrame:
-    bloqueios = st.session_state.get("bloquear_campos_auto", {})
+    bloqueios = _safe_session_state_get("bloquear_campos_auto", {})
     if not isinstance(bloqueios, dict) or not bloqueios.get("preco"):
         return df
 
     df_saida = df.copy()
-    df_precificado = st.session_state.get("df_precificado")
+    df_precificado = _safe_session_state_get("df_precificado")
 
     if not isinstance(df_precificado, pd.DataFrame) or df_precificado.empty:
         return df_saida
@@ -109,11 +122,15 @@ def _garantir_preco(df: pd.DataFrame) -> pd.DataFrame:
         serie_origem = df_precificado[col_preco_origem].reset_index(drop=True)
         tamanho_destino = len(df_saida.index)
 
+        if tamanho_destino <= 0:
+            return df_saida
+
         if len(serie_origem) >= tamanho_destino:
             df_saida[col_preco_destino] = serie_origem.iloc[:tamanho_destino].values
         else:
             df_saida[col_preco_destino] = ""
-            df_saida.loc[: len(serie_origem) - 1, col_preco_destino] = serie_origem.values
+            if len(serie_origem) > 0:
+                df_saida.loc[df_saida.index[: len(serie_origem)], col_preco_destino] = serie_origem.values
     except Exception:
         pass
 
