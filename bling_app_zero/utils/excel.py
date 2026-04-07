@@ -42,6 +42,23 @@ def _safe_session_state_get(chave: str, default=None):
 
 
 # ==========================================================
+# LOG
+# ==========================================================
+def _log_debug(msg: str, nivel: str = "INFO") -> None:
+    try:
+        if "logs" not in st.session_state:
+            st.session_state["logs"] = []
+
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        linha = f"[{timestamp}] [{nivel}] {msg}"
+        st.session_state["logs"].append(linha)
+    except Exception:
+        pass
+
+
+# ==========================================================
 # 🔥 DETECTA COLUNA DEPÓSITO
 # ==========================================================
 def _detectar_coluna_deposito(df: pd.DataFrame):
@@ -183,9 +200,91 @@ def _garantir_estrutura_modelo(df: pd.DataFrame) -> pd.DataFrame:
         return df_saida
 
     df_saida = df_saida.copy()
-    df_saida.columns = [str(c) for c in df_saida.columns]
+    df_saida.columns = [str(c).strip() for c in df_saida.columns]
 
     return df_saida
+
+
+def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
+    df_saida = _to_dataframe(df)
+
+    if df_saida.empty:
+        return df_saida
+
+    df_saida = df_saida.copy()
+
+    # Remove colunas totalmente vazias
+    df_saida = df_saida.dropna(axis=1, how="all")
+
+    # Remove linhas totalmente vazias
+    df_saida = df_saida.dropna(axis=0, how="all")
+
+    if df_saida.empty:
+        return pd.DataFrame()
+
+    # Converte cabeçalhos "Unnamed" / vazios para nomes seguros
+    colunas = []
+    usados = set()
+
+    for i, col in enumerate(df_saida.columns):
+        nome = str(col).strip()
+
+        if not nome or nome.lower().startswith("unnamed:"):
+            nome = f"Coluna {i + 1}"
+
+        nome_base = nome
+        contador = 2
+        while nome in usados:
+            nome = f"{nome_base} ({contador})"
+            contador += 1
+
+        usados.add(nome)
+        colunas.append(nome)
+
+    df_saida.columns = colunas
+
+    # Limpa strings vazias de espaços
+    for col in df_saida.columns:
+        try:
+            df_saida[col] = df_saida[col].apply(
+                lambda v: "" if v is None else str(v).strip()
+            )
+        except Exception:
+            pass
+
+    # Remove novamente linhas totalmente vazias após strip
+    mascara_vazia = df_saida.apply(
+        lambda row: all(str(v).strip() == "" for v in row.values), axis=1
+    )
+    df_saida = df_saida.loc[~mascara_vazia].copy()
+
+    if df_saida.empty:
+        return pd.DataFrame()
+
+    df_saida.reset_index(drop=True, inplace=True)
+    return df_saida
+
+
+def _score_dataframe(df: pd.DataFrame) -> tuple[int, int, int]:
+    """
+    Score para escolher a melhor aba:
+    1) mais linhas
+    2) mais colunas
+    3) mais cabeçalhos úteis
+    """
+    if df is None or df.empty:
+        return (0, 0, 0)
+
+    linhas = len(df)
+    colunas = len(df.columns)
+
+    cabecalhos_uteis = 0
+    for c in df.columns:
+        nome = str(c).strip().lower()
+        if nome and not nome.startswith("coluna ") and not nome.startswith("unnamed:"):
+            cabecalhos_uteis += 1
+
+    return (linhas, colunas, cabecalhos_uteis)
 
 
 # ==========================================================
@@ -232,71 +331,72 @@ def exportar_dataframe_para_excel(df: pd.DataFrame, sheet_name: str = "Planilha"
 # ==========================================================
 # LEITURA ROBUSTA
 # ==========================================================
-def ler_planilha_excel(uploaded_file: Any) -> pd.DataFrame:
-    nome = str(getattr(uploaded_file, "name", "") or "").lower()
+def _ler_csv_robusto(uploaded_file: Any) -> pd.DataFrame:
+    encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252"]
+    separadores = [None, ";", ",", "\t", "|"]
 
-    if hasattr(uploaded_file, "seek"):
-        uploaded_file.seek(0)
+    melhor_df = pd.DataFrame()
+    melhor_score = (0, 0, 0)
 
-    if nome.endswith(".csv"):
-        encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252"]
-        separadores = [None, ",", ";", "\t"]
+    for enc in encodings:
+        for sep in separadores:
+            try:
+                if hasattr(uploaded_file, "seek"):
+                    uploaded_file.seek(0)
 
-        for enc in encodings:
-            for sep in separadores:
-                try:
-                    if hasattr(uploaded_file, "seek"):
-                        uploaded_file.seek(0)
+                kwargs = {
+                    "encoding": enc,
+                    "dtype": str,
+                    "keep_default_na": False,
+                    "on_bad_lines": "skip",
+                }
 
-                    kwargs = {
-                        "encoding": enc,
-                        "dtype": str,
-                        "keep_default_na": False,
-                    }
+                if sep is None:
+                    kwargs["sep"] = None
+                    kwargs["engine"] = "python"
+                else:
+                    kwargs["sep"] = sep
 
-                    if sep is None:
-                        kwargs["sep"] = None
-                        kwargs["engine"] = "python"
-                    else:
-                        kwargs["sep"] = sep
+                df = pd.read_csv(uploaded_file, **kwargs)
+                df = _limpar_dataframe_lido(df)
+                score = _score_dataframe(df)
 
-                    df = pd.read_csv(uploaded_file, **kwargs)
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_df = df
 
-                    if df is not None and not df.empty:
-                        return _garantir_estrutura_modelo(_normalizar_para_excel(df))
+            except Exception:
+                continue
 
-                except Exception:
-                    continue
+    if not melhor_df.empty:
+        return _garantir_estrutura_modelo(_normalizar_para_excel(melhor_df))
 
-        return pd.DataFrame()
+    return pd.DataFrame()
 
-    try:
-        if hasattr(uploaded_file, "seek"):
-            uploaded_file.seek(0)
 
-        df = pd.read_excel(uploaded_file, dtype=str)
-
-        if df is not None and not df.empty:
-            return _garantir_estrutura_modelo(_normalizar_para_excel(df))
-
-    except Exception:
-        pass
+def _ler_excel_sheet_por_sheet(uploaded_file: Any) -> pd.DataFrame:
+    melhor_df = pd.DataFrame()
+    melhor_score = (0, 0, 0)
 
     try:
         if hasattr(uploaded_file, "seek"):
             uploaded_file.seek(0)
 
-        df = pd.read_excel(uploaded_file)
+        xls = pd.ExcelFile(uploaded_file)
+        abas = xls.sheet_names or []
 
-        return _garantir_estrutura_modelo(_normalizar_para_excel(df))
+        for aba in abas:
+            try:
+                if hasattr(uploaded_file, "seek"):
+                    uploaded_file.seek(0)
 
-    except Exception:
-        return pd.DataFrame()
+                df = pd.read_excel(
+                    xls,
+                    sheet_name=aba,
+                    dtype=str,
+                )
+                df = _limpar_dataframe_lido(df)
+                score = _score_dataframe(df)
 
-
-__all__ = [
-    "df_to_excel_bytes",
-    "exportar_df_exato_para_excel_bytes",
-    "exportar_dataframe_para_excel",
-    "ler_planilha_excel",
-]
+                _log_debug(
+                    f"Excel analisado aba='{str(aba).strip()}' score={score} shape={df.shape if isinstance(df, pd.DataFrame) else (0, 0
