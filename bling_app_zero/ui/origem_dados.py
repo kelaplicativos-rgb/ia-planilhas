@@ -65,7 +65,7 @@ def render_origem_dados() -> None:
 
     origem_atual = _obter_origem_atual()
 
-    # 🔥 CORREÇÃO CRÍTICA — TRAVA PARA SITE
+    # 🔒 TRAVA PARA SITE
     if "site" in origem_atual:
         if not st.session_state.get("site_processado"):
             st.info("🔎 Execute a busca do site para continuar.")
@@ -77,14 +77,18 @@ def render_origem_dados() -> None:
 
     sincronizar_estado_com_origem(df_origem, log_debug)
 
-    with st.expander("Prévia da planilha do fornecedor", expanded=False):
-        try:
-            st.dataframe(df_origem.head(10), use_container_width=True)
-        except Exception:
-            pass
+    # =========================================================
+    # PREVIEW (SÓ PARA PLANILHA/XML)
+    # =========================================================
+    if "site" not in origem_atual:
+        with st.expander("Prévia da planilha do fornecedor", expanded=False):
+            try:
+                st.dataframe(df_origem.head(10), use_container_width=True)
+            except Exception:
+                pass
 
     # =========================================================
-    # 2) OPERAÇÃO + MODELO
+    # 2) OPERAÇÃO
     # =========================================================
     st.markdown("### Tipo de envio")
 
@@ -100,21 +104,17 @@ def render_origem_dados() -> None:
         "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
     )
 
+    # =========================================================
+    # 3) MODELO (DEPENDE DA OPERAÇÃO)
+    # =========================================================
     render_modelo_bling(operacao)
-
-    # =========================================================
-    # 🔥 CORREÇÃO — PRECIFICAÇÃO SÓ QUANDO DADOS OK
-    # =========================================================
-    render_precificacao(df_origem)
 
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     # =========================================================
-    # 4) ESTOQUE + DEPÓSITO
+    # 4) DEPÓSITO (SÓ ESTOQUE)
     # =========================================================
-    tipo = st.session_state.get("tipo_operacao_bling")
-
-    if tipo == "estoque":
+    if st.session_state["tipo_operacao_bling"] == "estoque":
         st.markdown("### Configurações de estoque")
 
         deposito = st.text_input(
@@ -139,11 +139,16 @@ def render_origem_dados() -> None:
                 "", qtd
             )
 
+    # =========================================================
+    # 5) PRECIFICAÇÃO (DEPOIS DO MODELO)
+    # =========================================================
+    render_precificacao(df_origem)
+
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
 
     # =========================================================
-    # 5) VALIDAÇÃO + AVANÇO
+    # 6) VALIDAÇÃO + AVANÇO
     # =========================================================
     modelo_ok = safe_df_dados(obter_modelo_ativo())
 
