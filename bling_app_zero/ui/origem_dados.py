@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -15,6 +16,10 @@ from bling_app_zero.utils.xml_nfe import (
     arquivo_parece_xml_nfe,
     ler_xml_nfe,
 )
+
+
+_EXTENSOES_PLANILHA_PERMITIDAS = {".xlsx", ".xls", ".csv", ".xlsm", ".xlsb"}
+_EXTENSOES_XML_PERMITIDAS = {".xml"}
 
 
 def _safe_df_dados(df) -> bool:
@@ -39,6 +44,32 @@ def _safe_float(valor, default: float = 0.0) -> float:
         return float(valor)
     except Exception:
         return default
+
+
+def _nome_arquivo(arquivo) -> str:
+    try:
+        return str(getattr(arquivo, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _extensao_arquivo(arquivo) -> str:
+    try:
+        return Path(_nome_arquivo(arquivo)).suffix.lower().strip()
+    except Exception:
+        return ""
+
+
+def _arquivo_planilha_permitido(arquivo) -> bool:
+    return _extensao_arquivo(arquivo) in _EXTENSOES_PLANILHA_PERMITIDAS
+
+
+def _arquivo_xml_permitido(arquivo) -> bool:
+    return _extensao_arquivo(arquivo) in _EXTENSOES_XML_PERMITIDAS
+
+
+def _texto_extensoes_planilha() -> str:
+    return ", ".join(sorted(_EXTENSOES_PLANILHA_PERMITIDAS))
 
 
 def _coletar_parametros_precificacao():
@@ -170,6 +201,17 @@ def _carregar_modelo_bling(arquivo, tipo_modelo: str) -> bool:
     if arquivo is None:
         return False
 
+    if not _arquivo_planilha_permitido(arquivo):
+        st.error(
+            f"Formato não suportado para o modelo Bling. "
+            f"Envie um arquivo em: {_texto_extensoes_planilha()}."
+        )
+        log_debug(
+            f"Modelo Bling recusado por extensão: {_nome_arquivo(arquivo)}",
+            "ERROR",
+        )
+        return False
+
     try:
         df_modelo = ler_planilha_segura(arquivo)
 
@@ -223,8 +265,12 @@ def _render_modelo_bling(operacao: str) -> None:
     if operacao == "Cadastro de Produtos":
         arquivo_modelo = st.file_uploader(
             "Anexar modelo de cadastro",
-            type=["xlsx", "xls", "xlsm", "xlsb", "csv"],
             key="modelo_cadastro",
+            help=(
+                "No celular, o seletor de arquivos pode bloquear formatos quando há "
+                "filtro direto no upload. Por isso a validação é feita após a seleção. "
+                f"Formatos aceitos: {_texto_extensoes_planilha()}."
+            ),
         )
 
         if arquivo_modelo is not None:
@@ -238,8 +284,12 @@ def _render_modelo_bling(operacao: str) -> None:
     else:
         arquivo_modelo = st.file_uploader(
             "Anexar modelo de estoque",
-            type=["xlsx", "xls", "xlsm", "xlsb", "csv"],
             key="modelo_estoque",
+            help=(
+                "No celular, o seletor de arquivos pode bloquear formatos quando há "
+                "filtro direto no upload. Por isso a validação é feita após a seleção. "
+                f"Formatos aceitos: {_texto_extensoes_planilha()}."
+            ),
         )
 
         if arquivo_modelo is not None:
@@ -253,6 +303,14 @@ def _render_modelo_bling(operacao: str) -> None:
 
 def _ler_origem_xml(arquivo_xml):
     if arquivo_xml is None:
+        return None
+
+    if not _arquivo_xml_permitido(arquivo_xml):
+        st.error("Envie um arquivo XML válido (.xml).")
+        log_debug(
+            f"Arquivo XML recusado por extensão: {_nome_arquivo(arquivo_xml)}",
+            "ERROR",
+        )
         return None
 
     try:
@@ -301,11 +359,27 @@ def _render_origem_entrada():
     if origem == "Planilha":
         arquivo = st.file_uploader(
             "Envie a planilha",
-            type=["xlsx", "xls", "csv", "xlsm", "xlsb"],
             key="arquivo_origem_planilha",
+            help=(
+                "No Android, alguns gerenciadores de arquivos deixam a planilha "
+                "acinzentada quando o uploader filtra por extensão. Aqui a seleção "
+                "fica livre e a validação acontece depois. "
+                f"Formatos aceitos: {_texto_extensoes_planilha()}."
+            ),
         )
 
-        if arquivo:
+        if arquivo is not None:
+            if not _arquivo_planilha_permitido(arquivo):
+                st.error(
+                    f"Formato não suportado. Envie um arquivo em: "
+                    f"{_texto_extensoes_planilha()}."
+                )
+                log_debug(
+                    f"Arquivo de origem recusado por extensão: {_nome_arquivo(arquivo)}",
+                    "ERROR",
+                )
+                return None
+
             try:
                 df_origem = ler_planilha_segura(arquivo)
 
@@ -333,8 +407,11 @@ def _render_origem_entrada():
     elif origem == "XML":
         arquivo_xml = st.file_uploader(
             "Envie o XML da nota fiscal",
-            type=["xml"],
             key="arquivo_origem_xml",
+            help=(
+                "No celular, a seleção fica livre para evitar bloqueio do seletor. "
+                "A validação do XML é feita após a escolha."
+            ),
         )
 
         if arquivo_xml is not None:
@@ -537,8 +614,4 @@ def render_origem_dados() -> None:
             st.session_state["df_final"] = df_saida.copy()
             st.session_state["df_saida"] = df_saida.copy()
             st.session_state["etapa_origem"] = "mapeamento"
-            log_debug("Fluxo enviado para etapa de mapeamento")
-            st.rerun()
-        except Exception as e:
-            log_debug(f"Erro ao continuar para o mapeamento: {e}", "ERRO")
-            st.error("Não foi possível seguir para o mapeamento.")
+         
