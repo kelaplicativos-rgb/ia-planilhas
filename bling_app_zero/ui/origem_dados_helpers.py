@@ -68,25 +68,76 @@ def _extrair_bytes_arquivo(arquivo) -> bytes:
         if arquivo is None:
             return b""
 
+        conteudo = b""
+
+        if hasattr(arquivo, "seek"):
+            try:
+                arquivo.seek(0)
+            except Exception:
+                pass
+
         if hasattr(arquivo, "getvalue"):
-            conteudo = arquivo.getvalue()
-            if isinstance(conteudo, bytes):
-                return conteudo
+            try:
+                conteudo = arquivo.getvalue()
+                if isinstance(conteudo, bytes) and conteudo:
+                    return conteudo
+            except Exception:
+                pass
 
         if hasattr(arquivo, "read"):
             try:
                 if hasattr(arquivo, "seek"):
                     arquivo.seek(0)
+                conteudo = arquivo.read()
+                if isinstance(conteudo, bytes) and conteudo:
+                    return conteudo
             except Exception:
                 pass
-
-            conteudo = arquivo.read()
-            if isinstance(conteudo, bytes):
-                return conteudo
 
         return b""
     except Exception:
         return b""
+
+
+def _arquivo_parece_excel_por_assinatura(conteudo: bytes) -> bool:
+    try:
+        if not conteudo:
+            return False
+
+        # XLSX/XLSM/XLSB são ZIP containers
+        if conteudo[:2] == b"PK":
+            return True
+
+        # XLS legado (OLE Compound File)
+        if conteudo[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+def _arquivo_parece_csv_texto(conteudo: bytes) -> bool:
+    try:
+        if not conteudo:
+            return False
+
+        amostra = conteudo[:4096]
+
+        for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+            try:
+                texto = amostra.decode(encoding, errors="ignore")
+                if not texto.strip():
+                    continue
+
+                if any(sep in texto for sep in [";", ",", "\t"]):
+                    return True
+            except Exception:
+                continue
+
+        return False
+    except Exception:
+        return False
 
 
 # ==========================================================
@@ -284,8 +335,11 @@ def _texto_parece_mojibake(texto: str) -> bool:
 
 
 def _normalizar_texto(valor):
-    if pd.isna(valor):
-        return valor
+    try:
+        if pd.isna(valor):
+            return valor
+    except Exception:
+        pass
 
     if not isinstance(valor, str):
         return valor
@@ -306,7 +360,9 @@ def _normalizar_texto(valor):
 def _normalizar_df_texto(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df_normalizado = df.copy()
-        df_normalizado.columns = [_normalizar_texto(str(col)) for col in df_normalizado.columns]
+        df_normalizado.columns = [
+            _normalizar_texto(str(col)) for col in df_normalizado.columns
+        ]
 
         for col in df_normalizado.select_dtypes(include=["object"]).columns:
             df_normalizado[col] = df_normalizado[col].map(_normalizar_texto)
@@ -347,6 +403,24 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
             erros.append(f"{encoding}: {e}")
             continue
 
+    # fallback manual com separadores comuns
+    for encoding in ["utf-8-sig", "utf-8", "cp1252", "latin1"]:
+        for sep in [";", ",", "\t", "|"]:
+            try:
+                df = pd.read_csv(
+                    BytesIO(conteudo),
+                    encoding=encoding,
+                    sep=sep,
+                    engine="python",
+                )
+                if df is not None and len(df.columns) > 0:
+                    df = _corrigir_coluna_unica(df)
+                    log_debug(f"CSV OK ({encoding}, sep='{sep}')", "SUCCESS")
+                    return df
+            except Exception as e:
+                erros.append(f"{encoding}/{sep}: {e}")
+                continue
+
     if erros:
         log_debug("Falha nas tentativas de leitura CSV: " + " | ".join(erros), "ERROR")
     return None
@@ -355,7 +429,7 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
 # ==========================================================
 # EXCEL ROBUSTO
 # ==========================================================
-def _mensagem_dependencia_excel(nome: str, erro: Exception) -> str:
+def _mensagem_dependencia_excel(nome: str, erros: list[str]) -> str:
     ext = Path(nome).suffix.lower()
 
     if ext == ".xls":
@@ -370,40 +444,49 @@ def _mensagem_dependencia_excel(nome: str, erro: Exception) -> str:
             "No ambiente publicado, instale a dependência 'pyxlsb'."
         )
 
-    return f"Erro ao ler Excel: {erro}"
+    if erros:
+        return "Erro ao ler Excel: " + " | ".join(erros[:3])
+
+    return "Erro ao ler Excel."
 
 
-def _ler_excel_com_engine(conteudo: bytes, engine: str | None, nome: str) -> pd.DataFrame | None:
+def _ler_excel_com_engine(
+    conteudo: bytes, engine: str | None, nome: str
+) -> tuple[pd.DataFrame | None, list[str]]:
     engine_label = engine or "auto"
+    erros: list[str] = []
 
     try:
         excel_file = pd.ExcelFile(BytesIO(conteudo), engine=engine)
         abas = excel_file.sheet_names or []
     except Exception as e:
-        log_debug(f"Falha ao abrir workbook ({engine_label}) em {nome}: {e}", "WARNING")
-        return None
+        msg = f"Falha ao abrir workbook ({engine_label}) em {nome}: {e}"
+        log_debug(msg, "WARNING")
+        erros.append(msg)
+        return None, erros
 
     for aba in abas:
         try:
             df = pd.read_excel(BytesIO(conteudo), sheet_name=aba, engine=engine)
             if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
                 log_debug(f"Excel OK ({engine_label}) aba='{aba}'", "SUCCESS")
-                return df
+                return df, erros
         except Exception as e:
-            log_debug(
-                f"Falha ao ler aba '{aba}' ({engine_label}) em {nome}: {e}",
-                "WARNING",
-            )
+            msg = f"Falha ao ler aba '{aba}' ({engine_label}) em {nome}: {e}"
+            log_debug(msg, "WARNING")
+            erros.append(msg)
 
     try:
         df = pd.read_excel(BytesIO(conteudo), engine=engine)
         if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
             log_debug(f"Excel OK ({engine_label})", "SUCCESS")
-            return df
+            return df, erros
     except Exception as e:
-        log_debug(f"Falha final read_excel ({engine_label}) em {nome}: {e}", "WARNING")
+        msg = f"Falha final read_excel ({engine_label}) em {nome}: {e}"
+        log_debug(msg, "WARNING")
+        erros.append(msg)
 
-    return None
+    return None, erros
 
 
 def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
@@ -415,6 +498,7 @@ def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
         return None
 
     ext = Path(nome).suffix.lower()
+    erros_gerais: list[str] = []
 
     if ext in {".xlsx", ".xlsm"}:
         engines: list[str | None] = [None, "openpyxl"]
@@ -423,21 +507,17 @@ def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
     elif ext == ".xlsb":
         engines = ["pyxlsb", None]
     else:
+        # fallback para arquivo com extensão diferente, mas conteúdo excel
         engines = [None, "openpyxl", "xlrd", "pyxlsb"]
 
-    ultimo_erro: Exception | None = None
-
     for engine in engines:
-        try:
-            df = _ler_excel_com_engine(conteudo, engine, nome)
-            if _safe_df(df):
-                return df
-        except Exception as e:
-            ultimo_erro = e
-            log_debug(f"Erro na tentativa Excel ({engine or 'auto'}): {e}", "WARNING")
+        df, erros = _ler_excel_com_engine(conteudo, engine, nome)
+        erros_gerais.extend(erros)
+        if _safe_df(df):
+            return df
 
-    if ultimo_erro is not None:
-        st.error(_mensagem_dependencia_excel(nome, ultimo_erro))
+    if erros_gerais:
+        st.error(_mensagem_dependencia_excel(nome, erros_gerais))
 
     return None
 
@@ -450,20 +530,46 @@ def ler_planilha_segura(arquivo):
         nome = str(getattr(arquivo, "name", "")).lower().strip()
         log_debug(f"Lendo arquivo: {nome or 'arquivo_sem_nome'}")
 
-        if not arquivo:
+        if arquivo is None:
             st.error("Nenhum arquivo foi enviado.")
             return None
 
-        if nome.endswith(".csv"):
-            df = _ler_csv_tentativas(arquivo)
-        elif nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb")):
-            df = _ler_excel_tentativas(arquivo)
-        else:
-            st.error("Formato não suportado.")
+        conteudo = _extrair_bytes_arquivo(arquivo)
+        if not conteudo:
+            st.error("Arquivo vazio ou inválido.")
+            log_debug("Arquivo vazio ou sem bytes.", "ERROR")
             return None
+
+        ext = Path(nome).suffix.lower()
+
+        df = None
+
+        # 1) segue a extensão primeiro
+        if ext == ".csv":
+            df = _ler_csv_tentativas(arquivo)
+        elif ext in {".xlsx", ".xls", ".xlsm", ".xlsb"}:
+            df = _ler_excel_tentativas(arquivo)
+
+        # 2) fallback por assinatura real do conteúdo
+        if df is None:
+            if _arquivo_parece_excel_por_assinatura(conteudo):
+                log_debug(
+                    "Fallback acionado: conteúdo parece Excel independentemente da extensão.",
+                    "WARNING",
+                )
+                df = _ler_excel_tentativas(arquivo)
+
+        if df is None:
+            if _arquivo_parece_csv_texto(conteudo):
+                log_debug(
+                    "Fallback acionado: conteúdo parece CSV/texto independentemente da extensão.",
+                    "WARNING",
+                )
+                df = _ler_csv_tentativas(arquivo)
 
         if df is None:
             st.error("Erro ao ler arquivo.")
+            log_debug(f"Falha total na leitura do arquivo: {nome}", "ERROR")
             return None
 
         df = df.dropna(how="all")
@@ -472,6 +578,12 @@ def ler_planilha_segura(arquivo):
             df = _corrigir_coluna_unica(df)
 
         df = _normalizar_df_texto(df)
+
+        if not _safe_df(df):
+            st.error("Arquivo lido sem colunas válidas.")
+            log_debug(f"Arquivo lido sem colunas válidas: {nome}", "ERROR")
+            return None
+
         log_debug(f"Shape final: {df.shape}", "INFO")
         return df
     except Exception as e:
