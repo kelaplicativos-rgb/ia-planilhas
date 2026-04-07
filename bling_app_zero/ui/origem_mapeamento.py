@@ -18,10 +18,6 @@ def _get_modelo():
 
 
 def _get_deposito() -> str:
-    """
-    Mantém compatibilidade com os diferentes estados já usados no projeto.
-    Prioriza a chave principal e cai nos fallbacks.
-    """
     candidatos = [
         "deposito_nome",
         "deposito_nome_widget",
@@ -45,7 +41,18 @@ def _is_coluna_deposito(nome) -> bool:
 
 def _is_coluna_preco(nome) -> bool:
     nome = str(nome).strip().lower()
-    return "preço" in nome or "preco" in nome
+
+    palavras = [
+        "preço",
+        "preco",
+        "valor venda",
+        "valor_venda",
+        "preco venda",
+        "preço venda",
+        "price",
+    ]
+
+    return any(p in nome for p in palavras)
 
 
 def _get_mapping_state_key() -> str:
@@ -79,10 +86,6 @@ def _limpar_mapeamento_widgets(colunas_modelo: list[str]) -> None:
 
 
 def _encontrar_coluna_existente(df: pd.DataFrame, coluna_modelo: str) -> str:
-    """
-    Tenta localizar no df já preparado uma coluna equivalente à coluna do modelo.
-    Isso ajuda a preservar preço/deposito já calculados, mesmo com pequenas variações.
-    """
     if not _safe_df(df):
         return ""
 
@@ -121,54 +124,41 @@ def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: 
         origem = mapping.get(col, "")
         col_existente = _encontrar_coluna_existente(df_base, col)
 
-        # 1) PREÇO AUTOMÁTICO: preserva o valor já calculado
-        if _is_coluna_preco(col) and bloqueios.get("preco"):
+        # 🔥 PREÇO BLINDADO TOTAL (NOVA REGRA)
+        if _is_coluna_preco(col):
             if col_existente and col_existente in df_base.columns:
                 df_saida[col] = df_base[col_existente]
             else:
                 df_saida[col] = ""
             continue
 
-        # 2) DEPÓSITO MANUAL: sempre prevalece quando informado
+        # DEPÓSITO
         if _is_coluna_deposito(col) and deposito:
             df_saida[col] = deposito
             continue
 
-        # 3) MAPEAMENTO MANUAL NORMAL
+        # MAPEAMENTO
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
             continue
 
-        # 4) PRESERVA VALOR JÁ EXISTENTE EM DF_BASE QUANDO HOUVER
+        # PRESERVAÇÃO
         if col_existente and col_existente in df_base.columns:
             df_saida[col] = df_base[col_existente]
             continue
 
-        # 5) FALLBACK VAZIO
         df_saida[col] = ""
 
-    # Reforço final do depósito
     if deposito:
-        encontrou = False
         for col in df_saida.columns:
             if _is_coluna_deposito(col):
                 df_saida[col] = deposito
-                encontrou = True
-
-        if not encontrou:
-            # só cria se realmente o modelo não trouxer depósito
-            pass
 
     df_saida = df_saida.reindex(columns=df_modelo.columns, fill_value="")
     return df_saida
 
 
-def _colunas_origem_ja_usadas(
-    mapping_atual: dict,
-    coluna_atual_modelo: str,
-    bloqueios: dict,
-    deposito: str,
-) -> set[str]:
+def _colunas_origem_ja_usadas(mapping_atual, coluna_atual_modelo, bloqueios, deposito):
     usadas = set()
 
     for campo_modelo, origem in mapping_atual.items():
@@ -181,7 +171,7 @@ def _colunas_origem_ja_usadas(
         if _is_coluna_deposito(campo_modelo) and deposito:
             continue
 
-        if _is_coluna_preco(campo_modelo) and bloqueios.get("preco"):
+        if _is_coluna_preco(campo_modelo):
             continue
 
         usadas.add(str(origem))
@@ -220,13 +210,13 @@ def render_origem_mapeamento():
     col_top_1, col_top_2 = st.columns(2)
 
     with col_top_1:
-        if st.button("🧹 Limpar mapeamento", use_container_width=True, key="btn_limpar_mapeamento_manual"):
+        if st.button("🧹 Limpar mapeamento", use_container_width=True):
             st.session_state[mapping_state_key] = {}
             _limpar_mapeamento_widgets(colunas_modelo)
             st.rerun()
 
     with col_top_2:
-        st.caption("Os campos automáticos permanecem bloqueados para evitar sobrescrita.")
+        st.caption("Campos automáticos (preço e depósito) protegidos.")
 
     mapping_atual = {}
 
@@ -240,6 +230,8 @@ def render_origem_mapeamento():
             col_modelo = colunas_modelo[i + j]
 
             with cols[j]:
+
+                # DEPÓSITO
                 if _is_coluna_deposito(col_modelo) and deposito:
                     st.text_input(
                         col_modelo,
@@ -250,7 +242,8 @@ def render_origem_mapeamento():
                     mapping_atual[col_modelo] = ""
                     continue
 
-                if _is_coluna_preco(col_modelo) and bloqueios.get("preco"):
+                # PREÇO
+                if _is_coluna_preco(col_modelo):
                     st.text_input(
                         col_modelo,
                         value="Calculado automaticamente",
@@ -263,28 +256,24 @@ def render_origem_mapeamento():
                 valor_inicial = _get_valor_widget_coluna(col_modelo, mapping_salvo)
 
                 usadas = _colunas_origem_ja_usadas(
-                    mapping_atual=mapping_atual,
-                    coluna_atual_modelo=col_modelo,
-                    bloqueios=bloqueios,
-                    deposito=deposito,
+                    mapping_atual,
+                    col_modelo,
+                    bloqueios,
+                    deposito,
                 )
 
-                opcoes_livres = [col for col in colunas_origem if col not in usadas]
+                opcoes = [""] + [c for c in colunas_origem if c not in usadas]
 
-                if valor_inicial and valor_inicial not in opcoes_livres and valor_inicial in colunas_origem:
-                    opcoes = ["", valor_inicial] + opcoes_livres
-                else:
-                    opcoes = [""] + opcoes_livres
-
-                opcoes = list(dict.fromkeys(opcoes))
-                indice = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
+                if valor_inicial and valor_inicial not in opcoes:
+                    opcoes.insert(1, valor_inicial)
 
                 escolhido = st.selectbox(
                     col_modelo,
-                    opcoes,
-                    index=indice,
+                    list(dict.fromkeys(opcoes)),
+                    index=opcoes.index(valor_inicial) if valor_inicial in opcoes else 0,
                     key=f"map_{col_modelo}",
                 )
+
                 mapping_atual[col_modelo] = escolhido
 
     st.session_state[mapping_state_key] = mapping_atual.copy()
@@ -301,16 +290,14 @@ def render_origem_mapeamento():
     with st.expander("📦 Preview final", expanded=False):
         st.dataframe(df_saida.head(20), use_container_width=True, hide_index=True)
 
-    col_acao_1, col_acao_2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-    with col_acao_1:
-        if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_voltar_origem"):
+    with col1:
+        if st.button("⬅️ Voltar"):
             st.session_state["etapa_origem"] = "upload"
             st.rerun()
 
-    with col_acao_2:
-        if st.button("➡️ Continuar para preview final", use_container_width=True, key="btn_ir_final"):
-            st.session_state["df_saida"] = df_saida.copy()
-            st.session_state["df_final"] = df_saida.copy()
+    with col2:
+        if st.button("➡️ Finalizar"):
             st.session_state["etapa_origem"] = "final"
             st.rerun()
