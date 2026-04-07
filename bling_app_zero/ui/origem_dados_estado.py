@@ -110,8 +110,9 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
             "Resetando estados transitórios do fluxo."
         )
 
+        resetar_estado_fluxo(manter_modelos=True)
+
         if not tem_upload_ativo():
-            resetar_estado_fluxo(manter_modelos=True)
             st.session_state["etapa_origem"] = "upload"
 
         st.session_state["_operacao_anterior_origem_dados"] = operacao
@@ -130,8 +131,9 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
             "Resetando estados transitórios do fluxo."
         )
 
+        resetar_estado_fluxo(manter_modelos=True)
+
         if not tem_upload_ativo():
-            resetar_estado_fluxo(manter_modelos=True)
             st.session_state["etapa_origem"] = "upload"
 
         st.session_state["_origem_anterior_origem_dados"] = origem
