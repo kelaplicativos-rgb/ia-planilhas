@@ -11,11 +11,28 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from bling_app_zero.core.fornecedores_adaptativos import (
-    carregar_fornecedor,
-    extrair_dominio,
-    garantir_fornecedor_adaptativo,
-)
+
+# ==========================================================
+# IMPORTS OPCIONAIS (BLINDAGEM)
+# ==========================================================
+try:
+    from bling_app_zero.core.fornecedores_adaptativos import (
+        carregar_fornecedor,
+        extrair_dominio,
+        garantir_fornecedor_adaptativo,
+    )
+except Exception:
+    def carregar_fornecedor(_dominio: str):
+        return None
+
+    def extrair_dominio(url: str) -> str:
+        try:
+            return urlparse(str(url or "").strip()).netloc.lower().replace("www.", "")
+        except Exception:
+            return ""
+
+    def garantir_fornecedor_adaptativo(_url: str, _html: str | None = None) -> None:
+        return None
 
 
 # ==========================================================
@@ -599,28 +616,12 @@ def _extrair_com_seletores_texto(soup: BeautifulSoup, seletores: list[str]) -> s
     return ""
 
 
-def _extrair_com_seletores_atributo(
+def _extrair_imagens_com_config(
     soup: BeautifulSoup,
+    base_url: str,
     seletores: list[str],
-    attrs: list[str],
-    base_url: str = "",
+    imagens_multiplas: bool,
 ) -> str:
-    for sel in _garantir_lista(seletores):
-        try:
-            el = soup.select_one(sel)
-            if not el:
-                continue
-
-            for attr in attrs:
-                val = _texto_limpo(el.get(attr))
-                if val:
-                    return _normalizar_link(base_url, val) if base_url else val
-        except Exception:
-            continue
-    return ""
-
-
-def _extrair_imagens_com_config(soup: BeautifulSoup, base_url: str, seletores: list[str], imagens_multiplas: bool) -> str:
     imagens: list[str] = []
     vistos = set()
 
@@ -647,9 +648,11 @@ def _extrair_imagens_com_config(soup: BeautifulSoup, base_url: str, seletores: l
                     link = _normalizar_link(base_url, candidato)
                     if not link:
                         continue
+
                     chave = link.lower()
                     if chave in vistos:
                         continue
+
                     vistos.add(chave)
                     imagens.append(link)
 
@@ -700,7 +703,7 @@ def _extrair_produto_por_fornecedor(html: str, url: str, config: dict) -> dict:
 
 
 # ==========================================================
-# IA DE EXTRAÇÃO
+# EXTRAÇÃO DE PRODUTO
 # ==========================================================
 def _extrair_produto(html: str, url: str) -> dict:
     dominio = extrair_dominio(url)
@@ -713,9 +716,12 @@ def _extrair_produto(html: str, url: str) -> dict:
 
     soup = BeautifulSoup(html, "html.parser")
 
+    try:
+        garantir_fornecedor_adaptativo(url, html)
+    except Exception:
+        pass
+
     produto_json = _extrair_produto_json_ld(soup, url)
 
     nome = produto_json.get("Nome", "") or _extrair_nome_produto_generico(soup)
-    preco = produto_json.get("Preço", "") or _extrair_preco_produto_generico(soup)
-    descricao = produto_json.get("Descrição", "") or _extrair_descricao_produto_generica(soup)
-    imagem = produto_json
+    preco = produto_json.get("Preço", "") or _extrair_pre
