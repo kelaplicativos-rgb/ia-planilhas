@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import BytesIO
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.origem_dados_helpers import (
-    exportar_excel_bytes,
-    limpar_gtin_invalido,
-    validar_campos_obrigatorios,
-)
 from bling_app_zero.ui.bling_panel import render_bling_panel
 
-# tenta usar exportador mais robusto, sem quebrar se não existir
+# ==========================================================
+# IMPORTS OPCIONAIS / BLINDAGEM
+# ==========================================================
 try:
     from bling_app_zero.utils.excel import (
         exportar_dataframe_para_excel as _exportar_excel_robusto,
@@ -20,7 +19,22 @@ try:
 except Exception:
     _exportar_excel_robusto = None
 
+try:
+    from bling_app_zero.utils.excel import (
+        df_to_excel_bytes as _df_to_excel_bytes_utils,
+    )
+except Exception:
+    _df_to_excel_bytes_utils = None
 
+try:
+    from bling_app_zero.utils.gtin import aplicar_validacao_gtin_df
+except Exception:
+    aplicar_validacao_gtin_df = None
+
+
+# ==========================================================
+# ESTADO / LOG
+# ==========================================================
 def garantir_estado_base() -> None:
     if "logs" not in st.session_state:
         st.session_state["logs"] = []
@@ -34,11 +48,64 @@ def garantir_estado_base() -> None:
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
+        if "logs" not in st.session_state:
+            st.session_state["logs"] = []
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         linha = f"[{timestamp}] [{nivel}] {msg}"
         st.session_state["logs"].append(linha)
     except Exception:
         pass
+
+
+# ==========================================================
+# HELPERS GERAIS
+# ==========================================================
+def _safe_text(value: Any) -> str:
+    try:
+        if value is None:
+            return ""
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
+
+
+def _normalizar_nome_coluna(nome: Any) -> str:
+    return (
+        _safe_text(nome)
+        .lower()
+        .replace("_", " ")
+        .replace("-", " ")
+        .replace("  ", " ")
+    )
+
+
+def _colunas_possiveis_gtin(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+
+    candidatas: list[str] = []
+    chaves = [
+        "gtin",
+        "ean",
+        "código de barras",
+        "codigo de barras",
+        "cod barras",
+        "cod. barras",
+        "gtin/ean",
+        "ean/gtin",
+        "gtin tribut",
+        "ean tribut",
+    ]
+
+    for col in df.columns:
+        nome = _normalizar_nome_coluna(col)
+        if any(chave in nome for chave in chaves):
+            candidatas.append(col)
+
+    return candidatas
 
 
 def safe_df_from_state(key: str) -> pd.DataFrame | None:
@@ -95,6 +162,38 @@ def normalizar_validacao_obrigatorios(resultado_validacao) -> bool:
         return True
 
 
+# ==========================================================
+# EXPORTAÇÃO
+# ==========================================================
+def _exportar_excel_fallback(df: pd.DataFrame) -> bytes:
+    df_saida = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_saida.to_excel(writer, sheet_name="Planilha", index=False)
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
+    """
+    Mantém compatibilidade local caso o módulo antigo
+    bling_app_zero.ui.origem_dados_helpers não exista.
+    """
+    if _df_to_excel_bytes_utils is not None:
+        try:
+            retorno = _df_to_excel_bytes_utils(df)
+            if isinstance(retorno, bytes):
+                return retorno
+            if hasattr(retorno, "getvalue"):
+                return retorno.getvalue()
+        except Exception as e:
+            log_debug(f"Falha em _df_to_excel_bytes_utils: {e}", "ERRO")
+
+    return _exportar_excel_fallback(df)
+
+
 def exportar_download_bytes(df: pd.DataFrame) -> bytes:
     """
     Tenta primeiro um exportador robusto. Se não existir ou falhar,
@@ -115,6 +214,128 @@ def exportar_download_bytes(df: pd.DataFrame) -> bytes:
     return exportar_excel_bytes(df)
 
 
+# ==========================================================
+# GTIN
+# ==========================================================
+def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpa GTIN/EAN inválido deixando vazio, sem depender do módulo ausente.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    df_saida = df.copy()
+
+    if aplicar_validacao_gtin_df is None:
+        return df_saida
+
+    try:
+        colunas_gtin = _colunas_possiveis_gtin(df_saida)
+
+        for col in colunas_gtin:
+            try:
+                df_saida, logs_gtin = aplicar_validacao_gtin_df(df_saida, col)
+                for linha in logs_gtin[-20:]:
+                    log_debug(str(linha), "INFO")
+            except Exception as e:
+                log_debug(f"Falha ao validar GTIN na coluna '{col}': {e}", "ERRO")
+
+        return df_saida
+    except Exception as e:
+        log_debug(f"Erro geral ao limpar GTIN inválido: {e}", "ERRO")
+        return df.copy()
+
+
+# ==========================================================
+# VALIDAÇÃO
+# ==========================================================
+def _obter_campos_faltando_de_estado() -> list[str]:
+    """
+    Aproveita possíveis estruturas já existentes em session_state
+    sem forçar um formato único.
+    """
+    candidatos = [
+        "campos_obrigatorios_faltando",
+        "faltando_obrigatorios",
+        "erros_campos_obrigatorios",
+        "validacao_campos_obrigatorios",
+    ]
+
+    faltando: list[str] = []
+
+    for chave in candidatos:
+        valor = st.session_state.get(chave)
+
+        if isinstance(valor, dict):
+            for k, v in valor.items():
+                if v:
+                    faltando.append(str(k).strip())
+
+        elif isinstance(valor, (list, tuple, set)):
+            faltando.extend([str(x).strip() for x in valor if str(x).strip()])
+
+        elif isinstance(valor, str) and valor.strip():
+            faltando.append(valor.strip())
+
+    # remove duplicados preservando ordem
+    vistos = set()
+    saida: list[str] = []
+    for item in faltando:
+        if item and item not in vistos:
+            vistos.add(item)
+            saida.append(item)
+
+    return saida
+
+
+def validar_campos_obrigatorios(df: pd.DataFrame):
+    """
+    Validação segura e não destrutiva.
+    Retorna:
+    - True quando pode seguir
+    - lista/dict quando houver faltas explícitas detectadas
+    """
+    try:
+        if not isinstance(df, pd.DataFrame) or df.empty or len(df.columns) == 0:
+            return ["Nenhum dado final disponível para download."]
+
+        faltando_estado = _obter_campos_faltando_de_estado()
+        if faltando_estado:
+            return faltando_estado
+
+        # Se existir estrutura pronta de obrigatórios, respeita.
+        obrigatorios = st.session_state.get("colunas_obrigatorias_download")
+        if isinstance(obrigatorios, (list, tuple, set)) and obrigatorios:
+            faltando: list[str] = []
+
+            for col in obrigatorios:
+                col = str(col).strip()
+                if not col:
+                    continue
+
+                if col not in df.columns:
+                    faltando.append(col)
+                    continue
+
+                serie = df[col]
+                preenchidos = serie.astype(str).str.strip().replace(
+                    {"nan": "", "None": "", "null": ""}
+                )
+                if (preenchidos != "").sum() == 0:
+                    faltando.append(col)
+
+            if faltando:
+                return faltando
+
+        return True
+    except Exception as e:
+        log_debug(f"Erro interno na validação de obrigatórios: {e}", "ERRO")
+        return True
+
+
+# ==========================================================
+# LOG / DEBUG
+# ==========================================================
 def gerar_log_bytes() -> bytes:
     try:
         logs = st.session_state.get("logs", [])
@@ -166,6 +387,9 @@ def render_debug_panel(
         )
 
 
+# ==========================================================
+# PREVIEW FINAL
+# ==========================================================
 def render_preview_final() -> None:
     sincronizar_df_final()
     df_fluxo = get_df_fluxo()
