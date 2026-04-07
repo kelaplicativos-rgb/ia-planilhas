@@ -35,6 +35,30 @@ def _slug(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def _safe_float(valor: Any, default: float = 0.0) -> float:
+    try:
+        return float(valor)
+    except Exception:
+        return default
+
+
+def _safe_bool(valor: Any, default: bool = False) -> bool:
+    if isinstance(valor, bool):
+        return valor
+
+    texto = str(valor or "").strip().lower()
+    if texto in {"1", "true", "sim", "yes", "y"}:
+        return True
+    if texto in {"0", "false", "nao", "não", "no", "n"}:
+        return False
+
+    return default
+
+
+def _safe_dict(valor: Any) -> dict[str, Any]:
+    return valor if isinstance(valor, dict) else {}
+
+
 def _load_db() -> dict[str, Any]:
     _garantir_pasta()
 
@@ -103,11 +127,15 @@ def salvar_fornecedor(
     novo_item = {
         "dominio": dominio,
         "tipo": str(config.get("tipo", atual.get("tipo", "generico")) or "generico").strip(),
-        "confianca": float(config.get("confianca", atual.get("confianca", 0.0)) or 0.0),
-        "seletores": config.get("seletores", atual.get("seletores", {})) or {},
-        "links": config.get("links", atual.get("links", {})) or {},
-        "imagens_multiplas": bool(config.get("imagens_multiplas", atual.get("imagens_multiplas", True))),
+        "confianca": _safe_float(config.get("confianca", atual.get("confianca", 0.0)), 0.0),
+        "seletores": _safe_dict(config.get("seletores", atual.get("seletores", {}))) or {},
+        "links": _safe_dict(config.get("links", atual.get("links", {}))) or {},
+        "imagens_multiplas": _safe_bool(
+            config.get("imagens_multiplas", atual.get("imagens_multiplas", True)),
+            True,
+        ),
         "origem": str(config.get("origem", atual.get("origem", "ia_adaptativa")) or "ia_adaptativa").strip(),
+        "principal": _safe_bool(config.get("principal", atual.get("principal", False)), False),
     }
 
     db[dominio] = novo_item
@@ -133,7 +161,7 @@ def atualizar_fornecedor(
         if not isinstance(seletores, dict):
             seletores = {}
         for chave, valor in patch["seletores"].items():
-            if valor:
+            if valor is not None:
                 seletores[chave] = valor
         atual["seletores"] = seletores
 
@@ -142,7 +170,7 @@ def atualizar_fornecedor(
         if not isinstance(links, dict):
             links = {}
         for chave, valor in patch["links"].items():
-            if valor:
+            if valor is not None:
                 links[chave] = valor
         atual["links"] = links
 
@@ -151,13 +179,19 @@ def atualizar_fornecedor(
             atual[chave] = patch.get(chave)
 
     if "confianca" in patch and patch.get("confianca") is not None:
-        try:
-            atual["confianca"] = float(patch.get("confianca"))
-        except Exception:
-            pass
+        atual["confianca"] = _safe_float(patch.get("confianca"), atual.get("confianca", 0.0))
 
     if "imagens_multiplas" in patch:
-        atual["imagens_multiplas"] = bool(patch.get("imagens_multiplas"))
+        atual["imagens_multiplas"] = _safe_bool(
+            patch.get("imagens_multiplas"),
+            atual.get("imagens_multiplas", True),
+        )
+
+    if "principal" in patch:
+        atual["principal"] = _safe_bool(
+            patch.get("principal"),
+            atual.get("principal", False),
+        )
 
     db[dominio] = atual
     _save_db(db)
@@ -419,6 +453,7 @@ def analisar_fornecedor_por_html(url: str, html: str) -> dict[str, Any]:
         "confianca": 0.75,
         "origem": "ia_adaptativa",
         "imagens_multiplas": True,
+        "principal": False,
         "seletores": {
             "nome": _detectar_selectores_nome(soup),
             "preco": _detectar_selectores_preco(soup),
@@ -431,7 +466,6 @@ def analisar_fornecedor_por_html(url: str, html: str) -> dict[str, Any]:
         },
     }
 
-    # aumenta confiança se achou bem os principais campos
     score = 0.0
     if config["seletores"]["nome"]:
         score += 0.1
