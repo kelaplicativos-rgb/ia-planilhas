@@ -11,6 +11,12 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.fornecedores_adaptativos import (
+    carregar_fornecedor,
+    extrair_dominio,
+    garantir_fornecedor_adaptativo,
+)
+
 
 # ==========================================================
 # CONFIG
@@ -124,7 +130,6 @@ def _normalizar_preco(valor: str) -> str:
     if not texto:
         return ""
 
-    # tenta extrair o número mais relevante
     match = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:,\d{2})|\d+(?:\.\d{2}))", texto)
     if match:
         return match.group(1).strip()
@@ -334,7 +339,7 @@ def _detectar_estoque(html: str, soup: BeautifulSoup) -> int:
     return 0
 
 
-def _extrair_nome_produto(soup: BeautifulSoup) -> str:
+def _extrair_nome_produto_generico(soup: BeautifulSoup) -> str:
     candidatos = [
         _meta_content(soup, ["og:title"]),
         _texto(
@@ -347,7 +352,6 @@ def _extrair_nome_produto(soup: BeautifulSoup) -> str:
                 ".produto_nome",
                 ".product_title",
                 "[itemprop='name']",
-                "meta[name='title']",
                 "[class*='product-title']",
                 "[class*='product-name']",
                 "[class*='produto'] h1",
@@ -364,7 +368,7 @@ def _extrair_nome_produto(soup: BeautifulSoup) -> str:
     return _texto_limpo(title)
 
 
-def _extrair_preco_produto(soup: BeautifulSoup) -> str:
+def _extrair_preco_produto_generico(soup: BeautifulSoup) -> str:
     candidatos = [
         _meta_content(soup, ["product:price:amount"]),
         _meta_content(soup, ["og:price:amount"]),
@@ -408,7 +412,7 @@ def _extrair_preco_produto(soup: BeautifulSoup) -> str:
     return melhor
 
 
-def _extrair_descricao_produto(soup: BeautifulSoup) -> str:
+def _extrair_descricao_produto_generica(soup: BeautifulSoup) -> str:
     candidatos = [
         _meta_content(soup, ["og:description"]),
         _meta_content(soup, ["description"], attr="name"),
@@ -435,7 +439,7 @@ def _extrair_descricao_produto(soup: BeautifulSoup) -> str:
     return ""
 
 
-def _extrair_imagens_produto(soup: BeautifulSoup, url: str) -> str:
+def _extrair_imagens_produto_genericas(soup: BeautifulSoup, url: str) -> str:
     imagens: list[str] = []
     vistos = set()
 
@@ -467,7 +471,6 @@ def _extrair_imagens_produto(soup: BeautifulSoup, url: str) -> str:
         vistos.add(img.lower())
         imagens.append(img)
 
-    # coleta múltiplas imagens visíveis
     for img_tag in soup.select(
         ".product-gallery img, "
         ".woocommerce-product-gallery img, "
@@ -552,8 +555,8 @@ def _parece_pagina_produto(html: str, url: str) -> bool:
     if _extrair_produto_json_ld(soup, url).get("Nome"):
         return True
 
-    nome = _extrair_nome_produto(soup)
-    preco = _extrair_preco_produto(soup)
+    nome = _extrair_nome_produto_generico(soup)
+    preco = _extrair_preco_produto_generico(soup)
 
     if nome and _preco_para_float(preco) > 0:
         return True
@@ -567,160 +570,152 @@ def _parece_pagina_produto(html: str, url: str) -> bool:
 
 
 # ==========================================================
-# IA DE EXTRAÇÃO
+# ADAPTADOR POR FORNECEDOR
 # ==========================================================
-def _extrair_produto(html: str, url: str) -> dict:
+def _garantir_lista(valor) -> list[str]:
+    if isinstance(valor, list):
+        return [str(v).strip() for v in valor if str(v).strip()]
+    if isinstance(valor, str) and valor.strip():
+        return [valor.strip()]
+    return []
+
+
+def _extrair_com_seletores_texto(soup: BeautifulSoup, seletores: list[str]) -> str:
+    for sel in _garantir_lista(seletores):
+        try:
+            el = soup.select_one(sel)
+            if not el:
+                continue
+
+            if el.name == "meta":
+                val = _texto_limpo(el.get("content"))
+            else:
+                val = _texto_limpo(el.get_text(" ", strip=True))
+
+            if val:
+                return val
+        except Exception:
+            continue
+    return ""
+
+
+def _extrair_com_seletores_atributo(
+    soup: BeautifulSoup,
+    seletores: list[str],
+    attrs: list[str],
+    base_url: str = "",
+) -> str:
+    for sel in _garantir_lista(seletores):
+        try:
+            el = soup.select_one(sel)
+            if not el:
+                continue
+
+            for attr in attrs:
+                val = _texto_limpo(el.get(attr))
+                if val:
+                    return _normalizar_link(base_url, val) if base_url else val
+        except Exception:
+            continue
+    return ""
+
+
+def _extrair_imagens_com_config(soup: BeautifulSoup, base_url: str, seletores: list[str], imagens_multiplas: bool) -> str:
+    imagens: list[str] = []
+    vistos = set()
+
+    if not seletores:
+        return ""
+
+    for sel in _garantir_lista(seletores):
+        try:
+            elementos = soup.select(sel)
+        except Exception:
+            continue
+
+        for el in elementos:
+            try:
+                candidatos = [
+                    el.get("content"),
+                    el.get("data-zoom-image"),
+                    el.get("data-large_image"),
+                    el.get("data-src"),
+                    el.get("src"),
+                ]
+
+                for candidato in candidatos:
+                    link = _normalizar_link(base_url, candidato)
+                    if not link:
+                        continue
+                    chave = link.lower()
+                    if chave in vistos:
+                        continue
+                    vistos.add(chave)
+                    imagens.append(link)
+
+                    if not imagens_multiplas:
+                        return link
+
+                    if len(imagens) >= 10:
+                        return "|".join(imagens)
+            except Exception:
+                continue
+
+    return "|".join(imagens)
+
+
+def _extrair_produto_por_fornecedor(html: str, url: str, config: dict) -> dict:
     soup = BeautifulSoup(html, "html.parser")
+    seletores = config.get("seletores", {}) if isinstance(config.get("seletores", {}), dict) else {}
 
-    produto_json = _extrair_produto_json_ld(soup, url)
-
-    nome = produto_json.get("Nome", "") or _extrair_nome_produto(soup)
-    preco = produto_json.get("Preço", "") or _extrair_preco_produto(soup)
-    descricao = produto_json.get("Descrição", "") or _extrair_descricao_produto(soup)
-    imagem = produto_json.get("Imagem", "") or _extrair_imagens_produto(soup, url)
-    estoque = (
-        produto_json.get("Estoque", 0)
-        if produto_json.get("Estoque", 0) in (0, 10)
-        else _detectar_estoque(html, soup)
+    nome = _extrair_com_seletores_texto(soup, seletores.get("nome", []))
+    preco = _extrair_com_seletores_texto(soup, seletores.get("preco", []))
+    descricao = _extrair_com_seletores_texto(soup, seletores.get("descricao", []))
+    imagem = _extrair_imagens_com_config(
+        soup,
+        url,
+        seletores.get("imagem", []),
+        bool(config.get("imagens_multiplas", True)),
     )
 
-    nome = _texto_limpo(nome)
-    descricao = _texto_limpo(descricao)
+    if not nome:
+        nome = _extrair_nome_produto_generico(soup)
+    if not preco:
+        preco = _extrair_preco_produto_generico(soup)
+    if not descricao:
+        descricao = _extrair_descricao_produto_generica(soup)
+    if not imagem:
+        imagem = _extrair_imagens_produto_genericas(soup, url)
+
+    estoque = _detectar_estoque(html, soup)
 
     return {
-        "Nome": nome,
+        "Nome": _texto_limpo(nome),
         "Preço": _normalizar_preco(preco),
-        "Descrição": descricao,
+        "Descrição": _texto_limpo(descricao),
         "Imagem": imagem,
         "Link": url,
-        "Estoque": estoque if estoque in (0, 10) else _detectar_estoque(html, soup),
+        "Estoque": estoque,
     }
 
 
 # ==========================================================
-# COLETAR LINKS
+# IA DE EXTRAÇÃO
 # ==========================================================
-def _extrair_links_paginacao(html: str, base_url: str) -> list[str]:
-    soup = BeautifulSoup(html, "html.parser")
-    links: list[str] = []
-    vistos = set()
+def _extrair_produto(html: str, url: str) -> dict:
+    dominio = extrair_dominio(url)
+    config_fornecedor = carregar_fornecedor(dominio)
 
-    for a in soup.select("a[href]"):
-        href = a.get("href")
-        link = _normalizar_link(base_url, href)
-        if not link:
-            continue
-        if not _mesmo_dominio(base_url, link):
-            continue
-        if _parece_link_irrelevante(link):
-            continue
-
-        link_slug = _slug(link)
-        texto = _slug(a.get_text(" ", strip=True))
-        rel = " ".join(a.get("rel", []) or [])
-        classes = " ".join(a.get("class", []) or [])
-
-        eh_paginacao = any(
-            termo in link_slug or termo in texto or termo in rel or termo in classes
-            for termo in [
-                "page",
-                "pagina",
-                "prxima",
-                "proxima",
-                "next",
-                "older",
-                "mais produtos",
-                "carregar mais",
-                "load more",
-                "show more",
-            ]
-        )
-
-        if eh_paginacao and link not in vistos:
-            vistos.add(link)
-            links.append(link)
-
-    return links
-
-
-def _extrair_links(html: str, base_url: str) -> list[str]:
-    soup = BeautifulSoup(html, "html.parser")
-    candidatos: list[tuple[float, str]] = []
-    vistos = set()
-
-    for a in soup.select("a[href]"):
-        href = a.get("href")
-        link_absoluto = _normalizar_link(base_url, href)
-        if not link_absoluto:
-            continue
-
-        if not _mesmo_dominio(base_url, link_absoluto):
-            continue
-
-        if _parece_link_irrelevante(link_absoluto):
-            continue
-
-        if link_absoluto in vistos:
-            continue
-
-        texto_ancora = a.get_text(" ", strip=True)
-        classes = " ".join(a.get("class", []) or [])
-        score = _score_link_produto(link_absoluto, texto_ancora, classes)
-
-        if score <= 0:
-            continue
-
-        vistos.add(link_absoluto)
-        candidatos.append((score, link_absoluto))
-
-    candidatos.sort(key=lambda x: x[0], reverse=True)
-    links = [link for _, link in candidatos[:MAX_LINKS]]
-    return links
-
-
-def _coletar_paginas_relevantes(url_inicial: str, html_inicial: str) -> list[tuple[str, str]]:
-    paginas: list[tuple[str, str]] = [(url_inicial, html_inicial)]
-    visitados = {url_inicial}
-    fila = _extrair_links_paginacao(html_inicial, url_inicial)[: MAX_PAGINAS - 1]
-
-    for link in fila:
-        if link in visitados:
-            continue
-        html = _fetch(link)
-        if not html:
-            continue
-        visitados.add(link)
-        paginas.append((link, html))
-        if len(paginas) >= MAX_PAGINAS:
-            break
-
-    return paginas
-
-
-# ==========================================================
-# CRAWLER PRINCIPAL
-# ==========================================================
-def executar_crawler(url: str) -> pd.DataFrame:
-    url = str(url or "").strip()
-    if not url:
-        return pd.DataFrame()
-
-    html = _fetch(url)
-    if not html:
-        return pd.DataFrame()
-
-    # se a URL já for uma página de produto, extrai diretamente
-    if _parece_pagina_produto(html, url):
-        produto = _extrair_produto(html, url)
+    if config_fornecedor:
+        produto = _extrair_produto_por_fornecedor(html, url, config_fornecedor)
         if produto.get("Nome"):
-            return pd.DataFrame([produto])
-        return pd.DataFrame()
+            return produto
 
-    paginas = _coletar_paginas_relevantes(url, html)
+    soup = BeautifulSoup(html, "html.parser")
 
-    links: list[str] = []
-    vistos_links = set()
+    produto_json = _extrair_produto_json_ld(soup, url)
 
-    for pagina_url, pagina_html in paginas:
-        for link in _extrair_links(pagina_html, pagina_url):
-            if link in vistos_lin
+    nome = produto_json.get("Nome", "") or _extrair_nome_produto_generico(soup)
+    preco = produto_json.get("Preço", "") or _extrair_preco_produto_generico(soup)
+    descricao = produto_json.get("Descrição", "") or _extrair_descricao_produto_generica(soup)
+    imagem = produto_json
