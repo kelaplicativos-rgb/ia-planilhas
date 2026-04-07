@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -105,7 +104,7 @@ def _arquivo_parece_csv_texto(conteudo: bytes) -> bool:
                 if not texto.strip():
                     continue
 
-                if any(sep in texto for sep in [";", ",", "\t"]):
+                if any(sep in texto for sep in [";", ",", "\t", "|"]):
                     return True
             except Exception:
                 continue
@@ -125,6 +124,9 @@ def _apenas_digitos(valor) -> str:
 
 
 def _ean_checksum_valido(numero: str) -> bool:
+    """
+    Valida GTIN-8 / GTIN-12 / GTIN-13 / GTIN-14.
+    """
     try:
         if not numero or not numero.isdigit():
             return False
@@ -207,7 +209,13 @@ def validar_campos_obrigatorios(df: pd.DataFrame) -> bool:
 
         coluna_descricao = encontrar_coluna(["descricao", "descrição"])
         coluna_preco = encontrar_coluna(
-            ["preco de venda", "preço de venda", "preco", "preço", "valor"]
+            [
+                "preco de venda",
+                "preço de venda",
+                "preco",
+                "preço",
+                "valor",
+            ]
         )
 
         faltantes_estrutura: list[str] = []
