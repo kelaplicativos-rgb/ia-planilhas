@@ -17,16 +17,33 @@ def _get_modelo():
     return st.session_state.get("df_modelo_estoque")
 
 
-def _get_deposito():
-    return str(st.session_state.get("deposito_nome", "") or "").strip()
+def _get_deposito() -> str:
+    """
+    Mantém compatibilidade com os diferentes estados já usados no projeto.
+    Prioriza a chave principal e cai nos fallbacks.
+    """
+    candidatos = [
+        "deposito_nome",
+        "deposito_nome_widget",
+        "deposito_nome_manual",
+    ]
+
+    for chave in candidatos:
+        valor = str(st.session_state.get(chave, "") or "").strip()
+        if valor:
+            if chave != "deposito_nome":
+                st.session_state["deposito_nome"] = valor
+            return valor
+
+    return ""
 
 
-def _is_coluna_deposito(nome):
+def _is_coluna_deposito(nome) -> bool:
     nome = str(nome).strip().lower()
     return "deposit" in nome or "depós" in nome or "deposito" in nome
 
 
-def _is_coluna_preco(nome):
+def _is_coluna_preco(nome) -> bool:
     nome = str(nome).strip().lower()
     return "preço" in nome or "preco" in nome
 
@@ -104,6 +121,32 @@ def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: 
     return df_saida
 
 
+def _colunas_origem_ja_usadas(
+    mapping_atual: dict,
+    coluna_atual_modelo: str,
+    bloqueios: dict,
+    deposito: str,
+) -> set[str]:
+    usadas = set()
+
+    for campo_modelo, origem in mapping_atual.items():
+        if campo_modelo == coluna_atual_modelo:
+            continue
+
+        if not origem:
+            continue
+
+        if _is_coluna_deposito(campo_modelo) and deposito:
+            continue
+
+        if _is_coluna_preco(campo_modelo) and bloqueios.get("preco"):
+            continue
+
+        usadas.add(str(origem))
+
+    return usadas
+
+
 def render_origem_mapeamento():
     etapa = str(st.session_state.get("etapa_origem", "") or "").strip().lower()
     if etapa not in {"mapeamento", ""}:
@@ -125,6 +168,7 @@ def render_origem_mapeamento():
     deposito = _get_deposito()
     bloqueios = _get_bloqueios()
     colunas_modelo = list(df_modelo.columns)
+    colunas_origem = list(df_origem.columns)
 
     mapping_state_key = _get_mapping_state_key()
     mapping_salvo = st.session_state.get(mapping_state_key, {})
@@ -175,7 +219,24 @@ def render_origem_mapeamento():
                     continue
 
                 valor_inicial = _get_valor_widget_coluna(col_modelo, mapping_salvo)
-                opcoes = [""] + list(df_origem.columns)
+
+                usadas = _colunas_origem_ja_usadas(
+                    mapping_atual=mapping_atual,
+                    coluna_atual_modelo=col_modelo,
+                    bloqueios=bloqueios,
+                    deposito=deposito,
+                )
+
+                opcoes_livres = [col for col in colunas_origem if col not in usadas]
+
+                if valor_inicial and valor_inicial not in opcoes_livres and valor_inicial in colunas_origem:
+                    opcoes = ["", valor_inicial] + opcoes_livres
+                else:
+                    opcoes = [""] + opcoes_livres
+
+                # remove duplicadas preservando ordem
+                opcoes = list(dict.fromkeys(opcoes))
+
                 indice = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
                 escolhido = st.selectbox(
@@ -198,7 +259,7 @@ def render_origem_mapeamento():
     st.session_state["df_final"] = df_saida.copy()
 
     with st.expander("📦 Preview final", expanded=False):
-        st.dataframe(df_saida.head(20), width="stretch")
+        st.dataframe(df_saida.head(20), use_container_width=True)
 
     col_acao_1, col_acao_2 = st.columns(2)
 
