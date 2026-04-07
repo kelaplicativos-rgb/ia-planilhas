@@ -78,35 +78,76 @@ def _limpar_mapeamento_widgets(colunas_modelo: list[str]) -> None:
         st.session_state.pop(f"map_{col}", None)
 
 
+def _encontrar_coluna_existente(df: pd.DataFrame, coluna_modelo: str) -> str:
+    """
+    Tenta localizar no df já preparado uma coluna equivalente à coluna do modelo.
+    Isso ajuda a preservar preço/deposito já calculados, mesmo com pequenas variações.
+    """
+    if not _safe_df(df):
+        return ""
+
+    alvo = str(coluna_modelo).strip().lower()
+
+    for col in df.columns:
+        if str(col).strip().lower() == alvo:
+            return col
+
+    if _is_coluna_preco(coluna_modelo):
+        for col in df.columns:
+            if _is_coluna_preco(col):
+                return col
+
+    if _is_coluna_deposito(coluna_modelo):
+        for col in df.columns:
+            if _is_coluna_deposito(col):
+                return col
+
+    return ""
+
+
 def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
     bloqueios = _get_bloqueios()
     deposito = _get_deposito()
 
     df_preparado = st.session_state.get("df_saida")
     if _safe_df(df_preparado):
-        df_saida = df_preparado.copy()
+        df_base = df_preparado.copy()
     else:
-        df_saida = pd.DataFrame(index=df_origem.index)
+        df_base = pd.DataFrame(index=df_origem.index)
+
+    df_saida = pd.DataFrame(index=df_origem.index)
 
     for col in df_modelo.columns:
         origem = mapping.get(col, "")
+        col_existente = _encontrar_coluna_existente(df_base, col)
 
-        # preço automático: preserva o valor já calculado no df_preparado
+        # 1) PREÇO AUTOMÁTICO: preserva o valor já calculado
         if _is_coluna_preco(col) and bloqueios.get("preco"):
-            if col not in df_saida.columns:
+            if col_existente and col_existente in df_base.columns:
+                df_saida[col] = df_base[col_existente]
+            else:
                 df_saida[col] = ""
             continue
 
-        # depósito manual automático: prevalece sobre mapeamento
+        # 2) DEPÓSITO MANUAL: sempre prevalece quando informado
         if _is_coluna_deposito(col) and deposito:
             df_saida[col] = deposito
             continue
 
+        # 3) MAPEAMENTO MANUAL NORMAL
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
-        elif col not in df_saida.columns:
-            df_saida[col] = ""
+            continue
 
+        # 4) PRESERVA VALOR JÁ EXISTENTE EM DF_BASE QUANDO HOUVER
+        if col_existente and col_existente in df_base.columns:
+            df_saida[col] = df_base[col_existente]
+            continue
+
+        # 5) FALLBACK VAZIO
+        df_saida[col] = ""
+
+    # Reforço final do depósito
     if deposito:
         encontrou = False
         for col in df_saida.columns:
@@ -115,7 +156,8 @@ def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: 
                 encontrou = True
 
         if not encontrou:
-            df_saida["Depósito"] = deposito
+            # só cria se realmente o modelo não trouxer depósito
+            pass
 
     df_saida = df_saida.reindex(columns=df_modelo.columns, fill_value="")
     return df_saida
@@ -234,9 +276,7 @@ def render_origem_mapeamento():
                 else:
                     opcoes = [""] + opcoes_livres
 
-                # remove duplicadas preservando ordem
                 opcoes = list(dict.fromkeys(opcoes))
-
                 indice = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
                 escolhido = st.selectbox(
@@ -259,7 +299,7 @@ def render_origem_mapeamento():
     st.session_state["df_final"] = df_saida.copy()
 
     with st.expander("📦 Preview final", expanded=False):
-        st.dataframe(df_saida.head(20), use_container_width=True)
+        st.dataframe(df_saida.head(20), use_container_width=True, hide_index=True)
 
     col_acao_1, col_acao_2 = st.columns(2)
 
