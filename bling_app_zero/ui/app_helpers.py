@@ -82,6 +82,15 @@ def _normalizar_nome_coluna(nome: Any) -> str:
     )
 
 
+def _somente_digitos(value: Any) -> str:
+    return "".join(ch for ch in _safe_text(value) if ch.isdigit())
+
+
+def _gtin_valido_tamanho(value: Any) -> str:
+    digits = _somente_digitos(value)
+    return digits if len(digits) in {8, 12, 13, 14} else ""
+
+
 def _colunas_possiveis_gtin(df: pd.DataFrame) -> list[str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
@@ -178,8 +187,7 @@ def _exportar_excel_fallback(df: pd.DataFrame) -> bytes:
 
 def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
     """
-    Mantém compatibilidade local caso o módulo antigo
-    bling_app_zero.ui.origem_dados_helpers não exista.
+    Exportação padrão com fallback seguro.
     """
     if _df_to_excel_bytes_utils is not None:
         try:
@@ -191,26 +199,23 @@ def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
         except Exception as e:
             log_debug(f"Falha em _df_to_excel_bytes_utils: {e}", "ERRO")
 
+    if _exportar_excel_robusto is not None:
+        try:
+            retorno = _exportar_excel_robusto(df)
+            if isinstance(retorno, bytes):
+                return retorno
+            if hasattr(retorno, "getvalue"):
+                return retorno.getvalue()
+        except Exception as e:
+            log_debug(f"Falha em _exportar_excel_robusto: {e}", "ERRO")
+
     return _exportar_excel_fallback(df)
 
 
 def exportar_download_bytes(df: pd.DataFrame) -> bytes:
     """
-    Tenta primeiro um exportador robusto. Se não existir ou falhar,
-    cai no exportador atual do projeto.
+    Mantido para compatibilidade com chamadas já existentes no projeto.
     """
-    if _exportar_excel_robusto is not None:
-        try:
-            retorno = _exportar_excel_robusto(df)
-
-            if isinstance(retorno, bytes):
-                return retorno
-
-            if hasattr(retorno, "getvalue"):
-                return retorno.getvalue()
-        except Exception as e:
-            log_debug(f"Falha no exportador robusto: {e}", "ERRO")
-
     return exportar_excel_bytes(df)
 
 
@@ -219,26 +224,41 @@ def exportar_download_bytes(df: pd.DataFrame) -> bytes:
 # ==========================================================
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Limpa GTIN/EAN inválido deixando vazio, sem depender do módulo ausente.
+    Limpa GTIN/EAN inválido deixando vazio.
     """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
     df_saida = df.copy()
 
-    if aplicar_validacao_gtin_df is None:
-        return df_saida
-
     try:
         colunas_gtin = _colunas_possiveis_gtin(df_saida)
 
-        for col in colunas_gtin:
-            try:
-                df_saida, logs_gtin = aplicar_validacao_gtin_df(df_saida, col)
-                for linha in logs_gtin[-20:]:
-                    log_debug(str(linha), "INFO")
-            except Exception as e:
-                log_debug(f"Falha ao validar GTIN na coluna '{col}': {e}", "ERRO")
+        if not colunas_gtin:
+            return df_saida
+
+        if aplicar_validacao_gtin_df is not None:
+            for col in colunas_gtin:
+                try:
+                    resultado = aplicar_validacao_gtin_df(df_saida, col)
+
+                    if isinstance(resultado, tuple) and len(resultado) >= 1:
+                        df_saida = resultado[0]
+                        logs_gtin = resultado[1] if len(resultado) > 1 else []
+                    else:
+                        logs_gtin = []
+
+                    if isinstance(logs_gtin, list):
+                        for linha in logs_gtin[-20:]:
+                            log_debug(str(linha), "INFO")
+                except Exception as e:
+                    log_debug(f"Falha ao validar GTIN na coluna '{col}': {e}", "ERRO")
+        else:
+            for col in colunas_gtin:
+                try:
+                    df_saida[col] = df_saida[col].apply(_gtin_valido_tamanho)
+                except Exception as e:
+                    log_debug(f"Falha no fallback de GTIN na coluna '{col}': {e}", "ERRO")
 
         return df_saida
     except Exception as e:
@@ -277,7 +297,6 @@ def _obter_campos_faltando_de_estado() -> list[str]:
         elif isinstance(valor, str) and valor.strip():
             faltando.append(valor.strip())
 
-    # remove duplicados preservando ordem
     vistos = set()
     saida: list[str] = []
     for item in faltando:
@@ -303,7 +322,6 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         if faltando_estado:
             return faltando_estado
 
-        # Se existir estrutura pronta de obrigatórios, respeita.
         obrigatorios = st.session_state.get("colunas_obrigatorias_download")
         if isinstance(obrigatorios, (list, tuple, set)) and obrigatorios:
             faltando: list[str] = []
