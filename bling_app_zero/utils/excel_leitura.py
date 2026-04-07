@@ -207,4 +207,87 @@ def _ler_excel_com_engine(
 
 def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
     nome = str(getattr(arquivo, "name", "")).lower().strip()
-    conteudo = _extrair_bytes_
+    conteudo = _extrair_bytes_arquivo(arquivo)
+
+    if not conteudo:
+        log_debug("Arquivo Excel vazio ou sem bytes disponíveis.", "ERROR")
+        return None
+
+    ext = Path(nome).suffix.lower()
+    erros_gerais: list[str] = []
+
+    if ext in {".xlsx", ".xlsm"}:
+        engines: list[str | None] = [None, "openpyxl"]
+    elif ext == ".xls":
+        engines = ["xlrd", None]
+    elif ext == ".xlsb":
+        engines = ["pyxlsb", None]
+    else:
+        engines = [None, "openpyxl", "xlrd", "pyxlsb"]
+
+    for engine in engines:
+        df, erros = _ler_excel_com_engine(conteudo, engine, nome)
+        erros_gerais.extend(erros)
+        if _safe_df(df):
+            return df
+
+    if erros_gerais:
+        st.error(_mensagem_dependencia_excel(nome, erros_gerais))
+
+    return None
+
+
+def ler_planilha_segura(arquivo) -> pd.DataFrame:
+    try:
+        if arquivo is None:
+            log_debug("Nenhum arquivo enviado para leitura.", "WARNING")
+            return pd.DataFrame()
+
+        arquivo = _extrair_planilha_zip(arquivo)
+        conteudo = _extrair_bytes_arquivo(arquivo)
+
+        if not conteudo:
+            st.error("Arquivo sem conteúdo legível.")
+            log_debug("Arquivo sem conteúdo legível.", "ERROR")
+            return pd.DataFrame()
+
+        nome = str(getattr(arquivo, "name", "") or "").lower().strip()
+        ext = Path(nome).suffix.lower()
+
+        df: pd.DataFrame | None = None
+
+        if ext == ".csv":
+            df = _ler_csv_tentativas(arquivo)
+        elif ext in {".xlsx", ".xls", ".xlsm", ".xlsb"}:
+            df = _ler_excel_tentativas(arquivo)
+        else:
+            if _arquivo_parece_excel_por_assinatura(conteudo):
+                df = _ler_excel_tentativas(arquivo)
+            elif _arquivo_parece_csv_texto(conteudo):
+                df = _ler_csv_tentativas(arquivo)
+
+        if df is None or not isinstance(df, pd.DataFrame):
+            st.error("Não foi possível ler a planilha enviada.")
+            log_debug(f"Falha total na leitura do arquivo: {nome}", "ERROR")
+            return pd.DataFrame()
+
+        df = _corrigir_coluna_unica(df)
+        df = _normalizar_df_texto(df)
+        df = _limpar_dataframe_lido(df)
+
+        if df.empty:
+            st.error("A planilha foi lida, mas está vazia após limpeza.")
+            log_debug("Planilha vazia após limpeza.", "WARNING")
+            return pd.DataFrame()
+
+        log_debug(f"Leitura segura concluída com sucesso. Shape={df.shape}", "SUCCESS")
+        return df
+
+    except Exception as e:
+        st.error(f"Erro ao ler planilha: {e}")
+        log_debug(f"Erro em ler_planilha_segura: {e}", "ERROR")
+        return pd.DataFrame()
+
+
+def ler_planilha_excel(arquivo) -> pd.DataFrame:
+    return ler_planilha_segura(arquivo)
