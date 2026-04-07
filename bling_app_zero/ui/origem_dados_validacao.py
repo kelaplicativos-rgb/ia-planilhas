@@ -43,8 +43,11 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
 
 def obter_modelo_ativo():
     tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
+
     if tipo == "cadastro":
         return st.session_state.get("df_modelo_cadastro")
+
     if tipo == "estoque":
         return st.session_state.get("df_modelo_estoque")
+
     return None
