@@ -10,6 +10,7 @@ from bling_app_zero.ui.origem_dados_helpers import (
     limpar_gtin_invalido,
     validar_campos_obrigatorios,
 )
+from bling_app_zero.utils.init_app import inicializar_app
 
 # tenta usar exportador mais robusto, sem quebrar se não existir
 try:
@@ -31,6 +32,12 @@ from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
 APP_VERSION = "1.0.20"
+
+
+# =========================
+# INICIALIZAÇÃO
+# =========================
+inicializar_app()
 
 
 # =========================
@@ -221,6 +228,9 @@ def _render_preview_final() -> None:
 # =========================
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
+
+if st.session_state.get("_cache_log"):
+    st.info(st.session_state.get("_cache_log"))
 
 area_app = st.radio(
     "Área do sistema",
