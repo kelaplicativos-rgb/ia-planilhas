@@ -104,11 +104,9 @@ def _arquivo_parece_excel_por_assinatura(conteudo: bytes) -> bool:
         if not conteudo:
             return False
 
-        # XLSX/XLSM/XLSB são ZIP containers
         if conteudo[:2] == b"PK":
             return True
 
-        # XLS legado (OLE Compound File)
         if conteudo[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
             return True
 
@@ -403,7 +401,6 @@ def _ler_csv_tentativas(arquivo) -> pd.DataFrame | None:
             erros.append(f"{encoding}: {e}")
             continue
 
-    # fallback manual com separadores comuns
     for encoding in ["utf-8-sig", "utf-8", "cp1252", "latin1"]:
         for sep in [";", ",", "\t", "|"]:
             try:
@@ -507,7 +504,6 @@ def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
     elif ext == ".xlsb":
         engines = ["pyxlsb", None]
     else:
-        # fallback para arquivo com extensão diferente, mas conteúdo excel
         engines = [None, "openpyxl", "xlrd", "pyxlsb"]
 
     for engine in engines:
@@ -544,28 +540,24 @@ def ler_planilha_segura(arquivo):
 
         df = None
 
-        # 1) segue a extensão primeiro
         if ext == ".csv":
             df = _ler_csv_tentativas(arquivo)
         elif ext in {".xlsx", ".xls", ".xlsm", ".xlsb"}:
             df = _ler_excel_tentativas(arquivo)
 
-        # 2) fallback por assinatura real do conteúdo
-        if df is None:
-            if _arquivo_parece_excel_por_assinatura(conteudo):
-                log_debug(
-                    "Fallback acionado: conteúdo parece Excel independentemente da extensão.",
-                    "WARNING",
-                )
-                df = _ler_excel_tentativas(arquivo)
+        if df is None and _arquivo_parece_excel_por_assinatura(conteudo):
+            log_debug(
+                "Fallback acionado: conteúdo parece Excel independentemente da extensão.",
+                "WARNING",
+            )
+            df = _ler_excel_tentativas(arquivo)
 
-        if df is None:
-            if _arquivo_parece_csv_texto(conteudo):
-                log_debug(
-                    "Fallback acionado: conteúdo parece CSV/texto independentemente da extensão.",
-                    "WARNING",
-                )
-                df = _ler_csv_tentativas(arquivo)
+        if df is None and _arquivo_parece_csv_texto(conteudo):
+            log_debug(
+                "Fallback acionado: conteúdo parece CSV/texto independentemente da extensão.",
+                "WARNING",
+            )
+            df = _ler_csv_tentativas(arquivo)
 
         if df is None:
             st.error("Erro ao ler arquivo.")
@@ -617,7 +609,18 @@ def safe_preview(df: pd.DataFrame, rows: int = 20) -> pd.DataFrame:
     try:
         if df is None or df.empty:
             return pd.DataFrame()
-        return df.head(rows).copy()
+
+        df_preview = df.head(rows).copy()
+
+        for col in df_preview.columns:
+            try:
+                df_preview[col] = df_preview[col].map(
+                    lambda x: "" if pd.isna(x) else str(x)
+                )
+            except Exception:
+                pass
+
+        return df_preview
     except Exception as e:
         log_debug(f"Erro preview: {e}", "ERROR")
         return pd.DataFrame()
