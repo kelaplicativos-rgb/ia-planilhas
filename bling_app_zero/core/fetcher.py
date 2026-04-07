@@ -3,6 +3,10 @@ from __future__ import annotations
 import time
 import random
 import requests
+import urllib3
+
+# 🔥 desativa warning de SSL inseguro (IMPORTANTE)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # ==========================================================
