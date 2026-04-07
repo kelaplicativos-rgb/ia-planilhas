@@ -5,12 +5,12 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
 from bling_app_zero.ui.origem_dados_helpers import (
-    log_debug,
     ler_planilha_segura,
+    log_debug,
 )
 from bling_app_zero.ui.origem_dados_site import render_origem_site
-from bling_app_zero.core.precificacao import aplicar_precificacao_automatica
 
 
 def _safe_df_dados(df) -> bool:
@@ -63,10 +63,6 @@ def _aplicar_precificacao_com_fallback(df_base, coluna_preco):
 
 
 def _fingerprint_df(df) -> str:
-    """
-    Gera uma assinatura simples do DataFrame para detectar troca de origem
-    e evitar reaproveitamento silencioso de estado antigo.
-    """
     try:
         if not _safe_df_dados(df):
             return ""
@@ -76,11 +72,16 @@ def _fingerprint_df(df) -> str:
         return ""
 
 
+def _limpar_mapeamento_widgets() -> None:
+    try:
+        for chave in list(st.session_state.keys()):
+            if str(chave).startswith("map_"):
+                st.session_state.pop(chave, None)
+    except Exception:
+        pass
+
+
 def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
-    """
-    Limpa estados transitórios do fluxo sem mexer desnecessariamente
-    na estrutura geral da aplicação.
-    """
     chaves_reset = [
         "df_origem",
         "df_saida",
@@ -89,12 +90,17 @@ def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
         "bloquear_campos_auto",
         "mapeamento_automatico",
         "mapeamento_manual",
+        "mapeamento_manual_cadastro",
+        "mapeamento_manual_estoque",
         "coluna_preco_base",
         "origem_dados_fingerprint",
+        "df_origem_site",
     ]
 
     for chave in chaves_reset:
         st.session_state.pop(chave, None)
+
+    _limpar_mapeamento_widgets()
 
     if not manter_modelos:
         st.session_state.pop("df_modelo_cadastro", None)
@@ -104,9 +110,6 @@ def _resetar_estado_fluxo(manter_modelos: bool = True) -> None:
 
 
 def _controlar_troca_operacao(operacao: str) -> None:
-    """
-    Quando troca Cadastro/Estoque, limpa o fluxo para não vazar estado antigo.
-    """
     operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
     if operacao_anterior is None:
         st.session_state["_operacao_anterior_origem_dados"] = operacao
@@ -123,10 +126,6 @@ def _controlar_troca_operacao(operacao: str) -> None:
 
 
 def _controlar_troca_origem(origem: str) -> None:
-    """
-    Quando troca a origem (Planilha/XML/Site), limpa o fluxo para evitar
-    reaproveitar df antigo sem perceber.
-    """
     origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
     if origem_anterior is None:
         st.session_state["_origem_anterior_origem_dados"] = origem
@@ -143,10 +142,6 @@ def _controlar_troca_origem(origem: str) -> None:
 
 
 def _carregar_modelo_bling(arquivo, tipo_modelo: str) -> bool:
-    """
-    Lê o modelo anexado e salva no session_state na chave esperada
-    pelo fluxo de mapeamento.
-    """
     if arquivo is None:
         return False
 
@@ -249,10 +244,16 @@ def _render_origem_entrada():
         if arquivo:
             try:
                 df_origem = ler_planilha_segura(arquivo)
-                log_debug(
-                    f"Planilha de origem carregada: {getattr(arquivo, 'name', 'arquivo')} "
-                    f"({len(df_origem)} linha(s), {len(df_origem.columns)} coluna(s))"
-                )
+
+                if _safe_df_dados(df_origem):
+                    log_debug(
+                        f"Planilha de origem carregada: {getattr(arquivo, 'name', 'arquivo')} "
+                        f"({len(df_origem)} linha(s), {len(df_origem.columns)} coluna(s))"
+                    )
+                else:
+                    st.error("Não foi possível ler a planilha enviada.")
+                    return None
+
             except Exception as e:
                 log_debug(f"Erro ao ler planilha de origem: {e}", "ERRO")
                 st.error("Não foi possível ler a planilha enviada.")
@@ -274,10 +275,6 @@ def _render_origem_entrada():
 
 
 def _sincronizar_estado_com_origem(df_origem) -> None:
-    """
-    Mantém df_origem/df_saida/df_final consistentes quando a origem muda.
-    Evita reaproveitar precificação ou saída antiga em outra planilha/site.
-    """
     if not _safe_df_dados(df_origem):
         return
 
@@ -292,6 +289,9 @@ def _sincronizar_estado_com_origem(df_origem) -> None:
         st.session_state["df_final"] = df_origem.copy()
         st.session_state.pop("df_precificado", None)
         st.session_state["bloquear_campos_auto"] = {}
+        st.session_state.pop("mapeamento_manual_cadastro", None)
+        st.session_state.pop("mapeamento_manual_estoque", None)
+        _limpar_mapeamento_widgets()
     else:
         st.session_state["df_origem"] = df_origem.copy()
 
@@ -309,16 +309,20 @@ def _render_precificacao(df_base):
         return
 
     colunas = list(df_base.columns)
-
     if not colunas:
         return
 
     coluna_preco_default = 0
     candidatos = [
+        "preco de custo",
+        "preço de custo",
         "preco_custo",
         "preço_custo",
         "custo",
+        "valor custo",
         "valor_custo",
+        "preco compra",
+        "preço compra",
         "preco",
         "preço",
         "valor",
@@ -326,9 +330,13 @@ def _render_precificacao(df_base):
 
     colunas_lower = [str(c).strip().lower() for c in colunas]
     for candidato in candidatos:
-        if candidato in colunas_lower:
-            coluna_preco_default = colunas_lower.index(candidato)
-            break
+        for i, nome_col in enumerate(colunas_lower):
+            if candidato == nome_col or candidato in nome_col:
+                coluna_preco_default = i
+                break
+        else:
+            continue
+        break
 
     coluna_preco = st.selectbox(
         "Selecione a coluna de PREÇO DE CUSTO",
@@ -439,6 +447,8 @@ def render_origem_dados() -> None:
         df_saida = df_origem.copy()
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
+    else:
+        st.session_state["df_final"] = df_saida.copy()
 
     modelo_ativo = _obter_modelo_ativo()
     if not _safe_df_dados(modelo_ativo):
@@ -451,10 +461,10 @@ def render_origem_dados() -> None:
             st.warning(erro)
         return
 
-    if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+    if st.button("➡️ Continuar para mapeamento", use_container_width=True, key="btn_continuar_mapeamento"):
         try:
-            st.session_state["df_final"] = df_saida.copy()
-            st.session_state["df_saida"] = df_saida.copy()
+            st.session_state["df_final"] = st.session_state.get("df_saida").copy()
+            st.session_state["df_saida"] = st.session_state.get("df_saida").copy()
             st.session_state["etapa_origem"] = "mapeamento"
             log_debug("Fluxo enviado para etapa de mapeamento")
             st.rerun()
