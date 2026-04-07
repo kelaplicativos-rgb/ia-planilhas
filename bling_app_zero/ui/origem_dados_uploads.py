@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -16,23 +17,22 @@ from bling_app_zero.utils.xml_nfe import (
     ler_xml_nfe,
 )
 
-
 _EXTENSOES_PLANILHA_PERMITIDAS = {".xlsx", ".xls", ".csv", ".xlsm", ".xlsb"}
 _EXTENSOES_XML_PERMITIDAS = {".xml"}
 
 
-def _somente_digitos(valor) -> str:
+def _somente_digitos(valor: Any) -> str:
     return re.sub(r"\D+", "", str(valor or "").strip())
 
 
-def _safe_str(valor) -> str:
+def _safe_str(valor: Any) -> str:
     try:
         return "" if pd.isna(valor) else str(valor).strip()
     except Exception:
         return ""
 
 
-def _safe_float(valor, default: float = 0.0) -> float:
+def _safe_float(valor: Any, default: float = 0.0) -> float:
     try:
         texto = str(valor or "").strip()
         if not texto:
@@ -41,8 +41,15 @@ def _safe_float(valor, default: float = 0.0) -> float:
         texto = texto.replace("R$", "").replace("r$", "").strip()
         texto = texto.replace(" ", "")
 
-        if texto.count(",") == 1 and texto.count(".") > 1:
-            texto = texto.replace(".", "").replace(",", ".")
+        # Casos comuns:
+        # 1.234,56 -> 1234.56
+        # 1234,56  -> 1234.56
+        # 1234.56  -> 1234.56
+        if "," in texto and "." in texto:
+            if texto.rfind(",") > texto.rfind("."):
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
         else:
             texto = texto.replace(",", ".")
 
@@ -131,13 +138,15 @@ def _normalizar_df_xml(df: pd.DataFrame) -> pd.DataFrame:
             "vprod",
         ]
 
+        preco_encontrado = False
         for nome in candidatos_preco:
             if nome in cols:
                 col = cols[nome]
                 df["preco_compra_xml"] = df[col].apply(_safe_float)
+                preco_encontrado = True
                 break
 
-        if "preco_compra_xml" not in df.columns:
+        if not preco_encontrado:
             df["preco_compra_xml"] = 0.0
 
         return df
@@ -171,25 +180,25 @@ def _limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
-def nome_arquivo(arquivo) -> str:
+def nome_arquivo(arquivo: Any) -> str:
     try:
         return str(getattr(arquivo, "name", "") or "").strip()
     except Exception:
         return ""
 
 
-def extensao_arquivo(arquivo) -> str:
+def extensao_arquivo(arquivo: Any) -> str:
     try:
         return Path(nome_arquivo(arquivo)).suffix.lower().strip()
     except Exception:
         return ""
 
 
-def arquivo_planilha_permitido(arquivo) -> bool:
+def arquivo_planilha_permitido(arquivo: Any) -> bool:
     return extensao_arquivo(arquivo) in _EXTENSOES_PLANILHA_PERMITIDAS
 
 
-def arquivo_xml_permitido(arquivo) -> bool:
+def arquivo_xml_permitido(arquivo: Any) -> bool:
     return extensao_arquivo(arquivo) in _EXTENSOES_XML_PERMITIDAS
 
 
@@ -197,7 +206,7 @@ def texto_extensoes_planilha() -> str:
     return ", ".join(sorted(_EXTENSOES_PLANILHA_PERMITIDAS))
 
 
-def hash_arquivo_upload(arquivo) -> str:
+def hash_arquivo_upload(arquivo: Any) -> str:
     try:
         if arquivo is None:
             return ""
@@ -235,7 +244,65 @@ def hash_arquivo_upload(arquivo) -> str:
         return ""
 
 
-def carregar_modelo_bling(arquivo, tipo_modelo: str) -> bool:
+def _limpar_estado_origem() -> None:
+    """
+    Limpa somente o estado dependente da origem atual.
+    Não mexe nos modelos do Bling.
+    """
+    chaves = [
+        "df_origem",
+        "df_origem_xml",
+        "df_saida",
+        "df_final",
+        "arquivo_origem_hash",
+        "arquivo_origem_nome",
+        "origem_dados_hash",
+        "origem_dados_nome",
+        "origem_arquivo_nome",
+        "origem_arquivo_hash",
+        "url_origem_site",
+        "df_mapeado",
+        "mapeamento_colunas",
+        "mapeamento_manual",
+        "mapeamento_auto",
+        "colunas_mapeadas",
+    ]
+    for chave in chaves:
+        try:
+            if chave in st.session_state:
+                del st.session_state[chave]
+        except Exception:
+            pass
+
+
+def _salvar_df_origem(df: pd.DataFrame, origem: str, nome_ref: str = "", hash_ref: str = "") -> pd.DataFrame:
+    """
+    Centraliza a persistência da origem no session_state.
+    """
+    try:
+        df_salvo = df.copy()
+
+        st.session_state["df_origem"] = df_salvo
+        st.session_state["df_saida"] = df_salvo.copy()
+        st.session_state["df_final"] = df_salvo.copy()
+
+        if origem.lower() == "xml":
+            st.session_state["df_origem_xml"] = df_salvo.copy()
+
+        if nome_ref:
+            st.session_state["origem_arquivo_nome"] = nome_ref
+            st.session_state["arquivo_origem_nome"] = nome_ref
+
+        if hash_ref:
+            st.session_state["origem_arquivo_hash"] = hash_ref
+            st.session_state["arquivo_origem_hash"] = hash_ref
+
+        return df_salvo
+    except Exception:
+        return df
+
+
+def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
     if arquivo is None:
         return False
 
@@ -318,6 +385,7 @@ def render_modelo_bling(operacao: str) -> None:
                     st.dataframe(
                         _df_preview_seguro(df_modelo).head(5),
                         use_container_width=True,
+                        hide_index=True,
                     )
                 except Exception as e:
                     log_debug(
@@ -347,6 +415,7 @@ def render_modelo_bling(operacao: str) -> None:
                     st.dataframe(
                         _df_preview_seguro(df_modelo).head(5),
                         use_container_width=True,
+                        hide_index=True,
                     )
                 except Exception as e:
                     log_debug(
@@ -356,7 +425,7 @@ def render_modelo_bling(operacao: str) -> None:
                     st.write(_df_preview_seguro(df_modelo).head(5))
 
 
-def ler_origem_xml(arquivo_xml):
+def ler_origem_xml(arquivo_xml: Any):
     if arquivo_xml is None:
         return None
 
@@ -369,6 +438,14 @@ def ler_origem_xml(arquivo_xml):
         return None
 
     try:
+        hash_atual = hash_arquivo_upload(arquivo_xml)
+        hash_anterior = st.session_state.get("arquivo_origem_hash", "")
+
+        if hash_atual and hash_atual == hash_anterior:
+            df_salvo = st.session_state.get("df_origem")
+            if safe_df_dados(df_salvo):
+                return df_salvo.copy()
+
         if not arquivo_parece_xml_nfe(arquivo_xml):
             st.error("O arquivo anexado não parece ser um XML de NFe válido.")
             log_debug(
@@ -391,8 +468,13 @@ def ler_origem_xml(arquivo_xml):
 
         df_xml = _normalizar_df_xml(df_xml)
         df_xml = _limpar_gtin_invalido(df_xml)
+        df_xml = _salvar_df_origem(
+            df_xml,
+            origem="XML",
+            nome_ref=nome_arquivo(arquivo_xml),
+            hash_ref=hash_atual,
+        )
 
-        st.session_state["df_origem_xml"] = df_xml.copy()
         log_debug(
             f"XML de origem carregado e normalizado: {getattr(arquivo_xml, 'name', 'arquivo_xml')} "
             f"({len(df_xml)} linha(s), {len(df_xml.columns)} coluna(s))"
@@ -411,6 +493,11 @@ def render_origem_entrada(controlar_troca_origem_fn):
         key="origem_tipo",
     )
 
+    origem_anterior = st.session_state.get("_origem_tipo_anterior", "")
+    if origem_anterior != origem:
+        _limpar_estado_origem()
+        st.session_state["_origem_tipo_anterior"] = origem
+
     if not tem_upload_ativo():
         controlar_troca_origem_fn(origem)
 
@@ -428,53 +515,75 @@ def render_origem_entrada(controlar_troca_origem_fn):
             ),
         )
 
-        if arquivo is not None:
-            if not arquivo_planilha_permitido(arquivo):
-                st.error(
-                    f"Formato não suportado. Envie um arquivo em: "
-                    f"{texto_extensoes_planilha()}."
-                )
-                log_debug(
-                    f"Arquivo de origem recusado por extensão: {nome_arquivo(arquivo)}",
-                    "ERROR",
-                )
-                return None
+        if arquivo is None:
+            return None
 
-            try:
-                hash_atual = hash_arquivo_upload(arquivo)
-                hash_anterior = st.session_state.get("arquivo_origem_hash", "")
+        if not arquivo_planilha_permitido(arquivo):
+            st.error(
+                f"Formato não suportado. Envie um arquivo em: "
+                f"{texto_extensoes_planilha()}."
+            )
+            log_debug(
+                f"Arquivo de origem recusado por extensão: {nome_arquivo(arquivo)}",
+                "ERROR",
+            )
+            return None
 
-                if hash_atual and hash_atual == hash_anterior:
-                    df_salvo = st.session_state.get("df_origem")
-                    if safe_df_dados(df_salvo):
-                        return df_salvo.copy()
+        try:
+            hash_atual = hash_arquivo_upload(arquivo)
+            hash_anterior = st.session_state.get("arquivo_origem_hash", "")
 
-                df_origem = ler_planilha_segura(arquivo)
+            if hash_atual and hash_atual == hash_anterior:
+                df_salvo = st.session_state.get("df_origem")
+                if safe_df_dados(df_salvo):
+                    return df_salvo.copy()
 
-                if safe_df_dados(df_origem):
-                    st.session_state["arquivo_origem_hash"] = hash_atual
-                    st.session_state["arquivo_origem_nome"] = nome_arquivo(arquivo)
-                    log_debug(
-                        f"Planilha de origem carregada: {getattr(arquivo, 'name', 'arquivo')} "
-                        f"({len(df_origem)} linha(s), {len(df_origem.columns)} coluna(s))"
-                    )
-                else:
-                    st.error("Não foi possível ler a planilha enviada.")
-                    return None
-            except Exception as e:
-                log_debug(f"Erro ao ler planilha de origem: {e}", "ERRO")
+            df_origem = ler_planilha_segura(arquivo)
+
+            if not safe_df_dados(df_origem):
                 st.error("Não foi possível ler a planilha enviada.")
                 return None
 
-    elif origem == "Site":
+            df_origem = _salvar_df_origem(
+                df_origem,
+                origem="Planilha",
+                nome_ref=nome_arquivo(arquivo),
+                hash_ref=hash_atual,
+            )
+
+            log_debug(
+                f"Planilha de origem carregada: {getattr(arquivo, 'name', 'arquivo')} "
+                f"({len(df_origem)} linha(s), {len(df_origem.columns)} coluna(s))"
+            )
+            return df_origem
+        except Exception as e:
+            log_debug(f"Erro ao ler planilha de origem: {e}", "ERRO")
+            st.error("Não foi possível ler a planilha enviada.")
+            return None
+
+    if origem == "Site":
         try:
             df_origem = render_origem_site()
+
+            if safe_df_dados(df_origem):
+                df_origem = _salvar_df_origem(
+                    df_origem,
+                    origem="Site",
+                    nome_ref=st.session_state.get("url_origem_site", ""),
+                    hash_ref="",
+                )
+                log_debug(
+                    f"Origem por site carregada ({len(df_origem)} linha(s), "
+                    f"{len(df_origem.columns)} coluna(s))"
+                )
+
+            return df_origem
         except Exception as e:
             log_debug(f"Erro na origem por site: {e}", "ERRO")
             st.error("Erro ao buscar dados do site.")
             return None
 
-    elif origem == "XML":
+    if origem == "XML":
         arquivo_xml = st.file_uploader(
             "Envie o XML da nota fiscal",
             key="arquivo_origem_xml",
@@ -484,7 +593,9 @@ def render_origem_entrada(controlar_troca_origem_fn):
             ),
         )
 
-        if arquivo_xml is not None:
-            df_origem = ler_origem_xml(arquivo_xml)
+        if arquivo_xml is None:
+            return None
+
+        return ler_origem_xml(arquivo_xml)
 
     return df_origem
