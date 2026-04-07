@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import re
 import unicodedata
+
 import pandas as pd
 
 
@@ -79,6 +82,7 @@ SINONIMOS = {
         "price",
         "preco_cheio",
         "preco_final",
+        "preco_de_venda",
     ],
     "estoque": [
         "estoque",
@@ -144,6 +148,13 @@ SINONIMOS = {
         "ativo",
         "situacao_produto",
     ],
+    "deposito": [
+        "deposito",
+        "depósito",
+        "warehouse",
+        "almoxarifado",
+        "local_estoque",
+    ],
 }
 
 
@@ -180,6 +191,7 @@ def campos_estoque_bling():
         "codigo",
         "nome",
         "estoque",
+        "deposito",
     ]
 
 
@@ -311,7 +323,14 @@ def mapear_cadastro_bling(
         obter_serie(df, mapeamento_final, "preco", "0"),
         default="0"
     )
+
+    situacao_origem = limpar_texto_serie(obter_serie(df, mapeamento_final, "situacao", ""))
     saida["situacao"] = "Ativo"
+    if not situacao_origem.empty:
+        valores_inativos = {"0", "inativo", "desativado", "desabilitado", "false"}
+        mascara_inativo = situacao_origem.str.lower().isin(valores_inativos)
+        saida.loc[mascara_inativo, "situacao"] = "Inativo"
+
     saida["marca"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "marca", ""))
 
     nome_produto = limpar_texto_serie(
@@ -330,8 +349,13 @@ def mapear_cadastro_bling(
     vazios_desc = descricao_final.astype(str).str.strip() == ""
     descricao_final.loc[vazios_desc] = nome_final.loc[vazios_desc]
 
+    # regra do projeto:
+    # - nome/título vai em "nome"
+    # - descrição real vai em "descricao_curta"
+    # - "descricao" acompanha o nome para não quebrar integração legada
     saida["descricao"] = nome_final
     saida["descricao_curta"] = descricao_final
+
     saida["video"] = ""
 
     imagem_base = limpar_url_serie(obter_serie(df, mapeamento_final, "imagem", ""))
@@ -341,8 +365,12 @@ def mapear_cadastro_bling(
     saida["imagem_4"] = ""
     saida["imagem_5"] = ""
 
+    # regra pedida: Link Externo deve ficar vazio
     saida["link_externo"] = ""
+
+    # regra pedida: categoria só se vier confiante/manual; aqui mantém origem detectada
     saida["categoria"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "categoria", ""))
+
     saida["peso_liquido"] = limpar_numero_serie(
         obter_serie(df, mapeamento_final, "peso", "0"),
         default="0"
@@ -374,6 +402,18 @@ def mapear_estoque_bling(
         obter_serie(df, mapeamento_final, "estoque", "0"),
         default="0"
     )
+
+    deposito_manual = ""
+    try:
+        import streamlit as st
+        deposito_manual = str(st.session_state.get("deposito_nome", "") or "").strip()
+    except Exception:
+        deposito_manual = ""
+
+    if deposito_manual:
+        saida["deposito"] = deposito_manual
+    else:
+        saida["deposito"] = limpar_texto_serie(obter_serie(df, mapeamento_final, "deposito", ""))
 
     saida = saida[campos_estoque_bling()]
 
