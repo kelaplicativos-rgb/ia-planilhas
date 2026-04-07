@@ -7,8 +7,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import safe_df_dados, tem_upload_ativo
-from bling_app_zero.ui.origem_dados_helpers import ler_planilha_segura, log_debug
+from bling_app_zero.ui.origem_dados_helpers import ler_planilha_segura
 from bling_app_zero.ui.origem_dados_site import render_origem_site
 from bling_app_zero.utils.xml_nfe import (
     arquivo_parece_xml_nfe,
