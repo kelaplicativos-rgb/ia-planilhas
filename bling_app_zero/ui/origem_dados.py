@@ -53,6 +53,30 @@ def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
         return df
 
 
+def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante uma base de saída estável sem quebrar o fluxo.
+    Se a precificação já tiver gerado df_saida em session_state, respeita.
+    Caso contrário, cria a partir da origem.
+    """
+    try:
+        df_saida_state = st.session_state.get("df_saida")
+
+        if safe_df_dados(df_saida_state):
+            df_saida = df_saida_state.copy()
+        else:
+            df_saida = df_origem.copy()
+            st.session_state["df_saida"] = df_saida.copy()
+
+        st.session_state["df_final"] = df_saida.copy()
+        return df_saida
+    except Exception:
+        df_saida = df_origem.copy()
+        st.session_state["df_saida"] = df_saida.copy()
+        st.session_state["df_final"] = df_saida.copy()
+        return df_saida
+
+
 def render_origem_dados() -> None:
     etapa_atual = st.session_state.get("etapa_origem")
     if etapa_atual in ["mapeamento", "final"]:
@@ -73,22 +97,31 @@ def render_origem_dados() -> None:
     else:
         st.session_state["tipo_operacao_bling"] = "estoque"
 
+    # 1) Primeiro o modelo oficial do Bling
     render_modelo_bling(operacao)
 
+    # 2) Depois a origem dos dados
     df_origem = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
+
     if not safe_df_dados(df_origem):
+        st.info("Selecione a origem e carregue os dados para continuar.")
         return
 
     sincronizar_estado_com_origem(df_origem, log_debug)
 
     with st.expander("Prévia da planilha do fornecedor", expanded=False):
         try:
-            st.dataframe(
-                _df_preview_seguro(df_origem).head(10),
-                use_container_width=True,
-            )
+            df_preview = _df_preview_seguro(df_origem)
+            if safe_df_dados(df_preview):
+                st.dataframe(
+                    df_preview.head(10),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("Não há dados válidos para pré-visualização.")
         except Exception as e:
             log_debug(
                 f"Erro ao renderizar prévia da planilha do fornecedor: {e}",
@@ -100,37 +133,38 @@ def render_origem_dados() -> None:
             except Exception:
                 pass
 
+    # 3) Precificação entra antes do mapeamento
     render_precificacao(df_origem)
 
-    df_saida = st.session_state.get("df_saida")
-    if not safe_df_dados(df_saida):
-        df_saida = df_origem.copy()
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
-    else:
-        df_saida = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
+    # 4) Após a precificação, sempre reconsultar df_saida da sessão
+    df_saida = _sincronizar_df_saida_base(df_origem)
 
     modelo_ativo = obter_modelo_ativo()
-    if not safe_df_dados(modelo_ativo):
-        st.warning("Anexe o modelo oficial do Bling antes de continuar para o mapeamento.")
-        return
+    modelo_ok = safe_df_dados(modelo_ativo)
 
-    valido, erros = validar_antes_mapeamento()
-    if not valido:
-        for erro in erros:
-            st.warning(erro)
-        return
+    if not modelo_ok:
+        st.warning("Anexe o modelo oficial do Bling antes de continuar para o mapeamento.")
+
+    continuar_desabilitado = not modelo_ok
 
     if st.button(
         "➡️ Continuar para mapeamento",
         use_container_width=True,
         key="btn_continuar_mapeamento",
+        disabled=continuar_desabilitado,
     ):
         try:
-            st.session_state["df_final"] = df_saida.copy()
+            valido, erros = validar_antes_mapeamento()
+
+            if not valido:
+                for erro in erros:
+                    st.warning(erro)
+                return
+
             st.session_state["df_saida"] = df_saida.copy()
+            st.session_state["df_final"] = df_saida.copy()
             st.session_state["etapa_origem"] = "mapeamento"
+
             log_debug("Fluxo enviado para etapa de mapeamento")
             st.rerun()
         except Exception as e:
