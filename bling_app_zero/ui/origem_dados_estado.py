@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import streamlit as st
 
 
-def safe_df_dados(df) -> bool:
+def safe_df_dados(df: Any) -> bool:
     try:
         if df is None:
             return False
@@ -20,7 +21,7 @@ def safe_df_dados(df) -> bool:
         return False
 
 
-def fingerprint_df(df) -> str:
+def fingerprint_df(df: Any) -> str:
     try:
         if not safe_df_dados(df):
             return ""
@@ -64,7 +65,19 @@ def tem_upload_ativo() -> bool:
         return False
 
 
+def _pop_varias(chaves: list[str]) -> None:
+    for chave in chaves:
+        try:
+            st.session_state.pop(chave, None)
+        except Exception:
+            pass
+
+
 def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
+    """
+    Reseta somente estados transitórios do fluxo.
+    Mantém os modelos do Bling por padrão.
+    """
     chaves_reset = [
         "df_origem",
         "df_saida",
@@ -73,6 +86,10 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
         "bloquear_campos_auto",
         "mapeamento_automatico",
         "mapeamento_manual",
+        "mapeamento_auto",
+        "mapeamento_colunas",
+        "colunas_mapeadas",
+        "df_mapeado",
         "mapeamento_manual_cadastro",
         "mapeamento_manual_estoque",
         "coluna_preco_base",
@@ -81,65 +98,86 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
         "df_origem_xml",
         "arquivo_origem_hash",
         "arquivo_origem_nome",
+        "origem_arquivo_hash",
+        "origem_arquivo_nome",
+        "origem_dados_hash",
+        "origem_dados_nome",
+        "url_origem_site",
     ]
 
-    for chave in chaves_reset:
-        st.session_state.pop(chave, None)
-
+    _pop_varias(chaves_reset)
     limpar_mapeamento_widgets()
 
     if not manter_modelos:
-        st.session_state.pop("df_modelo_cadastro", None)
-        st.session_state.pop("modelo_cadastro_nome", None)
-        st.session_state.pop("df_modelo_estoque", None)
-        st.session_state.pop("modelo_estoque_nome", None)
-        st.session_state.pop("modelo_cadastro_hash", None)
-        st.session_state.pop("modelo_estoque_hash", None)
+        _pop_varias(
+            [
+                "df_modelo_cadastro",
+                "modelo_cadastro_nome",
+                "df_modelo_estoque",
+                "modelo_estoque_nome",
+                "modelo_cadastro_hash",
+                "modelo_estoque_hash",
+            ]
+        )
 
 
 def controlar_troca_operacao(operacao: str, log_debug) -> None:
+    """
+    Quando trocar entre Cadastro e Estoque:
+    - limpa somente estados transitórios
+    - mantém modelos anexados
+    - preserva comportamento estável da Home
+    """
     operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
 
     if operacao_anterior is None:
         st.session_state["_operacao_anterior_origem_dados"] = operacao
         return
 
-    if operacao_anterior != operacao:
-        log_debug(
-            f"Operação alterada de '{operacao_anterior}' para '{operacao}'. "
-            "Resetando estados transitórios do fluxo."
-        )
+    if operacao_anterior == operacao:
+        return
 
-        resetar_estado_fluxo(manter_modelos=True)
+    log_debug(
+        f"Operação alterada de '{operacao_anterior}' para '{operacao}'. "
+        "Resetando estados transitórios do fluxo."
+    )
 
-        if not tem_upload_ativo():
-            st.session_state["etapa_origem"] = "upload"
+    resetar_estado_fluxo(manter_modelos=True)
 
-        st.session_state["_operacao_anterior_origem_dados"] = operacao
+    st.session_state["etapa_origem"] = "upload"
+    st.session_state["_operacao_anterior_origem_dados"] = operacao
 
 
 def controlar_troca_origem(origem: str, log_debug) -> None:
+    """
+    Quando trocar entre Planilha / XML / Site:
+    - limpa estados da origem anterior
+    - mantém modelos do Bling
+    """
     origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
 
     if origem_anterior is None:
         st.session_state["_origem_anterior_origem_dados"] = origem
         return
 
-    if origem_anterior != origem:
-        log_debug(
-            f"Origem alterada de '{origem_anterior}' para '{origem}'. "
-            "Resetando estados transitórios do fluxo."
-        )
+    if origem_anterior == origem:
+        return
 
-        resetar_estado_fluxo(manter_modelos=True)
+    log_debug(
+        f"Origem alterada de '{origem_anterior}' para '{origem}'. "
+        "Resetando estados transitórios do fluxo."
+    )
 
-        if not tem_upload_ativo():
-            st.session_state["etapa_origem"] = "upload"
-
-        st.session_state["_origem_anterior_origem_dados"] = origem
+    resetar_estado_fluxo(manter_modelos=True)
+    st.session_state["etapa_origem"] = "upload"
+    st.session_state["_origem_anterior_origem_dados"] = origem
 
 
 def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
+    """
+    Sincroniza o session_state com a origem atual sem sobrescrever
+    resultados já gerados pela precificação, exceto quando a origem muda.
+    """
     if not safe_df_dados(df_origem):
         return
 
@@ -148,20 +186,36 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
 
     if fingerprint_atual != novo_fingerprint:
         log_debug("Nova origem detectada. Sincronizando estados do fluxo.")
+
         st.session_state["origem_dados_fingerprint"] = novo_fingerprint
         st.session_state["df_origem"] = df_origem.copy()
         st.session_state["df_saida"] = df_origem.copy()
         st.session_state["df_final"] = df_origem.copy()
+
         st.session_state.pop("df_precificado", None)
         st.session_state["bloquear_campos_auto"] = {}
+
+        st.session_state.pop("mapeamento_manual", None)
+        st.session_state.pop("mapeamento_auto", None)
+        st.session_state.pop("mapeamento_automatico", None)
+        st.session_state.pop("mapeamento_colunas", None)
+        st.session_state.pop("colunas_mapeadas", None)
+        st.session_state.pop("df_mapeado", None)
         st.session_state.pop("mapeamento_manual_cadastro", None)
         st.session_state.pop("mapeamento_manual_estoque", None)
+
         limpar_mapeamento_widgets()
-    else:
-        st.session_state["df_origem"] = df_origem.copy()
+        return
 
-        if not safe_df_dados(st.session_state.get("df_saida")):
-            st.session_state["df_saida"] = df_origem.copy()
+    st.session_state["df_origem"] = df_origem.copy()
 
-        if not safe_df_dados(st.session_state.get("df_final")):
-            st.session_state["df_final"] = st.session_state["df_saida"].copy()
+    if not safe_df_dados(st.session_state.get("df_saida")):
+        st.session_state["df_saida"] = df_origem.copy()
+
+    if not safe_df_dados(st.session_state.get("df_final")):
+        st.session_state["df_final"] = st.session_state["df_saida"].copy()
+
+    if "bloquear_campos_auto" not in st.session_state or not isinstance(
+        st.session_state.get("bloquear_campos_auto"), dict
+    ):
+        st.session_state["bloquear_campos_auto"] = {}
