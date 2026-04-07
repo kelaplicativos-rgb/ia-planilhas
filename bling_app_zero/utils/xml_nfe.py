@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -7,87 +9,138 @@ import pandas as pd
 
 
 def _safe_text(node: Optional[ET.Element], tag: str, default: str = "") -> str:
-    if node is None:
+    try:
+        if node is None:
+            return default
+
+        for child in node.iter():
+            if child.tag.split("}")[-1] == tag:
+                return (child.text or "").strip()
+
         return default
-
-    for child in node.iter():
-        if child.tag.split("}")[-1] == tag:
-            return (child.text or "").strip()
-
-    return default
+    except Exception:
+        return default
 
 
 def _find_first(node: Optional[ET.Element], tag: str) -> Optional[ET.Element]:
-    if node is None:
+    try:
+        if node is None:
+            return None
+
+        for child in node.iter():
+            if child.tag.split("}")[-1] == tag:
+                return child
+
         return None
-
-    for child in node.iter():
-        if child.tag.split("}")[-1] == tag:
-            return child
-
-    return None
+    except Exception:
+        return None
 
 
 def _find_all(node: Optional[ET.Element], tag: str) -> List[ET.Element]:
-    if node is None:
+    try:
+        if node is None:
+            return []
+
+        encontrados: List[ET.Element] = []
+        for child in node.iter():
+            if child.tag.split("}")[-1] == tag:
+                encontrados.append(child)
+
+        return encontrados
+    except Exception:
         return []
-
-    encontrados: List[ET.Element] = []
-    for child in node.iter():
-        if child.tag.split("}")[-1] == tag:
-            encontrados.append(child)
-
-    return encontrados
 
 
 def _normalize_xml_upload_to_bytes(arquivo) -> bytes:
-    if arquivo is None:
+    try:
+        if arquivo is None:
+            return b""
+
+        if hasattr(arquivo, "seek"):
+            try:
+                arquivo.seek(0)
+            except Exception:
+                pass
+
+        if hasattr(arquivo, "getvalue"):
+            try:
+                conteudo = arquivo.getvalue()
+                if isinstance(conteudo, str):
+                    conteudo = conteudo.encode("utf-8")
+                if isinstance(conteudo, bytes):
+                    if hasattr(arquivo, "seek"):
+                        try:
+                            arquivo.seek(0)
+                        except Exception:
+                            pass
+                    return conteudo
+            except Exception:
+                pass
+
+        conteudo = b""
+        if hasattr(arquivo, "read"):
+            conteudo = arquivo.read()
+
+        if hasattr(arquivo, "seek"):
+            try:
+                arquivo.seek(0)
+            except Exception:
+                pass
+
+        if isinstance(conteudo, str):
+            return conteudo.encode("utf-8")
+
+        return conteudo or b""
+    except Exception:
         return b""
-
-    if hasattr(arquivo, "seek"):
-        arquivo.seek(0)
-
-    conteudo = arquivo.read()
-
-    if hasattr(arquivo, "seek"):
-        arquivo.seek(0)
-
-    if isinstance(conteudo, str):
-        return conteudo.encode("utf-8")
-
-    return conteudo or b""
 
 
 def _to_float(value, default: float = 0.0) -> float:
-    if value is None:
-        return default
-
-    txt = str(value).strip()
-    if not txt:
-        return default
-
-    txt = txt.replace("R$", "").replace(" ", "")
-    txt = txt.replace(".", "").replace(",", ".")
-
     try:
+        if value is None:
+            return default
+
+        txt = str(value).strip()
+        if not txt:
+            return default
+
+        txt = txt.replace("R$", "").replace("\u00a0", "").replace(" ", "")
+
+        if "," in txt and "." in txt:
+            if txt.rfind(",") > txt.rfind("."):
+                txt = txt.replace(".", "").replace(",", ".")
+            else:
+                txt = txt.replace(",", "")
+        elif "," in txt:
+            txt = txt.replace(".", "").replace(",", ".")
+        elif txt.count(".") > 1:
+            partes = txt.split(".")
+            if len(partes[-1]) in {1, 2}:
+                txt = "".join(partes[:-1]) + "." + partes[-1]
+            else:
+                txt = "".join(partes)
+
         return float(txt)
     except Exception:
         return default
 
 
 def _find_tax_value_anywhere(node: Optional[ET.Element], possible_tags: List[str]) -> float:
-    if node is None:
+    try:
+        if node is None:
+            return 0.0
+
+        total = 0.0
+        tags_set = {x.strip() for x in possible_tags if x and x.strip()}
+
+        for child in node.iter():
+            tag = child.tag.split("}")[-1]
+            if tag in tags_set:
+                total += _to_float(child.text, 0.0)
+
+        return total
+    except Exception:
         return 0.0
-
-    total = 0.0
-    tags_set = {x.strip() for x in possible_tags if x.strip()}
-
-    for child in node.iter():
-        tag = child.tag.split("}")[-1]
-        if tag in tags_set:
-            total += _to_float(child.text, 0.0)
-
-    return total
 
 
 def _calcular_custo_item(prod: ET.Element, det: ET.Element) -> Dict[str, float]:
@@ -154,14 +207,15 @@ def _titulo_limpo(texto: str) -> str:
 
 
 def _gtin_valido(valor: str) -> str:
-    valor = re.sub(r"\D", "", str(valor or ""))
-    if valor in {"", "0", "SEMGTIN", "SEM GTIN"}:
+    texto_original = str(valor or "").strip().upper()
+    if texto_original in {"", "0", "SEMGTIN", "SEM GTIN"}:
         return ""
 
-    if len(valor) not in {8, 12, 13, 14}:
+    valor_limpo = re.sub(r"\D", "", str(valor or ""))
+    if len(valor_limpo) not in {8, 12, 13, 14}:
         return ""
 
-    return valor
+    return valor_limpo
 
 
 def _extrair_cor(descricao: str) -> str:
@@ -227,7 +281,6 @@ def _extrair_marca(descricao: str, fornecedor: str) -> str:
         if encontrado:
             return encontrado.group(1).strip().title()
 
-    # Heurística: pega o primeiro trecho antes de "-" se for curto
     primeiros = re.split(r"[-|/]", texto_original)
     if primeiros:
         primeiro = primeiros[0].strip()
@@ -449,15 +502,18 @@ def _enriquecer_item_xml(linha: Dict[str, object]) -> Dict[str, object]:
 
 
 def arquivo_parece_xml_nfe(arquivo) -> bool:
-    if arquivo is None:
-        return False
-
-    nome = (getattr(arquivo, "name", "") or "").lower().strip()
-    if not nome.endswith(".xml"):
-        return False
-
     try:
+        if arquivo is None:
+            return False
+
+        nome = (getattr(arquivo, "name", "") or "").lower().strip()
+        if nome and not nome.endswith(".xml"):
+            return False
+
         xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
+        if not xml_bytes:
+            return False
+
         trecho = xml_bytes[:5000].decode("utf-8", errors="ignore").lower()
 
         marcadores = [
@@ -473,97 +529,108 @@ def arquivo_parece_xml_nfe(arquivo) -> bool:
 
 
 def ler_xml_nfe(arquivo) -> pd.DataFrame:
-    xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
-    if not xml_bytes:
+    try:
+        xml_bytes = _normalize_xml_upload_to_bytes(arquivo)
+        if not xml_bytes:
+            return pd.DataFrame()
+
+        try:
+            root = ET.fromstring(xml_bytes)
+        except Exception:
+            try:
+                texto = xml_bytes.decode("utf-8-sig", errors="ignore")
+                root = ET.fromstring(texto.encode("utf-8"))
+            except Exception:
+                return pd.DataFrame()
+
+        inf_nfe = _find_first(root, "infNFe")
+        if inf_nfe is None:
+            return pd.DataFrame()
+
+        ide = _find_first(inf_nfe, "ide")
+        emit = _find_first(inf_nfe, "emit")
+        dest = _find_first(inf_nfe, "dest")
+        total = _find_first(inf_nfe, "ICMSTot")
+
+        numero_nfe = _safe_text(ide, "nNF")
+        serie_nfe = _safe_text(ide, "serie")
+        data_emissao = _safe_text(ide, "dhEmi") or _safe_text(ide, "dEmi")
+        natureza_operacao = _safe_text(ide, "natOp")
+
+        emitente_nome = _safe_text(emit, "xNome")
+        emitente_fantasia = _safe_text(emit, "xFant")
+        emitente_cnpj = _safe_text(emit, "CNPJ") or _safe_text(emit, "CPF")
+
+        destinatario_nome = _safe_text(dest, "xNome")
+        destinatario_cnpj = _safe_text(dest, "CNPJ") or _safe_text(dest, "CPF")
+
+        valor_total_nfe = _safe_text(total, "vNF")
+        valor_produtos_nfe = _safe_text(total, "vProd")
+
+        linhas: List[Dict[str, object]] = []
+
+        for det in _find_all(inf_nfe, "det"):
+            prod = _find_first(det, "prod")
+            if prod is None:
+                continue
+
+            custos = _calcular_custo_item(prod, det)
+
+            linha = {
+                "origem_tipo": "xml_nfe",
+                "origem_arquivo_ou_url": getattr(arquivo, "name", "xml_nfe"),
+                "numero_nfe": numero_nfe,
+                "serie_nfe": serie_nfe,
+                "data_emissao": data_emissao,
+                "natureza_operacao": natureza_operacao,
+                "emitente_nome": emitente_nome,
+                "emitente_fantasia": emitente_fantasia,
+                "emitente_cnpj": emitente_cnpj,
+                "destinatario_nome": destinatario_nome,
+                "destinatario_cnpj": destinatario_cnpj,
+                "valor_total_nfe": valor_total_nfe,
+                "valor_produtos_nfe": valor_produtos_nfe,
+                "item": det.attrib.get("nItem", ""),
+                "codigo": _safe_text(prod, "cProd"),
+                "descricao": _safe_text(prod, "xProd"),
+                "descricao_curta": _safe_text(prod, "xProd"),
+                "gtin": _safe_text(prod, "cEAN"),
+                "gtin_tributavel": _safe_text(prod, "cEANTrib"),
+                "ncm": _safe_text(prod, "NCM"),
+                "cest": _safe_text(prod, "CEST"),
+                "cfop": _safe_text(prod, "CFOP"),
+                "unidade": _safe_text(prod, "uCom"),
+                "quantidade": _safe_text(prod, "qCom"),
+                "preco": _safe_text(prod, "vUnCom"),
+                "preco_compra_xml": round(custos["custo_unitario_float"], 6),
+                "preco_custo": round(custos["custo_unitario_float"], 6),
+                "custo": round(custos["custo_unitario_float"], 6),
+                "custo_total_item_xml": round(custos["custo_total_item_float"], 6),
+                "valor_total_item": _safe_text(prod, "vProd"),
+                "unidade_tributavel": _safe_text(prod, "uTrib"),
+                "quantidade_tributavel": _safe_text(prod, "qTrib"),
+                "valor_unitario_tributavel": _safe_text(prod, "vUnTrib"),
+                "frete_item": _safe_text(prod, "vFrete"),
+                "seguro_item": _safe_text(prod, "vSeg"),
+                "desconto_item": _safe_text(prod, "vDesc"),
+                "outras_despesas_item": _safe_text(prod, "vOutro"),
+                "fornecedor": emitente_fantasia or emitente_nome,
+                "cnpj_fornecedor": emitente_cnpj,
+                "valor_ipi_item": round(custos["valor_ipi_float"], 6),
+                "valor_icms_st_item": round(custos["valor_icms_st_float"], 6),
+                "valor_fcp_st_item": round(custos["valor_fcp_st_float"], 6),
+                "valor_ii_item": round(custos["valor_ii_float"], 6),
+                "total_impostos_item": round(custos["total_impostos_float"], 6),
+            }
+
+            linha = _enriquecer_item_xml(linha)
+            linhas.append(linha)
+
+        if not linhas:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(linhas)
+        return df.fillna("")
+
+    except Exception:
         return pd.DataFrame()
-
-    root = ET.fromstring(xml_bytes)
-
-    inf_nfe = _find_first(root, "infNFe")
-    if inf_nfe is None:
-        return pd.DataFrame()
-
-    ide = _find_first(inf_nfe, "ide")
-    emit = _find_first(inf_nfe, "emit")
-    dest = _find_first(inf_nfe, "dest")
-    total = _find_first(inf_nfe, "ICMSTot")
-
-    numero_nfe = _safe_text(ide, "nNF")
-    serie_nfe = _safe_text(ide, "serie")
-    data_emissao = _safe_text(ide, "dhEmi") or _safe_text(ide, "dEmi")
-    natureza_operacao = _safe_text(ide, "natOp")
-
-    emitente_nome = _safe_text(emit, "xNome")
-    emitente_fantasia = _safe_text(emit, "xFant")
-    emitente_cnpj = _safe_text(emit, "CNPJ") or _safe_text(emit, "CPF")
-
-    destinatario_nome = _safe_text(dest, "xNome")
-    destinatario_cnpj = _safe_text(dest, "CNPJ") or _safe_text(dest, "CPF")
-
-    valor_total_nfe = _safe_text(total, "vNF")
-    valor_produtos_nfe = _safe_text(total, "vProd")
-
-    linhas: List[Dict[str, object]] = []
-
-    for det in _find_all(inf_nfe, "det"):
-        prod = _find_first(det, "prod")
-        if prod is None:
-            continue
-
-        custos = _calcular_custo_item(prod, det)
-
-        linha = {
-            "origem_tipo": "xml_nfe",
-            "origem_arquivo_ou_url": getattr(arquivo, "name", "xml_nfe"),
-            "numero_nfe": numero_nfe,
-            "serie_nfe": serie_nfe,
-            "data_emissao": data_emissao,
-            "natureza_operacao": natureza_operacao,
-            "emitente_nome": emitente_nome,
-            "emitente_fantasia": emitente_fantasia,
-            "emitente_cnpj": emitente_cnpj,
-            "destinatario_nome": destinatario_nome,
-            "destinatario_cnpj": destinatario_cnpj,
-            "valor_total_nfe": valor_total_nfe,
-            "valor_produtos_nfe": valor_produtos_nfe,
-            "item": det.attrib.get("nItem", ""),
-            "codigo": _safe_text(prod, "cProd"),
-            "descricao": _safe_text(prod, "xProd"),
-            "descricao_curta": _safe_text(prod, "xProd"),
-            "gtin": _safe_text(prod, "cEAN"),
-            "gtin_tributavel": _safe_text(prod, "cEANTrib"),
-            "ncm": _safe_text(prod, "NCM"),
-            "cest": _safe_text(prod, "CEST"),
-            "cfop": _safe_text(prod, "CFOP"),
-            "unidade": _safe_text(prod, "uCom"),
-            "quantidade": _safe_text(prod, "qCom"),
-            "preco": _safe_text(prod, "vUnCom"),
-            "preco_compra_xml": round(custos["custo_unitario_float"], 6),
-            "preco_custo": round(custos["custo_unitario_float"], 6),
-            "custo": round(custos["custo_unitario_float"], 6),
-            "custo_total_item_xml": round(custos["custo_total_item_float"], 6),
-            "valor_total_item": _safe_text(prod, "vProd"),
-            "unidade_tributavel": _safe_text(prod, "uTrib"),
-            "quantidade_tributavel": _safe_text(prod, "qTrib"),
-            "valor_unitario_tributavel": _safe_text(prod, "vUnTrib"),
-            "frete_item": _safe_text(prod, "vFrete"),
-            "seguro_item": _safe_text(prod, "vSeg"),
-            "desconto_item": _safe_text(prod, "vDesc"),
-            "outras_despesas_item": _safe_text(prod, "vOutro"),
-            "fornecedor": emitente_fantasia or emitente_nome,
-            "cnpj_fornecedor": emitente_cnpj,
-            "valor_ipi_item": round(custos["valor_ipi_float"], 6),
-            "valor_icms_st_item": round(custos["valor_icms_st_float"], 6),
-            "valor_fcp_st_item": round(custos["valor_fcp_st_float"], 6),
-            "valor_ii_item": round(custos["valor_ii_float"], 6),
-            "total_impostos_item": round(custos["total_impostos_float"], 6),
-        }
-
-        linha = _enriquecer_item_xml(linha)
-        linhas.append(linha)
-
-    if not linhas:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(linhas)
-    return df.fillna("")
