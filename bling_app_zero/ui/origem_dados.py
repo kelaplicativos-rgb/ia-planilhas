@@ -82,7 +82,7 @@ def render_origem_dados() -> None:
     st.subheader("Origem dos dados")
 
     # =========================================================
-    # 1) ORIGEM PRIMEIRO (CORREÇÃO APLICADA)
+    # 1) ORIGEM
     # =========================================================
     df_origem = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
@@ -101,8 +101,11 @@ def render_origem_dados() -> None:
             pass
 
     # =========================================================
-    # 2) OPERAÇÃO
+    # 2) OPERAÇÃO + MODELO (CORREÇÃO PRINCIPAL)
+    # AGORA FICA LOGO ABAIXO DA ORIGEM
     # =========================================================
+    st.markdown("### Tipo de envio")
+
     operacao = st.radio(
         "Selecione a operação",
         ["Cadastro de Produtos", "Atualização de Estoque"],
@@ -115,20 +118,18 @@ def render_origem_dados() -> None:
         "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
     )
 
-    # =========================================================
-    # 3) MODELO BLING
-    # =========================================================
+    # MODELO VEM JUNTO (colado na operação)
     render_modelo_bling(operacao)
 
     # =========================================================
-    # 4) PRECIFICAÇÃO
+    # 3) PRECIFICAÇÃO
     # =========================================================
     render_precificacao(df_origem)
 
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     # =========================================================
-    # 5) ESTOQUE + DEPÓSITO
+    # 4) ESTOQUE + DEPÓSITO
     # =========================================================
     origem_atual = _obter_origem_atual()
     tipo = st.session_state.get("tipo_operacao_bling")
@@ -162,7 +163,7 @@ def render_origem_dados() -> None:
     st.session_state["df_final"] = df_saida.copy()
 
     # =========================================================
-    # 6) VALIDAÇÃO + AVANÇO
+    # 5) VALIDAÇÃO + AVANÇO
     # =========================================================
     modelo_ok = safe_df_dados(obter_modelo_ativo())
 
