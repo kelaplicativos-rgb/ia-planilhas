@@ -51,7 +51,7 @@ def render_preview_final() -> None:
         pass
 
     with st.expander("📦 Ver dados finais", expanded=False):
-        st.dataframe(df_fluxo.head(20), width="stretch")
+        st.dataframe(df_fluxo.head(20), use_container_width=True)
 
     try:
         df_download = limpar_gtin_invalido(df_fluxo.copy())
