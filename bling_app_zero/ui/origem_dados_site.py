@@ -16,17 +16,13 @@ def _safe_df(df) -> bool:
 def _obter_executar_crawler():
     try:
         from bling_app_zero.core.site_crawler import executar_crawler
-
         return executar_crawler
     except Exception as e:
         log_debug(f"Falha ao importar crawler: {e}", "ERROR")
         return None
 
 
-def _normalizar_coluna_estoque(
-    df: pd.DataFrame,
-    estoque_padrao_site: int,
-) -> pd.DataFrame:
+def _normalizar_coluna_estoque(df: pd.DataFrame, estoque_padrao_site: int) -> pd.DataFrame:
     df_saida = df.copy()
 
     coluna_estoque = None
@@ -40,38 +36,29 @@ def _normalizar_coluna_estoque(
         df_saida["estoque"] = int(estoque_padrao_site)
         return df_saida
 
-    serie = df_saida[coluna_estoque]
-
     def ajustar(valor):
-        if valor is None:
-            return int(estoque_padrao_site)
-
-        texto = str(valor).strip().lower()
+        texto = str(valor or "").strip().lower()
 
         if texto in {"", "nan", "none", "null"}:
             return int(estoque_padrao_site)
 
-        if any(
-            token in texto
-            for token in [
-                "esgotado",
-                "indispon",
-                "sem estoque",
-                "out of stock",
-            ]
-        ):
+        if any(token in texto for token in [
+            "esgotado", "indispon", "sem estoque", "out of stock"
+        ]):
             return 0
 
         try:
-            return int(float(str(valor).replace(",", ".")))
+            return int(float(texto.replace(",", ".")))
         except Exception:
             return int(estoque_padrao_site)
 
-    df_saida[coluna_estoque] = serie.apply(ajustar)
+    df_saida[coluna_estoque] = df_saida[coluna_estoque].apply(ajustar)
     return df_saida
 
 
 def render_origem_site():
+    st.markdown("### 🌐 Captação de produtos via site")
+
     url = st.text_input("URL do site", key="url_site_origem")
 
     estoque_padrao_site = st.number_input(
@@ -82,70 +69,55 @@ def render_origem_site():
         key="estoque_padrao_site",
     )
 
+    # =========================
+    # ESTADO CONTROLADO
+    # =========================
     if "crawler_rodando" not in st.session_state:
         st.session_state["crawler_rodando"] = False
 
     if "df_origem_site" not in st.session_state:
         st.session_state["df_origem_site"] = None
 
-    if "url_site_origem_anterior" not in st.session_state:
-        st.session_state["url_site_origem_anterior"] = ""
+    if "site_processado" not in st.session_state:
+        st.session_state["site_processado"] = False
 
     url_limpa = str(url or "").strip()
 
-    if url_limpa and st.session_state["url_site_origem_anterior"] != url_limpa:
-        st.session_state["df_origem_site"] = None
-        st.session_state["url_site_origem_anterior"] = url_limpa
-
+    # =========================
+    # BOTÃO
+    # =========================
     buscar = st.button(
-        "Buscar produtos do site",
+        "🚀 Buscar produtos do site",
         use_container_width=True,
-        key="btn_buscar_produtos_site",
         disabled=st.session_state["crawler_rodando"] or not bool(url_limpa),
     )
 
+    # =========================
+    # EXECUÇÃO DO CRAWLER
+    # =========================
     if buscar:
         st.session_state["crawler_rodando"] = True
-        log_debug(f"Iniciando crawler: {url_limpa}")
+        st.session_state["site_processado"] = False
 
         progress = st.progress(0)
         status = st.empty()
-        detalhe = st.empty()
 
         try:
             executar_crawler = _obter_executar_crawler()
             if executar_crawler is None:
-                status.error("Erro ao carregar o módulo do crawler.")
-                detalhe.write("Falha ao importar bling_app_zero.core.site_crawler")
-                st.error("Erro ao carregar o módulo de busca por site.")
-                st.session_state["df_origem_site"] = None
+                st.error("Erro ao carregar o crawler.")
                 return None
 
             status.info("🔎 Conectando ao site...")
-            detalhe.write("Abrindo conexão com servidor")
-            progress.progress(10)
-
-            status.info("📦 Coletando páginas...")
-            detalhe.write("Mapeando categorias e paginação")
-            progress.progress(25)
-
-            status.info("📄 Extraindo produtos...")
-            detalhe.write("Capturando dados do HTML")
-            progress.progress(40)
+            progress.progress(20)
 
             df_origem = executar_crawler(url_limpa)
-            progress.progress(70)
+            progress.progress(60)
 
             if df_origem is None or len(df_origem) == 0:
-                status.error("Nenhum produto encontrado.")
-                detalhe.write("O crawler não retornou produtos válidos.")
                 st.error("Nenhum produto encontrado.")
-                st.session_state["crawler_rodando"] = False
                 st.session_state["df_origem_site"] = None
                 return None
-
-            status.info("🧠 Processando dados...")
-            detalhe.write("Padronizando estrutura dos dados")
 
             df_origem = pd.DataFrame(df_origem)
             df_origem = _normalizar_coluna_estoque(
@@ -153,32 +125,32 @@ def render_origem_site():
                 int(estoque_padrao_site),
             )
 
-            progress.progress(90)
-
-            status.info("📊 Finalizando...")
-            detalhe.write(f"{len(df_origem)} produtos processados")
             progress.progress(100)
-            status.success("✅ Concluído com sucesso")
 
             st.session_state["df_origem_site"] = df_origem.copy()
-            log_debug(
-                f"Crawler finalizado: {len(df_origem)} produtos",
-                "SUCCESS",
-            )
+            st.session_state["site_processado"] = True
+
+            status.success(f"✅ {len(df_origem)} produtos carregados")
+
+            log_debug(f"Crawler finalizado: {len(df_origem)} produtos", "SUCCESS")
 
         except Exception as e:
-            log_debug(f"Erro crawler: {e}", "ERROR")
-            status.error("Erro no processamento")
-            detalhe.write(str(e))
             st.error("Erro ao buscar site.")
+            log_debug(f"Erro crawler: {e}", "ERROR")
             st.session_state["df_origem_site"] = None
+
         finally:
             st.session_state["crawler_rodando"] = False
 
+    # =========================
+    # PREVIEW
+    # =========================
     df_site = st.session_state.get("df_origem_site")
+
     if _safe_df(df_site):
-        with st.expander("🌐 Prévia dos dados do site", expanded=False):
+        with st.expander("📊 Prévia dos dados do site", expanded=False):
             st.dataframe(df_site.head(20), use_container_width=True)
+
         return df_site.copy()
 
     return None
