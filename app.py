@@ -36,6 +36,9 @@ APP_VERSION = "1.0.20"
 if "logs" not in st.session_state:
     st.session_state["logs"] = []
 
+if "etapa_origem" not in st.session_state:
+    st.session_state["etapa_origem"] = "upload"
+
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
@@ -51,7 +54,7 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 # =========================
 def _safe_df(key: str) -> pd.DataFrame | None:
     df = st.session_state.get(key)
-    if isinstance(df, pd.DataFrame) and not df.empty:
+    if isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0:
         return df.copy()
     return None
 
@@ -123,6 +126,81 @@ def _exportar_download_bytes(df: pd.DataFrame) -> bytes:
     return exportar_excel_bytes(df)
 
 
+def _render_preview_final() -> None:
+    _sincronizar_df_final()
+    df_fluxo = _get_df_fluxo()
+
+    if df_fluxo is None:
+        st.warning("Nenhum dado disponível para o preview final.")
+        log_debug("Etapa final sem DataFrame disponível", "ERRO")
+        return
+
+    try:
+        log_debug(
+            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
+        )
+    except Exception:
+        pass
+
+    st.divider()
+    st.subheader("Preview final")
+
+    with st.expander("📦 Ver dados finais", expanded=False):
+        st.dataframe(df_fluxo.head(20), use_container_width=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_para_mapeamento_final"):
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
+
+    with col2:
+        if st.button("🔄 Atualizar preview", use_container_width=True, key="btn_atualizar_preview_final"):
+            st.session_state["df_final"] = df_fluxo.copy()
+            st.rerun()
+
+    try:
+        df_download = limpar_gtin_invalido(df_fluxo.copy())
+    except Exception as e:
+        log_debug(f"Erro ao limpar GTIN inválido: {e}", "ERRO")
+        df_download = df_fluxo.copy()
+
+    validacao_ok = True
+    excel_bytes = None
+
+    try:
+        validacao_ok = _normalizar_validacao_obrigatorios(
+            validar_campos_obrigatorios(df_download)
+        )
+    except Exception as e:
+        log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
+        validacao_ok = True
+
+    if not validacao_ok:
+        st.error("Preencha os campos obrigatórios antes do download.")
+    else:
+        try:
+            excel_bytes = _exportar_download_bytes(df_download)
+        except Exception as e:
+            log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
+            st.error("Não foi possível gerar a planilha final.")
+
+    if excel_bytes:
+        st.download_button(
+            "⬇️ Baixar planilha final",
+            excel_bytes,
+            "bling_final.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="btn_baixar_planilha_final",
+        )
+
+    st.divider()
+    st.subheader("Integração com Bling")
+    render_bling_panel()
+
+
 # =========================
 # UI
 # =========================
@@ -139,7 +217,7 @@ etapa = st.session_state.get("etapa_origem", "upload")
 # =========================
 # ETAPA 1 — ORIGEM
 # =========================
-if etapa in ["upload", None]:
+if etapa in ["upload", None, "origem"]:
     render_origem_dados()
     _sincronizar_df_final()
 
@@ -150,7 +228,6 @@ if etapa in ["upload", None]:
 elif etapa == "mapeamento":
     st.divider()
     st.subheader("Mapeamento")
-
     render_origem_mapeamento()
     _sincronizar_df_final()
 
@@ -159,65 +236,7 @@ elif etapa == "mapeamento":
 # ETAPA 3 — FINAL
 # =========================
 elif etapa == "final":
-    _sincronizar_df_final()
-    df_fluxo = _get_df_fluxo()
-
-    if df_fluxo is not None:
-        try:
-            log_debug(
-                f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
-            )
-        except Exception:
-            pass
-
-        st.divider()
-        st.subheader("Preview final")
-
-        with st.expander("📦 Ver dados finais", expanded=False):
-            st.dataframe(df_fluxo.head(20), width="stretch")
-
-        try:
-            df_download = limpar_gtin_invalido(df_fluxo.copy())
-        except Exception as e:
-            log_debug(f"Erro ao limpar GTIN inválido: {e}", "ERRO")
-            df_download = df_fluxo.copy()
-
-        validacao_ok = True
-        excel_bytes = None
-
-        try:
-            validacao_ok = _normalizar_validacao_obrigatorios(
-                validar_campos_obrigatorios(df_download)
-            )
-        except Exception as e:
-            log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
-            validacao_ok = True
-
-        if not validacao_ok:
-            st.error("Preencha os campos obrigatórios antes do download.")
-        else:
-            try:
-                excel_bytes = _exportar_download_bytes(df_download)
-            except Exception as e:
-                log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
-                st.error("Não foi possível gerar a planilha final.")
-
-        if excel_bytes is not None:
-            st.download_button(
-                "⬇️ Baixar planilha final",
-                excel_bytes,
-                "bling_final.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-
-        st.divider()
-        st.subheader("Integração com Bling")
-        render_bling_panel()
-
-    else:
-        st.warning("Nenhum dado disponível para o preview final.")
-        log_debug("Etapa final sem DataFrame disponível", "ERRO")
+    _render_preview_final()
 
 
 # =========================
@@ -244,4 +263,5 @@ with st.expander("🔍 Debug", expanded=False):
         "\n".join(logs),
         "debug.txt",
         use_container_width=True,
+        key="btn_baixar_log_debug",
     )
