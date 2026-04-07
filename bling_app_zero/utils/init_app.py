@@ -3,31 +3,44 @@ from __future__ import annotations
 import streamlit as st
 
 
-def limpar_cache_se_necessario():
+# ⚠️ MANTER IGUAL AO app.py
+APP_VERSION = "1.0.20"
+
+
+def limpar_cache_se_necessario() -> None:
     """
-    Limpa cache automaticamente UMA VEZ por sessão.
-    Evita bugs de leitura de planilha, estado antigo e processamento preso.
+    Limpa cache automaticamente de forma inteligente:
+    - 1x por sessão
+    - OU quando a versão do app muda (deploy novo)
     """
 
     try:
-        if not st.session_state.get("_cache_limpo_auto", False):
+        cache_ja_limpo = st.session_state.get("_cache_limpo_auto", False)
+        versao_cache = st.session_state.get("_cache_version")
+
+        precisa_limpar = (
+            not cache_ja_limpo
+            or versao_cache != APP_VERSION
+        )
+
+        if precisa_limpar:
             st.cache_data.clear()
             st.cache_resource.clear()
 
-            # marca que já limpou
             st.session_state["_cache_limpo_auto"] = True
-
-            # opcional: log visual
-            st.session_state["_cache_log"] = "Cache limpo automaticamente na inicialização."
+            st.session_state["_cache_version"] = APP_VERSION
+            st.session_state["_cache_log"] = (
+                f"Cache limpo automaticamente (versão {APP_VERSION})"
+            )
 
     except Exception:
         pass
 
 
-def inicializar_app():
+def inicializar_app() -> None:
     """
-    Ponto único de inicialização do app.
-    Pode crescer depois (logs, configs, etc).
+    Inicialização central do app.
+    Aqui você pode evoluir depois (logs, configs, IA debug etc).
     """
 
     limpar_cache_se_necessario()
