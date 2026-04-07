@@ -21,31 +21,6 @@ from bling_app_zero.ui.origem_dados_validacao import (
 )
 
 
-def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    try:
-        if not safe_df_dados(df):
-            return df
-
-        df_preview = df.copy()
-
-        for col in df_preview.columns:
-            try:
-                df_preview[col] = df_preview[col].apply(
-                    lambda x: "" if pd.isna(x) else str(x)
-                )
-            except Exception:
-                try:
-                    df_preview[col] = df_preview[col].astype(str)
-                except Exception:
-                    pass
-
-        return df_preview.replace(
-            {"nan": "", "None": "", "<NA>": "", "NaT": ""}
-        )
-    except Exception:
-        return df
-
-
 def _obter_origem_atual() -> str:
     try:
         for key in ["origem_dados", "origem_selecionada", "tipo_origem", "origem"]:
@@ -88,6 +63,14 @@ def render_origem_dados() -> None:
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
 
+    origem_atual = _obter_origem_atual()
+
+    # 🔥 CORREÇÃO CRÍTICA — TRAVA PARA SITE
+    if "site" in origem_atual:
+        if not st.session_state.get("site_processado"):
+            st.info("🔎 Execute a busca do site para continuar.")
+            return
+
     if not safe_df_dados(df_origem):
         st.info("Selecione a origem e carregue os dados para continuar.")
         return
@@ -101,8 +84,7 @@ def render_origem_dados() -> None:
             pass
 
     # =========================================================
-    # 2) OPERAÇÃO + MODELO (CORREÇÃO PRINCIPAL)
-    # AGORA FICA LOGO ABAIXO DA ORIGEM
+    # 2) OPERAÇÃO + MODELO
     # =========================================================
     st.markdown("### Tipo de envio")
 
@@ -118,11 +100,10 @@ def render_origem_dados() -> None:
         "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
     )
 
-    # MODELO VEM JUNTO (colado na operação)
     render_modelo_bling(operacao)
 
     # =========================================================
-    # 3) PRECIFICAÇÃO
+    # 🔥 CORREÇÃO — PRECIFICAÇÃO SÓ QUANDO DADOS OK
     # =========================================================
     render_precificacao(df_origem)
 
@@ -131,7 +112,6 @@ def render_origem_dados() -> None:
     # =========================================================
     # 4) ESTOQUE + DEPÓSITO
     # =========================================================
-    origem_atual = _obter_origem_atual()
     tipo = st.session_state.get("tipo_operacao_bling")
 
     if tipo == "estoque":
