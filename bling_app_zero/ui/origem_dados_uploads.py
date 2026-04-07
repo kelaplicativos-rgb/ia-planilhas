@@ -1,5 +1,23 @@
-# (mantive tudo igual, só ajustei a função carregar_modelo_bling)
+from __future__ import annotations
 
+from typing import Any
+
+import streamlit as st
+
+from bling_app_zero.utils.excel import (
+    ler_planilha_segura,
+    safe_df_dados,
+)
+from bling_app_zero.utils.excel_helpers import (
+    arquivo_planilha_permitido,
+    texto_extensoes_planilha,
+    nome_arquivo,
+    hash_arquivo_upload,
+)
+from bling_app_zero.utils.excel_logs import log_debug
+
+
+# (mantive tudo igual, só ajustei a função carregar_modelo_bling)
 def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
     if arquivo is None:
         return False
@@ -80,5 +98,5 @@ def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
 
     except Exception as e:
         st.error("Erro ao carregar o modelo Bling.")
-        log_debug(f"Erro ao carregar modelo Bling ({tipo_modelo}): {e}", "ERRO")
+        log_debug(f"Erro ao carregar modelo Bling ({tipo_modelo}): {e}", "ERROR")
         return False
