@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from .excel_logs import log_debug
 
 
 _MOJIBAKE_TOKENS = ("Ã", "Â", "â€™", "â€œ", "â€", "�")
+_EXTENSOES_PLANILHA = (".xlsx", ".xls", ".xlsm", ".xlsb", ".csv")
 
 
 def _safe_df(df: pd.DataFrame | None) -> bool:
@@ -39,6 +41,20 @@ def _normalizar_nome_coluna(nome: str) -> str:
         return ""
 
 
+def nome_arquivo(arquivo: Any) -> str:
+    try:
+        if arquivo is None:
+            return ""
+        nome = getattr(arquivo, "name", "") or ""
+        return str(nome).strip()
+    except Exception:
+        return ""
+
+
+def texto_extensoes_planilha() -> str:
+    return ", ".join(_EXTENSOES_PLANILHA)
+
+
 def _extrair_bytes_arquivo(arquivo) -> bytes:
     try:
         if arquivo is None:
@@ -56,6 +72,11 @@ def _extrair_bytes_arquivo(arquivo) -> bytes:
             try:
                 conteudo = arquivo.getvalue()
                 if isinstance(conteudo, bytes) and conteudo:
+                    if hasattr(arquivo, "seek"):
+                        try:
+                            arquivo.seek(0)
+                        except Exception:
+                            pass
                     return conteudo
             except Exception:
                 pass
@@ -66,13 +87,38 @@ def _extrair_bytes_arquivo(arquivo) -> bytes:
                     arquivo.seek(0)
                 conteudo = arquivo.read()
                 if isinstance(conteudo, bytes) and conteudo:
+                    if hasattr(arquivo, "seek"):
+                        try:
+                            arquivo.seek(0)
+                        except Exception:
+                            pass
                     return conteudo
+            except Exception:
+                pass
+
+        if hasattr(arquivo, "seek"):
+            try:
+                arquivo.seek(0)
             except Exception:
                 pass
 
         return b""
     except Exception:
         return b""
+
+
+def hash_arquivo_upload(arquivo: Any) -> str:
+    try:
+        conteudo = _extrair_bytes_arquivo(arquivo)
+        if not conteudo:
+            nome = nome_arquivo(arquivo)
+            if not nome:
+                return ""
+            return hashlib.md5(nome.encode("utf-8", errors="ignore")).hexdigest()
+        return hashlib.md5(conteudo).hexdigest()
+    except Exception as e:
+        log_debug(f"Erro ao gerar hash do upload: {e}", "ERROR")
+        return ""
 
 
 def _arquivo_parece_excel_por_assinatura(conteudo: bytes) -> bool:
@@ -111,6 +157,33 @@ def _arquivo_parece_csv_texto(conteudo: bytes) -> bool:
 
         return False
     except Exception:
+        return False
+
+
+def arquivo_planilha_permitido(arquivo: Any) -> bool:
+    try:
+        if arquivo is None:
+            return False
+
+        nome = nome_arquivo(arquivo).lower()
+        ext = Path(nome).suffix.lower()
+
+        if ext in _EXTENSOES_PLANILHA:
+            return True
+
+        conteudo = _extrair_bytes_arquivo(arquivo)
+        if not conteudo:
+            return False
+
+        if _arquivo_parece_excel_por_assinatura(conteudo):
+            return True
+
+        if _arquivo_parece_csv_texto(conteudo):
+            return True
+
+        return False
+    except Exception as e:
+        log_debug(f"Erro ao validar arquivo de planilha: {e}", "ERROR")
         return False
 
 
