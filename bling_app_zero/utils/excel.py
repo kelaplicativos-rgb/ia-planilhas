@@ -8,9 +8,9 @@ from .excel_exportacao import (
     gerar_zip_com_arquivos,
     gerar_zip_processamento,
 )
+from .excel_helpers import limpar_gtin_invalido, validar_campos_obrigatorios
 from .excel_leitura import ler_planilha_excel, ler_planilha_segura
 from .excel_logs import baixar_logs_txt, log_debug
-from .excel_helpers import limpar_gtin_invalido, validar_campos_obrigatorios
 
 __all__ = [
     "log_debug",
