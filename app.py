@@ -18,6 +18,7 @@ except Exception:
     _exportar_excel_robusto = None
 
 from bling_app_zero.ui.bling_panel import render_bling_panel
+from bling_app_zero.ui.fornecedores_panel import render_fornecedores_panel
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 
@@ -38,6 +39,9 @@ if "logs" not in st.session_state:
 
 if "etapa_origem" not in st.session_state:
     st.session_state["etapa_origem"] = "upload"
+
+if "area_app" not in st.session_state:
+    st.session_state["area_app"] = "Fluxo principal"
 
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
@@ -206,6 +210,32 @@ def _render_preview_final() -> None:
 # =========================
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
+
+area_app = st.radio(
+    "Área do sistema",
+    ["Fluxo principal", "Fornecedores adaptativos"],
+    horizontal=True,
+    key="area_app",
+)
+
+if area_app == "Fornecedores adaptativos":
+    render_fornecedores_panel()
+
+    with st.expander("🔍 Debug", expanded=False):
+        logs = st.session_state.get("logs", [])
+
+        for linha in reversed(logs[-100:]):
+            st.text(linha)
+
+        st.download_button(
+            "📥 Baixar log",
+            "\n".join(logs),
+            "debug.txt",
+            use_container_width=True,
+            key="btn_baixar_log_debug_fornecedores",
+        )
+
+    st.stop()
 
 
 # =========================
