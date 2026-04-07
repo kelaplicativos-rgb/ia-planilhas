@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.site_crawler import executar_crawler
 from bling_app_zero.ui.origem_dados_helpers import log_debug
 
 
@@ -14,7 +13,20 @@ def _safe_df(df) -> bool:
         return False
 
 
-def _normalizar_coluna_estoque(df: pd.DataFrame, estoque_padrao_site: int) -> pd.DataFrame:
+def _obter_executar_crawler():
+    try:
+        from bling_app_zero.core.site_crawler import executar_crawler
+
+        return executar_crawler
+    except Exception as e:
+        log_debug(f"Falha ao importar crawler: {e}", "ERROR")
+        return None
+
+
+def _normalizar_coluna_estoque(
+    df: pd.DataFrame,
+    estoque_padrao_site: int,
+) -> pd.DataFrame:
     df_saida = df.copy()
 
     coluna_estoque = None
@@ -39,7 +51,15 @@ def _normalizar_coluna_estoque(df: pd.DataFrame, estoque_padrao_site: int) -> pd
         if texto in {"", "nan", "none", "null"}:
             return int(estoque_padrao_site)
 
-        if any(token in texto for token in ["esgotado", "indispon", "sem estoque", "out of stock"]):
+        if any(
+            token in texto
+            for token in [
+                "esgotado",
+                "indispon",
+                "sem estoque",
+                "out of stock",
+            ]
+        ):
             return 0
 
         try:
@@ -93,6 +113,14 @@ def render_origem_site():
         detalhe = st.empty()
 
         try:
+            executar_crawler = _obter_executar_crawler()
+            if executar_crawler is None:
+                status.error("Erro ao carregar o módulo do crawler.")
+                detalhe.write("Falha ao importar bling_app_zero.core.site_crawler")
+                st.error("Erro ao carregar o módulo de busca por site.")
+                st.session_state["df_origem_site"] = None
+                return None
+
             status.info("🔎 Conectando ao site...")
             detalhe.write("Abrindo conexão com servidor")
             progress.progress(10)
@@ -103,24 +131,29 @@ def render_origem_site():
 
             status.info("📄 Extraindo produtos...")
             detalhe.write("Capturando dados do HTML")
+            progress.progress(40)
 
             df_origem = executar_crawler(url_limpa)
-            progress.progress(60)
+            progress.progress(70)
 
             if df_origem is None or len(df_origem) == 0:
                 status.error("Nenhum produto encontrado.")
+                detalhe.write("O crawler não retornou produtos válidos.")
                 st.error("Nenhum produto encontrado.")
                 st.session_state["crawler_rodando"] = False
                 st.session_state["df_origem_site"] = None
                 return None
 
-            status.info("🧠 Processando com IA...")
+            status.info("🧠 Processando dados...")
             detalhe.write("Padronizando estrutura dos dados")
 
             df_origem = pd.DataFrame(df_origem)
-            df_origem = _normalizar_coluna_estoque(df_origem, int(estoque_padrao_site))
+            df_origem = _normalizar_coluna_estoque(
+                df_origem,
+                int(estoque_padrao_site),
+            )
 
-            progress.progress(85)
+            progress.progress(90)
 
             status.info("📊 Finalizando...")
             detalhe.write(f"{len(df_origem)} produtos processados")
@@ -128,7 +161,10 @@ def render_origem_site():
             status.success("✅ Concluído com sucesso")
 
             st.session_state["df_origem_site"] = df_origem.copy()
-            log_debug(f"Crawler finalizado: {len(df_origem)} produtos", "SUCCESS")
+            log_debug(
+                f"Crawler finalizado: {len(df_origem)} produtos",
+                "SUCCESS",
+            )
 
         except Exception as e:
             log_debug(f"Erro crawler: {e}", "ERROR")
