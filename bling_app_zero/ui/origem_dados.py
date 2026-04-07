@@ -3,13 +3,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import (
     controlar_troca_operacao,
     controlar_troca_origem,
     safe_df_dados,
     sincronizar_estado_com_origem,
 )
-from bling_app_zero.ui.origem_dados_helpers import log_debug
 from bling_app_zero.ui.origem_dados_precificacao import render_precificacao
 from bling_app_zero.ui.origem_dados_uploads import (
     render_modelo_bling,
