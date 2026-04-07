@@ -146,32 +146,54 @@ def render_precificacao(df_base):
         try:
             df_precificado = aplicar_precificacao_com_fallback(df_base, coluna_preco)
 
-            if safe_df_dados(df_precificado):
-                st.session_state["df_precificado"] = df_precificado.copy()
-                st.session_state["df_saida"] = df_precificado.copy()
-                st.session_state["df_final"] = df_precificado.copy()
-                st.session_state["bloquear_campos_auto"] = {"preco": True}
-                log_debug(
-                    f"Precificação aplicada com sucesso usando a coluna '{coluna_preco}'"
-                )
-            else:
+            if not safe_df_dados(df_precificado):
                 st.error("A precificação não retornou dados válidos.")
                 log_debug("Precificação retornou DataFrame inválido", "ERRO")
+                return
+
+            # 🔥 GARANTE QUE SEMPRE EXISTA COLUNA DE PREÇO FINAL
+            if "preco" not in [c.lower() for c in df_precificado.columns]:
+                df_precificado["preco"] = df_precificado[coluna_preco]
+
+            # 🔥 SALVA EM TODOS OS ESTADOS CORRETOS
+            st.session_state["df_precificado"] = df_precificado.copy()
+            st.session_state["df_saida"] = df_precificado.copy()
+            st.session_state["df_final"] = df_precificado.copy()
+
+            # 🔥 BLOQUEIA PREÇO NO MAPEAMENTO
+            st.session_state["bloquear_campos_auto"] = {
+                "preco": True,
+                "preço": True,
+                "preco de venda": True,
+                "preço de venda": True,
+            }
+
+            log_debug(
+                f"Precificação aplicada com sucesso usando a coluna '{coluna_preco}'"
+            )
+
+            st.success("Precificação aplicada com sucesso!")
+
         except Exception as e:
             log_debug(f"Erro na precificação: {e}", "ERRO")
             st.error("Erro ao aplicar a precificação.")
 
-    df_preview_precificacao = st.session_state.get("df_precificado")
-    if safe_df_dados(df_preview_precificacao):
+    # 🔥 IMPORTANTE: SE JÁ EXISTE, GARANTE QUE NÃO SE PERCA
+    df_precificado_state = st.session_state.get("df_precificado")
+
+    if safe_df_dados(df_precificado_state):
+        st.session_state["df_saida"] = df_precificado_state.copy()
+        st.session_state["df_final"] = df_precificado_state.copy()
+
         with st.expander("Prévia da precificação", expanded=False):
             try:
                 st.dataframe(
-                    _df_preview_seguro(df_preview_precificacao).head(10),
+                    _df_preview_seguro(df_precificado_state).head(10),
                     use_container_width=True,
                 )
             except Exception as e:
                 log_debug(f"Erro ao renderizar prévia da precificação: {e}", "ERRO")
                 try:
-                    st.write(_df_preview_seguro(df_preview_precificacao).head(10))
+                    st.write(_df_preview_seguro(df_precificado_state).head(10))
                 except Exception:
                     pass
