@@ -85,51 +85,20 @@ def _limpar_mapeamento_widgets(colunas_modelo: list[str]) -> None:
         st.session_state.pop(f"map_{col}", None)
 
 
-def _encontrar_coluna_existente(df: pd.DataFrame, coluna_modelo: str) -> str:
-    if not _safe_df(df):
-        return ""
-
-    alvo = str(coluna_modelo).strip().lower()
-
-    for col in df.columns:
-        if str(col).strip().lower() == alvo:
-            return col
-
-    if _is_coluna_preco(coluna_modelo):
-        for col in df.columns:
-            if _is_coluna_preco(col):
-                return col
-
-    if _is_coluna_deposito(coluna_modelo):
-        for col in df.columns:
-            if _is_coluna_deposito(col):
-                return col
-
-    return ""
-
-
+# 🔥 CORREÇÃO CRÍTICA AQUI
 def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
     bloqueios = _get_bloqueios()
     deposito = _get_deposito()
 
-    df_preparado = st.session_state.get("df_saida")
-    if _safe_df(df_preparado):
-        df_base = df_preparado.copy()
-    else:
-        df_base = pd.DataFrame(index=df_origem.index)
-
+    # 🚨 BASE AGORA É SEMPRE NOVA (MODELO)
     df_saida = pd.DataFrame(index=df_origem.index)
 
     for col in df_modelo.columns:
         origem = mapping.get(col, "")
-        col_existente = _encontrar_coluna_existente(df_base, col)
 
-        # 🔥 PREÇO BLINDADO TOTAL (NOVA REGRA)
+        # PREÇO
         if _is_coluna_preco(col):
-            if col_existente and col_existente in df_base.columns:
-                df_saida[col] = df_base[col_existente]
-            else:
-                df_saida[col] = ""
+            df_saida[col] = ""
             continue
 
         # DEPÓSITO
@@ -140,21 +109,12 @@ def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: 
         # MAPEAMENTO
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
-            continue
+        else:
+            df_saida[col] = ""
 
-        # PRESERVAÇÃO
-        if col_existente and col_existente in df_base.columns:
-            df_saida[col] = df_base[col_existente]
-            continue
-
-        df_saida[col] = ""
-
-    if deposito:
-        for col in df_saida.columns:
-            if _is_coluna_deposito(col):
-                df_saida[col] = deposito
-
+    # GARANTIA FINAL (ordem do modelo)
     df_saida = df_saida.reindex(columns=df_modelo.columns, fill_value="")
+
     return df_saida
 
 
@@ -192,7 +152,7 @@ def render_origem_mapeamento():
         return
 
     if not _safe_df(df_modelo):
-        st.warning("Anexe o modelo oficial antes de mapear.")
+        st.error("⚠️ Anexe o modelo do Bling antes de continuar.")
         return
 
     st.markdown("### 🔗 Mapeamento")
@@ -231,7 +191,6 @@ def render_origem_mapeamento():
 
             with cols[j]:
 
-                # DEPÓSITO
                 if _is_coluna_deposito(col_modelo) and deposito:
                     st.text_input(
                         col_modelo,
@@ -242,7 +201,6 @@ def render_origem_mapeamento():
                     mapping_atual[col_modelo] = ""
                     continue
 
-                # PREÇO
                 if _is_coluna_preco(col_modelo):
                     st.text_input(
                         col_modelo,
