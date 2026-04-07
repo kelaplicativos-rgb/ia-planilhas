@@ -41,6 +41,18 @@ def _safe_session_state_get(chave: str, default=None):
         return default
 
 
+def _valor_vazio(valor: Any) -> bool:
+    try:
+        if valor is None:
+            return True
+        if pd.isna(valor):
+            return True
+        texto = str(valor).strip().lower()
+        return texto in {"", "nan", "none", "null", "<na>"}
+    except Exception:
+        return True
+
+
 # ==========================================================
 # LOG
 # ==========================================================
@@ -216,12 +228,14 @@ def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
 
     df_saida = df_saida.copy()
 
+    # remove colunas/linhas totalmente vazias antes da limpeza fina
     df_saida = df_saida.dropna(axis=1, how="all")
     df_saida = df_saida.dropna(axis=0, how="all")
 
     if df_saida.empty:
         return pd.DataFrame()
 
+    # cabeçalhos seguros
     colunas = []
     usados = set()
 
@@ -242,16 +256,18 @@ def _limpar_dataframe_lido(df: pd.DataFrame) -> pd.DataFrame:
 
     df_saida.columns = colunas
 
+    # limpeza sem transformar NaN em "nan"
     for col in df_saida.columns:
         try:
             df_saida[col] = df_saida[col].apply(
-                lambda v: "" if v is None else str(v).strip()
+                lambda v: "" if _valor_vazio(v) else str(v).strip()
             )
         except Exception:
             pass
 
+    # remove linhas realmente vazias após a limpeza
     mascara_vazia = df_saida.apply(
-        lambda row: all(str(v).strip() == "" for v in row.values), axis=1
+        lambda row: all(_valor_vazio(v) for v in row.values), axis=1
     )
     df_saida = df_saida.loc[~mascara_vazia].copy()
 
@@ -386,6 +402,7 @@ def _ler_excel_sheet_por_sheet(uploaded_file: Any) -> pd.DataFrame:
         abas = xls.sheet_names or []
 
         for aba in abas:
+            # tentativa 1: leitura normal
             try:
                 df = pd.read_excel(
                     xls,
@@ -406,7 +423,34 @@ def _ler_excel_sheet_por_sheet(uploaded_file: Any) -> pd.DataFrame:
 
             except Exception as e:
                 _log_debug(
-                    f"Falha ao ler aba '{str(aba).strip()}': {e}",
+                    f"Falha ao ler aba '{str(aba).strip()}' (header padrão): {e}",
+                    "WARNING",
+                )
+
+            # tentativa 2: leitura sem header, usando primeira linha como possível conteúdo
+            try:
+                df_sem_header = pd.read_excel(
+                    xls,
+                    sheet_name=aba,
+                    header=None,
+                    dtype=str,
+                )
+                df_sem_header = _limpar_dataframe_lido(df_sem_header)
+                score_sem_header = _score_dataframe(df_sem_header)
+
+                _log_debug(
+                    f"Excel analisado aba='{str(aba).strip()}' sem header "
+                    f"score={score_sem_header} "
+                    f"shape={df_sem_header.shape if isinstance(df_sem_header, pd.DataFrame) else (0, 0)}"
+                )
+
+                if score_sem_header > melhor_score:
+                    melhor_score = score_sem_header
+                    melhor_df = df_sem_header
+
+            except Exception as e:
+                _log_debug(
+                    f"Falha ao ler aba '{str(aba).strip()}' (sem header): {e}",
                     "WARNING",
                 )
 
