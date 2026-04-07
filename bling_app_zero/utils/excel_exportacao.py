@@ -89,9 +89,6 @@ def exportar_dataframe_para_excel(
 
 
 def exportar_excel_bytes(df: pd.DataFrame, nome_aba: str = "Planilha") -> bytes:
-    """
-    Mantido por compatibilidade com imports antigos do projeto.
-    """
     return exportar_df_exato_para_excel_bytes(df=df, nome_aba=nome_aba)
 
 
