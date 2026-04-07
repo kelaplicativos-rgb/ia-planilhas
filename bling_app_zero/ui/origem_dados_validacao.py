@@ -5,6 +5,18 @@ import streamlit as st
 from bling_app_zero.ui.origem_dados_estado import safe_df_dados
 
 
+def obter_modelo_ativo():
+    tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
+
+    if tipo == "cadastro":
+        return st.session_state.get("df_modelo_cadastro")
+
+    if tipo == "estoque":
+        return st.session_state.get("df_modelo_estoque")
+
+    return None
+
+
 def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     erros: list[str] = []
 
@@ -12,6 +24,7 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     df_origem = st.session_state.get("df_origem")
     df_saida = st.session_state.get("df_saida")
     df_final = st.session_state.get("df_final")
+    modelo_ativo = obter_modelo_ativo()
 
     if tipo not in {"cadastro", "estoque"}:
         erros.append("Selecione a operação antes de continuar.")
@@ -29,25 +42,15 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
         except Exception:
             pass
 
-    if tipo == "cadastro":
-        modelo_ok = safe_df_dados(st.session_state.get("df_modelo_cadastro"))
-        if not modelo_ok:
+    if not safe_df_dados(df_final):
+        erros.append("A base final ainda não foi preparada.")
+
+    if not safe_df_dados(modelo_ativo):
+        if tipo == "cadastro":
             erros.append("Anexe o modelo oficial de cadastro do Bling.")
-    elif tipo == "estoque":
-        modelo_ok = safe_df_dados(st.session_state.get("df_modelo_estoque"))
-        if not modelo_ok:
+        elif tipo == "estoque":
             erros.append("Anexe o modelo oficial de estoque do Bling.")
+        else:
+            erros.append("Anexe o modelo oficial do Bling antes de continuar.")
 
     return len(erros) == 0, erros
-
-
-def obter_modelo_ativo():
-    tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
-
-    if tipo == "cadastro":
-        return st.session_state.get("df_modelo_cadastro")
-
-    if tipo == "estoque":
-        return st.session_state.get("df_modelo_estoque")
-
-    return None
