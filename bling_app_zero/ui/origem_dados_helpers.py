@@ -104,10 +104,6 @@ def _extrair_bytes_arquivo(arquivo) -> bytes:
 # ZIP AUTOMÁTICO
 # ==========================================================
 def _extrair_planilha_zip(arquivo):
-    """
-    Se o arquivo enviado for .zip, tenta extrair automaticamente
-    a primeira planilha suportada dentro dele.
-    """
     try:
         nome = str(getattr(arquivo, "name", "") or "").lower().strip()
 
@@ -126,14 +122,15 @@ def _extrair_planilha_zip(arquivo):
             for nome_interno in nomes_internos:
                 nome_interno_lower = str(nome_interno).lower().strip()
 
-                if nome_interno_lower.endswith((".xlsx", ".xls", ".csv", ".xlsm", ".xlsb")):
+                if nome_interno_lower.endswith(
+                    (".xlsx", ".xls", ".csv", ".xlsm", ".xlsb")
+                ):
                     candidatos.append(nome_interno)
 
             if not candidatos:
                 log_debug("ZIP sem planilha válida interna.", "ERROR")
                 return arquivo
 
-            # prioridade simples: primeiro arquivo útil encontrado
             nome_escolhido = candidatos[0]
 
             with zf.open(nome_escolhido) as arquivo_interno:
@@ -676,4 +673,9 @@ def _ler_excel_tentativas(arquivo) -> pd.DataFrame | None:
     return None
 
 
-# ==================================================
+# ==========================================================
+# LEITOR UNIVERSAL
+# ==========================================================
+def ler_planilha_segura(arquivo):
+    try:
+        arquivo = _extrai
