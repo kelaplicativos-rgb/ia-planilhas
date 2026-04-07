@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+
 import pandas as pd
 
 
@@ -29,7 +30,7 @@ def _slug(texto) -> str:
 
 
 def _coluna_por_trecho(df: pd.DataFrame, trechos: list[str]):
-    if df is None or df.empty:
+    if df is None or len(df.columns) == 0:
         return None
 
     mapa = {col: _slug(col) for col in df.columns}
@@ -144,10 +145,10 @@ def validar_cadastro_bling(df: pd.DataFrame) -> tuple[list[str], list[str]]:
     col_codigo_pai = _coluna_por_trecho(df, ["codigo pai", "id pai"])
     col_unidade = _coluna_por_trecho(df, ["unidade", "und", "un"])
     col_ncm = _coluna_por_trecho(df, ["ncm"])
-    col_preco = _coluna_por_trecho(df, ["preco", "valor", "preco venda"])
-    col_nome = _coluna_por_trecho(df, ["nome", "produto"])
+    col_preco = _coluna_por_trecho(df, ["preco de venda", "preco", "valor", "preco venda"])
+    col_nome = _coluna_por_trecho(df, ["nome", "produto", "titulo"])
     col_descricao = _coluna_por_trecho(df, ["descricao"])
-    col_descricao_curta = _coluna_por_trecho(df, ["descricao curta"])
+    col_descricao_curta = _coluna_por_trecho(df, ["descricao curta", "descricao curta"])
     col_video = _coluna_por_trecho(df, ["video"])
     col_link_externo = _coluna_por_trecho(df, ["link externo", "url produto", "link produto"])
     col_gtin = _coluna_por_trecho(df, ["gtin", "ean", "codigo barras", "codigo de barras"])
@@ -255,7 +256,7 @@ def validar_estoque_bling(df: pd.DataFrame) -> tuple[list[str], list[str]]:
 
     col_codigo = _coluna_por_trecho(df, ["codigo produto", "codigo", "sku"])
     col_codigo_pai = _coluna_por_trecho(df, ["codigo pai", "id pai"])
-    col_deposito = _coluna_por_trecho(df, ["deposito", "localizacao", "almoxarifado"])
+    col_deposito = _coluna_por_trecho(df, ["deposito", "depósito", "localizacao", "almoxarifado"])
     col_balanco = _coluna_por_trecho(df, ["balanco", "balanco estoque", "saldo", "estoque", "quantidade"])
     col_preco = _coluna_por_trecho(df, ["preco unitario", "preco unitario produto", "preco", "valor"])
     col_nome = _coluna_por_trecho(df, ["nome", "produto", "descricao produto"])
