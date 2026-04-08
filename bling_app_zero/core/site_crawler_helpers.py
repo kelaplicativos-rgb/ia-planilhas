@@ -62,7 +62,7 @@ def numero_texto_crawler(valor: Any) -> str:
     texto = texto_limpo_crawler(valor)
     texto = texto.replace("R$", "").replace("r$", "").strip()
 
-    # tenta pegar preço completo primeiro
+    # tenta pegar preço completo primeiro (ex: 1.299,90)
     m = re.search(r"(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{2}))", texto)
     if m:
         return m.group(1)
