@@ -61,17 +61,20 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     )
 
 
+# 🔥 CORREÇÃO CRÍTICA
 def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     try:
-        df_saida = st.session_state.get("df_saida")
+        # 🔒 NÃO recriar se já existe
+        if safe_df_dados(st.session_state.get("df_saida")):
+            return st.session_state["df_saida"]
 
-        if not safe_df_dados(df_saida):
-            df_saida = df_origem.copy()
+        df_saida = df_origem.copy()
 
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
 
         return df_saida
+
     except Exception:
         df_saida = df_origem.copy()
         st.session_state["df_saida"] = df_saida.copy()
@@ -149,22 +152,12 @@ def render_origem_dados() -> None:
 
     st.subheader("📦 Origem dos dados")
 
-    # =========================================================
-    # BOTÃO VOLTAR (SE ESTIVER NO MAPEAMENTO)
-    # =========================================================
+    # 🔥 BOTÃO VOLTAR FIXO (não some mais)
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
             st.session_state["etapa_origem"] = "origem"
             st.rerun()
 
-    # =========================================================
-    # BLOQUEIO SOMENTE VISUAL
-    # =========================================================
-    bloquear_inputs = etapa != "origem"
-
-    # =========================================================
-    # 1) ORIGEM
-    # =========================================================
     df_origem = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
@@ -183,9 +176,6 @@ def render_origem_dados() -> None:
 
     st.markdown("---")
 
-    # =========================================================
-    # 2) TIPO DE ENVIO
-    # =========================================================
     operacao = st.radio(
         "Tipo de envio",
         ["Cadastro de Produtos", "Atualização de Estoque"],
@@ -196,38 +186,27 @@ def render_origem_dados() -> None:
 
     st.markdown("---")
 
-    # =========================================================
-    # 3) MODELO BLING
-    # =========================================================
     render_modelo_bling(operacao)
 
     if not safe_df_dados(obter_modelo_ativo()):
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
-    # =========================================================
-    # 4) DF SAÍDA
-    # =========================================================
+    # 🔥 AGORA NÃO PERDE MAIS ESTADO
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
         df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
 
+    # 🔒 NÃO sobrescrever df_final sempre
     st.session_state["df_saida"] = df_saida.copy()
-    st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("---")
 
-    # =========================================================
-    # 5) PRECIFICAÇÃO
-    # =========================================================
     render_precificacao(df_origem)
 
     st.markdown("---")
 
-    # =========================================================
-    # 6) CONTINUAR
-    # =========================================================
     if etapa == "origem":
         if st.button("➡️ Continuar para mapeamento", use_container_width=True):
             valido, erros = validar_antes_mapeamento()
