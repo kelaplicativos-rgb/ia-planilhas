@@ -6,29 +6,27 @@ from urllib.parse import urlparse
 from bling_app_zero.core.fetcher import fetch_url
 
 # ==========================================================
-# LOG (BLINDADO)
+# LOG
 # ==========================================================
 try:
-    from bling_app_zero.utils.excel_logs import log_debug  # type: ignore
+    from bling_app_zero.utils.excel_logs import log_debug
 except Exception:
     try:
-        from bling_app_zero.utils.excel import log_debug  # type: ignore
+        from bling_app_zero.utils.excel import log_debug
     except Exception:
         def log_debug(_msg: str, _nivel: str = "INFO") -> None:
             return None
 
 
 # ==========================================================
-# IMPORT PLAYWRIGHT (BLINDADO)
+# PLAYWRIGHT
 # ==========================================================
 try:
     from bling_app_zero.core.playwright_fetcher import (
         fetch_playwright_payload,
-        tentar_fetch_com_fallback_js,
     )
 except Exception:
     fetch_playwright_payload = None
-    tentar_fetch_com_fallback_js = None
 
 
 # ==========================================================
@@ -48,6 +46,29 @@ def _normalizar_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         return "https://" + url
     return url
+
+
+def _html_parece_vazio(html: str | None) -> bool:
+    if not html:
+        return True
+
+    html_lower = html.lower()
+
+    sinais_vazio = [
+        "carregando",
+        "loading",
+        "javascript required",
+        "enable javascript",
+    ]
+
+    if any(x in html_lower for x in sinais_vazio):
+        return True
+
+    # pouco conteúdo real
+    if len(html) < 5000:
+        return True
+
+    return False
 
 
 def _payload_requests(url: str, html: str | None, erro: str = "") -> dict[str, Any]:
@@ -74,51 +95,46 @@ def fetch_payload_router(
     url = _normalizar_url(url)
     log_debug(f"[FETCH_ROUTER] START | {url}")
 
-    erro_playwright = ""
-
     # ======================================================
-    # 🔥 PLAYWRIGHT (AGORA CONTROLADO CORRETAMENTE)
-    # ======================================================
-    if preferir_js and fetch_playwright_payload:
-        log_debug("[FETCH_ROUTER] TENTANDO PLAYWRIGHT")
-
-        try:
-            payload_js = fetch_playwright_payload(url)
-
-            html_js = payload_js.get("html")
-            erro_playwright = _safe_str(payload_js.get("error"))
-
-            if html_js and len(_safe_str(html_js)) > 1000:
-                log_debug("[FETCH_ROUTER] PLAYWRIGHT OK")
-                return payload_js
-
-        except Exception as e:
-            erro_playwright = str(e)
-            log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
-
-    # ======================================================
-    # ✅ REQUESTS (PRINCIPAL)
+    # 1. REQUESTS
     # ======================================================
     html = fetch_url(url)
 
     if html:
         log_debug("[FETCH_ROUTER] REQUESTS OK")
-        return _payload_requests(url, html, erro=erro_playwright)
+
+        # 🔥 DETECTA HTML FALSO
+        if _html_parece_vazio(html):
+            log_debug("[FETCH_ROUTER] HTML VAZIO DETECTADO → USANDO PLAYWRIGHT")
+
+            if fetch_playwright_payload:
+                try:
+                    payload_js = fetch_playwright_payload(url)
+
+                    if payload_js.get("html"):
+                        log_debug("[FETCH_ROUTER] PLAYWRIGHT OK")
+                        return payload_js
+
+                except Exception as e:
+                    log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
+
+        return _payload_requests(url, html)
 
     # ======================================================
-    # ⚠️ FALLBACK JS (SÓ SE PEDIDO)
+    # 2. PLAYWRIGHT (FALLBACK TOTAL)
     # ======================================================
-    if preferir_js and tentar_fetch_com_fallback_js:
-        log_debug("[FETCH_ROUTER] FALLBACK JS FINAL")
+    if fetch_playwright_payload:
+        log_debug("[FETCH_ROUTER] FALLBACK TOTAL PLAYWRIGHT")
 
-        payload_js = tentar_fetch_com_fallback_js(
-            url=url,
-            html_requests=html,
-        )
+        try:
+            payload_js = fetch_playwright_payload(url)
 
-        if payload_js.get("html"):
-            return payload_js
+            if payload_js.get("html"):
+                return payload_js
+
+        except Exception as e:
+            log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
 
     log_debug("[FETCH_ROUTER] FALHA TOTAL")
 
-    return _payload_requests(url, html, erro=erro_playwright)
+    return _payload_requests(url, html)
