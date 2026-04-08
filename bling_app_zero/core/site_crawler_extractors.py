@@ -58,6 +58,48 @@ def _extrair_categoria(soup: BeautifulSoup) -> str:
     return ""
 
 
+def _limpar_descricao(texto: str) -> str:
+    if not texto:
+        return ""
+
+    cortes = [
+        "mega center eletrônicos",
+        "produtos relacionados",
+        "veja também",
+        "formas de pagamento",
+        "atendimento",
+        "loja física",
+        "endereço",
+    ]
+
+    texto = texto.lower()
+
+    for c in cortes:
+        texto = texto.split(c)[0]
+
+    texto = re.sub(r"\s+", " ", texto)
+
+    return texto.strip()[:800]
+
+
+def _filtrar_imagens(lista: str) -> str:
+    if not lista:
+        return ""
+
+    imgs = [i.strip() for i in lista.split("|") if i.strip()]
+
+    # remove logos / ícones
+    imgs = [
+        i for i in imgs
+        if not any(x in i.lower() for x in ["logo", "icon", "placeholder"])
+    ]
+
+    # remove duplicados
+    imgs = list(dict.fromkeys(imgs))
+
+    return " | ".join(imgs[:5])
+
+
 # ==========================================================
 # EXTRAÇÃO PRINCIPAL
 # ==========================================================
@@ -96,10 +138,12 @@ def extrair_preco(soup, jsonld, html):
     if meta:
         return numero_texto_crawler(meta)
 
-    for el in soup.select("[class*='price'], [class*='valor'], span"):
+    # 🔥 seletor mais seguro
+    for el in soup.select("[class*='price'], [class*='valor']"):
         txt = texto_limpo_crawler(el.get_text())
         preco = numero_texto_crawler(txt)
-        if preco and len(preco) >= 2:
+
+        if preco and len(preco) >= 3:
             return preco
 
     return _extrair_preco_global(html)
@@ -107,37 +151,35 @@ def extrair_preco(soup, jsonld, html):
 
 def extrair_descricao(soup, jsonld):
     desc = texto_limpo_crawler(jsonld.get("description"))
-    if desc:
-        return desc
 
-    meta = meta_content_crawler(soup, "name", "description")
-    if meta:
-        return meta
+    if not desc:
+        meta = meta_content_crawler(soup, "name", "description")
+        desc = meta or ""
 
-    for sel in [
-        ".product-description",
-        ".description",
-        "[class*='description']",
-    ]:
-        el = soup.select_one(sel)
-        if el:
-            txt = texto_limpo_crawler(el.get_text())
-            if txt:
-                return txt
+    if not desc:
+        for sel in [
+            ".product-description",
+            ".description",
+            "[class*='description']",
+        ]:
+            el = soup.select_one(sel)
+            if el:
+                desc = texto_limpo_crawler(el.get_text())
+                break
 
-    return ""
+    return _limpar_descricao(desc)
 
 
 def extrair_imagens(soup, url, jsonld):
     imgs = jsonld.get("image")
 
     if isinstance(imgs, list):
-        return " | ".join([i for i in imgs if isinstance(i, str)])
+        return _filtrar_imagens(" | ".join(imgs))
 
     if isinstance(imgs, str):
         return imgs
 
-    return todas_imagens_crawler(soup, url)
+    return _filtrar_imagens(todas_imagens_crawler(soup, url))
 
 
 def extrair_marca(jsonld):
@@ -172,7 +214,7 @@ def extrair_produto_crawler(
     preco = extrair_preco(soup, json_produto, html)
 
     # ======================================================
-    # 🔥 IA FALLBACK
+    # IA FALLBACK
     # ======================================================
     if extrair_com_ia and (not nome or not preco):
         log_debug(f"[IA FALLBACK] {url}")
