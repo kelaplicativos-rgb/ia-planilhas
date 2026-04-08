@@ -15,6 +15,7 @@ from bling_app_zero.core.site_crawler_helpers import (
     MAX_THREADS,
     extrair_links_paginacao_crawler,
     extrair_links_produtos_crawler,
+    link_parece_produto_crawler,
 )
 
 # ==========================================================
@@ -46,7 +47,7 @@ def _fetch(url: str) -> dict:
 
 
 # ==========================================================
-# 🔥 FUNÇÃO QUE FALTAVA
+# BAIXAR PRODUTO
 # ==========================================================
 def _baixar(link: str, padrao_disponivel: int) -> dict | None:
     payload = _fetch(link)
@@ -74,15 +75,15 @@ def _baixar(link: str, padrao_disponivel: int) -> dict | None:
 
 
 # ==========================================================
-# PAGINAÇÃO
+# PAGINAÇÃO (COM CACHE HTML)
 # ==========================================================
-def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
+def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
     visitadas = set()
     fila = [url_inicial]
-    saida = []
+    paginas = []
 
-    while fila and len(saida) < max_paginas:
+    while fila and len(paginas) < max_paginas:
         url = fila.pop(0)
 
         if not url or url in visitadas:
@@ -96,7 +97,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
         if not html:
             continue
 
-        saida.append(url)
+        paginas.append((url, html))  # 🔥 guarda HTML junto
 
         try:
             novos = extrair_links_paginacao_crawler(html, url)
@@ -104,7 +105,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
         except Exception:
             pass
 
-    return saida
+    return paginas
 
 
 # ==========================================================
@@ -140,28 +141,28 @@ def executar_crawler(
     # ======================================================
     links = []
 
-    for i, p in enumerate(paginas, start=1):
+    for i, (p, html) in enumerate(paginas, start=1):
         detalhe.info(f"🔗 Página {i}/{len(paginas)}")
 
-        payload = _fetch(p)
-        html = payload.get("html")
+        try:
+            novos = extrair_links_produtos_crawler(html, p)
 
-        if html:
-            try:
-                novos = extrair_links_produtos_crawler(html, p)
-                links.extend(novos)
-            except Exception:
-                pass
+            # 🔥 FILTRO FORTE
+            novos = [l for l in novos if link_parece_produto_crawler(l)]
+
+            links.extend(novos)
+        except Exception:
+            pass
 
         progress_bar.progress(15 + int((i / max(len(paginas), 1)) * 25))
 
     links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
     # ======================================================
-    # 🔥 FALLBACK INTELIGENTE
+    # FALLBACK
     # ======================================================
     if not links:
-        status.warning("⚠️ Nenhum link encontrado, tentando direto...")
+        status.warning("⚠️ Tentando extração direta...")
 
         payload = _fetch(url)
         html = payload.get("html")
@@ -198,7 +199,6 @@ def executar_crawler(
                 resultados.append(r)
 
             progress_bar.progress(45 + int((i / total) * 50))
-
             detalhe.info(f"⚙️ Produto {i}/{total}")
 
     # ======================================================
