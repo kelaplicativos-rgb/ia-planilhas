@@ -35,14 +35,17 @@ def _linha_parece_cabecalho(valores: list) -> bool:
     try:
         if not valores:
             return False
+
         textos = [_normalizar_texto_coluna(v) for v in valores]
         preenchidos = [t for t in textos if t]
         if not preenchidos:
             return False
+
         unicos = len(set(preenchidos))
         proporcao_unicos = unicos / max(len(preenchidos), 1)
         qtd_textuais = sum(1 for t in preenchidos if not t.isdigit())
         proporcao_textual = qtd_textuais / max(len(preenchidos), 1)
+
         return proporcao_unicos >= 0.7 and proporcao_textual >= 0.7
     except Exception:
         return False
@@ -68,7 +71,7 @@ def _promover_primeira_linha_para_header_se_preciso(df):
         usados = set()
 
         for i, v in enumerate(primeira):
-            nome = _normalizar_texto_coluna(v) or f"Coluna_{i+1}"
+            nome = _normalizar_texto_coluna(v) or f"Coluna_{i + 1}"
             base = nome
             c = 2
             while nome in usados:
@@ -94,7 +97,7 @@ def _normalizar_nomes_colunas(df):
         novas = []
 
         for i, col in enumerate(df2.columns):
-            nome = _normalizar_texto_coluna(col) or f"Coluna_{i+1}"
+            nome = _normalizar_texto_coluna(col) or f"Coluna_{i + 1}"
             base = nome
             c = 2
             while nome in usadas:
@@ -132,7 +135,7 @@ def _get_deposito() -> str:
 
 
 def _is_coluna_preco(nome) -> bool:
-    nome = str(nome).lower()
+    nome = str(nome).lower().strip()
     return any(
         p in nome
         for p in [
@@ -148,7 +151,7 @@ def _is_coluna_preco(nome) -> bool:
 
 
 def _is_coluna_deposito(nome) -> bool:
-    nome = str(nome).lower()
+    nome = str(nome).lower().strip()
     return "deposit" in nome or "depós" in nome or "deposito" in nome
 
 
@@ -179,38 +182,56 @@ def _get_coluna_preco_base_precificacao(df_origem: pd.DataFrame) -> str:
     return ""
 
 
-def _get_df_precificado() -> pd.DataFrame | None:
+def _get_df_fluxo_base(df_origem: pd.DataFrame) -> pd.DataFrame:
+    """
+    Retorna o DataFrame atual do fluxo, priorizando df_saida quando ele ainda
+    representa a base antes do mapeamento final. Se não existir, cai para df_origem.
+    """
     try:
-        df_precificado = st.session_state.get("df_precificado")
-        if _safe_df(df_precificado):
-            return df_precificado.copy().reset_index(drop=True)
+        df_fluxo = st.session_state.get("df_saida")
+        if _safe_df(df_fluxo):
+            return df_fluxo.copy().reset_index(drop=True)
     except Exception:
         pass
-    return None
+
+    return df_origem.copy().reset_index(drop=True)
 
 
 def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
+    """
+    Prioriza a coluna calculada de preço de venda no fluxo atual.
+    Não depende de df_precificado.
+    """
     try:
+        df_fluxo = _get_df_fluxo_base(df_origem)
+
+        candidatos_preco_venda = [
+            "Preço de venda",
+            "preço de venda",
+            "Preco de venda",
+            "preco de venda",
+            "Preço Venda",
+            "preço venda",
+            "preco venda",
+        ]
+
+        for nome in candidatos_preco_venda:
+            if nome in df_fluxo.columns:
+                return (
+                    df_fluxo[nome]
+                    .reset_index(drop=True)
+                    .reindex(range(len(df_origem)), fill_value="")
+                    .astype("object")
+                )
+
         coluna_preco_base = _get_coluna_preco_base_precificacao(df_origem)
-        if not coluna_preco_base:
-            return pd.Series([""] * len(df_origem), index=range(len(df_origem)), dtype="object")
-
-        df_precificado = _get_df_precificado()
-        if _safe_df(df_precificado) and coluna_preco_base in df_precificado.columns:
-            serie = (
-                df_precificado[coluna_preco_base]
+        if coluna_preco_base and coluna_preco_base in df_fluxo.columns:
+            return (
+                df_fluxo[coluna_preco_base]
                 .reset_index(drop=True)
                 .reindex(range(len(df_origem)), fill_value="")
+                .astype("object")
             )
-            return serie.astype("object")
-
-        if coluna_preco_base in df_origem.columns:
-            serie = (
-                df_origem[coluna_preco_base]
-                .reset_index(drop=True)
-                .reindex(range(len(df_origem)), fill_value="")
-            )
-            return serie.astype("object")
 
     except Exception:
         pass
@@ -218,7 +239,11 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
     return pd.Series([""] * len(df_origem), index=range(len(df_origem)), dtype="object")
 
 
-def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+def _montar_df_saida(
+    df_origem: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping: dict,
+) -> pd.DataFrame:
     deposito = _get_deposito()
     serie_preco = _obter_serie_preco_para_saida(df_origem)
 
@@ -292,6 +317,7 @@ def render_origem_mapeamento():
     df_origem = _preparar_df_para_mapeamento(df_origem)
     df_modelo = _preparar_df_para_mapeamento(df_modelo)
 
+    # preserva a origem limpa, sem substituir pelo resultado do mapeamento
     st.session_state["df_origem"] = df_origem.copy()
 
     if st.session_state.get("tipo_operacao_bling") == "cadastro":
@@ -323,12 +349,18 @@ def render_origem_mapeamento():
 
     with st.container():
         st.markdown("### 👁️ Preview da planilha fornecedora")
-        st.dataframe(df_origem.head(5), use_container_width=True)
+        st.dataframe(
+            df_origem.head(5),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     colunas_modelo = list(df_modelo.columns)
     colunas_origem = list(df_origem.columns)
 
-    mapping_key = f"mapeamento_manual_{str(st.session_state.get('tipo_operacao_bling', 'padrao')).lower()}"
+    mapping_key = (
+        f"mapeamento_manual_{str(st.session_state.get('tipo_operacao_bling', 'padrao')).lower()}"
+    )
     mapping_salvo = st.session_state.get(mapping_key, {}) or {}
     mapping = {}
 
@@ -385,16 +417,25 @@ def render_origem_mapeamento():
 
     df_saida = _montar_df_saida(df_origem, df_modelo, mapping)
 
+    # salva somente a saída final do modelo, sem apagar a origem
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("### 📄 Preview da saída")
-    st.dataframe(df_saida.head(10), use_container_width=True)
+    st.dataframe(
+        df_saida.head(10),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     rodape_a, rodape_b = st.columns([1, 1])
 
     with rodape_a:
-        if st.button("⬅️ Voltar para origem", key="voltar_origem_rodape", use_container_width=True):
+        if st.button(
+            "⬅️ Voltar para origem",
+            key="voltar_origem_rodape",
+            use_container_width=True,
+        ):
             _voltar_para_origem()
 
     with rodape_b:
