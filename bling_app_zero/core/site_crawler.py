@@ -36,11 +36,19 @@ def _safe_list(v: Any) -> list:
 
 
 # ==========================================================
-# FETCH
+# 🔥 FETCH INTELIGENTE
 # ==========================================================
 def _fetch(url: str) -> dict:
     try:
-        return fetch_payload_router(url=url, preferir_js=False) or {}
+        payload = fetch_payload_router(url=url, preferir_js=True) or {}
+
+        html = payload.get("html")
+
+        if not html:
+            log_debug(f"[CRAWLER] HTML vazio: {url}", "WARNING")
+
+        return payload
+
     except Exception as e:
         log_debug(f"[CRAWLER] Erro fetch: {url} | {e}", "ERROR")
         return {}
@@ -111,32 +119,25 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
 
 # ==========================================================
-# 🔥 EXTRAÇÃO AGRESSIVA DE LINKS
+# 🔥 EXTRAÇÃO FORTE DE LINKS
 # ==========================================================
 def _extrair_links_agressivo(html: str, base_url: str):
 
     links = extrair_links_produtos_crawler(html, base_url)
 
+    # 🔥 fallback REAL
     if not links:
         soup = BeautifulSoup(html, "html.parser")
 
         candidatos = []
 
-        for a in soup.select("a[href]"):
+        for a in soup.select('a[href*="/produto"]'):
             href = a.get("href")
+
             if not href:
                 continue
 
-            href = href.strip()
-
-            if any(x in href.lower() for x in [
-                "produto",
-                "product",
-                "/p/",
-                "sku",
-                "id=",
-            ]):
-                candidatos.append(href)
+            candidatos.append(href.strip())
 
         links = candidatos
 
@@ -204,7 +205,7 @@ def executar_crawler(
     links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
     # ======================================================
-    # FALLBACK
+    # FALLBACK FORTE
     # ======================================================
     if not links:
         status.warning("⚠️ Tentando fallback direto...")
@@ -213,7 +214,12 @@ def executar_crawler(
         html = payload.get("html")
 
         if html:
-            links = _extrair_links_agressivo(html, url)
+            soup = BeautifulSoup(html, "html.parser")
+            links = [
+                a.get("href")
+                for a in soup.select('a[href*="/produto"]')
+                if a.get("href")
+            ]
 
     tick(10, f"🔗 {len(links)} produtos detectados")
 
