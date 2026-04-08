@@ -177,23 +177,6 @@ def render_origem_dados() -> None:
 
     sincronizar_estado_com_origem(df_origem, log_debug)
 
-    # =========================================================
-    # PREVIEW OBRIGATÓRIA
-    # =========================================================
-    st.markdown("### 👁 Prévia do fornecedor")
-
-    try:
-        st.dataframe(
-            df_origem.head(5),
-            use_container_width=True,
-            hide_index=True,
-        )
-    except Exception:
-        try:
-            st.dataframe(df_origem.head(5), use_container_width=True)
-        except Exception:
-            pass
-
     st.markdown("---")
 
     # =========================================================
@@ -247,13 +230,6 @@ def render_origem_dados() -> None:
     # =========================================================
     st.markdown("### 💰 Precificação")
     render_precificacao(df_origem)
-
-    try:
-        st.session_state["df_saida"] = st.session_state.get("df_saida", df_saida).copy()
-        st.session_state["df_final"] = st.session_state.get("df_final", df_saida).copy()
-    except Exception:
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("---")
 
