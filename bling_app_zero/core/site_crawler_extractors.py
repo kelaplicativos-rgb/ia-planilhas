@@ -108,7 +108,7 @@ def _extrair_network(network_records):
 
 
 # ==========================================================
-# HTML
+# HTML EXTRAÇÃO MELHORADA
 # ==========================================================
 def extrair_nome(soup, jsonld):
     return (
@@ -120,11 +120,33 @@ def extrair_nome(soup, jsonld):
 
 def extrair_preco(soup, jsonld, html):
     offers = jsonld.get("offers")
+
     if isinstance(offers, dict) and offers.get("price"):
         return numero_texto_crawler(offers.get("price"))
 
-    preco = primeiro_texto_crawler(soup, [".price", ".preco"])
+    # 🔥 NOVO: mais seletores
+    seletores = [
+        ".price",
+        ".preco",
+        ".product-price",
+        ".sale-price",
+        "[class*='price']",
+    ]
+
+    preco = primeiro_texto_crawler(soup, seletores)
     return numero_texto_crawler(preco)
+
+
+def extrair_imagens(soup, url, jsonld):
+    imgs_json = jsonld.get("image")
+
+    if isinstance(imgs_json, list):
+        return " | ".join(imgs_json)
+
+    if isinstance(imgs_json, str):
+        return imgs_json
+
+    return todas_imagens_crawler(soup, url)
 
 
 # ==========================================================
@@ -143,7 +165,6 @@ def extrair_produto_crawler(
     jsonlds = extrair_json_ld_crawler(soup)
     json_produto = buscar_produto_jsonld_crawler(jsonlds)
 
-    # HTML BASE
     base = {
         "Nome": extrair_nome(soup, json_produto),
         "Preço": extrair_preco(soup, json_produto, html),
@@ -152,17 +173,16 @@ def extrair_produto_crawler(
         "Categoria": "",
         "GTIN/EAN": _digitos(json_produto.get("gtin13")),
         "NCM": "",
-        "URL Imagens Externas": todas_imagens_crawler(soup, url),
+        "URL Imagens Externas": extrair_imagens(soup, url, json_produto),
         "Link Externo": url,
         "Estoque": detectar_estoque_crawler(html, soup, padrao_disponivel),
     }
 
-    # 🔥 NETWORK
+    # 🔥 NETWORK (AGORA DOMINA)
     network = _extrair_network(network_records)
 
-    # 🔥 MERGE INTELIGENTE
     for k, v in network.items():
-        if not base.get(k):
+        if v:  # 🔥 agora sobrescreve se for melhor
             base[k] = v
 
     base["Descrição Curta"] = base.get("Descrição") or base.get("Nome")
