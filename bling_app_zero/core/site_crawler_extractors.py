@@ -348,7 +348,6 @@ def extrair_id_origem(url: str) -> str:
 def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
     candidatos: list[str] = []
 
-    # 1) JSON-LD
     for campo in ["sku", "mpn", "productID", "productId"]:
         valor = _normalizar_codigo_sku(jsonld.get(campo))
         if valor:
@@ -370,7 +369,6 @@ def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
                 if valor:
                     candidatos.append(valor)
 
-    # 2) meta tags
     for attr, value in [
         ("property", "product:retailer_item_id"),
         ("property", "product:sku"),
@@ -381,8 +379,9 @@ def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
         if valor:
             candidatos.append(valor)
 
-    # 3) HTML visível - CÓD / SKU / REF / MODELO
-    html_texto = texto_limpo_crawler(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
+    html_texto = texto_limpo_crawler(
+        BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)
+    )
 
     padroes = [
         r"\bC[ÓO]D(?:IGO)?\s*[:\-]?\s*([A-Z0-9\-_./]{4,})",
@@ -397,7 +396,6 @@ def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
             if valor:
                 candidatos.append(valor)
 
-    # 4) elementos comuns no HTML
     for sel in [
         "[class*='sku']",
         "[id*='sku']",
@@ -436,12 +434,10 @@ def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
 
 
 def extrair_categoria(soup, jsonld):
-    # 1) JSON-LD
     categoria = _normalizar_categoria_texto(jsonld.get("category"))
     if categoria:
         return categoria
 
-    # 2) meta
     for attr, value in [
         ("property", "product:category"),
         ("name", "category"),
@@ -451,7 +447,6 @@ def extrair_categoria(soup, jsonld):
         if meta:
             return meta
 
-    # 3) breadcrumb melhorado
     for nav in soup.select("nav, .breadcrumb, [class*='bread'], [class*='crumb']"):
         textos = [
             texto_limpo_crawler(x.get_text(" ", strip=True))
@@ -595,7 +590,6 @@ def extrair_produto_crawler(
     network_records=None,
     payload_origem=None,
 ) -> dict:
-
     soup = BeautifulSoup(html, "html.parser")
 
     jsonlds = extrair_json_ld_crawler(soup)
@@ -604,14 +598,15 @@ def extrair_produto_crawler(
     nome = extrair_nome(soup, json_produto)
     preco = extrair_preco(soup, json_produto, html)
 
-    # IA somente em falha total
     if extrair_com_ia and (not nome and not preco):
         log_debug(f"[IA FALLBACK TOTAL] {url}")
 
         produto_ia = extrair_com_ia(html, url)
 
         if produto_ia and produto_ia.get("Nome"):
-            produto_ia["Descrição Curta"] = produto_ia.get("Descrição") or produto_ia.get("Nome")
+            produto_ia["Descrição Curta"] = (
+                produto_ia.get("Descrição") or produto_ia.get("Nome")
+            )
             return produto_ia
 
     if not nome:
