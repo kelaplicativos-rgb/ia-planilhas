@@ -72,7 +72,7 @@ def calcular_preco_venda(
 
 
 # ==========================================================
-# 🔥 CORREÇÃO PRINCIPAL
+# 🔥 NOVO PADRÃO PROFISSIONAL
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -81,6 +81,7 @@ def aplicar_precificacao_automatica(
     margem_lucro: float = 0.0,
     custo_fixo: float = 0.0,
     taxa_extra: float = 0.0,
+    coluna_saida: str = "Preço de venda",
 ) -> pd.DataFrame:
 
     if df is None or df.empty:
@@ -91,11 +92,9 @@ def aplicar_precificacao_automatica(
     if not coluna_preco or coluna_preco not in df_saida.columns:
         return df_saida
 
-    # 🔥 pega coluna base
     precos_base = df_saida[coluna_preco].apply(_to_float)
 
-    # 🔥 sobrescreve a MESMA coluna
-    df_saida[coluna_preco] = precos_base.apply(
+    df_saida[coluna_saida] = precos_base.apply(
         lambda valor: calcular_preco_venda(
             preco_compra=valor,
             percentual_impostos=percentual_impostos,
@@ -111,7 +110,7 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# FLUXO
+# 🔥 FLUXO LIMPO (SEM STREAMLIT)
 # ==========================================================
 def aplicar_precificacao_no_fluxo(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     try:
@@ -123,14 +122,6 @@ def aplicar_precificacao_no_fluxo(df: pd.DataFrame, params: dict) -> pd.DataFram
             custo_fixo=params.get("custo_fixo", 0),
             taxa_extra=params.get("taxa", 0),
         )
-
-        try:
-            import streamlit as st
-
-            st.session_state["df_saida"] = df_precificado.copy()
-            st.session_state["df_final"] = df_precificado.copy()
-        except Exception:
-            pass
 
         return df_precificado
 
