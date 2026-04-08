@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -36,11 +37,11 @@ def _safe_list(v: Any) -> list:
 
 
 # ==========================================================
-# FETCH
+# FETCH (SEM JS - MAIS ESTÁVEL)
 # ==========================================================
 def _fetch(url: str) -> dict:
     try:
-        return fetch_payload_router(url=url, preferir_js=True) or {}
+        return fetch_payload_router(url=url, preferir_js=False) or {}
     except Exception as e:
         log_debug(f"[CRAWLER] Erro fetch: {url} | {e}", "ERROR")
         return {}
@@ -75,7 +76,7 @@ def _baixar(link: str, padrao_disponivel: int) -> dict | None:
 
 
 # ==========================================================
-# PAGINAÇÃO
+# PAGINAÇÃO MELHORADA
 # ==========================================================
 def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
@@ -101,7 +102,9 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
         try:
             novos = extrair_links_paginacao_crawler(html, url)
-            fila.extend([n for n in novos if n not in visitadas])
+            for n in novos:
+                if n not in visitadas:
+                    fila.append(n)
         except Exception:
             pass
 
@@ -136,17 +139,16 @@ def executar_crawler(
     # ======================================================
     # ETAPA 1
     # ======================================================
-    tick(5, "🔎 Iniciando busca...")
+    tick(5, "🔎 Iniciando crawler...")
 
     paginas = _coletar_paginas_listagem(url, max_paginas)
 
-    tick(10, f"📄 {len(paginas)} páginas encontradas")
+    tick(10, f"📄 {len(paginas)} páginas carregadas")
 
     # ======================================================
     # ETAPA 2 - LINKS
     # ======================================================
     links = []
-
     total_paginas = max(len(paginas), 1)
 
     for i, (p, html) in enumerate(paginas, start=1):
@@ -158,7 +160,7 @@ def executar_crawler(
 
             links.extend(novos)
 
-            status.info(f"🔗 Coletando links... {len(links)} encontrados")
+            status.info(f"🔗 {len(links)} links coletados")
 
         except Exception:
             pass
@@ -168,10 +170,10 @@ def executar_crawler(
     links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
     # ======================================================
-    # FALLBACK
+    # FALLBACK (HOME DIRETA)
     # ======================================================
     if not links:
-        status.warning("⚠️ Tentando extração direta...")
+        status.warning("⚠️ Tentando fallback direto...")
 
         payload = _fetch(url)
         html = payload.get("html")
@@ -182,7 +184,7 @@ def executar_crawler(
             except Exception:
                 pass
 
-    tick(10, f"🔗 {len(links)} produtos encontrados")
+    tick(10, f"🔗 {len(links)} produtos detectados")
 
     # ======================================================
     # EXTRAÇÃO
@@ -191,7 +193,7 @@ def executar_crawler(
         status.error("❌ Nenhum produto encontrado")
         return pd.DataFrame()
 
-    tick(5, "📦 Iniciando extração...")
+    tick(5, "📦 Extraindo produtos...")
 
     resultados = []
     total = len(links)
@@ -209,7 +211,7 @@ def executar_crawler(
             progress_bar.progress(50 + progresso_extra)
 
             detalhe.info(f"⚙️ Produto {i}/{total}")
-            status.info(f"📦 Extraindo... {i}/{total}")
+            status.info(f"📦 Extraindo {i}/{total}")
 
     # ======================================================
     # FINAL
