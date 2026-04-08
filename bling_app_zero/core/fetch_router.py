@@ -5,11 +5,22 @@ from urllib.parse import urlparse
 
 from bling_app_zero.core.fetcher import fetch_url
 
+# ==========================================================
+# LOG (BLINDADO)
+# ==========================================================
 try:
-    from bling_app_zero.utils.excel_logs import log_debug
+    from bling_app_zero.utils.excel_logs import log_debug  # type: ignore
 except Exception:
-    def log_debug(*args, **kwargs): pass
+    try:
+        from bling_app_zero.utils.excel import log_debug  # type: ignore
+    except Exception:
+        def log_debug(_msg: str, _nivel: str = "INFO") -> None:
+            return None
 
+
+# ==========================================================
+# IMPORT PLAYWRIGHT (BLINDADO)
+# ==========================================================
 try:
     from bling_app_zero.core.playwright_fetcher import (
         fetch_playwright_payload,
@@ -22,14 +33,20 @@ except Exception:
     tentar_fetch_com_fallback_js = None
 
 
-HTML_MINIMO_UTIL = 3000  # 🔥 aumentei (antes 1200)
+# ==========================================================
+# CONFIG
+# ==========================================================
+HTML_MINIMO_UTIL = 3000  # 🔥 aumentado
 
 DOMINIOS_PRIORIDADE_JS = {
     "atacadum.com.br",
-    "megacentereletronicos.com.br",  # 🔥 FORÇA JS
+    "megacentereletronicos.com.br",  # 🔥 ADICIONADO
 }
 
 
+# ==========================================================
+# HELPERS
+# ==========================================================
 def _safe_str(valor: Any) -> str:
     try:
         return str(valor or "").strip()
@@ -64,7 +81,6 @@ def _parece_html_fraco(html: str | None) -> bool:
     if len(html) < HTML_MINIMO_UTIL:
         return True
 
-    # 🔥 NOVO: detecta páginas vazias de produto
     sinais_ruins = [
         "access denied",
         "captcha",
@@ -77,14 +93,14 @@ def _parece_html_fraco(html: str | None) -> bool:
     if any(s in html_baixo for s in sinais_ruins):
         return True
 
-    # 🔥 NOVO: não tem sinais de produto
+    # 🔥 NOVO: precisa ter sinais de produto
     sinais_produto = [
         "price",
         "preco",
-        "product",
         "produto",
-        "add to cart",
+        "product",
         "comprar",
+        "add to cart",
     ]
 
     if not any(s in html_baixo for s in sinais_produto):
@@ -93,16 +109,21 @@ def _parece_html_fraco(html: str | None) -> bool:
     return False
 
 
+def _usar_js_prioritario(url: str) -> bool:
+    dominio = _dominio(url)
+    return dominio in DOMINIOS_PRIORIDADE_JS
+
+
 def _storage_state(url: str) -> str | None:
     if storage_state_path_por_dominio is None:
         return None
     try:
         return storage_state_path_por_dominio(_normalizar_url(url))
-    except:
+    except Exception:
         return None
 
 
-def _payload_requests(url: str, html: str | None) -> dict:
+def _payload_requests(url: str, html: str | None) -> dict[str, Any]:
     return {
         "ok": bool(html),
         "engine": "requests",
@@ -110,7 +131,7 @@ def _payload_requests(url: str, html: str | None) -> dict:
         "final_url": url,
         "html": html,
         "network_records": [],
-        "error": "" if html else "Falha requests",
+        "error": "" if html else "Falha no fetch via requests.",
     }
 
 
@@ -120,28 +141,28 @@ def _payload_requests(url: str, html: str | None) -> dict:
 def fetch_payload_router(
     url: str,
     preferir_js: bool = False,
-    wait_selector: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
 
     url = _normalizar_url(url)
     dominio = _dominio(url)
 
     log_debug(f"[FETCH_ROUTER] START | {url}")
 
-    # 🔥 FORÇA JS PARA DOMÍNIOS
-    if dominio in DOMINIOS_PRIORIDADE_JS:
-        preferir_js = True
-
     # ======================================================
-    # 1) JS DIRETO
+    # 🔥 1) PRIORIDADE TOTAL PARA PLAYWRIGHT
     # ======================================================
-    if preferir_js and fetch_playwright_payload:
-        log_debug("[FETCH_ROUTER] FORÇANDO JS")
+    if fetch_playwright_payload:
+        log_debug("[FETCH_ROUTER] TENTANDO PLAYWRIGHT")
 
-        payload = fetch_playwright_payload(url)
+        try:
+            payload_js = fetch_playwright_payload(url)
 
-        if payload.get("ok"):
-            return payload
+            if payload_js.get("ok") and payload_js.get("html"):
+                log_debug("[FETCH_ROUTER] PLAYWRIGHT OK")
+                return payload_js
+
+        except Exception as e:
+            log_debug(f"[FETCH_ROUTER] erro playwright: {e}")
 
     # ======================================================
     # 2) REQUESTS
@@ -149,22 +170,22 @@ def fetch_payload_router(
     html = fetch_url(url)
 
     if html and not _parece_html_fraco(html):
-        log_debug("[FETCH_ROUTER] HTML OK (requests)")
+        log_debug("[FETCH_ROUTER] REQUESTS OK")
         return _payload_requests(url, html)
 
     # ======================================================
-    # 3) FALLBACK JS
+    # 3) FALLBACK FINAL
     # ======================================================
     if tentar_fetch_com_fallback_js:
-        log_debug("[FETCH_ROUTER] FALLBACK JS")
+        log_debug("[FETCH_ROUTER] FALLBACK JS FINAL")
 
-        payload = tentar_fetch_com_fallback_js(
+        payload_js = tentar_fetch_com_fallback_js(
             url=url,
             html_requests=html,
         )
 
-        if payload.get("ok"):
-            return payload
+        if payload_js.get("ok"):
+            return payload_js
 
     log_debug("[FETCH_ROUTER] FALHA TOTAL")
 
