@@ -4,9 +4,6 @@ import pandas as pd
 import streamlit as st
 
 
-# =========================================================
-# SAFE
-# =========================================================
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
@@ -14,9 +11,6 @@ def _safe_df(df) -> bool:
         return False
 
 
-# =========================================================
-# NORMALIZAÇÃO
-# =========================================================
 def _normalizar_texto_coluna(valor) -> str:
     try:
         texto = str(valor if valor is not None else "").strip()
@@ -28,27 +22,128 @@ def _normalizar_texto_coluna(valor) -> str:
         return ""
 
 
-def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+def _coluna_parece_generica(col) -> bool:
+    texto = _normalizar_texto_coluna(col).lower()
+    if texto == "" or texto.isdigit() or texto.startswith("unnamed:"):
+        return True
+    if texto in {"none", "nan"}:
+        return True
+    return False
+
+
+def _linha_parece_cabecalho(valores: list) -> bool:
     try:
-        df = df.copy()
-        df = df.reset_index(drop=True)
+        if not valores:
+            return False
+        textos = [_normalizar_texto_coluna(v) for v in valores]
+        preenchidos = [t for t in textos if t]
+        if not preenchidos:
+            return False
+        unicos = len(set(preenchidos))
+        proporcao_unicos = unicos / max(len(preenchidos), 1)
+        qtd_textuais = sum(1 for t in preenchidos if not t.isdigit())
+        proporcao_textual = qtd_textuais / max(len(preenchidos), 1)
+        return proporcao_unicos >= 0.7 and proporcao_textual >= 0.7
+    except Exception:
+        return False
 
-        for col in df.columns:
-            df[col] = df[col].astype(str)
 
-        return df
+def _promover_primeira_linha_para_header_se_preciso(df):
+    try:
+        if not _safe_df(df):
+            return df
+
+        df2 = df.copy()
+        colunas = list(df2.columns)
+
+        qtd_genericas = sum(1 for c in colunas if _coluna_parece_generica(c))
+        if qtd_genericas / max(len(colunas), 1) < 0.6:
+            return df2
+
+        primeira = df2.iloc[0].tolist()
+        if not _linha_parece_cabecalho(primeira):
+            return df2
+
+        novos = []
+        usados = set()
+
+        for i, v in enumerate(primeira):
+            nome = _normalizar_texto_coluna(v) or f"Coluna_{i+1}"
+            base = nome
+            c = 2
+            while nome in usados:
+                nome = f"{base}_{c}"
+                c += 1
+            usados.add(nome)
+            novos.append(nome)
+
+        df2.columns = novos
+        return df2.iloc[1:].reset_index(drop=True)
+
     except Exception:
         return df
 
 
-# =========================================================
-# DETECÇÕES
-# =========================================================
+def _normalizar_nomes_colunas(df):
+    try:
+        if not _safe_df(df):
+            return df
+
+        df2 = df.copy()
+        usadas = set()
+        novas = []
+
+        for i, col in enumerate(df2.columns):
+            nome = _normalizar_texto_coluna(col) or f"Coluna_{i+1}"
+            base = nome
+            c = 2
+            while nome in usadas:
+                nome = f"{base}_{c}"
+                c += 1
+            usadas.add(nome)
+            novas.append(nome)
+
+        df2.columns = novas
+        return df2.reset_index(drop=True)
+    except Exception:
+        return df
+
+
+def _preparar_df_para_mapeamento(df):
+    df = _promover_primeira_linha_para_header_se_preciso(df)
+    df = _normalizar_nomes_colunas(df)
+    return df
+
+
+def _get_modelo():
+    if st.session_state.get("tipo_operacao_bling") == "cadastro":
+        return st.session_state.get("df_modelo_cadastro")
+    return st.session_state.get("df_modelo_estoque")
+
+
+def _get_deposito() -> str:
+    for chave in ["deposito_nome", "deposito_nome_widget", "deposito_nome_manual"]:
+        valor = str(st.session_state.get(chave, "") or "").strip()
+        if valor:
+            if chave != "deposito_nome":
+                st.session_state["deposito_nome"] = valor
+            return valor
+    return ""
+
+
 def _is_coluna_preco(nome) -> bool:
     nome = str(nome).lower()
     return any(
         p in nome
-        for p in ["preço", "preco", "valor venda", "preco venda", "price"]
+        for p in [
+            "preço",
+            "preco",
+            "valor venda",
+            "valor_venda",
+            "preco venda",
+            "preço venda",
+            "price",
+        ]
     )
 
 
@@ -57,145 +152,255 @@ def _is_coluna_deposito(nome) -> bool:
     return "deposit" in nome or "depós" in nome or "deposito" in nome
 
 
-# =========================================================
-# PREVIEW
-# =========================================================
 def _preview_coluna(df, coluna):
     try:
         if coluna in df.columns:
-            return df[coluna].astype(str).head(5).tolist()
+            valores = (
+                df[coluna]
+                .fillna("")
+                .astype(str)
+                .replace("nan", "")
+                .head(5)
+                .tolist()
+            )
+            return valores
     except Exception:
         pass
     return []
 
 
-# =========================================================
-# PRECIFICAÇÃO
-# =========================================================
-def _get_df_precificado():
-    df = st.session_state.get("df_precificado")
-    if _safe_df(df):
-        return df.copy()
-    return None
-
-
-def _get_coluna_preco_base(df_origem):
-    col = str(st.session_state.get("coluna_preco_base", "") or "").strip()
-    if col in df_origem.columns:
-        return col
+def _get_coluna_preco_base_precificacao(df_origem: pd.DataFrame) -> str:
+    try:
+        coluna = str(st.session_state.get("coluna_preco_base", "") or "").strip()
+        if coluna and coluna in df_origem.columns:
+            return coluna
+    except Exception:
+        pass
     return ""
 
 
-def _obter_serie_preco(df_origem):
+def _get_df_precificado() -> pd.DataFrame | None:
     try:
-        col = _get_coluna_preco_base(df_origem)
-        if not col:
-            return pd.Series([""] * len(df_origem))
-
-        df_prec = _get_df_precificado()
-        if df_prec is not None and col in df_prec.columns:
-            return df_prec[col].reset_index(drop=True)
-
-        return df_origem[col].reset_index(drop=True)
+        df_precificado = st.session_state.get("df_precificado")
+        if _safe_df(df_precificado):
+            return df_precificado.copy().reset_index(drop=True)
     except Exception:
-        return pd.Series([""] * len(df_origem))
+        pass
+    return None
 
 
-# =========================================================
-# MONTAGEM FINAL (CORRIGIDO)
-# =========================================================
-def _montar_df_saida(df_origem, df_modelo, mapping):
+def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
     try:
-        df_origem = _normalizar_df(df_origem)
-        df_modelo = _normalizar_df(df_modelo)
+        coluna_preco_base = _get_coluna_preco_base_precificacao(df_origem)
+        if not coluna_preco_base:
+            return pd.Series([""] * len(df_origem), index=range(len(df_origem)), dtype="object")
 
-        serie_preco = _obter_serie_preco(df_origem)
+        df_precificado = _get_df_precificado()
+        if _safe_df(df_precificado) and coluna_preco_base in df_precificado.columns:
+            serie = (
+                df_precificado[coluna_preco_base]
+                .reset_index(drop=True)
+                .reindex(range(len(df_origem)), fill_value="")
+            )
+            return serie.astype("object")
 
-        df_saida = pd.DataFrame(index=range(len(df_origem)))
+        if coluna_preco_base in df_origem.columns:
+            serie = (
+                df_origem[coluna_preco_base]
+                .reset_index(drop=True)
+                .reindex(range(len(df_origem)), fill_value="")
+            )
+            return serie.astype("object")
 
-        for col in df_modelo.columns:
-            origem = mapping.get(col, "")
+    except Exception:
+        pass
 
-            # PREÇO
-            if _is_coluna_preco(col):
-                df_saida[col] = serie_preco.astype(str)
-                continue
+    return pd.Series([""] * len(df_origem), index=range(len(df_origem)), dtype="object")
 
-            # DEPÓSITO
-            if _is_coluna_deposito(col):
-                deposito = str(st.session_state.get("deposito_nome", "") or "")
-                df_saida[col] = deposito
-                continue
 
-            # MAPEAMENTO NORMAL
-            if origem in df_origem.columns:
-                try:
-                    df_saida[col] = df_origem[origem].astype(str).reset_index(drop=True)
-                except Exception:
-                    df_saida[col] = ""
-            else:
+def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    deposito = _get_deposito()
+    serie_preco = _obter_serie_preco_para_saida(df_origem)
+
+    df_origem = df_origem.copy().reset_index(drop=True)
+    df_modelo = df_modelo.copy().reset_index(drop=True)
+
+    df_saida = pd.DataFrame(index=range(len(df_origem)))
+
+    for col in df_modelo.columns:
+        origem = str(mapping.get(col, "") or "").strip()
+
+        if _is_coluna_preco(col):
+            try:
+                df_saida[col] = serie_preco.reset_index(drop=True)
+            except Exception:
                 df_saida[col] = ""
+            continue
 
-        return df_saida.fillna("")
+        if _is_coluna_deposito(col):
+            df_saida[col] = deposito if deposito else ""
+            continue
 
-    except Exception as e:
-        st.error(f"Erro ao montar saída: {e}")
-        return pd.DataFrame()
+        if origem in df_origem.columns:
+            try:
+                df_saida[col] = (
+                    df_origem[origem]
+                    .reset_index(drop=True)
+                    .reindex(range(len(df_origem)), fill_value="")
+                )
+            except Exception:
+                df_saida[col] = ""
+        else:
+            df_saida[col] = ""
+
+    try:
+        df_saida = df_saida.reindex(columns=df_modelo.columns, fill_value="")
+    except Exception:
+        pass
+
+    try:
+        df_saida = df_saida.fillna("")
+    except Exception:
+        pass
+
+    return df_saida
 
 
-# =========================================================
-# RENDER
-# =========================================================
+def _salvar_estado_mapeamento(mapping_key: str, mapping: dict) -> None:
+    try:
+        st.session_state[mapping_key] = mapping.copy()
+    except Exception:
+        pass
+
+
+def _voltar_para_origem() -> None:
+    try:
+        st.session_state["etapa_origem"] = "origem"
+    except Exception:
+        st.session_state["etapa_origem"] = None
+    st.rerun()
+
+
 def render_origem_mapeamento():
     df_origem = st.session_state.get("df_origem")
-    df_modelo = (
-        st.session_state.get("df_modelo_cadastro")
-        if st.session_state.get("tipo_operacao_bling") == "cadastro"
-        else st.session_state.get("df_modelo_estoque")
-    )
+    df_modelo = _get_modelo()
 
     if not _safe_df(df_origem) or not _safe_df(df_modelo):
+        st.warning("Dados de origem ou modelo não encontrados. Volte para a etapa anterior.")
         return
 
-    df_origem = _normalizar_df(df_origem)
-    df_modelo = _normalizar_df(df_modelo)
+    df_origem = _preparar_df_para_mapeamento(df_origem)
+    df_modelo = _preparar_df_para_mapeamento(df_modelo)
+
+    st.session_state["df_origem"] = df_origem.copy()
+
+    if st.session_state.get("tipo_operacao_bling") == "cadastro":
+        st.session_state["df_modelo_cadastro"] = df_modelo.copy()
+    else:
+        st.session_state["df_modelo_estoque"] = df_modelo.copy()
 
     st.markdown("## 🔗 Mapeamento de colunas")
 
-    st.dataframe(df_origem.head(5), use_container_width=True)
+    topo_a, topo_b = st.columns([1, 1])
+
+    with topo_a:
+        if st.button("⬅️ Voltar", use_container_width=True):
+            _voltar_para_origem()
+
+    with topo_b:
+        if st.button("🧹 Limpar mapeamento", use_container_width=True):
+            mapping_key_limpar = (
+                f"mapeamento_manual_{str(st.session_state.get('tipo_operacao_bling', 'padrao')).lower()}"
+            )
+            st.session_state[mapping_key_limpar] = {}
+
+            for col_modelo in df_modelo.columns:
+                chave_widget = f"map_{col_modelo}"
+                if chave_widget in st.session_state:
+                    del st.session_state[chave_widget]
+
+            st.rerun()
+
+    with st.container():
+        st.markdown("### 👁️ Preview da planilha fornecedora")
+        st.dataframe(df_origem.head(5), use_container_width=True)
 
     colunas_modelo = list(df_modelo.columns)
     colunas_origem = list(df_origem.columns)
 
+    mapping_key = f"mapeamento_manual_{str(st.session_state.get('tipo_operacao_bling', 'padrao')).lower()}"
+    mapping_salvo = st.session_state.get(mapping_key, {}) or {}
     mapping = {}
 
-    for col_modelo in colunas_modelo:
+    st.markdown("### 🧩 Relacione as colunas")
 
+    for col_modelo in colunas_modelo:
         if _is_coluna_preco(col_modelo):
-            st.text_input(col_modelo, value="Calculado automaticamente", disabled=True)
+            coluna_base = _get_coluna_preco_base_precificacao(df_origem)
+            texto_preco = "Calculado automaticamente"
+            if coluna_base:
+                texto_preco = f"Calculado automaticamente ({coluna_base})"
+
+            st.text_input(
+                col_modelo,
+                value=texto_preco,
+                disabled=True,
+                key=f"preco_fix_{col_modelo}",
+            )
             mapping[col_modelo] = ""
             continue
 
         if _is_coluna_deposito(col_modelo):
-            deposito = st.session_state.get("deposito_nome", "")
-            st.text_input(col_modelo, value=deposito or "Depósito automático", disabled=True)
+            deposito = _get_deposito()
+            st.text_input(
+                col_modelo,
+                value=deposito or "Depósito automático",
+                disabled=True,
+                key=f"deposito_fix_{col_modelo}",
+            )
             mapping[col_modelo] = ""
             continue
 
+        valor_inicial = str(mapping_salvo.get(col_modelo, "") or "")
+        opcoes = [""] + colunas_origem
+
+        if valor_inicial and valor_inicial not in opcoes:
+            opcoes.append(valor_inicial)
+
         escolhido = st.selectbox(
             col_modelo,
-            [""] + colunas_origem,
+            opcoes,
+            index=opcoes.index(valor_inicial) if valor_inicial in opcoes else 0,
             key=f"map_{col_modelo}",
         )
 
         mapping[col_modelo] = escolhido
 
         if escolhido:
-            st.caption(_preview_coluna(df_origem, escolhido))
+            valores = _preview_coluna(df_origem, escolhido)
+            if valores:
+                st.caption(f"Exemplo: {valores}")
+
+    _salvar_estado_mapeamento(mapping_key, mapping)
 
     df_saida = _montar_df_saida(df_origem, df_modelo, mapping)
 
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
 
+    st.markdown("### 📄 Preview da saída")
     st.dataframe(df_saida.head(10), use_container_width=True)
+
+    rodape_a, rodape_b = st.columns([1, 1])
+
+    with rodape_a:
+        if st.button("⬅️ Voltar para origem", key="voltar_origem_rodape", use_container_width=True):
+            _voltar_para_origem()
+
+    with rodape_b:
+        st.button(
+            "✅ Mapeamento salvo",
+            disabled=True,
+            key="mapeamento_salvo_info",
+            use_container_width=True,
+        )
