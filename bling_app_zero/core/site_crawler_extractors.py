@@ -22,11 +22,8 @@ from bling_app_zero.core.site_crawler_helpers import (
 try:
     from bling_app_zero.utils.excel_logs import log_debug
 except Exception:
-    try:
-        from bling_app_zero.utils.excel import log_debug
-    except Exception:
-        def log_debug(*args, **kwargs):
-            pass
+    def log_debug(*args, **kwargs):
+        pass
 
 
 # ==========================================================
@@ -40,132 +37,30 @@ def _digitos(valor: Any) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
 
-def _safe_list(v: Any) -> list:
-    return v if isinstance(v, list) else []
-
-
-def _safe_dict(v: Any) -> dict:
-    return v if isinstance(v, dict) else {}
-
-
-def _extrair_preco_texto_global(html: str) -> str:
-    html = html or ""
-    padroes = [
-        r"R\$\s*\d[\d\.\,]*",
-        r"\d[\d\.\,]*\s*R\$",
-    ]
-
-    for padrao in padroes:
-        achados = re.findall(padrao, html, flags=re.I)
-        for item in achados:
-            preco = numero_texto_crawler(item)
-            if preco:
-                return preco
-
+def _extrair_preco_global(html: str) -> str:
+    matches = re.findall(r"R\$\s*\d[\d\.\,]*", html or "", re.I)
+    for m in matches:
+        p = numero_texto_crawler(m)
+        if p:
+            return p
     return ""
 
 
 def _extrair_categoria(soup: BeautifulSoup) -> str:
     partes = []
 
-    for a in soup.select(".breadcrumb a, nav.breadcrumb a, .breadcrumbs a"):
+    for a in soup.select("a"):
         txt = texto_limpo_crawler(a.get_text(" ", strip=True))
-        if txt and txt.lower() not in {"home", "início", "inicio"}:
+        if txt and len(txt) < 40:
+            if any(x in txt.lower() for x in ["categoria", "produtos"]):
+                continue
             partes.append(txt)
 
-    return " > ".join(dict.fromkeys(partes))
-
-
-def _extrair_ncm(html: str) -> str:
-    texto = _limpar(html)
-    m = re.search(r"\bNCM\b[:\s\-]*([0-9\.\-]{8,12})", texto, re.I)
-    if m:
-        return _digitos(m.group(1))
-    return ""
+    return " > ".join(dict.fromkeys(partes[:4]))
 
 
 # ==========================================================
-# NETWORK (API INTERNA)
-# ==========================================================
-def _buscar_recursivo(obj, chaves, achados):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if str(k).lower() in chaves and v not in (None, "", [], {}):
-                achados.append(v)
-            _buscar_recursivo(v, chaves, achados)
-    elif isinstance(obj, list):
-        for item in obj:
-            _buscar_recursivo(item, chaves, achados)
-
-
-def _get(obj, keys):
-    achados = []
-    _buscar_recursivo(obj, set(k.lower() for k in keys), achados)
-    return achados[0] if achados else None
-
-
-def _extrair_network(network_records):
-    network_records = _safe_list(network_records)
-
-    melhor = {}
-    melhor_score = -1
-
-    for rec in network_records:
-        rec = _safe_dict(rec)
-        data = rec.get("json")
-        if not data:
-            continue
-
-        nome = _limpar(_get(data, ["name", "title", "product_name", "productName"]))
-        preco = numero_texto_crawler(
-            _get(data, ["price", "sale_price", "amount", "final_price", "special_price"])
-        )
-        desc = _limpar(_get(data, ["description", "short_description", "shortDescription"]))
-        marca_val = _get(data, ["brand", "manufacturer", "marca"])
-        gtin = _digitos(_get(data, ["gtin", "ean", "gtin13", "barcode"]))
-        imagens = _get(data, ["images", "image", "image_url", "imageUrl"])
-
-        if isinstance(marca_val, dict):
-            marca = _limpar(
-                marca_val.get("name") or marca_val.get("label") or marca_val.get("title")
-            )
-        else:
-            marca = _limpar(marca_val)
-
-        if isinstance(imagens, list):
-            imagens = " | ".join([i for i in imagens if isinstance(i, str)])
-        elif not isinstance(imagens, str):
-            imagens = ""
-
-        score = 0
-        if nome:
-            score += 3
-        if preco:
-            score += 3
-        if imagens:
-            score += 2
-        if desc:
-            score += 1
-
-        if score > melhor_score:
-            melhor_score = score
-            melhor = {
-                "Nome": nome,
-                "Preço": preco,
-                "Descrição": desc,
-                "Marca": marca,
-                "GTIN/EAN": gtin,
-                "URL Imagens Externas": imagens or "",
-            }
-
-    if melhor:
-        log_debug(f"[NETWORK] score={melhor_score}")
-
-    return melhor
-
-
-# ==========================================================
-# HTML EXTRAÇÃO
+# EXTRAÇÃO PRINCIPAL
 # ==========================================================
 def extrair_nome(soup, jsonld):
     return (
@@ -173,7 +68,13 @@ def extrair_nome(soup, jsonld):
         or meta_content_crawler(soup, "property", "og:title")
         or primeiro_texto_crawler(
             soup,
-            ["h1", ".product-title", ".product-name", "[itemprop='name']"],
+            [
+                "h1",
+                ".product-title",
+                ".product-name",
+                ".title",
+                "[class*='title']",
+            ],
         )
     )
 
@@ -181,54 +82,36 @@ def extrair_nome(soup, jsonld):
 def extrair_preco(soup, jsonld, html):
     offers = jsonld.get("offers")
 
-    if isinstance(offers, dict) and offers.get("price"):
+    if isinstance(offers, dict):
         preco = numero_texto_crawler(offers.get("price"))
         if preco:
             return preco
 
     if isinstance(offers, list):
-        for item in offers:
-            if isinstance(item, dict) and item.get("price"):
-                preco = numero_texto_crawler(item.get("price"))
-                if preco:
-                    return preco
+        for o in offers:
+            preco = numero_texto_crawler(o.get("price"))
+            if preco:
+                return preco
 
     meta = meta_content_crawler(soup, "property", "product:price:amount")
     if meta:
-        preco = numero_texto_crawler(meta)
-        if preco:
-            return preco
+        return numero_texto_crawler(meta)
 
     seletores = [
-        ".price",
-        ".preco",
-        ".product-price",
-        ".sale-price",
-        ".current-price",
         "[class*='price']",
+        "[class*='valor']",
         "[data-price]",
+        ".price",
     ]
 
-    preco = primeiro_texto_crawler(soup, seletores)
-    preco = numero_texto_crawler(preco)
-    if preco:
-        return preco
+    for sel in seletores:
+        el = soup.select_one(sel)
+        if el:
+            preco = numero_texto_crawler(el.get_text())
+            if preco and len(preco) >= 2:
+                return preco
 
-    return _extrair_preco_texto_global(html)
-
-
-def extrair_imagens(soup, url, jsonld):
-    imgs_json = jsonld.get("image")
-
-    if isinstance(imgs_json, list):
-        filtradas = [i for i in imgs_json if isinstance(i, str) and i.strip()]
-        if filtradas:
-            return " | ".join(filtradas)
-
-    if isinstance(imgs_json, str) and imgs_json.strip():
-        return imgs_json.strip()
-
-    return todas_imagens_crawler(soup, url)
+    return _extrair_preco_global(html)
 
 
 def extrair_descricao(soup, jsonld):
@@ -240,58 +123,42 @@ def extrair_descricao(soup, jsonld):
     if meta:
         return meta
 
-    return primeiro_texto_crawler(
-        soup,
-        [
-            ".product-description",
-            ".description",
-            "#tab-description",
-            "[itemprop='description']",
-        ],
-    )
+    for sel in [
+        ".product-description",
+        ".description",
+        "[class*='description']",
+    ]:
+        el = soup.select_one(sel)
+        if el:
+            txt = texto_limpo_crawler(el.get_text())
+            if txt:
+                return txt
+
+    return ""
+
+
+def extrair_imagens(soup, url, jsonld):
+    imgs = jsonld.get("image")
+
+    if isinstance(imgs, list):
+        return " | ".join([i for i in imgs if isinstance(i, str)])
+
+    if isinstance(imgs, str):
+        return imgs
+
+    return todas_imagens_crawler(soup, url)
 
 
 def extrair_marca(jsonld):
     marca = jsonld.get("brand")
 
     if isinstance(marca, dict):
-        return texto_limpo_crawler(
-            marca.get("name") or marca.get("label") or marca.get("title")
-        )
+        return texto_limpo_crawler(marca.get("name"))
 
     if isinstance(marca, str):
         return texto_limpo_crawler(marca)
 
     return ""
-
-
-# ==========================================================
-# MERGE
-# ==========================================================
-def _merge_preferindo_melhor(base: dict, network: dict) -> dict:
-    if not network:
-        return base
-
-    saida = dict(base)
-
-    campos_prioritarios_network = {
-        "Preço",
-        "GTIN/EAN",
-        "URL Imagens Externas",
-    }
-
-    for k, v in network.items():
-        if not v:
-            continue
-
-        if k in campos_prioritarios_network:
-            saida[k] = v
-            continue
-
-        if not saida.get(k):
-            saida[k] = v
-
-    return saida
 
 
 # ==========================================================
@@ -304,6 +171,7 @@ def extrair_produto_crawler(
     network_records=None,
     payload_origem=None,
 ) -> dict:
+
     soup = BeautifulSoup(html, "html.parser")
 
     jsonlds = extrair_json_ld_crawler(soup)
@@ -315,15 +183,11 @@ def extrair_produto_crawler(
         "Descrição": extrair_descricao(soup, json_produto),
         "Marca": extrair_marca(json_produto),
         "Categoria": _extrair_categoria(soup),
-        "GTIN/EAN": _digitos(json_produto.get("gtin13") or json_produto.get("gtin")),
-        "NCM": _extrair_ncm(html),
+        "GTIN/EAN": _digitos(json_produto.get("gtin13")),
         "URL Imagens Externas": extrair_imagens(soup, url, json_produto),
         "Link Externo": url,
         "Estoque": detectar_estoque_crawler(html, soup, padrao_disponivel),
     }
-
-    network = _extrair_network(network_records)
-    base = _merge_preferindo_melhor(base, network)
 
     base["Descrição Curta"] = base.get("Descrição") or base.get("Nome")
 
