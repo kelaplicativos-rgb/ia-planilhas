@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
+from bs4 import BeautifulSoup
 
 from bling_app_zero.core.fetch_router import fetch_payload_router
-
 from bling_app_zero.core.site_crawler_extractors import extrair_produto_crawler
 from bling_app_zero.core.site_crawler_helpers import (
     MAX_PAGINAS,
@@ -37,7 +36,7 @@ def _safe_list(v: Any) -> list:
 
 
 # ==========================================================
-# FETCH (SEM JS - MAIS ESTÁVEL)
+# FETCH
 # ==========================================================
 def _fetch(url: str) -> dict:
     try:
@@ -76,7 +75,7 @@ def _baixar(link: str, padrao_disponivel: int) -> dict | None:
 
 
 # ==========================================================
-# PAGINAÇÃO MELHORADA
+# PAGINAÇÃO
 # ==========================================================
 def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
@@ -109,6 +108,43 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
             pass
 
     return paginas
+
+
+# ==========================================================
+# 🔥 EXTRAÇÃO AGRESSIVA DE LINKS
+# ==========================================================
+def _extrair_links_agressivo(html: str, base_url: str):
+
+    links = extrair_links_produtos_crawler(html, base_url)
+
+    if not links:
+        soup = BeautifulSoup(html, "html.parser")
+
+        candidatos = []
+
+        for a in soup.select("a[href]"):
+            href = a.get("href")
+            if not href:
+                continue
+
+            href = href.strip()
+
+            if any(x in href.lower() for x in [
+                "produto",
+                "product",
+                "/p/",
+                "sku",
+                "id=",
+            ]):
+                candidatos.append(href)
+
+        links = candidatos
+
+    links = [l for l in links if link_parece_produto_crawler(l)]
+
+    log_debug(f"[LINKS DETECTADOS] {len(links)}")
+
+    return links
 
 
 # ==========================================================
@@ -146,7 +182,7 @@ def executar_crawler(
     tick(10, f"📄 {len(paginas)} páginas carregadas")
 
     # ======================================================
-    # ETAPA 2 - LINKS
+    # ETAPA 2
     # ======================================================
     links = []
     total_paginas = max(len(paginas), 1)
@@ -155,9 +191,7 @@ def executar_crawler(
         detalhe.info(f"🔗 Página {i}/{total_paginas}")
 
         try:
-            novos = extrair_links_produtos_crawler(html, p)
-            novos = [l for l in novos if link_parece_produto_crawler(l)]
-
+            novos = _extrair_links_agressivo(html, p)
             links.extend(novos)
 
             status.info(f"🔗 {len(links)} links coletados")
@@ -170,7 +204,7 @@ def executar_crawler(
     links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
     # ======================================================
-    # FALLBACK (HOME DIRETA)
+    # FALLBACK
     # ======================================================
     if not links:
         status.warning("⚠️ Tentando fallback direto...")
@@ -179,10 +213,7 @@ def executar_crawler(
         html = payload.get("html")
 
         if html:
-            try:
-                links = extrair_links_produtos_crawler(html, url)
-            except Exception:
-                pass
+            links = _extrair_links_agressivo(html, url)
 
     tick(10, f"🔗 {len(links)} produtos detectados")
 
