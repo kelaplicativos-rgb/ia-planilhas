@@ -54,7 +54,7 @@ def render_origem_dados() -> None:
     if etapa in ["mapeamento", "final"]:
         return
 
-    st.subheader("Origem dos dados")
+    st.subheader("📦 Origem dos dados")
 
     # =========================================================
     # 1) ORIGEM
@@ -78,36 +78,39 @@ def render_origem_dados() -> None:
     sincronizar_estado_com_origem(df_origem, log_debug)
 
     # =========================================================
-    # PREVIEW (SÓ PARA PLANILHA/XML)
+    # PREVIEW COMPACTA
     # =========================================================
     if "site" not in origem_atual:
-        with st.expander("Prévia da planilha do fornecedor", expanded=False):
+        with st.expander("👁 Prévia do fornecedor", expanded=False):
             try:
-                st.dataframe(df_origem.head(10), use_container_width=True)
+                st.dataframe(df_origem.head(5), use_container_width=True)
             except Exception:
                 pass
 
     # =========================================================
-    # 2) OPERAÇÃO
+    # 2 + 3) OPERAÇÃO + MODELO (LADO A LADO)
     # =========================================================
-    st.markdown("### Tipo de envio")
+    col1, col2 = st.columns(2)
 
-    operacao = st.radio(
-        "Selecione a operação",
-        ["Cadastro de Produtos", "Atualização de Estoque"],
-        key="tipo_operacao",
-    )
+    with col1:
+        st.markdown("### Tipo de envio")
 
-    controlar_troca_operacao(operacao, log_debug)
+        operacao = st.radio(
+            "Selecione",
+            ["Cadastro de Produtos", "Atualização de Estoque"],
+            key="tipo_operacao",
+            label_visibility="collapsed",
+        )
 
-    st.session_state["tipo_operacao_bling"] = (
-        "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
-    )
+        controlar_troca_operacao(operacao, log_debug)
 
-    # =========================================================
-    # 3) MODELO (DEPENDE DA OPERAÇÃO)
-    # =========================================================
-    render_modelo_bling(operacao)
+        st.session_state["tipo_operacao_bling"] = (
+            "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
+        )
+
+    with col2:
+        st.markdown("### Modelo Bling")
+        render_modelo_bling(operacao)
 
     df_saida = _sincronizar_df_saida_base(df_origem)
 
@@ -115,33 +118,38 @@ def render_origem_dados() -> None:
     # 4) DEPÓSITO (SÓ ESTOQUE)
     # =========================================================
     if st.session_state["tipo_operacao_bling"] == "estoque":
-        st.markdown("### Configurações de estoque")
+        st.markdown("### 🏬 Estoque")
 
-        deposito = st.text_input(
-            "Nome do depósito",
-            value=st.session_state.get("deposito_nome", ""),
-            key="deposito_nome",
-        )
+        col1, col2 = st.columns(2)
 
-        if deposito:
-            df_saida["Depósito"] = deposito
-
-        if "site" in origem_atual:
-            qtd = st.number_input(
-                "Quantidade padrão (fallback)",
-                min_value=0,
-                value=st.session_state.get("quantidade_fallback", 0),
-                step=1,
-                key="quantidade_fallback",
+        with col1:
+            deposito = st.text_input(
+                "Depósito",
+                value=st.session_state.get("deposito_nome", ""),
+                key="deposito_nome",
             )
 
-            df_saida["Quantidade"] = df_saida.get("Quantidade", pd.Series()).replace(
-                "", qtd
-            )
+            if deposito:
+                df_saida["Depósito"] = deposito
+
+        with col2:
+            if "site" in origem_atual:
+                qtd = st.number_input(
+                    "Qtd padrão",
+                    min_value=0,
+                    value=st.session_state.get("quantidade_fallback", 0),
+                    step=1,
+                    key="quantidade_fallback",
+                )
+
+                df_saida["Quantidade"] = df_saida.get(
+                    "Quantidade", pd.Series()
+                ).replace("", qtd)
 
     # =========================================================
-    # 5) PRECIFICAÇÃO (DEPOIS DO MODELO)
+    # 5) PRECIFICAÇÃO (MANTIDO NO LUGAR CORRETO)
     # =========================================================
+    st.markdown("### 💰 Precificação")
     render_precificacao(df_origem)
 
     st.session_state["df_saida"] = df_saida.copy()
@@ -153,7 +161,9 @@ def render_origem_dados() -> None:
     modelo_ok = safe_df_dados(obter_modelo_ativo())
 
     if not modelo_ok:
-        st.warning("Anexe o modelo do Bling antes de continuar.")
+        st.warning("⚠️ Anexe o modelo do Bling antes de continuar.")
+
+    st.markdown("---")
 
     if st.button(
         "➡️ Continuar para mapeamento",
