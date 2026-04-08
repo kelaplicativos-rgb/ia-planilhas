@@ -61,11 +61,8 @@ def _html_parece_vazio(html: str | None) -> bool:
         "enable javascript",
     ]
 
+    # 🔥 só considera vazio se tiver sinal explícito
     if any(x in html_lower for x in sinais_vazio):
-        return True
-
-    # pouco conteúdo real
-    if len(html) < 5000:
         return True
 
     return False
@@ -96,6 +93,20 @@ def fetch_payload_router(
     log_debug(f"[FETCH_ROUTER] START | {url}")
 
     # ======================================================
+    # 🔥 PRIORIDADE JS (FORÇADO)
+    # ======================================================
+    if preferir_js and fetch_playwright_payload:
+        try:
+            log_debug("[FETCH_ROUTER] USANDO PLAYWRIGHT (preferir_js=True)")
+            payload_js = fetch_playwright_payload(url)
+
+            if payload_js.get("html"):
+                return payload_js
+
+        except Exception as e:
+            log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
+
+    # ======================================================
     # 1. REQUESTS
     # ======================================================
     html = fetch_url(url)
@@ -103,30 +114,26 @@ def fetch_payload_router(
     if html:
         log_debug("[FETCH_ROUTER] REQUESTS OK")
 
-        # 🔥 DETECTA HTML FALSO
-        if _html_parece_vazio(html):
-            log_debug("[FETCH_ROUTER] HTML VAZIO DETECTADO → USANDO PLAYWRIGHT")
+        # 🔥 fallback inteligente
+        if _html_parece_vazio(html) and fetch_playwright_payload:
+            try:
+                log_debug("[FETCH_ROUTER] HTML suspeito → fallback PLAYWRIGHT")
+                payload_js = fetch_playwright_payload(url)
 
-            if fetch_playwright_payload:
-                try:
-                    payload_js = fetch_playwright_payload(url)
+                if payload_js.get("html"):
+                    return payload_js
 
-                    if payload_js.get("html"):
-                        log_debug("[FETCH_ROUTER] PLAYWRIGHT OK")
-                        return payload_js
-
-                except Exception as e:
-                    log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
+            except Exception as e:
+                log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
 
         return _payload_requests(url, html)
 
     # ======================================================
-    # 2. PLAYWRIGHT (FALLBACK TOTAL)
+    # 2. PLAYWRIGHT (TOTAL)
     # ======================================================
     if fetch_playwright_payload:
-        log_debug("[FETCH_ROUTER] FALLBACK TOTAL PLAYWRIGHT")
-
         try:
+            log_debug("[FETCH_ROUTER] FALLBACK TOTAL PLAYWRIGHT")
             payload_js = fetch_playwright_payload(url)
 
             if payload_js.get("html"):
