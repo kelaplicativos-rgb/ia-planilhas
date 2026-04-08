@@ -73,11 +73,19 @@ def _pop_varias(chaves: list[str]) -> None:
             pass
 
 
+def _set_if_changed(key: str, value):
+    """
+    Evita sobrescrever estado desnecessariamente
+    e reduz risco de conflito com widgets
+    """
+    try:
+        if st.session_state.get(key) != value:
+            st.session_state[key] = value
+    except Exception:
+        pass
+
+
 def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
-    """
-    Reseta somente estados transitórios do fluxo.
-    Mantém os modelos do Bling por padrão.
-    """
     chaves_reset = [
         "df_origem",
         "df_saida",
@@ -122,16 +130,10 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
 
 
 def controlar_troca_operacao(operacao: str, log_debug) -> None:
-    """
-    Quando trocar entre Cadastro e Estoque:
-    - limpa somente estados transitórios
-    - mantém modelos anexados
-    - preserva comportamento estável da Home
-    """
     operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
 
     if operacao_anterior is None:
-        st.session_state["_operacao_anterior_origem_dados"] = operacao
+        _set_if_changed("_operacao_anterior_origem_dados", operacao)
         return
 
     if operacao_anterior == operacao:
@@ -144,20 +146,15 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
 
     resetar_estado_fluxo(manter_modelos=True)
 
-    st.session_state["etapa_origem"] = "upload"
-    st.session_state["_operacao_anterior_origem_dados"] = operacao
+    _set_if_changed("etapa_origem", "upload")
+    _set_if_changed("_operacao_anterior_origem_dados", operacao)
 
 
 def controlar_troca_origem(origem: str, log_debug) -> None:
-    """
-    Quando trocar entre Planilha / XML / Site:
-    - limpa estados da origem anterior
-    - mantém modelos do Bling
-    """
     origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
 
     if origem_anterior is None:
-        st.session_state["_origem_anterior_origem_dados"] = origem
+        _set_if_changed("_origem_anterior_origem_dados", origem)
         return
 
     if origem_anterior == origem:
@@ -169,15 +166,12 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
     )
 
     resetar_estado_fluxo(manter_modelos=True)
-    st.session_state["etapa_origem"] = "upload"
-    st.session_state["_origem_anterior_origem_dados"] = origem
+
+    _set_if_changed("etapa_origem", "upload")
+    _set_if_changed("_origem_anterior_origem_dados", origem)
 
 
 def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
-    """
-    Sincroniza o session_state com a origem atual sem sobrescrever
-    resultados já gerados pela precificação, exceto quando a origem muda.
-    """
     if not safe_df_dados(df_origem):
         return
 
@@ -187,7 +181,7 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
     if fingerprint_atual != novo_fingerprint:
         log_debug("Nova origem detectada. Sincronizando estados do fluxo.")
 
-        st.session_state["origem_dados_fingerprint"] = novo_fingerprint
+        _set_if_changed("origem_dados_fingerprint", novo_fingerprint)
         st.session_state["df_origem"] = df_origem.copy()
         st.session_state["df_saida"] = df_origem.copy()
         st.session_state["df_final"] = df_origem.copy()
