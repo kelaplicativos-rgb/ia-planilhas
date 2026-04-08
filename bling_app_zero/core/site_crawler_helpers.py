@@ -35,93 +35,125 @@ def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
 
 
 def texto_limpo_crawler(valor: Any) -> str:
-    if valor is None:
-        return ""
-    texto = str(valor)
-    texto = re.sub(r"\s+", " ", texto).strip()
-    return texto
+    return re.sub(r"\s+", " ", str(valor or "")).strip()
 
 
 def numero_texto_crawler(valor: Any) -> str:
     texto = texto_limpo_crawler(valor)
-    if not texto:
-        return ""
     texto = texto.replace("R$", "").replace("r$", "").strip()
-    match = re.search(r"(\d[\d\.\,]*)", texto)
-    return match.group(1).strip() if match else texto
+    m = re.search(r"(\d[\d\.\,]*)", texto)
+    return m.group(1).strip() if m else ""
 
 
 # ==========================================================
-# 🔥 DETECÇÃO DE PRODUTO (MUITO MAIS FORTE)
+# 🔥 JSON-LD (ESSENCIAL)
+# ==========================================================
+def extrair_json_ld_crawler(soup: BeautifulSoup) -> list[dict]:
+    dados = []
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            conteudo = script.string or script.text
+            if not conteudo:
+                continue
+            json_data = json.loads(conteudo)
+
+            if isinstance(json_data, list):
+                dados.extend(json_data)
+            else:
+                dados.append(json_data)
+        except Exception:
+            continue
+    return dados
+
+
+def buscar_produto_jsonld_crawler(jsonlds: list[dict]) -> dict:
+    for item in jsonlds:
+        if isinstance(item, dict):
+            if "product" in str(item.get("@type", "")).lower():
+                return item
+    return {}
+
+
+# ==========================================================
+# META / TEXTO
+# ==========================================================
+def meta_content_crawler(soup: BeautifulSoup, attr: str, value: str) -> str:
+    tag = soup.find("meta", attrs={attr: value})
+    return tag.get("content") if tag else ""
+
+
+def primeiro_texto_crawler(soup: BeautifulSoup, seletores: list[str]) -> str:
+    for sel in seletores:
+        el = soup.select_one(sel)
+        if el:
+            txt = texto_limpo_crawler(el.get_text(" ", strip=True))
+            if txt:
+                return txt
+    return ""
+
+
+def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
+    imagens = []
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src")
+        if src:
+            imagens.append(urljoin(base_url, src))
+    return " | ".join(list(dict.fromkeys(imagens))[:5])
+
+
+# ==========================================================
+# ESTOQUE
+# ==========================================================
+def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int:
+    html = (html or "").lower()
+
+    if any(x in html for x in ["esgotado", "indisponível", "out of stock"]):
+        return 0
+
+    if any(x in html for x in ["comprar", "adicionar", "buy now"]):
+        return padrao
+
+    return padrao
+
+
+# ==========================================================
+# DETECÇÃO PRODUTO
 # ==========================================================
 def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
     u = (url or "").lower()
     t = (texto_link or "").lower()
 
-    # 🚫 lixo
-    if any(x in u for x in [
-        "javascript:",
-        "mailto:",
-        "#",
-        ".jpg", ".jpeg", ".png", ".webp", ".svg", ".pdf"
-    ]):
+    if any(x in u for x in ["javascript:", "mailto:", "#"]):
         return False
 
-    if any(x in u for x in [
-        "/cart", "/checkout", "/login", "/account", "/carrinho"
-    ]):
+    if any(x in u for x in ["/cart", "/checkout", "/login"]):
         return False
 
-    # ✅ padrões fortes
-    if any(x in u for x in [
-        "/produto",
-        "/product",
-        "/item",
-        "/sku",
-        "/p/",
-    ]):
+    if any(x in u for x in ["/produto", "/product", "/item", "/sku", "/p/"]):
         return True
 
-    # 🔥 NOVO: padrão slug de produto
     partes = [p for p in urlparse(u).path.split("/") if p]
 
-    if len(partes) >= 2:
-        if not any(x in u for x in [
-            "categoria",
-            "category",
-            "search",
-            "busca",
-            "collections",
-        ]):
-            # evita páginas muito curtas tipo /contato
-            if len(partes[-1]) > 8:
-                return True
+    if len(partes) >= 2 and len(partes[-1]) > 8:
+        return True
 
-    # 🔥 NOVO: texto do link
-    if any(p in t for p in [
-        "comprar",
-        "ver produto",
-        "detalhes",
-        "adicionar",
-    ]):
+    if any(p in t for p in ["comprar", "detalhes", "produto"]):
         return True
 
     return False
 
 
 # ==========================================================
-# 🔥 EXTRAÇÃO LINKS PRODUTOS (MUITO MAIS FORTE)
+# LINKS PRODUTOS
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
-    links: list[str] = []
+    links = []
 
     for a in soup.find_all("a", href=True):
-
-        href = a.get("href")
-        url = normalizar_url_crawler(base_url, href)
+        url = normalizar_url_crawler(base_url, a.get("href"))
 
         if not url:
             continue
@@ -134,29 +166,7 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if link_parece_produto_crawler(url, texto):
             links.append(url)
 
-    # 🔥 NOVO: fallback agressivo (ESSENCIAL)
-    if len(links) < 5:
-        for a in soup.select("a[href]"):
-            href = a.get("href")
-            url = normalizar_url_crawler(base_url, href)
-
-            if not url:
-                continue
-
-            if url_mesmo_dominio_crawler(base_url, url):
-                if len(url) > 20 and "/" in url:
-                    links.append(url)
-
-    # remover duplicados
-    vistos = set()
-    unicos = []
-
-    for link in links:
-        if link not in vistos:
-            vistos.add(link)
-            unicos.append(link)
-
-    return unicos
+    return list(dict.fromkeys(links))
 
 
 # ==========================================================
@@ -165,11 +175,10 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
-    links: list[str] = []
+    links = []
 
     for a in soup.find_all("a", href=True):
-        href = a.get("href")
-        url = normalizar_url_crawler(base_url, href)
+        url = normalizar_url_crawler(base_url, a.get("href"))
 
         if not url:
             continue
@@ -177,18 +186,7 @@ def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
-        if any(x in url.lower() for x in [
-            "page=", "/page/", "pagina", "p="
-        ]):
+        if any(x in url.lower() for x in ["page=", "/page/", "pagina"]):
             links.append(url)
 
-    # remover duplicados
-    vistos = set()
-    unicos = []
-
-    for link in links:
-        if link not in vistos:
-            vistos.add(link)
-            unicos.append(link)
-
-    return unicos
+    return list(dict.fromkeys(links))
