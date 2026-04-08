@@ -30,7 +30,10 @@ def _df_preview_seguro(df: pd.DataFrame | None):
                     lambda x: "" if pd.isna(x) else str(x)
                 )
             except Exception:
-                pass
+                try:
+                    df_preview[col] = df_preview[col].astype(str)
+                except Exception:
+                    pass
 
         return df_preview.replace(
             {"nan": "", "None": "", "<NA>": "", "NaT": ""}
@@ -39,7 +42,7 @@ def _df_preview_seguro(df: pd.DataFrame | None):
         return df
 
 
-def coletar_parametros_precificacao():
+def coletar_parametros_precificacao() -> dict:
     return {
         "coluna_preco": st.session_state.get("coluna_preco_base"),
         "impostos": safe_float(st.session_state.get("perc_impostos", 0)),
@@ -49,76 +52,188 @@ def coletar_parametros_precificacao():
     }
 
 
-def _sincronizar_df(df):
+def _detectar_coluna_preco_default(colunas: list[str]) -> int:
     try:
-        st.session_state["df_precificado"] = df.copy()
-        st.session_state["df_dados"] = df.copy()
-        st.session_state["df_saida"] = df.copy()
-        st.session_state["df_final"] = df.copy()
+        candidatos = [
+            "preco de custo",
+            "preço de custo",
+            "custo",
+            "valor custo",
+            "preco compra",
+            "preço compra",
+            "preco de compra",
+            "preço de compra",
+            "valor unitário",
+            "valor unitario",
+            "preco",
+            "preço",
+            "valor",
+            "codigo",
+            "código",
+        ]
 
-        st.session_state["df_origem"] = df.copy()
+        colunas_lower = [str(c).strip().lower() for c in colunas]
 
-        st.session_state["bloquear_campos_auto"] = {
-            "preco": True,
-            "preço": True,
-            "preco de venda": True,
-            "preço de venda": True,
+        for candidato in candidatos:
+            for i, nome_col in enumerate(colunas_lower):
+                if candidato in nome_col:
+                    return i
+
+        return 0
+    except Exception:
+        return 0
+
+
+def _registrar_bloqueio_preco() -> None:
+    try:
+        bloqueios_atuais = st.session_state.get("bloquear_campos_auto", {})
+        if not isinstance(bloqueios_atuais, dict):
+            bloqueios_atuais = {}
+
+        bloqueios_atuais.update(
+            {
+                "preco": True,
+                "preço": True,
+                "preco de venda": True,
+                "preço de venda": True,
+                "valor": True,
+                "valor de venda": True,
+            }
+        )
+
+        st.session_state["bloquear_campos_auto"] = bloqueios_atuais
+    except Exception:
+        pass
+
+
+def _sincronizar_df_precificado_no_fluxo(df_precificado: pd.DataFrame) -> None:
+    try:
+        df_sync = df_precificado.copy()
+
+        st.session_state["df_precificado"] = df_sync.copy()
+        st.session_state["df_dados"] = df_sync.copy()
+        st.session_state["df_saida"] = df_sync.copy()
+        st.session_state["df_final"] = df_sync.copy()
+        st.session_state["df_origem"] = df_sync.copy()
+        st.session_state["df_origem_mapeamento"] = df_sync.copy()
+        st.session_state["df_preview_final"] = df_sync.copy()
+
+        st.session_state["precificacao_aplicada"] = True
+        st.session_state["ultima_acao_fluxo"] = "precificacao"
+
+        st.session_state["config_precificacao"] = {
+            "coluna_preco_base": st.session_state.get("coluna_preco_base"),
+            "margem_lucro": safe_float(st.session_state.get("margem_lucro", 0)),
+            "perc_impostos": safe_float(st.session_state.get("perc_impostos", 0)),
+            "custo_fixo": safe_float(st.session_state.get("custo_fixo", 0)),
+            "taxa_extra": safe_float(st.session_state.get("taxa_extra", 0)),
         }
 
+        _registrar_bloqueio_preco()
+
     except Exception as e:
-        log_debug(f"Erro sincronizar DF: {e}", "ERRO")
+        log_debug(f"Erro sincronizar DF precificado: {e}", "ERRO")
+
+
+def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
+    try:
+        params = coletar_parametros_precificacao()
+
+        coluna_preco = str(params.get("coluna_preco") or "").strip()
+        if not coluna_preco:
+            return None
+
+        if coluna_preco not in list(df_base.columns):
+            log_debug(
+                f"Coluna de custo inválida para precificação: {coluna_preco}",
+                "ERRO",
+            )
+            return None
+
+        df_precificado = aplicar_precificacao_no_fluxo(df_base.copy(), params)
+
+        if not safe_df_dados(df_precificado):
+            log_debug("Precificação retornou DataFrame inválido.", "ERRO")
+            return None
+
+        _sincronizar_df_precificado_no_fluxo(df_precificado)
+        return df_precificado
+
+    except Exception as e:
+        log_debug(f"Erro na precificação automática: {e}", "ERRO")
+        return None
 
 
 def render_precificacao(df_base):
-
-    # ❌ REMOVIDO título duplicado
+    # Título removido daqui para evitar duplicação.
+    # O cabeçalho já é renderizado no arquivo pai origem_dados.py
 
     if not safe_df_dados(df_base):
         return
 
     colunas = list(df_base.columns)
+    if not colunas:
+        return
+
+    coluna_preco_default = _detectar_coluna_preco_default(colunas)
 
     st.selectbox(
         "Coluna de custo",
         options=colunas,
+        index=coluna_preco_default,
         key="coluna_preco_base",
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.number_input("Margem (%)", min_value=0.0, key="margem_lucro")
-        st.number_input("Impostos (%)", min_value=0.0, key="perc_impostos")
+        st.number_input(
+            "Margem (%)",
+            min_value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="margem_lucro",
+        )
+        st.number_input(
+            "Impostos (%)",
+            min_value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="perc_impostos",
+        )
 
     with col2:
-        st.number_input("Custo fixo", min_value=0.0, key="custo_fixo")
-        st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
+        st.number_input(
+            "Custo fixo",
+            min_value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="custo_fixo",
+        )
+        st.number_input(
+            "Taxa (%)",
+            min_value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="taxa_extra",
+        )
 
-    # =========================================================
-    # 🔥 RECALCULA SEMPRE (STREAMLIT JÁ CONTROLA)
-    # =========================================================
-    try:
-        params = coletar_parametros_precificacao()
+    # Recalcula sempre no rerun natural do Streamlit.
+    # Mudou qualquer campo -> rerun -> novo preview imediatamente.
+    df_precificado = _aplicar_precificacao(df_base)
 
-        if params.get("coluna_preco"):
-            df_precificado = aplicar_precificacao_no_fluxo(
-                df_base.copy(), params
-            )
+    if safe_df_dados(df_precificado):
+        df_preview = df_precificado
+    else:
+        df_preview = st.session_state.get("df_precificado")
 
-            if safe_df_dados(df_precificado):
-                _sincronizar_df(df_precificado)
-
-    except Exception as e:
-        log_debug(f"Erro precificação: {e}", "ERRO")
-
-    # =========================================================
-    # PREVIEW
-    # =========================================================
-    df = st.session_state.get("df_precificado")
-
-    if safe_df_dados(df):
+    if safe_df_dados(df_preview):
         with st.expander("📊 Preview da precificação", expanded=True):
-            st.dataframe(
-                _df_preview_seguro(df).head(10),
-                use_container_width=True,
-            )
+            try:
+                st.dataframe(
+                    _df_preview_seguro(df_preview).head(10),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            except Exception as e:
+                log_debug(f"Erro ao renderizar prévia: {e}", "ERRO")
