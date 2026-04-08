@@ -221,10 +221,40 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
+        u = url.lower()
+
+        # ignora lixo
+        if any(x in u for x in [
+            "login",
+            "conta",
+            "carrinho",
+            "checkout",
+            "categoria",
+            "category",
+            "blog",
+            "javascript:",
+            "#",
+        ]):
+            continue
+
+        # 1) mantém compatibilidade com padrão clássico
         if link_parece_produto_crawler(url):
             links.append(url)
+            continue
 
-    return list(dict.fromkeys(links))
+        # 2) fallback heurístico para sites com slug customizado
+        path = urlparse(u).path or ""
+        partes = [p for p in path.split("/") if p.strip()]
+
+        if (
+            len(u) > 30
+            and "-" in u
+            and len(partes) >= 1
+            and not u.endswith((".jpg", ".png", ".svg", ".webp", ".jpeg"))
+        ):
+            links.append(url)
+
+    return list(dict.fromkeys(links))[:300]
 
 
 # ==========================================================
