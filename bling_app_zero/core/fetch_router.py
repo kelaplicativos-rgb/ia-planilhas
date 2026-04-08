@@ -5,22 +5,11 @@ from urllib.parse import urlparse
 
 from bling_app_zero.core.fetcher import fetch_url
 
-# ==========================================================
-# LOG (BLINDADO)
-# ==========================================================
 try:
-    from bling_app_zero.utils.excel_logs import log_debug  # type: ignore
+    from bling_app_zero.utils.excel_logs import log_debug
 except Exception:
-    try:
-        from bling_app_zero.utils.excel import log_debug  # type: ignore
-    except Exception:
-        def log_debug(_msg: str, _nivel: str = "INFO") -> None:
-            return None
+    def log_debug(*args, **kwargs): pass
 
-
-# ==========================================================
-# IMPORT PLAYWRIGHT (BLINDADO)
-# ==========================================================
 try:
     from bling_app_zero.core.playwright_fetcher import (
         fetch_playwright_payload,
@@ -33,85 +22,40 @@ except Exception:
     tentar_fetch_com_fallback_js = None
 
 
-# ==========================================================
-# CONFIG
-# ==========================================================
-HTML_MINIMO_UTIL = 1200
+HTML_MINIMO_UTIL = 3000  # 🔥 aumentei (antes 1200)
 
 DOMINIOS_PRIORIDADE_JS = {
     "atacadum.com.br",
-}
-
-SELETORES_ESPERA: dict[str, list[str]] = {
-    "megacentereletronicos.com.br": [
-        "h1",
-        ".product-title",
-        ".product-name",
-        ".price",
-        ".preco",
-        ".product-price",
-        "main",
-    ],
-    "atacadum.com.br": [
-        "h1",
-        ".product-title",
-        ".product-name",
-        ".price",
-        ".preco",
-        ".product-price",
-        "main",
-    ],
+    "megacentereletronicos.com.br",  # 🔥 FORÇA JS
 }
 
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 def _safe_str(valor: Any) -> str:
-    if valor is None:
-        return ""
     try:
-        return str(valor).strip()
-    except Exception:
+        return str(valor or "").strip()
+    except:
         return ""
 
 
 def _normalizar_url(url: str) -> str:
     url = _safe_str(url)
-
     if not url:
         return ""
-
-    # remove espaços internos acidentais nas pontas
-    url = url.strip()
-
-    # já veio completo
-    if url.startswith(("http://", "https://")):
-        return url
-
-    # veio com //dominio.com
-    if url.startswith("//"):
-        return "https:" + url
-
-    # evita esquemas não web quebrando o fluxo
-    parsed = urlparse(url)
-    if parsed.scheme and parsed.scheme not in {"http", "https"}:
-        return url
-
-    # padrão do projeto: assumir https
-    return f"https://{url}"
+    if not url.startswith(("http://", "https://")):
+        return "https://" + url
+    return url
 
 
 def _dominio(url: str) -> str:
     try:
-        normalizada = _normalizar_url(url)
-        return urlparse(normalizada).netloc.lower().replace("www.", "")
-    except Exception:
+        return urlparse(_normalizar_url(url)).netloc.lower().replace("www.", "")
+    except:
         return ""
 
 
 def _parece_html_fraco(html: str | None) -> bool:
     html = _safe_str(html)
+
     if not html:
         return True
 
@@ -120,230 +64,108 @@ def _parece_html_fraco(html: str | None) -> bool:
     if len(html) < HTML_MINIMO_UTIL:
         return True
 
-    sinais = [
+    # 🔥 NOVO: detecta páginas vazias de produto
+    sinais_ruins = [
         "access denied",
-        "forbidden",
         "captcha",
         "cloudflare",
-        "attention required",
-        "security check",
         "verify you are human",
-        "cf-browser-verification",
-        "please enable cookies",
+        "carregando",
+        "loading",
     ]
-    if any(s in html_baixo for s in sinais):
+
+    if any(s in html_baixo for s in sinais_ruins):
         return True
 
-    if 'id="__next"' in html_baixo and len(html) < 5000:
-        return True
+    # 🔥 NOVO: não tem sinais de produto
+    sinais_produto = [
+        "price",
+        "preco",
+        "product",
+        "produto",
+        "add to cart",
+        "comprar",
+    ]
 
-    if 'id="app"' in html_baixo and len(html) < 5000:
-        return True
-
-    if "__nuxt" in html_baixo and len(html) < 5000:
+    if not any(s in html_baixo for s in sinais_produto):
         return True
 
     return False
 
 
-def _selector_por_dominio(url: str) -> str | None:
-    dominio = _dominio(url)
-    candidatos = SELETORES_ESPERA.get(dominio, [])
-
-    for seletor in candidatos:
-        if _safe_str(seletor):
-            return seletor
-
-    return None
-
-
-def _usar_js_prioritario(url: str) -> bool:
-    dominio = _dominio(url)
-    return dominio in DOMINIOS_PRIORIDADE_JS
-
-
 def _storage_state(url: str) -> str | None:
     if storage_state_path_por_dominio is None:
         return None
-
     try:
         return storage_state_path_por_dominio(_normalizar_url(url))
-    except Exception:
+    except:
         return None
 
 
-def _payload_requests(url: str, html: str | None) -> dict[str, Any]:
-    html = html if isinstance(html, str) else None
-    url = _normalizar_url(url)
-
+def _payload_requests(url: str, html: str | None) -> dict:
     return {
         "ok": bool(html),
         "engine": "requests",
         "url": url,
         "final_url": url,
         "html": html,
-        "title": "",
-        "status_hint": None,
-        "blocked_hint": _parece_html_fraco(html),
         "network_records": [],
-        "screenshot_path": None,
-        "storage_state_path": None,
-        "error": "" if html else "Falha no fetch via requests.",
+        "error": "" if html else "Falha requests",
     }
 
 
 # ==========================================================
-# API PRINCIPAL
+# MAIN
 # ==========================================================
-def fetch_html_router(
-    url: str,
-    preferir_js: bool = False,
-    wait_selector: str | None = None,
-) -> str | None:
-    payload = fetch_payload_router(
-        url=url,
-        preferir_js=preferir_js,
-        wait_selector=wait_selector,
-    )
-    html = payload.get("html")
-    return html if isinstance(html, str) and html.strip() else None
-
-
 def fetch_payload_router(
     url: str,
     preferir_js: bool = False,
     wait_selector: str | None = None,
-) -> dict[str, Any]:
-    url_original = _safe_str(url)
-    url = _normalizar_url(url_original)
+) -> dict:
 
-    if not url:
-        log_debug("[FETCH_ROUTER] URL vazia recebida.", "ERROR")
-        return {
-            "ok": False,
-            "engine": "router",
-            "url": "",
-            "final_url": "",
-            "html": None,
-            "title": "",
-            "status_hint": None,
-            "blocked_hint": False,
-            "network_records": [],
-            "screenshot_path": None,
-            "storage_state_path": None,
-            "error": "URL vazia.",
-        }
-
+    url = _normalizar_url(url)
     dominio = _dominio(url)
-    seletor_final = wait_selector or _selector_por_dominio(url)
-    state_path = _storage_state(url)
 
-    if url != url_original:
-        log_debug(
-            f"[FETCH_ROUTER] URL normalizada | original={url_original} | final={url}",
-            "INFO",
+    log_debug(f"[FETCH_ROUTER] START | {url}")
+
+    # 🔥 FORÇA JS PARA DOMÍNIOS
+    if dominio in DOMINIOS_PRIORIDADE_JS:
+        preferir_js = True
+
+    # ======================================================
+    # 1) JS DIRETO
+    # ======================================================
+    if preferir_js and fetch_playwright_payload:
+        log_debug("[FETCH_ROUTER] FORÇANDO JS")
+
+        payload = fetch_playwright_payload(url)
+
+        if payload.get("ok"):
+            return payload
+
+    # ======================================================
+    # 2) REQUESTS
+    # ======================================================
+    html = fetch_url(url)
+
+    if html and not _parece_html_fraco(html):
+        log_debug("[FETCH_ROUTER] HTML OK (requests)")
+        return _payload_requests(url, html)
+
+    # ======================================================
+    # 3) FALLBACK JS
+    # ======================================================
+    if tentar_fetch_com_fallback_js:
+        log_debug("[FETCH_ROUTER] FALLBACK JS")
+
+        payload = tentar_fetch_com_fallback_js(
+            url=url,
+            html_requests=html,
         )
 
-    log_debug(
-        f"[FETCH_ROUTER] Início | dominio={dominio} | preferir_js={preferir_js} | url={url}"
-    )
+        if payload.get("ok"):
+            return payload
 
-    # ======================================================
-    # 1) JS prioritário por domínio ou por chamada explícita
-    # ======================================================
-    if preferir_js or _usar_js_prioritario(url):
-        if fetch_playwright_payload is not None:
-            log_debug(
-                f"[FETCH_ROUTER] JS prioritário acionado | dominio={dominio} | url={url}"
-            )
-            try:
-                payload_js = fetch_playwright_payload(
-                    url=url,
-                    wait_selector=seletor_final,
-                    storage_state_path=state_path,
-                    screenshot_on_error=True,
-                    headless=True,
-                )
-                if payload_js.get("ok") and payload_js.get("html"):
-                    return payload_js
+    log_debug("[FETCH_ROUTER] FALHA TOTAL")
 
-                log_debug(
-                    f"[FETCH_ROUTER] JS prioritário falhou, tentando requests | "
-                    f"dominio={dominio} | erro={payload_js.get('error', '')}",
-                    "WARNING",
-                )
-            except Exception as exc:
-                log_debug(
-                    f"[FETCH_ROUTER] Erro no JS prioritário | {type(exc).__name__}: {exc}",
-                    "WARNING",
-                )
-
-        html_requests = fetch_url(url)
-        return _payload_requests(url, html_requests)
-
-    # ======================================================
-    # 2) Primeiro requests
-    # ======================================================
-    html_requests = fetch_url(url)
-    payload_req = _payload_requests(url, html_requests)
-
-    if html_requests and not _parece_html_fraco(html_requests):
-        log_debug(
-            f"[FETCH_ROUTER] Requests suficiente | dominio={dominio} | url={url}"
-        )
-        return payload_req
-
-    # ======================================================
-    # 3) Fallback JS inteligente
-    # ======================================================
-    if tentar_fetch_com_fallback_js is not None:
-        try:
-            log_debug(
-                f"[FETCH_ROUTER] Acionando fallback JS | dominio={dominio} | url={url}"
-            )
-
-            payload_js = tentar_fetch_com_fallback_js(
-                url=url,
-                html_requests=html_requests,
-                wait_selector=seletor_final,
-                storage_state_path=state_path,
-            )
-
-            if payload_js.get("ok") and payload_js.get("html"):
-                return payload_js
-
-            log_debug(
-                f"[FETCH_ROUTER] Fallback JS sem sucesso | dominio={dominio} | "
-                f"erro={payload_js.get('error', '')}",
-                "WARNING",
-            )
-        except Exception as exc:
-            log_debug(
-                f"[FETCH_ROUTER] Erro no fallback JS | {type(exc).__name__}: {exc}",
-                "WARNING",
-            )
-
-    return payload_req
-
-
-# ==========================================================
-# API AUXILIAR DE DIAGNÓSTICO
-# ==========================================================
-def diagnosticar_fetch(
-    url: str,
-    preferir_js: bool = False,
-    wait_selector: str | None = None,
-) -> dict[str, Any]:
-    payload = fetch_payload_router(
-        url=url,
-        preferir_js=preferir_js,
-        wait_selector=wait_selector,
-    )
-
-    html = _safe_str(payload.get("html"))
-    payload["html_len"] = len(html)
-    payload["dominio"] = _dominio(payload.get("final_url") or payload.get("url") or url)
-    payload["usou_js"] = payload.get("engine") == "playwright"
-    payload["html_fraco"] = _parece_html_fraco(html)
-
-    return payload
+    return _payload_requests(url, html)
