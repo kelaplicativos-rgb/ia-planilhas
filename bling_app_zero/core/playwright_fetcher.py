@@ -26,7 +26,10 @@ except Exception:
 # IMPORT PLAYWRIGHT (BLINDADO)
 # ==========================================================
 try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import (
+        TimeoutError as PlaywrightTimeoutError,
+        sync_playwright,
+    )
 except Exception:  # pragma: no cover
     sync_playwright = None
     PlaywrightTimeoutError = Exception
@@ -177,7 +180,10 @@ def _auto_scroll(page: Any, max_scrolls: int = PLAYWRIGHT_MAX_SCROLLS) -> None:
 
             altura_anterior = altura_atual
     except Exception as exc:
-        log_debug(f"[PLAYWRIGHT] Falha no auto scroll: {type(exc).__name__}: {exc}", "WARNING")
+        log_debug(
+            f"[PLAYWRIGHT] Falha no auto scroll: {type(exc).__name__}: {exc}",
+            "WARNING",
+        )
 
 
 def _esperar_estabilidade_basica(page: Any) -> None:
@@ -242,10 +248,17 @@ def _preparar_captura_network(page: Any, registros: list[dict[str, Any]]) -> Non
             json_payload = _extrair_json_de_response(response)
             if json_payload is not None:
                 item["json"] = json_payload
-                item["json_preview"] = _limpar_texto_curto(_serializar_json_seguro(json_payload), 800)
+                item["json_preview"] = _limpar_texto_curto(
+                    _serializar_json_seguro(json_payload),
+                    800,
+                )
             else:
                 try:
-                    if "text" in content_type or "html" in content_type or "javascript" in content_type:
+                    if (
+                        "text" in content_type
+                        or "html" in content_type
+                        or "javascript" in content_type
+                    ):
                         texto = response.text()
                         item["text_preview"] = _limpar_texto_curto(texto, 800)
                 except Exception:
@@ -254,7 +267,8 @@ def _preparar_captura_network(page: Any, registros: list[dict[str, Any]]) -> Non
             registros.append(item)
         except Exception as exc:
             log_debug(
-                f"[PLAYWRIGHT] Falha capturando response de rede: {type(exc).__name__}: {exc}",
+                f"[PLAYWRIGHT] Falha capturando response de rede: "
+                f"{type(exc).__name__}: {exc}",
                 "WARNING",
             )
 
@@ -338,7 +352,9 @@ def fetch_playwright_payload(
         return payload
 
     dominio = _dominio(url)
-    log_debug(f"[PLAYWRIGHT] Iniciando fetch browser real | dominio={dominio} | url={url}")
+    log_debug(
+        f"[PLAYWRIGHT] Iniciando fetch browser real | dominio={dominio} | url={url}"
+    )
 
     browser = None
     context = None
@@ -374,7 +390,11 @@ def fetch_playwright_payload(
 
             page.on("response", _on_main_response)
 
-            response = page.goto(url, wait_until="domcontentloaded", timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
+            response = page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=PLAYWRIGHT_NAV_TIMEOUT_MS,
+            )
 
             if response is not None:
                 try:
@@ -429,7 +449,8 @@ def fetch_playwright_payload(
                     log_debug(f"[PLAYWRIGHT] storage_state salvo em {storage_state_path}")
                 except Exception as exc:
                     log_debug(
-                        f"[PLAYWRIGHT] Falha salvando storage_state: {type(exc).__name__}: {exc}",
+                        f"[PLAYWRIGHT] Falha salvando storage_state: "
+                        f"{type(exc).__name__}: {exc}",
                         "WARNING",
                     )
 
@@ -440,41 +461,57 @@ def fetch_playwright_payload(
                     f"titulo={titulo or '(sem título)'} | final_url={final_url}"
                 )
             elif html:
-                payload["error"] = "Página retornou conteúdo com indício de bloqueio/challenge."
+                payload["error"] = (
+                    "Página retornou conteúdo com indício de bloqueio/challenge."
+                )
                 log_debug(
-                    f"[PLAYWRIGHT] Conteúdo carregado, mas com indício de bloqueio | final_url={final_url}",
+                    f"[PLAYWRIGHT] Conteúdo carregado, mas com indício de bloqueio | "
+                    f"final_url={final_url}",
                     "WARNING",
                 )
             else:
                 payload["error"] = "Página carregada sem HTML útil."
                 log_debug(
-                    f"[PLAYWRIGHT] HTML vazio/inútil | status={payload['status_hint']} | final_url={final_url}",
+                    f"[PLAYWRIGHT] HTML vazio/inútil | "
+                    f"status={payload['status_hint']} | final_url={final_url}",
                     "WARNING",
                 )
 
     except PlaywrightTimeoutError as exc:
         payload["error"] = f"Timeout Playwright: {type(exc).__name__}: {exc}"
-        log_debug(f"[PLAYWRIGHT] Timeout | url={url} | detalhe={payload['error']}", "ERROR")
+        log_debug(
+            f"[PLAYWRIGHT] Timeout | url={url} | detalhe={payload['error']}",
+            "ERROR",
+        )
 
         if screenshot_on_error and page is not None:
             try:
                 screenshot_path = _arquivo_temp("playwright_timeout", ".png")
                 page.screenshot(path=screenshot_path, full_page=True)
                 payload["screenshot_path"] = screenshot_path
-                log_debug(f"[PLAYWRIGHT] Screenshot de timeout salvo em {screenshot_path}", "INFO")
+                log_debug(
+                    f"[PLAYWRIGHT] Screenshot de timeout salvo em {screenshot_path}",
+                    "INFO",
+                )
             except Exception:
                 pass
 
     except Exception as exc:
         payload["error"] = f"{type(exc).__name__}: {exc}"
-        log_debug(f"[PLAYWRIGHT] Erro geral | url={url} | detalhe={payload['error']}", "ERROR")
+        log_debug(
+            f"[PLAYWRIGHT] Erro geral | url={url} | detalhe={payload['error']}",
+            "ERROR",
+        )
 
         if screenshot_on_error and page is not None:
             try:
                 screenshot_path = _arquivo_temp("playwright_error", ".png")
                 page.screenshot(path=screenshot_path, full_page=True)
                 payload["screenshot_path"] = screenshot_path
-                log_debug(f"[PLAYWRIGHT] Screenshot de erro salvo em {screenshot_path}", "INFO")
+                log_debug(
+                    f"[PLAYWRIGHT] Screenshot de erro salvo em {screenshot_path}",
+                    "INFO",
+                )
             except Exception:
                 pass
 
@@ -531,7 +568,7 @@ def tentar_fetch_com_fallback_js(
         precisa_js = True
     elif len(html_requests.strip()) < 1200:
         precisa_js = True
-    elif "id=\"__next\"" in html_baixo or "id=\"app\"" in html_baixo:
+    elif 'id="__next"' in html_baixo or 'id="app"' in html_baixo:
         precisa_js = True
     elif "__nuxt" in html_baixo or "window.__initial_state__" in html_baixo:
         precisa_js = True
