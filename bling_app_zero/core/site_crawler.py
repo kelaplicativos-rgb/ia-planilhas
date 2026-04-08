@@ -20,13 +20,19 @@ from bling_app_zero.core.site_crawler_helpers import (
 )
 
 # ==========================================================
+# VERSION
+# ==========================================================
+SITE_CRAWLER_VERSION = "V2_MODULAR_OK"
+
+
+# ==========================================================
 # LOG
 # ==========================================================
 try:
     from bling_app_zero.utils.excel_logs import log_debug
 except Exception:
     def log_debug(*args, **kwargs):
-        pass
+        return None
 
 
 # ==========================================================
@@ -44,13 +50,20 @@ def _safe_int(valor: Any, padrao: int) -> int:
         return padrao
 
 
+def _safe_str(valor: Any) -> str:
+    try:
+        return str(valor or "").strip()
+    except Exception:
+        return ""
+
+
 # ==========================================================
 # URL HELPERS
 # ==========================================================
 def _mesmo_dominio(url_base: str, url: str) -> bool:
     try:
-        d1 = urlparse(str(url_base or "")).netloc.replace("www.", "").lower()
-        d2 = urlparse(str(url or "")).netloc.replace("www.", "").lower()
+        d1 = urlparse(_safe_str(url_base)).netloc.replace("www.", "").lower()
+        d2 = urlparse(_safe_str(url)).netloc.replace("www.", "").lower()
 
         if not d1 or not d2:
             return False
@@ -62,7 +75,7 @@ def _mesmo_dominio(url_base: str, url: str) -> bool:
 
 def _normalizar_link(base_url: str, href: Any) -> str:
     try:
-        href = str(href or "").strip()
+        href = _safe_str(href)
         if not href:
             return ""
 
@@ -83,7 +96,7 @@ def _normalizar_link(base_url: str, href: Any) -> str:
 
 def _eh_link_ruim(url: str) -> bool:
     try:
-        u = str(url or "").strip().lower()
+        u = _safe_str(url).lower()
         if not u:
             return True
 
@@ -138,7 +151,6 @@ def _parece_link_produto_flexivel(url: str) -> bool:
 
         low = url.lower()
 
-        # Primeiro respeita o helper existente do projeto.
         try:
             if link_parece_produto_crawler(url):
                 return True
@@ -160,8 +172,6 @@ def _parece_link_produto_flexivel(url: str) -> bool:
         if any(s in low for s in sinais_fortes):
             return True
 
-        # Heurística flexível:
-        # link interno, sem âncoras ruins, com caminho mais "profundo".
         path = urlparse(low).path or ""
         partes = [p for p in path.split("/") if p.strip()]
 
@@ -179,7 +189,7 @@ def _parece_link_produto_flexivel(url: str) -> bool:
 def _fetch(url: str) -> dict[str, Any]:
     try:
         payload = fetch_payload_router(url=url, preferir_js=True) or {}
-        html = str(payload.get("html") or "").strip()
+        html = _safe_str(payload.get("html"))
 
         if not html:
             log_debug(f"[CRAWLER] HTML vazio: {url}", "WARNING")
@@ -191,9 +201,9 @@ def _fetch(url: str) -> dict[str, Any]:
                 "WARNING",
             )
 
-        engine = str(payload.get("engine") or "")
+        engine = _safe_str(payload.get("engine")) or "desconhecido"
         log_debug(
-            f"[CRAWLER] FETCH OK | engine={engine or 'desconhecido'} | url={url}",
+            f"[CRAWLER] FETCH OK | engine={engine} | url={url}",
             "INFO",
         )
         return payload
@@ -208,7 +218,7 @@ def _fetch(url: str) -> dict[str, Any]:
 # ==========================================================
 def _baixar(link: str, padrao_disponivel: int) -> dict[str, Any] | None:
     payload = _fetch(link)
-    html = str(payload.get("html") or "").strip()
+    html = _safe_str(payload.get("html"))
 
     if not html:
         log_debug(f"[CRAWLER] Produto sem HTML: {link}", "WARNING")
@@ -230,13 +240,12 @@ def _baixar(link: str, padrao_disponivel: int) -> dict[str, Any] | None:
         log_debug(f"[CRAWLER] retorno inválido do extractor: {link}", "WARNING")
         return None
 
-    nome = str(produto.get("Nome") or "").strip()
+    nome = _safe_str(produto.get("Nome"))
     if not nome:
         log_debug(f"[CRAWLER] produto sem Nome: {link}", "WARNING")
         return None
 
-    # Blindagem mínima para link externo.
-    if not str(produto.get("Link Externo") or "").strip():
+    if not _safe_str(produto.get("Link Externo")):
         produto["Link Externo"] = link
 
     return produto
@@ -259,7 +268,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[tuple[
         visitadas.add(url)
 
         payload = _fetch(url)
-        html = str(payload.get("html") or "").strip()
+        html = _safe_str(payload.get("html"))
 
         if not html:
             continue
@@ -288,14 +297,12 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[tuple[
 def _extrair_links_agressivo(html: str, base_url: str) -> list[str]:
     links: list[str] = []
 
-    # 1) tenta helper principal do projeto
     try:
         links = extrair_links_produtos_crawler(html, base_url) or []
     except Exception as e:
         log_debug(f"[CRAWLER] erro extrair_links_produtos_crawler: {e}", "WARNING")
         links = []
 
-    # normalização inicial
     normalizados: list[str] = []
     vistos: set[str] = set()
 
@@ -310,7 +317,6 @@ def _extrair_links_agressivo(html: str, base_url: str) -> list[str]:
 
     links = normalizados
 
-    # 2) fallback agressivo real
     if len(links) < 3:
         soup = BeautifulSoup(html, "html.parser")
         candidatos: list[str] = []
@@ -330,34 +336,28 @@ def _extrair_links_agressivo(html: str, base_url: str) -> list[str]:
 
             score = 0
 
-            # sinais na URL
             if any(x in low for x in ["/produto", "/product", "/prod/", "/item/", "/p/", "/sku/"]):
                 score += 3
 
-            # sinais no texto do link
             if any(x in texto_link for x in ["comprar", "ver produto", "detalhes", "saiba mais"]):
                 score += 2
 
-            # sinais estruturais
             path = urlparse(low).path or ""
             partes = [p for p in path.split("/") if p.strip()]
             if len(partes) >= 2:
                 score += 1
 
-            # filtro final flexível
             if _parece_link_produto_flexivel(url):
                 score += 2
 
             if score >= 2:
                 candidatos.append(url)
 
-        # junta e deduplica
         for item in candidatos:
             if item not in vistos:
                 vistos.add(item)
                 links.append(item)
 
-    # 3) filtro final mais flexível, sem matar links bons
     links_filtrados: list[str] = []
     vistos_finais: set[str] = set()
 
@@ -394,7 +394,6 @@ def executar_crawler(
     max_threads = _safe_int(max_threads, MAX_THREADS)
     padrao_disponivel = _safe_int(padrao_disponivel, 10)
 
-    # Blindagem prática para evitar bloqueio agressivo.
     max_threads = min(max_threads, 5)
 
     progress_bar = st.progress(0)
@@ -410,7 +409,7 @@ def executar_crawler(
         status.info(msg)
 
     log_debug(
-        f"[CRAWLER] iniciar | url={url} | max_paginas={max_paginas} | max_threads={max_threads}",
+        f"[CRAWLER] iniciar | version={SITE_CRAWLER_VERSION} | url={url} | max_paginas={max_paginas} | max_threads={max_threads}",
         "INFO",
     )
 
@@ -441,7 +440,6 @@ def executar_crawler(
 
         progress_bar.progress(15 + int((i / total_paginas) * 25))
 
-    # deduplicar e limitar
     dedup_links: list[str] = []
     vistos_links: set[str] = set()
 
@@ -460,7 +458,7 @@ def executar_crawler(
         status.warning("⚠️ Tentando fallback direto...")
 
         payload = _fetch(url)
-        html = str(payload.get("html") or "").strip()
+        html = _safe_str(payload.get("html"))
 
         if html:
             try:
