@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
@@ -19,10 +19,21 @@ MAX_PRODUTOS = 1200
 def normalizar_url_crawler(base_url: str, href: str | None) -> str:
     if not href:
         return ""
+
     href = str(href).strip()
     if not href:
         return ""
-    return urljoin(base_url, href)
+
+    url = urljoin(base_url, href)
+
+    # 🔥 remove parâmetros desnecessários
+    try:
+        parsed = urlparse(url)
+        url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    except Exception:
+        pass
+
+    return url
 
 
 def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
@@ -106,8 +117,9 @@ def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
         if not url:
             continue
 
-        if url not in imagens:
-            imagens.append(url)
+        if not any(x in url.lower() for x in ["logo", "icon", "placeholder"]):
+            if url not in imagens:
+                imagens.append(url)
 
     return " | ".join(imagens[:5])
 
@@ -144,7 +156,7 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
 
 
 # ==========================================================
-# DETECÇÃO DE PRODUTO
+# DETECÇÃO DE PRODUTO (MELHORADA)
 # ==========================================================
 def link_parece_produto_crawler(url: str) -> bool:
     u = (url or "").lower()
@@ -162,13 +174,8 @@ def link_parece_produto_crawler(url: str) -> bool:
     ]):
         return False
 
-    if any(x in u for x in ["produto", "product", "/p/", "sku", "id="]):
-        return True
-
-    path = urlparse(u).path
-    partes = [p for p in path.split("/") if p]
-
-    if len(partes) >= 2 and len(partes[-1]) > 10:
+    # 🔥 mais restritivo
+    if any(x in u for x in ["/produto", "/product", "/p/"]):
         return True
 
     return False
@@ -181,11 +188,8 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     links: list[str] = []
 
-    # Varredura principal
-    for a in soup.select("a[href]"):
+    for a in soup.select("a[href*='/produto'], a[href*='/product']"):
         href = a.get("href")
-        if not href:
-            continue
 
         url = normalizar_url_crawler(base_url, href)
         if not url:
@@ -194,35 +198,28 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
-        if not link_parece_produto_crawler(url):
-            continue
-
         links.append(url)
 
-    # Fallback por cards/listas, só se resultado ainda for fraco
+    # fallback
     if len(links) < 3:
-        for card in soup.select("[class*='product'], [class*='card'], li"):
-            a = card.find("a", href=True)
-            if not a:
-                continue
+        for a in soup.select("a[href]"):
+            href = a.get("href")
 
-            url = normalizar_url_crawler(base_url, a.get("href"))
+            url = normalizar_url_crawler(base_url, href)
             if not url:
                 continue
 
             if not url_mesmo_dominio_crawler(base_url, url):
                 continue
 
-            if not link_parece_produto_crawler(url):
-                continue
-
-            links.append(url)
+            if link_parece_produto_crawler(url):
+                links.append(url)
 
     return list(dict.fromkeys(links))
 
 
 # ==========================================================
-# PAGINAÇÃO
+# PAGINAÇÃO (MELHORADA)
 # ==========================================================
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
@@ -230,13 +227,21 @@ def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
 
     for a in soup.select("a[href]"):
         url = normalizar_url_crawler(base_url, a.get("href"))
+
         if not url:
             continue
 
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
-        if any(x in url.lower() for x in ["page=", "pagina", "?p=", "&p="]):
+        if any(x in url.lower() for x in [
+            "page=",
+            "pagina",
+            "/page/",
+            "/pagina/",
+            "?p=",
+            "&p="
+        ]):
             links.append(url)
 
     return list(dict.fromkeys(links))
