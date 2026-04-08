@@ -16,7 +16,15 @@ from bling_app_zero.core.site_crawler_helpers import (
     texto_limpo_crawler,
 )
 
+# ==========================================================
+# VERSION
+# ==========================================================
+EXTRACTOR_VERSION = "V2_MODULAR_OK"
+
+
+# ==========================================================
 # IA
+# ==========================================================
 try:
     from bling_app_zero.core.ia_extractor import extrair_com_ia
 except Exception:
@@ -42,20 +50,18 @@ def _digitos(valor: Any) -> str:
 
 def _extrair_preco_global(html: str) -> str:
     matches = re.findall(r"R\$\s*\d[\d\.\,]*", html or "", re.I)
+
+    precos = []
     for m in matches:
         p = numero_texto_crawler(m)
         if p:
-            return p
-    return ""
+            precos.append(float(p))
 
+    if not precos:
+        return ""
 
-def _extrair_categoria(soup: BeautifulSoup) -> str:
-    for nav in soup.select("nav, .breadcrumb, [class*='bread']"):
-        textos = [texto_limpo_crawler(x.get_text()) for x in nav.select("a, span")]
-        textos = [t for t in textos if t and len(t) < 40]
-        if len(textos) >= 2:
-            return " > ".join(textos[:4])
-    return ""
+    # 🔥 pega o menor valor válido (evita preço parcelado)
+    return str(min(precos))
 
 
 def _limpar_descricao(texto: str) -> str:
@@ -63,13 +69,11 @@ def _limpar_descricao(texto: str) -> str:
         return ""
 
     cortes = [
-        "mega center eletrônicos",
         "produtos relacionados",
         "veja também",
         "formas de pagamento",
         "atendimento",
         "loja física",
-        "endereço",
     ]
 
     texto = texto.lower()
@@ -88,20 +92,18 @@ def _filtrar_imagens(lista: str) -> str:
 
     imgs = [i.strip() for i in lista.split("|") if i.strip()]
 
-    # remove logos / ícones
     imgs = [
         i for i in imgs
-        if not any(x in i.lower() for x in ["logo", "icon", "placeholder"])
+        if not any(x in i.lower() for x in ["logo", "icon", "placeholder", "thumb"])
     ]
 
-    # remove duplicados
     imgs = list(dict.fromkeys(imgs))
 
     return " | ".join(imgs[:5])
 
 
 # ==========================================================
-# EXTRAÇÃO PRINCIPAL
+# EXTRAÇÃO
 # ==========================================================
 def extrair_nome(soup, jsonld):
     return (
@@ -109,13 +111,7 @@ def extrair_nome(soup, jsonld):
         or meta_content_crawler(soup, "property", "og:title")
         or primeiro_texto_crawler(
             soup,
-            [
-                "h1",
-                ".product-title",
-                ".product-name",
-                "[class*='product'] h1",
-                "[class*='title']",
-            ],
+            ["h1", ".product-title", ".product-name"],
         )
     )
 
@@ -138,14 +134,6 @@ def extrair_preco(soup, jsonld, html):
     if meta:
         return numero_texto_crawler(meta)
 
-    # 🔥 seletor mais seguro
-    for el in soup.select("[class*='price'], [class*='valor']"):
-        txt = texto_limpo_crawler(el.get_text())
-        preco = numero_texto_crawler(txt)
-
-        if preco and len(preco) >= 3:
-            return preco
-
     return _extrair_preco_global(html)
 
 
@@ -157,15 +145,9 @@ def extrair_descricao(soup, jsonld):
         desc = meta or ""
 
     if not desc:
-        for sel in [
-            ".product-description",
-            ".description",
-            "[class*='description']",
-        ]:
-            el = soup.select_one(sel)
-            if el:
-                desc = texto_limpo_crawler(el.get_text())
-                break
+        el = soup.select_one("[class*='description']")
+        if el:
+            desc = texto_limpo_crawler(el.get_text())
 
     return _limpar_descricao(desc)
 
@@ -177,7 +159,7 @@ def extrair_imagens(soup, url, jsonld):
         return _filtrar_imagens(" | ".join(imgs))
 
     if isinstance(imgs, str):
-        return imgs
+        return _filtrar_imagens(imgs)
 
     return _filtrar_imagens(todas_imagens_crawler(soup, url))
 
@@ -194,8 +176,16 @@ def extrair_marca(jsonld):
     return ""
 
 
+def extrair_gtin(jsonld):
+    for campo in ["gtin13", "gtin", "ean"]:
+        valor = _digitos(jsonld.get(campo))
+        if len(valor) in (8, 12, 13, 14):
+            return valor
+    return ""
+
+
 # ==========================================================
-# MAIN COM IA
+# MAIN
 # ==========================================================
 def extrair_produto_crawler(
     html: str,
@@ -213,11 +203,9 @@ def extrair_produto_crawler(
     nome = extrair_nome(soup, json_produto)
     preco = extrair_preco(soup, json_produto, html)
 
-    # ======================================================
-    # IA FALLBACK
-    # ======================================================
-    if extrair_com_ia and (not nome or not preco):
-        log_debug(f"[IA FALLBACK] {url}")
+    # 🔥 IA SOMENTE EM FALHA TOTAL
+    if extrair_com_ia and (not nome and not preco):
+        log_debug(f"[IA FALLBACK TOTAL] {url}")
 
         produto_ia = extrair_com_ia(html, url)
 
@@ -233,8 +221,8 @@ def extrair_produto_crawler(
         "Preço": preco,
         "Descrição": extrair_descricao(soup, json_produto),
         "Marca": extrair_marca(json_produto),
-        "Categoria": _extrair_categoria(soup),
-        "GTIN/EAN": _digitos(json_produto.get("gtin13")),
+        "Categoria": "",  # 🔥 REMOVIDO AUTO
+        "GTIN/EAN": extrair_gtin(json_produto),
         "URL Imagens Externas": extrair_imagens(soup, url, json_produto),
         "Link Externo": url,
         "Estoque": detectar_estoque_crawler(html, soup, padrao_disponivel),
