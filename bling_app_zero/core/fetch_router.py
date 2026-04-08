@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from bling_app_zero.core.fetcher import fetch_url
 
@@ -75,11 +76,36 @@ def _safe_str(valor: Any) -> str:
         return ""
 
 
+def _normalizar_url(url: str) -> str:
+    url = _safe_str(url)
+
+    if not url:
+        return ""
+
+    # remove espaços internos acidentais nas pontas
+    url = url.strip()
+
+    # já veio completo
+    if url.startswith(("http://", "https://")):
+        return url
+
+    # veio com //dominio.com
+    if url.startswith("//"):
+        return "https:" + url
+
+    # evita esquemas não web quebrando o fluxo
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.scheme not in {"http", "https"}:
+        return url
+
+    # padrão do projeto: assumir https
+    return f"https://{url}"
+
+
 def _dominio(url: str) -> str:
     try:
-        from urllib.parse import urlparse
-
-        return urlparse(_safe_str(url)).netloc.lower().replace("www.", "")
+        normalizada = _normalizar_url(url)
+        return urlparse(normalizada).netloc.lower().replace("www.", "")
     except Exception:
         return ""
 
@@ -141,13 +167,15 @@ def _storage_state(url: str) -> str | None:
         return None
 
     try:
-        return storage_state_path_por_dominio(url)
+        return storage_state_path_por_dominio(_normalizar_url(url))
     except Exception:
         return None
 
 
 def _payload_requests(url: str, html: str | None) -> dict[str, Any]:
     html = html if isinstance(html, str) else None
+    url = _normalizar_url(url)
+
     return {
         "ok": bool(html),
         "engine": "requests",
@@ -186,7 +214,8 @@ def fetch_payload_router(
     preferir_js: bool = False,
     wait_selector: str | None = None,
 ) -> dict[str, Any]:
-    url = _safe_str(url)
+    url_original = _safe_str(url)
+    url = _normalizar_url(url_original)
 
     if not url:
         log_debug("[FETCH_ROUTER] URL vazia recebida.", "ERROR")
@@ -208,6 +237,12 @@ def fetch_payload_router(
     dominio = _dominio(url)
     seletor_final = wait_selector or _selector_por_dominio(url)
     state_path = _storage_state(url)
+
+    if url != url_original:
+        log_debug(
+            f"[FETCH_ROUTER] URL normalizada | original={url_original} | final={url}",
+            "INFO",
+        )
 
     log_debug(
         f"[FETCH_ROUTER] Início | dominio={dominio} | preferir_js={preferir_js} | url={url}"
@@ -307,7 +342,7 @@ def diagnosticar_fetch(
 
     html = _safe_str(payload.get("html"))
     payload["html_len"] = len(html)
-    payload["dominio"] = _dominio(url)
+    payload["dominio"] = _dominio(payload.get("final_url") or payload.get("url") or url)
     payload["usou_js"] = payload.get("engine") == "playwright"
     payload["html_fraco"] = _parece_html_fraco(html)
 
