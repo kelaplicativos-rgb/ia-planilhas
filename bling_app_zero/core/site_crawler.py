@@ -34,7 +34,7 @@ def _safe_list(v: Any) -> list:
     return v if isinstance(v, list) else []
 
 
-# 🔥 CORREÇÃO CRÍTICA → FORÇA JS SEMPRE
+# 🔥 FORÇA JS
 def _fetch(url: str, js: bool = True) -> dict:
     try:
         return fetch_payload_router(url=url, preferir_js=True) or {}
@@ -60,7 +60,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
 
         visitadas.add(url)
 
-        payload = _fetch(url)  # 🔥 sempre JS
+        payload = _fetch(url)
         html = payload.get("html")
 
         if not html:
@@ -78,54 +78,6 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
 
 
 # ==========================================================
-# LINKS PRODUTOS
-# ==========================================================
-def _coletar_links(url: str, max_paginas: int) -> list[str]:
-
-    paginas = _coletar_paginas_listagem(url, max_paginas)
-    links = []
-
-    for p in paginas:
-        payload = _fetch(p)  # 🔥 sempre JS
-        html = payload.get("html")
-
-        if not html:
-            continue
-
-        try:
-            links.extend(extrair_links_produtos_crawler(html, p))
-        except Exception:
-            pass
-
-    return list(dict.fromkeys(links))[:MAX_PRODUTOS]
-
-
-# ==========================================================
-# EXTRAÇÃO
-# ==========================================================
-def _baixar(link: str, padrao: int) -> dict | None:
-
-    payload = _fetch(link)  # 🔥 sempre JS
-    html = payload.get("html")
-
-    if not html:
-        return None
-
-    try:
-        produto = extrair_produto_crawler(
-            html=html,
-            url=link,
-            padrao_disponivel=padrao,
-            network_records=_safe_list(payload.get("network_records")),
-            payload_origem=payload,
-        )
-    except Exception:
-        return None
-
-    return produto if produto.get("Nome") else None
-
-
-# ==========================================================
 # MAIN
 # ==========================================================
 def executar_crawler(
@@ -140,14 +92,48 @@ def executar_crawler(
 
     progress_bar = st.progress(0)
     status = st.empty()
+    detalhe = st.empty()
 
-    status.info("🔎 Coletando links...")
+    # ======================================================
+    # ETAPA 1 - PÁGINAS
+    # ======================================================
+    status.info("🔎 Buscando páginas do site...")
+    progress_bar.progress(5)
 
-    links = _coletar_links(url, max_paginas)
+    paginas = _coletar_paginas_listagem(url, max_paginas)
 
-    status.info(f"🔗 {len(links)} produtos encontrados. Iniciando extração...")
+    status.info(f"📄 {len(paginas)} páginas encontradas")
+    progress_bar.progress(15)
 
-    # 🔥 fallback produto único
+    # ======================================================
+    # ETAPA 2 - LINKS
+    # ======================================================
+    links = []
+
+    for i, p in enumerate(paginas, start=1):
+        detalhe.info(f"🔗 Lendo página {i}/{len(paginas)}")
+
+        payload = _fetch(p)
+        html = payload.get("html")
+
+        if html:
+            try:
+                novos = extrair_links_produtos_crawler(html, p)
+                links.extend(novos)
+            except Exception:
+                pass
+
+        progresso = 15 + int((i / max(len(paginas), 1)) * 25)
+        progress_bar.progress(progresso)
+
+    links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
+
+    status.info(f"🔗 {len(links)} produtos encontrados")
+    progress_bar.progress(40)
+
+    # ======================================================
+    # FALLBACK
+    # ======================================================
     if not links:
         status.warning("⚠️ Nenhum link encontrado, tentando página única...")
 
@@ -170,6 +156,12 @@ def executar_crawler(
         status.error("❌ Falha total")
         return pd.DataFrame()
 
+    # ======================================================
+    # ETAPA 3 - EXTRAÇÃO
+    # ======================================================
+    status.info("📦 Extraindo produtos...")
+    progress_bar.progress(45)
+
     resultados = []
     total = len(links)
 
@@ -182,11 +174,16 @@ def executar_crawler(
             if r:
                 resultados.append(r)
 
-            progresso = int((i / total) * 100)
+            progresso = 45 + int((i / total) * 50)
             progress_bar.progress(progresso)
 
-            status.info(f"⚙️ Processando: {i}/{total} ({progresso}%)")
+            detalhe.info(
+                f"⚙️ Processando produto {i}/{total} ({int((i/total)*100)}%)"
+            )
 
+    # ======================================================
+    # FINAL
+    # ======================================================
     if not resultados:
         status.error("❌ Nenhum produto válido encontrado")
         return pd.DataFrame()
@@ -197,6 +194,6 @@ def executar_crawler(
         df = df.drop_duplicates(subset=["Link Externo"])
 
     progress_bar.progress(100)
-    status.success(f"✅ Finalizado: {len(df)} produtos")
+    status.success(f"✅ Finalizado: {len(df)} produtos extraídos")
 
     return df.reset_index(drop=True)
