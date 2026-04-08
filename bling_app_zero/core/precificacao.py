@@ -6,9 +6,6 @@ from typing import Any
 import pandas as pd
 
 
-# ==========================================================
-# BASE
-# ==========================================================
 def _to_float(valor: Any) -> float:
     if valor is None:
         return 0.0
@@ -20,14 +17,9 @@ def _to_float(valor: Any) -> float:
         pass
 
     if isinstance(valor, (int, float)):
-        try:
-            return float(valor)
-        except Exception:
-            return 0.0
+        return float(valor)
 
     texto = str(valor).strip()
-    if not texto:
-        return 0.0
 
     texto = (
         texto.replace("R$", "")
@@ -49,87 +41,6 @@ def _to_float(valor: Any) -> float:
         return 0.0
 
 
-def _normalizar_nome_coluna(nome: str) -> str:
-    try:
-        texto = str(nome).strip().lower()
-        texto = texto.replace("_", " ").replace("-", " ")
-        texto = re.sub(r"\s+", " ", texto)
-        return texto
-    except Exception:
-        return ""
-
-
-# ==========================================================
-# DETECÇÃO AUTOMÁTICA
-# ==========================================================
-def _detectar_coluna_preco(df: pd.DataFrame) -> str:
-    if df is None or df.empty:
-        return ""
-
-    prioridades = [
-        "preco custo",
-        "preço custo",
-        "preco de custo",
-        "preço de custo",
-        "valor custo",
-        "valor de custo",
-        "custo",
-        "preco compra",
-        "preço compra",
-        "preco de compra",
-        "preço de compra",
-        "valor unitario",
-        "valor unitário",
-        "valor",
-        "preco",
-        "preço",
-    ]
-
-    colunas = {col: _normalizar_nome_coluna(col) for col in df.columns}
-
-    for alvo in prioridades:
-        for col, nome in colunas.items():
-            if alvo == nome:
-                return col
-
-    for alvo in prioridades:
-        for col, nome in colunas.items():
-            if alvo in nome:
-                return col
-
-    return ""
-
-
-def _detectar_coluna_venda(df: pd.DataFrame) -> str:
-    if df is None or df.empty:
-        return ""
-
-    prioridades = [
-        "preço de venda",
-        "preco de venda",
-        "valor de venda",
-        "preço venda",
-        "preco venda",
-    ]
-
-    colunas = {col: _normalizar_nome_coluna(col) for col in df.columns}
-
-    for alvo in prioridades:
-        for col, nome in colunas.items():
-            if alvo == nome:
-                return col
-
-    for alvo in prioridades:
-        for col, nome in colunas.items():
-            if alvo in nome:
-                return col
-
-    return ""
-
-
-# ==========================================================
-# CÁLCULO
-# ==========================================================
 def calcular_preco_venda(
     preco_compra: float,
     percentual_impostos: float,
@@ -138,40 +49,30 @@ def calcular_preco_venda(
     taxa_extra: float,
 ) -> float:
     try:
-        preco_compra = _to_float(preco_compra)
-        percentual_impostos = _to_float(percentual_impostos)
-        margem_lucro = _to_float(margem_lucro)
-        custo_fixo = _to_float(custo_fixo)
-        taxa_extra = _to_float(taxa_extra)
+        base = max(0.0, _to_float(preco_compra) + _to_float(custo_fixo))
 
-        base = max(0.0, preco_compra + custo_fixo)
-        impostos = percentual_impostos / 100.0
-        lucro = margem_lucro / 100.0
-        taxa = taxa_extra / 100.0
+        impostos = _to_float(percentual_impostos) / 100.0
+        lucro = _to_float(margem_lucro) / 100.0
+        taxa = _to_float(taxa_extra) / 100.0
 
         denominador = 1.0 - impostos - lucro - taxa
 
-        # Nunca deixar a função zerar o preço por configuração inválida
         if denominador <= 0:
             return round(base, 2)
 
         resultado = base / denominador
 
-        # Proteção adicional para nunca vender abaixo da base
         if resultado < base:
             resultado = base
 
-        return round(max(0.0, float(resultado)), 2)
+        return round(resultado, 2)
 
     except Exception:
-        try:
-            return round(max(0.0, _to_float(preco_compra) + _to_float(custo_fixo)), 2)
-        except Exception:
-            return 0.0
+        return round(base, 2)
 
 
 # ==========================================================
-# APLICAÇÃO PRINCIPAL
+# 🔥 CORREÇÃO PRINCIPAL
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -181,29 +82,20 @@ def aplicar_precificacao_automatica(
     custo_fixo: float = 0.0,
     taxa_extra: float = 0.0,
 ) -> pd.DataFrame:
+
     if df is None or df.empty:
         return df
 
     df_saida = df.copy()
 
-    coluna_base = (
-        coluna_preco
-        if coluna_preco and coluna_preco in df_saida.columns
-        else _detectar_coluna_preco(df_saida)
-    )
-
-    if not coluna_base:
+    if not coluna_preco or coluna_preco not in df_saida.columns:
         return df_saida
 
-    precos_base = df_saida[coluna_base].apply(_to_float)
+    # 🔥 pega coluna base
+    precos_base = df_saida[coluna_preco].apply(_to_float)
 
-    coluna_destino = _detectar_coluna_venda(df_saida)
-    if not coluna_destino:
-        coluna_destino = "Preço de venda"
-        if coluna_destino not in df_saida.columns:
-            df_saida[coluna_destino] = 0.0
-
-    df_saida[coluna_destino] = precos_base.apply(
+    # 🔥 sobrescreve a MESMA coluna
+    df_saida[coluna_preco] = precos_base.apply(
         lambda valor: calcular_preco_venda(
             preco_compra=valor,
             percentual_impostos=percentual_impostos,
@@ -211,7 +103,7 @@ def aplicar_precificacao_automatica(
             custo_fixo=custo_fixo,
             taxa_extra=taxa_extra,
         )
-        if _to_float(valor) > 0
+        if valor > 0
         else 0.0
     )
 
@@ -219,18 +111,10 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# INTEGRA COM O FLUXO
+# FLUXO
 # ==========================================================
-def aplicar_precificacao_no_fluxo(
-    df: pd.DataFrame,
-    params: dict,
-) -> pd.DataFrame:
-    """
-    Garante que a precificação atualiza o fluxo inteiro.
-    """
+def aplicar_precificacao_no_fluxo(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     try:
-        params = params if isinstance(params, dict) else {}
-
         df_precificado = aplicar_precificacao_automatica(
             df=df,
             coluna_preco=params.get("coluna_preco"),
@@ -251,4 +135,4 @@ def aplicar_precificacao_no_fluxo(
         return df_precificado
 
     except Exception:
-        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+        return df.copy()
