@@ -121,18 +121,37 @@ def _get_modelo():
     return st.session_state.get("df_modelo_estoque")
 
 
-def _get_deposito():
-    return st.session_state.get("deposito_nome", "")
+def _get_deposito() -> str:
+    for chave in ["deposito_nome", "deposito_nome_widget", "deposito_nome_manual"]:
+        valor = str(st.session_state.get(chave, "") or "").strip()
+        if valor:
+            if chave != "deposito_nome":
+                st.session_state["deposito_nome"] = valor
+            return valor
+    return ""
 
 
-def _is_coluna_preco(nome):
+def _is_coluna_preco(nome) -> bool:
     nome = str(nome).lower()
-    return "preco" in nome or "preço" in nome or "valor" in nome
+    return any(
+        p in nome
+        for p in [
+            "preço",
+            "preco",
+            "valor venda",
+            "valor_venda",
+            "preco venda",
+            "preço venda",
+            "price",
+        ]
+    )
 
 
-# =========================================================
-# 🔥 NOVO: PREVIEW INTELIGENTE DA COLUNA
-# =========================================================
+def _is_coluna_deposito(nome) -> bool:
+    nome = str(nome).lower()
+    return "deposit" in nome or "depós" in nome or "deposito" in nome
+
+
 def _preview_coluna(df, coluna):
     try:
         if coluna in df.columns:
@@ -143,8 +162,79 @@ def _preview_coluna(df, coluna):
     return []
 
 
-def render_origem_mapeamento():
+def _get_coluna_preco_base_precificacao(df_origem: pd.DataFrame) -> str:
+    try:
+        coluna = str(st.session_state.get("coluna_preco_base", "") or "").strip()
+        if coluna and coluna in df_origem.columns:
+            return coluna
+    except Exception:
+        pass
+    return ""
 
+
+def _get_df_precificado() -> pd.DataFrame | None:
+    try:
+        df_precificado = st.session_state.get("df_precificado")
+        if _safe_df(df_precificado):
+            return df_precificado.copy()
+    except Exception:
+        pass
+    return None
+
+
+def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
+    """
+    Regra:
+    1) Se existir df_precificado e a coluna base usada na precificação ainda existir nele,
+       usa essa coluna já recalculada.
+    2) Caso contrário, usa a coluna base escolhida diretamente da origem.
+    3) Se nada existir, devolve coluna vazia.
+    """
+    try:
+        coluna_preco_base = _get_coluna_preco_base_precificacao(df_origem)
+        if not coluna_preco_base:
+            return pd.Series([""] * len(df_origem), index=df_origem.index, dtype="object")
+
+        df_precificado = _get_df_precificado()
+        if _safe_df(df_precificado) and coluna_preco_base in df_precificado.columns:
+            serie = df_precificado[coluna_preco_base]
+            return serie.reindex(df_origem.index, fill_value="")
+
+        if coluna_preco_base in df_origem.columns:
+            return df_origem[coluna_preco_base].reindex(df_origem.index, fill_value="")
+
+    except Exception:
+        pass
+
+    return pd.Series([""] * len(df_origem), index=df_origem.index, dtype="object")
+
+
+def _montar_df_saida(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    deposito = _get_deposito()
+    serie_preco = _obter_serie_preco_para_saida(df_origem)
+
+    df_saida = pd.DataFrame(index=df_origem.index)
+
+    for col in df_modelo.columns:
+        origem = mapping.get(col, "")
+
+        if _is_coluna_preco(col):
+            df_saida[col] = serie_preco
+            continue
+
+        if _is_coluna_deposito(col):
+            df_saida[col] = deposito if deposito else ""
+            continue
+
+        if origem in df_origem.columns:
+            df_saida[col] = df_origem[origem]
+        else:
+            df_saida[col] = ""
+
+    return df_saida.reindex(columns=df_modelo.columns, fill_value="")
+
+
+def render_origem_mapeamento():
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
 
@@ -154,11 +244,14 @@ def render_origem_mapeamento():
     df_origem = _preparar_df_para_mapeamento(df_origem)
     df_modelo = _preparar_df_para_mapeamento(df_modelo)
 
+    st.session_state["df_origem"] = df_origem.copy()
+    if st.session_state.get("tipo_operacao_bling") == "cadastro":
+        st.session_state["df_modelo_cadastro"] = df_modelo.copy()
+    else:
+        st.session_state["df_modelo_estoque"] = df_modelo.copy()
+
     st.markdown("## 🔗 Mapeamento de colunas")
 
-    # =========================================================
-    # 🔥 NOVO: PREVIEW FIXO DA PLANILHA FORNECEDORA
-    # =========================================================
     with st.container():
         st.markdown("### 👁️ Preview da planilha fornecedora")
         st.dataframe(df_origem.head(5), use_container_width=True)
@@ -166,38 +259,62 @@ def render_origem_mapeamento():
     colunas_modelo = list(df_modelo.columns)
     colunas_origem = list(df_origem.columns)
 
+    mapping_key = f"mapeamento_manual_{str(st.session_state.get('tipo_operacao_bling', 'padrao')).lower()}"
+    mapping_salvo = st.session_state.get(mapping_key, {}) or {}
     mapping = {}
 
     for col_modelo in colunas_modelo:
-
         if _is_coluna_preco(col_modelo):
-            st.text_input(col_modelo, value="Calculado automaticamente", disabled=True)
+            coluna_base = _get_coluna_preco_base_precificacao(df_origem)
+            texto_preco = "Calculado automaticamente"
+            if coluna_base:
+                texto_preco = f"Calculado automaticamente ({coluna_base})"
+
+            st.text_input(
+                col_modelo,
+                value=texto_preco,
+                disabled=True,
+                key=f"preco_fix_{col_modelo}",
+            )
             mapping[col_modelo] = ""
             continue
 
-        escolha = st.selectbox(col_modelo, [""] + colunas_origem)
+        if _is_coluna_deposito(col_modelo):
+            deposito = _get_deposito()
+            st.text_input(
+                col_modelo,
+                value=deposito or "Depósito automático",
+                disabled=True,
+                key=f"deposito_fix_{col_modelo}",
+            )
+            mapping[col_modelo] = ""
+            continue
 
-        mapping[col_modelo] = escolha
+        valor_inicial = str(mapping_salvo.get(col_modelo, "") or "")
+        opcoes = [""] + colunas_origem
 
-        # =========================================================
-        # 🔥 NOVO: MOSTRAR VALORES DA COLUNA SELECIONADA
-        # =========================================================
-        if escolha:
-            valores = _preview_coluna(df_origem, escolha)
+        if valor_inicial and valor_inicial not in opcoes:
+            opcoes.append(valor_inicial)
 
+        escolhido = st.selectbox(
+            col_modelo,
+            opcoes,
+            index=opcoes.index(valor_inicial) if valor_inicial in opcoes else 0,
+            key=f"map_{col_modelo}",
+        )
+
+        mapping[col_modelo] = escolhido
+
+        if escolhido:
+            valores = _preview_coluna(df_origem, escolhido)
             if valores:
                 st.caption(f"Exemplo: {valores}")
 
-    # =========================================================
-    # SAÍDA
-    # =========================================================
-    df_saida = pd.DataFrame(index=df_origem.index)
+    st.session_state[mapping_key] = mapping.copy()
 
-    for col in df_modelo.columns:
-        origem = mapping.get(col, "")
-        df_saida[col] = df_origem[origem] if origem in df_origem.columns else ""
+    df_saida = _montar_df_saida(df_origem, df_modelo, mapping)
 
-    st.session_state["df_saida"] = df_saida
-    st.session_state["df_final"] = df_saida
+    st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
 
     st.dataframe(df_saida.head(10), use_container_width=True)
