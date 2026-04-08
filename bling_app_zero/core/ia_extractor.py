@@ -1,6 +1,35 @@
+👉 isso quebra o `json.loads`
+
+---
+
+## ❌ 2. Falta normalização de preço
+Pode vir:
+- `"1.299,90"`
+- `"R$ 1.299"`
+
+👉 precisa limpar
+
+---
+
+## ❌ 3. Estoque pode vir string
+👉 precisa garantir int seguro
+
+---
+
+# 🚀 CORREÇÃO (NÍVEL PRODUÇÃO)
+
+## 📁 Arquivo:
+`bling_app_zero/core/ia_extractor.py`
+
+---
+
+# ✅ CÓDIGO COMPLETO CORRIGIDO
+
+```python
 from __future__ import annotations
 
 import json
+import re
 import streamlit as st
 
 # ==========================================================
@@ -12,6 +41,38 @@ except Exception:
     OpenAI = None
 
 
+# ==========================================================
+# HELPERS
+# ==========================================================
+def _safe_json(texto: str) -> dict:
+    try:
+        texto = texto.strip()
+
+        # remove ```json ```
+        texto = re.sub(r"```json|```", "", texto, flags=re.IGNORECASE).strip()
+
+        return json.loads(texto)
+    except Exception:
+        return {}
+
+
+def _numero(valor: str) -> str:
+    valor = str(valor or "")
+    valor = valor.replace("R$", "").replace(" ", "")
+    match = re.search(r"(\d[\d\.,]*)", valor)
+    return match.group(1) if match else ""
+
+
+def _to_int(valor) -> int:
+    try:
+        return int(float(str(valor).replace(",", ".")))
+    except Exception:
+        return 0
+
+
+# ==========================================================
+# MAIN
+# ==========================================================
 def extrair_com_ia(html: str, url: str) -> dict:
 
     if not OpenAI:
@@ -23,7 +84,9 @@ def extrair_com_ia(html: str, url: str) -> dict:
         prompt = f"""
 Extraia dados de produto do HTML abaixo.
 
-Retorne JSON com:
+Responda SOMENTE JSON válido.
+
+Campos obrigatórios:
 - Nome
 - Preco
 - Descricao
@@ -42,19 +105,22 @@ HTML:
             temperature=0.2,
         )
 
-        texto = resp.choices[0].message.content
+        texto = resp.choices[0].message.content or ""
 
-        data = json.loads(texto)
+        data = _safe_json(texto)
+
+        if not data:
+            return {}
 
         return {
             "Nome": data.get("Nome", ""),
-            "Preço": data.get("Preco", ""),
+            "Preço": _numero(data.get("Preco", "")),
             "Descrição": data.get("Descricao", ""),
             "Marca": data.get("Marca", ""),
             "Categoria": data.get("Categoria", ""),
             "URL Imagens Externas": " | ".join(data.get("Imagens", [])),
             "Link Externo": url,
-            "Estoque": int(data.get("Estoque", 0)),
+            "Estoque": _to_int(data.get("Estoque", 0)),
         }
 
     except Exception:
