@@ -68,8 +68,6 @@ def _detectar_coluna_preco_default(colunas: list[str]) -> int:
             "preco",
             "preço",
             "valor",
-            "codigo",
-            "código",
         ]
 
         colunas_lower = [str(c).strip().lower() for c in colunas]
@@ -84,57 +82,7 @@ def _detectar_coluna_preco_default(colunas: list[str]) -> int:
         return 0
 
 
-def _registrar_bloqueio_preco() -> None:
-    try:
-        bloqueios_atuais = st.session_state.get("bloquear_campos_auto", {})
-        if not isinstance(bloqueios_atuais, dict):
-            bloqueios_atuais = {}
-
-        bloqueios_atuais.update(
-            {
-                "preco": True,
-                "preço": True,
-                "preco de venda": True,
-                "preço de venda": True,
-                "valor": True,
-                "valor de venda": True,
-            }
-        )
-
-        st.session_state["bloquear_campos_auto"] = bloqueios_atuais
-    except Exception:
-        pass
-
-
-def _sincronizar_df_precificado_no_fluxo(df_precificado: pd.DataFrame) -> None:
-    try:
-        df_sync = df_precificado.copy()
-
-        st.session_state["df_precificado"] = df_sync.copy()
-        st.session_state["df_dados"] = df_sync.copy()
-        st.session_state["df_saida"] = df_sync.copy()
-        st.session_state["df_final"] = df_sync.copy()
-        st.session_state["df_origem"] = df_sync.copy()
-        st.session_state["df_origem_mapeamento"] = df_sync.copy()
-        st.session_state["df_preview_final"] = df_sync.copy()
-
-        st.session_state["precificacao_aplicada"] = True
-        st.session_state["ultima_acao_fluxo"] = "precificacao"
-
-        st.session_state["config_precificacao"] = {
-            "coluna_preco_base": st.session_state.get("coluna_preco_base"),
-            "margem_lucro": safe_float(st.session_state.get("margem_lucro", 0)),
-            "perc_impostos": safe_float(st.session_state.get("perc_impostos", 0)),
-            "custo_fixo": safe_float(st.session_state.get("custo_fixo", 0)),
-            "taxa_extra": safe_float(st.session_state.get("taxa_extra", 0)),
-        }
-
-        _registrar_bloqueio_preco()
-
-    except Exception as e:
-        log_debug(f"Erro sincronizar DF precificado: {e}", "ERRO")
-
-
+# 🔥 NOVO: aplicar no fluxo SEM destruir origem
 def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
     try:
         params = coletar_parametros_precificacao()
@@ -145,7 +93,7 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
 
         if coluna_preco not in list(df_base.columns):
             log_debug(
-                f"Coluna de custo inválida para precificação: {coluna_preco}",
+                f"Coluna inválida na precificação: {coluna_preco}",
                 "ERRO",
             )
             return None
@@ -153,25 +101,23 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
         df_precificado = aplicar_precificacao_no_fluxo(df_base.copy(), params)
 
         if not safe_df_dados(df_precificado):
-            log_debug("Precificação retornou DataFrame inválido.", "ERRO")
             return None
 
-        _sincronizar_df_precificado_no_fluxo(df_precificado)
         return df_precificado
 
     except Exception as e:
-        log_debug(f"Erro na precificação automática: {e}", "ERRO")
+        log_debug(f"Erro na precificação: {e}", "ERRO")
         return None
 
 
 def render_precificacao(df_base):
-    # Título removido daqui para evitar duplicação.
-    # O cabeçalho já é renderizado no arquivo pai origem_dados.py
-
     if not safe_df_dados(df_base):
         return
 
-    colunas = list(df_base.columns)
+    # 🔥 USAR DF ATUAL DO FLUXO
+    df_fluxo = st.session_state.get("df_saida", df_base)
+
+    colunas = list(df_fluxo.columns)
     if not colunas:
         return
 
@@ -218,22 +164,20 @@ def render_precificacao(df_base):
             key="taxa_extra",
         )
 
-    # Recalcula sempre no rerun natural do Streamlit.
-    # Mudou qualquer campo -> rerun -> novo preview imediatamente.
-    df_precificado = _aplicar_precificacao(df_base)
+    # 🔥 recalculo automático SEM botão
+    df_precificado = _aplicar_precificacao(df_fluxo)
 
     if safe_df_dados(df_precificado):
-        df_preview = df_precificado
-    else:
-        df_preview = st.session_state.get("df_precificado")
+        # 🔥 ATUALIZA SOMENTE DF DE SAÍDA
+        st.session_state["df_saida"] = df_precificado.copy()
+        st.session_state["df_final"] = df_precificado.copy()
+
+    df_preview = df_precificado or df_fluxo
 
     if safe_df_dados(df_preview):
         with st.expander("📊 Preview da precificação", expanded=True):
-            try:
-                st.dataframe(
-                    _df_preview_seguro(df_preview).head(10),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-            except Exception as e:
-                log_debug(f"Erro ao renderizar prévia: {e}", "ERRO")
+            st.dataframe(
+                _df_preview_seguro(df_preview).head(10),
+                use_container_width=True,
+                hide_index=True,
+            )
