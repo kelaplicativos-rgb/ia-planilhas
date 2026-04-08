@@ -8,6 +8,12 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 
 
+# ==========================================================
+# VERSION
+# ==========================================================
+HELPERS_VERSION = "V2_MODULAR_OK"
+
+
 MAX_THREADS = 12
 MAX_PAGINAS = 12
 MAX_PRODUTOS = 1200
@@ -26,7 +32,6 @@ def normalizar_url_crawler(base_url: str, href: str | None) -> str:
 
     url = urljoin(base_url, href)
 
-    # 🔥 remove parâmetros desnecessários
     try:
         parsed = urlparse(url)
         url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
@@ -38,8 +43,12 @@ def normalizar_url_crawler(base_url: str, href: str | None) -> str:
 
 def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
     try:
-        d1 = urlparse(url_base).netloc.replace("www.", "").lower()
-        d2 = urlparse(url).netloc.replace("www.", "").lower()
+        d1 = urlparse(str(url_base or "")).netloc.replace("www.", "").lower()
+        d2 = urlparse(str(url or "")).netloc.replace("www.", "").lower()
+
+        if not d1 or not d2:
+            return False
+
         return d1 == d2 or d2.endswith("." + d1) or d1.endswith("." + d2)
     except Exception:
         return False
@@ -52,8 +61,15 @@ def texto_limpo_crawler(valor: Any) -> str:
 def numero_texto_crawler(valor: Any) -> str:
     texto = texto_limpo_crawler(valor)
     texto = texto.replace("R$", "").replace("r$", "").strip()
-    m = re.search(r"(\d[\d\.\,]*)", texto)
-    return m.group(1) if m else ""
+
+    # tenta pegar preço completo primeiro
+    m = re.search(r"(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{2}))", texto)
+    if m:
+        return m.group(1)
+
+    # fallback simples
+    m2 = re.search(r"(\d+)", texto)
+    return m2.group(1) if m2 else ""
 
 
 # ==========================================================
@@ -117,7 +133,7 @@ def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
         if not url:
             continue
 
-        if not any(x in url.lower() for x in ["logo", "icon", "placeholder"]):
+        if not any(x in url.lower() for x in ["logo", "icon", "placeholder", "thumb"]):
             if url not in imagens:
                 imagens.append(url)
 
@@ -156,7 +172,7 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
 
 
 # ==========================================================
-# DETECÇÃO DE PRODUTO (MELHORADA)
+# DETECÇÃO DE PRODUTO
 # ==========================================================
 def link_parece_produto_crawler(url: str) -> bool:
     u = (url or "").lower()
@@ -174,11 +190,18 @@ def link_parece_produto_crawler(url: str) -> bool:
     ]):
         return False
 
-    # 🔥 mais restritivo
-    if any(x in u for x in ["/produto", "/product", "/p/"]):
-        return True
+    sinais = [
+        "/produto",
+        "/product",
+        "/p/",
+        "/prod/",
+        "/item/",
+        "/sku/",
+        "produto-",
+        "product-",
+    ]
 
-    return False
+    return any(s in u for s in sinais)
 
 
 # ==========================================================
@@ -188,7 +211,7 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     links: list[str] = []
 
-    for a in soup.select("a[href*='/produto'], a[href*='/product']"):
+    for a in soup.select("a[href]"):
         href = a.get("href")
 
         url = normalizar_url_crawler(base_url, href)
@@ -198,28 +221,14 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
-        links.append(url)
-
-    # fallback
-    if len(links) < 3:
-        for a in soup.select("a[href]"):
-            href = a.get("href")
-
-            url = normalizar_url_crawler(base_url, href)
-            if not url:
-                continue
-
-            if not url_mesmo_dominio_crawler(base_url, url):
-                continue
-
-            if link_parece_produto_crawler(url):
-                links.append(url)
+        if link_parece_produto_crawler(url):
+            links.append(url)
 
     return list(dict.fromkeys(links))
 
 
 # ==========================================================
-# PAGINAÇÃO (MELHORADA)
+# PAGINAÇÃO
 # ==========================================================
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
@@ -240,7 +249,10 @@ def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
             "/page/",
             "/pagina/",
             "?p=",
-            "&p="
+            "&p=",
+            "pg=",
+            "offset",
+            "start",
         ]):
             links.append(url)
 
