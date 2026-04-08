@@ -75,7 +75,7 @@ def _baixar(link: str, padrao_disponivel: int) -> dict | None:
 
 
 # ==========================================================
-# PAGINAÇÃO (COM CACHE HTML)
+# PAGINAÇÃO
 # ==========================================================
 def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
 
@@ -97,7 +97,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int):
         if not html:
             continue
 
-        paginas.append((url, html))  # 🔥 guarda HTML junto
+        paginas.append((url, html))
 
         try:
             novos = extrair_links_paginacao_crawler(html, url)
@@ -125,36 +125,45 @@ def executar_crawler(
     status = st.empty()
     detalhe = st.empty()
 
+    progresso = 0
+
+    def tick(valor, msg):
+        nonlocal progresso
+        progresso = min(100, progresso + valor)
+        progress_bar.progress(progresso)
+        status.info(msg)
+
     # ======================================================
     # ETAPA 1
     # ======================================================
-    status.info("🔎 Buscando páginas...")
-    progress_bar.progress(5)
+    tick(5, "🔎 Iniciando busca...")
 
     paginas = _coletar_paginas_listagem(url, max_paginas)
 
-    progress_bar.progress(15)
-    status.info(f"📄 {len(paginas)} páginas encontradas")
+    tick(10, f"📄 {len(paginas)} páginas encontradas")
 
     # ======================================================
     # ETAPA 2 - LINKS
     # ======================================================
     links = []
 
+    total_paginas = max(len(paginas), 1)
+
     for i, (p, html) in enumerate(paginas, start=1):
-        detalhe.info(f"🔗 Página {i}/{len(paginas)}")
+        detalhe.info(f"🔗 Página {i}/{total_paginas}")
 
         try:
             novos = extrair_links_produtos_crawler(html, p)
-
-            # 🔥 FILTRO FORTE
             novos = [l for l in novos if link_parece_produto_crawler(l)]
 
             links.extend(novos)
+
+            status.info(f"🔗 Coletando links... {len(links)} encontrados")
+
         except Exception:
             pass
 
-        progress_bar.progress(15 + int((i / max(len(paginas), 1)) * 25))
+        progress_bar.progress(15 + int((i / total_paginas) * 25))
 
     links = list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
@@ -173,8 +182,7 @@ def executar_crawler(
             except Exception:
                 pass
 
-    status.info(f"🔗 {len(links)} produtos encontrados")
-    progress_bar.progress(40)
+    tick(10, f"🔗 {len(links)} produtos encontrados")
 
     # ======================================================
     # EXTRAÇÃO
@@ -183,8 +191,7 @@ def executar_crawler(
         status.error("❌ Nenhum produto encontrado")
         return pd.DataFrame()
 
-    status.info("📦 Extraindo produtos...")
-    progress_bar.progress(45)
+    tick(5, "📦 Iniciando extração...")
 
     resultados = []
     total = len(links)
@@ -198,8 +205,11 @@ def executar_crawler(
             if r:
                 resultados.append(r)
 
-            progress_bar.progress(45 + int((i / total) * 50))
+            progresso_extra = int((i / total) * 50)
+            progress_bar.progress(50 + progresso_extra)
+
             detalhe.info(f"⚙️ Produto {i}/{total}")
+            status.info(f"📦 Extraindo... {i}/{total}")
 
     # ======================================================
     # FINAL
