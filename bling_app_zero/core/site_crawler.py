@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
+import streamlit as st  # 🔥 NOVO
 
 # 🔥 AGORA SIM → router completo (HTML + NETWORK)
 from bling_app_zero.core.fetch_router import fetch_payload_router
@@ -140,10 +141,20 @@ def executar_crawler(
     if not url:
         return pd.DataFrame()
 
+    # 🔥 UI FEEDBACK
+    progress_bar = st.progress(0)
+    status = st.empty()
+
+    status.info("🔎 Coletando links...")
+
     links = _coletar_links(url, max_paginas)
+
+    status.info(f"🔗 {len(links)} produtos encontrados. Iniciando extração...")
 
     # 🔥 fallback produto único
     if not links:
+        status.warning("⚠️ Nenhum link encontrado, tentando página única...")
+
         payload = _fetch(url, js=True)
         html = payload.get("html")
 
@@ -156,26 +167,42 @@ def executar_crawler(
                 payload_origem=payload,
             )
             if produto.get("Nome"):
+                progress_bar.progress(100)
+                status.success("✅ Produto único extraído")
                 return pd.DataFrame([produto])
 
+        status.error("❌ Falha total")
         return pd.DataFrame()
 
     resultados = []
 
+    total = len(links)
+
     with ThreadPoolExecutor(max_workers=max_threads) as ex:
         futs = {ex.submit(_baixar, l, padrao_disponivel): l for l in links}
 
-        for f in as_completed(futs):
+        for i, f in enumerate(as_completed(futs), start=1):
             r = f.result()
+
             if r:
                 resultados.append(r)
 
+            # 🔥 PROGRESSO EM TEMPO REAL
+            progresso = int((i / total) * 100)
+            progress_bar.progress(progresso)
+
+            status.info(f"⚙️ Processando: {i}/{total} ({progresso}%)")
+
     if not resultados:
+        status.error("❌ Nenhum produto válido encontrado")
         return pd.DataFrame()
 
     df = pd.DataFrame(resultados)
 
     if "Link Externo" in df.columns:
         df = df.drop_duplicates(subset=["Link Externo"])
+
+    progress_bar.progress(100)
+    status.success(f"✅ Finalizado: {len(df)} produtos")
 
     return df.reset_index(drop=True)
