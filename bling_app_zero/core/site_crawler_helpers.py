@@ -31,13 +31,6 @@ def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
         return False
 
 
-def _dominio(url: str) -> str:
-    try:
-        return urlparse(url).netloc.lower()
-    except Exception:
-        return ""
-
-
 def texto_limpo_crawler(valor: Any) -> str:
     return re.sub(r"\s+", " ", str(valor or "")).strip()
 
@@ -83,105 +76,113 @@ def buscar_produto_jsonld_crawler(jsonlds: list[dict]) -> dict:
 
 
 # ==========================================================
-# META / TEXTO
-# ==========================================================
-def meta_content_crawler(soup: BeautifulSoup, attr: str, value: str) -> str:
-    tag = soup.find("meta", attrs={attr: value})
-    return tag.get("content") if tag else ""
-
-
-def primeiro_texto_crawler(soup: BeautifulSoup, seletores: list[str]) -> str:
-    for sel in seletores:
-        el = soup.select_one(sel)
-        if el:
-            txt = texto_limpo_crawler(el.get_text(" ", strip=True))
-            if txt:
-                return txt
-    return ""
-
-
-def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
-    imagens = []
-
-    for img in soup.find_all("img"):
-        src = img.get("src") or img.get("data-src")
-        if src:
-            imagens.append(urljoin(base_url, src))
-
-    return " | ".join(list(dict.fromkeys(imagens))[:5])
-
-
-# ==========================================================
-# ESTOQUE
-# ==========================================================
-def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int:
-    html = (html or "").lower()
-
-    if "esgotado" in html:
-        return 0
-
-    return padrao
-
-
-# ==========================================================
-# DETECÇÃO PRODUTO
-# ==========================================================
-def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
-
-    u = (url or "").lower()
-
-    if "/produto/" in u:
-        return True
-
-    if any(x in u for x in ["javascript:", "mailto:", "#"]):
-        return False
-
-    if any(x in u for x in ["/cart", "/checkout", "/login"]):
-        return False
-
-    partes = [p for p in urlparse(u).path.split("/") if p]
-
-    if len(partes) >= 2 and len(partes[-1]) > 8:
-        return True
-
-    return False
-
-
-# ==========================================================
-# LINKS PRODUTOS (LIMPO)
+# LINKS PRODUTOS (NÍVEL PRODUÇÃO)
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    for a in soup.select("a[href*='/produto/']"):
-        url = normalizar_url_crawler(base_url, a.get("href"))
+    # 🔥 1. tenta padrões conhecidos
+    seletores = [
+        "a[href*='produto']",
+        "a[href*='product']",
+        "a[href*='/p/']",
+        "a[href*='sku']",
+        "a[href*='id=']",
+    ]
 
-        if not url:
-            continue
+    for sel in seletores:
+        for a in soup.select(sel):
+            url = normalizar_url_crawler(base_url, a.get("href"))
 
-        if not url_mesmo_dominio_crawler(base_url, url):
-            continue
+            if not url:
+                continue
 
-        # 🚫 IGNORAR HEADER / FOOTER
-        if any(x in url.lower() for x in ["login", "conta", "carrinho"]):
-            continue
+            if not url_mesmo_dominio_crawler(base_url, url):
+                continue
 
-        links.append(url)
+            links.append(url)
+
+    # 🔥 2. fallback por estrutura (cards de produto)
+    if not links:
+        for card in soup.select("[class*='product'], [class*='card'], li"):
+            a = card.find("a", href=True)
+            if not a:
+                continue
+
+            url = normalizar_url_crawler(base_url, a.get("href"))
+
+            if not url:
+                continue
+
+            if not url_mesmo_dominio_crawler(base_url, url):
+                continue
+
+            # evita lixo
+            if any(x in url.lower() for x in ["login", "conta", "carrinho"]):
+                continue
+
+            links.append(url)
+
+    # 🔥 3. fallback bruto (último nível)
+    if not links:
+        for a in soup.select("a[href]"):
+            url = normalizar_url_crawler(base_url, a.get("href"))
+
+            if not url:
+                continue
+
+            if not url_mesmo_dominio_crawler(base_url, url):
+                continue
+
+            if any(x in url.lower() for x in [
+                "login",
+                "conta",
+                "carrinho",
+                "checkout",
+                "javascript",
+                "#",
+            ]):
+                continue
+
+            # heurística forte
+            if len(urlparse(url).path) > 10:
+                links.append(url)
 
     return list(dict.fromkeys(links))
 
 
 # ==========================================================
-# PAGINAÇÃO REAL (CORRIGIDO)
+# DETECÇÃO PRODUTO (MELHORADA)
+# ==========================================================
+def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
+
+    u = (url or "").lower()
+
+    if any(x in u for x in ["javascript:", "mailto:", "#"]):
+        return False
+
+    if any(x in u for x in ["cart", "checkout", "login"]):
+        return False
+
+    path = urlparse(u).path
+
+    # 🔥 produto geralmente tem path mais profundo
+    if len(path.split("/")) >= 2 and len(path) > 15:
+        return True
+
+    return False
+
+
+# ==========================================================
+# PAGINAÇÃO
 # ==========================================================
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    # 🔥 pega paginação real (botões 1,2,3...)
     for a in soup.select("a[href]"):
         url = normalizar_url_crawler(base_url, a.get("href"))
 
