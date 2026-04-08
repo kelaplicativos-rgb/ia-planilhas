@@ -8,3 +8,6 @@ beautifulsoup4==4.12.3
 lxml==5.2.1
 xlrd==2.0.1
 pyxlsb==1.0.10
+
+# 🔥 ADICIONADO (CRÍTICO)
+playwright==1.44.0
