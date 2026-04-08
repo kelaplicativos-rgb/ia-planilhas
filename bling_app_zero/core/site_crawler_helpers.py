@@ -19,14 +19,17 @@ MAX_PRODUTOS = 1200
 def normalizar_url_crawler(base_url: str, href: str | None) -> str:
     if not href:
         return ""
-    return urljoin(base_url, str(href).strip())
+    href = str(href).strip()
+    if not href:
+        return ""
+    return urljoin(base_url, href)
 
 
 def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
     try:
         d1 = urlparse(url_base).netloc.replace("www.", "").lower()
         d2 = urlparse(url).netloc.replace("www.", "").lower()
-        return d1 == d2 or d2.endswith("." + d1)
+        return d1 == d2 or d2.endswith("." + d1) or d1.endswith("." + d2)
     except Exception:
         return False
 
@@ -46,19 +49,23 @@ def numero_texto_crawler(valor: Any) -> str:
 # JSON-LD
 # ==========================================================
 def extrair_json_ld_crawler(soup: BeautifulSoup) -> list[dict]:
-    dados = []
+    dados: list[dict] = []
+
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             conteudo = script.string or script.text
             if not conteudo:
                 continue
+
             json_data = json.loads(conteudo)
+
             if isinstance(json_data, list):
-                dados.extend(json_data)
-            else:
+                dados.extend([x for x in json_data if isinstance(x, dict)])
+            elif isinstance(json_data, dict):
                 dados.append(json_data)
         except Exception:
             continue
+
     return dados
 
 
@@ -70,11 +77,11 @@ def buscar_produto_jsonld_crawler(jsonlds: list[dict]) -> dict:
 
 
 # ==========================================================
-# META / TEXTO (🔥 RESTAURADO)
+# META / TEXTO
 # ==========================================================
 def meta_content_crawler(soup: BeautifulSoup, attr: str, value: str) -> str:
     tag = soup.find("meta", attrs={attr: value})
-    return tag.get("content") if tag else ""
+    return str(tag.get("content", "")).strip() if tag else ""
 
 
 def primeiro_texto_crawler(soup: BeautifulSoup, seletores: list[str]) -> str:
@@ -88,44 +95,70 @@ def primeiro_texto_crawler(soup: BeautifulSoup, seletores: list[str]) -> str:
 
 
 def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
-    imagens = []
+    imagens: list[str] = []
+
     for img in soup.find_all("img"):
         src = img.get("src") or img.get("data-src")
-        if src:
-            imagens.append(urljoin(base_url, src))
-    return " | ".join(list(dict.fromkeys(imagens))[:5])
+        if not src:
+            continue
+
+        url = normalizar_url_crawler(base_url, src)
+        if not url:
+            continue
+
+        if url not in imagens:
+            imagens.append(url)
+
+    return " | ".join(imagens[:5])
 
 
 # ==========================================================
 # ESTOQUE
 # ==========================================================
 def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int:
+    html_baixo = (html or "").lower()
 
-    html = (html or "").lower()
-
-    if any(x in html for x in [
-        "esgotado", "indisponível", "indisponivel", "sem estoque"
-    ]):
+    sinais_esgotado = [
+        "esgotado",
+        "indisponível",
+        "indisponivel",
+        "out of stock",
+        "sem estoque",
+    ]
+    if any(x in html_baixo for x in sinais_esgotado):
         return 0
 
-    if any(x in html for x in [
-        "comprar", "adicionar ao carrinho", "em estoque"
-    ]):
+    sinais_disponivel = [
+        "comprar",
+        "adicionar ao carrinho",
+        "adicionar",
+        "buy now",
+        "em estoque",
+        "disponível",
+        "disponivel",
+    ]
+    if any(x in html_baixo for x in sinais_disponivel):
         return padrao
 
     return padrao
 
 
 # ==========================================================
-# DETECÇÃO PRODUTO
+# DETECÇÃO DE PRODUTO
 # ==========================================================
 def link_parece_produto_crawler(url: str) -> bool:
-
     u = (url or "").lower()
 
     if any(x in u for x in [
-        "javascript:", "mailto:", "#",
-        "login", "conta", "carrinho", "checkout"
+        "javascript:",
+        "mailto:",
+        "#",
+        "login",
+        "conta",
+        "carrinho",
+        "checkout",
+        "categoria",
+        "category",
     ]):
         return False
 
@@ -133,8 +166,9 @@ def link_parece_produto_crawler(url: str) -> bool:
         return True
 
     path = urlparse(u).path
+    partes = [p for p in path.split("/") if p]
 
-    if len(path.split("/")) >= 2 and len(path) > 15:
+    if len(partes) >= 2 and len(partes[-1]) > 10:
         return True
 
     return False
@@ -144,13 +178,16 @@ def link_parece_produto_crawler(url: str) -> bool:
 # LINKS PRODUTOS
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
-
     soup = BeautifulSoup(html, "html.parser")
-    links = []
+    links: list[str] = []
 
+    # Varredura principal
     for a in soup.select("a[href]"):
-        url = normalizar_url_crawler(base_url, a.get("href"))
+        href = a.get("href")
+        if not href:
+            continue
 
+        url = normalizar_url_crawler(base_url, href)
         if not url:
             continue
 
@@ -162,14 +199,14 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
         links.append(url)
 
-    if len(links) < 5:
+    # Fallback por cards/listas, só se resultado ainda for fraco
+    if len(links) < 3:
         for card in soup.select("[class*='product'], [class*='card'], li"):
             a = card.find("a", href=True)
             if not a:
                 continue
 
             url = normalizar_url_crawler(base_url, a.get("href"))
-
             if not url:
                 continue
 
@@ -188,13 +225,11 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 # PAGINAÇÃO
 # ==========================================================
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
-
     soup = BeautifulSoup(html, "html.parser")
-    links = []
+    links: list[str] = []
 
     for a in soup.select("a[href]"):
         url = normalizar_url_crawler(base_url, a.get("href"))
-
         if not url:
             continue
 
