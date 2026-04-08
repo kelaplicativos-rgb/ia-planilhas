@@ -16,6 +16,13 @@ from bling_app_zero.core.site_crawler_helpers import (
     texto_limpo_crawler,
 )
 
+# IA
+try:
+    from bling_app_zero.core.ia_extractor import extrair_com_ia
+except Exception:
+    extrair_com_ia = None
+
+
 # ==========================================================
 # LOG
 # ==========================================================
@@ -29,10 +36,6 @@ except Exception:
 # ==========================================================
 # HELPERS
 # ==========================================================
-def _limpar(valor: Any) -> str:
-    return re.sub(r"\s+", " ", str(valor or "")).strip()
-
-
 def _digitos(valor: Any) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
@@ -47,13 +50,11 @@ def _extrair_preco_global(html: str) -> str:
 
 
 def _extrair_categoria(soup: BeautifulSoup) -> str:
-    # 🔥 pega breadcrumb real
     for nav in soup.select("nav, .breadcrumb, [class*='bread']"):
         textos = [texto_limpo_crawler(x.get_text()) for x in nav.select("a, span")]
         textos = [t for t in textos if t and len(t) < 40]
         if len(textos) >= 2:
             return " > ".join(textos[:4])
-
     return ""
 
 
@@ -95,7 +96,6 @@ def extrair_preco(soup, jsonld, html):
     if meta:
         return numero_texto_crawler(meta)
 
-    # 🔥 reforço para STOQUI
     for el in soup.select("[class*='price'], [class*='valor'], span"):
         txt = texto_limpo_crawler(el.get_text())
         preco = numero_texto_crawler(txt)
@@ -153,7 +153,7 @@ def extrair_marca(jsonld):
 
 
 # ==========================================================
-# MAIN
+# MAIN COM IA
 # ==========================================================
 def extrair_produto_crawler(
     html: str,
@@ -169,13 +169,26 @@ def extrair_produto_crawler(
     json_produto = buscar_produto_jsonld_crawler(jsonlds)
 
     nome = extrair_nome(soup, json_produto)
+    preco = extrair_preco(soup, json_produto, html)
+
+    # ======================================================
+    # 🔥 IA FALLBACK
+    # ======================================================
+    if extrair_com_ia and (not nome or not preco):
+        log_debug(f"[IA FALLBACK] {url}")
+
+        produto_ia = extrair_com_ia(html, url)
+
+        if produto_ia and produto_ia.get("Nome"):
+            produto_ia["Descrição Curta"] = produto_ia.get("Descrição") or produto_ia.get("Nome")
+            return produto_ia
 
     if not nome:
         return {}
 
     base = {
         "Nome": nome,
-        "Preço": extrair_preco(soup, json_produto, html),
+        "Preço": preco,
         "Descrição": extrair_descricao(soup, json_produto),
         "Marca": extrair_marca(json_produto),
         "Categoria": _extrair_categoria(soup),
