@@ -87,10 +87,17 @@ def tratar_gtin(valor: Any) -> tuple[str, bool]:
 def aplicar_validacao_gtin_df(
     df: pd.DataFrame,
     coluna: str,
+    preservar_coluna_original: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Valida a coluna de GTIN em um DataFrame.
     GTIN inválido é zerado (fica vazio) automaticamente.
+
+    Parâmetros:
+    - df: DataFrame de entrada
+    - coluna: nome da coluna de GTIN/EAN
+    - preservar_coluna_original: se True, cria "<coluna> Original"
+      com o valor original limpo antes da validação
 
     Retorna:
     - DataFrame atualizado
@@ -114,6 +121,8 @@ def aplicar_validacao_gtin_df(
         df_saida = df.copy()
 
         novos_valores: list[str] = []
+        valores_originais: list[str] = []
+
         total_invalidos = 0
         total_validos = 0
         total_vazios = 0
@@ -124,12 +133,15 @@ def aplicar_validacao_gtin_df(
             except Exception:
                 texto_original = str(valor).strip() if valor is not None else ""
 
-            if not texto_original:
+            gtin_original_limpo = limpar_gtin(texto_original)
+            valores_originais.append(gtin_original_limpo)
+
+            if not gtin_original_limpo:
                 novos_valores.append("")
                 total_vazios += 1
                 continue
 
-            gtin_corrigido, valido = tratar_gtin(texto_original)
+            gtin_corrigido, valido = tratar_gtin(gtin_original_limpo)
 
             if valido:
                 novos_valores.append(gtin_corrigido)
@@ -140,6 +152,14 @@ def aplicar_validacao_gtin_df(
                 logs.append(f"Linha {idx}: GTIN inválido zerado ({texto_original})")
 
         df_saida[coluna] = novos_valores
+
+        if preservar_coluna_original:
+            nome_coluna_original = f"{coluna} Original"
+            if nome_coluna_original not in df_saida.columns:
+                df_saida[nome_coluna_original] = valores_originais
+            else:
+                df_saida[nome_coluna_original] = valores_originais
+            logs.append(f"Coluna original preservada: {nome_coluna_original}")
 
         logs.append(f"GTIN válido: {total_validos}")
         logs.append(f"GTIN inválido zerado: {total_invalidos}")
@@ -188,10 +208,15 @@ def normalizar_gtin_para_texto(valor: Any) -> str:
 # =========================================================
 def aplicar_validacao_gtin_em_colunas_automaticas(
     df: pd.DataFrame,
+    preservar_coluna_original: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Procura automaticamente colunas com nome contendo GTIN ou EAN
     e aplica a validação em todas elas.
+
+    Parâmetros:
+    - preservar_coluna_original: se True, cria "<coluna> Original"
+      para cada coluna validada
     """
     logs: list[str] = []
 
@@ -217,7 +242,11 @@ def aplicar_validacao_gtin_em_colunas_automaticas(
             return df_saida, logs
 
         for coluna in colunas_gtin:
-            df_saida, logs_coluna = aplicar_validacao_gtin_df(df_saida, coluna)
+            df_saida, logs_coluna = aplicar_validacao_gtin_df(
+                df_saida,
+                coluna,
+                preservar_coluna_original=preservar_coluna_original,
+            )
             logs.append(f"Coluna validada: {coluna}")
             logs.extend(logs_coluna)
 
