@@ -53,7 +53,9 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     except Exception:
         pass
 
-    st.session_state["tipo_operacao"] = operacao
+    # IMPORTANTE:
+    # não escrever novamente em st.session_state["tipo_operacao"]
+    # porque essa chave pertence ao widget st.radio(key="tipo_operacao")
     st.session_state["tipo_operacao_bling"] = (
         "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
     )
@@ -203,10 +205,13 @@ def render_origem_dados() -> None:
 
     operacao_inicial = _obter_operacao_atual_label()
 
+    # define valor inicial apenas antes do widget existir nesta execução
+    if "tipo_operacao" not in st.session_state:
+        st.session_state["tipo_operacao"] = operacao_inicial
+
     operacao = st.radio(
         "Selecione",
         ["Cadastro de Produtos", "Atualização de Estoque"],
-        index=0 if operacao_inicial == "Cadastro de Produtos" else 1,
         key="tipo_operacao",
         horizontal=False,
         label_visibility="collapsed",
