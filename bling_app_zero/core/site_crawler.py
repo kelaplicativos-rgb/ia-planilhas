@@ -5,7 +5,9 @@ from typing import Any
 
 import pandas as pd
 
-from bling_app_zero.core.fetcher import fetch_url
+# 🔥 TROCA AQUI → agora usa o router inteligente
+from bling_app_zero.core.fetch_router import fetch_html_router
+
 from bling_app_zero.core.site_crawler_extractors import extrair_produto_crawler
 from bling_app_zero.core.site_crawler_helpers import (
     MAX_PAGINAS,
@@ -50,7 +52,9 @@ def _coletar_paginas_listagem(
 
         visitadas.add(url)
 
-        html = fetch_url(url)
+        # 🔥 USANDO ROUTER
+        html = fetch_html_router(url)
+
         if not html:
             log_debug(f"[CRAWLER] Falha ao carregar página: {url}", "WARNING")
             continue
@@ -90,7 +94,9 @@ def _coletar_links_de_todas_paginas(
     todos_links: list[str] = []
 
     for pagina in paginas:
-        html = fetch_url(pagina)
+        # 🔥 USANDO ROUTER
+        html = fetch_html_router(pagina)
+
         if not html:
             log_debug(f"[CRAWLER] Falha ao carregar página (links): {pagina}", "WARNING")
             continue
@@ -124,7 +130,8 @@ def _baixar_e_extrair(
     padrao_disponivel: int = 10,
 ) -> dict | None:
 
-    html = fetch_url(link)
+    # 🔥 USANDO ROUTER
+    html = fetch_html_router(link)
 
     if not html:
         log_debug(f"[CRAWLER] Falha ao baixar produto: {link}", "WARNING")
@@ -171,7 +178,7 @@ def executar_crawler(
     if not links:
         log_debug("[CRAWLER] Nenhum link encontrado → fallback página única")
 
-        html_unico = fetch_url(url)
+        html_unico = fetch_html_router(url)
 
         if html_unico:
             try:
