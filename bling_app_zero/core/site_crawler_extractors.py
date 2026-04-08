@@ -16,9 +16,8 @@ from bling_app_zero.core.site_crawler_helpers import (
     texto_limpo_crawler,
 )
 
-
 # ==========================================================
-# LOG (BLINDADO)
+# LOG
 # ==========================================================
 try:
     from bling_app_zero.utils.excel_logs import log_debug
@@ -31,7 +30,36 @@ except Exception:
 
 
 # ==========================================================
-# SCORE DE QUALIDADE
+# HELPERS PESADOS
+# ==========================================================
+def _limpar_texto(valor: Any) -> str:
+    return re.sub(r"\s+", " ", str(valor or "")).strip()
+
+
+def _extrair_preco_texto_global(html: str) -> str:
+    """
+    fallback extremo: pega qualquer preço do HTML
+    """
+    matches = re.findall(r"R\$?\s?\d+[.,]\d{2}", html)
+    if matches:
+        return numero_texto_crawler(matches[0])
+    return ""
+
+
+def _extrair_nome_texto_global(soup: BeautifulSoup) -> str:
+    """
+    fallback extremo: pega maior texto relevante
+    """
+    candidatos = [h.get_text(" ", strip=True) for h in soup.find_all("h1")]
+    if candidatos:
+        return _limpar_texto(candidatos[0])
+
+    title = soup.title.string if soup.title else ""
+    return _limpar_texto(title)
+
+
+# ==========================================================
+# SCORE
 # ==========================================================
 def _score_produto(dados: dict) -> int:
     score = 0
@@ -51,7 +79,7 @@ def _score_produto(dados: dict) -> int:
 
 
 # ==========================================================
-# EXTRAÇÕES BASE
+# EXTRAÇÕES
 # ==========================================================
 def extrair_nome_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
     nome = texto_limpo_crawler(jsonld.get("name"))
@@ -62,13 +90,17 @@ def extrair_nome_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
     if og:
         return og
 
-    return primeiro_texto_crawler(
+    nome = primeiro_texto_crawler(
         soup,
         ["h1", ".product-title", ".product-name", "[itemprop='name']"],
     )
+    if nome:
+        return nome
+
+    return _extrair_nome_texto_global(soup)
 
 
-def extrair_preco_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
+def extrair_preco_crawler(soup: BeautifulSoup, jsonld: dict, html: str) -> str:
     offers = jsonld.get("offers")
 
     if isinstance(offers, dict) and offers.get("price"):
@@ -83,7 +115,7 @@ def extrair_preco_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
     if meta:
         return numero_texto_crawler(meta)
 
-    return numero_texto_crawler(
+    preco = numero_texto_crawler(
         primeiro_texto_crawler(
             soup,
             [
@@ -97,6 +129,11 @@ def extrair_preco_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
         )
     )
 
+    if preco:
+        return preco
+
+    return _extrair_preco_texto_global(html)
+
 
 def extrair_descricao_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
     desc = texto_limpo_crawler(jsonld.get("description"))
@@ -107,7 +144,7 @@ def extrair_descricao_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
     if meta:
         return meta
 
-    return primeiro_texto_crawler(
+    desc = primeiro_texto_crawler(
         soup,
         [
             ".product-description",
@@ -116,6 +153,13 @@ def extrair_descricao_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
             "[itemprop='description']",
         ],
     )
+
+    if desc:
+        return desc
+
+    # fallback pesado
+    texto = soup.get_text(" ", strip=True)
+    return texto[:1200]
 
 
 def extrair_marca_crawler(soup: BeautifulSoup, jsonld: dict) -> str:
@@ -162,7 +206,7 @@ def extrair_categoria_crawler(soup: BeautifulSoup) -> str:
 
 
 # ==========================================================
-# EXTRAÇÃO PRINCIPAL (IA MULTICAMADA)
+# EXTRAÇÃO PRINCIPAL
 # ==========================================================
 def extrair_produto_crawler(
     html: str,
@@ -175,12 +219,9 @@ def extrair_produto_crawler(
     jsonlds = extrair_json_ld_crawler(soup)
     json_produto = buscar_produto_jsonld_crawler(jsonlds)
 
-    # ========================
-    # EXTRAÇÃO
-    # ========================
     dados = {
         "Nome": extrair_nome_crawler(soup, json_produto),
-        "Preço": extrair_preco_crawler(soup, json_produto),
+        "Preço": extrair_preco_crawler(soup, json_produto, html),
         "Descrição": extrair_descricao_crawler(soup, json_produto),
         "Marca": extrair_marca_crawler(soup, json_produto),
         "Categoria": extrair_categoria_crawler(soup),
@@ -191,21 +232,13 @@ def extrair_produto_crawler(
         "Estoque": detectar_estoque_crawler(html, soup, padrao_disponivel),
     }
 
-    # ========================
     # DESCRIÇÃO CURTA
-    # ========================
     dados["Descrição Curta"] = dados.get("Descrição") or dados.get("Nome")
 
-    # ========================
-    # SCORE DE QUALIDADE
-    # ========================
     score = _score_produto(dados)
 
     log_debug(f"[EXTRACTOR] Score produto: {score} | URL: {url}")
 
-    # ========================
-    # FILTRO DE QUALIDADE
-    # ========================
     if score < 4:
         log_debug(f"[EXTRACTOR] Produto fraco descartado | {url}", "WARNING")
         return {}
