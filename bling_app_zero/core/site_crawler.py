@@ -4,9 +4,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
-import streamlit as st  # 🔥 NOVO
+import streamlit as st
 
-# 🔥 AGORA SIM → router completo (HTML + NETWORK)
 from bling_app_zero.core.fetch_router import fetch_payload_router
 
 from bling_app_zero.core.site_crawler_extractors import extrair_produto_crawler
@@ -24,11 +23,8 @@ from bling_app_zero.core.site_crawler_helpers import (
 try:
     from bling_app_zero.utils.excel_logs import log_debug
 except Exception:
-    try:
-        from bling_app_zero.utils.excel import log_debug
-    except Exception:
-        def log_debug(*args, **kwargs):
-            pass
+    def log_debug(*args, **kwargs):
+        pass
 
 
 # ==========================================================
@@ -38,9 +34,10 @@ def _safe_list(v: Any) -> list:
     return v if isinstance(v, list) else []
 
 
-def _fetch(url: str, js: bool = False) -> dict:
+# 🔥 CORREÇÃO CRÍTICA → FORÇA JS SEMPRE
+def _fetch(url: str, js: bool = True) -> dict:
     try:
-        return fetch_payload_router(url=url, preferir_js=js) or {}
+        return fetch_payload_router(url=url, preferir_js=True) or {}
     except Exception as e:
         log_debug(f"[CRAWLER] Erro fetch: {url} | {e}", "ERROR")
         return {}
@@ -63,7 +60,7 @@ def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
 
         visitadas.add(url)
 
-        payload = _fetch(url)
+        payload = _fetch(url)  # 🔥 sempre JS
         html = payload.get("html")
 
         if not html:
@@ -89,7 +86,7 @@ def _coletar_links(url: str, max_paginas: int) -> list[str]:
     links = []
 
     for p in paginas:
-        payload = _fetch(p)
+        payload = _fetch(p)  # 🔥 sempre JS
         html = payload.get("html")
 
         if not html:
@@ -108,7 +105,7 @@ def _coletar_links(url: str, max_paginas: int) -> list[str]:
 # ==========================================================
 def _baixar(link: str, padrao: int) -> dict | None:
 
-    payload = _fetch(link)
+    payload = _fetch(link)  # 🔥 sempre JS
     html = payload.get("html")
 
     if not html:
@@ -141,7 +138,6 @@ def executar_crawler(
     if not url:
         return pd.DataFrame()
 
-    # 🔥 UI FEEDBACK
     progress_bar = st.progress(0)
     status = st.empty()
 
@@ -155,7 +151,7 @@ def executar_crawler(
     if not links:
         status.warning("⚠️ Nenhum link encontrado, tentando página única...")
 
-        payload = _fetch(url, js=True)
+        payload = _fetch(url)
         html = payload.get("html")
 
         if html:
@@ -175,7 +171,6 @@ def executar_crawler(
         return pd.DataFrame()
 
     resultados = []
-
     total = len(links)
 
     with ThreadPoolExecutor(max_workers=max_threads) as ex:
@@ -187,7 +182,6 @@ def executar_crawler(
             if r:
                 resultados.append(r)
 
-            # 🔥 PROGRESSO EM TEMPO REAL
             progresso = int((i / total) * 100)
             progress_bar.progress(progresso)
 
