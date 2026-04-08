@@ -18,7 +18,7 @@ from bling_app_zero.utils.init_app import inicializar_app
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.21"  # 🔥 atualizei versão
 
 
 # =========================
@@ -39,32 +39,38 @@ if st.session_state.get("_cache_log"):
 
 
 # =========================
-# CONTROLE DE ETAPA
+# CONTROLE DE ETAPA (PADRONIZADO)
 # =========================
-etapa = st.session_state.get("etapa_origem")
+if "etapa_origem" not in st.session_state:
+    st.session_state["etapa_origem"] = "origem"
 
-if not etapa:
-    etapa = "upload"
-    st.session_state["etapa_origem"] = "upload"
+etapa = st.session_state.get("etapa_origem", "origem")
 
 
 # =========================
 # ETAPA 1 — ORIGEM
 # =========================
-if etapa in ["upload", "origem"]:
+if etapa == "origem":
     render_origem_dados()
 
 
 # =========================
-# ETAPA 2 — ORIGEM + MAPEAMENTO
-# Mantém o fluxo real:
-# origem primeiro e depois mapeamento
+# ETAPA 2 — MAPEAMENTO
 # =========================
 elif etapa == "mapeamento":
-    render_origem_dados()
+
+    st.subheader("📦 Origem dos dados (resumo)")
+
+    # 🔥 aqui NÃO chamamos origem completa
+    if st.session_state.get("df_origem") is not None:
+        st.dataframe(
+            st.session_state["df_origem"].head(5),
+            use_container_width=True,
+        )
 
     st.divider()
-    st.subheader("Mapeamento")
+
+    st.subheader("🔗 Mapeamento")
     render_origem_mapeamento()
 
 
@@ -76,12 +82,11 @@ elif etapa == "final":
 
 
 # =========================
-# FALLBACK DE ETAPA DESCONHECIDA
+# FALLBACK
 # =========================
 else:
-    log_debug(f"Etapa desconhecida recebida: {etapa}", "ERRO")
-    st.warning("Etapa do fluxo inválida. Retornando para a origem.")
-    st.session_state["etapa_origem"] = "upload"
+    log_debug(f"Etapa desconhecida: {etapa}", "ERRO")
+    st.session_state["etapa_origem"] = "origem"
     st.rerun()
 
 
