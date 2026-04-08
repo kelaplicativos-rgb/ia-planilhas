@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pandas as pd
 
@@ -8,7 +9,7 @@ import pandas as pd
 # ==========================================================
 # BASE
 # ==========================================================
-def _to_float(valor) -> float:
+def _to_float(valor: Any) -> float:
     if valor is None:
         return 0.0
 
@@ -143,25 +144,34 @@ def calcular_preco_venda(
         custo_fixo = _to_float(custo_fixo)
         taxa_extra = _to_float(taxa_extra)
 
-        base = preco_compra + custo_fixo
+        base = max(0.0, preco_compra + custo_fixo)
         impostos = percentual_impostos / 100.0
         lucro = margem_lucro / 100.0
         taxa = taxa_extra / 100.0
 
         denominador = 1.0 - impostos - lucro - taxa
+
+        # Nunca deixar a função zerar o preço por configuração inválida
         if denominador <= 0:
-            return 0.0
+            return round(base, 2)
 
         resultado = base / denominador
 
-        return max(0.0, float(resultado))
+        # Proteção adicional para nunca vender abaixo da base
+        if resultado < base:
+            resultado = base
+
+        return round(max(0.0, float(resultado)), 2)
 
     except Exception:
-        return 0.0
+        try:
+            return round(max(0.0, _to_float(preco_compra) + _to_float(custo_fixo)), 2)
+        except Exception:
+            return 0.0
 
 
 # ==========================================================
-# APLICAÇÃO PRINCIPAL (CORRIGIDA)
+# APLICAÇÃO PRINCIPAL
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -194,15 +204,12 @@ def aplicar_precificacao_automatica(
             df_saida[coluna_destino] = 0.0
 
     df_saida[coluna_destino] = precos_base.apply(
-        lambda valor: round(
-            calcular_preco_venda(
-                preco_compra=valor,
-                percentual_impostos=percentual_impostos,
-                margem_lucro=margem_lucro,
-                custo_fixo=custo_fixo,
-                taxa_extra=taxa_extra,
-            ),
-            2,
+        lambda valor: calcular_preco_venda(
+            preco_compra=valor,
+            percentual_impostos=percentual_impostos,
+            margem_lucro=margem_lucro,
+            custo_fixo=custo_fixo,
+            taxa_extra=taxa_extra,
         )
         if _to_float(valor) > 0
         else 0.0
@@ -212,17 +219,18 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# 🔥 NOVA FUNÇÃO CRÍTICA (INTEGRA COM O APP)
+# INTEGRA COM O FLUXO
 # ==========================================================
 def aplicar_precificacao_no_fluxo(
     df: pd.DataFrame,
     params: dict,
 ) -> pd.DataFrame:
     """
-    Essa função GARANTE que a precificação atualiza o fluxo inteiro.
+    Garante que a precificação atualiza o fluxo inteiro.
     """
-
     try:
+        params = params if isinstance(params, dict) else {}
+
         df_precificado = aplicar_precificacao_automatica(
             df=df,
             coluna_preco=params.get("coluna_preco"),
@@ -232,7 +240,6 @@ def aplicar_precificacao_no_fluxo(
             taxa_extra=params.get("taxa", 0),
         )
 
-        # 🔥 ESSENCIAL: atualizar o fluxo
         try:
             import streamlit as st
 
@@ -244,4 +251,4 @@ def aplicar_precificacao_no_fluxo(
         return df_precificado
 
     except Exception:
-        return df
+        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
