@@ -78,7 +78,7 @@ def _detectar_coluna_preco_default(colunas: list[str]) -> int:
 
 
 def render_precificacao(df_base):
-    st.markdown("### Precificação")
+    st.markdown("### 💰 Precificação")
 
     if not safe_df_dados(df_base):
         return
@@ -90,7 +90,7 @@ def render_precificacao(df_base):
     coluna_preco_default = _detectar_coluna_preco_default(colunas)
 
     coluna_preco = st.selectbox(
-        "Selecione a coluna de PREÇO DE CUSTO",
+        "Coluna de custo",
         options=colunas,
         index=coluna_preco_default,
         key="coluna_preco_base",
@@ -104,10 +104,10 @@ def render_precificacao(df_base):
 
     with col2:
         st.number_input("Custo fixo", min_value=0.0, key="custo_fixo")
-        st.number_input("Taxa extra (%)", min_value=0.0, key="taxa_extra")
+        st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
 
     # =========================================================
-    # 🔥 AUTO APLICAÇÃO (CORREÇÃO PRINCIPAL)
+    # 🔥 CORREÇÃO PRINCIPAL AQUI
     # =========================================================
     params = coletar_parametros_precificacao()
 
@@ -115,9 +115,12 @@ def render_precificacao(df_base):
         df_precificado = aplicar_precificacao_no_fluxo(df_base, params)
 
         if safe_df_dados(df_precificado):
+            # 🔥 AGORA ENTRA NO FLUXO REAL
             st.session_state["df_precificado"] = df_precificado.copy()
+            st.session_state["df_saida"] = df_precificado.copy()
+            st.session_state["df_final"] = df_precificado.copy()
 
-            # 🔥 trava campo preço no mapeamento
+            # 🔒 bloqueio campo preço no mapeamento
             st.session_state["bloquear_campos_auto"] = {
                 "preco": True,
                 "preço": True,
@@ -129,18 +132,21 @@ def render_precificacao(df_base):
         log_debug(f"Erro na precificação automática: {e}", "ERRO")
 
     # =========================================================
-    # BOTÃO MANUAL (mantido)
+    # BOTÃO MANUAL
     # =========================================================
-    if st.button("Reaplicar precificação", use_container_width=True):
+    if st.button("🔁 Reaplicar", use_container_width=True):
         try:
             df_precificado = aplicar_precificacao_no_fluxo(df_base, params)
 
             st.session_state["df_precificado"] = df_precificado.copy()
-            st.success("Precificação reaplicada com sucesso!")
+            st.session_state["df_saida"] = df_precificado.copy()
+            st.session_state["df_final"] = df_precificado.copy()
+
+            st.success("Precificação aplicada!")
 
         except Exception as e:
             log_debug(f"Erro ao reaplicar precificação: {e}", "ERRO")
-            st.error("Erro ao aplicar a precificação.")
+            st.error("Erro ao aplicar.")
 
     # =========================================================
     # PRÉVIA
@@ -148,7 +154,7 @@ def render_precificacao(df_base):
     df_precificado_state = st.session_state.get("df_precificado")
 
     if safe_df_dados(df_precificado_state):
-        with st.expander("Prévia da precificação", expanded=False):
+        with st.expander("📊 Preview da precificação", expanded=False):
             try:
                 st.dataframe(
                     _df_preview_seguro(df_precificado_state).head(10),
