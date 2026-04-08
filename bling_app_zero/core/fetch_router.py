@@ -37,7 +37,7 @@ except Exception:
 def _safe_str(valor: Any) -> str:
     try:
         return str(valor or "").strip()
-    except:
+    except Exception:
         return ""
 
 
@@ -53,11 +53,12 @@ def _normalizar_url(url: str) -> str:
 def _dominio(url: str) -> str:
     try:
         return urlparse(_normalizar_url(url)).netloc.lower().replace("www.", "")
-    except:
+    except Exception:
         return ""
 
 
-def _payload_requests(url: str, html: str | None) -> dict[str, Any]:
+def _payload_requests(url: str, html: str | None, erro: str = "") -> dict[str, Any]:
+    url = _normalizar_url(url)
     return {
         "ok": bool(html),
         "engine": "requests",
@@ -65,7 +66,7 @@ def _payload_requests(url: str, html: str | None) -> dict[str, Any]:
         "final_url": url,
         "html": html,
         "network_records": [],
-        "error": "" if html else "Falha no fetch via requests.",
+        "error": erro if erro else ("" if html else "Falha no fetch via requests."),
     }
 
 
@@ -76,13 +77,14 @@ def fetch_payload_router(
     url: str,
     preferir_js: bool = False,
 ) -> dict[str, Any]:
-
     url = _normalizar_url(url)
 
     log_debug(f"[FETCH_ROUTER] START | {url}")
 
+    erro_playwright = ""
+
     # ======================================================
-    # 🔥 1) PLAYWRIGHT PRIMEIRO (ACEITA HTML MESMO SEM ok)
+    # 1) PLAYWRIGHT PRIMEIRO
     # ======================================================
     if fetch_playwright_payload:
         log_debug("[FETCH_ROUTER] TENTANDO PLAYWRIGHT")
@@ -91,14 +93,21 @@ def fetch_payload_router(
             payload_js = fetch_playwright_payload(url)
 
             html_js = payload_js.get("html")
+            erro_playwright = _safe_str(payload_js.get("error"))
 
-            # 🔥 CORREÇÃO PRINCIPAL
-            if html_js and len(html_js) > 1000:
+            if html_js and len(_safe_str(html_js)) > 1000:
                 log_debug("[FETCH_ROUTER] PLAYWRIGHT HTML OK")
                 return payload_js
 
+            if erro_playwright:
+                log_debug(
+                    f"[FETCH_ROUTER] PLAYWRIGHT sem sucesso | erro={erro_playwright}",
+                    "WARNING",
+                )
+
         except Exception as e:
-            log_debug(f"[FETCH_ROUTER] erro playwright: {e}")
+            erro_playwright = str(e)
+            log_debug(f"[FETCH_ROUTER] erro playwright: {e}", "WARNING")
 
     # ======================================================
     # 2) REQUESTS
@@ -107,12 +116,16 @@ def fetch_payload_router(
 
     if html:
         log_debug("[FETCH_ROUTER] REQUESTS OK")
-        return _payload_requests(url, html)
+        return _payload_requests(url, html, erro=erro_playwright)
 
     # ======================================================
     # 3) FALLBACK FINAL
+    # Só tenta fallback JS se o Playwright não falhou por dependência
+    # do host. Isso evita ficar insistindo inutilmente.
     # ======================================================
-    if tentar_fetch_com_fallback_js:
+    host_sem_dependencias = "Host system is missing dependencies to run browsers" in erro_playwright
+
+    if tentar_fetch_com_fallback_js and not host_sem_dependencias:
         log_debug("[FETCH_ROUTER] FALLBACK JS FINAL")
 
         payload_js = tentar_fetch_com_fallback_js(
@@ -123,6 +136,9 @@ def fetch_payload_router(
         if payload_js.get("html"):
             return payload_js
 
+    if host_sem_dependencias:
+        log_debug("[FETCH_ROUTER] PLAYWRIGHT indisponível no host; seguindo sem JS", "WARNING")
+
     log_debug("[FETCH_ROUTER] FALHA TOTAL")
 
-    return _payload_requests(url, html)
+    return _payload_requests(url, html, erro=erro_playwright)
