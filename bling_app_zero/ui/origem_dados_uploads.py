@@ -65,6 +65,14 @@ def _safe_float(valor: Any, default: float = 0.0) -> float:
         return default
 
 
+def _set_if_changed(key: str, value: Any) -> None:
+    try:
+        if st.session_state.get(key) != value:
+            st.session_state[key] = value
+    except Exception:
+        pass
+
+
 def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
     try:
         if not safe_df_dados(df):
@@ -93,6 +101,24 @@ def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
         return df
 
 
+def _gtin_valido_basico(valor: Any) -> str:
+    try:
+        digitos = _somente_digitos(valor)
+
+        if not digitos:
+            return ""
+
+        if set(digitos) == {"0"}:
+            return ""
+
+        if len(digitos) in [8, 12, 13, 14]:
+            return digitos
+
+        return ""
+    except Exception:
+        return ""
+
+
 def _limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not safe_df_dados(df):
@@ -108,11 +134,7 @@ def _limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
                 or "codigo de barras" in nome_col
                 or "código de barras" in nome_col
             ):
-                df[col] = df[col].apply(
-                    lambda x: _somente_digitos(x)
-                    if len(_somente_digitos(x)) in [8, 12, 13, 14]
-                    else ""
-                )
+                df[col] = df[col].apply(_gtin_valido_basico)
 
         return df
     except Exception:
@@ -149,7 +171,7 @@ def _normalizar_df_xml(df: pd.DataFrame) -> pd.DataFrame:
         ]:
             if nome in cols:
                 col = cols[nome]
-                df[col] = df[col].apply(_somente_digitos)
+                df[col] = df[col].apply(_gtin_valido_basico)
 
         for nome in ["ncm", "cest"]:
             if nome in cols:
@@ -196,6 +218,10 @@ def _normalizar_df_xml(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _limpar_estado_origem() -> None:
+    """
+    Limpa apenas estados transitórios da origem atual,
+    sem destruir modelos do Bling nem caches desnecessários.
+    """
     chaves = [
         "df_origem",
         "df_origem_xml",
@@ -213,6 +239,8 @@ def _limpar_estado_origem() -> None:
         "origem_arquivo_nome",
         "origem_arquivo_hash",
         "url_origem_site",
+        "df_precificado",
+        "origem_dados_fingerprint",
     ]
 
     for chave in chaves:
@@ -420,6 +448,7 @@ def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
 
         df_origem = df_origem.copy()
         df_origem.columns = [str(c).strip() for c in df_origem.columns]
+        df_origem = _limpar_gtin_invalido(df_origem)
 
         _salvar_df_origem(
             df_origem,
@@ -512,7 +541,7 @@ def render_origem_entrada(on_change=None) -> pd.DataFrame | None:
     origem_atual = mapa_origem.get(origem_escolhida, "")
 
     origem_anterior = str(st.session_state.get("origem_dados", "") or "").strip().lower()
-    st.session_state["origem_dados"] = origem_atual
+    _set_if_changed("origem_dados", origem_atual)
 
     if origem_atual != origem_anterior and callable(on_change):
         try:
@@ -525,8 +554,10 @@ def render_origem_entrada(on_change=None) -> pd.DataFrame | None:
     if origem_atual == "site":
         df_site = render_origem_site()
         if safe_df_dados(df_site):
+            df_site = _limpar_gtin_invalido(df_site)
             _salvar_df_origem(df_site, origem="site")
             df_origem = df_site
+
     elif origem_atual == "planilha":
         arquivo_planilha = st.file_uploader(
             "Anexar planilha do fornecedor",
@@ -534,6 +565,7 @@ def render_origem_entrada(on_change=None) -> pd.DataFrame | None:
             help=f"Formatos aceitos: {texto_extensoes_planilha()}.",
         )
         df_origem = _processar_upload_planilha(arquivo_planilha)
+
     elif origem_atual == "xml":
         arquivo_xml = st.file_uploader(
             "Anexar XML da nota fiscal",
