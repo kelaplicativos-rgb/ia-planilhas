@@ -56,23 +56,23 @@ def _html_ruim(html: str | None) -> bool:
     if not html:
         return True
 
-    if len(html) < 500:
-        return True
+    # HTML grande deve ser aceito
+    if len(html) > 2000:
+        return False
 
     h = html.lower()
 
-    sinais = [
+    # somente sinais reais de bloqueio/dependência crítica de JS
+    sinais_bloqueio = [
         "captcha",
         "cloudflare",
         "access denied",
         "forbidden",
         "enable javascript",
         "javascript required",
-        "loading",
-        "carregando",
     ]
 
-    if any(s in h for s in sinais):
+    if any(s in h for s in sinais_bloqueio):
         return True
 
     return False
@@ -118,7 +118,6 @@ def _fetch_playwright(url: str) -> dict[str, Any]:
 
     try:
         payload = fetch_playwright_payload(url)
-
         html = _safe_str(payload.get("html"))
 
         return {
@@ -126,7 +125,7 @@ def _fetch_playwright(url: str) -> dict[str, Any]:
             "engine": "playwright",
             "url": url,
             "html": html,
-            "error": payload.get("error") or "",
+            "error": _safe_str(payload.get("error")),
         }
 
     except Exception as e:
