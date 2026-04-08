@@ -120,7 +120,7 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
 
 
 # ==========================================================
-# DETECÇÃO PRODUTO (MELHORADA)
+# DETECÇÃO PRODUTO
 # ==========================================================
 def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
@@ -133,7 +133,6 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
     if any(x in u for x in ["/cart", "/checkout", "/login"]):
         return False
 
-    # padrão forte
     if any(x in u for x in ["/produto", "/product", "/item", "/sku", "/p/"]):
         return True
 
@@ -149,7 +148,7 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
 
 # ==========================================================
-# LINKS PRODUTOS (COM FALLBACK)
+# LINKS PRODUTOS
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
@@ -170,7 +169,7 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if link_parece_produto_crawler(url, texto):
             links.append(url)
 
-    # 🔥 FALLBACK (ESSENCIAL)
+    # fallback agressivo
     if len(links) < 5:
         for a in soup.select("a[href]"):
             url = normalizar_url_crawler(base_url, a.get("href"))
@@ -181,5 +180,28 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
             if url_mesmo_dominio_crawler(base_url, url):
                 if len(url) > 20:
                     links.append(url)
+
+    return list(dict.fromkeys(links))
+
+
+# ==========================================================
+# PAGINAÇÃO (ESSENCIAL - ADICIONADA)
+# ==========================================================
+def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
+
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+
+    for a in soup.find_all("a", href=True):
+        url = normalizar_url_crawler(base_url, a.get("href"))
+
+        if not url:
+            continue
+
+        if not url_mesmo_dominio_crawler(base_url, url):
+            continue
+
+        if any(x in url.lower() for x in ["page=", "/page/", "pagina", "p="]):
+            links.append(url)
 
     return list(dict.fromkeys(links))
