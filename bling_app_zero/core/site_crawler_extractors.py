@@ -47,16 +47,14 @@ def _extrair_preco_global(html: str) -> str:
 
 
 def _extrair_categoria(soup: BeautifulSoup) -> str:
-    partes = []
+    # 🔥 pega breadcrumb real
+    for nav in soup.select("nav, .breadcrumb, [class*='bread']"):
+        textos = [texto_limpo_crawler(x.get_text()) for x in nav.select("a, span")]
+        textos = [t for t in textos if t and len(t) < 40]
+        if len(textos) >= 2:
+            return " > ".join(textos[:4])
 
-    for a in soup.select("a"):
-        txt = texto_limpo_crawler(a.get_text(" ", strip=True))
-        if txt and len(txt) < 40:
-            if any(x in txt.lower() for x in ["categoria", "produtos"]):
-                continue
-            partes.append(txt)
-
-    return " > ".join(dict.fromkeys(partes[:4]))
+    return ""
 
 
 # ==========================================================
@@ -72,7 +70,7 @@ def extrair_nome(soup, jsonld):
                 "h1",
                 ".product-title",
                 ".product-name",
-                ".title",
+                "[class*='product'] h1",
                 "[class*='title']",
             ],
         )
@@ -97,19 +95,12 @@ def extrair_preco(soup, jsonld, html):
     if meta:
         return numero_texto_crawler(meta)
 
-    seletores = [
-        "[class*='price']",
-        "[class*='valor']",
-        "[data-price]",
-        ".price",
-    ]
-
-    for sel in seletores:
-        el = soup.select_one(sel)
-        if el:
-            preco = numero_texto_crawler(el.get_text())
-            if preco and len(preco) >= 2:
-                return preco
+    # 🔥 reforço para STOQUI
+    for el in soup.select("[class*='price'], [class*='valor'], span"):
+        txt = texto_limpo_crawler(el.get_text())
+        preco = numero_texto_crawler(txt)
+        if preco and len(preco) >= 2:
+            return preco
 
     return _extrair_preco_global(html)
 
@@ -177,8 +168,13 @@ def extrair_produto_crawler(
     jsonlds = extrair_json_ld_crawler(soup)
     json_produto = buscar_produto_jsonld_crawler(jsonlds)
 
+    nome = extrair_nome(soup, json_produto)
+
+    if not nome:
+        return {}
+
     base = {
-        "Nome": extrair_nome(soup, json_produto),
+        "Nome": nome,
         "Preço": extrair_preco(soup, json_produto, html),
         "Descrição": extrair_descricao(soup, json_produto),
         "Marca": extrair_marca(json_produto),
@@ -190,9 +186,6 @@ def extrair_produto_crawler(
     }
 
     base["Descrição Curta"] = base.get("Descrição") or base.get("Nome")
-
-    if not base.get("Nome"):
-        return {}
 
     log_debug(f"[EXTRACTOR FINAL] {url}")
 
