@@ -21,6 +21,9 @@ from bling_app_zero.ui.origem_dados_validacao import (
 )
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def _obter_origem_atual() -> str:
     try:
         for key in ["origem_dados", "origem_selecionada", "tipo_origem", "origem"]:
@@ -64,9 +67,10 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
 
         if not safe_df_dados(df_saida):
             df_saida = df_origem.copy()
-            st.session_state["df_saida"] = df_saida.copy()
 
+        st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
+
         return df_saida
     except Exception:
         df_saida = df_origem.copy()
@@ -95,10 +99,7 @@ def _normalizar_quantidade(valor, fallback: int) -> int:
             return 0
 
         numero = int(float(str(valor).replace(",", ".")))
-        if numero < 0:
-            return 0
-
-        return numero
+        return max(numero, 0)
     except Exception:
         return int(fallback)
 
@@ -109,12 +110,10 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
 
         st.markdown("### 🏬 Dados de estoque")
 
-        deposito_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
         deposito = st.text_input(
             "Nome do depósito",
-            value=deposito_atual,
+            value=str(st.session_state.get("deposito_nome", "") or ""),
             key="deposito_nome",
-            placeholder="Ex.: ifood",
         )
 
         if deposito:
@@ -128,34 +127,40 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
                 value=int(st.session_state.get("quantidade_fallback", 0) or 0),
                 step=1,
                 key="quantidade_fallback",
-                help="Só usada quando a origem vier do site e alguma quantidade estiver vazia.",
             )
 
             df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
             df_saida["Quantidade"] = df_saida["Quantidade"].apply(
                 lambda v: _normalizar_quantidade(v, qtd)
             )
-        else:
-            if "Quantidade" in df_saida.columns:
-                try:
-                    df_saida["Quantidade"] = df_saida["Quantidade"].apply(
-                        lambda v: _normalizar_quantidade(v, 0)
-                    )
-                except Exception:
-                    pass
 
         return df_saida
+
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida
 
 
+# =========================================================
+# RENDER
+# =========================================================
 def render_origem_dados() -> None:
-    etapa = st.session_state.get("etapa_origem")
-    if etapa in ["mapeamento", "final"]:
-        return
+    etapa = st.session_state.get("etapa_origem", "origem")
 
     st.subheader("📦 Origem dos dados")
+
+    # =========================================================
+    # BOTÃO VOLTAR (SE ESTIVER NO MAPEAMENTO)
+    # =========================================================
+    if etapa == "mapeamento":
+        if st.button("⬅️ Voltar para origem", use_container_width=True):
+            st.session_state["etapa_origem"] = "origem"
+            st.rerun()
+
+    # =========================================================
+    # BLOQUEIO SOMENTE VISUAL
+    # =========================================================
+    bloquear_inputs = etapa != "origem"
 
     # =========================================================
     # 1) ORIGEM
@@ -166,7 +171,6 @@ def render_origem_dados() -> None:
 
     origem_atual = _obter_origem_atual()
 
-    # 🔒 TRAVA PARA SITE
     if "site" in origem_atual and not st.session_state.get("site_processado"):
         st.info("🔎 Execute a busca do site para continuar.")
         return
@@ -182,19 +186,10 @@ def render_origem_dados() -> None:
     # =========================================================
     # 2) TIPO DE ENVIO
     # =========================================================
-    st.markdown("### Tipo de envio")
-
-    operacao_inicial = _obter_operacao_atual_label()
-
-    if "tipo_operacao" not in st.session_state:
-        st.session_state["tipo_operacao"] = operacao_inicial
-
     operacao = st.radio(
-        "Selecione",
+        "Tipo de envio",
         ["Cadastro de Produtos", "Atualização de Estoque"],
         key="tipo_operacao",
-        horizontal=False,
-        label_visibility="collapsed",
     )
 
     _sincronizar_tipo_operacao(operacao)
@@ -204,16 +199,14 @@ def render_origem_dados() -> None:
     # =========================================================
     # 3) MODELO BLING
     # =========================================================
-    st.markdown("### Modelo Bling")
     render_modelo_bling(operacao)
 
-    modelo_ok = safe_df_dados(obter_modelo_ativo())
-    if not modelo_ok:
+    if not safe_df_dados(obter_modelo_ativo()):
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
     # =========================================================
-    # 4) PREPARAÇÃO DF SAÍDA
+    # 4) DF SAÍDA
     # =========================================================
     df_saida = _sincronizar_df_saida_base(df_origem)
 
@@ -228,7 +221,6 @@ def render_origem_dados() -> None:
     # =========================================================
     # 5) PRECIFICAÇÃO
     # =========================================================
-    st.markdown("### 💰 Precificação")
     render_precificacao(df_origem)
 
     st.markdown("---")
@@ -236,16 +228,14 @@ def render_origem_dados() -> None:
     # =========================================================
     # 6) CONTINUAR
     # =========================================================
-    if st.button(
-        "➡️ Continuar para mapeamento",
-        use_container_width=True,
-    ):
-        valido, erros = validar_antes_mapeamento()
+    if etapa == "origem":
+        if st.button("➡️ Continuar para mapeamento", use_container_width=True):
+            valido, erros = validar_antes_mapeamento()
 
-        if not valido:
-            for e in erros:
-                st.warning(e)
-            return
+            if not valido:
+                for e in erros:
+                    st.warning(e)
+                return
 
-        st.session_state["etapa_origem"] = "mapeamento"
-        st.rerun()
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
