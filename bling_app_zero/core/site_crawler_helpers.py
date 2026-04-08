@@ -19,17 +19,14 @@ MAX_PRODUTOS = 1200
 def normalizar_url_crawler(base_url: str, href: str | None) -> str:
     if not href:
         return ""
-    href = str(href).strip()
-    if not href:
-        return ""
-    return urljoin(base_url, href)
+    return urljoin(base_url, str(href).strip())
 
 
 def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
     try:
         d1 = urlparse(url_base).netloc.replace("www.", "").lower()
         d2 = urlparse(url).netloc.replace("www.", "").lower()
-        return d1 == d2 or d2.endswith("." + d1) or d1.endswith("." + d2)
+        return d1 == d2 or d2.endswith("." + d1)
     except Exception:
         return False
 
@@ -40,29 +37,33 @@ def texto_limpo_crawler(valor: Any) -> str:
 
 def numero_texto_crawler(valor: Any) -> str:
     texto = texto_limpo_crawler(valor)
-    texto = texto.replace("R$", "").replace("r$", "").strip()
+    texto = texto.replace("R$", "").strip()
     m = re.search(r"(\d[\d\.\,]*)", texto)
-    return m.group(1).strip() if m else ""
+    return m.group(1) if m else ""
 
 
 # ==========================================================
-# 🔥 JSON-LD (ESSENCIAL)
+# JSON-LD
 # ==========================================================
 def extrair_json_ld_crawler(soup: BeautifulSoup) -> list[dict]:
     dados = []
+
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             conteudo = script.string or script.text
             if not conteudo:
                 continue
+
             json_data = json.loads(conteudo)
 
             if isinstance(json_data, list):
                 dados.extend(json_data)
             else:
                 dados.append(json_data)
+
         except Exception:
             continue
+
     return dados
 
 
@@ -94,10 +95,12 @@ def primeiro_texto_crawler(soup: BeautifulSoup, seletores: list[str]) -> str:
 
 def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
     imagens = []
+
     for img in soup.find_all("img"):
         src = img.get("src") or img.get("data-src")
         if src:
             imagens.append(urljoin(base_url, src))
+
     return " | ".join(list(dict.fromkeys(imagens))[:5])
 
 
@@ -117,7 +120,7 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
 
 
 # ==========================================================
-# DETECÇÃO PRODUTO
+# DETECÇÃO PRODUTO (MELHORADA)
 # ==========================================================
 def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
@@ -130,6 +133,7 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
     if any(x in u for x in ["/cart", "/checkout", "/login"]):
         return False
 
+    # padrão forte
     if any(x in u for x in ["/produto", "/product", "/item", "/sku", "/p/"]):
         return True
 
@@ -145,7 +149,7 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
 
 # ==========================================================
-# LINKS PRODUTOS
+# LINKS PRODUTOS (COM FALLBACK)
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
@@ -166,27 +170,16 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         if link_parece_produto_crawler(url, texto):
             links.append(url)
 
-    return list(dict.fromkeys(links))
+    # 🔥 FALLBACK (ESSENCIAL)
+    if len(links) < 5:
+        for a in soup.select("a[href]"):
+            url = normalizar_url_crawler(base_url, a.get("href"))
 
+            if not url:
+                continue
 
-# ==========================================================
-# PAGINAÇÃO
-# ==========================================================
-def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
-
-    soup = BeautifulSoup(html, "html.parser")
-    links = []
-
-    for a in soup.find_all("a", href=True):
-        url = normalizar_url_crawler(base_url, a.get("href"))
-
-        if not url:
-            continue
-
-        if not url_mesmo_dominio_crawler(base_url, url):
-            continue
-
-        if any(x in url.lower() for x in ["page=", "/page/", "pagina"]):
-            links.append(url)
+            if url_mesmo_dominio_crawler(base_url, url):
+                if len(url) > 20:
+                    links.append(url)
 
     return list(dict.fromkeys(links))
