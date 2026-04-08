@@ -55,13 +55,17 @@ def _extrair_preco_global(html: str) -> str:
     for m in matches:
         p = numero_texto_crawler(m)
         if p:
-            precos.append(float(p))
+            try:
+                precos.append(float(str(p).replace(".", "").replace(",", ".")))
+            except Exception:
+                pass
 
     if not precos:
         return ""
 
-    # 🔥 pega o menor valor válido (evita preço parcelado)
-    return str(min(precos))
+    menor = min(precos)
+    texto = f"{menor:.2f}".replace(".", ",")
+    return texto
 
 
 def _limpar_descricao(texto: str) -> str:
@@ -100,6 +104,27 @@ def _filtrar_imagens(lista: str) -> str:
     imgs = list(dict.fromkeys(imgs))
 
     return " | ".join(imgs[:5])
+
+
+def _marca_invalida(marca: str) -> bool:
+    marca_low = texto_limpo_crawler(marca).lower()
+
+    if not marca_low:
+        return True
+
+    invalidas = [
+        "mega center",
+        "megacenter",
+        "mega center eletrônicos",
+        "mega center eletronicos",
+        "loja",
+        "store",
+        "shop",
+        "eletronicos",
+        "eletrônicos",
+    ]
+
+    return any(x in marca_low for x in invalidas)
 
 
 # ==========================================================
@@ -164,14 +189,47 @@ def extrair_imagens(soup, url, jsonld):
     return _filtrar_imagens(todas_imagens_crawler(soup, url))
 
 
-def extrair_marca(jsonld):
+def extrair_marca(soup, jsonld):
+    def limpar(m):
+        return texto_limpo_crawler(m or "")
+
+    # 1) JSON-LD
     marca = jsonld.get("brand")
 
     if isinstance(marca, dict):
-        return texto_limpo_crawler(marca.get("name"))
+        nome = limpar(marca.get("name"))
+        if nome and not _marca_invalida(nome):
+            return nome
 
     if isinstance(marca, str):
-        return texto_limpo_crawler(marca)
+        nome = limpar(marca)
+        if nome and not _marca_invalida(nome):
+            return nome
+
+    # 2) META
+    meta = meta_content_crawler(soup, "property", "product:brand")
+    meta = limpar(meta)
+    if meta and not _marca_invalida(meta):
+        return meta
+
+    # 3) HTML (fallback leve)
+    possiveis: list[str] = []
+
+    for sel in [
+        "[class*='brand']",
+        "[id*='brand']",
+        ".marca",
+        ".brand",
+    ]:
+        el = soup.select_one(sel)
+        if el:
+            txt = limpar(el.get_text())
+            if txt:
+                possiveis.append(txt)
+
+    for m in possiveis:
+        if not _marca_invalida(m):
+            return m
 
     return ""
 
@@ -220,8 +278,8 @@ def extrair_produto_crawler(
         "Nome": nome,
         "Preço": preco,
         "Descrição": extrair_descricao(soup, json_produto),
-        "Marca": extrair_marca(json_produto),
-        "Categoria": "",  # 🔥 REMOVIDO AUTO
+        "Marca": extrair_marca(soup, json_produto),
+        "Categoria": "",
         "GTIN/EAN": extrair_gtin(json_produto),
         "URL Imagens Externas": extrair_imagens(soup, url, json_produto),
         "Link Externo": url,
