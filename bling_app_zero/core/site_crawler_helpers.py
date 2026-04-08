@@ -31,6 +31,13 @@ def url_mesmo_dominio_crawler(url_base: str, url: str) -> bool:
         return False
 
 
+def _dominio(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower()
+    except Exception:
+        return ""
+
+
 def texto_limpo_crawler(valor: Any) -> str:
     return re.sub(r"\s+", " ", str(valor or "")).strip()
 
@@ -110,22 +117,22 @@ def todas_imagens_crawler(soup: BeautifulSoup, base_url: str) -> str:
 def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int:
     html = (html or "").lower()
 
-    if any(x in html for x in ["esgotado", "indisponível", "out of stock"]):
+    if "esgotado" in html:
         return 0
-
-    if any(x in html for x in ["comprar", "adicionar", "buy now"]):
-        return padrao
 
     return padrao
 
 
 # ==========================================================
-# DETECÇÃO PRODUTO
+# DETECÇÃO PRODUTO (COM ID STOQUI)
 # ==========================================================
 def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
 
     u = (url or "").lower()
-    t = (texto_link or "").lower()
+
+    # 🔥 STOQUI (CRÍTICO)
+    if "/produto/" in u:
+        return True
 
     if any(x in u for x in ["javascript:", "mailto:", "#"]):
         return False
@@ -133,7 +140,7 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
     if any(x in u for x in ["/cart", "/checkout", "/login"]):
         return False
 
-    if any(x in u for x in ["/produto", "/product", "/item", "/sku", "/p/"]):
+    if any(x in u for x in ["/product", "/item", "/sku", "/p/"]):
         return True
 
     partes = [p for p in urlparse(u).path.split("/") if p]
@@ -141,57 +148,71 @@ def link_parece_produto_crawler(url: str, texto_link: str = "") -> bool:
     if len(partes) >= 2 and len(partes[-1]) > 8:
         return True
 
-    if any(p in t for p in ["comprar", "detalhes", "produto"]):
-        return True
-
     return False
 
 
 # ==========================================================
-# LINKS PRODUTOS
+# LINKS PRODUTOS (COM STOQUI + PRIMEIRA PÁGINA)
 # ==========================================================
 def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    for a in soup.find_all("a", href=True):
-        url = normalizar_url_crawler(base_url, a.get("href"))
+    dominio = _dominio(base_url)
 
-        if not url:
-            continue
+    # ======================================================
+    # 🔥 STOQUI (PEGAR PRIMEIRA PÁGINA)
+    # ======================================================
+    if "stoqui" in dominio:
+        for a in soup.select("a[href*='/produto/']"):
+            url = normalizar_url_crawler(base_url, a.get("href"))
+            if url:
+                links.append(url)
 
-        if not url_mesmo_dominio_crawler(base_url, url):
-            continue
-
-        texto = texto_limpo_crawler(a.get_text(" ", strip=True))
-
-        if link_parece_produto_crawler(url, texto):
-            links.append(url)
-
-    # fallback agressivo
-    if len(links) < 5:
-        for a in soup.select("a[href]"):
+    # ======================================================
+    # FALLBACK PADRÃO
+    # ======================================================
+    if not links:
+        for a in soup.find_all("a", href=True):
             url = normalizar_url_crawler(base_url, a.get("href"))
 
             if not url:
                 continue
 
-            if url_mesmo_dominio_crawler(base_url, url):
-                if len(url) > 20:
-                    links.append(url)
+            if not url_mesmo_dominio_crawler(base_url, url):
+                continue
+
+            texto = texto_limpo_crawler(a.get_text(" ", strip=True))
+
+            if link_parece_produto_crawler(url, texto):
+                links.append(url)
 
     return list(dict.fromkeys(links))
 
 
 # ==========================================================
-# PAGINAÇÃO (ESSENCIAL - ADICIONADA)
+# PAGINAÇÃO (STOQUI + INFINITO)
 # ==========================================================
 def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
+    dominio = _dominio(base_url)
+
+    # ======================================================
+    # STOQUI (categoria)
+    # ======================================================
+    if "stoqui" in dominio:
+        for a in soup.select("a[href*='categoria']"):
+            url = normalizar_url_crawler(base_url, a.get("href"))
+            if url:
+                links.append(url)
+
+    # ======================================================
+    # PADRÃO
+    # ======================================================
     for a in soup.find_all("a", href=True):
         url = normalizar_url_crawler(base_url, a.get("href"))
 
