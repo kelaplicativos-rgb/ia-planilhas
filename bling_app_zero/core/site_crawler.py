@@ -5,8 +5,8 @@ from typing import Any
 
 import pandas as pd
 
-# 🔥 TROCA AQUI → agora usa o router inteligente
-from bling_app_zero.core.fetch_router import fetch_html_router
+# 🔥 AGORA SIM → router completo (HTML + NETWORK)
+from bling_app_zero.core.fetch_router import fetch_payload_router
 
 from bling_app_zero.core.site_crawler_extractors import extrair_produto_crawler
 from bling_app_zero.core.site_crawler_helpers import (
@@ -18,7 +18,7 @@ from bling_app_zero.core.site_crawler_helpers import (
 )
 
 # ==========================================================
-# LOG (BLINDADO)
+# LOG
 # ==========================================================
 try:
     from bling_app_zero.utils.excel_logs import log_debug
@@ -31,18 +31,28 @@ except Exception:
 
 
 # ==========================================================
-# COLETA PAGINAÇÃO
+# SAFE
 # ==========================================================
-def _coletar_paginas_listagem(
-    url_inicial: str,
-    max_paginas: int = MAX_PAGINAS,
-) -> list[str]:
+def _safe_list(v: Any) -> list:
+    return v if isinstance(v, list) else []
+
+
+def _fetch(url: str, js: bool = False) -> dict:
+    try:
+        return fetch_payload_router(url=url, preferir_js=js) or {}
+    except Exception as e:
+        log_debug(f"[CRAWLER] Erro fetch: {url} | {e}", "ERROR")
+        return {}
+
+
+# ==========================================================
+# PAGINAÇÃO
+# ==========================================================
+def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[str]:
 
     visitadas = set()
     fila = [url_inicial]
     saida = []
-
-    log_debug(f"[CRAWLER] Iniciando paginação: {url_inicial}")
 
     while fila and len(saida) < max_paginas:
         url = fila.pop(0)
@@ -52,110 +62,73 @@ def _coletar_paginas_listagem(
 
         visitadas.add(url)
 
-        # 🔥 USANDO ROUTER
-        html = fetch_html_router(url)
+        payload = _fetch(url)
+        html = payload.get("html")
 
         if not html:
-            log_debug(f"[CRAWLER] Falha ao carregar página: {url}", "WARNING")
             continue
-
-        log_debug(f"[CRAWLER] Página coletada: {url}")
 
         saida.append(url)
 
         try:
-            novos_links = extrair_links_paginacao_crawler(html, url)
-        except Exception as e:
-            log_debug(f"[CRAWLER] Erro extraindo paginação: {url} | {e}", "ERROR")
-            continue
+            novos = extrair_links_paginacao_crawler(html, url)
+            fila.extend([n for n in novos if n not in visitadas])
+        except Exception:
+            pass
 
-        for prox in novos_links:
-            if (
-                prox
-                and prox not in visitadas
-                and prox not in fila
-                and len(saida) + len(fila) < max_paginas
-            ):
-                fila.append(prox)
-
-    log_debug(f"[CRAWLER] Total páginas coletadas: {len(saida)}")
     return saida
 
 
 # ==========================================================
-# COLETA LINKS PRODUTOS
+# LINKS PRODUTOS
 # ==========================================================
-def _coletar_links_de_todas_paginas(
-    url_inicial: str,
-    max_paginas: int = MAX_PAGINAS,
-) -> list[str]:
+def _coletar_links(url: str, max_paginas: int) -> list[str]:
 
-    paginas = _coletar_paginas_listagem(url_inicial, max_paginas=max_paginas)
-    todos_links: list[str] = []
+    paginas = _coletar_paginas_listagem(url, max_paginas)
+    links = []
 
-    for pagina in paginas:
-        # 🔥 USANDO ROUTER
-        html = fetch_html_router(pagina)
+    for p in paginas:
+        payload = _fetch(p)
+        html = payload.get("html")
 
         if not html:
-            log_debug(f"[CRAWLER] Falha ao carregar página (links): {pagina}", "WARNING")
             continue
 
         try:
-            links = extrair_links_produtos_crawler(html, pagina)
-            log_debug(f"[CRAWLER] {len(links)} links encontrados em {pagina}")
-            todos_links.extend(links)
-        except Exception as e:
-            log_debug(f"[CRAWLER] Erro extraindo links: {pagina} | {e}", "ERROR")
+            links.extend(extrair_links_produtos_crawler(html, p))
+        except Exception:
+            pass
 
-    # remover duplicados mantendo ordem
-    unicos = []
-    vistos = set()
-
-    for link in todos_links:
-        if link not in vistos:
-            vistos.add(link)
-            unicos.append(link)
-
-    log_debug(f"[CRAWLER] Total links únicos: {len(unicos)}")
-
-    return unicos[:MAX_PRODUTOS]
+    return list(dict.fromkeys(links))[:MAX_PRODUTOS]
 
 
 # ==========================================================
-# EXTRAÇÃO PRODUTO
+# EXTRAÇÃO
 # ==========================================================
-def _baixar_e_extrair(
-    link: str,
-    padrao_disponivel: int = 10,
-) -> dict | None:
+def _baixar(link: str, padrao: int) -> dict | None:
 
-    # 🔥 USANDO ROUTER
-    html = fetch_html_router(link)
+    payload = _fetch(link)
+    html = payload.get("html")
 
     if not html:
-        log_debug(f"[CRAWLER] Falha ao baixar produto: {link}", "WARNING")
         return None
 
     try:
         produto = extrair_produto_crawler(
-            html,
-            link,
-            padrao_disponivel=padrao_disponivel,
+            html=html,
+            url=link,
+            padrao_disponivel=padrao,
+            network_records=_safe_list(payload.get("network_records")),
+            payload_origem=payload,
         )
-    except Exception as e:
-        log_debug(f"[CRAWLER] Erro ao extrair produto: {link} | {e}", "ERROR")
+    except Exception:
         return None
 
-    if not produto.get("Nome"):
-        log_debug(f"[CRAWLER] Produto inválido (sem nome): {link}", "WARNING")
-        return None
-
-    return produto
+    return produto if produto.get("Nome") else None
 
 
 # ==========================================================
-# EXECUÇÃO PRINCIPAL
+# MAIN
 # ==========================================================
 def executar_crawler(
     url: str,
@@ -165,96 +138,44 @@ def executar_crawler(
 ) -> pd.DataFrame:
 
     if not url:
-        log_debug("[CRAWLER] URL vazia", "ERROR")
         return pd.DataFrame()
 
-    log_debug(f"[CRAWLER] INÍCIO → {url}")
+    links = _coletar_links(url, max_paginas)
 
-    links = _coletar_links_de_todas_paginas(url, max_paginas=max_paginas)
-
-    # ======================================================
-    # FALLBACK → página única
-    # ======================================================
+    # 🔥 fallback produto único
     if not links:
-        log_debug("[CRAWLER] Nenhum link encontrado → fallback página única")
+        payload = _fetch(url, js=True)
+        html = payload.get("html")
 
-        html_unico = fetch_html_router(url)
+        if html:
+            produto = extrair_produto_crawler(
+                html=html,
+                url=url,
+                padrao_disponivel=padrao_disponivel,
+                network_records=_safe_list(payload.get("network_records")),
+                payload_origem=payload,
+            )
+            if produto.get("Nome"):
+                return pd.DataFrame([produto])
 
-        if html_unico:
-            try:
-                produto = extrair_produto_crawler(
-                    html_unico,
-                    url,
-                    padrao_disponivel=padrao_disponivel,
-                )
-
-                if produto.get("Nome"):
-                    log_debug("[CRAWLER] Produto único extraído com sucesso")
-                    return pd.DataFrame([produto])
-
-            except Exception as e:
-                log_debug(f"[CRAWLER] Erro fallback produto único | {e}", "ERROR")
-
-        log_debug("[CRAWLER] Falha total no fallback", "ERROR")
         return pd.DataFrame()
 
-    # ======================================================
-    # DOWNLOAD PARALELO
-    # ======================================================
-    resultados: list[dict] = []
+    resultados = []
 
-    log_debug(f"[CRAWLER] Iniciando download paralelo ({len(links)} links)")
+    with ThreadPoolExecutor(max_workers=max_threads) as ex:
+        futs = {ex.submit(_baixar, l, padrao_disponivel): l for l in links}
 
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-
-        futuros = {
-            executor.submit(_baixar_e_extrair, link, padrao_disponivel): link
-            for link in links
-        }
-
-        for i, futuro in enumerate(as_completed(futuros), start=1):
-            link = futuros[futuro]
-
-            try:
-                produto = futuro.result()
-
-                if produto:
-                    resultados.append(produto)
-
-                if i % 10 == 0:
-                    log_debug(f"[CRAWLER] Progresso: {i}/{len(links)}")
-
-            except Exception as e:
-                log_debug(f"[CRAWLER] Erro thread: {link} | {e}", "ERROR")
+        for f in as_completed(futs):
+            r = f.result()
+            if r:
+                resultados.append(r)
 
     if not resultados:
-        log_debug("[CRAWLER] Nenhum produto válido encontrado", "ERROR")
         return pd.DataFrame()
 
     df = pd.DataFrame(resultados)
 
-    # ======================================================
-    # LIMPEZA
-    # ======================================================
     if "Link Externo" in df.columns:
-        df = df.drop_duplicates(subset=["Link Externo"], keep="first")
-
-    for col in [
-        "Nome",
-        "Preço",
-        "Descrição",
-        "Descrição Curta",
-        "Marca",
-        "Categoria",
-        "GTIN/EAN",
-        "NCM",
-        "URL Imagens Externas",
-        "Link Externo",
-        "Estoque",
-    ]:
-        if col not in df.columns:
-            df[col] = ""
-
-    log_debug(f"[CRAWLER] FINALIZADO → {len(df)} produtos válidos")
+        df = df.drop_duplicates(subset=["Link Externo"])
 
     return df.reset_index(drop=True)
