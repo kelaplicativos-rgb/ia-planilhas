@@ -91,6 +91,7 @@ def aplicar_validacao_gtin_df(
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Valida a coluna de GTIN em um DataFrame.
+
     GTIN inválido é zerado (fica vazio) automaticamente.
 
     Parâmetros:
@@ -155,10 +156,7 @@ def aplicar_validacao_gtin_df(
 
         if preservar_coluna_original:
             nome_coluna_original = f"{coluna} Original"
-            if nome_coluna_original not in df_saida.columns:
-                df_saida[nome_coluna_original] = valores_originais
-            else:
-                df_saida[nome_coluna_original] = valores_originais
+            df_saida[nome_coluna_original] = valores_originais
             logs.append(f"Coluna original preservada: {nome_coluna_original}")
 
         logs.append(f"GTIN válido: {total_validos}")
@@ -169,7 +167,9 @@ def aplicar_validacao_gtin_df(
 
     except Exception as e:
         logs.append(f"Erro ao validar GTIN na coluna '{coluna}': {e}")
-        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
+        if isinstance(df, pd.DataFrame):
+            return df.copy(), logs
+        return pd.DataFrame(), logs
 
 
 # =========================================================
@@ -234,7 +234,8 @@ def aplicar_validacao_gtin_em_colunas_automaticas(
         colunas_gtin = [
             col
             for col in df_saida.columns
-            if "gtin" in str(col).strip().lower() or "ean" in str(col).strip().lower()
+            if "gtin" in str(col).strip().lower()
+            or "ean" in str(col).strip().lower()
         ]
 
         if not colunas_gtin:
@@ -254,4 +255,6 @@ def aplicar_validacao_gtin_em_colunas_automaticas(
 
     except Exception as e:
         logs.append(f"Erro na varredura automática de GTIN: {e}")
-        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
+        if isinstance(df, pd.DataFrame):
+            return df.copy(), logs
+        return pd.DataFrame(), logs
