@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import pandas as pd
 import streamlit as st
 
@@ -50,10 +49,6 @@ def coletar_parametros_precificacao():
     }
 
 
-def _hash_parametros(params: dict) -> str:
-    return hashlib.md5(str(params).encode()).hexdigest()
-
-
 def _sincronizar_df(df):
     try:
         st.session_state["df_precificado"] = df.copy()
@@ -74,25 +69,9 @@ def _sincronizar_df(df):
         log_debug(f"Erro sincronizar DF: {e}", "ERRO")
 
 
-def _aplicar_precificacao(df_base):
-    try:
-        params = coletar_parametros_precificacao()
-
-        if not params.get("coluna_preco"):
-            return
-
-        df_precificado = aplicar_precificacao_no_fluxo(df_base.copy(), params)
-
-        if safe_df_dados(df_precificado):
-            _sincronizar_df(df_precificado)
-
-    except Exception as e:
-        log_debug(f"Erro precificação: {e}", "ERRO")
-
-
 def render_precificacao(df_base):
 
-    st.markdown("### 💰 Precificação")
+    # ❌ REMOVIDO título duplicado
 
     if not safe_df_dados(df_base):
         return
@@ -116,14 +95,21 @@ def render_precificacao(df_base):
         st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
 
     # =========================================================
-    # 🔥 CONTROLE INTELIGENTE (SEM LOOP)
+    # 🔥 RECALCULA SEMPRE (STREAMLIT JÁ CONTROLA)
     # =========================================================
-    params = coletar_parametros_precificacao()
-    hash_atual = _hash_parametros(params)
+    try:
+        params = coletar_parametros_precificacao()
 
-    if st.session_state.get("hash_precificacao") != hash_atual:
-        st.session_state["hash_precificacao"] = hash_atual
-        _aplicar_precificacao(df_base)
+        if params.get("coluna_preco"):
+            df_precificado = aplicar_precificacao_no_fluxo(
+                df_base.copy(), params
+            )
+
+            if safe_df_dados(df_precificado):
+                _sincronizar_df(df_precificado)
+
+    except Exception as e:
+        log_debug(f"Erro precificação: {e}", "ERRO")
 
     # =========================================================
     # PREVIEW
