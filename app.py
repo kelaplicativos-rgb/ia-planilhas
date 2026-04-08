@@ -7,7 +7,6 @@ from bling_app_zero.ui.app_helpers import (
     log_debug,
     render_debug_panel,
     render_preview_final,
-    sincronizar_df_final,
 )
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
@@ -54,7 +53,6 @@ if not etapa:
 # =========================
 if etapa in ["upload", "origem"]:
     render_origem_dados()
-    sincronizar_df_final()
 
 
 # =========================
@@ -64,12 +62,10 @@ if etapa in ["upload", "origem"]:
 # =========================
 elif etapa == "mapeamento":
     render_origem_dados()
-    sincronizar_df_final()
 
     st.divider()
     st.subheader("Mapeamento")
     render_origem_mapeamento()
-    sincronizar_df_final()
 
 
 # =========================
