@@ -76,7 +76,7 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 
 
 # ==========================================================
-# DEBUG PANEL (🔥 FALTAVA ISSO)
+# DEBUG PANEL (🔥 AGORA COM DOWNLOAD)
 # ==========================================================
 def render_debug_panel() -> None:
     try:
@@ -87,14 +87,14 @@ def render_debug_panel() -> None:
             if not logs:
                 st.caption("Nenhum log disponível.")
             else:
-                texto = "\n".join(logs[-200:])
+                texto = "\n".join(logs[-500:])
                 st.text_area(
                     "Logs do sistema",
                     value=texto,
                     height=220,
                 )
 
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
 
             with col1:
                 if st.button("🔄 Atualizar logs", use_container_width=True):
@@ -104,6 +104,18 @@ def render_debug_panel() -> None:
                 if st.button("🧹 Limpar logs", use_container_width=True):
                     st.session_state["logs"] = []
                     st.rerun()
+
+            with col3:
+                if logs:
+                    log_bytes = "\n".join(logs).encode("utf-8")
+
+                    st.download_button(
+                        "📥 Baixar log",
+                        data=log_bytes,
+                        file_name="log_processamento.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
 
     except Exception as e:
         st.warning(f"Erro no debug panel: {e}")
@@ -120,10 +132,14 @@ def safe_df_from_state(key: str) -> pd.DataFrame | None:
 
 
 def get_df_fluxo() -> pd.DataFrame | None:
-    for key in ["df_saida", "df_final", "df_precificado", "df_origem"]:
+    # 🔥 PRIORIDADE CORRETA
+    prioridade = ["df_final", "df_saida", "df_dados", "df_base"]
+
+    for key in prioridade:
         df = safe_df_from_state(key)
         if df is not None:
             return df
+
     return None
 
 
@@ -192,5 +208,9 @@ def render_preview_final() -> None:
         use_container_width=True,
     )
 
-    st.subheader("Integração com Bling")
-    render_bling_panel()
+    # 🔥 CORREÇÃO: evitar duplicação
+    if not st.session_state.get("_bling_renderizado"):
+        st.session_state["_bling_renderizado"] = True
+
+        st.subheader("Integração com Bling")
+        render_bling_panel()
