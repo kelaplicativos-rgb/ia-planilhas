@@ -76,11 +76,20 @@ def _set_if_changed(key: str, value: Any) -> None:
         pass
 
 
+# 🔥 CORREÇÃO CRÍTICA
 def _df_tem_estrutura(df: pd.DataFrame | None) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+        return df is not None and isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
+
+
+# 🔥 NOVO: limpar mantendo cabeçalho (REUTILIZAÇÃO)
+def _limpar_df_mantendo_cabecalho(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        return pd.DataFrame(columns=df.columns)
+    except Exception:
+        return df
 
 
 # ==========================================================
@@ -144,8 +153,12 @@ def _salvar_df_origem(
 # ==========================================================
 def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
     try:
+        # 🔥 REUTILIZAÇÃO AUTOMÁTICA
         if arquivo_planilha is None:
-            return st.session_state.get("df_origem")
+            df_existente = st.session_state.get("df_origem")
+            if _df_tem_estrutura(df_existente):
+                return df_existente
+            return None
 
         if not arquivo_planilha_permitido(arquivo_planilha):
             st.error(f"Formato inválido. Use: {texto_extensoes_planilha()}")
@@ -159,7 +172,7 @@ def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
 
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 🔥 padrão único
+        # 🔥 limpar GTIN inválido
         df = limpar_gtin_invalido(df)
 
         return _salvar_df_origem(df, "planilha")
@@ -176,7 +189,10 @@ def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
 def _processar_upload_xml(arquivo_xml: Any) -> pd.DataFrame | None:
     try:
         if arquivo_xml is None:
-            return st.session_state.get("df_origem")
+            df_existente = st.session_state.get("df_origem")
+            if _df_tem_estrutura(df_existente):
+                return df_existente
+            return None
 
         if not arquivo_parece_xml_nfe(arquivo_xml):
             st.warning("XML pode ser inválido.")
