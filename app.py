@@ -22,7 +22,10 @@ except ImportError:
 
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
-from bling_app_zero.ui.bling_envio import render_bling_envio  # 🔥 NOVO
+
+# 🔥 CORREÇÃO AQUI
+from bling_app_zero.ui.bling_send_panel import render_send_panel
+
 from bling_app_zero.utils.init_app import inicializar_app
 
 
@@ -31,7 +34,7 @@ from bling_app_zero.utils.init_app import inicializar_app
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.25"  # 🔥 atualizado
+APP_VERSION = "1.0.26"  # 🔥 atualizado
 
 
 # =========================
@@ -44,7 +47,7 @@ garantir_estado_base()
 # =========================
 # HELPERS DE ETAPA
 # =========================
-ETAPAS_VALIDAS = {"origem", "mapeamento", "final", "envio"}  # 🔥 NOVA ETAPA
+ETAPAS_VALIDAS = {"origem", "mapeamento", "final", "envio"}
 
 
 def _safe_df(df) -> bool:
@@ -140,7 +143,6 @@ elif etapa == "final":
     df_final_valido = _safe_df(df_final)
     df_saida_valido = _safe_df(df_saida)
 
-    # 🔒 BLOQUEIO
     if not df_final_valido and not df_saida_valido:
         log_debug("FINAL sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
@@ -150,7 +152,6 @@ elif etapa == "final":
 
         st.stop()
 
-    # 🔄 SINCRONIZAÇÃO
     if not df_final_valido and df_saida_valido:
         st.session_state["df_final"] = df_saida.copy()
 
@@ -180,7 +181,8 @@ elif etapa == "envio":
     if st.button("⬅️ Voltar para final", use_container_width=True):
         _ir_para("final")
 
-    render_bling_envio()
+    # 🔥 CORREÇÃO AQUI
+    render_send_panel()
 
 
 # =========================
