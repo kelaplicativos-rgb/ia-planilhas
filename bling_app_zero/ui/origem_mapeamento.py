@@ -148,32 +148,23 @@ def _get_deposito() -> str:
     return ""
 
 
-def _is_coluna_preco(nome) -> bool:
-    nome = str(nome).lower().strip()
-    return any(
-        p in nome
-        for p in ["preço", "preco", "valor venda", "preco venda", "price"]
-    )
-
-
 def _is_coluna_deposito(nome) -> bool:
     nome = str(nome).lower().strip()
     return "deposit" in nome or "deposito" in nome
 
 
-def _preview_coluna(df, coluna):
-    try:
-        if coluna in df.columns:
-            return df[coluna].fillna("").astype(str).head(5).tolist()
-    except Exception:
-        pass
-    return []
-
-
 def _montar_df_saida(df_origem, df_modelo, mapping):
     df_saida = pd.DataFrame(index=range(len(df_origem)))
 
+    deposito_fixo = _get_deposito()
+
     for col in df_modelo.columns:
+
+        # 🔥 FORÇA DEPÓSITO AUTOMÁTICO
+        if _is_coluna_deposito(col):
+            df_saida[col] = deposito_fixo
+            continue
+
         origem = mapping.get(col, "")
 
         if origem in df_origem.columns:
@@ -203,19 +194,30 @@ def render_origem_mapeamento():
     df_origem = _preparar_df_origem_para_mapeamento(df_origem)
     df_modelo = _preparar_df_modelo_para_mapeamento(df_modelo)
 
-    # mantém os dataframes preparados no estado
     st.session_state["df_origem"] = df_origem
     st.session_state["df_modelo_mapeamento"] = df_modelo
 
-    # mantém mapping salvo entre reruns
     mapping_salvo = st.session_state.get("mapping_origem", {})
     if not isinstance(mapping_salvo, dict):
         mapping_salvo = {}
 
     mapping = {}
 
+    # 🔥 CAMPO FIXO DE DEPÓSITO
+    st.text_input(
+        "📦 Nome do Depósito (Bling)",
+        key="deposito_nome_widget",
+        placeholder="Ex: ifood, geral, principal"
+    )
+
     for col_modelo in df_modelo.columns:
+
+        # 🔥 REMOVE DEPÓSITO DO MAPEAMENTO
+        if _is_coluna_deposito(col_modelo):
+            continue
+
         opcoes = [""] + list(df_origem.columns)
+
         valor_atual = st.session_state.get(
             f"map_{col_modelo}",
             mapping_salvo.get(col_modelo, "")
