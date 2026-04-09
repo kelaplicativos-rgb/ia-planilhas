@@ -31,7 +31,7 @@ def _normalizar_nome_coluna(nome: str) -> str:
 # ==========================================================
 # DETECÇÃO DE COLUNA
 # ==========================================================
-def _detectar_coluna_venda(df: pd.DataFrame) -> str:
+def _detectar_coluna_venda(df: pd.DataFrame) -> str | None:
     candidatos = [
         "preço de venda",
         "preco de venda",
@@ -40,8 +40,6 @@ def _detectar_coluna_venda(df: pd.DataFrame) -> str:
         "valor venda",
         "preço unitário",
         "preco unitario",
-        "preço",
-        "preco",
     ]
 
     for col in df.columns:
@@ -50,10 +48,10 @@ def _detectar_coluna_venda(df: pd.DataFrame) -> str:
             if c in nome:
                 return col
 
-    return df.columns[0]
+    return None
 
 
-def _detectar_coluna_resultado(df: pd.DataFrame) -> str:
+def _detectar_coluna_resultado(df: pd.DataFrame) -> str | None:
     candidatos = [
         "preço calculado",
         "preco calculado",
@@ -69,7 +67,7 @@ def _detectar_coluna_resultado(df: pd.DataFrame) -> str:
             if c in nome:
                 return col
 
-    return df.columns[-1]
+    return None
 
 
 # ==========================================================
@@ -90,7 +88,7 @@ def coletar_parametros_precificacao() -> dict:
 # ==========================================================
 def _garantir_base_precificacao(df_base: pd.DataFrame) -> pd.DataFrame:
     try:
-        hash_atual = hashlib.md5(str(df_base.head(20)).encode()).hexdigest()
+        hash_atual = hashlib.md5(str(df_base).encode()).hexdigest()
         hash_salvo = st.session_state.get("_precificacao_df_base_hash", "")
 
         if hash_atual != hash_salvo:
@@ -120,14 +118,17 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
             return None
 
         col_resultado = _detectar_coluna_resultado(df_calc)
-        col_venda = _detectar_coluna_venda(df_calc)
+        col_venda = _detectar_coluna_venda(df_base)
 
-        # 🔥 REGRA DE OURO
-        df_calc[col_venda] = df_calc[col_resultado].copy()
+        if not col_resultado or not col_venda:
+            return None
+
+        # 🔥 aplica resultado SEM perder estrutura
+        df_base[col_venda] = df_calc[col_resultado].values
 
         st.session_state["coluna_preco_unitario_destino"] = col_venda
 
-        return df_calc
+        return df_base
 
     except Exception as e:
         log_debug(f"Erro na precificação: {e}", "ERROR")
@@ -165,14 +166,14 @@ def render_precificacao(df_base):
         st.number_input("Custo fixo", min_value=0.0, key="custo_fixo")
         st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
 
-    # 🔥 AUTO RECALCULO (SEM BOTÃO)
-    df_precificado = _aplicar_precificacao(df_base_calc)
+    # 🔥 recalculo seguro
+    df_saida_atual = st.session_state.get("df_saida", df_base_calc)
+
+    df_precificado = _aplicar_precificacao(df_saida_atual.copy())
 
     if safe_df_dados(df_precificado):
-        # 🔥 ATUALIZA FLUXO INTEIRO
         st.session_state["df_saida"] = df_precificado.copy()
         st.session_state["df_final"] = df_precificado.copy()
-
         df_preview = df_precificado
     else:
         df_preview = df_base_calc
