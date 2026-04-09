@@ -21,6 +21,25 @@ def _safe_df_com_linhas(df) -> bool:
         return False
 
 
+# =========================
+# 🔥 NOVO — SINCRONIZA ETAPA
+# =========================
+def _set_etapa(etapa: str):
+    etapa = str(etapa).strip().lower()
+
+    st.session_state["etapa_origem"] = etapa
+    st.session_state["etapa"] = etapa
+    st.session_state["etapa_fluxo"] = etapa
+
+
+def _get_etapa() -> str:
+    for chave in ["etapa_origem", "etapa", "etapa_fluxo"]:
+        val = str(st.session_state.get(chave) or "").strip().lower()
+        if val:
+            return val
+    return "origem"
+
+
 def _normalizar_texto_coluna(valor) -> str:
     try:
         texto = str(valor if valor is not None else "").strip()
@@ -142,8 +161,7 @@ def _get_deposito() -> str:
     for chave in ["deposito_nome", "deposito_nome_widget", "deposito_nome_manual"]:
         valor = str(st.session_state.get(chave, "") or "").strip()
         if valor:
-            if chave != "deposito_nome":
-                st.session_state["deposito_nome"] = valor
+            st.session_state["deposito_nome"] = valor
             return valor
     return ""
 
@@ -160,7 +178,6 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
 
     for col in df_modelo.columns:
 
-        # 🔥 FORÇA DEPÓSITO AUTOMÁTICO
         if _is_coluna_deposito(col):
             df_saida[col] = deposito_fixo
             continue
@@ -176,12 +193,14 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
 
 
 def _voltar_para_origem():
-    st.session_state["etapa_origem"] = "origem"
+    _set_etapa("origem")
     st.rerun()
 
 
 def render_origem_mapeamento():
-    if st.session_state.get("etapa_origem") != "mapeamento":
+
+    # 🔥 CORREÇÃO CRÍTICA AQUI
+    if _get_etapa() != "mapeamento":
         return
 
     df_origem = st.session_state.get("df_origem")
@@ -203,7 +222,6 @@ def render_origem_mapeamento():
 
     mapping = {}
 
-    # 🔥 CAMPO FIXO DE DEPÓSITO
     st.text_input(
         "📦 Nome do Depósito (Bling)",
         key="deposito_nome_widget",
@@ -212,7 +230,6 @@ def render_origem_mapeamento():
 
     for col_modelo in df_modelo.columns:
 
-        # 🔥 REMOVE DEPÓSITO DO MAPEAMENTO
         if _is_coluna_deposito(col_modelo):
             continue
 
@@ -251,7 +268,7 @@ def render_origem_mapeamento():
             st.session_state["df_saida"] = df_saida
             st.session_state["df_final"] = df_saida
             st.session_state["mapping_origem"] = mapping
-            st.session_state["etapa_origem"] = "final"
+            _set_etapa("final")
             st.rerun()
 
     with col2:
