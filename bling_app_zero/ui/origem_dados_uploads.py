@@ -27,7 +27,7 @@ from bling_app_zero.utils.xml_nfe import (
 )
 
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento"}
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
 def _safe_str(valor: Any) -> str:
