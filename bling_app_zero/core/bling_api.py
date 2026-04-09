@@ -21,6 +21,45 @@ class BlingAPIClient:
             "enable-jwt": "1",
         }
 
+    @staticmethod
+    def _parse_response_payload(resp: httpx.Response) -> Any:
+        content_type = str(resp.headers.get("content-type", "")).lower()
+
+        if "application/json" in content_type:
+            try:
+                return resp.json()
+            except Exception:
+                return {
+                    "raw_text": resp.text,
+                    "parse_error": "Falha ao interpretar JSON da resposta.",
+                }
+
+        return resp.text
+
+    @staticmethod
+    def _clean_str(value: Any) -> str:
+        try:
+            return str(value or "").strip()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _normalize_situacao(value: Any) -> str:
+        texto = BlingAPIClient._clean_str(value).lower()
+
+        if not texto:
+            return "A"
+
+        mapa_ativo = {"a", "ativo", "active", "1", "true", "sim"}
+        mapa_inativo = {"i", "inativo", "inactive", "0", "false", "nao", "não", "desativado"}
+
+        if texto in mapa_ativo:
+            return "A"
+        if texto in mapa_inativo:
+            return "I"
+
+        return BlingAPIClient._clean_str(value).upper() or "A"
+
     def request(
         self,
         method: str,
@@ -65,8 +104,7 @@ class BlingAPIClient:
                         json=json,
                     )
 
-                content_type = resp.headers.get("content-type", "")
-                payload = resp.json() if "application/json" in content_type else resp.text
+                payload = self._parse_response_payload(resp)
 
                 if resp.status_code >= 400:
                     return False, {
@@ -78,6 +116,11 @@ class BlingAPIClient:
                     }
 
                 return True, payload
+
+        except httpx.TimeoutException as exc:
+            return False, f"Timeout ao comunicar com o Bling: {exc}"
+        except httpx.RequestError as exc:
+            return False, f"Erro de comunicação com o Bling: {exc}"
         except Exception as exc:
             return False, f"Erro de comunicação com o Bling: {exc}"
 
@@ -89,8 +132,10 @@ class BlingAPIClient:
                 return [item for item in data if isinstance(item, dict)]
             if isinstance(data, dict):
                 return [data]
+
         if isinstance(payload, list):
             return [item for item in payload if isinstance(item, dict)]
+
         return []
 
     @staticmethod
@@ -119,16 +164,19 @@ class BlingAPIClient:
                 texto = value.strip()
                 if not texto:
                     return None
+
                 texto = (
                     texto.replace("R$", "")
                     .replace("r$", "")
                     .replace(" ", "")
                     .replace("\u00a0", "")
                 )
+
                 if "," in texto:
                     texto = texto.replace(".", "").replace(",", ".")
                 else:
                     texto = texto.replace(",", "")
+
                 return float(texto)
 
             return float(value)
@@ -190,6 +238,7 @@ class BlingAPIClient:
                 for estoque in estoque_info:
                     if not isinstance(estoque, dict):
                         continue
+
                     rows.append(
                         {
                             "id_produto": self._pick(produto_info, "id", "idProduto"),
@@ -264,15 +313,22 @@ class BlingAPIClient:
         return pd.DataFrame(rows)
 
     def _normalize_product_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        nome = str(
-            self._pick(row, "nome", "descricao", "descricao_curta") or ""
-        ).strip()
-        codigo = str(self._pick(row, "codigo", "sku") or "").strip()
-        preco = self._pick(row, "preco", "preco_venda", "valor", "preco de venda", "Preço de venda")
-        unidade = str(self._pick(row, "unidade", "unidade_medida") or "UN").strip() or "UN"
-        situacao = str(self._pick(row, "situacao") or "A").strip() or "A"
-        tipo = str(self._pick(row, "tipo") or "P").strip() or "P"
-        formato = str(self._pick(row, "formato") or "S").strip() or "S"
+        nome = self._clean_str(
+            self._pick(row, "nome", "descricao", "descricao_curta", "descrição curta")
+        )
+        codigo = self._clean_str(self._pick(row, "codigo", "sku"))
+        preco = self._pick(
+            row,
+            "preco",
+            "preco_venda",
+            "valor",
+            "preco de venda",
+            "Preço de venda",
+        )
+        unidade = self._clean_str(self._pick(row, "unidade", "unidade_medida")) or "UN"
+        situacao = self._normalize_situacao(self._pick(row, "situacao"))
+        tipo = self._clean_str(self._pick(row, "tipo")).upper() or "P"
+        formato = self._clean_str(self._pick(row, "formato")).upper() or "S"
 
         payload: Dict[str, Any] = {
             "nome": nome,
@@ -289,20 +345,20 @@ class BlingAPIClient:
 
         gtin = self._pick(row, "gtin", "ean")
         if gtin not in (None, ""):
-            payload["gtin"] = str(gtin).strip()
+            payload["gtin"] = self._clean_str(gtin)
 
         marca = self._pick(row, "marca")
         if marca not in (None, ""):
-            payload["marca"] = str(marca).strip()
+            payload["marca"] = self._clean_str(marca)
 
         descricao_curta = self._pick(row, "descricao_curta", "descrição curta")
         if descricao_curta not in (None, ""):
-            payload["descricaoCurta"] = str(descricao_curta).strip()
+            payload["descricaoCurta"] = self._clean_str(descricao_curta)
 
         return payload
 
     def find_product_by_code(self, codigo: str) -> Tuple[bool, Any]:
-        codigo = str(codigo or "").strip()
+        codigo = self._clean_str(codigo)
         if not codigo:
             return False, "Código vazio."
 
@@ -313,13 +369,14 @@ class BlingAPIClient:
         items = self._data_list(payload)
         if not items:
             return True, None
+
         return True, items[0]
 
     def upsert_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
         if not isinstance(row, dict):
             return False, "Linha do produto inválida."
 
-        codigo = str(self._pick(row, "codigo", "sku") or "").strip()
+        codigo = self._clean_str(self._pick(row, "codigo", "sku"))
         payload = self._normalize_product_payload(row)
 
         if not payload.get("nome"):
@@ -335,6 +392,7 @@ class BlingAPIClient:
             product_id = self._pick(found, "id")
             if product_id in (None, ""):
                 return False, {"erro": "Produto localizado sem id.", "produto": found}
+
             return self.request("PUT", f"/produtos/{product_id}", json=payload)
 
         return self.request("POST", "/produtos", json=payload)
@@ -347,7 +405,7 @@ class BlingAPIClient:
         deposito_id: Optional[str] = None,
         preco: Optional[float] = None,
     ) -> Tuple[bool, Any]:
-        codigo = str(codigo or "").strip()
+        codigo = self._clean_str(codigo)
         if not codigo:
             return False, "Código do produto ausente para atualização de estoque."
 
@@ -371,18 +429,27 @@ class BlingAPIClient:
         }
 
         if deposito_id not in (None, ""):
-            body["deposito"] = {"id": str(deposito_id).strip()}
+            body["deposito"] = {"id": self._clean_str(deposito_id)}
 
         preco_float = self._to_float(preco)
         if preco_float is not None:
             body["preco"] = preco_float
 
-        candidates: Iterable[str] = (
+        raw_candidates: Iterable[str] = (
             self.auth.settings.stock_write_path or "/estoques",
             "/estoques",
             "/produtos/estoques",
             f"/produtos/{product_id}/estoques",
         )
+
+        candidates: List[str] = []
+        vistos = set()
+        for path in raw_candidates:
+            path_limpo = self._clean_str(path)
+            if not path_limpo or path_limpo in vistos:
+                continue
+            vistos.add(path_limpo)
+            candidates.append(path_limpo)
 
         tried: List[Any] = []
         for path in candidates:
