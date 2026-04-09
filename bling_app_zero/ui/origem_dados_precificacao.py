@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-
 import pandas as pd
 import streamlit as st
 
@@ -133,9 +132,9 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
             coluna_destino,
         )
 
-        serie_preco_calculado = df_precificado[coluna_resultado].copy()
+        # 🔥 GARANTIA: jogar preço calculado na coluna real de venda
+        df_precificado[coluna_destino] = df_precificado[coluna_resultado].copy()
 
-        df_precificado[coluna_destino] = serie_preco_calculado
         st.session_state["coluna_preco_unitario_destino"] = coluna_destino
         st.session_state["preco_calculado_coluna"] = coluna_resultado
 
@@ -175,8 +174,12 @@ def render_precificacao(df_base):
     df_precificado = _aplicar_precificacao(df_base_calculo)
 
     if safe_df_dados(df_precificado):
+        # 🔥 CORREÇÃO PRINCIPAL
+        st.session_state["df_base"] = df_precificado.copy()
+        st.session_state["df_dados"] = df_precificado.copy()
         st.session_state["df_saida"] = df_precificado.copy()
         st.session_state["df_final"] = df_precificado.copy()
+
         df_preview = df_precificado
     else:
         df_preview = df_base_calculo
