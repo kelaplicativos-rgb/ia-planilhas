@@ -123,6 +123,17 @@ def _normalizar_quantidade(valor, fallback: int) -> int:
         return int(fallback)
 
 
+def _modelo_tem_estrutura(df) -> bool:
+    """
+    Para modelo Bling, basta existir estrutura de colunas.
+    Não exige linhas, porque o modelo oficial pode vir só com cabeçalho.
+    """
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
 def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
     try:
         df_saida = df_saida.copy()
@@ -173,7 +184,6 @@ def render_origem_dados() -> None:
             st.session_state["etapa_origem"] = "origem"
             st.rerun()
 
-    # 🔥 CORREÇÃO: remover callback duplicado
     df_origem = render_origem_entrada()
 
     origem_atual = _obter_origem_atual()
@@ -191,7 +201,6 @@ def render_origem_dados() -> None:
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao sincronizar estado com origem: {e}", "ERROR")
 
-    # 🔥 BLINDAGEM FINAL DE ETAPA
     etapa = _normalizar_etapa_origem()
 
     st.markdown("---")
@@ -215,7 +224,9 @@ def render_origem_dados() -> None:
 
     render_modelo_bling(operacao)
 
-    if not safe_df_dados(obter_modelo_ativo()):
+    # CORREÇÃO:
+    # modelo do Bling precisa ser aceito com colunas mesmo sem linhas
+    if not _modelo_tem_estrutura(obter_modelo_ativo()):
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
