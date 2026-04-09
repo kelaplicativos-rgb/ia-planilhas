@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 try:
@@ -43,6 +44,13 @@ garantir_estado_base()
 # HELPERS DE ETAPA
 # =========================
 ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
+
+
+def _safe_df(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
 
 
 def _normalizar_etapa(valor: object) -> str:
@@ -125,32 +133,33 @@ elif etapa == "mapeamento":
 # ETAPA 3 — FINAL / DOWNLOAD
 # =========================
 elif etapa == "final":
-
     df_final = st.session_state.get("df_final")
     df_saida = st.session_state.get("df_saida")
 
+    df_final_valido = _safe_df(df_final)
+    df_saida_valido = _safe_df(df_saida)
+
     # 🔒 BLOQUEIO DE SEGURANÇA
-    if df_final is None and df_saida is None:
-        log_debug("FINAL sem dados", "ERROR")
+    if not df_final_valido and not df_saida_valido:
+        log_debug("FINAL sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
 
-        if st.button("⬅️ Voltar"):
+        if st.button("⬅️ Voltar", use_container_width=True):
             _ir_para("mapeamento")
 
         st.stop()
 
     # 🔥 SINCRONIZAÇÃO
-    if df_final is None and df_saida is not None:
+    if not df_final_valido and df_saida_valido:
         st.session_state["df_final"] = df_saida.copy()
 
-    if df_saida is None and df_final is not None:
+    if not df_saida_valido and df_final_valido:
         st.session_state["df_saida"] = df_final.copy()
 
     render_preview_final()
 
     st.markdown("---")
 
-    # 🔥 BOTÃO VOLTAR FUNCIONAL
     if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
         _ir_para("mapeamento")
 
