@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import (
-    garantir_estado_base,
-    log_debug,
-    render_debug_panel,
-    render_preview_final,
-)
+try:
+    from bling_app_zero.ui.app_helpers import (
+        garantir_estado_base,
+        log_debug,
+        render_debug_panel,
+        render_preview_final,
+    )
+except ImportError:
+    from bling_app_zero.ui.app_helpers import (
+        garantir_estado_base,
+        log_debug,
+        render_preview_final,
+    )
+
+    def render_debug_panel():
+        return None
+
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.utils.init_app import inicializar_app
