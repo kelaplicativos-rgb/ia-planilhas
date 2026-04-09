@@ -32,7 +32,6 @@ except Exception:
     aplicar_validacao_gtin_df = None
 
 
-# 🔥 CORREÇÃO PRINCIPAL
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
@@ -48,7 +47,6 @@ def garantir_estado_base() -> None:
 
         etapa_atual = str(st.session_state.get("etapa_origem", "") or "").strip().lower()
 
-        # 🔥 NÃO RESETAR FINAL
         if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
             st.session_state["etapa_origem"] = "origem"
 
@@ -164,7 +162,46 @@ def exportar_download_bytes(df: pd.DataFrame) -> bytes:
 
 
 # ==========================================================
-# PREVIEW FINAL (JÁ FUNCIONANDO)
+# DEBUG PANEL
+# ==========================================================
+def render_debug_panel() -> None:
+    try:
+        logs = st.session_state.get("logs", [])
+
+        with st.expander("Debug / Logs", expanded=False):
+            if not logs:
+                st.caption("Nenhum log disponível.")
+            else:
+                qtd = min(len(logs), 200)
+                ultimos = logs[-qtd:]
+                texto = "\n".join(ultimos)
+                st.text_area(
+                    "Logs do sistema",
+                    value=texto,
+                    height=220,
+                    key="debug_logs_textarea",
+                )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("Atualizar logs", key="btn_atualizar_logs", use_container_width=True):
+                    st.rerun()
+
+            with col2:
+                if st.button("Limpar logs", key="btn_limpar_logs", use_container_width=True):
+                    st.session_state["logs"] = []
+                    st.rerun()
+
+    except Exception as e:
+        try:
+            st.warning(f"Falha ao renderizar painel de debug: {e}")
+        except Exception:
+            pass
+
+
+# ==========================================================
+# PREVIEW FINAL
 # ==========================================================
 def render_preview_final() -> None:
     sincronizar_df_final()
