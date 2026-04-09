@@ -53,38 +53,32 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     )
 
 
-# 🔥 CORREÇÃO REAL: alinhar df_saida com modelo
+# 🔥 CORREÇÃO ROBUSTA
 def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     try:
         modelo = obter_modelo_ativo()
 
-        # se já existe e está ok → não recria
-        if safe_df_dados(st.session_state.get("df_saida")) and isinstance(
-            modelo, pd.DataFrame
-        ):
-            df_saida_existente = st.session_state["df_saida"]
+        if isinstance(modelo, pd.DataFrame) and len(modelo.columns) > 0:
+            precisa_recriar = True
 
-            # 🔥 SE MODELO MUDOU → RECRIAR BASE
-            if list(df_saida_existente.columns) != list(modelo.columns):
+            df_saida_existente = st.session_state.get("df_saida")
+
+            if safe_df_dados(df_saida_existente):
+                if list(df_saida_existente.columns) == list(modelo.columns):
+                    precisa_recriar = False
+
+            if precisa_recriar:
                 df_saida = pd.DataFrame(
                     index=range(len(df_origem)), columns=modelo.columns
                 )
             else:
-                return df_saida_existente
+                df_saida = df_saida_existente.copy()
 
         else:
-            if isinstance(modelo, pd.DataFrame):
-                df_saida = pd.DataFrame(
-                    index=range(len(df_origem)), columns=modelo.columns
-                )
-            else:
-                df_saida = df_origem.copy()
+            df_saida = df_origem.copy()
 
         st.session_state["df_saida"] = df_saida.copy()
-
-        # 🔒 só cria df_final se não existir
-        if not safe_df_dados(st.session_state.get("df_final")):
-            st.session_state["df_final"] = df_saida.copy()
+        st.session_state["df_final"] = df_saida.copy()
 
         return df_saida
 
@@ -146,6 +140,7 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
             )
 
             df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
+
             df_saida["Quantidade"] = df_saida["Quantidade"].apply(
                 lambda v: _normalizar_quantidade(v, qtd)
             )
@@ -161,7 +156,7 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
 # RENDER
 # =========================================================
 def render_origem_dados() -> None:
-    etapa = st.session_state.get("etapa_origem", "origem")
+    etapa = st.session_state.get("etapa", "origem")
 
     st.subheader("📦 Origem dos dados")
 
@@ -177,8 +172,9 @@ def render_origem_dados() -> None:
     origem_atual = _obter_origem_atual()
 
     if "site" in origem_atual and not st.session_state.get("site_processado"):
-        st.info("🔎 Execute a busca do site para continuar.")
-        return
+        if not safe_df_dados(df_origem):
+            st.info("🔎 Execute a busca do site para continuar.")
+            return
 
     if not safe_df_dados(df_origem):
         st.info("Selecione a origem e carregue os dados para continuar.")
@@ -210,10 +206,12 @@ def render_origem_dados() -> None:
         df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
 
     st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("---")
 
-    render_precificacao(df_origem)
+    # 🔥 CORREÇÃO: agora usa df_saida
+    render_precificacao(df_saida)
 
     st.markdown("---")
 
