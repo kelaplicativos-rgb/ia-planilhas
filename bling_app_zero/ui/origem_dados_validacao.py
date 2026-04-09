@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from bling_app_zero.ui.origem_dados_estado import safe_df_dados
 
@@ -18,7 +18,6 @@ def obter_modelo_ativo():
     return None
 
 
-# 🔥 NOVO: valida estrutura mínima (colunas)
 def _modelo_tem_estrutura(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
@@ -54,7 +53,7 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     if not safe_df_dados(df_final):
         erros.append("A base final ainda não foi preparada.")
 
-    # 🔥 CORREÇÃO AQUI
+    # Para modelo Bling, basta existir estrutura de colunas.
     if not _modelo_tem_estrutura(modelo_ativo):
         if tipo == "cadastro":
             erros.append("Anexe o modelo oficial de cadastro do Bling.")
