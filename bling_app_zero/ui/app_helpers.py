@@ -50,31 +50,22 @@ def garantir_estado_base() -> None:
         if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
             st.session_state["etapa_origem"] = "origem"
 
-        if "area_app" not in st.session_state or not st.session_state.get("area_app"):
+        if "area_app" not in st.session_state:
             st.session_state["area_app"] = "Fluxo principal"
 
-        if "bloquear_campos_auto" not in st.session_state or not isinstance(
-            st.session_state.get("bloquear_campos_auto"), dict
-        ):
+        if "bloquear_campos_auto" not in st.session_state:
             st.session_state["bloquear_campos_auto"] = {}
 
     except Exception:
-        try:
-            st.session_state["logs"] = st.session_state.get("logs", [])
-            st.session_state["etapa_origem"] = "origem"
-            st.session_state["area_app"] = "Fluxo principal"
-            st.session_state["bloquear_campos_auto"] = st.session_state.get(
-                "bloquear_campos_auto", {}
-            )
-        except Exception:
-            pass
+        st.session_state["logs"] = []
+        st.session_state["etapa_origem"] = "origem"
+        st.session_state["area_app"] = "Fluxo principal"
+        st.session_state["bloquear_campos_auto"] = {}
 
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
-        if "logs" not in st.session_state or not isinstance(
-            st.session_state.get("logs"), list
-        ):
+        if "logs" not in st.session_state:
             st.session_state["logs"] = []
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -85,22 +76,45 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 
 
 # ==========================================================
-# HELPERS GERAIS
+# DEBUG PANEL (🔥 FALTAVA ISSO)
 # ==========================================================
-def _safe_text(value: Any) -> str:
+def render_debug_panel() -> None:
     try:
-        if value is None:
-            return ""
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
-    return str(value).strip()
+        logs = st.session_state.get("logs", [])
+
+        with st.expander("🧠 Debug / Logs", expanded=False):
+
+            if not logs:
+                st.caption("Nenhum log disponível.")
+            else:
+                texto = "\n".join(logs[-200:])
+                st.text_area(
+                    "Logs do sistema",
+                    value=texto,
+                    height=220,
+                )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("🔄 Atualizar logs", use_container_width=True):
+                    st.rerun()
+
+            with col2:
+                if st.button("🧹 Limpar logs", use_container_width=True):
+                    st.session_state["logs"] = []
+                    st.rerun()
+
+    except Exception as e:
+        st.warning(f"Erro no debug panel: {e}")
 
 
+# ==========================================================
+# HELPERS
+# ==========================================================
 def safe_df_from_state(key: str) -> pd.DataFrame | None:
     df = st.session_state.get(key)
-    if isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0:
+    if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
         return df.copy()
     return None
 
@@ -123,34 +137,23 @@ def sincronizar_df_final() -> None:
 # EXPORTAÇÃO
 # ==========================================================
 def _exportar_excel_fallback(df: pd.DataFrame) -> bytes:
-    df_saida = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
-
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_saida.to_excel(writer, sheet_name="Planilha", index=False)
-
+        df.to_excel(writer, index=False)
     output.seek(0)
     return output.getvalue()
 
 
 def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
-    if _df_to_excel_bytes_utils is not None:
+    if _df_to_excel_bytes_utils:
         try:
-            retorno = _df_to_excel_bytes_utils(df)
-            if isinstance(retorno, bytes):
-                return retorno
-            if hasattr(retorno, "getvalue"):
-                return retorno.getvalue()
+            return _df_to_excel_bytes_utils(df)
         except Exception:
             pass
 
-    if _exportar_excel_robusto is not None:
+    if _exportar_excel_robusto:
         try:
-            retorno = _exportar_excel_robusto(df)
-            if isinstance(retorno, bytes):
-                return retorno
-            if hasattr(retorno, "getvalue"):
-                return retorno.getvalue()
+            return _exportar_excel_robusto(df)
         except Exception:
             pass
 
@@ -162,84 +165,32 @@ def exportar_download_bytes(df: pd.DataFrame) -> bytes:
 
 
 # ==========================================================
-# DEBUG PANEL
-# ==========================================================
-def render_debug_panel() -> None:
-    try:
-        logs = st.session_state.get("logs", [])
-
-        with st.expander("Debug / Logs", expanded=False):
-            if not logs:
-                st.caption("Nenhum log disponível.")
-            else:
-                qtd = min(len(logs), 200)
-                ultimos = logs[-qtd:]
-                texto = "\n".join(ultimos)
-                st.text_area(
-                    "Logs do sistema",
-                    value=texto,
-                    height=220,
-                    key="debug_logs_textarea",
-                )
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button("Atualizar logs", key="btn_atualizar_logs", use_container_width=True):
-                    st.rerun()
-
-            with col2:
-                if st.button("Limpar logs", key="btn_limpar_logs", use_container_width=True):
-                    st.session_state["logs"] = []
-                    st.rerun()
-
-    except Exception as e:
-        try:
-            st.warning(f"Falha ao renderizar painel de debug: {e}")
-        except Exception:
-            pass
-
-
-# ==========================================================
 # PREVIEW FINAL
 # ==========================================================
 def render_preview_final() -> None:
     sincronizar_df_final()
-    df_fluxo = get_df_fluxo()
+    df = get_df_fluxo()
 
-    if df_fluxo is None:
-        st.warning("Nenhum dado disponível para o preview final.")
+    if df is None:
+        st.warning("Nenhum dado disponível.")
         return
 
-    st.divider()
     st.subheader("Preview final")
 
-    with st.expander("📦 Ver dados finais", expanded=False):
-        st.dataframe(df_fluxo.head(20), use_container_width=True)
+    st.dataframe(df.head(20), use_container_width=True)
 
-    col1, col2 = st.columns(2)
+    if st.button("⬅️ Voltar"):
+        st.session_state["etapa_origem"] = "mapeamento"
+        st.rerun()
 
-    with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
-            st.session_state["etapa_origem"] = "mapeamento"
-            st.rerun()
+    excel_bytes = exportar_download_bytes(df)
 
-    with col2:
-        if st.button("🔄 Atualizar preview", use_container_width=True):
-            st.session_state["df_final"] = df_fluxo.copy()
-            st.rerun()
+    st.download_button(
+        "⬇️ Baixar planilha",
+        data=excel_bytes,
+        file_name="bling_final.xlsx",
+        use_container_width=True,
+    )
 
-    excel_bytes = exportar_download_bytes(df_fluxo)
-
-    if excel_bytes:
-        st.download_button(
-            "⬇️ Baixar planilha final",
-            data=excel_bytes,
-            file_name="bling_final.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    st.divider()
     st.subheader("Integração com Bling")
     render_bling_panel()
