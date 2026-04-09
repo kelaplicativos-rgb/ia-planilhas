@@ -78,7 +78,4 @@ elif etapa == "final":
 # =========================
 # DEBUG
 # =========================
-render_debug_panel(
-    download_key="btn_baixar_log_debug",
-    file_name="debug.txt",
-)
+render_debug_panel()
