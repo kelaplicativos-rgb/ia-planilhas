@@ -275,9 +275,11 @@ def ler_planilha_segura(arquivo) -> pd.DataFrame:
         df = _normalizar_df_texto(df)
         df = _limpar_dataframe_lido(df)
 
-        if df.empty:
-            st.error("A planilha foi lida, mas está vazia após limpeza.")
-            log_debug("Planilha vazia após limpeza.", "WARNING")
+        # 🔥 CORREÇÃO CRÍTICA AQUI
+        # permite DataFrame com colunas mesmo sem linhas (modelo Bling)
+        if df.empty and len(df.columns) == 0:
+            st.error("A planilha não possui colunas válidas.")
+            log_debug("Planilha sem colunas após leitura.", "ERROR")
             return pd.DataFrame()
 
         log_debug(f"Leitura segura concluída com sucesso. Shape={df.shape}", "SUCCESS")
@@ -291,4 +293,3 @@ def ler_planilha_segura(arquivo) -> pd.DataFrame:
 
 def ler_planilha_excel(arquivo) -> pd.DataFrame:
     return ler_planilha_segura(arquivo)
-
