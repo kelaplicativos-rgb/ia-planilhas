@@ -7,7 +7,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.bling_panel import render_bling_panel
+# ==========================================================
+# BLING PANEL (BLINDADO)
+# ==========================================================
+try:
+    from bling_app_zero.ui.bling_panel import render_bling_panel
+except Exception:
+    def render_bling_panel():
+        st.warning("Painel do Bling indisponível no momento.")
 
 # ==========================================================
 # IMPORTS OPCIONAIS / BLINDAGEM
@@ -142,16 +149,11 @@ def _safe_str(valor: Any) -> str:
 
 
 def _normalizar_coluna(nome: Any) -> str:
-    texto = _safe_str(nome).lower()
-    return texto
+    return _safe_str(nome).lower()
 
 
 def _tem_coluna_gtin(df: pd.DataFrame) -> bool:
-    for col in df.columns:
-        nome = _normalizar_coluna(col)
-        if "gtin" in nome or "ean" in nome:
-            return True
-    return False
+    return any("gtin" in _normalizar_coluna(col) or "ean" in _normalizar_coluna(col) for col in df.columns)
 
 
 # ==========================================================
@@ -162,7 +164,7 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     if not _tem_coluna_gtin(df):
-        return df  # 🔥 evita processamento desnecessário
+        return df
 
     try:
         modo = _safe_str(st.session_state.get("gtin_modo_valor") or "limpar").lower()
