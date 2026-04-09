@@ -18,7 +18,7 @@ from bling_app_zero.utils.init_app import inicializar_app
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.24"  # 🔥 atualizado
+APP_VERSION = "1.0.24"
 
 
 # =========================
