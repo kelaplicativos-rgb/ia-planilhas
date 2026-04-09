@@ -110,8 +110,6 @@ def render_origem_dados() -> None:
 
     st.subheader("📦 Origem dos dados")
 
-    # 🔥 NÃO EXISTE MAIS etapa final aqui
-
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
             st.session_state["etapa_origem"] = "origem"
@@ -161,13 +159,15 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
+    # 🔥 GARANTE BASE ÚNICA
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     st.session_state["df_saida"] = df_saida.copy()
 
     st.markdown("---")
 
-    render_precificacao(df_origem)
+    # 🔥 CORREÇÃO CRÍTICA: USA DF_SAIDA
+    render_precificacao(df_saida)
 
     st.markdown("---")
 
