@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import hashlib
 
 import pandas as pd
 import streamlit as st
@@ -18,13 +19,6 @@ from bling_app_zero.utils import (
     log_debug,
 )
 
-from bling_app_zero.utils.excel_helpers import (
-    arquivo_planilha_permitido,
-    hash_arquivo_upload,
-    nome_arquivo,
-    texto_extensoes_planilha,
-)
-
 from bling_app_zero.utils.xml_nfe import (
     arquivo_parece_xml_nfe,
     ler_xml_nfe,
@@ -32,6 +26,58 @@ from bling_app_zero.utils.xml_nfe import (
 
 
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
+
+
+# ==========================================================
+# HELPERS DE COMPATIBILIDADE
+# ==========================================================
+def arquivo_planilha_permitido(arquivo: Any) -> bool:
+    try:
+        nome = str(getattr(arquivo, "name", "") or "").strip().lower()
+        return nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb", ".csv"))
+    except Exception:
+        return False
+
+
+def hash_arquivo_upload(arquivo: Any) -> str:
+    try:
+        nome = str(getattr(arquivo, "name", "") or "")
+        tamanho = str(getattr(arquivo, "size", "") or "")
+
+        conteudo = b""
+        if hasattr(arquivo, "getvalue"):
+            try:
+                conteudo = arquivo.getvalue() or b""
+            except Exception:
+                conteudo = b""
+        elif hasattr(arquivo, "read"):
+            try:
+                pos = None
+                if hasattr(arquivo, "tell"):
+                    pos = arquivo.tell()
+                conteudo = arquivo.read() or b""
+                if pos is not None and hasattr(arquivo, "seek"):
+                    arquivo.seek(pos)
+            except Exception:
+                conteudo = b""
+
+        base = nome.encode("utf-8", errors="ignore") + b"|" + tamanho.encode(
+            "utf-8", errors="ignore"
+        ) + b"|" + conteudo
+        return hashlib.md5(base).hexdigest()
+    except Exception:
+        return ""
+
+
+def nome_arquivo(arquivo: Any) -> str:
+    try:
+        return str(getattr(arquivo, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def texto_extensoes_planilha() -> str:
+    return ".xlsx, .xls, .xlsm, .xlsb, .csv"
 
 
 # ==========================================================
@@ -134,7 +180,9 @@ def _salvar_modelo_bling(
         return _somente_cabecalho(df_modelo)
 
 
-def _ler_modelo_bling_upload(arquivo_modelo: Any, operacao: str) -> pd.DataFrame | None:
+def _ler_modelo_bling_upload(
+    arquivo_modelo: Any, operacao: str
+) -> pd.DataFrame | None:
     try:
         if arquivo_modelo is None:
             chave_df, _, _ = _obter_chaves_modelo(operacao)
@@ -186,7 +234,7 @@ def _limpar_modelo_bling_salvo(operacao: str) -> None:
 # ==========================================================
 def _garantir_etapa_origem_valida() -> None:
     try:
-        etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
+        etapa = str(st.session_state.get("etapa_origem", "origem") or "").strip().lower()
         if etapa not in ETAPAS_VALIDAS_ORIGEM:
             log_debug(f"Etapa inválida: {etapa}", "ERROR")
             st.session_state["etapa_origem"] = "origem"
