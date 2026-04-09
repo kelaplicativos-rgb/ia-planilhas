@@ -9,7 +9,6 @@ try:
         df_to_excel_bytes,
         exportar_dataframe_para_excel,
         exportar_df_exato_para_excel_bytes,
-        exportar_excel_bytes,
         gerar_zip_com_arquivos,
         gerar_zip_processamento,
         ler_planilha_excel,
@@ -27,7 +26,6 @@ except Exception as e:
     df_to_excel_bytes = _erro
     exportar_dataframe_para_excel = _erro
     exportar_df_exato_para_excel_bytes = _erro
-    exportar_excel_bytes = _erro
     gerar_zip_com_arquivos = _erro
     gerar_zip_processamento = _erro
     ler_planilha_excel = _erro
@@ -56,7 +54,6 @@ __all__ = [
     "df_to_excel_bytes",
     "exportar_df_exato_para_excel_bytes",
     "exportar_dataframe_para_excel",
-    "exportar_excel_bytes",
     "gerar_zip_com_arquivos",
     "gerar_zip_processamento",
     "normalize_value",
