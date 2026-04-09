@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug, render_preview_final
+from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import (
     controlar_troca_operacao,
     controlar_troca_origem,
@@ -21,9 +21,6 @@ from bling_app_zero.ui.origem_dados_validacao import (
 )
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
@@ -113,25 +110,7 @@ def render_origem_dados() -> None:
 
     st.subheader("📦 Origem dos dados")
 
-    # 🔥 NOVO: etapa final (DOWNLOAD DIRETO)
-    if etapa == "final":
-        st.success("✅ Arquivo pronto para download")
-
-        df_final = st.session_state.get("df_final")
-
-        if not safe_df_dados(df_final):
-            st.warning("Arquivo final não encontrado.")
-            return
-
-        render_preview_final()
-
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
-            st.session_state["etapa_origem"] = "mapeamento"
-            st.rerun()
-
-        return
-
-    # =====================================================
+    # 🔥 NÃO EXISTE MAIS etapa final aqui
 
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
