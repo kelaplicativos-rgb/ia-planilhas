@@ -239,7 +239,6 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
         if not _safe_df(df_fluxo):
             return _serie_vazia_tamanho_origem(df_origem)
 
-        # PRIORIDADE 1 — nomes clássicos de preço de venda
         candidatos = [
             "preço de venda",
             "preco de venda",
@@ -255,14 +254,12 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
                 if candidato in nome:
                     return _alinhar_serie_para_origem(df_fluxo[col], df_origem)
 
-        # PRIORIDADE 2 — coluna nova criada pela precificação
         colunas_origem = set(df_origem.columns)
 
         for col in df_fluxo.columns:
             if col not in colunas_origem:
                 return _alinhar_serie_para_origem(df_fluxo[col], df_origem)
 
-        # PRIORIDADE 3 — detectar coluna alterada em relação à origem
         for col in df_fluxo.columns:
             if col in df_origem.columns:
                 try:
@@ -286,7 +283,6 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
                 except Exception:
                     continue
 
-        # FALLBACK — usa a coluna base apenas como último recurso
         coluna_preco_base = _get_coluna_preco_base_precificacao(df_origem)
         if coluna_preco_base and coluna_preco_base in df_fluxo.columns:
             return _alinhar_serie_para_origem(df_fluxo[coluna_preco_base], df_origem)
@@ -428,8 +424,6 @@ def render_origem_mapeamento():
         st.session_state["df_modelo_cadastro"] = df_modelo.copy()
     else:
         st.session_state["df_modelo_estoque"] = df_modelo.copy()
-
-    st.markdown("## 🔗 Mapeamento de colunas")
 
     topo_a, topo_b = st.columns([1, 1])
 
