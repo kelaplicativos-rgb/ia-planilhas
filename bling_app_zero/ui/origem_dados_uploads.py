@@ -247,6 +247,126 @@ def _normalizar_df_xml(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
+def _normalizar_texto_coluna(valor: Any) -> str:
+    try:
+        texto = str(valor if valor is not None else "").strip()
+        texto = texto.replace("\n", " ").replace("\r", " ")
+        while "  " in texto:
+            texto = texto.replace("  ", " ")
+        return texto
+    except Exception:
+        return ""
+
+
+def _coluna_parece_generica(col: Any) -> bool:
+    try:
+        texto = _normalizar_texto_coluna(col).lower()
+        if texto == "":
+            return True
+        if texto.isdigit():
+            return True
+        if texto.startswith("unnamed:"):
+            return True
+        if texto in {"none", "nan"}:
+            return True
+        return False
+    except Exception:
+        return True
+
+
+def _linha_parece_cabecalho(valores: list[Any]) -> bool:
+    try:
+        if not valores:
+            return False
+
+        textos = [_normalizar_texto_coluna(v) for v in valores]
+        preenchidos = [t for t in textos if t]
+
+        if not preenchidos:
+            return False
+
+        unicos = len(set(preenchidos))
+        proporcao_unicos = unicos / max(len(preenchidos), 1)
+        qtd_textuais = sum(1 for t in preenchidos if not t.isdigit())
+        proporcao_textual = qtd_textuais / max(len(preenchidos), 1)
+
+        return proporcao_unicos >= 0.7 and proporcao_textual >= 0.7
+    except Exception:
+        return False
+
+
+def _normalizar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if not isinstance(df, pd.DataFrame):
+            return df
+
+        df2 = df.copy()
+        usadas = set()
+        novas = []
+
+        for i, col in enumerate(df2.columns):
+            nome = _normalizar_texto_coluna(col) or f"Coluna_{i + 1}"
+            base = nome
+            c = 2
+
+            while nome in usadas:
+                nome = f"{base}_{c}"
+                c += 1
+
+            usadas.add(nome)
+            novas.append(nome)
+
+        df2.columns = novas
+        return df2.reset_index(drop=True)
+    except Exception:
+        return df
+
+
+def _promover_primeira_linha_para_header_modelo_se_preciso(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Corrige modelos Bling que chegam com colunas 0,1,2... porque a primeira
+    linha real do arquivo foi lida como dado e não como cabeçalho.
+    """
+    try:
+        if not isinstance(df, pd.DataFrame):
+            return df
+
+        if df.empty or len(df.columns) == 0:
+            return df
+
+        df2 = df.copy()
+
+        qtd_genericas = sum(1 for c in df2.columns if _coluna_parece_generica(c))
+        if qtd_genericas / max(len(df2.columns), 1) < 0.6:
+            return _normalizar_nomes_colunas(df2)
+
+        primeira_linha = df2.iloc[0].tolist()
+        if not _linha_parece_cabecalho(primeira_linha):
+            return _normalizar_nomes_colunas(df2)
+
+        novos_nomes = []
+        usados = set()
+
+        for i, valor in enumerate(primeira_linha):
+            nome = _normalizar_texto_coluna(valor) or f"Coluna_{i + 1}"
+            base = nome
+            c = 2
+
+            while nome in usados:
+                nome = f"{base}_{c}"
+                c += 1
+
+            usados.add(nome)
+            novos_nomes.append(nome)
+
+        df2.columns = novos_nomes
+        df2 = df2.iloc[1:].reset_index(drop=True)
+        return _normalizar_nomes_colunas(df2)
+
+    except Exception:
+        return df
+
+
 def _limpar_estado_origem() -> None:
     """
     Limpa apenas estados transitórios da origem atual,
@@ -354,6 +474,7 @@ def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
             return False
 
         df_modelo = df_modelo.copy()
+        df_modelo = _promover_primeira_linha_para_header_modelo_se_preciso(df_modelo)
         df_modelo.columns = [str(c).strip() for c in df_modelo.columns]
 
         if tipo_modelo == "cadastro":
