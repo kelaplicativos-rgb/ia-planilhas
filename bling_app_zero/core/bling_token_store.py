@@ -13,9 +13,19 @@ class BlingTokenStore:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
 
+    # =========================
+    # HELPERS
+    # =========================
     def _normalize_user_key(self, user_key: str) -> str:
         chave = str(user_key or "").strip()
         return chave or "default"
+
+    def _safe_json_load(self, raw: str) -> Dict[str, Any]:
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def _read_all(self) -> Dict[str, Any]:
         if not self.file_path.exists():
@@ -26,25 +36,36 @@ class BlingTokenStore:
             if not raw:
                 return {}
 
-            data = json.loads(raw)
-            return data if isinstance(data, dict) else {}
+            return self._safe_json_load(raw)
         except Exception:
             return {}
 
     def _write_all(self, data: Dict[str, Any]) -> None:
-        self.file_path.write_text(
+        # 🔒 escrita segura (evita corromper arquivo)
+        temp_path = self.file_path.with_suffix(".tmp")
+
+        temp_path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
+        temp_path.replace(self.file_path)
+
+    # =========================
+    # GET
+    # =========================
     def get(self, user_key: str = "default") -> Optional[Dict[str, Any]]:
         chave = self._normalize_user_key(user_key)
 
         with self._lock:
             data = self._read_all()
             value = data.get(chave)
+
             return value.copy() if isinstance(value, dict) else None
 
+    # =========================
+    # SAVE TOKEN
+    # =========================
     def save_token_payload(
         self,
         token_payload: Dict[str, Any],
@@ -54,6 +75,10 @@ class BlingTokenStore:
         chave = self._normalize_user_key(user_key)
         payload = token_payload if isinstance(token_payload, dict) else {}
 
+        access_token = str(payload.get("access_token", "") or "").strip()
+        if not access_token:
+            return {}
+
         now = datetime.now(timezone.utc)
 
         try:
@@ -62,10 +87,11 @@ class BlingTokenStore:
             expires_in = 0
 
         expires_at = now + timedelta(seconds=max(0, expires_in))
+
         atual = self.get(chave) or {}
 
         item = {
-            "access_token": str(payload.get("access_token", "") or "").strip(),
+            "access_token": access_token,
             "refresh_token": str(
                 payload.get("refresh_token", atual.get("refresh_token", "")) or ""
             ).strip(),
@@ -76,7 +102,7 @@ class BlingTokenStore:
             "last_auth_at": now.isoformat(),
             "company_name": (
                 str(company_name).strip()
-                if company_name is not None and str(company_name).strip()
+                if company_name and str(company_name).strip()
                 else atual.get("company_name")
             ),
         }
@@ -88,6 +114,9 @@ class BlingTokenStore:
 
         return item.copy()
 
+    # =========================
+    # UPDATE COMPANY
+    # =========================
     def update_company_name(self, company_name: str, user_key: str = "default") -> None:
         chave = self._normalize_user_key(user_key)
         nome = str(company_name or "").strip()
@@ -98,26 +127,39 @@ class BlingTokenStore:
         with self._lock:
             data = self._read_all()
             atual = data.get(chave, {})
+
             if not isinstance(atual, dict):
                 atual = {}
 
             atual["company_name"] = nome
             data[chave] = atual
+
             self._write_all(data)
 
+    # =========================
+    # DELETE
+    # =========================
     def delete(self, user_key: str = "default") -> bool:
         chave = self._normalize_user_key(user_key)
 
         with self._lock:
             data = self._read_all()
+
             if chave in data:
                 del data[chave]
                 self._write_all(data)
                 return True
+
             return False
 
+    # =========================
+    # EXPIRAÇÃO
+    # =========================
     @staticmethod
-    def is_expired(token_data: Optional[Dict[str, Any]], leeway_seconds: int = 120) -> bool:
+    def is_expired(
+        token_data: Optional[Dict[str, Any]],
+        leeway_seconds: int = 120,
+    ) -> bool:
         if not token_data:
             return True
 
@@ -132,6 +174,10 @@ class BlingTokenStore:
                 expires_dt = expires_dt.replace(tzinfo=timezone.utc)
 
             now = datetime.now(timezone.utc)
-            return now >= (expires_dt - timedelta(seconds=max(0, int(leeway_seconds))))
+
+            return now >= (
+                expires_dt - timedelta(seconds=max(0, int(leeway_seconds)))
+            )
+
         except Exception:
             return True
