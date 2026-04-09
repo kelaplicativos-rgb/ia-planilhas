@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug
+from bling_app_zero.ui.app_helpers import log_debug, render_preview_final
 from bling_app_zero.ui.origem_dados_estado import (
     controlar_troca_operacao,
     controlar_troca_origem,
@@ -24,7 +24,7 @@ from bling_app_zero.ui.origem_dados_validacao import (
 # =========================================================
 # HELPERS
 # =========================================================
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento"}
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
 def _obter_origem_atual() -> str:
@@ -98,77 +98,11 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
         return df_saida
 
 
-def _garantir_coluna(df: pd.DataFrame, coluna: str, valor_padrao="") -> pd.DataFrame:
-    try:
-        if coluna not in df.columns:
-            df[coluna] = valor_padrao
-        return df
-    except Exception:
-        return df
-
-
-def _normalizar_quantidade(valor, fallback: int) -> int:
-    try:
-        texto = str(valor or "").strip().lower()
-
-        if texto in {"", "nan", "none", "<na>"}:
-            return int(fallback)
-
-        if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
-            return 0
-
-        numero = int(float(str(valor).replace(",", ".")))
-        return max(numero, 0)
-    except Exception:
-        return int(fallback)
-
-
 def _modelo_tem_estrutura(df) -> bool:
-    """
-    Para modelo Bling, basta existir estrutura de colunas.
-    Não exige linhas, porque o modelo oficial pode vir só com cabeçalho.
-    """
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
     except Exception:
         return False
-
-
-def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
-    try:
-        df_saida = df_saida.copy()
-
-        st.markdown("### 🏬 Dados de estoque")
-
-        deposito = st.text_input(
-            "Nome do depósito",
-            value=str(st.session_state.get("deposito_nome", "") or ""),
-            key="deposito_nome",
-        )
-
-        if deposito:
-            df_saida = _garantir_coluna(df_saida, "Depósito", "")
-            df_saida["Depósito"] = deposito
-
-        if "site" in origem_atual:
-            qtd = st.number_input(
-                "Quantidade padrão",
-                min_value=0,
-                value=int(st.session_state.get("quantidade_fallback", 0) or 0),
-                step=1,
-                key="quantidade_fallback",
-            )
-
-            df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
-            df_saida["Quantidade"] = df_saida["Quantidade"].apply(
-                lambda v: _normalizar_quantidade(v, qtd)
-            )
-
-        return df_saida
-
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
-        return df_saida
 
 
 # =========================================================
@@ -178,6 +112,26 @@ def render_origem_dados() -> None:
     etapa = _normalizar_etapa_origem()
 
     st.subheader("📦 Origem dos dados")
+
+    # 🔥 NOVO: etapa final (DOWNLOAD DIRETO)
+    if etapa == "final":
+        st.success("✅ Arquivo pronto para download")
+
+        df_final = st.session_state.get("df_final")
+
+        if not safe_df_dados(df_final):
+            st.warning("Arquivo final não encontrado.")
+            return
+
+        render_preview_final()
+
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
+
+        return
+
+    # =====================================================
 
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
@@ -224,16 +178,11 @@ def render_origem_dados() -> None:
 
     render_modelo_bling(operacao)
 
-    # CORREÇÃO:
-    # modelo do Bling precisa ser aceito com colunas mesmo sem linhas
     if not _modelo_tem_estrutura(obter_modelo_ativo()):
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
     df_saida = _sincronizar_df_saida_base(df_origem)
-
-    if st.session_state.get("tipo_operacao_bling") == "estoque":
-        df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
 
     st.session_state["df_saida"] = df_saida.copy()
 
