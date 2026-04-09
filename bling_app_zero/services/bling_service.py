@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 import pandas as pd
 
@@ -22,37 +24,64 @@ class BlingService:
         }
 
     # =========================
-    # ENVIO DE PRODUTOS
+    # RETRY AUTOMÁTICO
+    # =========================
+    def _executar_com_retry(self, func, tentativas=3, delay=1):
+        ultimo_erro = None
+
+        for _ in range(tentativas):
+            ok, resp = func()
+
+            if ok:
+                return True, resp
+
+            ultimo_erro = resp
+            time.sleep(delay)
+
+        return False, ultimo_erro
+
+    # =========================
+    # EXECUÇÃO PARALELA
+    # =========================
+    def _executar_paralelo(self, tarefas, max_workers=5):
+        resultados = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(t) for t in tarefas]
+
+            for future in as_completed(futures):
+                try:
+                    resultados.append(future.result())
+                except Exception as e:
+                    resultados.append((False, str(e)))
+
+        return resultados
+
+    # =========================
+    # ENVIO DE PRODUTOS (TURBO)
     # =========================
     def enviar_produtos_df(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
         if df is None or df.empty:
             return False, {"erro": "DataFrame vazio para envio de produtos."}
 
-        logs: List[Dict[str, Any]] = []
-        sucesso = 0
-        erro = 0
+        tarefas = []
 
-        for i, row in df.iterrows():
+        for _, row in df.iterrows():
             row_dict = row.to_dict()
 
-            ok, resp = self.client.upsert_product(row_dict)
+            def task(r=row_dict):
+                return self._executar_com_retry(
+                    lambda: self.client.upsert_product(r)
+                )
 
-            if ok:
-                sucesso += 1
-                logs.append(self._log("sucesso", f"Produto enviado: {row_dict.get('codigo')}"))
-            else:
-                erro += 1
-                logs.append(self._log("erro", "Erro ao enviar produto", resp))
+            tarefas.append(task)
 
-        return True, {
-            "total": len(df),
-            "sucesso": sucesso,
-            "erro": erro,
-            "logs": logs,
-        }
+        resultados = self._executar_paralelo(tarefas)
+
+        return self._consolidar_resultados(resultados, df, "produto")
 
     # =========================
-    # ENVIO DE ESTOQUE
+    # ENVIO DE ESTOQUE (TURBO)
     # =========================
     def enviar_estoque_df(
         self,
@@ -63,29 +92,45 @@ class BlingService:
         if df is None or df.empty:
             return False, {"erro": "DataFrame vazio para envio de estoque."}
 
-        logs: List[Dict[str, Any]] = []
+        tarefas = []
+
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+
+            def task(r=row_dict):
+                codigo = r.get("codigo")
+                saldo = r.get("saldo") or r.get("estoque") or 0
+                deposito = r.get("deposito_id") or deposito_padrao
+
+                return self._executar_com_retry(
+                    lambda: self.client.update_stock(
+                        codigo=codigo,
+                        estoque=saldo,
+                        deposito_id=deposito,
+                    )
+                )
+
+            tarefas.append(task)
+
+        resultados = self._executar_paralelo(tarefas)
+
+        return self._consolidar_resultados(resultados, df, "estoque")
+
+    # =========================
+    # CONSOLIDADOR
+    # =========================
+    def _consolidar_resultados(self, resultados, df, tipo):
+        logs = []
         sucesso = 0
         erro = 0
 
-        for i, row in df.iterrows():
-            row_dict = row.to_dict()
-
-            codigo = row_dict.get("codigo")
-            saldo = row_dict.get("saldo") or row_dict.get("estoque") or 0
-            deposito = row_dict.get("deposito_id") or deposito_padrao
-
-            ok, resp = self.client.update_stock(
-                codigo=codigo,
-                estoque=saldo,
-                deposito_id=deposito,
-            )
-
+        for ok, resp in resultados:
             if ok:
                 sucesso += 1
-                logs.append(self._log("sucesso", f"Estoque enviado: {codigo}"))
+                logs.append(self._log("sucesso", f"{tipo} OK"))
             else:
                 erro += 1
-                logs.append(self._log("erro", f"Erro estoque: {codigo}", resp))
+                logs.append(self._log("erro", f"{tipo} erro", resp))
 
         return True, {
             "total": len(df),
