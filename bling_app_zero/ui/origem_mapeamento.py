@@ -99,7 +99,13 @@ def render_origem_mapeamento():
         return
 
     df_origem = st.session_state.get("df_origem")
-    df_modelo = st.session_state.get("df_modelo_mapeamento")
+
+    # 🔥 CORREÇÃO CRÍTICA: garantir modelo SEMPRE
+    df_modelo = (
+        st.session_state.get("df_modelo_mapeamento")
+        or st.session_state.get("df_modelo_cadastro")
+        or st.session_state.get("df_modelo_estoque")
+    )
 
     if not _safe_df_com_linhas(df_origem) or not _safe_df(df_modelo):
         st.warning("Dados inválidos.")
