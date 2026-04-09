@@ -3,24 +3,37 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
+# ==========================================================
+# VALIDAÇÃO DF
+# ==========================================================
 def safe_df_dados(df: Any) -> bool:
     try:
         return (
-            df is not None
-            and hasattr(df, "columns")
+            isinstance(df, pd.DataFrame)
             and len(df.columns) > 0
-            and not getattr(df, "empty", True)
+            and not df.empty
         )
     except Exception:
         return False
 
 
+def _df_tem_estrutura(df: Any) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+# ==========================================================
+# HELPERS
+# ==========================================================
 def _safe_str(valor: Any) -> str:
     try:
         texto = str(valor or "").strip()
@@ -35,21 +48,23 @@ def _normalizar_valor_fluxo(valor: Any) -> str:
     return _safe_str(valor).lower()
 
 
-# 🔥 RESTAURADO (OBRIGATÓRIO)
+# ==========================================================
+# UPLOAD ATIVO (CORRIGIDO)
+# ==========================================================
 def tem_upload_ativo() -> bool:
     try:
         return bool(
-            st.session_state.get("modelo_cadastro")
-            or st.session_state.get("modelo_estoque")
-            or st.session_state.get("arquivo_origem_planilha")
-            or st.session_state.get("arquivo_origem_xml")
-            or st.session_state.get("df_modelo_cadastro") is not None
-            or st.session_state.get("df_modelo_estoque") is not None
+            _df_tem_estrutura(st.session_state.get("df_modelo_cadastro"))
+            or _df_tem_estrutura(st.session_state.get("df_modelo_estoque"))
+            or _df_tem_estrutura(st.session_state.get("df_origem"))
         )
     except Exception:
         return False
 
 
+# ==========================================================
+# FINGERPRINT
+# ==========================================================
 def fingerprint_df(df: Any) -> str:
     try:
         if not safe_df_dados(df):
@@ -61,6 +76,9 @@ def fingerprint_df(df: Any) -> str:
         return ""
 
 
+# ==========================================================
+# LIMPEZA
+# ==========================================================
 def limpar_mapeamento_widgets() -> None:
     for chave in list(st.session_state.keys()):
         if str(chave).startswith("map_"):
@@ -90,9 +108,9 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
     st.session_state["etapa_origem"] = "origem"
 
 
-# =========================
+# ==========================================================
 # CONTROLE DE OPERAÇÃO
-# =========================
+# ==========================================================
 def controlar_troca_operacao(operacao: str, log_debug) -> None:
     operacao_atual = _safe_str(operacao)
     operacao_anterior = _safe_str(
@@ -124,9 +142,9 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
     st.session_state["_operacao_anterior_origem_dados"] = operacao_atual
 
 
-# =========================
+# ==========================================================
 # CONTROLE DE ORIGEM
-# =========================
+# ==========================================================
 def controlar_troca_origem(origem: str, log_debug) -> None:
     origem_atual = _normalizar_valor_fluxo(origem)
     origem_anterior = _normalizar_valor_fluxo(
@@ -150,9 +168,9 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
     st.session_state["_origem_anterior_origem_dados"] = origem_atual
 
 
-# =========================
+# ==========================================================
 # SINCRONIZAÇÃO
-# =========================
+# ==========================================================
 def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
     if not safe_df_dados(df_origem):
         return
