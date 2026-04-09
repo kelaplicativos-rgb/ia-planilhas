@@ -24,6 +24,25 @@ def safe_df_dados(df: Any) -> bool:
         return False
 
 
+def _safe_str(valor: Any) -> str:
+    try:
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.lower() in {"none", "nan", "<na>", "nat"}:
+            return ""
+        return texto
+    except Exception:
+        return ""
+
+
+def _normalizar_valor_fluxo(valor: Any) -> str:
+    try:
+        return _safe_str(valor).strip().lower()
+    except Exception:
+        return ""
+
+
 def fingerprint_df(df: Any) -> str:
     try:
         if not safe_df_dados(df):
@@ -41,7 +60,12 @@ def fingerprint_df(df: Any) -> str:
         except Exception:
             head_registros = []
 
-        base = f"{list(df_base.columns)}|{len(df_base)}|{head_registros}"
+        try:
+            colunas = [str(c).strip() for c in df_base.columns]
+        except Exception:
+            colunas = list(df_base.columns)
+
+        base = f"{colunas}|{len(df_base)}|{head_registros}"
         return hashlib.md5(base.encode("utf-8")).hexdigest()
     except Exception:
         return ""
@@ -63,6 +87,8 @@ def tem_upload_ativo() -> bool:
             or st.session_state.get("modelo_estoque")
             or st.session_state.get("arquivo_origem_planilha")
             or st.session_state.get("arquivo_origem_xml")
+            or st.session_state.get("df_modelo_cadastro") is not None
+            or st.session_state.get("df_modelo_estoque") is not None
         )
     except Exception:
         return False
@@ -76,7 +102,7 @@ def _pop_varias(chaves: list[str]) -> None:
             pass
 
 
-def _set_if_changed(key: str, value):
+def _set_if_changed(key: str, value: Any) -> None:
     try:
         if st.session_state.get(key) != value:
             st.session_state[key] = value
@@ -84,13 +110,15 @@ def _set_if_changed(key: str, value):
         pass
 
 
-def _forcar_etapa_valida():
+def _forcar_etapa_valida() -> None:
     """
-    Garantia absoluta: nunca deixar etapa inválida quebrar o sistema
+    Garantia absoluta: nunca deixar etapa inválida quebrar o sistema.
     """
-    etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
-
-    if etapa not in ETAPAS_VALIDAS_ORIGEM:
+    try:
+        etapa = _normalizar_valor_fluxo(st.session_state.get("etapa_origem", "origem") or "origem")
+        if etapa not in ETAPAS_VALIDAS_ORIGEM:
+            st.session_state["etapa_origem"] = "origem"
+    except Exception:
         st.session_state["etapa_origem"] = "origem"
 
 
@@ -120,6 +148,9 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
         "origem_dados_hash",
         "origem_dados_nome",
         "url_origem_site",
+        "coluna_em_mapeamento",
+        "campo_destino_mapeamento",
+        "preview_mapeamento_coluna",
     ]
 
     _pop_varias(chaves_reset)
@@ -137,62 +168,79 @@ def resetar_estado_fluxo(manter_modelos: bool = True) -> None:
             ]
         )
 
-    # 🔥 GARANTIA DE FLUXO
     st.session_state["etapa_origem"] = "origem"
+    _forcar_etapa_valida()
 
 
 def controlar_troca_operacao(operacao: str, log_debug) -> None:
-    operacao_anterior = st.session_state.get("_operacao_anterior_origem_dados")
+    operacao_atual = _safe_str(operacao)
+    operacao_anterior = _safe_str(st.session_state.get("_operacao_anterior_origem_dados"))
 
-    if operacao_anterior is None:
-        _set_if_changed("_operacao_anterior_origem_dados", operacao)
+    if not operacao_anterior:
+        _set_if_changed("_operacao_anterior_origem_dados", operacao_atual)
         return
 
-    if operacao_anterior == operacao:
+    if operacao_anterior == operacao_atual:
         return
 
     log_debug(
-        f"Operação alterada de '{operacao_anterior}' para '{operacao}'. "
+        f"Operação alterada de '{operacao_anterior}' para '{operacao_atual}'. "
         "Resetando estados transitórios do fluxo."
     )
 
     resetar_estado_fluxo(manter_modelos=True)
-
-    # 🔥 CORREÇÃO PRINCIPAL
     _set_if_changed("etapa_origem", "origem")
-
-    _set_if_changed("_operacao_anterior_origem_dados", operacao)
+    _set_if_changed("_operacao_anterior_origem_dados", operacao_atual)
 
 
 def controlar_troca_origem(origem: str, log_debug) -> None:
-    origem_anterior = st.session_state.get("_origem_anterior_origem_dados")
+    origem_atual = _normalizar_valor_fluxo(origem)
+    origem_anterior = _normalizar_valor_fluxo(
+        st.session_state.get("_origem_anterior_origem_dados")
+    )
 
-    if origem_anterior is None:
-        _set_if_changed("_origem_anterior_origem_dados", origem)
+    if not origem_anterior:
+        _set_if_changed("_origem_anterior_origem_dados", origem_atual)
         return
 
-    if origem_anterior == origem:
+    if origem_anterior == origem_atual:
         return
 
     log_debug(
-        f"Origem alterada de '{origem_anterior}' para '{origem}'. "
+        f"Origem alterada de '{origem_anterior}' para '{origem_atual}'. "
         "Resetando estados transitórios do fluxo."
     )
 
     resetar_estado_fluxo(manter_modelos=True)
-
-    # 🔥 CORREÇÃO PRINCIPAL
     _set_if_changed("etapa_origem", "origem")
-
-    _set_if_changed("_origem_anterior_origem_dados", origem)
+    _set_if_changed("_origem_anterior_origem_dados", origem_atual)
 
 
 def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
+    _forcar_etapa_valida()
+
     if not safe_df_dados(df_origem):
         return
 
     novo_fingerprint = fingerprint_df(df_origem)
-    fingerprint_atual = st.session_state.get("origem_dados_fingerprint", "")
+    fingerprint_atual = _safe_str(st.session_state.get("origem_dados_fingerprint", ""))
+
+    if not fingerprint_atual:
+        _set_if_changed("origem_dados_fingerprint", novo_fingerprint)
+        st.session_state["df_origem"] = df_origem.copy()
+
+        if not safe_df_dados(st.session_state.get("df_saida")):
+            st.session_state["df_saida"] = df_origem.copy()
+
+        if not safe_df_dados(st.session_state.get("df_final")):
+            st.session_state["df_final"] = st.session_state["df_saida"].copy()
+
+        if "bloquear_campos_auto" not in st.session_state or not isinstance(
+            st.session_state.get("bloquear_campos_auto"), dict
+        ):
+            st.session_state["bloquear_campos_auto"] = {}
+
+        return
 
     if fingerprint_atual != novo_fingerprint:
         log_debug("Nova origem detectada. Sincronizando estados do fluxo.")
@@ -213,8 +261,12 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
         st.session_state.pop("df_mapeado", None)
         st.session_state.pop("mapeamento_manual_cadastro", None)
         st.session_state.pop("mapeamento_manual_estoque", None)
+        st.session_state.pop("coluna_em_mapeamento", None)
+        st.session_state.pop("campo_destino_mapeamento", None)
+        st.session_state.pop("preview_mapeamento_coluna", None)
 
         limpar_mapeamento_widgets()
+        _forcar_etapa_valida()
         return
 
     st.session_state["df_origem"] = df_origem.copy()
@@ -229,3 +281,5 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
         st.session_state.get("bloquear_campos_auto"), dict
     ):
         st.session_state["bloquear_campos_auto"] = {}
+
+    _forcar_etapa_valida()
