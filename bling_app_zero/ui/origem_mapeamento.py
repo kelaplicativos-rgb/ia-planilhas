@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento"}
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
 def _safe_df(df) -> bool:
@@ -203,26 +203,55 @@ def render_origem_mapeamento():
     df_origem = _preparar_df_origem_para_mapeamento(df_origem)
     df_modelo = _preparar_df_modelo_para_mapeamento(df_modelo)
 
+    # mantém os dataframes preparados no estado
+    st.session_state["df_origem"] = df_origem
+    st.session_state["df_modelo_mapeamento"] = df_modelo
+
+    # mantém mapping salvo entre reruns
+    mapping_salvo = st.session_state.get("mapping_origem", {})
+    if not isinstance(mapping_salvo, dict):
+        mapping_salvo = {}
+
     mapping = {}
 
     for col_modelo in df_modelo.columns:
+        opcoes = [""] + list(df_origem.columns)
+        valor_atual = st.session_state.get(
+            f"map_{col_modelo}",
+            mapping_salvo.get(col_modelo, "")
+        )
+
+        if valor_atual not in opcoes:
+            valor_atual = ""
+
+        indice_atual = opcoes.index(valor_atual) if valor_atual in opcoes else 0
+
         mapping[col_modelo] = st.selectbox(
             col_modelo,
-            [""] + list(df_origem.columns),
+            opcoes,
+            index=indice_atual,
             key=f"map_{col_modelo}",
         )
 
+    st.session_state["mapping_origem"] = mapping
+
     df_saida = _montar_df_saida(df_origem, df_modelo, mapping)
 
-    st.dataframe(df_saida.head())
+    st.dataframe(df_saida.head(), use_container_width=True)
 
     st.session_state["df_saida"] = df_saida
     st.session_state["df_final"] = df_saida
 
-    # 🔥 CORREÇÃO PRINCIPAL AQUI
-    if st.button("🚀 Avançar"):
-        st.session_state["etapa_origem"] = "final"
-        st.rerun()
+    col1, col2 = st.columns(2)
 
-    if st.button("⬅️ Voltar"):
-        _voltar_para_origem()
+    with col1:
+        if st.button("🚀 Avançar", use_container_width=True):
+            st.session_state["df_saida"] = df_saida
+            st.session_state["df_final"] = df_saida
+            st.session_state["mapping_origem"] = mapping
+            st.session_state["etapa_origem"] = "final"
+            st.rerun()
+
+    with col2:
+        if st.button("⬅️ Voltar", use_container_width=True):
+            _voltar_para_origem()
