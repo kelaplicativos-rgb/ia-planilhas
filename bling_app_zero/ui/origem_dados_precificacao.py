@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -25,11 +26,14 @@ def _normalizar_nome_coluna(nome: str) -> str:
         return ""
 
 
-# 🔥 NOVO: detectar coluna de venda real
 def _detectar_coluna_venda(df: pd.DataFrame) -> str:
     candidatos = [
+        "preço unitário",
+        "preco unitario",
         "preço de venda",
         "preco de venda",
+        "preço venda",
+        "preco venda",
         "preço",
         "preco",
         "valor venda",
@@ -42,7 +46,43 @@ def _detectar_coluna_venda(df: pd.DataFrame) -> str:
             if c in nome:
                 return col
 
-    # fallback → primeira coluna
+    return df.columns[0]
+
+
+def _detectar_coluna_resultado_precificacao(
+    df: pd.DataFrame,
+    coluna_base: str,
+    coluna_destino: str,
+) -> str:
+    candidatos = [
+        "preço calculado",
+        "preco calculado",
+        "preço final",
+        "preco final",
+        "preço sugerido",
+        "preco sugerido",
+        "preço venda",
+        "preco venda",
+        "preço de venda",
+        "preco de venda",
+        "valor venda",
+        "valor final",
+        "preço unitário",
+        "preco unitario",
+    ]
+
+    for col in df.columns:
+        nome = _normalizar_nome_coluna(col)
+        for c in candidatos:
+            if c in nome:
+                return col
+
+    if coluna_destino in df.columns and coluna_destino != coluna_base:
+        return coluna_destino
+
+    if coluna_base in df.columns:
+        return coluna_base
+
     return df.columns[0]
 
 
@@ -86,10 +126,18 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
         if not safe_df_dados(df_precificado):
             return None
 
-        # 🔥 FORÇA RESULTADO NA COLUNA DE VENDA
         coluna_destino = _detectar_coluna_venda(df_precificado)
+        coluna_resultado = _detectar_coluna_resultado_precificacao(
+            df_precificado,
+            coluna_preco,
+            coluna_destino,
+        )
 
-        df_precificado[coluna_destino] = df_precificado[coluna_preco]
+        serie_preco_calculado = df_precificado[coluna_resultado].copy()
+
+        df_precificado[coluna_destino] = serie_preco_calculado
+        st.session_state["coluna_preco_unitario_destino"] = coluna_destino
+        st.session_state["preco_calculado_coluna"] = coluna_resultado
 
         return df_precificado
 
@@ -124,7 +172,6 @@ def render_precificacao(df_base):
         st.number_input("Custo fixo", min_value=0.0, key="custo_fixo")
         st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
 
-    # 🔥 recalcula automático
     df_precificado = _aplicar_precificacao(df_base_calculo)
 
     if safe_df_dados(df_precificado):
