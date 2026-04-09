@@ -41,7 +41,7 @@ if st.session_state.get("_cache_log"):
 # =========================
 # BLINDAGEM GLOBAL DE ETAPA
 # =========================
-ETAPAS_VALIDAS = {"origem", "mapeamento"}
+ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
 
 if "etapa_origem" not in st.session_state:
     st.session_state["etapa_origem"] = "origem"
@@ -66,6 +66,13 @@ if etapa == "origem":
 # =========================
 elif etapa == "mapeamento":
     render_origem_mapeamento()
+
+
+# =========================
+# ETAPA 3 — FINAL / DOWNLOAD
+# =========================
+elif etapa == "final":
+    render_preview_final()
 
 
 # =========================
