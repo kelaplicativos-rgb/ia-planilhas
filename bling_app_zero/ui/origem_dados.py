@@ -65,11 +65,6 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
 
 
 def _normalizar_etapa_origem() -> str:
-    """
-    Blindagem do fluxo:
-    qualquer etapa inválida volta para 'origem'
-    para evitar queda da tela após upload/reload.
-    """
     try:
         etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
 
@@ -178,9 +173,8 @@ def render_origem_dados() -> None:
             st.session_state["etapa_origem"] = "origem"
             st.rerun()
 
-    df_origem = render_origem_entrada(
-        lambda origem: controlar_troca_origem(origem, log_debug)
-    )
+    # 🔥 CORREÇÃO: remover callback duplicado
+    df_origem = render_origem_entrada()
 
     origem_atual = _obter_origem_atual()
 
@@ -196,6 +190,9 @@ def render_origem_dados() -> None:
         sincronizar_estado_com_origem(df_origem, log_debug)
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao sincronizar estado com origem: {e}", "ERROR")
+
+    # 🔥 BLINDAGEM FINAL DE ETAPA
+    etapa = _normalizar_etapa_origem()
 
     st.markdown("---")
 
