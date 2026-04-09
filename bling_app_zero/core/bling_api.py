@@ -1,1 +1,234 @@
+from __future__ import annotations
 
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+import pandas as pd
+
+from bling_app_zero.core.bling_auth import BlingAuthManager
+
+
+class BlingAPIClient:
+    def __init__(self, user_key: str = "default") -> None:
+        self.auth = BlingAuthManager(user_key=user_key)
+        self.base_url = self.auth.settings.api_base_url.rstrip("/")
+
+    # =========================
+    # PADRÃO DE RESPOSTA
+    # =========================
+    def _ok(self, data: Any) -> Tuple[bool, Dict[str, Any]]:
+        return True, {"ok": True, "data": data}
+
+    def _error(self, message: str, extra: Any = None) -> Tuple[bool, Dict[str, Any]]:
+        return False, {
+            "ok": False,
+            "erro": message,
+            "detalhes": extra,
+        }
+
+    def _headers(self, access_token: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "enable-jwt": "1",
+        }
+
+    @staticmethod
+    def _parse_response_payload(resp: httpx.Response) -> Any:
+        content_type = str(resp.headers.get("content-type", "")).lower()
+
+        if "application/json" in content_type:
+            try:
+                return resp.json()
+            except Exception:
+                return {
+                    "raw_text": resp.text,
+                    "parse_error": "Falha ao interpretar JSON da resposta.",
+                }
+
+        return resp.text
+
+    @staticmethod
+    def _clean_str(value: Any) -> str:
+        try:
+            return str(value or "").strip()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _normalize_situacao(value: Any) -> str:
+        texto = BlingAPIClient._clean_str(value).lower()
+
+        if not texto:
+            return "A"
+
+        mapa_ativo = {"a", "ativo", "active", "1", "true", "sim"}
+        mapa_inativo = {"i", "inativo", "inactive", "0", "false", "nao", "não", "desativado"}
+
+        if texto in mapa_ativo:
+            return "A"
+        if texto in mapa_inativo:
+            return "I"
+
+        return BlingAPIClient._clean_str(value).upper() or "A"
+
+    # =========================
+    # REQUEST BASE
+    # =========================
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        timeout: float = 30.0,
+    ) -> Tuple[bool, Any]:
+        ok, token_or_msg = self.auth.get_valid_access_token()
+        if not ok:
+            return self._error("Erro de autenticação", token_or_msg)
+
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        headers = self._headers(token_or_msg)
+
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                resp = client.request(
+                    method.upper(),
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json,
+                )
+
+                # 🔥 REFRESH AUTOMÁTICO
+                if resp.status_code == 401:
+                    refresh_ok, refresh_msg = self.auth.refresh_access_token()
+                    if not refresh_ok:
+                        return self._error("Erro ao renovar token", refresh_msg)
+
+                    ok2, token_or_msg2 = self.auth.get_valid_access_token()
+                    if not ok2:
+                        return self._error("Erro após refresh do token", token_or_msg2)
+
+                    headers = self._headers(token_or_msg2)
+                    resp = client.request(
+                        method.upper(),
+                        url,
+                        headers=headers,
+                        params=params,
+                        json=json,
+                    )
+
+                payload = self._parse_response_payload(resp)
+
+                if resp.status_code >= 400:
+                    return self._error(
+                        f"Erro HTTP {resp.status_code}",
+                        {
+                            "payload": payload,
+                            "url": url,
+                        },
+                    )
+
+                return self._ok(payload)
+
+        except httpx.TimeoutException as exc:
+            return self._error("Timeout com Bling", str(exc))
+        except httpx.RequestError as exc:
+            return self._error("Erro de conexão", str(exc))
+        except Exception as exc:
+            return self._error("Erro inesperado", str(exc))
+
+    # =========================
+    # BUSCAR PRODUTO POR CÓDIGO
+    # =========================
+    def get_product_by_codigo(self, codigo: str) -> Tuple[bool, Any]:
+        if not codigo:
+            return self._error("Código vazio")
+
+        return self.request(
+            "GET",
+            "/produtos",
+            params={"codigo": codigo},
+        )
+
+    # =========================
+    # PRODUTO (UPSERT REAL)
+    # =========================
+    def _normalize_product_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        nome = self._clean_str(row.get("nome") or row.get("descricao"))
+        codigo = self._clean_str(row.get("codigo") or row.get("sku"))
+
+        if not nome or not codigo:
+            return {}
+
+        payload: Dict[str, Any] = {
+            "nome": nome,
+            "codigo": codigo,
+            "tipo": "P",
+            "formato": "S",
+            "situacao": self._normalize_situacao(row.get("situacao")),
+            "unidade": "UN",
+        }
+
+        preco = row.get("preco") or row.get("preco_venda")
+        if preco not in (None, ""):
+            try:
+                payload["preco"] = float(str(preco).replace(",", "."))
+            except Exception:
+                pass
+
+        return payload
+
+    def upsert_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
+        payload = self._normalize_product_payload(row)
+
+        if not payload:
+            return self._error("Produto inválido ou incompleto", row)
+
+        codigo = payload.get("codigo")
+
+        # 🔥 VERIFICA SE EXISTE
+        ok, resp = self.get_product_by_codigo(codigo)
+
+        if ok:
+            data = resp.get("data", {})
+            if isinstance(data, dict) and data.get("data"):
+                produto_id = data["data"][0].get("id")
+
+                if produto_id:
+                    return self.request(
+                        "PUT",
+                        f"/produtos/{produto_id}",
+                        json=payload,
+                    )
+
+        # 🔥 SE NÃO EXISTE → CRIA
+        return self.request("POST", "/produtos", json=payload)
+
+    # =========================
+    # ESTOQUE
+    # =========================
+    def update_stock(
+        self,
+        *,
+        codigo: str,
+        estoque: float,
+        deposito_id: Optional[str] = None,
+    ) -> Tuple[bool, Any]:
+
+        if not codigo:
+            return self._error("Código vazio")
+
+        body = {
+            "codigo": codigo,
+            "saldo": float(estoque or 0),
+        }
+
+        # 🔥 GARANTE DEPÓSITO SE INFORMADO
+        if deposito_id:
+            body["deposito"] = {"id": deposito_id}
+
+        return self.request("POST", "/estoques", json=body)
