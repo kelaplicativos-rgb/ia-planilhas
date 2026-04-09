@@ -43,8 +43,6 @@ def _get_etapa() -> str:
 
 
 # =========================
-
-
 def _obter_origem_atual() -> str:
     try:
         for key in ["origem_dados", "origem_selecionada", "tipo_origem", "origem"]:
@@ -123,6 +121,33 @@ def _modelo_tem_estrutura(df) -> bool:
         return False
 
 
+def _render_configuracao_gtin() -> None:
+    st.markdown("---")
+    st.subheader("🔢 Tratamento de GTIN inválido")
+
+    opcoes = ["Deixar vazio", "Gerar GTIN válido automático"]
+
+    valor_atual = str(st.session_state.get("gtin_modo_label") or "").strip()
+    if valor_atual not in opcoes:
+        valor_atual = "Deixar vazio"
+
+    escolha = st.radio(
+        "Como tratar GTIN inválido?",
+        opcoes,
+        key="gtin_modo_label",
+        index=opcoes.index(valor_atual),
+        help=(
+            "Padrão profissional e compatível com o fluxo Bling: "
+            "GTIN inválido pode ficar vazio. Se preferir, o sistema pode gerar "
+            "um GTIN válido automático."
+        ),
+    )
+
+    st.session_state["gtin_modo_valor"] = (
+        "gerar" if escolha == "Gerar GTIN válido automático" else "limpar"
+    )
+
+
 # =========================================================
 # RENDER
 # =========================================================
@@ -187,6 +212,8 @@ def render_origem_dados() -> None:
     st.markdown("---")
 
     render_precificacao(df_saida)
+
+    _render_configuracao_gtin()
 
     st.markdown("---")
 
