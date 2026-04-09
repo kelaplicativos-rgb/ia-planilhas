@@ -76,6 +76,18 @@ def _set_if_changed(key: str, value: Any) -> None:
         pass
 
 
+def _df_tem_estrutura(df: pd.DataFrame | None) -> bool:
+    """
+    Considera válido um DataFrame com colunas, mesmo que venha sem linhas.
+    Isso é importante para modelos base do Bling que muitas vezes possuem
+    apenas o cabeçalho.
+    """
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
 def _garantir_etapa_origem_valida() -> None:
     """
     Impede que o fluxo fique preso em etapa inválida como 'upload'.
@@ -105,7 +117,7 @@ def _resetar_fluxo_para_origem() -> None:
 
 def _df_preview_seguro(df: pd.DataFrame | None) -> pd.DataFrame | None:
     try:
-        if not safe_df_dados(df):
+        if not _df_tem_estrutura(df):
             return df
 
         df_preview = df.copy()
@@ -458,7 +470,7 @@ def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
 
         hash_anterior = st.session_state.get(chave_hash, "")
 
-        nome_atual = getattr(arquivo, "name", "")
+        nome_atual = nome_arquivo(arquivo)
         chave_nome = (
             "modelo_cadastro_nome" if tipo_modelo == "cadastro" else "modelo_estoque_nome"
         )
@@ -469,12 +481,21 @@ def carregar_modelo_bling(arquivo: Any, tipo_modelo: str) -> bool:
 
         df_modelo = ler_planilha_segura(arquivo)
 
-        if not (safe_df_dados(df_modelo) or safe_df_dados_excel(df_modelo)):
+        if not (safe_df_dados(df_modelo) or safe_df_dados_excel(df_modelo) or _df_tem_estrutura(df_modelo)):
             st.error("Não foi possível ler o modelo Bling anexado.")
             return False
 
         df_modelo = df_modelo.copy()
         df_modelo = _promover_primeira_linha_para_header_modelo_se_preciso(df_modelo)
+
+        if not _df_tem_estrutura(df_modelo):
+            st.error("O modelo Bling anexado não possui colunas válidas.")
+            log_debug(
+                f"Modelo Bling sem estrutura válida ({tipo_modelo}): {nome_atual}",
+                "ERROR",
+            )
+            return False
+
         df_modelo.columns = [str(c).strip() for c in df_modelo.columns]
 
         if tipo_modelo == "cadastro":
@@ -555,20 +576,31 @@ def render_modelo_bling(operacao: str) -> None:
         carregar_modelo_bling(arquivo_modelo, tipo_modelo)
 
     df_modelo = _obter_df_modelo_por_tipo(tipo_modelo)
-    if safe_df_dados(df_modelo):
+    if _df_tem_estrutura(df_modelo):
         with st.expander(label_preview, expanded=False):
             try:
-                st.dataframe(
-                    _df_preview_seguro(df_modelo).head(5),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                if isinstance(df_modelo, pd.DataFrame) and df_modelo.empty:
+                    st.caption("Modelo carregado com sucesso. O arquivo contém cabeçalho/base sem linhas de exemplo.")
+                    st.dataframe(
+                        _df_preview_seguro(df_modelo).head(0),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.dataframe(
+                        _df_preview_seguro(df_modelo).head(5),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
             except Exception as e:
                 log_debug(
                     f"Erro ao renderizar {label_preview.lower()}: {e}",
                     "ERROR",
                 )
-                st.write(_df_preview_seguro(df_modelo).head(5))
+                try:
+                    st.write(_df_preview_seguro(df_modelo).head(5))
+                except Exception:
+                    st.write(df_modelo)
 
 
 def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
