@@ -44,7 +44,6 @@ def _is_coluna_deposito(nome) -> bool:
     return "deposit" in nome
 
 
-# 🔒 BLOQUEIO REAL ID (regra Bling)
 def _is_coluna_id(nome) -> bool:
     nome = str(nome).lower().strip()
     return nome == "id" or "id produto" in nome
@@ -79,7 +78,13 @@ def _obter_df_modelo():
 # CORE
 # =========================================================
 def _montar_df_saida(df_origem, df_modelo, mapping):
-    df_saida = pd.DataFrame(index=range(len(df_origem)))
+    # 🔥 CORREÇÃO: usa base existente se possível
+    df_saida_base = st.session_state.get("df_saida")
+
+    if isinstance(df_saida_base, pd.DataFrame) and len(df_saida_base) == len(df_origem):
+        df_saida = df_saida_base.copy()
+    else:
+        df_saida = pd.DataFrame(index=range(len(df_origem)))
 
     deposito = str(st.session_state.get("deposito_nome", "") or "")
 
@@ -100,7 +105,9 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
         if origem and origem in df_origem.columns:
             df_saida[col] = df_origem[origem].reset_index(drop=True)
         else:
-            df_saida[col] = ""
+            # 🔥 não sobrescreve se já existir valor (ex: preço calculado)
+            if col not in df_saida.columns:
+                df_saida[col] = ""
 
     return df_saida
 
@@ -131,11 +138,11 @@ def render_origem_mapeamento():
     if "mapping_origem" not in st.session_state:
         st.session_state["mapping_origem"] = {}
 
-    mapping = st.session_state["mapping_origem"]
+    # 🔥 CORREÇÃO: cópia segura
+    mapping = dict(st.session_state["mapping_origem"])
 
     for col_modelo in df_modelo.columns:
 
-        # 🔒 ID BLOQUEADO
         if _is_coluna_id(col_modelo):
             st.text_input(
                 col_modelo,
@@ -145,7 +152,6 @@ def render_origem_mapeamento():
             mapping[col_modelo] = ""
             continue
 
-        # ignora deposito (já tratado)
         if _is_coluna_deposito(col_modelo):
             continue
 
@@ -168,13 +174,14 @@ def render_origem_mapeamento():
         erro = True
         st.error("❌ Existe coluna sendo usada mais de uma vez.")
 
-    st.session_state["mapping_origem"] = mapping
+    # 🔥 salva só se válido
+    if not erro:
+        st.session_state["mapping_origem"] = mapping
 
     df_saida = _montar_df_saida(df_origem, df_modelo, mapping)
 
-    st.dataframe(df_saida.head(20), use_container_width=True)
+    st.dataframe(df_saida.head(15), use_container_width=True)
 
-    # 🔥 mantém saída final sempre sincronizada com o último mapeamento
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
 
