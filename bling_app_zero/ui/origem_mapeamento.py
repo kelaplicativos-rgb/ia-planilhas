@@ -9,6 +9,13 @@ ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento"}
 
 def _safe_df(df) -> bool:
     try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _safe_df_com_linhas(df) -> bool:
+    try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
@@ -56,7 +63,7 @@ def _linha_parece_cabecalho(valores: list) -> bool:
 
 def _promover_primeira_linha_para_header_se_preciso(df):
     try:
-        if not _safe_df(df):
+        if not _safe_df_com_linhas(df):
             return df
 
         df2 = df.copy()
@@ -201,7 +208,7 @@ def _get_df_fluxo_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     """
     try:
         df_fluxo = st.session_state.get("df_saida")
-        if _safe_df(df_fluxo):
+        if _safe_df_com_linhas(df_fluxo):
             return df_fluxo.copy().reset_index(drop=True)
     except Exception:
         pass
@@ -236,7 +243,7 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
     try:
         df_fluxo = _get_df_fluxo_base(df_origem)
 
-        if not _safe_df(df_fluxo):
+        if not _safe_df_com_linhas(df_fluxo):
             return _serie_vazia_tamanho_origem(df_origem)
 
         candidatos = [
@@ -411,19 +418,12 @@ def render_origem_mapeamento():
     df_origem = st.session_state.get("df_origem")
     df_modelo = _get_modelo()
 
-    if not _safe_df(df_origem) or not _safe_df(df_modelo):
+    if not _safe_df_com_linhas(df_origem) or not _safe_df(df_modelo):
         st.warning("Dados de origem ou modelo não encontrados. Volte para a etapa anterior.")
         return
 
     df_origem = _preparar_df_origem_para_mapeamento(df_origem)
     df_modelo = _preparar_df_modelo_para_mapeamento(df_modelo)
-
-    st.session_state["df_origem"] = df_origem.copy()
-
-    if st.session_state.get("tipo_operacao_bling") == "cadastro":
-        st.session_state["df_modelo_cadastro"] = df_modelo.copy()
-    else:
-        st.session_state["df_modelo_estoque"] = df_modelo.copy()
 
     topo_a, topo_b = st.columns([1, 1])
 
