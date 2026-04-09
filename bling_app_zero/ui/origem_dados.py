@@ -24,6 +24,27 @@ from bling_app_zero.ui.origem_dados_validacao import (
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
+# =========================
+# 🔥 NOVO — CONTROLE GLOBAL
+# =========================
+def _set_etapa(etapa: str):
+    etapa = str(etapa).strip().lower()
+    st.session_state["etapa_origem"] = etapa
+    st.session_state["etapa"] = etapa
+    st.session_state["etapa_fluxo"] = etapa
+
+
+def _get_etapa() -> str:
+    for chave in ["etapa_origem", "etapa", "etapa_fluxo"]:
+        val = str(st.session_state.get(chave) or "").strip().lower()
+        if val:
+            return val
+    return "origem"
+
+
+# =========================
+
+
 def _obter_origem_atual() -> str:
     try:
         for key in ["origem_dados", "origem_selecionada", "tipo_origem", "origem"]:
@@ -63,18 +84,18 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
 
 def _normalizar_etapa_origem() -> str:
     try:
-        etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
+        etapa = _get_etapa()
 
         if etapa not in ETAPAS_VALIDAS_ORIGEM:
             log_debug(f"Etapa desconhecida: {etapa}", "ERROR")
-            st.session_state["etapa_origem"] = "origem"
+            _set_etapa("origem")
             return "origem"
 
-        st.session_state["etapa_origem"] = etapa
+        _set_etapa(etapa)
         return etapa
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao normalizar etapa: {e}", "ERROR")
-        st.session_state["etapa_origem"] = "origem"
+        _set_etapa("origem")
         return "origem"
 
 
@@ -112,7 +133,7 @@ def render_origem_dados() -> None:
 
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
-            st.session_state["etapa_origem"] = "origem"
+            _set_etapa("origem")
             st.rerun()
 
     df_origem = render_origem_entrada()
@@ -159,14 +180,12 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
-    # 🔥 GARANTE BASE ÚNICA
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     st.session_state["df_saida"] = df_saida.copy()
 
     st.markdown("---")
 
-    # 🔥 CORREÇÃO CRÍTICA: USA DF_SAIDA
     render_precificacao(df_saida)
 
     st.markdown("---")
@@ -180,5 +199,5 @@ def render_origem_dados() -> None:
                     st.warning(erro)
                 return
 
-            st.session_state["etapa_origem"] = "mapeamento"
+            _set_etapa("mapeamento")
             st.rerun()
