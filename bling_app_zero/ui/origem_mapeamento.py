@@ -209,6 +209,25 @@ def _get_df_fluxo_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     return df_origem.copy().reset_index(drop=True)
 
 
+def _serie_vazia_tamanho_origem(df_origem: pd.DataFrame) -> pd.Series:
+    return pd.Series(
+        [""] * len(df_origem),
+        index=range(len(df_origem)),
+        dtype="object",
+    )
+
+
+def _alinhar_serie_para_origem(serie: pd.Series, df_origem: pd.DataFrame) -> pd.Series:
+    try:
+        return (
+            serie.reset_index(drop=True)
+            .reindex(range(len(df_origem)), fill_value="")
+            .astype("object")
+        )
+    except Exception:
+        return _serie_vazia_tamanho_origem(df_origem)
+
+
 def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
     """
     Detecta automaticamente a coluna de preço calculado no fluxo.
@@ -218,11 +237,7 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
         df_fluxo = _get_df_fluxo_base(df_origem)
 
         if not _safe_df(df_fluxo):
-            return pd.Series(
-                [""] * len(df_origem),
-                index=range(len(df_origem)),
-                dtype="object",
-            )
+            return _serie_vazia_tamanho_origem(df_origem)
 
         # PRIORIDADE 1 — nomes clássicos de preço de venda
         candidatos = [
@@ -238,55 +253,48 @@ def _obter_serie_preco_para_saida(df_origem: pd.DataFrame) -> pd.Series:
             nome = str(col).lower().strip()
             for candidato in candidatos:
                 if candidato in nome:
-                    return (
-                        df_fluxo[col]
-                        .reset_index(drop=True)
-                        .reindex(range(len(df_origem)), fill_value="")
-                        .astype("object")
-                    )
+                    return _alinhar_serie_para_origem(df_fluxo[col], df_origem)
 
         # PRIORIDADE 2 — coluna nova criada pela precificação
         colunas_origem = set(df_origem.columns)
 
         for col in df_fluxo.columns:
             if col not in colunas_origem:
-                return (
-                    df_fluxo[col]
-                    .reset_index(drop=True)
-                    .reindex(range(len(df_origem)), fill_value="")
-                    .astype("object")
-                )
+                return _alinhar_serie_para_origem(df_fluxo[col], df_origem)
 
         # PRIORIDADE 3 — detectar coluna alterada em relação à origem
         for col in df_fluxo.columns:
             if col in df_origem.columns:
                 try:
-                    s1 = df_origem[col].fillna("").astype(str)
-                    s2 = df_fluxo[col].fillna("").astype(str)
+                    s1 = (
+                        df_origem[col]
+                        .reindex(range(len(df_origem)), fill_value="")
+                        .fillna("")
+                        .astype(str)
+                        .reset_index(drop=True)
+                    )
+                    s2 = (
+                        df_fluxo[col]
+                        .reindex(range(len(df_origem)), fill_value="")
+                        .fillna("")
+                        .astype(str)
+                        .reset_index(drop=True)
+                    )
 
                     if not s1.equals(s2):
-                        return (
-                            s2.reset_index(drop=True)
-                            .reindex(range(len(df_origem)), fill_value="")
-                            .astype("object")
-                        )
+                        return _alinhar_serie_para_origem(df_fluxo[col], df_origem)
                 except Exception:
                     continue
 
         # FALLBACK — usa a coluna base apenas como último recurso
         coluna_preco_base = _get_coluna_preco_base_precificacao(df_origem)
         if coluna_preco_base and coluna_preco_base in df_fluxo.columns:
-            return (
-                df_fluxo[coluna_preco_base]
-                .reset_index(drop=True)
-                .reindex(range(len(df_origem)), fill_value="")
-                .astype("object")
-            )
+            return _alinhar_serie_para_origem(df_fluxo[coluna_preco_base], df_origem)
 
     except Exception:
         pass
 
-    return pd.Series([""] * len(df_origem), index=range(len(df_origem)), dtype="object")
+    return _serie_vazia_tamanho_origem(df_origem)
 
 
 def _montar_df_saida(
