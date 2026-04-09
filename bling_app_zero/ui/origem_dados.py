@@ -35,6 +35,13 @@ def _obter_origem_atual() -> str:
         return ""
 
 
+def _set_etapa(etapa: str) -> None:
+    etapa = str(etapa or "origem").strip().lower()
+    st.session_state["etapa_origem"] = etapa
+    st.session_state["etapa"] = etapa
+    st.session_state["etapa_fluxo"] = etapa
+
+
 def _sincronizar_tipo_operacao(operacao: str) -> None:
     try:
         controlar_troca_operacao(operacao, log_debug)
@@ -160,7 +167,7 @@ def render_origem_dados() -> None:
 
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
-            st.session_state["etapa_origem"] = "origem"
+            _set_etapa("origem")
             st.rerun()
 
     df_origem = render_origem_entrada(
@@ -197,7 +204,6 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
-    # 🔥 BASE CORRIGIDA
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
@@ -220,5 +226,5 @@ def render_origem_dados() -> None:
                     st.warning(e)
                 return
 
-            st.session_state["etapa_origem"] = "mapeamento"
+            _set_etapa("mapeamento")
             st.rerun()
