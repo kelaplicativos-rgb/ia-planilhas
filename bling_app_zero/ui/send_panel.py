@@ -9,7 +9,7 @@ def render_send_panel():
     st.subheader("🚀 Enviar para Bling")
 
     # =========================
-    # VALIDA DF FINAL
+    # VALIDAR DF FINAL
     # =========================
     df = st.session_state.get("df_final")
 
@@ -37,6 +37,8 @@ def render_send_panel():
             placeholder="Ex: 123456",
         )
 
+    st.markdown("---")
+
     # =========================
     # BOTÃO ENVIO
     # =========================
@@ -45,11 +47,10 @@ def render_send_panel():
 
         rows = df.to_dict(orient="records")
 
-        with st.spinner("Enviando para o Bling..."):
+        with st.spinner("Enviando dados para o Bling..."):
 
             if tipo == "Cadastro de Produtos":
                 resultado = service.enviar_produtos(rows)
-
             else:
                 resultado = service.enviar_estoque(
                     rows,
@@ -59,15 +60,15 @@ def render_send_panel():
         # =========================
         # RESULTADO
         # =========================
-        st.success("✅ Envio finalizado")
+        st.success("✅ Envio finalizado com sucesso!")
 
         col1, col2 = st.columns(2)
-        col1.metric("Sucesso", resultado["sucesso"])
-        col2.metric("Erros", resultado["erro"])
+        col1.metric("Sucesso", resultado.get("sucesso", 0))
+        col2.metric("Erros", resultado.get("erro", 0))
 
         # =========================
-        # ERROS DETALHADOS
+        # DETALHES DE ERRO
         # =========================
-        if resultado["detalhes"]:
-            with st.expander("⚠️ Ver erros"):
+        if resultado.get("detalhes"):
+            with st.expander("⚠️ Ver erros detalhados"):
                 st.json(resultado["detalhes"])
