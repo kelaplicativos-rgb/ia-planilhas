@@ -171,8 +171,29 @@ def _is_coluna_deposito(nome) -> bool:
     return "deposit" in nome or "deposito" in nome
 
 
+def _get_df_base_mapeamento(df_origem: pd.DataFrame) -> pd.DataFrame:
+    """
+    Usa o DF mais atualizado possível para que a precificação
+    reflita no preview final e no download.
+    Prioridade:
+    1) df_base
+    2) df_dados
+    3) df_origem
+    """
+    try:
+        for chave in ["df_base", "df_dados", "df_origem"]:
+            df = st.session_state.get(chave)
+            if _safe_df(df) and len(df) == len(df_origem):
+                return df.copy()
+    except Exception:
+        pass
+
+    return df_origem.copy()
+
+
 def _montar_df_saida(df_origem, df_modelo, mapping):
-    df_saida = pd.DataFrame(index=range(len(df_origem)))
+    df_base = _get_df_base_mapeamento(df_origem)
+    df_saida = pd.DataFrame(index=range(len(df_base)))
 
     deposito_fixo = _get_deposito()
 
@@ -184,7 +205,9 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
 
         origem = mapping.get(col, "")
 
-        if origem in df_origem.columns:
+        if origem in df_base.columns:
+            df_saida[col] = df_base[origem]
+        elif origem in df_origem.columns:
             df_saida[col] = df_origem[origem]
         else:
             df_saida[col] = ""
@@ -225,7 +248,7 @@ def render_origem_mapeamento():
     st.text_input(
         "📦 Nome do Depósito (Bling)",
         key="deposito_nome_widget",
-        placeholder="Ex: ifood, geral, principal"
+        placeholder="Ex: ifood, geral, principal",
     )
 
     for col_modelo in df_modelo.columns:
@@ -237,7 +260,7 @@ def render_origem_mapeamento():
 
         valor_atual = st.session_state.get(
             f"map_{col_modelo}",
-            mapping_salvo.get(col_modelo, "")
+            mapping_salvo.get(col_modelo, ""),
         )
 
         if valor_atual not in opcoes:
@@ -258,15 +281,15 @@ def render_origem_mapeamento():
 
     st.dataframe(df_saida.head(), use_container_width=True)
 
-    st.session_state["df_saida"] = df_saida
-    st.session_state["df_final"] = df_saida
+    st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
 
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("🚀 Avançar", use_container_width=True):
-            st.session_state["df_saida"] = df_saida
-            st.session_state["df_final"] = df_saida
+            st.session_state["df_saida"] = df_saida.copy()
+            st.session_state["df_final"] = df_saida.copy()
             st.session_state["mapping_origem"] = mapping
             _set_etapa("final")
             st.rerun()
