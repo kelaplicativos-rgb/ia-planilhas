@@ -12,6 +12,11 @@ class BlingServices:
         self.api = BlingAPIClient(user_key=user_key)
 
     # =========================
+    # CONFIG PRO
+    # =========================
+    BATCH_SIZE = 50
+
+    # =========================
     # HELPERS
     # =========================
     @staticmethod
@@ -36,10 +41,6 @@ class BlingServices:
 
             texto = texto.replace("R$", "").replace(" ", "")
 
-            # trata formatos:
-            # 1.234,56 -> 1234.56
-            # 1234,56  -> 1234.56
-            # 1234.56  -> 1234.56
             if "," in texto and "." in texto:
                 texto = texto.replace(".", "").replace(",", ".")
             elif "," in texto:
@@ -70,6 +71,11 @@ class BlingServices:
 
         return []
 
+    @staticmethod
+    def _chunk(lista: List[Any], size: int):
+        for i in range(0, len(lista), size):
+            yield lista[i : i + size]
+
     # =========================
     # PRODUTOS
     # =========================
@@ -90,23 +96,24 @@ class BlingServices:
         erro = 0
         erros: List[Any] = []
 
-        for row in registros:
-            codigo = self._codigo_valido(row)
-            if not codigo:
-                erro += 1
-                erros.append({"erro": "codigo vazio", "row": row})
-                continue
+        for lote in self._chunk(registros, self.BATCH_SIZE):
+            for row in lote:
+                codigo = self._codigo_valido(row)
+                if not codigo:
+                    erro += 1
+                    erros.append({"erro": "codigo vazio", "row": row})
+                    continue
 
-            try:
-                ok, resp = self.api.upsert_product(row)
-            except Exception as e:
-                ok, resp = False, str(e)
+                try:
+                    ok, resp = self.api.upsert_product(row)
+                except Exception as e:
+                    ok, resp = False, str(e)
 
-            if ok:
-                sucesso += 1
-            else:
-                erro += 1
-                erros.append(resp)
+                if ok:
+                    sucesso += 1
+                else:
+                    erro += 1
+                    erros.append(resp)
 
         resultado = {
             "ok": erro == 0 and sucesso > 0,
@@ -143,37 +150,41 @@ class BlingServices:
         erro = 0
         erros: List[Any] = []
 
-        for row in registros:
-            codigo = self._codigo_valido(row)
-            if not codigo:
-                erro += 1
-                erros.append({"erro": "codigo vazio", "row": row})
-                continue
+        for lote in self._chunk(registros, self.BATCH_SIZE):
+            for row in lote:
+                codigo = self._codigo_valido(row)
+                if not codigo:
+                    erro += 1
+                    erros.append({"erro": "codigo vazio", "row": row})
+                    continue
 
-            estoque = self._pick(row, "estoque", "saldo", "quantidade")
-            preco = self._pick(
-                row,
-                "preco",
-                "preco_venda",
-                "valor",
-                "valor_venda",
-            )
-
-            try:
-                ok, resp = self.api.update_stock(
-                    codigo=codigo,
-                    estoque=self._to_float(estoque) or 0,
-                    deposito_id=deposito_id,
-                    preco=self._to_float(preco),
+                estoque_raw = self._pick(row, "estoque", "saldo", "quantidade")
+                preco_raw = self._pick(
+                    row,
+                    "preco",
+                    "preco_venda",
+                    "valor",
+                    "valor_venda",
                 )
-            except Exception as e:
-                ok, resp = False, str(e)
 
-            if ok:
-                sucesso += 1
-            else:
-                erro += 1
-                erros.append(resp)
+                estoque = self._to_float(estoque_raw)
+                preco = self._to_float(preco_raw)
+
+                try:
+                    ok, resp = self.api.update_stock(
+                        codigo=codigo,
+                        estoque=estoque if estoque is not None else 0,
+                        deposito_id=deposito_id,
+                        preco=preco,
+                    )
+                except Exception as e:
+                    ok, resp = False, str(e)
+
+                if ok:
+                    sucesso += 1
+                else:
+                    erro += 1
+                    erros.append(resp)
 
         resultado = {
             "ok": erro == 0 and sucesso > 0,
