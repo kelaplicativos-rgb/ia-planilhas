@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import requests
 import urllib3
-
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -29,80 +28,135 @@ def _normalizar_url(url: str) -> str:
     url = (url or "").strip()
     if not url:
         return ""
+
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
-    return url
+
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "https").lower()
+    netloc = (parsed.netloc or "").strip().lower()
+    path = parsed.path or "/"
+
+    return urlunparse((scheme, netloc, path, "", parsed.query, ""))
 
 
-def _trocar_scheme(url: str, scheme: str) -> str:
-    p = urlparse(url)
-    return urlunparse((scheme, p.netloc, p.path or "/", p.params, p.query, p.fragment))
-
-
-def _trocar_www(url: str, usar_www: bool) -> str:
-    p = urlparse(url)
-    host = (p.netloc or "").strip()
-
-    if not host:
-        return url
-
-    if usar_www:
-        if host.startswith("www."):
-            novo_host = host
-        else:
-            novo_host = f"www.{host}"
-    else:
-        novo_host = host[4:] if host.startswith("www.") else host
-
-    return urlunparse((p.scheme, novo_host, p.path or "/", p.params, p.query, p.fragment))
-
-
-def _gerar_urls_tentativa(url: str) -> List[str]:
-    base = _normalizar_url(url)
-    if not base:
+def _variantes_url(url: str) -> List[str]:
+    url = _normalizar_url(url)
+    if not url:
         return []
 
-    candidatos: List[str] = []
+    parsed = urlparse(url)
+    netloc = parsed.netloc or ""
+    path = parsed.path or "/"
+
+    variantes: List[str] = []
+
+    candidatos_host = [netloc]
+    if netloc.startswith("www."):
+        candidatos_host.append(netloc[4:])
+    else:
+        candidatos_host.append(f"www.{netloc}")
+
+    candidatos_scheme = ["https", "http"]
     vistos = set()
 
-    def add(u: str) -> None:
-        u = (u or "").strip()
-        if u and u not in vistos:
-            vistos.add(u)
-            candidatos.append(u)
+    for scheme in candidatos_scheme:
+        for host in candidatos_host:
+            if not host:
+                continue
+            candidato = urlunparse((scheme, host, path, "", parsed.query, ""))
+            if candidato not in vistos:
+                vistos.add(candidato)
+                variantes.append(candidato)
 
-    add(base)
-
-    https_sem_www = _trocar_www(_trocar_scheme(base, "https"), usar_www=False)
-    https_com_www = _trocar_www(_trocar_scheme(base, "https"), usar_www=True)
-    http_sem_www = _trocar_www(_trocar_scheme(base, "http"), usar_www=False)
-    http_com_www = _trocar_www(_trocar_scheme(base, "http"), usar_www=True)
-
-    add(https_sem_www)
-    add(https_com_www)
-    add(http_sem_www)
-    add(http_com_www)
-
-    return candidatos
+    return variantes
 
 
-def _criar_sessao() -> requests.Session:
-    sessao = requests.Session()
-    sessao.headers.update(DEFAULT_HEADERS)
-    return sessao
+def _is_html_content_type(content_type: str) -> bool:
+    valor = (content_type or "").lower()
+    if not valor:
+        return True
+    return (
+        "text/html" in valor
+        or "application/xhtml+xml" in valor
+        or "xml" in valor
+        or "text/plain" in valor
+    )
 
 
-def baixar_html(
+def _build_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    return session
+
+
+def _tentar_request(
+    session: requests.Session,
     url: str,
-    timeout: int = 20,
-    verify_ssl: bool = True,
-    max_redirects: int = 8,
-) -> Dict:
+    timeout: int,
+    verify_ssl: bool,
+) -> Tuple[bool, Dict]:
+    try:
+        resposta = session.get(
+            url,
+            timeout=timeout,
+            allow_redirects=True,
+            verify=verify_ssl,
+        )
+        resposta.raise_for_status()
+
+        content_type = resposta.headers.get("Content-Type", "")
+        html = resposta.text or ""
+
+        if not html.strip():
+            return False, {
+                "ok": False,
+                "erro": "Resposta vazia.",
+                "url": resposta.url or url,
+                "status_code": resposta.status_code,
+                "content_type": content_type,
+                "html": "",
+            }
+
+        if not _is_html_content_type(content_type):
+            return False, {
+                "ok": False,
+                "erro": f"Conteúdo não HTML: {content_type}",
+                "url": resposta.url or url,
+                "status_code": resposta.status_code,
+                "content_type": content_type,
+                "html": "",
+            }
+
+        return True, {
+            "ok": True,
+            "erro": "",
+            "url": resposta.url or url,
+            "status_code": resposta.status_code,
+            "content_type": content_type,
+            "html": html,
+        }
+
+    except Exception as e:
+        return False, {
+            "ok": False,
+            "erro": str(e),
+            "url": url,
+            "status_code": None,
+            "content_type": "",
+            "html": "",
+        }
+
+
+def baixar_html(url: str, timeout: int = 20) -> Dict:
     """
-    Baixa HTML com fallback robusto para:
+    Faz download de HTML com fallback para:
+    - normalização de URL
     - https/http
-    - host com e sem www
-    - retry com verify=False quando SSL falhar
+    - www/sem www
+    - SSL verify on/off
+
+    Mantém a interface pública já usada no projeto.
     """
     url = _normalizar_url(url)
     if not url:
@@ -110,80 +164,31 @@ def baixar_html(
             "ok": False,
             "erro": "URL vazia.",
             "url": "",
-            "html": "",
             "status_code": None,
             "content_type": "",
-            "tentativas": [],
+            "html": "",
         }
 
-    sessao = _criar_sessao()
-    tentativas_log: List[Dict[str, object]] = []
-    candidatos = _gerar_urls_tentativa(url)
+    session = _build_session()
+    ultima_resposta: Optional[Dict] = None
 
-    # ordem de tentativa:
-    # 1) verify_ssl padrão
-    # 2) fallback verify=False
-    politicas_ssl = [verify_ssl]
-    if verify_ssl:
-        politicas_ssl.append(False)
+    for variante in _variantes_url(url):
+        for verify_ssl in (True, False):
+            ok, resultado = _tentar_request(
+                session=session,
+                url=variante,
+                timeout=timeout,
+                verify_ssl=verify_ssl,
+            )
+            ultima_resposta = resultado
+            if ok:
+                return resultado
 
-    for verify in politicas_ssl:
-        for candidata in candidatos:
-            try:
-                resposta = sessao.get(
-                    candidata,
-                    timeout=timeout,
-                    allow_redirects=True,
-                    verify=verify,
-                )
-                if len(resposta.history) > max_redirects:
-                    raise requests.TooManyRedirects(
-                        f"Redirecionamentos demais: {len(resposta.history)}"
-                    )
-
-                resposta.raise_for_status()
-
-                content_type = resposta.headers.get("Content-Type", "")
-                html = resposta.text or ""
-
-                tentativas_log.append(
-                    {
-                        "url": candidata,
-                        "ok": True,
-                        "verify_ssl": verify,
-                        "status_code": resposta.status_code,
-                        "erro": "",
-                    }
-                )
-
-                return {
-                    "ok": True,
-                    "erro": "",
-                    "url": resposta.url,
-                    "html": html,
-                    "status_code": resposta.status_code,
-                    "content_type": content_type,
-                    "tentativas": tentativas_log,
-                }
-
-            except Exception as e:
-                tentativas_log.append(
-                    {
-                        "url": candidata,
-                        "ok": False,
-                        "verify_ssl": verify,
-                        "status_code": None,
-                        "erro": str(e),
-                    }
-                )
-
-    ultimo_erro = tentativas_log[-1]["erro"] if tentativas_log else "Falha desconhecida."
-    return {
+    return ultima_resposta or {
         "ok": False,
-        "erro": str(ultimo_erro),
+        "erro": "Falha desconhecida ao baixar HTML.",
         "url": url,
-        "html": "",
         "status_code": None,
         "content_type": "",
-        "tentativas": tentativas_log,
+        "html": "",
     }
