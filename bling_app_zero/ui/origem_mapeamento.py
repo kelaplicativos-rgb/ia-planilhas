@@ -74,11 +74,42 @@ def _obter_df_modelo():
     return None
 
 
+# 🔥 NOVO: limpeza na origem (ESSENCIAL)
+def _sanitizar_valor(valor):
+    try:
+        if valor is None:
+            return ""
+
+        valor = str(valor)
+
+        # remove ⚠️
+        valor = valor.replace("⚠️", "").strip()
+
+        if valor.lower() in ["none", "nan"]:
+            return ""
+
+        return valor
+    except Exception:
+        return ""
+
+
+# 🔥 NOVO: padronizar Situação
+def _normalizar_situacao(valor):
+    try:
+        valor = str(valor).strip().lower()
+
+        if valor in ["ativo", "1", "true"]:
+            return "Ativo"
+
+        return "Inativo"
+    except Exception:
+        return "Inativo"
+
+
 # =========================================================
 # CORE
 # =========================================================
 def _montar_df_saida(df_origem, df_modelo, mapping):
-    # 🔥 CORREÇÃO: usa base existente se possível
     df_saida_base = st.session_state.get("df_saida")
 
     if isinstance(df_saida_base, pd.DataFrame) and len(df_saida_base) == len(df_origem):
@@ -90,12 +121,10 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
 
     for col in df_modelo.columns:
 
-        # 🔒 ID nunca é preenchido
         if _is_coluna_id(col):
             df_saida[col] = ""
             continue
 
-        # 🏬 Depósito fixo
         if _is_coluna_deposito(col):
             df_saida[col] = deposito
             continue
@@ -103,11 +132,20 @@ def _montar_df_saida(df_origem, df_modelo, mapping):
         origem = str(mapping.get(col, "") or "").strip()
 
         if origem and origem in df_origem.columns:
-            df_saida[col] = df_origem[origem].reset_index(drop=True)
+            serie = df_origem[origem].reset_index(drop=True)
+
+            # 🔥 sanitiza todos os valores
+            serie = serie.apply(_sanitizar_valor)
+
+            df_saida[col] = serie
+
         else:
-            # 🔥 não sobrescreve se já existir valor (ex: preço calculado)
             if col not in df_saida.columns:
                 df_saida[col] = ""
+
+        # 🔥 tratamento especial Situação
+        if "situa" in str(col).lower():
+            df_saida[col] = df_saida[col].apply(_normalizar_situacao)
 
     return df_saida
 
@@ -138,7 +176,6 @@ def render_origem_mapeamento():
     if "mapping_origem" not in st.session_state:
         st.session_state["mapping_origem"] = {}
 
-    # 🔥 CORREÇÃO: cópia segura
     mapping = dict(st.session_state["mapping_origem"])
 
     for col_modelo in df_modelo.columns:
@@ -174,7 +211,6 @@ def render_origem_mapeamento():
         erro = True
         st.error("❌ Existe coluna sendo usada mais de uma vez.")
 
-    # 🔥 salva só se válido
     if not erro:
         st.session_state["mapping_origem"] = mapping
 
