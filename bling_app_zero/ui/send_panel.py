@@ -74,13 +74,7 @@ def _garantir_estado():
 
 
 def _render_conexao(auth: BlingAuthManager) -> bool:
-    callback = auth.handle_oauth_callback()
-
-    if isinstance(callback, dict):
-        if callback.get("status") == "success":
-            st.success(callback.get("message") or "Conexão com o Bling realizada.")
-        elif callback.get("status") == "error":
-            st.error(callback.get("message") or "Erro ao conectar com o Bling.")
+    # 🚨 REMOVIDO CALLBACK AQUI (CORREÇÃO CRÍTICA)
 
     if not auth.is_configured():
         st.warning("⚠️ Bling não configurado. Verifique as credenciais em st.secrets.")
