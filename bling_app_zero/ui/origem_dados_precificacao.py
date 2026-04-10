@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -28,7 +29,12 @@ def _normalizar_nome_coluna(nome: str) -> str:
         return ""
 
 
-def _copiar_coluna_com_cast(df_origem: pd.DataFrame, df_destino: pd.DataFrame, col_origem: str, col_destino: str) -> pd.DataFrame:
+def _copiar_coluna_com_cast(
+    df_origem: pd.DataFrame,
+    df_destino: pd.DataFrame,
+    col_origem: str,
+    col_destino: str,
+) -> pd.DataFrame:
     try:
         if col_origem not in df_origem.columns or col_destino not in df_destino.columns:
             return df_destino
@@ -54,9 +60,9 @@ def _detectar_coluna_venda(df: pd.DataFrame) -> str | None:
         "valor venda",
     ]
 
-    for p in prioridades:
+    for prioridade in prioridades:
         for col in df.columns:
-            if _normalizar_nome_coluna(col) == p:
+            if _normalizar_nome_coluna(col) == prioridade:
                 return col
 
     for col in df.columns:
@@ -100,7 +106,10 @@ def _garantir_base_precificacao(df_base: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 # APLICAÇÃO CORRIGIDA
 # ==========================================================
-def _aplicar_precificacao(df_base_origem: pd.DataFrame, df_fluxo_destino: pd.DataFrame) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+def _aplicar_precificacao(
+    df_base_origem: pd.DataFrame,
+    df_fluxo_destino: pd.DataFrame,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
     try:
         if not safe_df_dados(df_base_origem):
             return None, None
@@ -122,12 +131,10 @@ def _aplicar_precificacao(df_base_origem: pd.DataFrame, df_fluxo_destino: pd.Dat
         if not col_venda_origem or col_venda_origem not in df_calc_origem.columns:
             return None, None
 
-        st.session_state["coluna_preco_unitario_destino"] = col_venda_origem
-
-        # preview da própria base precificada
+        # Preview da própria base precificada
         df_preview = df_calc_origem.copy()
 
-        # grava no dataframe real do fluxo/modelo
+        # Grava no dataframe real do fluxo/modelo
         df_destino = df_fluxo_destino.copy()
         col_venda_destino = _detectar_coluna_venda(df_destino)
 
@@ -139,6 +146,8 @@ def _aplicar_precificacao(df_base_origem: pd.DataFrame, df_fluxo_destino: pd.Dat
                 col_destino=col_venda_destino,
             )
             st.session_state["coluna_preco_unitario_destino"] = col_venda_destino
+        else:
+            st.session_state["coluna_preco_unitario_destino"] = col_venda_origem
 
         return df_destino, df_preview
 
@@ -191,7 +200,7 @@ def render_precificacao(df_base):
         st.session_state["df_saida"] = df_precificado_fluxo.copy()
         st.session_state["df_final"] = df_precificado_fluxo.copy()
 
-    with st.expander(" Preview da precificação", expanded=True):
+    with st.expander("Preview da precificação", expanded=True):
         if safe_df_dados(df_preview):
             st.dataframe(
                 df_preview.head(10),
@@ -203,4 +212,4 @@ def render_precificacao(df_base):
                 df_base_calc.head(10),
                 use_container_width=True,
                 hide_index=True,
-    )
+            )
