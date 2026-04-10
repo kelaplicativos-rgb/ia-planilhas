@@ -223,13 +223,17 @@ def _carregar_modelo_interno_no_estado(tipo: str) -> pd.DataFrame | None:
 
 def render_modelo_bling(operacao: str | None = None) -> None:
     st.markdown("### Modelo do Bling")
-    st.caption("O sistema agora carrega automaticamente o modelo interno conforme a operação selecionada.")
+    st.caption("O sistema carrega automaticamente o modelo interno conforme a operação selecionada.")
 
     operacao_normalizada = str(operacao or "").strip().lower()
     tipo = "cadastro" if "cadastro" in operacao_normalizada else "estoque"
 
     state_key = "df_modelo_cadastro" if tipo == "cadastro" else "df_modelo_estoque"
-    preview_titulo = "Prévia do modelo interno de cadastro" if tipo == "cadastro" else "Prévia do modelo interno de estoque"
+    preview_titulo = (
+        "Prévia do modelo interno de cadastro"
+        if tipo == "cadastro"
+        else "Prévia do modelo interno de estoque"
+    )
 
     modelo_existente = st.session_state.get(state_key)
     if not safe_df_estrutura(modelo_existente):
