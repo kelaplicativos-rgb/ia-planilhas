@@ -5,6 +5,11 @@ from typing import Callable
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.modelos_bling import (
+    carregar_modelo_por_operacao,
+    caminho_modelo_por_operacao,
+    modelo_interno_existe,
+)
 from bling_app_zero.core.origem_processamento import (
     detectar_tipo_origem_por_arquivo,
     ler_modelo,
@@ -197,60 +202,82 @@ def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.
     return df_origem
 
 
+def _carregar_modelo_interno_no_estado(tipo: str) -> pd.DataFrame | None:
+    try:
+        df_modelo = carregar_modelo_por_operacao(tipo)
+
+        if not safe_df_estrutura(df_modelo):
+            return None
+
+        if tipo == "cadastro":
+            st.session_state["df_modelo_cadastro"] = df_modelo.copy()
+        else:
+            st.session_state["df_modelo_estoque"] = df_modelo.copy()
+
+        st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
+        return df_modelo
+    except Exception as e:
+        log_debug(f"[MODELO_INTERNO] erro ao carregar modelo interno: {e}", "ERRO")
+        return None
+
+
 def render_modelo_bling(operacao: str | None = None) -> None:
-    st.markdown("### Modelo oficial do Bling")
+    st.markdown("### Modelo do Bling")
+    st.caption("O sistema agora carrega automaticamente o modelo interno conforme a operação selecionada.")
 
     operacao_normalizada = str(operacao or "").strip().lower()
+    tipo = "cadastro" if "cadastro" in operacao_normalizada else "estoque"
 
-    if "cadastro" in operacao_normalizada:
-        titulo = "Anexar modelo oficial do cadastro"
-        key = "upload_modelo_cadastro"
-        state_key = "df_modelo_cadastro"
-        sucesso = "Modelo de cadastro carregado com sucesso."
-        erro = "Não foi possível ler o modelo de cadastro."
-        preview_titulo = "Prévia do modelo de cadastro"
-    else:
-        titulo = "Anexar modelo oficial do estoque"
-        key = "upload_modelo_estoque"
-        state_key = "df_modelo_estoque"
-        sucesso = "Modelo de estoque carregado com sucesso."
-        erro = "Não foi possível ler o modelo de estoque."
-        preview_titulo = "Prévia do modelo de estoque"
+    state_key = "df_modelo_cadastro" if tipo == "cadastro" else "df_modelo_estoque"
+    preview_titulo = "Prévia do modelo interno de cadastro" if tipo == "cadastro" else "Prévia do modelo interno de estoque"
 
-    arquivo_modelo = st.file_uploader(
-        titulo,
-        type=["xlsx", "xls", "xlsb", "csv"],
-        key=key,
-        help=f"Formatos aceitos: {texto_extensoes_planilha()}",
-    )
+    modelo_existente = st.session_state.get(state_key)
+    if not safe_df_estrutura(modelo_existente):
+        modelo_existente = _carregar_modelo_interno_no_estado(tipo)
 
-    if arquivo_modelo is None:
-        modelo_existente = st.session_state.get(state_key)
+    col1, col2 = st.columns([3, 2])
 
-        if safe_df_estrutura(modelo_existente):
-            with st.expander(preview_titulo, expanded=False):
+    with col1:
+        if modelo_interno_existe(tipo):
+            st.success("Modelo interno carregado do sistema.")
+        else:
+            st.warning("Modelo físico não encontrado no repositório. Usando estrutura interna fallback.")
+
+    with col2:
+        st.caption(caminho_modelo_por_operacao(tipo))
+
+    if safe_df_estrutura(modelo_existente):
+        with st.expander(preview_titulo, expanded=False):
+            st.dataframe(
+                _df_preview_modelo(modelo_existente),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with st.expander("Substituir por modelo personalizado (opcional)", expanded=False):
+        arquivo_modelo = st.file_uploader(
+            "Enviar outro modelo apenas se quiser sobrescrever o interno",
+            type=["xlsx", "xls", "xlsb", "csv"],
+            key=f"upload_modelo_override_{tipo}",
+            help=f"Formatos aceitos: {texto_extensoes_planilha()}",
+        )
+
+        if arquivo_modelo is not None:
+            df_modelo = ler_modelo(arquivo_modelo)
+
+            if not safe_df_estrutura(df_modelo):
+                st.error("Não foi possível ler o modelo personalizado.")
+                return
+
+            st.session_state[state_key] = df_modelo.copy()
+            st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
+
+            st.success("Modelo personalizado carregado com sucesso.")
+            log_debug(f"[MODELO_INTERNO] modelo personalizado carregado: {arquivo_modelo.name}", "INFO")
+
+            with st.expander("Prévia do modelo personalizado", expanded=True):
                 st.dataframe(
-                    _df_preview_modelo(modelo_existente),
+                    _df_preview_modelo(df_modelo),
                     use_container_width=True,
                     hide_index=True,
                 )
-        return
-
-    df_modelo = ler_modelo(arquivo_modelo)
-
-    if not safe_df_estrutura(df_modelo):
-        st.error(erro)
-        return
-
-    st.session_state[state_key] = df_modelo.copy()
-    st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
-
-    st.success(sucesso)
-    log_debug(f"[ORIGEM_UPLOAD] modelo carregado: {arquivo_modelo.name}", "INFO")
-
-    with st.expander(preview_titulo, expanded=False):
-        st.dataframe(
-            _df_preview_modelo(df_modelo),
-            use_container_width=True,
-            hide_index=True,
-        )
