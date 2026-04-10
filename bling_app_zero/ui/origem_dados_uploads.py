@@ -1,482 +1,169 @@
 from __future__ import annotations
 
-from typing import Any
-import hashlib
-
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.origem_dados_estado import (
-    safe_df_dados,
-    tem_upload_ativo,
-)
-from bling_app_zero.ui.origem_dados_site import render_origem_site
-
-# 🔥 PADRÃO: usar tudo do utils (fonte única de verdade)
-from bling_app_zero.utils import (
-    ler_planilha_segura,
+from bling_app_zero.ui.app_helpers import (
+    exportar_excel_bytes,
     limpar_gtin_invalido,
     log_debug,
-)
-
-from bling_app_zero.utils.xml_nfe import (
-    arquivo_parece_xml_nfe,
-    ler_xml_nfe,
+    validar_campos_obrigatorios,
 )
 
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
-
-
-# ==========================================================
-# HELPERS DE COMPATIBILIDADE
-# ==========================================================
-def arquivo_planilha_permitido(arquivo: Any) -> bool:
+def _safe_df(df) -> bool:
     try:
-        nome = str(getattr(arquivo, "name", "") or "").strip().lower()
-        return nome.endswith((".xlsx", ".xls", ".xlsm", ".xlsb", ".csv"))
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
 
-def hash_arquivo_upload(arquivo: Any) -> str:
+def _get_df_fluxo() -> pd.DataFrame | None:
+    """
+    Ordem de prioridade do fluxo final:
+    1) df_saida
+    2) df_final
+    3) df_precificado
+    4) df_origem
+    """
+    for chave in ["df_saida", "df_final", "df_precificado", "df_origem"]:
+        df = st.session_state.get(chave)
+        if _safe_df(df):
+            return df.copy()
+    return None
+
+
+def _normalizar_validacao(resultado_validacao) -> bool:
     try:
-        nome = str(getattr(arquivo, "name", "") or "")
-        tamanho = str(getattr(arquivo, "size", "") or "")
+        if isinstance(resultado_validacao, bool):
+            return resultado_validacao
 
-        conteudo = b""
-        if hasattr(arquivo, "getvalue"):
-            try:
-                conteudo = arquivo.getvalue() or b""
-            except Exception:
-                conteudo = b""
-        elif hasattr(arquivo, "read"):
-            try:
-                pos = None
-                if hasattr(arquivo, "tell"):
-                    pos = arquivo.tell()
-                conteudo = arquivo.read() or b""
-                if pos is not None and hasattr(arquivo, "seek"):
-                    arquivo.seek(pos)
-            except Exception:
-                conteudo = b""
+        if resultado_validacao is None:
+            return True
 
-        base = nome.encode("utf-8", errors="ignore") + b"|" + tamanho.encode(
-            "utf-8", errors="ignore"
-        ) + b"|" + conteudo
-        return hashlib.md5(base).hexdigest()
-    except Exception:
-        return ""
+        if isinstance(resultado_validacao, dict):
+            return len(resultado_validacao) == 0
 
+        if isinstance(resultado_validacao, (list, tuple, set)):
+            return len(resultado_validacao) == 0
 
-def nome_arquivo(arquivo: Any) -> str:
-    try:
-        return str(getattr(arquivo, "name", "") or "").strip()
-    except Exception:
-        return ""
-
-
-def texto_extensoes_planilha() -> str:
-    return ".xlsx, .xls, .xlsm, .xlsb, .csv"
-
-
-# ==========================================================
-# HELPERS
-# ==========================================================
-def _safe_str(valor: Any) -> str:
-    try:
-        if pd.isna(valor):
-            return ""
-        return str(valor).strip()
-    except Exception:
-        return ""
-
-
-def _safe_float(valor: Any, default: float = 0.0) -> float:
-    try:
-        texto = str(valor or "").strip()
-        if not texto:
-            return default
-
-        texto = texto.replace("R$", "").replace("r$", "").strip()
-        texto = texto.replace(" ", "")
-
-        if "," in texto and "." in texto:
-            if texto.rfind(",") > texto.rfind("."):
-                texto = texto.replace(".", "").replace(",", ".")
-            else:
-                texto = texto.replace(",", "")
-        else:
-            texto = texto.replace(",", ".")
-
-        return float(texto)
-    except Exception:
-        return default
-
-
-def _set_if_changed(key: str, value: Any) -> None:
-    try:
-        if st.session_state.get(key) != value:
-            st.session_state[key] = value
-    except Exception:
-        pass
-
-
-def _df_tem_estrutura(df: pd.DataFrame | None) -> bool:
-    try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+        return bool(resultado_validacao)
     except Exception:
         return False
 
 
-def _somente_cabecalho(df: pd.DataFrame | None) -> pd.DataFrame:
+# 🔥 NOVO: limpeza final padrão Bling
+def _limpar_df_para_bling(df: pd.DataFrame) -> pd.DataFrame:
     try:
-        if not isinstance(df, pd.DataFrame):
-            return pd.DataFrame()
-        return pd.DataFrame(columns=[str(c).strip() for c in df.columns])
-    except Exception:
-        return pd.DataFrame()
+        df = df.copy()
 
+        for col in df.columns:
+            # remove None
+            df[col] = df[col].replace({None: ""})
 
-def _obter_chaves_modelo(operacao: str) -> tuple[str, str, str]:
-    operacao_norm = str(operacao or "").strip().lower()
+            # remove NaN
+            df[col] = df[col].fillna("")
 
-    if "estoque" in operacao_norm:
-        return (
-            "df_modelo_estoque",
-            "modelo_estoque_nome",
-            "modelo_estoque_hash",
-        )
+            # remove ⚠️
+            df[col] = df[col].astype(str).str.replace("⚠️", "").str.strip()
 
-    return (
-        "df_modelo_cadastro",
-        "modelo_cadastro_nome",
-        "modelo_cadastro_hash",
-    )
+        # padroniza Situação
+        if "Situação" in df.columns:
+            df["Situação"] = df["Situação"].apply(
+                lambda x: "Ativo"
+                if str(x).strip().lower() in ["ativo", "1", "true"]
+                else "Inativo"
+            )
 
-
-def _salvar_modelo_bling(
-    operacao: str,
-    df_modelo: pd.DataFrame,
-    nome_ref: str = "",
-    hash_ref: str = "",
-) -> pd.DataFrame:
-    try:
-        chave_df, chave_nome, chave_hash = _obter_chaves_modelo(operacao)
-
-        df_limpo = _somente_cabecalho(df_modelo)
-
-        st.session_state[chave_df] = df_limpo.copy()
-
-        if nome_ref:
-            st.session_state[chave_nome] = nome_ref
-
-        if hash_ref:
-            st.session_state[chave_hash] = hash_ref
-
-        return df_limpo
-    except Exception as e:
-        log_debug(f"Erro ao salvar modelo Bling: {e}", "ERROR")
-        return _somente_cabecalho(df_modelo)
-
-
-def _ler_modelo_bling_upload(
-    arquivo_modelo: Any, operacao: str
-) -> pd.DataFrame | None:
-    try:
-        if arquivo_modelo is None:
-            chave_df, _, _ = _obter_chaves_modelo(operacao)
-            modelo_existente = st.session_state.get(chave_df)
-            if _df_tem_estrutura(modelo_existente):
-                return modelo_existente
-            return None
-
-        if not arquivo_planilha_permitido(arquivo_modelo):
-            st.error(f"Formato inválido. Use: {texto_extensoes_planilha()}")
-            return None
-
-        nome_ref = nome_arquivo(arquivo_modelo)
-        hash_ref = hash_arquivo_upload(arquivo_modelo)
-
-        df_modelo = ler_planilha_segura(arquivo_modelo)
-
-        if not isinstance(df_modelo, pd.DataFrame) or len(df_modelo.columns) == 0:
-            st.error("Erro ao ler o modelo do Bling.")
-            return None
-
-        df_modelo.columns = [str(c).strip() for c in df_modelo.columns]
-
-        return _salvar_modelo_bling(
-            operacao=operacao,
-            df_modelo=df_modelo,
-            nome_ref=nome_ref,
-            hash_ref=hash_ref,
-        )
+        return df
 
     except Exception as e:
-        log_debug(f"Erro ao carregar modelo Bling: {e}", "ERROR")
-        st.error("Erro ao carregar modelo do Bling.")
-        return None
-
-
-def _limpar_modelo_bling_salvo(operacao: str) -> None:
-    try:
-        chave_df, chave_nome, chave_hash = _obter_chaves_modelo(operacao)
-        st.session_state.pop(chave_df, None)
-        st.session_state.pop(chave_nome, None)
-        st.session_state.pop(chave_hash, None)
-    except Exception:
-        pass
-
-
-# ==========================================================
-# FLUXO
-# ==========================================================
-def _garantir_etapa_origem_valida() -> None:
-    try:
-        etapa = str(st.session_state.get("etapa_origem", "origem") or "").strip().lower()
-        if etapa not in ETAPAS_VALIDAS_ORIGEM:
-            log_debug(f"Etapa inválida: {etapa}", "ERROR")
-            st.session_state["etapa_origem"] = "origem"
-    except Exception:
-        st.session_state["etapa_origem"] = "origem"
-
-
-def _resetar_fluxo_para_origem() -> None:
-    try:
-        st.session_state["etapa_origem"] = "origem"
-        st.session_state.pop("coluna_em_mapeamento", None)
-        st.session_state.pop("campo_destino_mapeamento", None)
-        st.session_state.pop("preview_mapeamento_coluna", None)
-    except Exception:
-        st.session_state["etapa_origem"] = "origem"
-
-
-# ==========================================================
-# SALVAR DF
-# ==========================================================
-def _salvar_df_origem(
-    df: pd.DataFrame,
-    origem: str,
-    nome_ref: str = "",
-    hash_ref: str = "",
-) -> pd.DataFrame:
-    try:
-        df_salvo = df.copy()
-
-        st.session_state["df_origem"] = df_salvo
-        st.session_state["df_saida"] = df_salvo.copy()
-        st.session_state["df_final"] = df_salvo.copy()
-
-        if origem == "xml":
-            st.session_state["df_origem_xml"] = df_salvo.copy()
-
-        if nome_ref:
-            st.session_state["origem_arquivo_nome"] = nome_ref
-
-        if hash_ref:
-            st.session_state["origem_arquivo_hash"] = hash_ref
-
-        _resetar_fluxo_para_origem()
-        return df_salvo
-
-    except Exception:
-        _resetar_fluxo_para_origem()
+        log_debug(f"Erro na limpeza final do DF: {e}", "ERRO")
         return df
 
 
-# ==========================================================
-# PLANILHA
-# ==========================================================
-def _processar_upload_planilha(arquivo_planilha: Any) -> pd.DataFrame | None:
+def render_preview_final() -> None:
+    st.subheader("Preview final")
+
+    df_fluxo = _get_df_fluxo()
+
+    if not _safe_df(df_fluxo):
+        st.warning("Nenhum dado disponível para o preview final.")
+        log_debug("Preview final sem DataFrame disponível", "ERRO")
+        return
+
     try:
-        if arquivo_planilha is None:
-            return st.session_state.get("df_origem")
-
-        if not arquivo_planilha_permitido(arquivo_planilha):
-            st.error(f"Formato inválido. Use: {texto_extensoes_planilha()}")
-            return None
-
-        nome_ref = nome_arquivo(arquivo_planilha)
-        hash_ref = hash_arquivo_upload(arquivo_planilha)
-
-        df = ler_planilha_segura(arquivo_planilha)
-
-        if not safe_df_dados(df):
-            st.error("Erro ao ler planilha.")
-            return None
-
-        df.columns = [str(c).strip() for c in df.columns]
-
-        # 🔥 padrão único
-        df = limpar_gtin_invalido(df)
-
-        return _salvar_df_origem(
-            df=df,
-            origem="planilha",
-            nome_ref=nome_ref,
-            hash_ref=hash_ref,
+        log_debug(
+            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
         )
+    except Exception:
+        pass
 
-    except Exception as e:
-        st.error("Erro no upload.")
-        log_debug(str(e), "ERROR")
-        return None
+    with st.expander("📦 Ver dados finais", expanded=False):
+        st.dataframe(df_fluxo.head(20), use_container_width=True)
 
-
-# ==========================================================
-# XML
-# ==========================================================
-def _processar_upload_xml(arquivo_xml: Any) -> pd.DataFrame | None:
+    # 🔥 LIMPEZA COMPLETA ANTES DE QUALQUER COISA
     try:
-        if arquivo_xml is None:
-            return st.session_state.get("df_origem")
-
-        if not arquivo_parece_xml_nfe(arquivo_xml):
-            st.warning("XML pode ser inválido.")
-
-        nome_ref = nome_arquivo(arquivo_xml)
-        hash_ref = hash_arquivo_upload(arquivo_xml)
-
-        df = ler_xml_nfe(arquivo_xml)
-
-        if not safe_df_dados(df):
-            st.error("Erro ao ler XML.")
-            return None
-
-        df = limpar_gtin_invalido(df)
-
-        return _salvar_df_origem(
-            df=df,
-            origem="xml",
-            nome_ref=nome_ref,
-            hash_ref=hash_ref,
-        )
-
+        df_download = _limpar_df_para_bling(df_fluxo.copy())
     except Exception as e:
-        st.error("Erro no XML.")
-        log_debug(str(e), "ERROR")
-        return None
+        log_debug(f"Erro na limpeza base: {e}", "ERRO")
+        df_download = df_fluxo.copy()
 
-
-# ==========================================================
-# MODELO BLING
-# ==========================================================
-def render_modelo_bling(operacao: str) -> pd.DataFrame | None:
+    # 🔥 limpeza GTIN depois da limpeza geral
     try:
-        st.markdown("### Modelo oficial do Bling")
-
-        chave_df, chave_nome, chave_hash = _obter_chaves_modelo(operacao)
-        modelo_existente = st.session_state.get(chave_df)
-        nome_existente = str(st.session_state.get(chave_nome) or "").strip()
-        hash_existente = str(st.session_state.get(chave_hash) or "").strip()
-
-        label_upload = (
-            "Modelo do Bling - Cadastro"
-            if "cadastro" in str(operacao or "").strip().lower()
-            else "Modelo do Bling - Estoque"
-        )
-
-        uploader_key = (
-            "upload_modelo_bling_cadastro"
-            if "cadastro" in str(operacao or "").strip().lower()
-            else "upload_modelo_bling_estoque"
-        )
-
-        arquivo_modelo = st.file_uploader(label_upload, key=uploader_key)
-
-        modelo_ativo = _ler_modelo_bling_upload(arquivo_modelo, operacao)
-
-        if _df_tem_estrutura(modelo_ativo):
-            if arquivo_modelo is None and _df_tem_estrutura(modelo_existente):
-                st.success("Modelo reutilizado automaticamente.")
-            elif arquivo_modelo is not None:
-                st.success("Modelo do Bling carregado com sucesso.")
-
-            if nome_existente:
-                st.caption(f"Arquivo do modelo: {nome_existente}")
-
-            with st.expander("Prévia do cabeçalho do modelo", expanded=False):
-                st.dataframe(modelo_ativo.head(0), use_container_width=True)
-
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                st.caption(f"Colunas detectadas: {len(modelo_ativo.columns)}")
-
-            with col2:
-                if st.button(
-                    "Limpar modelo salvo",
-                    key=f"btn_limpar_modelo_{uploader_key}",
-                    use_container_width=True,
-                ):
-                    _limpar_modelo_bling_salvo(operacao)
-                    st.rerun()
-
-            return modelo_ativo
-
-        if hash_existente and _df_tem_estrutura(modelo_existente):
-            return modelo_existente
-
-        st.info("Anexe o modelo oficial do Bling. Depois ele será reutilizado automaticamente.")
-        return None
-
+        df_download = limpar_gtin_invalido(df_download)
     except Exception as e:
-        log_debug(f"Erro ao renderizar modelo Bling: {e}", "ERROR")
-        st.error("Erro ao carregar modelo Bling.")
-        return None
+        log_debug(f"Erro ao limpar GTIN inválido: {e}", "ERRO")
 
+    # 🔥 validação
+    try:
+        validacao_ok = _normalizar_validacao(
+            validar_campos_obrigatorios(df_download)
+        )
+    except Exception as e:
+        log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
+        validacao_ok = False
 
-# ==========================================================
-# UI PRINCIPAL
-# ==========================================================
-def render_origem_entrada(on_change=None) -> pd.DataFrame | None:
-    _garantir_etapa_origem_valida()
+    if not validacao_ok:
+        st.error("Preencha os campos obrigatórios antes do download.")
+        return
 
-    st.markdown("### Entrada dos dados")
+    # 🔥 gerar excel
+    try:
+        excel_bytes = exportar_excel_bytes(df_download)
+    except Exception as e:
+        log_debug(f"Erro ao gerar Excel final: {e}", "ERRO")
+        st.error("Não foi possível gerar a planilha final.")
+        return
 
-    opcoes = [
-        "Buscar em site",
-        "Anexar planilha",
-        "Anexar XML da nota fiscal",
-    ]
+    if not excel_bytes:
+        st.error("Não foi possível gerar a planilha final.")
+        return
 
-    escolha = st.radio("Selecione a origem", opcoes)
+    st.download_button(
+        "⬇️ Baixar planilha final",
+        excel_bytes,
+        "bling_final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
-    mapa = {
-        "Buscar em site": "site",
-        "Anexar planilha": "planilha",
-        "Anexar XML da nota fiscal": "xml",
-    }
+    col1, col2 = st.columns(2)
 
-    origem = mapa.get(escolha, "")
+    with col1:
+        if st.button(
+            "⬅️ Voltar para mapeamento",
+            use_container_width=True,
+            key="btn_voltar_mapeamento_preview",
+        ):
+            st.session_state["etapa_origem"] = "mapeamento"
+            st.rerun()
 
-    _set_if_changed("origem_dados", origem)
-
-    if callable(on_change):
-        try:
-            on_change(origem)
-        except Exception:
-            pass
-
-    df = None
-
-    if origem == "site":
-        df = render_origem_site()
-
-    elif origem == "planilha":
-        arq = st.file_uploader("Planilha fornecedor")
-        df = _processar_upload_planilha(arq)
-
-    elif origem == "xml":
-        arq = st.file_uploader("XML NF", type=["xml"])
-        df = _processar_upload_xml(arq)
-
-    if not safe_df_dados(df):
-        df = st.session_state.get("df_origem")
-
-    if tem_upload_ativo() and safe_df_dados(df):
-        with st.expander("Prévia"):
-            st.dataframe(df.head(5), use_container_width=True)
-
-    return df
+    with col2:
+        if st.button(
+            "🔄 Atualizar preview",
+            use_container_width=True,
+            key="btn_atualizar_preview_final",
+        ):
+            st.session_state["df_final"] = df_fluxo.copy()
+            st.rerun()
