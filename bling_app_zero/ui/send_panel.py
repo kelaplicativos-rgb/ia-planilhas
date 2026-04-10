@@ -4,8 +4,9 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.bling_auth import BlingAuthManager
-from bling_app_zero.services.bling_service import BlingService
+# 🔥 IMPORTS CORRETOS
+from bling_app_zero.services.bling.bling_auth import BlingAuthManager
+from bling_app_zero.services.bling.bling_sync import BlingSync
 
 
 def _safe_df(df):
@@ -45,8 +46,8 @@ def _render_conexao(auth: BlingAuthManager):
         st.warning("⚠️ Bling não configurado (verifique st.secrets)")
         return False
 
-    token_data = auth.store.get(auth.user_key) or {}
-    conectado = bool(token_data) and not auth.store.is_expired(token_data)
+    status = auth.get_connection_status()
+    conectado = status.get("connected")
 
     col1, col2 = st.columns(2)
 
@@ -58,8 +59,9 @@ def _render_conexao(auth: BlingAuthManager):
 
     with col2:
         try:
-            url = auth.generate_auth_url()
-            st.link_button("🔗 Conectar com Bling", url, use_container_width=True)
+            url = auth.build_authorize_url()
+            if url:
+                st.link_button("🔗 Conectar com Bling", url, use_container_width=True)
         except Exception as e:
             st.error(f"Erro ao gerar URL: {e}")
 
@@ -77,7 +79,7 @@ def render_send_panel():
 
     user_key = _resolver_user_key()
     auth = BlingAuthManager(user_key=user_key)
-    service = BlingService(user_key=user_key)
+    sync = BlingSync(user_key=user_key)
 
     conectado = _render_conexao(auth)
 
@@ -103,23 +105,23 @@ def render_send_panel():
 
     st.markdown("---")
 
-    st.info(f"{len(df)} produtos prontos para envio")
+    st.info(f"{len(df)} registros prontos para envio")
 
     if st.button("🚀 Enviar para Bling", use_container_width=True):
 
         with st.spinner("Enviando dados para o Bling..."):
             try:
-                ok, resultado = service.enviar_dataframe_completo(
+                resultado = sync.sync_dataframe(
                     df=df.copy(),
                     tipo=tipo_api,
-                    deposito_padrao=deposito_id,
+                    deposito_id=deposito_id,
                 )
 
                 total = resultado.get("total", 0)
                 sucesso = resultado.get("sucesso", 0)
                 erro = resultado.get("erro", 0)
 
-                if ok:
+                if resultado.get("ok"):
                     st.success("✅ Envio concluído")
                 else:
                     st.error("❌ Falha no envio")
@@ -128,22 +130,12 @@ def render_send_panel():
                 col1.metric("Sucesso", sucesso)
                 col2.metric("Erros", erro)
 
-                logs = resultado.get("logs", [])
+                logs = resultado.get("erros", [])
 
                 if logs:
                     with st.expander("📋 Logs detalhados", expanded=(erro > 0)):
                         for item in logs:
-                            tipo_log = _safe_str(item.get("tipo")).lower()
-                            msg = _safe_str(item.get("mensagem"))
-                            extra = item.get("extra")
-
-                            if tipo_log == "sucesso":
-                                st.success(msg)
-                            else:
-                                st.error(msg)
-
-                            if extra:
-                                st.code(str(extra))
+                            st.error(str(item))
 
             except Exception as e:
                 st.error(f"Erro crítico: {e}")
