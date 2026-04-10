@@ -24,27 +24,100 @@ class BlingService:
         }
 
     # =========================
+    # HELPERS
+    # =========================
+    def _safe_str(self, valor: Any) -> str:
+        try:
+            if valor is None:
+                return ""
+            texto = str(valor).strip()
+            if texto.lower() == "nan":
+                return ""
+            return texto
+        except Exception:
+            return ""
+
+    def _safe_float(self, valor: Any, default: float = 0.0) -> float:
+        try:
+            if valor is None:
+                return default
+
+            if isinstance(valor, str):
+                texto = valor.strip()
+                if not texto:
+                    return default
+                texto = texto.replace("R$", "").replace("r$", "")
+                texto = texto.replace(".", "").replace(",", ".")
+                valor = texto
+
+            if pd.isna(valor):
+                return default
+
+            return float(valor)
+        except Exception:
+            return default
+
+    def _get_first_value(self, row: Dict[str, Any], *keys: str) -> Any:
+        if not isinstance(row, dict):
+            return None
+
+        mapa_normalizado: Dict[str, Any] = {}
+        for k, v in row.items():
+            try:
+                mapa_normalizado[str(k).strip().lower()] = v
+            except Exception:
+                continue
+
+        for key in keys:
+            valor = mapa_normalizado.get(str(key).strip().lower())
+            if valor is None:
+                continue
+
+            if isinstance(valor, str) and not valor.strip():
+                continue
+
+            try:
+                if pd.isna(valor):
+                    continue
+            except Exception:
+                pass
+
+            return valor
+
+        return None
+
+    # =========================
     # RETRY AUTOMÁTICO
     # =========================
-    def _executar_com_retry(self, func, tentativas=3, delay=1):
+    def _executar_com_retry(self, func, tentativas: int = 3, delay: float = 1.0):
         ultimo_erro = None
 
-        for _ in range(tentativas):
-            ok, resp = func()
+        for tentativa in range(1, tentativas + 1):
+            try:
+                ok, resp = func()
+            except Exception as exc:
+                ok, resp = False, f"Erro interno na tentativa {tentativa}: {exc}"
 
             if ok:
                 return True, resp
 
             ultimo_erro = resp
-            time.sleep(delay)
+
+            if tentativa < tentativas:
+                time.sleep(delay)
 
         return False, ultimo_erro
 
     # =========================
     # EXECUÇÃO PARALELA
     # =========================
-    def _executar_paralelo(self, tarefas, max_workers=5):
+    def _executar_paralelo(self, tarefas, max_workers: int = 5):
         resultados = []
+
+        if not tarefas:
+            return resultados
+
+        max_workers = max(1, min(int(max_workers or 1), len(tarefas)))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(t) for t in tarefas]
@@ -52,8 +125,15 @@ class BlingService:
             for future in as_completed(futures):
                 try:
                     resultados.append(future.result())
-                except Exception as e:
-                    resultados.append((False, str(e)))
+                except Exception as exc:
+                    resultados.append(
+                        (
+                            False,
+                            {
+                                "erro": f"Falha na execução paralela: {exc}",
+                            },
+                        )
+                    )
 
         return resultados
 
@@ -61,18 +141,28 @@ class BlingService:
     # ENVIO DE PRODUTOS (TURBO)
     # =========================
     def enviar_produtos_df(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
-        if df is None or df.empty:
+        if not isinstance(df, pd.DataFrame) or df.empty:
             return False, {"erro": "DataFrame vazio para envio de produtos."}
 
         tarefas = []
 
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             row_dict = row.to_dict()
 
-            def task(r=row_dict):
-                return self._executar_com_retry(
+            def task(r=row_dict, i=idx):
+                codigo = self._safe_str(
+                    self._get_first_value(r, "codigo", "Código", "sku", "SKU")
+                )
+
+                ok, resp = self._executar_com_retry(
                     lambda: self.client.upsert_product(r)
                 )
+
+                return ok, {
+                    "indice": i,
+                    "codigo": codigo,
+                    "resposta": resp,
+                }
 
             tarefas.append(task)
 
@@ -89,26 +179,74 @@ class BlingService:
         deposito_padrao: str | None = None,
     ) -> Tuple[bool, Dict[str, Any]]:
 
-        if df is None or df.empty:
+        if not isinstance(df, pd.DataFrame) or df.empty:
             return False, {"erro": "DataFrame vazio para envio de estoque."}
 
         tarefas = []
 
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             row_dict = row.to_dict()
 
-            def task(r=row_dict):
-                codigo = r.get("codigo")
-                saldo = r.get("saldo") or r.get("estoque") or 0
-                deposito = r.get("deposito_id") or deposito_padrao
+            def task(r=row_dict, i=idx):
+                codigo = self._safe_str(
+                    self._get_first_value(r, "codigo", "Código", "sku", "SKU")
+                )
 
-                return self._executar_com_retry(
+                saldo = self._safe_float(
+                    self._get_first_value(
+                        r,
+                        "saldo",
+                        "Saldo",
+                        "estoque",
+                        "Estoque",
+                        "quantidade",
+                        "Quantidade",
+                    ),
+                    default=0.0,
+                )
+
+                deposito = self._safe_str(
+                    self._get_first_value(
+                        r,
+                        "deposito_id",
+                        "depósito_id",
+                        "deposito",
+                        "depósito",
+                    )
+                ) or self._safe_str(deposito_padrao)
+
+                preco = self._get_first_value(
+                    r,
+                    "preco",
+                    "preço",
+                    "preco unitario",
+                    "preço unitário",
+                    "preco de venda",
+                    "preço de venda",
+                )
+                preco_float = self._safe_float(preco, default=0.0) if preco is not None else None
+
+                if not codigo:
+                    return False, {
+                        "indice": i,
+                        "codigo": "",
+                        "resposta": "Código do produto ausente para atualização de estoque.",
+                    }
+
+                ok, resp = self._executar_com_retry(
                     lambda: self.client.update_stock(
                         codigo=codigo,
                         estoque=saldo,
-                        deposito_id=deposito,
+                        deposito_id=deposito or None,
+                        preco=preco_float if preco is not None else None,
                     )
                 )
+
+                return ok, {
+                    "indice": i,
+                    "codigo": codigo,
+                    "resposta": resp,
+                }
 
             tarefas.append(task)
 
@@ -119,21 +257,55 @@ class BlingService:
     # =========================
     # CONSOLIDADOR
     # =========================
-    def _consolidar_resultados(self, resultados, df, tipo):
-        logs = []
+    def _consolidar_resultados(
+        self,
+        resultados: List[Tuple[bool, Any]],
+        df: pd.DataFrame,
+        tipo: str,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        logs: List[Dict[str, Any]] = []
         sucesso = 0
         erro = 0
 
         for ok, resp in resultados:
+            extra = resp if isinstance(resp, dict) else {"resposta": resp}
+
+            indice = extra.get("indice")
+            codigo = self._safe_str(extra.get("codigo"))
+            resposta_real = extra.get("resposta", extra)
+
+            sufixo = []
+            if indice is not None:
+                sufixo.append(f"linha={indice}")
+            if codigo:
+                sufixo.append(f"codigo={codigo}")
+
+            detalhe = f" ({', '.join(sufixo)})" if sufixo else ""
+
             if ok:
                 sucesso += 1
-                logs.append(self._log("sucesso", f"{tipo} OK"))
+                logs.append(
+                    self._log(
+                        "sucesso",
+                        f"{tipo} OK{detalhe}",
+                        resposta_real,
+                    )
+                )
             else:
                 erro += 1
-                logs.append(self._log("erro", f"{tipo} erro", resp))
+                logs.append(
+                    self._log(
+                        "erro",
+                        f"{tipo} erro{detalhe}",
+                        resposta_real,
+                    )
+                )
 
-        return True, {
-            "total": len(df),
+        total = len(df) if isinstance(df, pd.DataFrame) else len(resultados)
+        houve_sucesso = sucesso > 0
+
+        return houve_sucesso, {
+            "total": total,
             "sucesso": sucesso,
             "erro": erro,
             "logs": logs,
@@ -149,12 +321,12 @@ class BlingService:
         deposito_padrao: str | None = None,
     ) -> Tuple[bool, Dict[str, Any]]:
 
-        tipo = str(tipo or "").lower().strip()
+        tipo_normalizado = self._safe_str(tipo).lower()
 
-        if tipo == "cadastro":
+        if tipo_normalizado == "cadastro":
             return self.enviar_produtos_df(df)
 
-        if tipo == "estoque":
+        if tipo_normalizado == "estoque":
             return self.enviar_estoque_df(df, deposito_padrao)
 
         return False, {"erro": f"Tipo inválido: {tipo}"}
@@ -167,5 +339,5 @@ class BlingService:
 
         if ok:
             return True, {"mensagem": "Conexão com Bling OK"}
-        else:
-            return False, resp
+
+        return False, resp
