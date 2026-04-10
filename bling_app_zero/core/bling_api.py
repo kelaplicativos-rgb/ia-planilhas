@@ -4,16 +4,29 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
-from bling_app_zero.core.bling_auth import BlingAuthManager
+try:
+    from bling_app_zero.services.bling.bling_auth import BlingAuthManager
+except ImportError:
+    from bling_app_zero.core.bling_auth import BlingAuthManager
 
 
 class BlingAPIClient:
     def __init__(self, user_key: str = "default") -> None:
         self.auth = BlingAuthManager(user_key=user_key)
-        self.base_url = self.auth.settings.api_base_url.rstrip("/")
+        self.base_url = str(self.auth.settings.api_base_url).rstrip("/")
 
-        # 🔥 CLIENTE REUTILIZÁVEL (performance + estabilidade)
+        # CLIENTE REUTILIZÁVEL (performance + estabilidade)
         self._client = httpx.Client(timeout=30.0, follow_redirects=True)
+
+    def close(self) -> None:
+        try:
+            if getattr(self, "_client", None) is not None:
+                self._client.close()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        self.close()
 
     # =========================
     # PADRÃO DE RESPOSTA
@@ -81,8 +94,18 @@ class BlingAPIClient:
             if valor is None or valor == "":
                 return None
 
-            texto = str(valor).replace("R$", "").replace(" ", "")
-            texto = texto.replace(".", "").replace(",", ".")
+            texto = str(valor).strip()
+            if not texto:
+                return None
+
+            texto = texto.replace("R$", "").replace(" ", "")
+
+            # se tiver vírgula, assume formato BR e remove pontos de milhar
+            if "," in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                # se não tiver vírgula, mantém ponto decimal normal
+                texto = texto.replace(",", "")
 
             return float(texto)
         except Exception:
@@ -98,13 +121,13 @@ class BlingAPIClient:
         *,
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, Any]:
+    ) -> Tuple[bool, Dict[str, Any]]:
 
         ok, token_or_msg = self.auth.get_valid_access_token()
         if not ok:
             return self._error("Erro de autenticação", token_or_msg)
 
-        url = f"{self.base_url}/{path.lstrip('/')}"
+        url = f"{self.base_url}/{str(path or '').lstrip('/')}"
         headers = self._headers(token_or_msg)
 
         try:
@@ -116,7 +139,7 @@ class BlingAPIClient:
                 json=json,
             )
 
-            # 🔥 REFRESH AUTOMÁTICO
+            # REFRESH AUTOMÁTICO
             if resp.status_code == 401:
                 refresh_ok, refresh_msg = self.auth.refresh_access_token()
                 if not refresh_ok:
@@ -169,7 +192,7 @@ class BlingAPIClient:
             "tipo": "P",
             "formato": "S",
             "situacao": self._normalize_situacao(row.get("situacao")),
-            "unidade": "UN",
+            "unidade": self._clean_str(row.get("unidade")) or "UN",
         }
 
         preco = row.get("preco") or row.get("preco_venda")
@@ -188,14 +211,14 @@ class BlingAPIClient:
         row: Dict[str, Any],
         *,
         force_create: bool = False,
-    ) -> Tuple[bool, Any]:
+    ) -> Tuple[bool, Dict[str, Any]]:
 
         payload = self._normalize_product_payload(row)
 
         if not payload:
             return self._error("Produto inválido ou incompleto", row)
 
-        # 🔥 MODO TURBO / CADASTRO DIRETO
+        # MODO TURBO / CADASTRO DIRETO
         if force_create:
             return self.request("POST", "/produtos", json=payload)
 
@@ -216,8 +239,9 @@ class BlingAPIClient:
             elif isinstance(data, list):
                 lista = data
 
-            if lista:
-                produto_id = lista[0].get("id")
+            if isinstance(lista, list) and lista:
+                primeiro = lista[0] if isinstance(lista[0], dict) else {}
+                produto_id = primeiro.get("id")
                 if produto_id:
                     return self.request(
                         "PUT",
@@ -237,22 +261,23 @@ class BlingAPIClient:
         estoque: float,
         deposito_id: Optional[str] = None,
         preco: Optional[float] = None,
-    ) -> Tuple[bool, Any]:
+    ) -> Tuple[bool, Dict[str, Any]]:
 
-        if not codigo:
+        codigo_limpo = self._clean_str(codigo)
+        if not codigo_limpo:
             return self._error("Código vazio")
 
-        body = {
-            "codigo": codigo,
+        body: Dict[str, Any] = {
+            "codigo": codigo_limpo,
             "saldo": float(estoque or 0),
         }
 
         if preco is not None:
             body["preco"] = float(preco)
 
-        if deposito_id:
+        if deposito_id not in (None, ""):
             try:
-                body["deposito"] = {"id": int(deposito_id)}
+                body["deposito"] = {"id": int(str(deposito_id).strip())}
             except Exception:
                 return self._error("deposito_id inválido", deposito_id)
 
