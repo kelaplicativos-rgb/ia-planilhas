@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -16,15 +17,7 @@ from bling_app_zero.core.site_crawler_helpers import (
     texto_limpo_crawler,
 )
 
-# ==========================================================
-# VERSION
-# ==========================================================
-EXTRACTOR_VERSION = "V2_MODULAR_OK"
-
-
-# ==========================================================
 # IA
-# ==========================================================
 try:
     from bling_app_zero.core.ia_extractor import extrair_com_ia
 except Exception:
@@ -42,57 +35,123 @@ except Exception:
 
 
 # ==========================================================
+# CONSTANTES
+# ==========================================================
+PRODUCT_IMAGE_SELECTORS = [
+    ".woocommerce-product-gallery img",
+    ".product-gallery img",
+    ".product__gallery img",
+    ".product-gallery__image img",
+    ".produto-galeria img",
+    ".galeria-produto img",
+    ".gallery img",
+    ".swiper img",
+    ".slick-slide img",
+    "[data-fancybox] img",
+    "[data-zoom-image]",
+    "[data-large_image]",
+    "[class*=product] img",
+    "[class*=produto] img",
+    "[class*=gallery] img",
+    "[class*=galeria] img",
+    "[id*=product] img",
+    "[id*=produto] img",
+    "[itemprop=image]",
+]
+
+TRACKING_HOST_TOKENS = (
+    "facebook.com",
+    "facebook.net",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "googleads.g.doubleclick.net",
+    "doubleclick.net",
+    "analytics",
+    "hotjar",
+    "clarity",
+    "pixel.",
+    "trk.",
+)
+
+TRACKING_PATH_TOKENS = (
+    "/tr",
+    "/track",
+    "/tracking",
+    "/events",
+    "/collect",
+    "/pixel",
+)
+
+BAD_IMAGE_TOKENS = (
+    "sprite",
+    "icon",
+    "logo",
+    "banner",
+    "avatar",
+    "placeholder",
+    "spacer",
+    "blank.",
+    "loader",
+    "loading",
+    "favicon",
+    "lazyload",
+    "thumb",
+    "thumbnail",
+    "mini",
+    "small",
+)
+
+GOOD_IMAGE_HINTS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".avif",
+    "/produto/",
+    "/produtos/",
+    "/product/",
+    "/products/",
+    "/uploads/",
+    "/media/",
+    "/images/",
+    "/image/",
+    "/cdn/",
+    "data-large_image",
+    "zoom",
+)
+
+
+# ==========================================================
 # HELPERS
 # ==========================================================
-def _digitos(valor: Any) -> str:
-    return re.sub(r"\D", "", str(valor or ""))
-
-
-def _texto_bruto(valor: Any) -> str:
+def _safe_str(valor: Any) -> str:
     try:
         return str(valor or "").strip()
     except Exception:
         return ""
 
 
-def _normalizar_estoque_saida(valor: Any) -> int:
-    try:
-        if valor is None:
-            return 0
-
-        if isinstance(valor, bool):
-            return 0
-
-        texto = _texto_bruto(valor)
-        if not texto:
-            return 0
-
-        numero = int(float(texto.replace(",", ".")))
-        if numero < 0:
-            return 0
-
-        return numero
-    except Exception:
-        return 0
+def _digitos(valor: Any) -> str:
+    return re.sub(r"\D", "", str(valor or ""))
 
 
 def _extrair_preco_global(html: str) -> str:
     matches = re.findall(r"R\$\s*\d[\d\.\,]*", html or "", re.I)
-
-    precos = []
     for m in matches:
         p = numero_texto_crawler(m)
         if p:
-            try:
-                precos.append(float(str(p).replace(".", "").replace(",", ".")))
-            except Exception:
-                pass
+            return p
+    return ""
 
-    if not precos:
-        return ""
 
-    menor = min(precos)
-    return f"{menor:.2f}".replace(".", ",")
+def _extrair_categoria(soup: BeautifulSoup) -> str:
+    for nav in soup.select("nav, .breadcrumb, [class*='bread']"):
+        textos = [texto_limpo_crawler(x.get_text()) for x in nav.select("a, span")]
+        textos = [t for t in textos if t and len(t) < 40]
+        if len(textos) >= 2:
+            return " > ".join(textos[:4])
+    return ""
 
 
 def _limpar_descricao(texto: str) -> str:
@@ -100,391 +159,287 @@ def _limpar_descricao(texto: str) -> str:
         return ""
 
     cortes = [
+        "mega center eletrônicos",
         "produtos relacionados",
         "veja também",
         "formas de pagamento",
         "atendimento",
         "loja física",
+        "endereço",
     ]
 
     texto = texto.lower()
-
     for c in cortes:
         texto = texto.split(c)[0]
 
     texto = re.sub(r"\s+", " ", texto)
-
     return texto.strip()[:800]
 
 
-def _filtrar_imagens(lista: str) -> str:
+def _normalizar_url_imagem(url: str, base_url: str) -> str:
+    txt = _safe_str(url)
+    if not txt:
+        return ""
+
+    if txt.startswith("data:image"):
+        return ""
+
+    if "," in txt:
+        partes = [p.strip() for p in txt.split(",") if p.strip()]
+        for parte in partes:
+            primeira = parte.split(" ")[0].strip()
+            if primeira:
+                txt = primeira
+                break
+
+    absoluto = urljoin(base_url, txt).strip()
+    if not absoluto.startswith(("http://", "https://")):
+        return ""
+
+    return absoluto
+
+
+def _eh_url_tracking(url: str) -> bool:
+    try:
+        baixa = _safe_str(url).lower()
+        if not baixa:
+            return True
+
+        parsed = urlparse(baixa)
+        host = parsed.netloc or ""
+        path = parsed.path or ""
+        query = parsed.query or ""
+
+        if any(token in host for token in TRACKING_HOST_TOKENS):
+            return True
+
+        if any(token in path for token in TRACKING_PATH_TOKENS):
+            return True
+
+        if any(token in query for token in ("fbclid", "gclid", "utm_", "pixel", "track")):
+            return True
+
+        return False
+    except Exception:
+        return True
+
+
+def _eh_url_imagem_ruim(url: str) -> bool:
+    try:
+        baixa = _safe_str(url).lower()
+        if not baixa:
+            return True
+
+        if _eh_url_tracking(baixa):
+            return True
+
+        if any(token in baixa for token in BAD_IMAGE_TOKENS):
+            return True
+
+        return False
+    except Exception:
+        return True
+
+
+def _score_imagem(url: str, base_url: str, contexto: str = "") -> int:
+    try:
+        baixa = _safe_str(url).lower()
+        if not baixa:
+            return -999
+
+        if _eh_url_imagem_ruim(baixa):
+            return -999
+
+        score = 0
+
+        base_host = (urlparse(base_url).netloc or "").lower()
+        host = (urlparse(baixa).netloc or "").lower()
+
+        if host and base_host and host == base_host:
+            score += 6
+        elif host.endswith(base_host) and base_host:
+            score += 4
+
+        if any(token in baixa for token in GOOD_IMAGE_HINTS):
+            score += 5
+
+        if any(token in baixa for token in ("/produto/", "/produtos/", "/product/", "/products/")):
+            score += 4
+
+        contexto_low = _safe_str(contexto).lower()
+        if any(token in contexto_low for token in ("gallery", "galeria", "product", "produto", "zoom")):
+            score += 5
+
+        if "og:image" in contexto_low:
+            score += 3
+
+        if "twitter:image" in contexto_low:
+            score += 1
+
+        path = urlparse(baixa).path or ""
+        if re.search(r"\.(jpg|jpeg|png|webp|gif|avif)$", path, flags=re.I):
+            score += 4
+
+        if "facebook.com/tr" in baixa:
+            score -= 1000
+
+        return score
+    except Exception:
+        return -999
+
+
+def _adicionar_url_imagem(
+    urls: list[str],
+    url: str,
+    base_url: str,
+    contexto: str = "",
+    min_score: int = 0,
+) -> None:
+    normalizada = _normalizar_url_imagem(url, base_url)
+    if not normalizada:
+        return
+
+    if _score_imagem(normalizada, base_url, contexto) < min_score:
+        return
+
+    if normalizada not in urls:
+        urls.append(normalizada)
+
+
+def _extrair_imagens_por_selectors(soup: BeautifulSoup, base_url: str) -> list[str]:
+    urls: list[str] = []
+
+    for selector in PRODUCT_IMAGE_SELECTORS:
+        try:
+            elementos = soup.select(selector)
+        except Exception:
+            elementos = []
+
+        for el in elementos:
+            candidatos = [
+                el.get("src"),
+                el.get("data-src"),
+                el.get("data-original"),
+                el.get("data-lazy"),
+                el.get("data-zoom-image"),
+                el.get("data-large_image"),
+                el.get("href"),
+                el.get("srcset"),
+            ]
+
+            for candidato in candidatos:
+                _adicionar_url_imagem(
+                    urls=urls,
+                    url=candidato or "",
+                    base_url=base_url,
+                    contexto=selector,
+                    min_score=4,
+                )
+
+    return urls
+
+
+def _coletar_imagens_produto(soup: BeautifulSoup, base_url: str, jsonld: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+
+    # JSON-LD
+    imagens_json = jsonld.get("image")
+    if isinstance(imagens_json, str):
+        imagens_json = [imagens_json]
+    if isinstance(imagens_json, list):
+        for item in imagens_json:
+            _adicionar_url_imagem(
+                urls=urls,
+                url=_safe_str(item),
+                base_url=base_url,
+                contexto="json-ld",
+                min_score=1,
+            )
+
+    # Metas
+    for meta_name in ("og:image", "twitter:image"):
+        meta_url = meta_content_crawler(soup, "property", meta_name) or meta_content_crawler(soup, "name", meta_name)
+        _adicionar_url_imagem(
+            urls=urls,
+            url=meta_url,
+            base_url=base_url,
+            contexto=meta_name,
+            min_score=2,
+        )
+
+    # Seletores de galeria
+    for url in _extrair_imagens_por_selectors(soup, base_url):
+        if url not in urls:
+            urls.append(url)
+
+    # Fallback do helper legado
+    if len(urls) < 2:
+        todas = _safe_str(todas_imagens_crawler(soup, base_url))
+        for item in [p.strip() for p in todas.split("|") if p.strip()]:
+            _adicionar_url_imagem(
+                urls=urls,
+                url=item,
+                base_url=base_url,
+                contexto="helper_fallback",
+                min_score=5,
+            )
+
+    # Fallback final: img geral com filtro rígido
+    if len(urls) < 2:
+        for img in soup.find_all("img"):
+            candidatos = [
+                img.get("src"),
+                img.get("data-src"),
+                img.get("data-original"),
+                img.get("data-lazy"),
+                img.get("data-zoom-image"),
+                img.get("data-large_image"),
+                img.get("srcset"),
+            ]
+
+            classes = " ".join(img.get("class", []) or [])
+            alt = _safe_str(img.get("alt"))
+            parent_class = ""
+            try:
+                parent = img.parent
+                if parent:
+                    parent_class = " ".join(parent.get("class", []) or [])
+            except Exception:
+                parent_class = ""
+
+            contexto = " ".join([classes, alt, parent_class]).strip()
+
+            for candidato in candidatos:
+                _adicionar_url_imagem(
+                    urls=urls,
+                    url=candidato or "",
+                    base_url=base_url,
+                    contexto=contexto,
+                    min_score=6,
+                )
+
+    return urls[:8]
+
+
+def _filtrar_imagens(lista: list[str]) -> str:
     if not lista:
         return ""
 
-    imgs = [i.strip() for i in lista.split("|") if i.strip()]
+    urls: list[str] = []
+    vistos: set[str] = set()
 
-    imgs = [
-        i for i in imgs
-        if not any(x in i.lower() for x in ["logo", "icon", "placeholder", "thumb"])
-    ]
-
-    imgs = list(dict.fromkeys(imgs))
-
-    return " | ".join(imgs[:5])
-
-
-def _marca_invalida(marca: str) -> bool:
-    marca_low = texto_limpo_crawler(marca).lower()
-
-    if not marca_low:
-        return True
-
-    invalidas = [
-        "mega center",
-        "megacenter",
-        "mega center eletrônicos",
-        "mega center eletronicos",
-    ]
-
-    return any(x in marca_low for x in invalidas)
-
-
-def _normalizar_marca_texto(marca: str) -> str:
-    marca = texto_limpo_crawler(marca)
-    if not marca:
-        return ""
-
-    marca = re.sub(r"^(marca[:\-\s]+)", "", marca, flags=re.I).strip()
-    marca = re.sub(r"\s+", " ", marca).strip(" -|/")
-
-    if len(marca) > 40:
-        return ""
-
-    return marca
-
-
-def _formatar_marca_saida(marca: str) -> str:
-    marca = texto_limpo_crawler(marca)
-    if not marca:
-        return ""
-
-    especiais = {
-        "JBL",
-        "LG",
-        "HP",
-        "AOC",
-        "TCL",
-        "TP-LINK",
-        "TPLINK",
-        "H'MASTON",
-        "HOCO",
-        "KNUP",
-    }
-
-    marca_upper = marca.upper()
-    if marca_upper in especiais:
-        return marca_upper
-
-    return marca.title()
-
-
-def _extrair_marca_do_nome(nome: str) -> str:
-    nome_limpo = texto_limpo_crawler(nome)
-    if not nome_limpo:
-        return ""
-
-    nome_upper = nome_limpo.upper()
-
-    marcas_conhecidas = [
-        "APPLE",
-        "ASUS",
-        "AOC",
-        "BASEUS",
-        "BEHRINGER",
-        "BOSCH",
-        "BRITANIA",
-        "CANON",
-        "CORSAIR",
-        "DELL",
-        "ELGIN",
-        "EPSON",
-        "EXBOM",
-        "FUJIFILM",
-        "GOLDENTEC",
-        "GOOGLE",
-        "GREE",
-        "HAVIT",
-        "HP",
-        "HAYOM",
-        "HIKVISION",
-        "HISENSE",
-        "HMSTON",
-        "H'MASTON",
-        "HOCO",
-        "HONOR",
-        "HUAWEI",
-        "INTELBRAS",
-        "JBL",
-        "KINGSTON",
-        "KNUP",
-        "KODAK",
-        "LEHMOX",
-        "LENOVO",
-        "LG",
-        "LOGITECH",
-        "MONDIAL",
-        "MOTOROLA",
-        "MULTILASER",
-        "NIKON",
-        "NINTENDO",
-        "NOKIA",
-        "PHILCO",
-        "PHILIPS",
-        "POSITIVO",
-        "REALME",
-        "RING",
-        "SAMSUNG",
-        "SONY",
-        "TCL",
-        "TP-LINK",
-        "TPLINK",
-        "VENTISOL",
-        "XIAOMI",
-    ]
-
-    for marca in marcas_conhecidas:
-        if nome_upper.startswith(marca + " ") or nome_upper == marca:
-            return _formatar_marca_saida(marca)
-
-    for marca in marcas_conhecidas:
-        padrao = r"(^|[\s\-\|/()])" + re.escape(marca) + r"($|[\s\-\|/()])"
-        if re.search(padrao, nome_upper):
-            return _formatar_marca_saida(marca)
-
-    primeira = nome_limpo.split(" ")[0].strip()
-    if 2 < len(primeira) < 20:
-        primeira_low = primeira.lower()
-        blacklist = {
-            "carregador",
-            "cabo",
-            "fonte",
-            "mouse",
-            "teclado",
-            "caixa",
-            "som",
-            "suporte",
-            "adaptador",
-            "fone",
-            "kit",
-        }
-        if primeira_low not in blacklist:
-            return _formatar_marca_saida(primeira)
-
-    return ""
-
-
-def _normalizar_codigo_sku(valor: Any) -> str:
-    texto = _texto_bruto(valor)
-    if not texto:
-        return ""
-
-    texto = re.sub(
-        r"^(c[oó]d(?:igo)?|sku|ref(?:er[eê]ncia)?|modelo)\s*[:\-]?\s*",
-        "",
-        texto,
-        flags=re.I,
-    ).strip()
-
-    if not texto:
-        return ""
-
-    if len(texto) > 60:
-        return ""
-
-    return texto
-
-
-def _eh_codigo_generico_ruim(valor: str) -> bool:
-    v = _texto_bruto(valor).lower()
-    if not v:
-        return True
-
-    ruins = [
-        "indisponivel",
-        "indisponível",
-        "esgotado",
-        "produto",
-        "categoria",
-        "marca",
-    ]
-    return any(x == v for x in ruins)
-
-
-def _normalizar_categoria_texto(valor: Any) -> str:
-    texto = texto_limpo_crawler(valor)
-    if not texto:
-        return ""
-
-    texto = re.sub(r"\s*>\s*", " > ", texto)
-    texto = re.sub(r"\s+", " ", texto).strip(" >-|/")
-
-    partes = [p.strip() for p in texto.split(">") if p.strip()]
-    partes = [
-        p for p in partes
-        if p.lower() not in {"home", "início", "inicio", "loja", "shop"}
-    ]
-
-    if not partes:
-        return ""
-
-    categoria = " > ".join(partes[:4])
-
-    if len(categoria) > 120:
-        return ""
-
-    return categoria
-
-
-def extrair_id_origem(url: str) -> str:
-    if not url:
-        return ""
-
-    partes = [p for p in str(url).split("/") if p.strip()]
-    if not partes:
-        return ""
-
-    ultimo = partes[-1]
-
-    m = re.search(r"(\d{5,})", ultimo)
-    if m:
-        return m.group(1)
-
-    m2 = re.search(r"(\d{5,})", str(url))
-    if m2:
-        return m2.group(1)
-
-    return ""
-
-
-def extrair_codigo_sku(soup, jsonld, html: str, nome_produto: str = "") -> str:
-    candidatos: list[str] = []
-
-    for campo in ["sku", "mpn", "productID", "productId"]:
-        valor = _normalizar_codigo_sku(jsonld.get(campo))
-        if valor:
-            candidatos.append(valor)
-
-    offers = jsonld.get("offers")
-    if isinstance(offers, dict):
-        for campo in ["sku", "mpn"]:
-            valor = _normalizar_codigo_sku(offers.get(campo))
-            if valor:
-                candidatos.append(valor)
-
-    if isinstance(offers, list):
-        for offer in offers:
-            if not isinstance(offer, dict):
-                continue
-            for campo in ["sku", "mpn"]:
-                valor = _normalizar_codigo_sku(offer.get(campo))
-                if valor:
-                    candidatos.append(valor)
-
-    for attr, value in [
-        ("property", "product:retailer_item_id"),
-        ("property", "product:sku"),
-        ("name", "sku"),
-        ("name", "product:sku"),
-    ]:
-        valor = _normalizar_codigo_sku(meta_content_crawler(soup, attr, value))
-        if valor:
-            candidatos.append(valor)
-
-    html_texto = texto_limpo_crawler(
-        BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)
-    )
-
-    padroes = [
-        r"\bC[ÓO]D(?:IGO)?\s*[:\-]?\s*([A-Z0-9\-_./]{4,})",
-        r"\bSKU\s*[:\-]?\s*([A-Z0-9\-_./]{4,})",
-        r"\bREF(?:ER[ÊE]NCIA)?\s*[:\-]?\s*([A-Z0-9\-_./]{4,})",
-        r"\bMODELO\s*[:\-]?\s*([A-Z0-9\-_./]{4,})",
-    ]
-
-    for padrao in padroes:
-        for match in re.findall(padrao, html_texto, flags=re.I):
-            valor = _normalizar_codigo_sku(match)
-            if valor:
-                candidatos.append(valor)
-
-    for sel in [
-        "[class*='sku']",
-        "[id*='sku']",
-        "[class*='codigo']",
-        "[id*='codigo']",
-        "[class*='cod']",
-        "[id*='cod']",
-        "[class*='ref']",
-        "[id*='ref']",
-        "[class*='modelo']",
-        "[id*='modelo']",
-    ]:
-        for el in soup.select(sel)[:10]:
-            txt = _normalizar_codigo_sku(el.get_text(" ", strip=True))
-            if txt:
-                candidatos.append(txt)
-
-    nome_upper = _texto_bruto(nome_produto).upper()
-    vistos = set()
-
-    for c in candidatos:
-        c = _texto_bruto(c)
-        if not c or c in vistos:
+    for item in lista:
+        img = _safe_str(item)
+        if not img or img in vistos:
             continue
-        vistos.add(c)
+        vistos.add(img)
+        urls.append(img)
 
-        if _eh_codigo_generico_ruim(c):
-            continue
-
-        if nome_upper and c.upper() in nome_upper and len(c) > 20:
-            continue
-
-        return c
-
-    return ""
-
-
-def extrair_categoria(soup, jsonld):
-    categoria = _normalizar_categoria_texto(jsonld.get("category"))
-    if categoria:
-        return categoria
-
-    for attr, value in [
-        ("property", "product:category"),
-        ("name", "category"),
-        ("name", "product:category"),
-    ]:
-        meta = _normalizar_categoria_texto(meta_content_crawler(soup, attr, value))
-        if meta:
-            return meta
-
-    for nav in soup.select("nav, .breadcrumb, [class*='bread'], [class*='crumb']"):
-        textos = [
-            texto_limpo_crawler(x.get_text(" ", strip=True))
-            for x in nav.select("a, span")
-        ]
-        textos = [t for t in textos if t and len(t) < 50]
-
-        if len(textos) >= 2:
-            categoria = _normalizar_categoria_texto(" > ".join(textos[1:4]))
-            if categoria:
-                return categoria
-
-    return ""
+    return " | ".join(urls[:5])
 
 
 # ==========================================================
-# EXTRAÇÃO
+# EXTRAÇÃO PRINCIPAL
 # ==========================================================
 def extrair_nome(soup, jsonld):
     return (
@@ -492,7 +447,13 @@ def extrair_nome(soup, jsonld):
         or meta_content_crawler(soup, "property", "og:title")
         or primeiro_texto_crawler(
             soup,
-            ["h1", ".product-title", ".product-name"],
+            [
+                "h1",
+                ".product-title",
+                ".product-name",
+                "[class*='product'] h1",
+                "[class*='title']",
+            ],
         )
     )
 
@@ -515,6 +476,12 @@ def extrair_preco(soup, jsonld, html):
     if meta:
         return numero_texto_crawler(meta)
 
+    for el in soup.select("[class*='price'], [class*='valor']"):
+        txt = texto_limpo_crawler(el.get_text())
+        preco = numero_texto_crawler(txt)
+        if preco and len(preco) >= 3:
+            return preco
+
     return _extrair_preco_global(html)
 
 
@@ -526,83 +493,35 @@ def extrair_descricao(soup, jsonld):
         desc = meta or ""
 
     if not desc:
-        el = soup.select_one("[class*='description']")
-        if el:
-            desc = texto_limpo_crawler(el.get_text())
+        for sel in [
+            ".product-description",
+            ".description",
+            "[class*='description']",
+        ]:
+            el = soup.select_one(sel)
+            if el:
+                desc = texto_limpo_crawler(el.get_text())
+                break
 
     return _limpar_descricao(desc)
 
 
 def extrair_imagens(soup, url, jsonld):
-    imgs = jsonld.get("image")
-
-    if isinstance(imgs, list):
-        return _filtrar_imagens(" | ".join(imgs))
-
-    if isinstance(imgs, str):
-        return _filtrar_imagens(imgs)
-
-    return _filtrar_imagens(todas_imagens_crawler(soup, url))
+    imagens = _coletar_imagens_produto(soup, url, jsonld or {})
+    return _filtrar_imagens(imagens)
 
 
-def extrair_marca(soup, jsonld, nome_produto: str = ""):
+def extrair_marca(jsonld):
     marca = jsonld.get("brand")
-
     if isinstance(marca, dict):
-        nome = _normalizar_marca_texto(marca.get("name", ""))
-        if nome and not _marca_invalida(nome):
-            return _formatar_marca_saida(nome)
-
+        return texto_limpo_crawler(marca.get("name"))
     if isinstance(marca, str):
-        nome = _normalizar_marca_texto(marca)
-        if nome and not _marca_invalida(nome):
-            return _formatar_marca_saida(nome)
-
-    meta = _normalizar_marca_texto(meta_content_crawler(soup, "property", "product:brand"))
-    if meta and not _marca_invalida(meta):
-        return _formatar_marca_saida(meta)
-
-    meta_name = _normalizar_marca_texto(meta_content_crawler(soup, "name", "brand"))
-    if meta_name and not _marca_invalida(meta_name):
-        return _formatar_marca_saida(meta_name)
-
-    possiveis: list[str] = []
-
-    for sel in [
-        "[class*='brand']",
-        "[id*='brand']",
-        ".marca",
-        ".brand",
-        "[class*='fabricante']",
-        "[id*='fabricante']",
-    ]:
-        elementos = soup.select(sel)
-        for el in elementos[:5]:
-            txt = _normalizar_marca_texto(el.get_text(" ", strip=True))
-            if txt:
-                possiveis.append(txt)
-
-    for m in possiveis:
-        if not _marca_invalida(m):
-            return _formatar_marca_saida(m)
-
-    marca_nome = _extrair_marca_do_nome(nome_produto)
-    if marca_nome and not _marca_invalida(marca_nome):
-        return _formatar_marca_saida(marca_nome)
-
-    return ""
-
-
-def extrair_gtin(jsonld):
-    for campo in ["gtin13", "gtin", "ean"]:
-        valor = _digitos(jsonld.get(campo))
-        if len(valor) in (8, 12, 13, 14):
-            return valor
+        return texto_limpo_crawler(marca)
     return ""
 
 
 # ==========================================================
-# MAIN
+# MAIN COM IA
 # ==========================================================
 def extrair_produto_crawler(
     html: str,
@@ -612,52 +531,44 @@ def extrair_produto_crawler(
     payload_origem=None,
 ) -> dict:
     soup = BeautifulSoup(html, "html.parser")
-
     jsonlds = extrair_json_ld_crawler(soup)
     json_produto = buscar_produto_jsonld_crawler(jsonlds)
 
     nome = extrair_nome(soup, json_produto)
     preco = extrair_preco(soup, json_produto, html)
 
-    if extrair_com_ia and (not nome and not preco):
-        log_debug(f"[IA FALLBACK TOTAL] {url}")
-
+    # ======================================================
+    # IA FALLBACK
+    # ======================================================
+    if extrair_com_ia and (not nome or not preco):
+        log_debug(f"[IA FALLBACK] {url}")
         produto_ia = extrair_com_ia(html, url)
-
         if produto_ia and produto_ia.get("Nome"):
-            produto_ia["Descrição Curta"] = (
-                produto_ia.get("Descrição") or produto_ia.get("Nome")
-            )
+            produto_ia["Descrição Curta"] = produto_ia.get("Descrição") or produto_ia.get("Nome")
             return produto_ia
 
     if not nome:
         return {}
 
-    codigo_sku = extrair_codigo_sku(soup, json_produto, html, nome)
-    id_origem = extrair_id_origem(url)
-    codigo_final = codigo_sku or id_origem
-    estoque_extraido = _normalizar_estoque_saida(
-        detectar_estoque_crawler(html, soup, padrao_disponivel)
-    )
-
     base = {
         "Nome": nome,
         "Preço": preco,
         "Descrição": extrair_descricao(soup, json_produto),
-        "Marca": extrair_marca(soup, json_produto, nome),
-        "Categoria": extrair_categoria(soup, json_produto),
-        "GTIN/EAN": extrair_gtin(json_produto),
-        "Código": codigo_final,
-        "SKU": codigo_final,
-        "ID Origem": id_origem,
+        "Marca": extrair_marca(json_produto),
+        "Categoria": _extrair_categoria(soup),
+        "GTIN/EAN": _digitos(
+            json_produto.get("gtin13")
+            or json_produto.get("gtin12")
+            or json_produto.get("gtin14")
+            or json_produto.get("gtin8")
+            or json_produto.get("gtin")
+        ),
         "URL Imagens Externas": extrair_imagens(soup, url, json_produto),
         "Link Externo": url,
-        "Estoque": estoque_extraido,
+        "Estoque": detectar_estoque_crawler(html, soup, padrao_disponivel),
     }
 
     base["Descrição Curta"] = base.get("Descrição") or base.get("Nome")
 
-    log_debug(f"[ESTOQUE EXTRAIDO] url={url} | estoque={estoque_extraido}")
     log_debug(f"[EXTRACTOR FINAL] {url}")
-
     return base
