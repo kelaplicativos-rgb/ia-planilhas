@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -32,6 +36,74 @@ from bling_app_zero.utils.init_app import inicializar_app
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
 APP_VERSION = "1.0.27"
+APP_CHANGELOG_TITULO = "Sistema de versionamento automático"
+APP_CHANGELOG_DESCRICAO = "Sincronização automática com version.json + histórico de mudanças."
+
+
+# =========================
+# VERSIONAMENTO AUTOMÁTICO
+# =========================
+def _agora_iso() -> str:
+    try:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
+
+def _carregar_json(caminho: Path) -> dict:
+    try:
+        if not caminho.exists():
+            return {}
+        return json.loads(caminho.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _salvar_json(caminho: Path, data: dict):
+    try:
+        caminho.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _sync_version():
+    try:
+        path = Path("version.json")
+        data = _carregar_json(path)
+
+        versao_atual = str(data.get("version") or "")
+        historico = data.get("history") or []
+
+        if not isinstance(historico, list):
+            historico = []
+
+        if versao_atual != APP_VERSION:
+            historico.append({
+                "version": APP_VERSION,
+                "date": _agora_iso(),
+                "title": APP_CHANGELOG_TITULO,
+                "description": APP_CHANGELOG_DESCRICAO,
+            })
+
+        novo = {
+            "version": APP_VERSION,
+            "updated_at": _agora_iso(),
+            "last_title": APP_CHANGELOG_TITULO,
+            "last_description": APP_CHANGELOG_DESCRICAO,
+            "history": historico,
+        }
+
+        _salvar_json(path, novo)
+
+    except Exception:
+        pass
+
+
+# 🔥 EXECUTA AUTOMÁTICO
+_sync_version()
 
 
 # =========================
@@ -97,13 +169,6 @@ def _ir_para(etapa: str):
 
 
 def _obter_df_fluxo():
-    """
-    Retorna o melhor dataframe disponível do fluxo final.
-    Prioridade:
-    1) df_final
-    2) df_saida
-    E sincroniza os dois estados quando possível.
-    """
     df_final = st.session_state.get("df_final")
     df_saida = st.session_state.get("df_saida")
 
