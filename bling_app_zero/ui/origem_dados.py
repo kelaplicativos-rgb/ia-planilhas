@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import (
     controlar_troca_operacao,
+    controlar_troca_origem,
     garantir_estado_origem,
     safe_df_dados,
     safe_df_estrutura,
@@ -23,6 +24,9 @@ from bling_app_zero.ui.origem_dados_validacao import (
 )
 
 
+# ==========================================================
+# HELPERS
+# ==========================================================
 def _obter_origem_atual() -> str:
     try:
         for key in ["origem_dados", "origem_selecionada", "tipo_origem", "origem"]:
@@ -53,12 +57,10 @@ def _normalizar_texto(valor) -> str:
 def _normalizar_quantidade(valor, fallback: int) -> int:
     try:
         texto = str(valor or "").strip().lower()
-        if texto in {"", "nan", "none"}:
+        if texto in {"", "nan", "none", "<na>"}:
             return int(fallback)
-
         if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
             return 0
-
         numero = int(float(str(valor).replace(",", ".")))
         return max(numero, 0)
     except Exception:
@@ -157,99 +159,93 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
             f"{len(df_saida.columns)} coluna(s) e {colunas_preenchidas} coluna(s) preenchida(s) automaticamente.",
             "INFO",
         )
-
         return df_saida
 
     except Exception as e:
-        log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERRO")
-
+        log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERROR")
         df_saida = df_origem.copy()
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
-
         return df_saida
 
 
-def _render_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
+def _garantir_coluna(df: pd.DataFrame, nome: str, valor_padrao="") -> pd.DataFrame:
+    try:
+        if nome not in df.columns:
+            df[nome] = valor_padrao
+        return df
+    except Exception:
+        return df
+
+
+def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
     try:
         df_saida = df_saida.copy()
 
-        st.markdown("### Configurações de estoque")
+        st.markdown("### Dados de estoque")
 
-        col1, col2 = st.columns(2)
+        deposito = st.text_input(
+            "Nome do depósito",
+            value=str(st.session_state.get("deposito_nome", "") or ""),
+            key="deposito_nome",
+            placeholder="Ex.: ifood",
+        )
 
-        with col1:
-            deposito = st.text_input(
-                "Nome do depósito",
-                value=str(st.session_state.get("deposito_nome", "") or ""),
-                key="deposito_nome",
-                placeholder="Ex.: ifood",
-            )
-
-        with col2:
-            qtd_padrao = st.number_input(
-                "Quantidade padrão",
-                min_value=0,
-                value=int(st.session_state.get("quantidade_fallback", 0) or 0),
-                step=1,
-                key="quantidade_fallback",
-                help="Usado como fallback quando não houver quantidade válida.",
-            )
+        qtd = st.number_input(
+            "Quantidade padrão",
+            min_value=0,
+            value=int(st.session_state.get("quantidade_fallback", 0) or 0),
+            step=1,
+            key="quantidade_fallback",
+            help="Usado como fallback quando não houver quantidade válida.",
+        )
 
         if deposito:
-            if "Depósito" not in df_saida.columns:
-                df_saida["Depósito"] = ""
+            df_saida = _garantir_coluna(df_saida, "Depósito", "")
             df_saida["Depósito"] = deposito
 
-        if "Quantidade" not in df_saida.columns:
-            df_saida["Quantidade"] = qtd_padrao
+        df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
 
         if "site" in origem_atual:
             df_saida["Quantidade"] = df_saida["Quantidade"].apply(
-                lambda v: _normalizar_quantidade(v, qtd_padrao)
+                lambda v: _normalizar_quantidade(v, qtd)
             )
+        else:
+            df_saida["Quantidade"] = df_saida["Quantidade"].fillna(qtd)
 
         return df_saida
+
     except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERRO")
+        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida
 
 
 def _render_header_fluxo() -> None:
     st.subheader("Origem dos dados")
-    st.caption("Carregue a origem, escolha a operação e o sistema aplica automaticamente o modelo interno do Bling.")
+    st.caption(
+        "Carregue a origem, escolha a operação e o sistema aplica automaticamente o modelo do Bling."
+    )
 
 
-def _render_barra_etapas() -> None:
-    etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
-
-    mapa = {
-        "origem": "1. Origem",
-        "mapeamento": "2. Mapeamento",
-        "final": "3. Final",
-        "envio": "4. Envio",
-    }
-
-    atual = mapa.get(etapa, "1. Origem")
-    st.info(f"Etapa atual: {atual}")
-
-
+# ==========================================================
+# RENDER
+# ==========================================================
 def render_origem_dados() -> None:
     garantir_estado_origem()
-
-    etapa = str(st.session_state.get("etapa", "origem") or "origem").strip().lower()
-
     _render_header_fluxo()
-    _render_barra_etapas()
+
+    etapa = str(st.session_state.get("etapa_origem", "origem") or "origem").strip().lower()
 
     if etapa == "mapeamento":
         if st.button("⬅️ Voltar para origem", use_container_width=True):
             set_etapa_origem("origem")
             st.rerun()
+        return
 
-    st.markdown("---")
+    df_origem = render_origem_entrada(
+        lambda origem: controlar_troca_origem(origem, log_debug)
+    )
 
-    df_origem = render_origem_entrada()
     origem_atual = _obter_origem_atual()
 
     if "site" in origem_atual and not st.session_state.get("site_processado"):
@@ -261,10 +257,10 @@ def render_origem_dados() -> None:
         st.info("Selecione a origem e carregue os dados para continuar.")
         return
 
+    st.session_state["df_origem"] = df_origem.copy()
     sincronizar_estado_com_origem(df_origem, log_debug)
 
     st.markdown("---")
-    st.markdown("### Operação")
 
     operacao = st.radio(
         "Tipo de envio",
@@ -275,38 +271,46 @@ def render_origem_dados() -> None:
     _sincronizar_tipo_operacao(operacao)
 
     st.markdown("---")
+
+    # Mantém compatibilidade com upload manual e com modelo interno salvo no sistema.
     render_modelo_bling(operacao)
 
     modelo_ativo = obter_modelo_ativo()
     if not _modelo_tem_estrutura(modelo_ativo):
-        st.warning("O modelo interno do Bling não está disponível.")
+        st.warning("⚠️ Modelo do Bling não encontrado.")
         return
 
+    # Recria a base de saída sempre que a origem/operação estiver válida.
     df_saida = _sincronizar_df_saida_base(df_origem)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
-        st.markdown("---")
-        df_saida = _render_bloco_estoque(df_saida, origem_atual)
+        df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("---")
+
+    # A precificação trabalha sobre a origem/base, mas não pode destruir a estrutura da saída.
     render_precificacao(df_origem)
 
+    # Se existir precificação válida, ela pode servir como base-fonte para o mapeamento,
+    # mas a estrutura final permanece em df_saida.
+    df_prec = st.session_state.get("df_calc_precificado")
+    if safe_df_estrutura(df_prec):
+        st.session_state["df_precificado"] = df_prec.copy()
+
     st.markdown("---")
-    col1, col2 = st.columns([2, 1])
 
-    with col1:
-        st.caption("O mapeamento só avança quando origem, operação, base de saída e modelo interno estiverem válidos.")
+    if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
+        valido, erros = validar_antes_mapeamento()
+        if not valido:
+            for erro in erros:
+                st.warning(erro)
+            return
 
-    with col2:
-        if st.button("➡️ Continuar para mapeamento", use_container_width=True):
-            valido, erros = validar_antes_mapeamento()
+        # Garante que o fluxo siga com a base montada e não com a origem crua.
+        if safe_df_estrutura(st.session_state.get("df_saida")):
+            st.session_state["df_final"] = st.session_state["df_saida"].copy()
 
-            if not valido:
-                for erro in erros:
-                    st.warning(erro)
-                return
-
-            set_etapa_origem("mapeamento")
-            st.rerun()
+        set_etapa_origem("mapeamento")
+        st.rerun()
