@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from io import BytesIO
 from typing import Callable
 
 import pandas as pd
@@ -12,9 +11,16 @@ from bling_app_zero.ui.app_helpers import log_debug, limpar_gtin_invalido
 # ==========================================================
 # HELPERS
 # ==========================================================
-def _safe_df(df) -> bool:
+def _safe_df_com_linhas(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _safe_df_estrutura(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
     except Exception:
         return False
 
@@ -126,7 +132,7 @@ def texto_extensoes_planilha() -> str:
 
 def tem_upload_ativo() -> bool:
     try:
-        return _safe_df(st.session_state.get("df_origem"))
+        return _safe_df_com_linhas(st.session_state.get("df_origem"))
     except Exception:
         return False
 
@@ -184,7 +190,7 @@ def _processar_upload_planilha(arquivo_planilha) -> pd.DataFrame | None:
 
         df_planilha = _ler_planilha(arquivo_planilha)
 
-        if not _safe_df(df_planilha):
+        if not _safe_df_com_linhas(df_planilha):
             st.error("Não foi possível ler a planilha do fornecedor.")
             return None
 
@@ -224,7 +230,6 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
         if hash_xml != hash_anterior or nome_xml != nome_anterior:
             _limpar_estado_origem()
 
-        # fallback simples: tenta ler tabelar; se não conseguir, retorna vazio
         try:
             arquivo_xml.seek(0)
             conteudo = arquivo_xml.read()
@@ -237,7 +242,6 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
             st.error("Não foi possível ler o XML da nota fiscal.")
             return None
 
-        # mantém compatibilidade mínima sem quebrar o app
         df_xml = pd.DataFrame([{"XML": conteudo[:5000]}])
 
         df_xml = _normalizar_df(df_xml)
@@ -273,7 +277,7 @@ def render_origem_site() -> pd.DataFrame | None:
 def _carregar_modelo(uploaded_file) -> pd.DataFrame | None:
     try:
         df = _ler_planilha(uploaded_file)
-        if not _safe_df(df):
+        if not _safe_df_estrutura(df):
             return None
         return _normalizar_df(df)
     except Exception as e:
@@ -301,10 +305,12 @@ def render_modelo_bling(operacao: str | None = None) -> None:
 
         if arquivo_modelo is not None:
             df_modelo = _carregar_modelo(arquivo_modelo)
-            if _safe_df(df_modelo):
+            if _safe_df_estrutura(df_modelo):
                 st.session_state["df_modelo_estoque"] = df_modelo.copy()
                 st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
                 st.success("Modelo de estoque carregado com sucesso.")
+                with st.expander("Prévia do modelo de estoque", expanded=False):
+                    st.dataframe(df_modelo.head(5), use_container_width=True)
             else:
                 st.error("Não foi possível ler o modelo de estoque.")
     else:
@@ -316,10 +322,12 @@ def render_modelo_bling(operacao: str | None = None) -> None:
 
         if arquivo_modelo is not None:
             df_modelo = _carregar_modelo(arquivo_modelo)
-            if _safe_df(df_modelo):
+            if _safe_df_estrutura(df_modelo):
                 st.session_state["df_modelo_cadastro"] = df_modelo.copy()
                 st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
                 st.success("Modelo de cadastro carregado com sucesso.")
+                with st.expander("Prévia do modelo de cadastro", expanded=False):
+                    st.dataframe(df_modelo.head(5), use_container_width=True)
             else:
                 st.error("Não foi possível ler o modelo de cadastro.")
 
@@ -368,7 +376,7 @@ def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.
 
     if origem_atual == "site":
         df_site = render_origem_site()
-        if _safe_df(df_site):
+        if _safe_df_com_linhas(df_site):
             df_site = limpar_gtin_invalido(df_site)
             _salvar_df_origem(df_site, origem="site")
             df_origem = df_site
@@ -390,10 +398,10 @@ def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.
         )
         df_origem = _processar_upload_xml(arquivo_xml)
 
-    if not _safe_df(df_origem):
+    if not _safe_df_com_linhas(df_origem):
         df_origem = st.session_state.get("df_origem")
 
-    if tem_upload_ativo() and _safe_df(df_origem):
+    if tem_upload_ativo() and _safe_df_com_linhas(df_origem):
         with st.expander("Prévia rápida da origem", expanded=False):
             try:
                 st.dataframe(
