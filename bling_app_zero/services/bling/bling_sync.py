@@ -13,6 +13,11 @@ class BlingSync:
         self.services = BlingServices(user_key=self.user_key)
 
     # =========================
+    # CONFIG PRO
+    # =========================
+    BATCH_SIZE = 50  # 🔥 envio em lote (evita lentidão e duplicação)
+
+    # =========================
     # HELPERS
     # =========================
     @staticmethod
@@ -74,6 +79,11 @@ class BlingSync:
 
         return bool(codigo or id_produto)
 
+    @staticmethod
+    def _chunk(lista: List[Any], size: int):
+        for i in range(0, len(lista), size):
+            yield lista[i : i + size]
+
     # =========================
     # PRODUTOS
     # =========================
@@ -95,16 +105,16 @@ class BlingSync:
         erro = 0
         erros: List[Any] = []
 
-        for row in registros:
+        for lote in self._chunk(registros, self.BATCH_SIZE):
             try:
-                ok, resp = self.services.upsert_products([row])
+                ok, resp = self.services.upsert_products(lote)
             except Exception as e:
                 ok, resp = False, str(e)
 
             if ok:
-                sucesso += 1
+                sucesso += len(lote)
             else:
-                erro += 1
+                erro += len(lote)
                 erros.append(resp)
 
         return self._build_result(
@@ -141,19 +151,19 @@ class BlingSync:
         erro = 0
         erros: List[Any] = []
 
-        for row in registros:
+        for lote in self._chunk(registros, self.BATCH_SIZE):
             try:
                 ok, resp = self.services.update_stocks(
-                    [row],
+                    lote,
                     deposito_id=deposito_id,
                 )
             except Exception as e:
                 ok, resp = False, str(e)
 
             if ok:
-                sucesso += 1
+                sucesso += len(lote)
             else:
-                erro += 1
+                erro += len(lote)
                 erros.append(resp)
 
         return self._build_result(
