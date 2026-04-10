@@ -1,3 +1,20 @@
 {
-  "version": "1.0.20"
+  "version": "1.0.27",
+  "updated_at": "2026-04-10 07:00:00",
+  "last_title": "Sistema de versionamento automático",
+  "last_description": "Sincronização automática com version.json + histórico de mudanças.",
+  "history": [
+    {
+      "version": "1.0.20",
+      "date": "2026-04-09 00:00:00",
+      "title": "Versão anterior",
+      "description": "Versão base antes do controle automático."
+    },
+    {
+      "version": "1.0.27",
+      "date": "2026-04-10 07:00:00",
+      "title": "Sistema de versionamento automático",
+      "description": "Sincronização automática com version.json + histórico de mudanças."
+    }
+  ]
 }
