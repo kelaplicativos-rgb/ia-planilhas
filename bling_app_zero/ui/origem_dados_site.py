@@ -40,7 +40,7 @@ def _normalizar_coluna_estoque(
             break
 
     if coluna_estoque is None:
-        df_saida["estoque"] = int(estoque_padrao_site)
+        df_saida["Estoque"] = int(estoque_padrao_site)
         return df_saida
 
     def ajustar(valor):
@@ -67,6 +67,13 @@ def _normalizar_coluna_estoque(
             return int(estoque_padrao_site)
 
     df_saida[coluna_estoque] = df_saida[coluna_estoque].apply(ajustar)
+
+    if coluna_estoque != "Estoque" and "Estoque" not in df_saida.columns:
+        try:
+            df_saida["Estoque"] = df_saida[coluna_estoque]
+        except Exception:
+            pass
+
     return df_saida
 
 
@@ -95,11 +102,20 @@ def _parse_urls(valor: str) -> List[str]:
         return []
 
 
+def _combinar_urls(url_unica: str, urls_multiplas: str) -> List[str]:
+    urls: List[str] = []
+    for origem in (_parse_urls(url_unica), _parse_urls(urls_multiplas)):
+        for url in origem:
+            if url not in urls:
+                urls.append(url)
+    return urls
+
+
 def _deduplicar_df(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df_saida = df.copy()
 
-        for coluna in ["Link Externo", "url", "URL", "link", "Link"]:
+        for coluna in ["Link Externo", "link externo", "url", "URL", "link", "Link"]:
             if coluna in df_saida.columns:
                 df_saida[coluna] = df_saida[coluna].astype(str).str.strip()
                 df_saida = df_saida.drop_duplicates(subset=[coluna])
@@ -110,8 +126,23 @@ def _deduplicar_df(df: pd.DataFrame) -> pd.DataFrame:
         return df.reset_index(drop=True)
 
 
+def _limpar_estado_site() -> None:
+    try:
+        st.session_state["df_origem_site"] = None
+        st.session_state["site_processado"] = False
+        st.session_state["crawler_rodando"] = False
+    except Exception:
+        pass
+
+
 def render_origem_site():
     st.markdown("### Captação de produtos via site")
+
+    url_unica = st.text_input(
+        "URL do site",
+        key="url_site_origem",
+        placeholder="https://site.com/categoria-ou-pagina",
+    )
 
     urls_input = st.text_area(
         "URLs do site",
@@ -128,7 +159,7 @@ def render_origem_site():
     estoque_padrao_site = st.number_input(
         "Estoque padrão quando disponível",
         min_value=0,
-        value=int(st.session_state.get("estoque_padrao_site", 10) or 10),
+        value=int(st.session_state.get("estoque_padrao_site", 0) or 0),
         step=1,
         key="estoque_padrao_site",
     )
@@ -142,24 +173,37 @@ def render_origem_site():
     if "site_processado" not in st.session_state:
         st.session_state["site_processado"] = False
 
-    urls = _parse_urls(urls_input)
+    urls = _combinar_urls(url_unica, urls_input)
 
     if urls:
         st.caption(f"{len(urls)} URL(s) detectada(s) para processamento.")
 
-    buscar = st.button(
-        "Buscar produtos do site",
-        use_container_width=True,
-        disabled=st.session_state["crawler_rodando"] or not bool(urls),
-        key="botao_buscar_produtos_site",
-    )
+    col1, col2 = st.columns(2)
+
+    with col1:
+        buscar = st.button(
+            "Buscar produtos do site",
+            use_container_width=True,
+            disabled=st.session_state["crawler_rodando"] or not bool(urls),
+            key="botao_buscar_produtos_site",
+        )
+
+    with col2:
+        if st.button(
+            "Limpar URLs",
+            use_container_width=True,
+            key="botao_limpar_urls_site",
+        ):
+            st.session_state["url_site_origem"] = ""
+            st.session_state["urls_site_origem"] = ""
+            _limpar_estado_site()
+            st.rerun()
 
     if buscar:
         st.session_state["crawler_rodando"] = True
         st.session_state["site_processado"] = False
         st.session_state["df_origem_site"] = None
 
-        progress = st.progress(0)
         status = st.empty()
         detalhe = st.empty()
 
@@ -175,9 +219,6 @@ def render_origem_site():
             for indice, url_limpa in enumerate(urls, start=1):
                 detalhe.info(f"Processando URL {indice}/{total_urls}")
                 status.info(f"Conectando ao site: {url_limpa}")
-
-                progresso_base = int(((indice - 1) / total_urls) * 100)
-                progress.progress(min(95, max(1, progresso_base + 5)))
 
                 try:
                     df_origem = executar_crawler(
@@ -202,12 +243,9 @@ def render_origem_site():
                 except Exception as e:
                     log_debug(f"[SITE] Erro ao processar URL {url_limpa}: {e}", "ERROR")
 
-                progresso_url = int((indice / total_urls) * 100)
-                progress.progress(min(95, max(5, progresso_url)))
-
             if not dfs_resultado:
                 st.error("Nenhum produto encontrado nas URLs informadas.")
-                st.session_state["df_origem_site"] = None
+                _limpar_estado_site()
                 return None
 
             df_final = pd.concat(dfs_resultado, ignore_index=True)
@@ -220,7 +258,6 @@ def render_origem_site():
             st.session_state["df_origem_site"] = df_final.copy()
             st.session_state["site_processado"] = True
 
-            progress.progress(100)
             detalhe.empty()
             status.success(f"✅ {len(df_final)} produtos carregados")
             log_debug(
@@ -231,7 +268,7 @@ def render_origem_site():
         except Exception as e:
             st.error("Erro ao buscar site.")
             log_debug(f"Erro crawler: {e}", "ERROR")
-            st.session_state["df_origem_site"] = None
+            _limpar_estado_site()
 
         finally:
             st.session_state["crawler_rodando"] = False
