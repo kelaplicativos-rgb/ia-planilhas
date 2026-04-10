@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 
-ETAPAS_VALIDAS = {"origem", "mapeamento", "final", "envio"}
 
-
+# ==========================================================
+# VALIDAÇÃO DF
+# ==========================================================
 def safe_df_dados(df: Any) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+        return (
+            isinstance(df, pd.DataFrame)
+            and len(df.columns) > 0
+            and not df.empty
+        )
     except Exception:
         return False
 
@@ -23,175 +30,240 @@ def safe_df_estrutura(df: Any) -> bool:
         return False
 
 
-def garantir_estado_origem() -> None:
+# ==========================================================
+# HELPERS
+# ==========================================================
+def _safe_str(valor: Any) -> str:
     try:
-        etapa_atual = str(st.session_state.get("etapa_origem") or "").strip().lower()
-        if etapa_atual not in ETAPAS_VALIDAS:
-            st.session_state["etapa_origem"] = "origem"
+        texto = str(valor or "").strip()
+        if texto.lower() in {"none", "nan", "<na>", "nat"}:
+            return ""
+        return texto
     except Exception:
-        st.session_state["etapa_origem"] = "origem"
-
-    if "etapa" not in st.session_state:
-        st.session_state["etapa"] = st.session_state.get("etapa_origem", "origem")
-
-    if "etapa_fluxo" not in st.session_state:
-        st.session_state["etapa_fluxo"] = st.session_state.get("etapa_origem", "origem")
-
-    if "origem_dados" not in st.session_state:
-        st.session_state["origem_dados"] = ""
-
-    if "tipo_operacao_bling" not in st.session_state:
-        st.session_state["tipo_operacao_bling"] = ""
+        return ""
 
 
-def set_etapa_origem(etapa: str) -> None:
-    etapa_norm = str(etapa or "origem").strip().lower()
-    if etapa_norm not in ETAPAS_VALIDAS:
-        etapa_norm = "origem"
-
-    st.session_state["etapa_origem"] = etapa_norm
-    st.session_state["etapa"] = etapa_norm
-    st.session_state["etapa_fluxo"] = etapa_norm
+def _normalizar_valor_fluxo(valor: Any) -> str:
+    return _safe_str(valor).lower()
 
 
-def limpar_fluxo_processado() -> None:
-    for chave in [
+def _safe_copy_df(df: Any) -> Any:
+    try:
+        if isinstance(df, pd.DataFrame):
+            return df.copy()
+        return df
+    except Exception:
+        return df
+
+
+# ==========================================================
+# UPLOAD / MODELO ATIVO
+# ==========================================================
+def tem_upload_ativo() -> bool:
+    try:
+        return bool(
+            safe_df_estrutura(st.session_state.get("df_modelo_cadastro"))
+            or safe_df_estrutura(st.session_state.get("df_modelo_estoque"))
+            or safe_df_estrutura(st.session_state.get("df_origem"))
+        )
+    except Exception:
+        return False
+
+
+# ==========================================================
+# FINGERPRINT
+# ==========================================================
+def fingerprint_df(df: pd.DataFrame) -> str:
+    try:
+        if not isinstance(df, pd.DataFrame):
+            return ""
+
+        base = {
+            "shape": tuple(df.shape),
+            "columns": [str(c) for c in list(df.columns)],
+            "head": df.head(10).fillna("").astype(str).to_dict(),
+        }
+        bruto = str(base).encode("utf-8", errors="ignore")
+        return hashlib.md5(bruto).hexdigest()
+    except Exception:
+        return ""
+
+
+# ==========================================================
+# ETAPA
+# ==========================================================
+def _set_etapa_global(valor: str) -> None:
+    etapa = _normalizar_valor_fluxo(valor or "origem")
+    if etapa not in ETAPAS_VALIDAS_ORIGEM:
+        etapa = "origem"
+
+    st.session_state["etapa_origem"] = etapa
+    st.session_state["etapa"] = etapa
+    st.session_state["etapa_fluxo"] = etapa
+
+
+def set_etapa_origem(valor: str) -> None:
+    _set_etapa_global(valor)
+
+
+# ==========================================================
+# LIMPEZA DE WIDGETS / MAPEAMENTO
+# ==========================================================
+def limpar_mapeamento_widgets() -> None:
+    try:
+        chaves_para_remover = [
+            chave
+            for chave in list(st.session_state.keys())
+            if str(chave).startswith("map_")
+        ]
+        for chave in chaves_para_remover:
+            st.session_state.pop(chave, None)
+
+        st.session_state.pop("mapping_origem", None)
+    except Exception:
+        pass
+
+
+def resetar_estado_fluxo(preservar_origem: bool = True) -> None:
+    df_origem = _safe_copy_df(st.session_state.get("df_origem"))
+    fp_origem = _safe_str(st.session_state.get("origem_dados_fingerprint"))
+    origem_tipo = _safe_str(st.session_state.get("_origem_anterior_origem_dados"))
+
+    chaves_limpar = [
         "df_saida",
         "df_final",
         "df_precificado",
         "df_calc_precificado",
-        "mapping_origem",
-        "mapeamento_sugerido",
-        "preview_final_valido",
-        "campos_obrigatorios_faltantes",
-        "campos_obrigatorios_alertas",
-    ]:
-        if chave in st.session_state:
-            del st.session_state[chave]
+        "df_modelo_mapeamento",
+        "preview_download_df",
+    ]
+
+    for chave in chaves_limpar:
+        st.session_state.pop(chave, None)
+
+    limpar_mapeamento_widgets()
+
+    if preservar_origem and safe_df_dados(df_origem):
+        st.session_state["df_origem"] = df_origem.copy()
+        if fp_origem:
+            st.session_state["origem_dados_fingerprint"] = fp_origem
+        if origem_tipo:
+            st.session_state["_origem_anterior_origem_dados"] = origem_tipo
 
 
-def limpar_origem_carregada() -> None:
-    for chave in [
-        "df_origem",
-        "df_dados",
-        "arquivo_origem_nome",
-        "arquivo_origem_hash",
-        "origem_dados_nome",
-        "origem_dados_hash",
-        "origem_dados_tipo_arquivo",
-        "origem_pdf_texto",
-        "origem_pdf_nome",
-        "origem_xml_texto",
-        "origem_xml_nome",
-        "site_processado",
-    ]:
-        if chave in st.session_state:
-            del st.session_state[chave]
+# ==========================================================
+# CONTROLE DE OPERAÇÃO
+# ==========================================================
+def controlar_troca_operacao(operacao: str, log_debug) -> None:
+    operacao_atual = _safe_str(operacao)
+    operacao_anterior = _safe_str(
+        st.session_state.get("_operacao_anterior_origem_dados")
+    )
 
-
-def salvar_origem_no_estado(
-    df: pd.DataFrame,
-    *,
-    origem: str,
-    nome_ref: str = "",
-    hash_ref: str = "",
-    texto_bruto: str = "",
-) -> None:
-    origem_norm = str(origem or "").strip().lower()
-
-    st.session_state["df_origem"] = df.copy()
-    st.session_state["df_dados"] = df.copy()
-    st.session_state["origem_dados"] = origem_norm
-    st.session_state["origem_dados_nome"] = str(nome_ref or "")
-    st.session_state["origem_dados_hash"] = str(hash_ref or "")
-    st.session_state["arquivo_origem_nome"] = str(nome_ref or "")
-    st.session_state["arquivo_origem_hash"] = str(hash_ref or "")
-    st.session_state["origem_dados_tipo_arquivo"] = origem_norm
-
-    if origem_norm == "pdf":
-        st.session_state["origem_pdf_texto"] = texto_bruto
-        st.session_state["origem_pdf_nome"] = str(nome_ref or "")
-
-    if origem_norm == "xml":
-        st.session_state["origem_xml_texto"] = texto_bruto
-        st.session_state["origem_xml_nome"] = str(nome_ref or "")
-
-
-def controlar_troca_origem(origem: str, logger=None) -> bool:
-    garantir_estado_origem()
-
-    origem_nova = str(origem or "").strip().lower()
-    origem_atual = str(st.session_state.get("origem_dados") or "").strip().lower()
-
-    if origem_nova == origem_atual:
-        return False
-
-    limpar_origem_carregada()
-    limpar_fluxo_processado()
-
-    st.session_state["origem_dados"] = origem_nova
-    set_etapa_origem("origem")
-
-    if callable(logger):
-        logger(
-            f"[ORIGEM_ESTADO] troca de origem: {origem_atual or '-'} -> {origem_nova or '-'}",
-            "INFO",
-        )
-
-    return True
-
-
-def controlar_troca_operacao(operacao: str, logger=None) -> bool:
-    garantir_estado_origem()
-
-    valor = str(operacao or "").strip().lower()
-
-    if valor in {"cadastro", "cadastro de produtos"}:
-        tipo_novo = "cadastro"
-    elif valor in {"estoque", "atualização de estoque", "atualizacao de estoque"}:
-        tipo_novo = "estoque"
-    else:
-        return False
-
-    tipo_atual = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
-
-    if tipo_novo == tipo_atual:
-        return False
-
-    st.session_state["tipo_operacao_bling"] = tipo_novo
-    limpar_fluxo_processado()
-
-    if "df_modelo_mapeamento" in st.session_state:
-        del st.session_state["df_modelo_mapeamento"]
-
-    set_etapa_origem("origem")
-
-    if callable(logger):
-        logger(
-            f"[ORIGEM_ESTADO] troca de operação: {tipo_atual or '-'} -> {tipo_novo}",
-            "INFO",
-        )
-
-    return True
-
-
-def sincronizar_estado_com_origem(df_origem: pd.DataFrame, logger=None) -> None:
-    garantir_estado_origem()
-
-    if not safe_df_estrutura(df_origem):
+    if not operacao_anterior:
+        st.session_state["_operacao_anterior_origem_dados"] = operacao_atual
         return
 
-    st.session_state["df_origem"] = df_origem.copy()
-    st.session_state["df_dados"] = df_origem.copy()
+    if operacao_anterior == operacao_atual:
+        return
 
-    if not safe_df_estrutura(st.session_state.get("df_saida")):
-        st.session_state["df_saida"] = df_origem.copy()
+    # Corrigido:
+    # ao trocar entre cadastro e estoque, limpamos SOMENTE a saída/mapeamento,
+    # preservando a origem carregada e os modelos internos.
+    log_debug(
+        f"Operação alterada: {operacao_anterior} → {operacao_atual}. "
+        f"Resetando saída/mapeamento e preservando origem.",
+        "INFO",
+    )
 
-    if not safe_df_estrutura(st.session_state.get("df_final")):
-        st.session_state["df_final"] = st.session_state["df_saida"].copy()
+    resetar_estado_fluxo(preservar_origem=True)
+    st.session_state["_operacao_anterior_origem_dados"] = operacao_atual
 
-    if callable(logger):
-        logger(
-            f"[ORIGEM_ESTADO] origem sincronizada com {len(df_origem)} linha(s) e {len(df_origem.columns)} coluna(s).",
-            "INFO",
-        )
+
+# ==========================================================
+# CONTROLE DE ORIGEM
+# ==========================================================
+def controlar_troca_origem(origem: str, log_debug) -> None:
+    origem_atual = _safe_str(origem)
+    origem_anterior = _safe_str(
+        st.session_state.get("_origem_anterior_origem_dados")
+    )
+
+    if not origem_anterior:
+        st.session_state["_origem_anterior_origem_dados"] = origem_atual
+        return
+
+    if origem_anterior == origem_atual:
+        return
+
+    log_debug(
+        f"Origem alterada: {origem_anterior} → {origem_atual}. "
+        f"Limpando saída/mapeamento e preservando modelos.",
+        "INFO",
+    )
+
+    # Quando a origem muda, a base precisa ser refeita.
+    for chave in ["df_origem", "df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+        st.session_state.pop(chave, None)
+
+    st.session_state.pop("origem_dados_fingerprint", None)
+    limpar_mapeamento_widgets()
+    st.session_state["_origem_anterior_origem_dados"] = origem_atual
+
+
+# ==========================================================
+# ESTADO BASE
+# ==========================================================
+def garantir_estado_origem() -> None:
+    defaults = {
+        "etapa_origem": "origem",
+        "etapa": "origem",
+        "etapa_fluxo": "origem",
+        "tipo_operacao_bling": "",
+        "deposito_nome": "",
+        "quantidade_fallback": 0,
+        "site_processado": False,
+    }
+
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
+
+    etapa_atual = _normalizar_valor_fluxo(st.session_state.get("etapa_origem", "origem"))
+    if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
+        etapa_atual = "origem"
+
+    _set_etapa_global(etapa_atual)
+
+
+# ==========================================================
+# SINCRONIZAÇÃO DA ORIGEM
+# ==========================================================
+def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
+    if not safe_df_dados(df_origem):
+        return
+
+    fp_novo = fingerprint_df(df_origem)
+    fp_atual = _safe_str(st.session_state.get("origem_dados_fingerprint"))
+
+    if not fp_atual:
+        st.session_state["origem_dados_fingerprint"] = fp_novo
+        st.session_state["df_origem"] = df_origem.copy()
+
+        # Só semeia df_saida/df_final se eles ainda não existirem.
+        if not safe_df_estrutura(st.session_state.get("df_saida")):
+            st.session_state["df_saida"] = df_origem.copy()
+        if not safe_df_estrutura(st.session_state.get("df_final")):
+            st.session_state["df_final"] = df_origem.copy()
+        return
+
+    if fp_atual != fp_novo:
+        log_debug("Nova origem detectada. Limpando saída anterior.", "INFO")
+        st.session_state["origem_dados_fingerprint"] = fp_novo
+        st.session_state["df_origem"] = df_origem.copy()
+
+        # Nova origem deve limpar montagem anterior para evitar preview quebrado.
+        for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+            st.session_state.pop(chave, None)
+
+        limpar_mapeamento_widgets()
