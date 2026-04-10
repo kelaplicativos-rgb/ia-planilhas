@@ -48,7 +48,7 @@ def calcular_preco_venda(
     custo_fixo: float,
     taxa_extra: float,
 ) -> float:
-    base = 0.0  # 🔥 GARANTIA contra erro
+    base = 0.0
 
     try:
         base = max(0.0, _to_float(preco_compra) + _to_float(custo_fixo))
@@ -74,26 +74,35 @@ def calcular_preco_venda(
 
 
 # ==========================================================
-# 🔥 DETECTAR COLUNA DE PREÇO CORRETA
+# 🔥 DETECTAR COLUNA DESTINO (CORRIGIDO)
 # ==========================================================
 def _detectar_coluna_preco_saida(df: pd.DataFrame) -> str:
     try:
         prioridades = [
             "preço de venda",
             "preco de venda",
-            "preço venda",
-            "preco venda",
             "valor de venda",
             "valor venda",
-            "preço",
-            "preco",
         ]
 
+        # prioridade EXATA primeiro
+        for p in prioridades:
+            for col in df.columns:
+                nome = str(col).strip().lower()
+                if p == nome:
+                    return col
+
+        # fallback mais flexível
         for col in df.columns:
             nome = str(col).strip().lower()
-            for p in prioridades:
-                if p in nome:
-                    return col
+            if "venda" in nome:
+                return col
+
+        # fallback final → usa a primeira coluna de preço encontrada
+        for col in df.columns:
+            nome = str(col).strip().lower()
+            if "preço" in nome or "preco" in nome:
+                return col
 
         return "Preço de venda"
 
@@ -102,7 +111,7 @@ def _detectar_coluna_preco_saida(df: pd.DataFrame) -> str:
 
 
 # ==========================================================
-# 🔥 NOVO PADRÃO INTELIGENTE
+# 🔥 APLICAÇÃO ROBUSTA
 # ==========================================================
 def aplicar_precificacao_automatica(
     df: pd.DataFrame,
@@ -118,10 +127,17 @@ def aplicar_precificacao_automatica(
 
     df_saida = df.copy()
 
+    # 🔥 fallback inteligente da coluna base
     if not coluna_preco or coluna_preco not in df_saida.columns:
-        return df_saida
+        for col in df_saida.columns:
+            nome = str(col).lower()
+            if "custo" in nome or "compra" in nome:
+                coluna_preco = col
+                break
 
-    # 🔥 detectar automaticamente a coluna de destino
+    if not coluna_preco or coluna_preco not in df_saida.columns:
+        return df_saida  # sem base não calcula
+
     coluna_saida = _detectar_coluna_preco_saida(df_saida)
 
     precos_base = df_saida[coluna_preco].apply(_to_float)
@@ -142,7 +158,7 @@ def aplicar_precificacao_automatica(
 
 
 # ==========================================================
-# 🔥 FLUXO LIMPO
+# 🔥 FLUXO
 # ==========================================================
 def aplicar_precificacao_no_fluxo(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     try:
