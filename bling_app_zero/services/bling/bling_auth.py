@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 import httpx
 import streamlit as st
 
-# 🔥 CORREÇÃO DE IMPORT
 try:
     from bling_app_zero.services.bling.bling_token_store import BlingTokenStore
 except ImportError:
@@ -113,10 +112,7 @@ class BlingAuthManager:
         query_user = str(query_user or "").strip()
         user_key = str(user_key or "").strip()
 
-        if query_user:
-            self.user_key = query_user
-        else:
-            self.user_key = user_key or "default"
+        self.user_key = query_user or user_key or "default"
 
         self.settings = self._load_settings()
         self.store = BlingTokenStore(self.settings.token_store_path)
@@ -192,10 +188,16 @@ class BlingAuthManager:
             pass
 
     def handle_oauth_callback(self) -> Dict[str, str]:
+        # 🔒 evita reprocessamento
+        if st.session_state.get("_bling_oauth_processado"):
+            return {"status": "idle", "message": ""}
+
         query_params = st.query_params
 
         if "code" not in query_params and "error" not in query_params:
             return {"status": "idle", "message": ""}
+
+        st.session_state["_bling_oauth_processado"] = True
 
         if "error" in query_params:
             msg = str(
@@ -211,41 +213,35 @@ class BlingAuthManager:
             self._clear_oauth_query_params()
             return {
                 "status": "error",
-                "message": "OAuth recebido, mas a configuração fixa do app ainda não está preenchida.",
+                "message": "OAuth recebido, mas configuração incompleta.",
             }
 
         code = str(query_params.get("code", "")).strip()
         incoming_state = str(query_params.get("state", "")).strip()
 
-        if not code:
-            self._clear_oauth_query_params()
-            return {"status": "error", "message": "Callback sem authorization code."}
-
         saved = load_state(self.user_key)
 
         if not saved:
             self._clear_oauth_query_params()
-            return {"status": "error", "message": "State não encontrado. Gere nova conexão."}
+            return {"status": "error", "message": "State não encontrado."}
 
-        expected_state = str(saved.get("state", "")).strip()
-        created_at = int(saved.get("created_at", 0) or 0)
-
-        if not expected_state or incoming_state != expected_state:
+        if incoming_state != str(saved.get("state", "")):
             self._clear_oauth_query_params()
-            return {"status": "error", "message": "State inválido na autenticação com o Bling."}
+            return {"status": "error", "message": "State inválido."}
 
-        if created_at and (int(time.time()) - created_at) > 15 * 60:
+        if int(time.time()) - int(saved.get("created_at", 0)) > 15 * 60:
             clear_state(self.user_key)
             self._clear_oauth_query_params()
-            return {"status": "error", "message": "State expirado. Gere nova autenticação."}
+            return {"status": "error", "message": "State expirado."}
 
         ok, msg = self.exchange_code_for_token(code)
+
         self._clear_oauth_query_params()
+        clear_state(self.user_key)
 
         if not ok:
             return {"status": "error", "message": msg}
 
-        clear_state(self.user_key)
         return {"status": "success", "message": "Conta Bling conectada com sucesso."}
 
     def exchange_code_for_token(self, code: str) -> Tuple[bool, str]:
@@ -259,6 +255,7 @@ class BlingAuthManager:
             "Accept": "application/json",
             "enable-jwt": "1",
         }
+
         data = {
             "grant_type": "authorization_code",
             "code": code,
@@ -276,21 +273,27 @@ class BlingAuthManager:
             )
 
             if resp.status_code >= 400:
-                return False, f"Erro ao trocar code por token: HTTP {resp.status_code} | {payload}"
+                return False, f"Erro OAuth: {payload}"
 
             self.store.save_token_payload(payload, user_key=self.user_key)
-            self._hydrate_company_name_from_jwt()
             return True, "OK"
+
         except Exception as exc:
-            return False, f"Erro ao autenticar com o Bling: {exc}"
+            return False, f"Erro ao autenticar: {exc}"
 
     def get_connection_status(self) -> Dict[str, Optional[str]]:
         current = self.store.get(self.user_key) or {}
-        connected = bool(current.get("access_token"))
+
+        expires_at = current.get("expires_at")
+        now = int(time.time())
+
+        conectado = bool(current.get("access_token")) and (
+            not expires_at or now < int(expires_at)
+        )
 
         return {
-            "connected": connected,
+            "connected": conectado,
             "company_name": current.get("company_name"),
             "last_auth_at": current.get("last_auth_at"),
-            "expires_at": current.get("expires_at"),
+            "expires_at": expires_at,
         }
