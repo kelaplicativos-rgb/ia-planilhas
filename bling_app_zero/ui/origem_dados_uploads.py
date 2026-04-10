@@ -1,45 +1,22 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug
+from bling_app_zero.ui.app_helpers import log_debug, limpar_gtin_invalido
 
 
+# ==========================================================
+# HELPERS
+# ==========================================================
 def _safe_df(df) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
-
-
-def _ler_arquivo_tabela(uploaded_file) -> pd.DataFrame | None:
-    if uploaded_file is None:
-        return None
-
-    nome = str(getattr(uploaded_file, "name", "") or "").lower()
-
-    try:
-        if nome.endswith(".csv"):
-            try:
-                return pd.read_csv(uploaded_file)
-            except Exception:
-                uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file, sep=";", encoding="utf-8")
-
-        if nome.endswith(".xlsx") or nome.endswith(".xls"):
-            return pd.read_excel(uploaded_file)
-
-        if nome.endswith(".xlsb"):
-            return pd.read_excel(uploaded_file, engine="pyxlsb")
-
-        return None
-
-    except Exception as e:
-        log_debug(f"Erro ao ler arquivo {nome}: {e}", "ERRO")
-        return None
 
 
 def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,147 +32,376 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
-def _resetar_modelo_mapeamento() -> None:
+def _set_if_changed(chave: str, valor) -> None:
     try:
-        tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
+        atual = st.session_state.get(chave)
+        if atual != valor:
+            st.session_state[chave] = valor
+    except Exception:
+        st.session_state[chave] = valor
 
-        if tipo == "cadastro":
-            df_modelo = st.session_state.get("df_modelo_cadastro")
-        elif tipo == "estoque":
-            df_modelo = st.session_state.get("df_modelo_estoque")
-        else:
-            df_modelo = None
 
-        if _safe_df(df_modelo):
-            st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
+def _garantir_etapa_origem_valida() -> None:
+    try:
+        etapa = str(st.session_state.get("etapa_origem") or "").strip().lower()
+        if etapa not in {"origem", "mapeamento", "final"}:
+            st.session_state["etapa_origem"] = "origem"
+    except Exception:
+        st.session_state["etapa_origem"] = "origem"
+
+
+def _limpar_estado_origem() -> None:
+    for chave in [
+        "df_origem",
+        "df_dados",
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "mapping_origem",
+        "arquivo_origem_nome",
+        "arquivo_origem_hash",
+    ]:
+        if chave in st.session_state:
+            del st.session_state[chave]
+
+
+def _resetar_fluxo_para_origem() -> None:
+    try:
+        for chave in ["df_saida", "df_final", "df_precificado", "mapping_origem"]:
+            if chave in st.session_state:
+                del st.session_state[chave]
+
+        st.session_state["etapa_origem"] = "origem"
+        st.session_state["etapa"] = "origem"
+        st.session_state["etapa_fluxo"] = "origem"
+    except Exception:
+        pass
+
+
+def _salvar_df_origem(
+    df: pd.DataFrame,
+    origem: str = "",
+    nome_ref: str = "",
+    hash_ref: str = "",
+) -> None:
+    try:
+        st.session_state["df_origem"] = df.copy()
+        st.session_state["df_dados"] = df.copy()
+        st.session_state["origem_dados"] = str(origem or "").strip().lower()
+        st.session_state["arquivo_origem_nome"] = str(nome_ref or "")
+        st.session_state["arquivo_origem_hash"] = str(hash_ref or "")
+    except Exception:
+        st.session_state["df_origem"] = df
+        st.session_state["df_dados"] = df
+        st.session_state["origem_dados"] = str(origem or "").strip().lower()
+        st.session_state["arquivo_origem_nome"] = str(nome_ref or "")
+        st.session_state["arquivo_origem_hash"] = str(hash_ref or "")
+
+
+def _hash_arquivo_upload(uploaded_file) -> str:
+    try:
+        if uploaded_file is None:
+            return ""
+
+        pos = uploaded_file.tell()
+        uploaded_file.seek(0)
+        conteudo = uploaded_file.read()
+        uploaded_file.seek(pos)
+
+        return str(hash(conteudo))
+    except Exception:
+        return ""
+
+
+def _nome_arquivo(uploaded_file) -> str:
+    try:
+        return str(getattr(uploaded_file, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def texto_extensoes_planilha() -> str:
+    return ".xlsx, .xls, .xlsb, .csv"
+
+
+def tem_upload_ativo() -> bool:
+    try:
+        return _safe_df(st.session_state.get("df_origem"))
+    except Exception:
+        return False
+
+
+def _df_preview_seguro(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        return _normalizar_df(df).copy()
+    except Exception:
+        return df.copy()
+
+
+def _ler_planilha(uploaded_file) -> pd.DataFrame | None:
+    if uploaded_file is None:
+        return None
+
+    nome = _nome_arquivo(uploaded_file).lower()
+
+    try:
+        if nome.endswith(".csv"):
+            try:
+                uploaded_file.seek(0)
+                return pd.read_csv(uploaded_file)
+            except Exception:
+                uploaded_file.seek(0)
+                return pd.read_csv(uploaded_file, sep=";", encoding="utf-8")
+
+        if nome.endswith(".xlsb"):
+            uploaded_file.seek(0)
+            return pd.read_excel(uploaded_file, engine="pyxlsb")
+
+        if nome.endswith(".xlsx") or nome.endswith(".xls"):
+            uploaded_file.seek(0)
+            return pd.read_excel(uploaded_file)
+
+        return None
+
     except Exception as e:
-        log_debug(f"Erro ao resetar modelo de mapeamento: {e}", "ERRO")
+        log_debug(f"Erro ao ler planilha {nome}: {e}", "ERRO")
+        return None
 
 
-def render_modelo_bling() -> None:
-    st.markdown("### 📌 Modelos Bling")
+def _processar_upload_planilha(arquivo_planilha) -> pd.DataFrame | None:
+    try:
+        if arquivo_planilha is None:
+            return None
 
-    col1, col2 = st.columns(2)
+        nome_planilha = _nome_arquivo(arquivo_planilha)
+        hash_planilha = _hash_arquivo_upload(arquivo_planilha)
 
-    with col1:
-        arq_cadastro = st.file_uploader(
-            "Modelo cadastro",
-            type=["xlsx", "xls", "xlsb", "csv"],
-            key="upload_modelo_cadastro",
+        hash_anterior = st.session_state.get("arquivo_origem_hash", "")
+        nome_anterior = st.session_state.get("arquivo_origem_nome", "")
+
+        if hash_planilha != hash_anterior or nome_planilha != nome_anterior:
+            _limpar_estado_origem()
+
+        df_planilha = _ler_planilha(arquivo_planilha)
+
+        if not _safe_df(df_planilha):
+            st.error("Não foi possível ler a planilha do fornecedor.")
+            return None
+
+        df_planilha = _normalizar_df(df_planilha)
+        df_planilha = limpar_gtin_invalido(df_planilha)
+
+        _salvar_df_origem(
+            df_planilha,
+            origem="planilha",
+            nome_ref=nome_planilha,
+            hash_ref=hash_planilha,
         )
 
-        if arq_cadastro is not None:
-            df_cadastro = _ler_arquivo_tabela(arq_cadastro)
-            if _safe_df(df_cadastro):
-                df_cadastro = _normalizar_df(df_cadastro)
-                st.session_state["df_modelo_cadastro"] = df_cadastro.copy()
-                log_debug(
-                    f"Modelo cadastro carregado com {len(df_cadastro.columns)} coluna(s)"
-                )
-                st.success("Modelo cadastro carregado com sucesso.")
-            else:
-                st.error("Não foi possível ler o modelo cadastro.")
+        log_debug(
+            f"Planilha de origem carregada: {nome_planilha} "
+            f"({len(df_planilha)} linha(s), {len(df_planilha.columns)} coluna(s))"
+        )
+        return df_planilha
 
-    with col2:
-        arq_estoque = st.file_uploader(
-            "Modelo estoque",
+    except Exception as e:
+        st.error("Erro ao carregar a planilha do fornecedor.")
+        log_debug(f"Erro ao carregar planilha de origem: {e}", "ERRO")
+        return None
+
+
+def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
+    try:
+        if arquivo_xml is None:
+            return None
+
+        nome_xml = _nome_arquivo(arquivo_xml)
+        hash_xml = _hash_arquivo_upload(arquivo_xml)
+
+        hash_anterior = st.session_state.get("arquivo_origem_hash", "")
+        nome_anterior = st.session_state.get("arquivo_origem_nome", "")
+
+        if hash_xml != hash_anterior or nome_xml != nome_anterior:
+            _limpar_estado_origem()
+
+        # fallback simples: tenta ler tabelar; se não conseguir, retorna vazio
+        try:
+            arquivo_xml.seek(0)
+            conteudo = arquivo_xml.read()
+            if isinstance(conteudo, bytes):
+                conteudo = conteudo.decode("utf-8", errors="ignore")
+        except Exception:
+            conteudo = ""
+
+        if not conteudo.strip():
+            st.error("Não foi possível ler o XML da nota fiscal.")
+            return None
+
+        # mantém compatibilidade mínima sem quebrar o app
+        df_xml = pd.DataFrame([{"XML": conteudo[:5000]}])
+
+        df_xml = _normalizar_df(df_xml)
+        df_xml = limpar_gtin_invalido(df_xml)
+
+        _salvar_df_origem(
+            df_xml,
+            origem="xml",
+            nome_ref=nome_xml,
+            hash_ref=hash_xml,
+        )
+
+        log_debug(
+            f"XML de origem carregado: {nome_xml} "
+            f"({len(df_xml)} linha(s), {len(df_xml.columns)} coluna(s))"
+        )
+        return df_xml
+
+    except Exception as e:
+        st.error("Erro ao carregar o XML da nota fiscal.")
+        log_debug(f"Erro ao carregar XML de origem: {e}", "ERRO")
+        return None
+
+
+def render_origem_site() -> pd.DataFrame | None:
+    st.info("Origem por site disponível para integração. Use planilha ou XML, se necessário.")
+    return st.session_state.get("df_origem")
+
+
+# ==========================================================
+# MODELO BLING
+# ==========================================================
+def _carregar_modelo(uploaded_file) -> pd.DataFrame | None:
+    try:
+        df = _ler_planilha(uploaded_file)
+        if not _safe_df(df):
+            return None
+        return _normalizar_df(df)
+    except Exception as e:
+        log_debug(f"Erro ao carregar modelo Bling: {e}", "ERRO")
+        return None
+
+
+def render_modelo_bling(operacao: str | None = None) -> None:
+    st.markdown("### Modelo oficial do Bling")
+
+    operacao_normalizada = str(operacao or "").strip().lower()
+    if "cadastro" in operacao_normalizada:
+        tipo = "cadastro"
+    elif "estoque" in operacao_normalizada:
+        tipo = "estoque"
+    else:
+        tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
+
+    if tipo == "estoque":
+        arquivo_modelo = st.file_uploader(
+            "Anexar modelo oficial do estoque",
             type=["xlsx", "xls", "xlsb", "csv"],
             key="upload_modelo_estoque",
         )
 
-        if arq_estoque is not None:
-            df_estoque = _ler_arquivo_tabela(arq_estoque)
-            if _safe_df(df_estoque):
-                df_estoque = _normalizar_df(df_estoque)
-                st.session_state["df_modelo_estoque"] = df_estoque.copy()
-                log_debug(
-                    f"Modelo estoque carregado com {len(df_estoque.columns)} coluna(s)"
-                )
-                st.success("Modelo estoque carregado com sucesso.")
+        if arquivo_modelo is not None:
+            df_modelo = _carregar_modelo(arquivo_modelo)
+            if _safe_df(df_modelo):
+                st.session_state["df_modelo_estoque"] = df_modelo.copy()
+                st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
+                st.success("Modelo de estoque carregado com sucesso.")
             else:
-                st.error("Não foi possível ler o modelo estoque.")
+                st.error("Não foi possível ler o modelo de estoque.")
+    else:
+        arquivo_modelo = st.file_uploader(
+            "Anexar modelo oficial do cadastro",
+            type=["xlsx", "xls", "xlsb", "csv"],
+            key="upload_modelo_cadastro",
+        )
 
-    tipo_atual = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
-    if tipo_atual in {"cadastro", "estoque"}:
-        _resetar_modelo_mapeamento()
-
-    df_modelo_cadastro = st.session_state.get("df_modelo_cadastro")
-    df_modelo_estoque = st.session_state.get("df_modelo_estoque")
-
-    if _safe_df(df_modelo_cadastro) or _safe_df(df_modelo_estoque):
-        with st.expander("📋 Prévia dos modelos carregados", expanded=False):
-            if _safe_df(df_modelo_cadastro):
-                st.markdown("**Modelo cadastro**")
-                st.dataframe(df_modelo_cadastro.head(5), use_container_width=True)
-
-            if _safe_df(df_modelo_estoque):
-                st.markdown("**Modelo estoque**")
-                st.dataframe(df_modelo_estoque.head(5), use_container_width=True)
+        if arquivo_modelo is not None:
+            df_modelo = _carregar_modelo(arquivo_modelo)
+            if _safe_df(df_modelo):
+                st.session_state["df_modelo_cadastro"] = df_modelo.copy()
+                st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
+                st.success("Modelo de cadastro carregado com sucesso.")
+            else:
+                st.error("Não foi possível ler o modelo de cadastro.")
 
 
-def render_origem_entrada() -> None:
-    st.markdown("### 📥 Planilha do fornecedor")
+# ==========================================================
+# ORIGEM ENTRADA
+# ==========================================================
+def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.DataFrame | None:
+    _garantir_etapa_origem_valida()
 
-    uploaded_file = st.file_uploader(
-        "Planilha fornecedor",
-        type=["xlsx", "xls", "xlsb", "csv"],
-        key="upload_planilha_fornecedor",
+    st.markdown("### Entrada dos dados")
+
+    opcoes = [
+        "Buscar em site",
+        "Anexar planilha",
+        "Anexar XML da nota fiscal",
+    ]
+
+    origem_escolhida = st.radio(
+        "Selecione a origem dos dados",
+        opcoes,
+        key="origem_dados_radio",
+        horizontal=False,
     )
 
-    if uploaded_file is None:
-        return
+    mapa_origem = {
+        "Buscar em site": "site",
+        "Anexar planilha": "planilha",
+        "Anexar XML da nota fiscal": "xml",
+    }
+    origem_atual = mapa_origem.get(origem_escolhida, "")
 
-    df_origem = _ler_arquivo_tabela(uploaded_file)
+    origem_anterior = str(st.session_state.get("origem_dados", "") or "").strip().lower()
+    _set_if_changed("origem_dados", origem_atual)
+
+    if origem_atual != origem_anterior:
+        _resetar_fluxo_para_origem()
+
+        if callable(on_change):
+            try:
+                on_change(origem_atual)
+            except Exception as e:
+                log_debug(f"Erro no callback de troca de origem: {e}", "ERRO")
+
+    df_origem: pd.DataFrame | None = None
+
+    if origem_atual == "site":
+        df_site = render_origem_site()
+        if _safe_df(df_site):
+            df_site = limpar_gtin_invalido(df_site)
+            _salvar_df_origem(df_site, origem="site")
+            df_origem = df_site
+
+    elif origem_atual == "planilha":
+        arquivo_planilha = st.file_uploader(
+            "Anexar planilha do fornecedor",
+            type=["xlsx", "xls", "xlsb", "csv"],
+            key="arquivo_origem_planilha",
+            help=f"Formatos aceitos: {texto_extensoes_planilha()}.",
+        )
+        df_origem = _processar_upload_planilha(arquivo_planilha)
+
+    elif origem_atual == "xml":
+        arquivo_xml = st.file_uploader(
+            "Anexar XML da nota fiscal",
+            type=["xml"],
+            key="arquivo_origem_xml",
+        )
+        df_origem = _processar_upload_xml(arquivo_xml)
 
     if not _safe_df(df_origem):
-        st.error("Não foi possível ler a planilha do fornecedor.")
-        return
+        df_origem = st.session_state.get("df_origem")
 
-    df_origem = _normalizar_df(df_origem)
-
-    st.session_state["df_origem"] = df_origem.copy()
-    st.session_state["df_dados"] = df_origem.copy()
-
-    log_debug(
-        f"Planilha do fornecedor carregada com {len(df_origem)} linha(s) e {len(df_origem.columns)} coluna(s)"
-    )
-
-    st.success("Planilha do fornecedor carregada com sucesso.")
-
-    with st.expander("📋 Prévia da planilha do fornecedor", expanded=True):
-        st.dataframe(df_origem.head(20), use_container_width=True)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button(
-            "🧠 Ir para mapeamento",
-            key="btn_ir_para_mapeamento_uploads",
-            use_container_width=True,
-        ):
+    if tem_upload_ativo() and _safe_df(df_origem):
+        with st.expander("Prévia rápida da origem", expanded=False):
             try:
-                _resetar_modelo_mapeamento()
-                st.session_state["etapa_origem"] = "mapeamento"
-                st.session_state["etapa"] = "mapeamento"
-                st.session_state["etapa_fluxo"] = "mapeamento"
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao avançar para mapeamento: {e}")
+                st.dataframe(
+                    _df_preview_seguro(df_origem).head(5),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            except Exception:
+                st.write(_df_preview_seguro(df_origem).head(5))
 
-    with col2:
-        if st.button(
-            "🧹 Limpar planilha carregada",
-            key="btn_limpar_planilha_uploads",
-            use_container_width=True,
-        ):
-            for chave in [
-                "df_origem",
-                "df_dados",
-                "df_saida",
-                "df_final",
-                "df_precificado",
-                "mapping_origem",
-            ]:
-                if chave in st.session_state:
-                    del st.session_state[chave]
-            st.rerun()
+    return df_origem
