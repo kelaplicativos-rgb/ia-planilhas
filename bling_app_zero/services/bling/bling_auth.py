@@ -12,7 +12,11 @@ from urllib.parse import urlencode
 import httpx
 import streamlit as st
 
-from bling_app_zero.core.bling_token_store import BlingTokenStore
+# 🔥 CORREÇÃO DE IMPORT
+try:
+    from bling_app_zero.services.bling.bling_token_store import BlingTokenStore
+except ImportError:
+    from bling_app_zero.core.bling_token_store import BlingTokenStore
 
 
 STATE_PATH = Path("bling_app_zero/output/oauth_state.json")
@@ -280,140 +284,6 @@ class BlingAuthManager:
         except Exception as exc:
             return False, f"Erro ao autenticar com o Bling: {exc}"
 
-    def refresh_access_token(self) -> Tuple[bool, str]:
-        current = self.store.get(self.user_key) or {}
-        refresh_token = str(current.get("refresh_token", "")).strip()
-
-        if not refresh_token:
-            return False, "Refresh token não encontrado. Reconecte a conta."
-
-        redirect_uri = self.settings.redirect_uri
-        separador = "&" if "?" in redirect_uri else "?"
-        redirect_uri_com_user = f"{redirect_uri}{separador}bi={self.user_key}"
-
-        headers = {
-            "Authorization": self._basic_auth_header(),
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "enable-jwt": "1",
-        }
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "redirect_uri": redirect_uri_com_user,
-        }
-
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(self.settings.token_url, headers=headers, data=data)
-
-            payload = (
-                resp.json()
-                if "application/json" in resp.headers.get("content-type", "")
-                else {"raw": resp.text}
-            )
-
-            if resp.status_code >= 400:
-                return False, f"Erro ao renovar token: HTTP {resp.status_code} | {payload}"
-
-            self.store.save_token_payload(payload, user_key=self.user_key)
-            self._hydrate_company_name_from_jwt()
-            return True, "Token renovado."
-        except Exception as exc:
-            return False, f"Falha ao renovar token: {exc}"
-
-    def get_valid_access_token(self) -> Tuple[bool, str]:
-        current = self.store.get(self.user_key) or {}
-
-        if not current:
-            return False, "Conta Bling ainda não conectada."
-
-        if not self.store.is_expired(current):
-            token = str(current.get("access_token", "")).strip()
-            return (True, token) if token else (False, "Access token ausente.")
-
-        ok, msg = self.refresh_access_token()
-        if not ok:
-            return False, msg
-
-        refreshed = self.store.get(self.user_key) or {}
-        token = str(refreshed.get("access_token", "")).strip()
-        return (True, token) if token else (False, "Token renovado, mas access_token não foi encontrado.")
-
-    def revoke_token(self) -> Tuple[bool, str]:
-        if not self.is_configured():
-            return True, "Credenciais não configuradas; token local removido."
-
-        current = self.store.get(self.user_key) or {}
-        access_token = str(current.get("access_token", "")).strip()
-
-        if not access_token:
-            return True, "Conta já estava desconectada."
-
-        headers = {
-            "Authorization": self._basic_auth_header(),
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        }
-        data = {"token": access_token}
-
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(self.settings.revoke_url, headers=headers, data=data)
-
-            if resp.status_code >= 400:
-                return False, f"Erro ao revogar token: HTTP {resp.status_code} | {resp.text}"
-
-            return True, "Token revogado no Bling."
-        except Exception as exc:
-            return False, f"Falha ao revogar token: {exc}"
-
-    def disconnect(self) -> Tuple[bool, str]:
-        revoke_ok, revoke_msg = self.revoke_token()
-        self.store.delete(self.user_key)
-
-        if revoke_ok:
-            clear_state(self.user_key)
-            return True, "Conta Bling desconectada com sucesso."
-
-        return False, revoke_msg
-
-    def _decode_jwt_payload(self, token: str) -> Dict[str, Any]:
-        try:
-            parts = token.split(".")
-            if len(parts) < 2:
-                return {}
-
-            payload = parts[1]
-            padding = "=" * (-len(payload) % 4)
-            decoded = base64.urlsafe_b64decode(payload + padding)
-            data = json.loads(decoded.decode("utf-8"))
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def _hydrate_company_name_from_jwt(self) -> None:
-        current = self.store.get(self.user_key) or {}
-        token = str(current.get("access_token", "")).strip()
-
-        if not token:
-            return
-
-        payload = self._decode_jwt_payload(token)
-
-        for key in (
-            "company_name",
-            "empresa",
-            "empresa_nome",
-            "organization_name",
-            "username",
-            "sub",
-        ):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                self.store.update_company_name(value.strip(), user_key=self.user_key)
-                return
-
     def get_connection_status(self) -> Dict[str, Optional[str]]:
         current = self.store.get(self.user_key) or {}
         connected = bool(current.get("access_token"))
@@ -423,4 +293,4 @@ class BlingAuthManager:
             "company_name": current.get("company_name"),
             "last_auth_at": current.get("last_auth_at"),
             "expires_at": current.get("expires_at"),
-      }
+        }
