@@ -41,15 +41,6 @@ def _modelo_tem_estrutura(df) -> bool:
         return False
 
 
-def _garantir_coluna(df: pd.DataFrame, coluna: str, valor_padrao="") -> pd.DataFrame:
-    try:
-        if coluna not in df.columns:
-            df[coluna] = valor_padrao
-        return df
-    except Exception:
-        return df
-
-
 def _normalizar_quantidade(valor, fallback: int) -> int:
     try:
         texto = str(valor or "").strip().lower()
@@ -152,7 +143,7 @@ def _render_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
 
 def _render_header_fluxo() -> None:
     st.subheader("Origem dos dados")
-    st.caption("Carregue a origem, escolha a operação, anexe o modelo do Bling e avance para o mapeamento.")
+    st.caption("Carregue a origem, escolha a operação e o sistema aplica automaticamente o modelo interno do Bling.")
 
 
 def _render_barra_etapas() -> None:
@@ -214,7 +205,7 @@ def render_origem_dados() -> None:
 
     modelo_ativo = obter_modelo_ativo()
     if not _modelo_tem_estrutura(modelo_ativo):
-        st.warning("Anexe o modelo do Bling para continuar.")
+        st.warning("O modelo interno do Bling não está disponível.")
         return
 
     df_saida = _sincronizar_df_saida_base(df_origem)
@@ -232,9 +223,7 @@ def render_origem_dados() -> None:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.caption(
-            "O mapeamento só avança quando origem, operação, base de saída e modelo do Bling estiverem válidos."
-        )
+        st.caption("O mapeamento só avança quando origem, operação, base de saída e modelo interno estiverem válidos.")
 
     with col2:
         if st.button("➡️ Continuar para mapeamento", use_container_width=True):
