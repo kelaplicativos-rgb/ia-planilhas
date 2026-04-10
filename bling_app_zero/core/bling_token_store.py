@@ -27,6 +27,23 @@ class BlingTokenStore:
         except Exception:
             return {}
 
+    def _parse_iso_datetime(self, value: str) -> Optional[datetime]:
+        try:
+            texto = str(value or "").strip()
+
+            # 🔥 suporte a Z (UTC padrão API)
+            if texto.endswith("Z"):
+                texto = texto.replace("Z", "+00:00")
+
+            dt = datetime.fromisoformat(texto)
+
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+
+            return dt
+        except Exception:
+            return None
+
     def _read_all(self) -> Dict[str, Any]:
         if not self.file_path.exists():
             return {}
@@ -63,11 +80,10 @@ class BlingTokenStore:
                 if not expires_at:
                     continue
 
-                dt = datetime.fromisoformat(str(expires_at))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                dt = self._parse_iso_datetime(expires_at)
+                if not dt:
+                    continue
 
-                # mantém tokens válidos ou ainda renováveis
                 if dt > now - timedelta(days=30):
                     novo[k] = v
             except Exception:
@@ -88,7 +104,7 @@ class BlingTokenStore:
             return value.copy() if isinstance(value, dict) else None
 
     # =========================
-    # 🔥 SAVE (COMPATÍVEL COM AUTH)
+    # SAVE
     # =========================
     def save(
         self,
@@ -102,9 +118,6 @@ class BlingTokenStore:
             company_name=company_name,
         )
 
-    # =========================
-    # SAVE TOKEN
-    # =========================
     def save_token_payload(
         self,
         token_payload: Dict[str, Any],
@@ -120,7 +133,6 @@ class BlingTokenStore:
 
         now = datetime.now(timezone.utc)
 
-        # 🔥 BLINDAGEM expires_in
         try:
             expires_in = int(payload.get("expires_in", 0) or 0)
             if expires_in <= 0:
@@ -151,9 +163,7 @@ class BlingTokenStore:
 
         with self._lock:
             data = self._read_all()
-
             data = self._clean_expired_tokens(data)
-
             data[chave] = item
             self._write_all(data)
 
@@ -200,8 +210,8 @@ class BlingTokenStore:
     # =========================
     # EXPIRAÇÃO
     # =========================
-    @staticmethod
     def is_expired(
+        self,
         token_data: Optional[Dict[str, Any]],
         leeway_seconds: int = 120,
     ) -> bool:
@@ -212,17 +222,10 @@ class BlingTokenStore:
         if not expires_at:
             return True
 
-        try:
-            expires_dt = datetime.fromisoformat(str(expires_at))
-
-            if expires_dt.tzinfo is None:
-                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
-
-            now = datetime.now(timezone.utc)
-
-            return now >= (
-                expires_dt - timedelta(seconds=max(0, int(leeway_seconds)))
-            )
-
-        except Exception:
+        dt = self._parse_iso_datetime(expires_at)
+        if not dt:
             return True
+
+        now = datetime.now(timezone.utc)
+
+        return now >= (dt - timedelta(seconds=max(0, int(leeway_seconds))))
