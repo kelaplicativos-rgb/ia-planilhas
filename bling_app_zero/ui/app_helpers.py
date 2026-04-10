@@ -7,6 +7,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.modelos_bling import carregar_modelo_por_operacao
+
 # ==========================================================
 # BLING PANEL (BLINDADO)
 # ==========================================================
@@ -55,13 +57,10 @@ ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 # ==========================================================
 def garantir_estado_base() -> None:
     try:
-        if "logs" not in st.session_state or not isinstance(
-            st.session_state.get("logs"), list
-        ):
+        if "logs" not in st.session_state or not isinstance(st.session_state.get("logs"), list):
             st.session_state["logs"] = []
 
         etapa_atual = str(st.session_state.get("etapa_origem", "") or "").strip().lower()
-
         if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
             st.session_state["etapa_origem"] = "origem"
 
@@ -136,7 +135,7 @@ def render_debug_panel() -> None:
             debug_aberto = bool(st.session_state.get("debug_open", False))
 
             if st.button(
-                "🪵 Log debug" if not debug_aberto else "❌ Fechar log debug",
+                "📋 Log debug" if not debug_aberto else "❌ Fechar log debug",
                 key="btn_toggle_debug_global",
                 use_container_width=True,
             ):
@@ -266,14 +265,11 @@ def _validar_gtin(valor: Any) -> str:
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.copy()
-
         for col in df.columns:
             nome = _normalizar_coluna(col)
             if "gtin" in nome or "ean" in nome:
                 df[col] = df[col].apply(_validar_gtin)
-
         return df
-
     except Exception as e:
         log_debug(f"Erro limpar GTIN: {e}", "ERROR")
         return df
@@ -288,7 +284,6 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
 
     try:
         modo = _safe_str(st.session_state.get("gtin_modo_valor") or "limpar").lower()
-
         df_tratado, logs = aplicar_validacao_gtin_em_colunas_automaticas(
             df.copy(),
             preservar_coluna_original=False,
@@ -300,7 +295,6 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
             log_debug(linha, "INFO")
 
         return df_tratado
-
     except Exception as e:
         log_debug(f"Falha GTIN: {e}", "ERROR")
         return df
@@ -391,18 +385,43 @@ def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
     return _exportar_excel_fallback(df)
 
 
+def _obter_modelo_exportacao() -> pd.DataFrame | None:
+    try:
+        tipo_operacao = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+
+        if tipo_operacao in {"cadastro", "estoque"}:
+            state_key = "df_modelo_cadastro" if tipo_operacao == "cadastro" else "df_modelo_estoque"
+            df_modelo = st.session_state.get(state_key)
+
+            if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
+                return df_modelo
+
+            df_modelo = carregar_modelo_por_operacao(tipo_operacao)
+            if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
+                st.session_state[state_key] = df_modelo.copy()
+                return df_modelo
+
+        for fallback_key in ["df_modelo_cadastro", "df_modelo_estoque"]:
+            df_modelo = st.session_state.get(fallback_key)
+            if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
+                return df_modelo
+
+        return None
+    except Exception as e:
+        log_debug(f"Erro ao obter modelo de exportação: {e}", "ERROR")
+        return None
+
+
 def exportar_download_bytes(df: pd.DataFrame) -> bytes:
     try:
-        df_modelo = st.session_state.get("df_modelo_cadastro")
-        if not isinstance(df_modelo, pd.DataFrame):
-            df_modelo = st.session_state.get("df_modelo_estoque")
+        df_modelo = _obter_modelo_exportacao()
 
         if _exportar_excel_com_modelo and isinstance(df_modelo, pd.DataFrame):
             return _exportar_excel_com_modelo(df, df_modelo)
 
         return exportar_excel_bytes(df)
-
-    except Exception:
+    except Exception as e:
+        log_debug(f"Erro exportar_download_bytes: {e}", "ERROR")
         return exportar_excel_bytes(df)
 
 
@@ -434,7 +453,6 @@ def render_preview_final() -> None:
             st.rerun()
 
     excel_bytes = None
-
     try:
         excel_bytes = exportar_download_bytes(df_final)
         if not excel_bytes:
@@ -443,11 +461,14 @@ def render_preview_final() -> None:
         log_debug(f"Erro download: {e}", "ERROR")
         st.error(f"Erro ao gerar arquivo: {e}")
 
+    tipo_operacao = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+    nome_arquivo = "bling_export_estoque.xlsx" if tipo_operacao == "estoque" else "bling_export_cadastro.xlsx"
+
     with col_download:
         st.download_button(
             "⬇️ Baixar planilha",
             data=excel_bytes,
-            file_name="bling_export.xlsx",
+            file_name=nome_arquivo,
             use_container_width=True,
             disabled=(excel_bytes is None),
         )
