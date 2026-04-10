@@ -67,7 +67,7 @@ class BlingTokenStore:
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
 
-                # mantém tokens ainda válidos ou com refresh
+                # mantém tokens válidos ou ainda renováveis
                 if dt > now - timedelta(days=30):
                     novo[k] = v
             except Exception:
@@ -86,6 +86,21 @@ class BlingTokenStore:
             value = data.get(chave)
 
             return value.copy() if isinstance(value, dict) else None
+
+    # =========================
+    # 🔥 SAVE (COMPATÍVEL COM AUTH)
+    # =========================
+    def save(
+        self,
+        user_key: str,
+        token_payload: Dict[str, Any],
+        company_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self.save_token_payload(
+            token_payload=token_payload,
+            user_key=user_key,
+            company_name=company_name,
+        )
 
     # =========================
     # SAVE TOKEN
@@ -109,7 +124,7 @@ class BlingTokenStore:
         try:
             expires_in = int(payload.get("expires_in", 0) or 0)
             if expires_in <= 0:
-                expires_in = 3600  # fallback 1h
+                expires_in = 3600
         except Exception:
             expires_in = 3600
 
@@ -137,7 +152,6 @@ class BlingTokenStore:
         with self._lock:
             data = self._read_all()
 
-            # 🔥 LIMPEZA automática antes de salvar
             data = self._clean_expired_tokens(data)
 
             data[chave] = item
