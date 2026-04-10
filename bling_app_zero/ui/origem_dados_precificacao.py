@@ -29,43 +29,26 @@ def _normalizar_nome_coluna(nome: str) -> str:
 
 
 # ==========================================================
-# DETECÇÃO DE COLUNA
+# DETECÇÃO DE COLUNA DESTINO
 # ==========================================================
 def _detectar_coluna_venda(df: pd.DataFrame) -> str | None:
-    candidatos = [
+    prioridades = [
         "preço de venda",
         "preco de venda",
-        "preço venda",
-        "preco venda",
         "valor venda",
-        "preço unitário",
-        "preco unitario",
     ]
 
-    for col in df.columns:
-        nome = _normalizar_nome_coluna(col)
-        for c in candidatos:
-            if c in nome:
+    # prioridade exata
+    for p in prioridades:
+        for col in df.columns:
+            if _normalizar_nome_coluna(col) == p:
                 return col
 
-    return None
-
-
-def _detectar_coluna_resultado(df: pd.DataFrame) -> str | None:
-    candidatos = [
-        "preço calculado",
-        "preco calculado",
-        "preço final",
-        "preco final",
-        "preço sugerido",
-        "preco sugerido",
-    ]
-
+    # fallback
     for col in df.columns:
         nome = _normalizar_nome_coluna(col)
-        for c in candidatos:
-            if c in nome:
-                return col
+        if "venda" in nome or "preço" in nome:
+            return col
 
     return None
 
@@ -101,7 +84,7 @@ def _garantir_base_precificacao(df_base: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
-# APLICAÇÃO
+# APLICAÇÃO CORRIGIDA
 # ==========================================================
 def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
     try:
@@ -112,19 +95,20 @@ def _aplicar_precificacao(df_base: pd.DataFrame) -> pd.DataFrame | None:
         if not coluna_preco or coluna_preco not in df_base.columns:
             return None
 
+        # 🔥 aplica direto
         df_calc = aplicar_precificacao_no_fluxo(df_base.copy(), params)
 
         if not safe_df_dados(df_calc):
             return None
 
-        col_resultado = _detectar_coluna_resultado(df_calc)
+        # 🔥 coluna destino REAL
         col_venda = _detectar_coluna_venda(df_base)
 
-        if not col_resultado or not col_venda:
+        if not col_venda:
             return None
 
-        # 🔥 aplica resultado SEM perder estrutura
-        df_base[col_venda] = df_calc[col_resultado].values
+        # 🔥 aplica valor calculado diretamente
+        df_base[col_venda] = df_calc[col_venda]
 
         st.session_state["coluna_preco_unitario_destino"] = col_venda
 
@@ -166,7 +150,6 @@ def render_precificacao(df_base):
         st.number_input("Custo fixo", min_value=0.0, key="custo_fixo")
         st.number_input("Taxa (%)", min_value=0.0, key="taxa_extra")
 
-    # 🔥 recalculo seguro
     df_saida_atual = st.session_state.get("df_saida", df_base_calc)
 
     df_precificado = _aplicar_precificacao(df_saida_atual.copy())
