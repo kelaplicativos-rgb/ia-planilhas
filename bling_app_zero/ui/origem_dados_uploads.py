@@ -67,6 +67,9 @@ def _limpar_estado_origem() -> None:
         "mapping_origem",
         "arquivo_origem_nome",
         "arquivo_origem_hash",
+        "df_origem_site",
+        "site_processado",
+        "crawler_rodando",
     ]:
         if chave in st.session_state:
             del st.session_state[chave]
@@ -435,7 +438,10 @@ def render_origem_entrada(
         df_origem = _processar_upload_xml(arquivo_xml)
 
     if not _safe_df_com_linhas(df_origem):
-        df_origem = st.session_state.get("df_origem")
+        if origem_atual == "site":
+            df_origem = st.session_state.get("df_origem_site")
+        else:
+            df_origem = st.session_state.get("df_origem")
 
     if tem_upload_ativo() and _safe_df_com_linhas(df_origem):
         with st.expander("Prévia rápida da origem", expanded=False):
