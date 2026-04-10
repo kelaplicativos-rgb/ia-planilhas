@@ -47,7 +47,7 @@ except Exception:
     aplicar_validacao_gtin_em_colunas_automaticas = None
 
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 
 
 # ==========================================================
@@ -92,6 +92,9 @@ def garantir_estado_base() -> None:
         if "campos_obrigatorios_alertas" not in st.session_state:
             st.session_state["campos_obrigatorios_alertas"] = []
 
+        if "debug_open" not in st.session_state:
+            st.session_state["debug_open"] = False
+
     except Exception:
         st.session_state["logs"] = []
         st.session_state["etapa_origem"] = "origem"
@@ -104,6 +107,7 @@ def garantir_estado_base() -> None:
         st.session_state["preview_final_valido"] = True
         st.session_state["campos_obrigatorios_faltantes"] = []
         st.session_state["campos_obrigatorios_alertas"] = []
+        st.session_state["debug_open"] = False
 
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
@@ -116,6 +120,81 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
         st.session_state["logs"].append(linha)
     except Exception:
         pass
+
+
+# ==========================================================
+# PAINEL DEBUG FIXO
+# ==========================================================
+def render_debug_panel() -> None:
+    try:
+        garantir_estado_base()
+
+        with st.sidebar:
+            st.markdown("---")
+            st.caption("Debug do sistema")
+
+            debug_aberto = bool(st.session_state.get("debug_open", False))
+
+            if st.button(
+                "🪵 Log debug" if not debug_aberto else "❌ Fechar log debug",
+                key="btn_toggle_debug_global",
+                use_container_width=True,
+            ):
+                st.session_state["debug_open"] = not debug_aberto
+                st.rerun()
+
+            if st.session_state.get("debug_open", False):
+                etapa_origem = st.session_state.get("etapa_origem", "")
+                etapa = st.session_state.get("etapa", "")
+                etapa_fluxo = st.session_state.get("etapa_fluxo", "")
+                area_app = st.session_state.get("area_app", "")
+
+                st.text_input("Área", value=str(area_app), disabled=True)
+                st.text_input("Etapa origem", value=str(etapa_origem), disabled=True)
+                st.text_input("Etapa", value=str(etapa), disabled=True)
+                st.text_input("Etapa fluxo", value=str(etapa_fluxo), disabled=True)
+
+                logs = st.session_state.get("logs", [])
+                if isinstance(logs, list) and logs:
+                    conteudo_logs = "\n".join(str(l) for l in logs[-300:])
+                else:
+                    conteudo_logs = "Sem logs no momento."
+
+                st.text_area(
+                    "Logs",
+                    value=conteudo_logs,
+                    height=320,
+                    disabled=True,
+                    key="debug_logs_area",
+                )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button(
+                        "🧹 Limpar logs",
+                        key="btn_limpar_logs_global",
+                        use_container_width=True,
+                    ):
+                        st.session_state["logs"] = []
+                        log_debug("Logs limpos manualmente.", "INFO")
+                        st.rerun()
+
+                with col2:
+                    st.download_button(
+                        "⬇️ Baixar log",
+                        data=conteudo_logs.encode("utf-8"),
+                        file_name="log_debug_bling.txt",
+                        mime="text/plain",
+                        key="btn_baixar_logs_global",
+                        use_container_width=True,
+                    )
+
+    except Exception as e:
+        try:
+            st.sidebar.warning(f"Debug indisponível: {e}")
+        except Exception:
+            pass
 
 
 # ==========================================================
@@ -302,6 +381,13 @@ def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
             return _df_to_excel_bytes_utils(df)
         except Exception:
             pass
+
+    if _exportar_excel_robusto:
+        try:
+            return _exportar_excel_robusto(df)
+        except Exception:
+            pass
+
     return _exportar_excel_fallback(df)
 
 
