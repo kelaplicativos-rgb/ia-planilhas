@@ -7,23 +7,12 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-try:
-    from bling_app_zero.ui.app_helpers import (
-        garantir_estado_base,
-        log_debug,
-        render_debug_panel,
-        render_preview_final,
-    )
-except ImportError:
-    from bling_app_zero.ui.app_helpers import (
-        garantir_estado_base,
-        log_debug,
-        render_preview_final,
-    )
-
-    def render_debug_panel():
-        return None
-
+from bling_app_zero.ui.app_helpers import (
+    garantir_estado_base,
+    log_debug,
+    render_debug_panel,
+    render_preview_final,
+)
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.send_panel import render_send_panel
@@ -81,12 +70,14 @@ def _sync_version():
             historico = []
 
         if versao_atual != APP_VERSION:
-            historico.append({
-                "version": APP_VERSION,
-                "date": _agora_iso(),
-                "title": APP_CHANGELOG_TITULO,
-                "description": APP_CHANGELOG_DESCRICAO,
-            })
+            historico.append(
+                {
+                    "version": APP_VERSION,
+                    "date": _agora_iso(),
+                    "title": APP_CHANGELOG_TITULO,
+                    "description": APP_CHANGELOG_DESCRICAO,
+                }
+            )
 
         novo = {
             "version": APP_VERSION,
@@ -204,6 +195,8 @@ def _obter_df_fluxo():
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
 
+render_debug_panel()
+
 if st.session_state.get("_cache_log"):
     st.info(st.session_state.get("_cache_log"))
 
@@ -293,9 +286,3 @@ elif etapa == "envio":
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("origem")
-
-
-# =========================
-# DEBUG
-# =========================
-render_debug_panel()
