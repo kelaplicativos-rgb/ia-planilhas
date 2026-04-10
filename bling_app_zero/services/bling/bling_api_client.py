@@ -35,7 +35,15 @@ class BlingAPIClient:
 
         return str(token).strip()
 
+    def _refresh_token_runtime(self):
+        """🔥 Atualiza token dinamicamente durante execução"""
+        novo = self._get_token()
+        if novo and novo != self.access_token:
+            self.access_token = novo
+
     def _headers(self) -> Dict[str, str]:
+        self._refresh_token_runtime()
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -71,7 +79,7 @@ class BlingAPIClient:
         return True, {}
 
     # =========================
-    # REQUEST BASE
+    # REQUEST BASE (PRO)
     # =========================
     def _request(
         self,
@@ -86,48 +94,63 @@ class BlingAPIClient:
 
         url = f"{self.BASE_URL}{self._normalizar_endpoint(endpoint)}"
 
-        try:
-            response = requests.request(
-                method=str(method or "GET").upper(),
-                url=url,
-                headers=self._headers(),
-                json=json,
-                params=params,
-                timeout=20,  # 🔥 mais agressivo
-            )
+        for tentativa in range(2):  # 🔥 retry automático
+            try:
+                response = requests.request(
+                    method=str(method or "GET").upper(),
+                    url=url,
+                    headers=self._headers(),
+                    json=json,
+                    params=params,
+                    timeout=20,
+                )
 
-            data = self._parse_response(response)
+                data = self._parse_response(response)
 
-            if response.status_code in (200, 201, 202, 204):
-                return True, {
+                # 🔥 sucesso
+                if response.status_code in (200, 201, 202, 204):
+                    return True, {
+                        "status": response.status_code,
+                        "data": data,
+                    }
+
+                # 🔥 token expirado → tenta renovar
+                if response.status_code == 401 and tentativa == 0:
+                    self._refresh_token_runtime()
+                    continue
+
+                return False, {
                     "status": response.status_code,
-                    "data": data,
+                    "erro": data,
+                    "url": url,
                 }
 
-            return False, {
-                "status": response.status_code,
-                "erro": data,
-                "url": url,
-            }
+            except requests.Timeout:
+                if tentativa == 0:
+                    continue
+                return False, {
+                    "status": 408,
+                    "erro": "Timeout na API do Bling",
+                    "url": url,
+                }
 
-        except requests.Timeout:
-            return False, {
-                "status": 408,
-                "erro": "Timeout na API do Bling",
-                "url": url,
-            }
-        except requests.RequestException as e:
-            return False, {
-                "status": 500,
-                "erro": f"Erro de conexão: {str(e)}",
-                "url": url,
-            }
-        except Exception as e:
-            return False, {
-                "status": 500,
-                "erro": str(e),
-                "url": url,
-            }
+            except requests.RequestException as e:
+                if tentativa == 0:
+                    continue
+                return False, {
+                    "status": 500,
+                    "erro": f"Erro de conexão: {str(e)}",
+                    "url": url,
+                }
+
+            except Exception as e:
+                return False, {
+                    "status": 500,
+                    "erro": str(e),
+                    "url": url,
+                }
+
+        return False, {"erro": "Falha desconhecida"}
 
     # =========================
     # PRODUTO
@@ -140,11 +163,16 @@ class BlingAPIClient:
             return False, {"erro": "Produto sem código"}
 
         if not nome:
-            nome = codigo  # fallback seguro
+            nome = codigo
 
         preco = data.get("preco")
         if preco is None:
             preco = data.get("preco_venda")
+
+        try:
+            preco = float(preco) if preco is not None else None
+        except Exception:
+            preco = None
 
         payload = {
             "produto": {
@@ -173,10 +201,20 @@ class BlingAPIClient:
         if not codigo:
             return False, {"erro": "Código vazio para estoque"}
 
+        try:
+            estoque = float(estoque or 0)
+        except Exception:
+            estoque = 0.0
+
+        try:
+            preco = float(preco) if preco is not None else None
+        except Exception:
+            preco = None
+
         payload: Dict[str, Any] = {
             "produto": {
                 "codigo": codigo,
-                "estoque": float(estoque or 0),
+                "estoque": estoque,
             }
         }
 
