@@ -53,6 +53,55 @@ ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 
 
 # ==========================================================
+# HELPERS GERAIS
+# ==========================================================
+def _safe_str(valor: Any) -> str:
+    try:
+        texto = str(valor or "").strip()
+        if texto.lower() in {"none", "nan", "<na>", "nat"}:
+            return ""
+        return texto
+    except Exception:
+        return ""
+
+
+def _normalizar_coluna(nome: Any) -> str:
+    return _safe_str(nome).lower()
+
+
+def _sincronizar_etapa_global(etapa: str) -> str:
+    etapa_norm = _safe_str(etapa).lower() or "origem"
+    if etapa_norm not in ETAPAS_VALIDAS_ORIGEM:
+        etapa_norm = "origem"
+
+    st.session_state["etapa_origem"] = etapa_norm
+    st.session_state["etapa"] = etapa_norm
+    st.session_state["etapa_fluxo"] = etapa_norm
+    return etapa_norm
+
+
+def safe_df_from_state(key: str) -> pd.DataFrame | None:
+    df = st.session_state.get(key)
+    if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
+        return df.copy()
+    return None
+
+
+def _safe_df(df: Any) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _safe_df_com_linhas(df: Any) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+    except Exception:
+        return False
+
+
+# ==========================================================
 # ESTADO / LOG
 # ==========================================================
 def garantir_estado_base() -> None:
@@ -60,40 +109,26 @@ def garantir_estado_base() -> None:
         if "logs" not in st.session_state or not isinstance(st.session_state.get("logs"), list):
             st.session_state["logs"] = []
 
-        etapa_atual = str(st.session_state.get("etapa_origem", "") or "").strip().lower()
+        etapa_atual = _safe_str(st.session_state.get("etapa_origem")).lower()
         if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
-            st.session_state["etapa_origem"] = "origem"
+            etapa_atual = "origem"
 
-        if "etapa" not in st.session_state:
-            st.session_state["etapa"] = st.session_state.get("etapa_origem", "origem")
+        _sincronizar_etapa_global(etapa_atual)
 
-        if "etapa_fluxo" not in st.session_state:
-            st.session_state["etapa_fluxo"] = st.session_state.get("etapa_origem", "origem")
+        defaults = {
+            "area_app": "Fluxo principal",
+            "bloquear_campos_auto": {},
+            "gtin_modo_valor": "limpar",
+            "gtin_modo_label": "Deixar vazio",
+            "preview_final_valido": True,
+            "campos_obrigatorios_faltantes": [],
+            "campos_obrigatorios_alertas": [],
+            "debug_open": False,
+        }
 
-        if "area_app" not in st.session_state:
-            st.session_state["area_app"] = "Fluxo principal"
-
-        if "bloquear_campos_auto" not in st.session_state:
-            st.session_state["bloquear_campos_auto"] = {}
-
-        if "gtin_modo_valor" not in st.session_state:
-            st.session_state["gtin_modo_valor"] = "limpar"
-
-        if "gtin_modo_label" not in st.session_state:
-            st.session_state["gtin_modo_label"] = "Deixar vazio"
-
-        if "preview_final_valido" not in st.session_state:
-            st.session_state["preview_final_valido"] = True
-
-        if "campos_obrigatorios_faltantes" not in st.session_state:
-            st.session_state["campos_obrigatorios_faltantes"] = []
-
-        if "campos_obrigatorios_alertas" not in st.session_state:
-            st.session_state["campos_obrigatorios_alertas"] = []
-
-        if "debug_open" not in st.session_state:
-            st.session_state["debug_open"] = False
-
+        for chave, valor in defaults.items():
+            if chave not in st.session_state:
+                st.session_state[chave] = valor
     except Exception:
         st.session_state["logs"] = []
         st.session_state["etapa_origem"] = "origem"
@@ -111,7 +146,7 @@ def garantir_estado_base() -> None:
 
 def log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
-        if "logs" not in st.session_state:
+        if "logs" not in st.session_state or not isinstance(st.session_state.get("logs"), list):
             st.session_state["logs"] = []
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -188,7 +223,6 @@ def render_debug_panel() -> None:
                         key="btn_baixar_logs_global",
                         use_container_width=True,
                     )
-
     except Exception as e:
         try:
             st.sidebar.warning(f"Debug indisponível: {e}")
@@ -197,17 +231,10 @@ def render_debug_panel() -> None:
 
 
 # ==========================================================
-# HELPERS
+# FLUXO / DF
 # ==========================================================
-def safe_df_from_state(key: str) -> pd.DataFrame | None:
-    df = st.session_state.get(key)
-    if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
-        return df.copy()
-    return None
-
-
 def get_df_fluxo() -> pd.DataFrame | None:
-    for key in ["df_final", "df_saida", "df_dados", "df_base"]:
+    for key in ["df_final", "df_saida", "df_precificado", "df_calc_precificado", "df_dados", "df_base"]:
         df = safe_df_from_state(key)
         if df is not None:
             return df
@@ -215,22 +242,24 @@ def get_df_fluxo() -> pd.DataFrame | None:
 
 
 def sincronizar_df_final() -> None:
+    """
+    Corrigido:
+    - prioriza df_saida como base real do fluxo final;
+    - só cai para outros DFs quando df_saida não existir.
+    """
+    df_saida = safe_df_from_state("df_saida")
+    if df_saida is not None:
+        st.session_state["df_final"] = df_saida.copy()
+        return
+
     df_fluxo = get_df_fluxo()
     if df_fluxo is not None:
         st.session_state["df_final"] = df_fluxo.copy()
 
 
-def _safe_str(valor: Any) -> str:
-    try:
-        return str(valor or "").strip()
-    except Exception:
-        return ""
-
-
-def _normalizar_coluna(nome: Any) -> str:
-    return _safe_str(nome).lower()
-
-
+# ==========================================================
+# GTIN
+# ==========================================================
 def _tem_coluna_gtin(df: pd.DataFrame) -> bool:
     return any(
         "gtin" in _normalizar_coluna(col) or "ean" in _normalizar_coluna(col)
@@ -238,26 +267,22 @@ def _tem_coluna_gtin(df: pd.DataFrame) -> bool:
     )
 
 
-# ==========================================================
-# GTIN
-# ==========================================================
 def _validar_gtin(valor: Any) -> str:
     try:
         if valor is None:
             return ""
 
-        valor = str(valor).strip()
-
-        if not valor or valor.lower() in {"none", "nan"}:
+        texto = str(valor).strip()
+        if not texto or texto.lower() in {"none", "nan"}:
             return ""
 
-        if not valor.isdigit():
+        if not texto.isdigit():
             return ""
 
-        if len(valor) not in {8, 12, 13, 14}:
+        if len(texto) not in {8, 12, 13, 14}:
             return ""
 
-        return valor
+        return texto
     except Exception:
         return ""
 
@@ -265,10 +290,12 @@ def _validar_gtin(valor: Any) -> str:
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.copy()
+
         for col in df.columns:
             nome = _normalizar_coluna(col)
             if "gtin" in nome or "ean" in nome:
                 df[col] = df[col].apply(_validar_gtin)
+
         return df
     except Exception as e:
         log_debug(f"Erro limpar GTIN: {e}", "ERROR")
@@ -291,8 +318,9 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
             tamanho_gerado=13,
         )
 
-        for linha in logs[:50]:
-            log_debug(linha, "INFO")
+        if isinstance(logs, list):
+            for linha in logs[:50]:
+                log_debug(str(linha), "INFO")
 
         return df_tratado
     except Exception as e:
@@ -303,12 +331,14 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 # VALIDAÇÃO
 # ==========================================================
-def validar_campos_obrigatorios(df: pd.DataFrame):
+def validar_campos_obrigatorios(df: pd.DataFrame) -> bool:
     try:
         if not isinstance(df, pd.DataFrame) or df.empty:
             st.session_state["preview_final_valido"] = False
             st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
-            st.session_state["campos_obrigatorios_alertas"] = ["Nenhum dado disponível para validar."]
+            st.session_state["campos_obrigatorios_alertas"] = [
+                "Nenhum dado disponível para validar."
+            ]
             return False
 
         faltantes: list[str] = []
@@ -349,7 +379,6 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
                 log_debug(alerta, "WARNING")
 
         return len(faltantes) == 0
-
     except Exception as e:
         log_debug(f"Erro validar campos obrigatórios: {e}", "ERROR")
         st.session_state["preview_final_valido"] = False
@@ -394,17 +423,17 @@ def _obter_modelo_exportacao() -> pd.DataFrame | None:
             df_modelo = st.session_state.get(state_key)
 
             if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
-                return df_modelo
+                return df_modelo.copy()
 
             df_modelo = carregar_modelo_por_operacao(tipo_operacao)
             if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
                 st.session_state[state_key] = df_modelo.copy()
-                return df_modelo
+                return df_modelo.copy()
 
         for fallback_key in ["df_modelo_cadastro", "df_modelo_estoque"]:
             df_modelo = st.session_state.get(fallback_key)
             if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
-                return df_modelo
+                return df_modelo.copy()
 
         return None
     except Exception as e:
@@ -428,10 +457,17 @@ def exportar_download_bytes(df: pd.DataFrame) -> bytes:
 # ==========================================================
 # PREVIEW FINAL
 # ==========================================================
+def _render_alertas_preview() -> None:
+    alertas = st.session_state.get("campos_obrigatorios_alertas", [])
+    if isinstance(alertas, list):
+        for alerta in alertas:
+            st.warning(str(alerta))
+
+
 def render_preview_final() -> None:
     sincronizar_df_final()
-    df = get_df_fluxo()
 
+    df = get_df_fluxo()
     if df is None:
         st.warning("Nenhum dado disponível.")
         return
@@ -442,17 +478,20 @@ def render_preview_final() -> None:
     st.session_state["df_final"] = df_final.copy()
     st.session_state["df_saida"] = df_final.copy()
 
+    validar_campos_obrigatorios(df_final)
+
     st.subheader("Preview final")
+    _render_alertas_preview()
     st.dataframe(df_final.head(20), use_container_width=True)
 
     col_voltar, col_download = st.columns([1, 3])
 
     with col_voltar:
-        if st.button("⬅️ Voltar", use_container_width=True):
-            st.session_state["etapa_origem"] = "mapeamento"
+        if st.button("⬅️ Voltar", use_container_width=True, key="btn_preview_voltar"):
+            _sincronizar_etapa_global("mapeamento")
             st.rerun()
 
-    excel_bytes = None
+    excel_bytes: bytes | None = None
     try:
         excel_bytes = exportar_download_bytes(df_final)
         if not excel_bytes:
@@ -462,15 +501,25 @@ def render_preview_final() -> None:
         st.error(f"Erro ao gerar arquivo: {e}")
 
     tipo_operacao = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
-    nome_arquivo = "bling_export_estoque.xlsx" if tipo_operacao == "estoque" else "bling_export_cadastro.xlsx"
+    nome_arquivo = (
+        "bling_export_estoque.xlsx"
+        if tipo_operacao == "estoque"
+        else "bling_export_cadastro.xlsx"
+    )
 
     with col_download:
         st.download_button(
             "⬇️ Baixar planilha",
             data=excel_bytes,
             file_name=nome_arquivo,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             disabled=(excel_bytes is None),
+            key="btn_preview_download_excel",
         )
 
-    render_bling_panel()
+    # Mantido compatível com a base atual.
+    try:
+        render_bling_panel()
+    except Exception as e:
+        log_debug(f"Painel do Bling indisponível no preview final: {e}", "WARNING")
