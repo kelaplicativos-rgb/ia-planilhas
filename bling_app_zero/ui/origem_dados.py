@@ -53,6 +53,13 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     )
 
 
+def _modelo_tem_estrutura(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
 # 🔥 CORREÇÃO ROBUSTA
 def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     try:
@@ -196,7 +203,8 @@ def render_origem_dados() -> None:
 
     render_modelo_bling(operacao)
 
-    if not safe_df_dados(obter_modelo_ativo()):
+    modelo_ativo = obter_modelo_ativo()
+    if not _modelo_tem_estrutura(modelo_ativo):
         st.warning("⚠️ Anexe o modelo do Bling para continuar.")
         return
 
@@ -210,7 +218,6 @@ def render_origem_dados() -> None:
 
     st.markdown("---")
 
-    # 🔥 CORREÇÃO: agora usa df_saida
     render_precificacao(df_saida)
 
     st.markdown("---")
