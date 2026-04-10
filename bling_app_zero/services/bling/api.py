@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from bling_app_zero.core.bling_api import BlingAPIClient
+# 🔥 CORREÇÃO CRÍTICA AQUI
+try:
+    from bling_app_zero.services.bling.bling_api import BlingAPIClient
+except ImportError:
+    from bling_app_zero.core.bling_api import BlingAPIClient
 
 
 class BlingServices:
