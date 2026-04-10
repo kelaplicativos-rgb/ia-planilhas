@@ -218,7 +218,8 @@ def render_origem_dados() -> None:
 
     st.markdown("---")
 
-    render_precificacao(df_saida)
+    # usa os dados reais da origem para a prévia de precificação nesta etapa
+    render_precificacao(df_origem)
 
     st.markdown("---")
 
