@@ -269,3 +269,8 @@ class BlingSync:
                 "deposito_id": deposito_id,
             },
         )
+
+
+# 🔥🔥🔥 CORREÇÃO CRÍTICA
+# Alias para compatibilidade com o core
+BlingSyncService = BlingSync
