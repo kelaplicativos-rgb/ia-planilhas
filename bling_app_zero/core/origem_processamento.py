@@ -245,14 +245,28 @@ def extrair_texto_pdf(arquivo: Any) -> str:
     try:
         arquivo.seek(0)
         conteudo = arquivo.read()
+
         if not conteudo:
             return ""
+
+        texto_total = ""
 
         try:
             from pypdf import PdfReader  # type: ignore
 
             reader = PdfReader(BytesIO(conteudo))
-            return "\n".join((pagina.extract_text() or "") for pagina in reader.pages).strip()
+            textos = []
+
+            for pagina in reader.pages:
+                try:
+                    textos.append(pagina.extract_text() or "")
+                except Exception:
+                    textos.append("")
+
+            texto_total = "\n".join(textos).strip()
+            if texto_total:
+                return texto_total
+
         except Exception:
             pass
 
@@ -260,9 +274,37 @@ def extrair_texto_pdf(arquivo: Any) -> str:
             import PyPDF2  # type: ignore
 
             reader = PyPDF2.PdfReader(BytesIO(conteudo))
-            return "\n".join((pagina.extract_text() or "") for pagina in reader.pages).strip()
+            textos = []
+
+            for pagina in reader.pages:
+                try:
+                    textos.append(pagina.extract_text() or "")
+                except Exception:
+                    textos.append("")
+
+            texto_total = "\n".join(textos).strip()
+            if texto_total:
+                return texto_total
+
         except Exception:
-            return ""
+            pass
+
+        try:
+            texto_bruto_latin1 = conteudo.decode("latin-1", errors="ignore").strip()
+            if texto_bruto_latin1:
+                return texto_bruto_latin1[:5000]
+        except Exception:
+            pass
+
+        try:
+            texto_bruto_utf8 = conteudo.decode("utf-8", errors="ignore").strip()
+            if texto_bruto_utf8:
+                return texto_bruto_utf8[:5000]
+        except Exception:
+            pass
+
+        return ""
+
     except Exception:
         return ""
 
