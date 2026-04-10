@@ -11,6 +11,7 @@ from bling_app_zero.core.origem_processamento import (
     normalizar_df,
     processar_upload_arquivo_unificado,
     safe_df_com_linhas,
+    safe_df_estrutura,
 )
 from bling_app_zero.ui.app_helpers import limpar_gtin_invalido, log_debug
 from bling_app_zero.ui.origem_dados_estado import (
@@ -35,16 +36,12 @@ def tem_upload_ativo() -> bool:
         return False
 
 
-def _safe_df_estrutura(df) -> bool:
-    try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
-    except Exception:
-        return False
-
-
 def _df_preview_seguro(df: pd.DataFrame) -> pd.DataFrame:
     try:
-        return normalizar_df(df).copy()
+        df = normalizar_df(df).copy()
+        for col in df.columns:
+            df[col] = df[col].astype(str)
+        return df
     except Exception:
         return df.copy()
 
@@ -53,11 +50,14 @@ def _df_preview_modelo(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = normalizar_df(df)
 
-        if not _safe_df_estrutura(df):
+        if not safe_df_estrutura(df):
             return pd.DataFrame()
 
         if not df.empty:
-            return df.head(5).copy()
+            preview = df.head(5).copy()
+            for col in preview.columns:
+                preview[col] = preview[col].astype(str)
+            return preview
 
         return pd.DataFrame([{col: "" for col in df.columns}])
     except Exception:
@@ -121,11 +121,12 @@ def _render_card_upload_arquivo() -> pd.DataFrame | None:
         log_debug(f"[ORIGEM_UPLOAD] {erro}", "ERRO")
         return None
 
-    if not _safe_df_estrutura(df_origem):
+    if not safe_df_estrutura(df_origem):
         st.error("A leitura do arquivo não retornou uma estrutura válida.")
         return None
 
     df_origem = limpar_gtin_invalido(df_origem)
+    df_origem = normalizar_df(df_origem)
 
     salvar_origem_no_estado(
         df_origem,
@@ -172,7 +173,7 @@ def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.
     else:
         df_origem = _render_card_upload_arquivo()
 
-        if _safe_df_estrutura(df_origem) and callable(on_change):
+        if safe_df_estrutura(df_origem) and callable(on_change):
             try:
                 on_change(str(st.session_state.get("origem_dados", "") or ""))
             except Exception as e:
@@ -183,11 +184,15 @@ def render_origem_entrada(on_change: Callable[[str], None] | None = None) -> pd.
 
     if safe_df_com_linhas(df_origem):
         with st.expander("Prévia rápida da origem", expanded=False):
-            st.dataframe(
-                _df_preview_seguro(df_origem).head(5),
-                use_container_width=True,
-                hide_index=True,
-            )
+            preview = _df_preview_seguro(df_origem).head(5)
+            try:
+                st.dataframe(
+                    preview,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            except Exception:
+                st.write(preview)
 
     return df_origem
 
@@ -222,7 +227,7 @@ def render_modelo_bling(operacao: str | None = None) -> None:
     if arquivo_modelo is None:
         modelo_existente = st.session_state.get(state_key)
 
-        if _safe_df_estrutura(modelo_existente):
+        if safe_df_estrutura(modelo_existente):
             with st.expander(preview_titulo, expanded=False):
                 st.dataframe(
                     _df_preview_modelo(modelo_existente),
@@ -233,7 +238,7 @@ def render_modelo_bling(operacao: str | None = None) -> None:
 
     df_modelo = ler_modelo(arquivo_modelo)
 
-    if not _safe_df_estrutura(df_modelo):
+    if not safe_df_estrutura(df_modelo):
         st.error(erro)
         return
 
