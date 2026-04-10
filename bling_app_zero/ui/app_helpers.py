@@ -157,7 +157,46 @@ def _tem_coluna_gtin(df: pd.DataFrame) -> bool:
 
 
 # ==========================================================
-# GTIN
+# 🔥 NOVO: LIMPAR GTIN INVÁLIDO (FUNÇÃO QUE FALTAVA)
+# ==========================================================
+def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        df = df.copy()
+
+        for col in df.columns:
+            nome = _normalizar_coluna(col)
+
+            if "gtin" in nome or "ean" in nome:
+                df[col] = df[col].apply(_validar_gtin)
+
+        return df
+
+    except Exception as e:
+        log_debug(f"Erro limpar GTIN: {e}", "ERROR")
+        return df
+
+
+def _validar_gtin(valor):
+    try:
+        if valor is None:
+            return ""
+
+        valor = str(valor).strip()
+
+        if not valor.isdigit():
+            return ""
+
+        if len(valor) not in [8, 12, 13, 14]:
+            return ""
+
+        return valor
+
+    except Exception:
+        return ""
+
+
+# ==========================================================
+# GTIN AUTOMÁTICO (já existente)
 # ==========================================================
 def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
     if aplicar_validacao_gtin_em_colunas_automaticas is None:
@@ -234,6 +273,7 @@ def render_preview_final() -> None:
         return
 
     df_final = _aplicar_tratamento_gtin(df.copy())
+    df_final = limpar_gtin_invalido(df_final)
 
     st.session_state["df_final"] = df_final.copy()
     st.session_state["df_saida"] = df_final.copy()
