@@ -144,6 +144,29 @@ def _df_preview_seguro(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy()
 
 
+def _df_preview_modelo(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante que a prévia do modelo nunca apareça como 'empty'
+    quando o arquivo oficial tiver apenas cabeçalhos.
+    """
+    try:
+        df = _normalizar_df(df)
+
+        if not _safe_df_estrutura(df):
+            return pd.DataFrame()
+
+        if not df.empty:
+            return df.head(5).copy()
+
+        linha_vazia = {col: "" for col in df.columns}
+        return pd.DataFrame([linha_vazia])
+    except Exception:
+        try:
+            return df.head(5).copy()
+        except Exception:
+            return pd.DataFrame()
+
+
 def _ler_planilha(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
@@ -310,7 +333,11 @@ def render_modelo_bling(operacao: str | None = None) -> None:
                 st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
                 st.success("Modelo de estoque carregado com sucesso.")
                 with st.expander("Prévia do modelo de estoque", expanded=False):
-                    st.dataframe(df_modelo.head(5), use_container_width=True)
+                    st.dataframe(
+                        _df_preview_modelo(df_modelo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
             else:
                 st.error("Não foi possível ler o modelo de estoque.")
     else:
@@ -327,7 +354,11 @@ def render_modelo_bling(operacao: str | None = None) -> None:
                 st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
                 st.success("Modelo de cadastro carregado com sucesso.")
                 with st.expander("Prévia do modelo de cadastro", expanded=False):
-                    st.dataframe(df_modelo.head(5), use_container_width=True)
+                    st.dataframe(
+                        _df_preview_modelo(df_modelo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
             else:
                 st.error("Não foi possível ler o modelo de cadastro.")
 
