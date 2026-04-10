@@ -10,7 +10,7 @@ ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 
 
 # =========================================================
-# HELPERS
+# HELPERS BÁSICOS
 # =========================================================
 def _safe_df(df: Any) -> bool:
     try:
@@ -26,56 +26,6 @@ def _safe_df_com_linhas(df: Any) -> bool:
         return False
 
 
-def _set_etapa(etapa: str) -> None:
-    etapa = str(etapa or "").strip().lower()
-    if etapa not in ETAPAS_VALIDAS_ORIGEM:
-        etapa = "origem"
-
-    st.session_state["etapa_origem"] = etapa
-    st.session_state["etapa"] = etapa
-    st.session_state["etapa_fluxo"] = etapa
-
-
-def _get_etapa() -> str:
-    for chave in ["etapa_origem", "etapa", "etapa_fluxo"]:
-        try:
-            val = str(st.session_state.get(chave) or "").strip().lower()
-            if val:
-                return val
-        except Exception:
-            pass
-    return "origem"
-
-
-def _normalizar_nome_coluna(nome: Any) -> str:
-    try:
-        return str(nome or "").strip().lower()
-    except Exception:
-        return ""
-
-
-def _is_coluna_deposito(nome: Any) -> bool:
-    nome = _normalizar_nome_coluna(nome)
-    return "deposit" in nome
-
-
-def _is_coluna_id(nome: Any) -> bool:
-    nome = _normalizar_nome_coluna(nome)
-    return nome == "id" or "id produto" in nome
-
-
-def _is_coluna_situacao(nome: Any) -> bool:
-    nome = _normalizar_nome_coluna(nome)
-    return "situa" in nome or nome == "status"
-
-
-def _is_coluna_preco_venda(nome: Any) -> bool:
-    nome = _normalizar_nome_coluna(nome)
-    return nome in {"preço de venda", "preco de venda", "valor venda"} or (
-        "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome)
-    )
-
-
 def _safe_str(valor: Any) -> str:
     try:
         texto = str(valor or "").strip()
@@ -86,60 +36,68 @@ def _safe_str(valor: Any) -> str:
         return ""
 
 
-def _sanitizar_valor(valor: Any) -> str:
-    try:
-        if valor is None:
-            return ""
-
-        texto = str(valor)
-        texto = texto.replace("⚠️", "").strip()
-
-        if texto.lower() in {"none", "nan", "<na>", "nat"}:
-            return ""
-
-        return texto
-    except Exception:
-        return ""
+def _normalizar_nome_coluna(nome: Any) -> str:
+    return _safe_str(nome).lower()
 
 
-def _normalizar_situacao(valor: Any) -> str:
-    try:
-        texto = str(valor or "").strip().lower()
+def _set_etapa(etapa: str) -> None:
+    etapa_norm = _safe_str(etapa).lower() or "origem"
+    if etapa_norm not in ETAPAS_VALIDAS_ORIGEM:
+        etapa_norm = "origem"
 
-        if texto in {"ativo", "1", "true", "sim", "yes"}:
-            return "Ativo"
-
-        if texto in {"inativo", "0", "false", "não", "nao", "no"}:
-            return "Inativo"
-
-        if texto == "":
-            return "Ativo"
-
-        return "Ativo"
-    except Exception:
-        return "Ativo"
+    st.session_state["etapa_origem"] = etapa_norm
+    st.session_state["etapa"] = etapa_norm
+    st.session_state["etapa_fluxo"] = etapa_norm
 
 
-def _detectar_duplicidades(mapping: dict[str, str]) -> dict[str, list[str]]:
-    usados: dict[str, list[str]] = {}
-
-    for col_modelo, col_origem in mapping.items():
-        origem = _safe_str(col_origem)
-        if not origem:
-            continue
-        usados.setdefault(origem, []).append(col_modelo)
-
-    return {origem: cols for origem, cols in usados.items() if len(cols) > 1}
+def _get_etapa() -> str:
+    for chave in ("etapa_origem", "etapa", "etapa_fluxo"):
+        valor = _safe_str(st.session_state.get(chave)).lower()
+        if valor:
+            return valor
+    return "origem"
 
 
-def _inicializar_mapping_vazio(colunas_modelo: list[str]) -> dict[str, str]:
-    mapping_atual = st.session_state.get("mapping_origem")
-    if isinstance(mapping_atual, dict):
-        return dict(mapping_atual)
+# =========================================================
+# DETECÇÃO DE COLUNAS ESPECIAIS
+# =========================================================
+def _is_coluna_deposito(nome: Any) -> bool:
+    nome_norm = _normalizar_nome_coluna(nome)
+    return "deposit" in nome_norm or "armaz" in nome_norm
 
-    return {str(col): "" for col in colunas_modelo}
+
+def _is_coluna_id(nome: Any) -> bool:
+    nome_norm = _normalizar_nome_coluna(nome)
+    return nome_norm == "id" or "id produto" in nome_norm
 
 
+def _is_coluna_preco_venda(nome: Any) -> bool:
+    nome_norm = _normalizar_nome_coluna(nome)
+    return nome_norm in {
+        "preço de venda",
+        "preco de venda",
+        "valor venda",
+        "preço",
+        "preco",
+    } or (
+        "venda" in nome_norm
+        and ("preço" in nome_norm or "preco" in nome_norm or "valor" in nome_norm)
+    )
+
+
+def _is_coluna_situacao(nome: Any) -> bool:
+    nome_norm = _normalizar_nome_coluna(nome)
+    return "situa" in nome_norm or "status" in nome_norm
+
+
+def _is_coluna_quantidade(nome: Any) -> bool:
+    nome_norm = _normalizar_nome_coluna(nome)
+    return nome_norm in {"quantidade", "qtd", "estoque", "saldo"} or "quantidade" in nome_norm
+
+
+# =========================================================
+# FONTE / MODELO
+# =========================================================
 def _obter_df_modelo() -> pd.DataFrame | None:
     candidatos = [
         st.session_state.get("df_modelo_mapeamento"),
@@ -155,11 +113,6 @@ def _obter_df_modelo() -> pd.DataFrame | None:
 
 
 def _obter_df_fonte() -> pd.DataFrame | None:
-    """
-    Regra:
-    - Para mapear, a fonte deve ser a origem/precificação.
-    - Nunca usar df_saida/df_final como fonte de selectbox, pois isso recicla o próprio modelo.
-    """
     candidatos = [
         st.session_state.get("df_calc_precificado"),
         st.session_state.get("df_precificado"),
@@ -173,20 +126,62 @@ def _obter_df_fonte() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_saida_base(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
+# =========================================================
+# NORMALIZAÇÃO
+# =========================================================
+def _sanitizar_valor(valor: Any) -> Any:
     try:
-        df_saida_base = st.session_state.get("df_saida")
+        if valor is None:
+            return ""
 
-        if (
-            isinstance(df_saida_base, pd.DataFrame)
-            and len(df_saida_base) == len(df_fonte)
-            and list(df_saida_base.columns) == list(df_modelo.columns)
-        ):
-            return df_saida_base.copy()
+        if isinstance(valor, (int, float)) and not pd.isna(valor):
+            return valor
+
+        texto = str(valor).replace("⚠️", "").strip()
+        if texto.lower() in {"none", "nan", "<na>", "nat"}:
+            return ""
+        return texto
     except Exception:
-        pass
+        return ""
 
-    return pd.DataFrame(index=range(len(df_fonte)), columns=list(df_modelo.columns))
+
+def _normalizar_situacao(valor: Any) -> str:
+    try:
+        texto = _safe_str(valor).lower()
+        if texto in {"ativo", "1", "true", "sim", "yes"}:
+            return "Ativo"
+        if texto in {"inativo", "0", "false", "não", "nao", "no"}:
+            return "Inativo"
+        return "Ativo" if texto else "Inativo"
+    except Exception:
+        return "Inativo"
+
+
+def _normalizar_quantidade(valor: Any) -> int:
+    try:
+        texto = _safe_str(valor).lower()
+        if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
+            return 0
+        if texto == "":
+            return 0
+        return max(int(float(str(valor).replace(",", "."))), 0)
+    except Exception:
+        return 0
+
+
+# =========================================================
+# MAPEAMENTO AUTOMÁTICO
+# =========================================================
+def _detectar_duplicidades(mapping: dict[str, str]) -> dict[str, list[str]]:
+    usados: dict[str, list[str]] = {}
+
+    for col_modelo, col_origem in mapping.items():
+        origem = _safe_str(col_origem)
+        if not origem:
+            continue
+        usados.setdefault(origem, []).append(col_modelo)
+
+    return {origem: cols for origem, cols in usados.items() if len(cols) > 1}
 
 
 def _aplicar_mapeamento_automatico_preco(
@@ -196,148 +191,196 @@ def _aplicar_mapeamento_automatico_preco(
 ) -> dict[str, str]:
     try:
         col_preco_origem = _safe_str(st.session_state.get("coluna_preco_unitario_origem"))
-
         if not col_preco_origem or col_preco_origem not in df_fonte.columns:
             return mapping
 
-        novo_mapping = dict(mapping)
-
+        novo = dict(mapping)
         for col_modelo in df_modelo.columns:
-            if _is_coluna_preco_venda(col_modelo) and not _safe_str(novo_mapping.get(col_modelo)):
-                novo_mapping[str(col_modelo)] = col_preco_origem
-
-        return novo_mapping
+            if _is_coluna_preco_venda(col_modelo) and not _safe_str(novo.get(col_modelo)):
+                novo[col_modelo] = col_preco_origem
+        return novo
     except Exception:
         return mapping
 
 
-def _sugerir_mapeamento_basico(
-    mapping: dict[str, str],
+def _sugerir_mapeamento_inicial(
     df_modelo: pd.DataFrame,
     df_fonte: pd.DataFrame,
+    mapping_existente: dict[str, str],
 ) -> dict[str, str]:
-    try:
-        colunas_origem = list(df_fonte.columns)
-        colunas_origem_norm = {_normalizar_nome_coluna(c): c for c in colunas_origem}
+    sugestao = dict(mapping_existente)
 
-        aliases: dict[str, list[str]] = {
-            "código": ["codigo", "código", "sku", "ref", "referencia", "referência"],
-            "descrição": ["descrição", "descricao", "nome", "titulo", "título", "produto"],
-            "descrição curta": ["descrição curta", "descricao curta", "descrição", "descricao", "nome"],
-            "preço": ["preço", "preco", "valor", "valor venda"],
-            "preço de venda": ["preço de venda", "preco de venda", "valor venda", "preço", "preco"],
-            "preço de custo": ["preço de custo", "preco de custo", "custo"],
-            "marca": ["marca", "fabricante"],
-            "ncm": ["ncm"],
-            "gtin": ["gtin", "ean", "codigo de barras", "código de barras"],
-            "gtin tributário": ["gtin tributário", "gtin tributario", "ean tributário", "ean tributario"],
-            "unidade": ["unidade", "und", "ucom"],
-            "quantidade": ["quantidade", "qtd", "estoque", "saldo"],
-            "situação": ["situação", "situacao", "status"],
-            "imagens": ["imagens", "imagem", "foto", "fotos", "url imagem"],
-            "link externo": ["link externo", "url", "link", "produto url"],
-            "depósito": ["deposito", "depósito", "armazem", "armazém"],
-        }
+    colunas_fonte = list(df_fonte.columns)
+    colunas_fonte_norm = {_normalizar_nome_coluna(c): c for c in colunas_fonte}
 
-        novo_mapping = dict(mapping)
-        usados = {v for v in novo_mapping.values() if _safe_str(v)}
+    aliases = {
+        "descrição": ["descrição", "descricao", "nome", "titulo", "título", "produto"],
+        "descrição curta": ["descrição curta", "descricao curta", "descrição", "descricao", "nome"],
+        "código": ["código", "codigo", "sku", "ref", "referencia", "referência"],
+        "marca": ["marca", "fabricante"],
+        "ncm": ["ncm"],
+        "gtin": ["gtin", "ean", "codigo de barras", "código de barras"],
+        "gtin tributário": ["gtin tributário", "gtin tributario", "ean tributário", "ean tributario"],
+        "situação": ["situação", "situacao", "status"],
+        "link externo": ["link externo", "link", "url", "produto url"],
+        "imagens": ["imagem", "imagens", "foto", "fotos", "url imagem"],
+        "quantidade": ["quantidade", "qtd", "estoque", "saldo"],
+        "preço de venda": ["preço de venda", "preco de venda", "preço", "preco", "valor venda", "valor"],
+        "preço": ["preço", "preco", "valor", "valor venda"],
+        "preço de custo": ["preço de custo", "preco de custo", "custo", "valor custo"],
+        "unidade": ["unidade", "und", "ucom"],
+    }
 
-        for col_modelo in df_modelo.columns:
-            col_modelo_str = str(col_modelo)
+    for col_modelo in df_modelo.columns:
+        if _safe_str(sugestao.get(col_modelo)):
+            continue
+        if _is_coluna_id(col_modelo) or _is_coluna_deposito(col_modelo):
+            continue
 
-            if _safe_str(novo_mapping.get(col_modelo_str)):
-                continue
+        nome_modelo = _normalizar_nome_coluna(col_modelo)
 
-            if _is_coluna_id(col_modelo_str) or _is_coluna_deposito(col_modelo_str):
-                continue
+        if nome_modelo in colunas_fonte_norm:
+            sugestao[col_modelo] = colunas_fonte_norm[nome_modelo]
+            continue
 
-            nome_modelo_norm = _normalizar_nome_coluna(col_modelo_str)
-
-            # 1. Match direto
-            if nome_modelo_norm in colunas_origem_norm and colunas_origem_norm[nome_modelo_norm] not in usados:
-                novo_mapping[col_modelo_str] = colunas_origem_norm[nome_modelo_norm]
-                usados.add(colunas_origem_norm[nome_modelo_norm])
-                continue
-
-            # 2. Aliases conhecidos
-            for chave_alias, lista_alias in aliases.items():
-                chave_alias_norm = _normalizar_nome_coluna(chave_alias)
-                if chave_alias_norm != nome_modelo_norm:
-                    continue
-
-                encontrado = None
-                for alias in lista_alias:
-                    alias_norm = _normalizar_nome_coluna(alias)
-                    if alias_norm in colunas_origem_norm:
-                        candidato = colunas_origem_norm[alias_norm]
-                        if candidato not in usados:
-                            encontrado = candidato
-                            break
-
-                if encontrado:
-                    novo_mapping[col_modelo_str] = encontrado
-                    usados.add(encontrado)
+        for alias in aliases.get(nome_modelo, []):
+            alias_norm = _normalizar_nome_coluna(alias)
+            if alias_norm in colunas_fonte_norm:
+                sugestao[col_modelo] = colunas_fonte_norm[alias_norm]
                 break
 
-        return novo_mapping
-    except Exception:
-        return mapping
+        if _safe_str(sugestao.get(col_modelo)):
+            continue
+
+        for col_fonte in colunas_fonte:
+            nome_fonte = _normalizar_nome_coluna(col_fonte)
+            if nome_modelo and (nome_modelo in nome_fonte or nome_fonte in nome_modelo):
+                sugestao[col_modelo] = col_fonte
+                break
+
+    return _aplicar_mapeamento_automatico_preco(sugestao, df_modelo, df_fonte)
 
 
 # =========================================================
-# CORE
+# MONTAGEM DE SAÍDA
 # =========================================================
+def _criar_df_saida_base(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
+    df_saida_base = st.session_state.get("df_saida")
+
+    if (
+        isinstance(df_saida_base, pd.DataFrame)
+        and len(df_saida_base) == len(df_fonte)
+        and list(df_saida_base.columns) == list(df_modelo.columns)
+    ):
+        return df_saida_base.copy()
+
+    return pd.DataFrame(index=range(len(df_fonte)), columns=list(df_modelo.columns))
+
+
 def _montar_df_saida(
     df_fonte: pd.DataFrame,
     df_modelo: pd.DataFrame,
     mapping: dict[str, str],
 ) -> pd.DataFrame:
-    df_saida = _obter_df_saida_base(df_fonte, df_modelo)
+    df_saida = _criar_df_saida_base(df_fonte, df_modelo)
     deposito = _safe_str(st.session_state.get("deposito_nome"))
 
-    for col in df_modelo.columns:
-        col_str = str(col)
-
-        if _is_coluna_id(col_str):
-            df_saida[col_str] = ""
+    for col_modelo in df_modelo.columns:
+        if _is_coluna_id(col_modelo):
+            df_saida[col_modelo] = ""
             continue
 
-        if _is_coluna_deposito(col_str):
-            df_saida[col_str] = deposito
+        if _is_coluna_deposito(col_modelo):
+            df_saida[col_modelo] = deposito
             continue
 
-        origem = _safe_str(mapping.get(col_str))
-
+        origem = _safe_str(mapping.get(col_modelo))
         if origem and origem in df_fonte.columns:
-            serie = df_fonte[origem].reset_index(drop=True)
-            serie = serie.apply(_sanitizar_valor)
-            df_saida[col_str] = serie
-        else:
-            if col_str not in df_saida.columns:
-                df_saida[col_str] = ""
-            else:
-                df_saida[col_str] = df_saida[col_str].fillna("")
+            serie = df_fonte[origem].reset_index(drop=True).apply(_sanitizar_valor)
 
-        if _is_coluna_situacao(col_str):
-            df_saida[col_str] = df_saida[col_str].apply(_normalizar_situacao)
+            if _is_coluna_situacao(col_modelo):
+                serie = serie.apply(_normalizar_situacao)
+
+            if _is_coluna_quantidade(col_modelo):
+                serie = serie.apply(_normalizar_quantidade)
+
+            df_saida[col_modelo] = serie
+        else:
+            if col_modelo not in df_saida.columns:
+                df_saida[col_modelo] = ""
+
+            if _is_coluna_situacao(col_modelo):
+                df_saida[col_modelo] = df_saida[col_modelo].fillna("").apply(_normalizar_situacao)
+            else:
+                df_saida[col_modelo] = df_saida[col_modelo].fillna("")
 
     return df_saida
 
 
-def _render_aviso_duplicidades(duplicidades: dict[str, list[str]]) -> None:
+# =========================================================
+# UI
+# =========================================================
+def _render_preview_fonte(df_fonte: pd.DataFrame) -> None:
+    st.caption("Prévia da origem")
+    st.dataframe(df_fonte.head(8), use_container_width=True)
+
+
+def _render_alerta_duplicidade(duplicidades: dict[str, list[str]]) -> None:
     if not duplicidades:
         return
 
-    st.error("❌ Existe coluna de origem sendo usada mais de uma vez.")
+    linhas = []
+    for origem, destinos in duplicidades.items():
+        linhas.append(f"• {origem}: {', '.join(destinos)}")
 
-    for col_origem, colunas_modelo in duplicidades.items():
-        st.caption(
-            f"Origem '{col_origem}' usada em: {', '.join(str(c) for c in colunas_modelo)}"
+    st.error("❌ Existe coluna de origem usada mais de uma vez:\n\n" + "\n".join(linhas))
+
+
+def _render_campos_mapeamento(
+    df_modelo: pd.DataFrame,
+    df_fonte: pd.DataFrame,
+    mapping_atual: dict[str, str],
+) -> dict[str, str]:
+    novo_mapping = dict(mapping_atual)
+    opcoes = [""] + list(df_fonte.columns)
+
+    for col_modelo in df_modelo.columns:
+        if _is_coluna_id(col_modelo):
+            st.text_input(
+                col_modelo,
+                value="(Automático / Bloqueado)",
+                disabled=True,
+                key=f"map_id_{col_modelo}",
+            )
+            novo_mapping[col_modelo] = ""
+            continue
+
+        if _is_coluna_deposito(col_modelo):
+            st.text_input(
+                col_modelo,
+                value=_safe_str(st.session_state.get("deposito_nome")),
+                disabled=True,
+                key=f"map_dep_{col_modelo}",
+            )
+            novo_mapping[col_modelo] = ""
+            continue
+
+        valor_atual = _safe_str(novo_mapping.get(col_modelo))
+        index_atual = opcoes.index(valor_atual) if valor_atual in opcoes else 0
+
+        valor = st.selectbox(
+            col_modelo,
+            opcoes,
+            index=index_atual,
+            key=f"map_{col_modelo}",
         )
+        novo_mapping[col_modelo] = _safe_str(valor)
+
+    return novo_mapping
 
 
 # =========================================================
-# RENDER
+# RENDER PRINCIPAL
 # =========================================================
 def render_origem_mapeamento() -> None:
     if _get_etapa() != "mapeamento":
@@ -346,16 +389,11 @@ def render_origem_mapeamento() -> None:
     df_fonte = _obter_df_fonte()
     df_modelo = _obter_df_modelo()
 
-    if not _safe_df_com_linhas(df_fonte):
-        st.warning("Dados de origem inválidos para o mapeamento.")
-        return
-
-    if not _safe_df(df_modelo):
-        st.warning("Modelo do Bling inválido para o mapeamento.")
+    if not _safe_df_com_linhas(df_fonte) or not _safe_df(df_modelo):
+        st.warning("Dados inválidos para o mapeamento. Volte para a origem.")
         return
 
     st.subheader("Mapeamento de colunas")
-    st.caption("Mapeie as colunas da origem para as colunas do modelo do Bling.")
 
     st.text_input(
         "Nome do Depósito (Bling)",
@@ -364,84 +402,55 @@ def render_origem_mapeamento() -> None:
         placeholder="Ex: ifood, geral, principal",
     )
 
-    st.markdown("### Prévia da origem")
-    st.dataframe(df_fonte.head(10), use_container_width=True)
+    _render_preview_fonte(df_fonte)
 
-    mapping = _inicializar_mapping_vazio(list(df_modelo.columns))
-    mapping = _sugerir_mapeamento_basico(mapping, df_modelo, df_fonte)
-    mapping = _aplicar_mapeamento_automatico_preco(mapping, df_modelo, df_fonte)
+    if "mapping_origem" not in st.session_state or not isinstance(
+        st.session_state.get("mapping_origem"), dict
+    ):
+        st.session_state["mapping_origem"] = {}
 
-    st.markdown("### Mapeamento")
+    mapping = dict(st.session_state["mapping_origem"])
+    mapping = _sugerir_mapeamento_inicial(df_modelo, df_fonte, mapping)
 
-    for col_modelo in df_modelo.columns:
-        col_modelo_str = str(col_modelo)
-
-        if _is_coluna_id(col_modelo_str):
-            st.text_input(
-                col_modelo_str,
-                value="(Automático / Bloqueado)",
-                disabled=True,
-                key=f"map_locked_{col_modelo_str}",
-            )
-            mapping[col_modelo_str] = ""
-            continue
-
-        if _is_coluna_deposito(col_modelo_str):
-            st.text_input(
-                col_modelo_str,
-                value="Preenchido automaticamente pelo campo de depósito",
-                disabled=True,
-                key=f"map_deposito_{col_modelo_str}",
-            )
-            mapping[col_modelo_str] = ""
-            continue
-
-        opcoes = [""] + list(df_fonte.columns)
-        valor_atual = _safe_str(st.session_state.get(f"map_{col_modelo_str}", mapping.get(col_modelo_str, "")))
-
-        valor = st.selectbox(
-            col_modelo_str,
-            opcoes,
-            index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
-            key=f"map_{col_modelo_str}",
-        )
-
-        mapping[col_modelo_str] = valor
+    st.markdown("---")
+    mapping = _render_campos_mapeamento(df_modelo, df_fonte, mapping)
 
     duplicidades = _detectar_duplicidades(mapping)
-    erro = bool(duplicidades)
+    tem_erro = bool(duplicidades)
 
-    if erro:
-        _render_aviso_duplicidades(duplicidades)
-
-    if st.button("🧹 Limpar mapeamento", use_container_width=True):
-        for col_modelo in df_modelo.columns:
-            st.session_state.pop(f"map_{col_modelo}", None)
-        st.session_state["mapping_origem"] = {}
-        st.rerun()
-
-    if not erro:
+    if tem_erro:
+        _render_alerta_duplicidade(duplicidades)
+    else:
         st.session_state["mapping_origem"] = dict(mapping)
 
-        df_saida = _montar_df_saida(df_fonte, df_modelo, mapping)
+    df_saida = _montar_df_saida(df_fonte, df_modelo, mapping)
 
-        st.markdown("### Prévia do modelo montado")
-        st.dataframe(df_saida.head(15), use_container_width=True)
+    st.markdown("---")
+    st.caption("Prévia do resultado mapeado")
+    st.dataframe(df_saida.head(15), use_container_width=True)
 
-        # Mantém a base pronta para a tela final.
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
+    st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
+    st.session_state["df_modelo_mapeamento"] = df_modelo.copy()
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("➡️ Avançar", use_container_width=True, disabled=erro, type="primary"):
-            if not erro and _safe_df(st.session_state.get("df_saida")):
-                st.session_state["df_final"] = st.session_state["df_saida"].copy()
-            _set_etapa("final")
+        if st.button("Limpar mapeamento", use_container_width=True):
+            st.session_state["mapping_origem"] = {}
+            for chave in list(st.session_state.keys()):
+                if str(chave).startswith("map_"):
+                    st.session_state.pop(chave, None)
             st.rerun()
 
     with col2:
         if st.button("⬅️ Voltar", use_container_width=True):
             _set_etapa("origem")
+            st.rerun()
+
+    with col3:
+        if st.button("➡️ Avançar", use_container_width=True, type="primary", disabled=tem_erro):
+            st.session_state["df_saida"] = df_saida.copy()
+            st.session_state["df_final"] = df_saida.copy()
+            _set_etapa("final")
             st.rerun()
