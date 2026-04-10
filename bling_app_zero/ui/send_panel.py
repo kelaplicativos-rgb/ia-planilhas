@@ -12,7 +12,7 @@ from bling_app_zero.services.bling.bling_sync import BlingSync
 
 def _safe_df(df) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
@@ -34,7 +34,18 @@ def _resolver_user_key() -> str:
         return "default"
 
 
-# 🔥 NOVO: CAPTURA CALLBACK AUTOMÁTICO DO BLING
+def _normalizar_df_envio(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        df = df.copy()
+        for col in df.columns:
+            df[col] = df[col].replace({None: ""}).fillna("")
+            df[col] = df[col].astype(str).str.replace("⚠️", "", regex=False).str.strip()
+        return df
+    except Exception:
+        return df
+
+
+# 🔥 CALLBACK AUTOMÁTICO DO BLING
 def _processar_callback(auth: BlingAuthManager):
     try:
         query = st.query_params
@@ -43,13 +54,28 @@ def _processar_callback(auth: BlingAuthManager):
         if isinstance(code, list):
             code = code[0]
 
+        error = query.get("error")
+        if isinstance(error, list):
+            error = error[0]
+
+        if error:
+            st.error(f"Erro de autorização do Bling: {error}")
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
+            return
+
         if code:
             with st.spinner("Conectando com Bling..."):
                 ok = auth.handle_callback(code)
 
             if ok:
                 st.success("✅ Conectado com sucesso ao Bling!")
-                st.query_params.clear()
+                try:
+                    st.query_params.clear()
+                except Exception:
+                    pass
                 st.rerun()
             else:
                 st.error("❌ Falha ao conectar com Bling")
@@ -63,23 +89,27 @@ def _obter_df_envio():
     df_saida = st.session_state.get("df_saida")
 
     if _safe_df(df_final):
-        return df_final
+        return _normalizar_df_envio(df_final)
 
     if _safe_df(df_saida):
         try:
             st.session_state["df_final"] = df_saida.copy()
         except Exception:
             st.session_state["df_final"] = df_saida
-        return df_saida
+        return _normalizar_df_envio(df_saida)
 
     return None
 
 
 def _hash_df(df: pd.DataFrame, tipo_api: str = "", deposito_id: str = "") -> str:
     try:
+        if not _safe_df(df):
+            return ""
+
         base_hash = hashlib.md5(
             pd.util.hash_pandas_object(df.fillna(""), index=True).values.tobytes()
         ).hexdigest()
+
         contexto = f"{_safe_str(tipo_api)}|{_safe_str(deposito_id)}"
         return hashlib.md5(f"{base_hash}|{contexto}".encode("utf-8")).hexdigest()
     except Exception:
@@ -96,16 +126,27 @@ def _garantir_estado():
     if "bling_resultado" not in st.session_state:
         st.session_state["bling_resultado"] = None
 
+    if "bling_deposito_id" not in st.session_state:
+        st.session_state["bling_deposito_id"] = ""
+
 
 def _render_conexao(auth: BlingAuthManager) -> bool:
-    _processar_callback(auth)  # 🔥 AGORA FUNCIONA
+    _processar_callback(auth)
 
-    if not auth.is_configured():
-        st.warning("⚠️ Bling não configurado. Verifique as credenciais.")
+    try:
+        if not auth.is_configured():
+            st.warning("⚠️ Bling não configurado. Verifique as credenciais.")
+            return False
+    except Exception as e:
+        st.error(f"Erro ao validar configuração do Bling: {e}")
         return False
 
-    status = auth.get_connection_status()
-    conectado = bool(status.get("connected"))
+    try:
+        status = auth.get_connection_status()
+        conectado = bool(status.get("connected"))
+    except Exception as e:
+        st.error(f"Erro ao verificar conexão com Bling: {e}")
+        return False
 
     col1, col2 = st.columns(2)
 
@@ -170,8 +211,18 @@ def render_send_panel():
         return
 
     user_key = _resolver_user_key()
-    auth = BlingAuthManager(user_key=user_key)
-    sync = BlingSync(user_key=user_key)
+
+    try:
+        auth = BlingAuthManager(user_key=user_key)
+    except Exception as e:
+        st.error(f"Erro ao iniciar autenticação do Bling: {e}")
+        return
+
+    try:
+        sync = BlingSync(user_key=user_key)
+    except Exception as e:
+        st.error(f"Erro ao iniciar sincronização do Bling: {e}")
+        return
 
     conectado = _render_conexao(auth)
     if not conectado:
@@ -197,6 +248,9 @@ def render_send_panel():
     st.markdown("---")
     st.info(f"{len(df)} registros prontos para envio")
 
+    with st.expander("📦 Ver dados que serão enviados", expanded=False):
+        st.dataframe(df.head(20), use_container_width=True)
+
     df_hash = _hash_df(df, tipo_api=tipo_api, deposito_id=deposito_id)
 
     botao = st.button(
@@ -208,6 +262,10 @@ def render_send_panel():
     if botao:
         if st.session_state.get("bling_enviando"):
             st.warning("⚠️ Já existe um envio em andamento.")
+            return
+
+        if not df_hash:
+            st.error("Não foi possível gerar a assinatura do lote para envio.")
             return
 
         if st.session_state.get("bling_hash_enviado") == df_hash:
@@ -227,6 +285,15 @@ def render_send_panel():
                     tipo=tipo_api,
                     deposito_id=_safe_str(deposito_id) or None,
                 )
+
+            if not isinstance(resultado, dict):
+                resultado = {
+                    "ok": False,
+                    "total": len(df),
+                    "sucesso": 0,
+                    "erro": len(df),
+                    "erros": ["Retorno inválido do serviço de sincronização."],
+                }
 
             st.session_state["bling_resultado"] = resultado
 
