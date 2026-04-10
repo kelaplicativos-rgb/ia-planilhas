@@ -41,6 +41,15 @@ def _modelo_tem_estrutura(df) -> bool:
         return False
 
 
+def _normalizar_texto(valor) -> str:
+    try:
+        if valor is None:
+            return ""
+        return str(valor).strip().lower()
+    except Exception:
+        return ""
+
+
 def _normalizar_quantidade(valor, fallback: int) -> int:
     try:
         texto = str(valor or "").strip().lower()
@@ -67,32 +76,97 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     )
 
 
+def _mapa_colunas_equivalentes() -> dict[str, list[str]]:
+    return {
+        "id": ["id"],
+        "código": ["código", "codigo", "sku", "ref", "referencia", "referência", "cód", "cod"],
+        "descrição": ["descrição", "descricao", "nome", "título", "titulo", "produto"],
+        "descrição curta": ["descrição curta", "descricao curta", "descrição", "descricao", "nome", "produto"],
+        "preço": ["preço", "preco", "valor", "valor venda", "preço de venda", "preco de venda"],
+        "preço de venda": ["preço de venda", "preco de venda", "preço", "preco", "valor", "valor venda"],
+        "preço de custo": ["preço de custo", "preco de custo", "custo", "valor custo"],
+        "marca": ["marca", "fabricante"],
+        "ncm": ["ncm"],
+        "gtin": ["gtin", "ean", "código de barras", "codigo de barras"],
+        "gtin tributário": ["gtin tributário", "gtin tributario", "ean tributário", "ean tributario"],
+        "unidade": ["unidade", "und", "ucom"],
+        "estoque": ["estoque", "saldo", "quantidade", "qtd"],
+        "quantidade": ["quantidade", "qtd", "estoque", "saldo"],
+        "situação": ["situação", "situacao", "status"],
+        "imagens": ["imagens", "imagem", "fotos", "foto", "url imagem", "url da imagem"],
+        "link externo": ["link externo", "url", "link", "produto url"],
+        "depósito": ["depósito", "deposito", "armazém", "armazem"],
+    }
+
+
+def _encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> str | None:
+    nome_modelo = _normalizar_texto(coluna_modelo)
+    colunas_normalizadas = {_normalizar_texto(col): col for col in colunas_origem}
+
+    if nome_modelo in colunas_normalizadas:
+        return colunas_normalizadas[nome_modelo]
+
+    equivalentes = _mapa_colunas_equivalentes().get(nome_modelo, [])
+    for alias in equivalentes:
+        alias_norm = _normalizar_texto(alias)
+        if alias_norm in colunas_normalizadas:
+            return colunas_normalizadas[alias_norm]
+
+    for col in colunas_origem:
+        nome_origem = _normalizar_texto(col)
+        if nome_modelo and nome_modelo in nome_origem:
+            return col
+        if nome_origem and nome_origem in nome_modelo:
+            return col
+
+    return None
+
+
 def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     try:
         modelo = obter_modelo_ativo()
 
-        if isinstance(modelo, pd.DataFrame) and len(modelo.columns) > 0:
-            precisa_recriar = True
-            df_saida_existente = st.session_state.get("df_saida")
-
-            if safe_df_estrutura(df_saida_existente):
-                if list(df_saida_existente.columns) == list(modelo.columns):
-                    precisa_recriar = False
-
-            if precisa_recriar:
-                df_saida = pd.DataFrame(index=range(len(df_origem)), columns=modelo.columns)
-            else:
-                df_saida = df_saida_existente.copy()
-        else:
+        if not isinstance(modelo, pd.DataFrame) or len(modelo.columns) == 0:
             df_saida = df_origem.copy()
+            st.session_state["df_saida"] = df_saida.copy()
+            st.session_state["df_final"] = df_saida.copy()
+            log_debug(
+                f"[DF_SAIDA] modelo indisponível; usando origem direta com {len(df_saida)} linha(s).",
+                "INFO",
+            )
+            return df_saida
+
+        colunas_modelo = list(modelo.columns)
+        df_saida = pd.DataFrame(index=range(len(df_origem)), columns=colunas_modelo)
+
+        colunas_preenchidas = 0
+        for col_modelo in colunas_modelo:
+            col_origem = _encontrar_coluna_origem(col_modelo, list(df_origem.columns))
+            if col_origem is not None:
+                try:
+                    df_saida[col_modelo] = df_origem[col_origem].values
+                    colunas_preenchidas += 1
+                except Exception:
+                    pass
 
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
+
+        log_debug(
+            f"[DF_SAIDA] base preparada com {len(df_saida)} linha(s), "
+            f"{len(df_saida.columns)} coluna(s) e {colunas_preenchidas} coluna(s) preenchida(s) automaticamente.",
+            "INFO",
+        )
+
         return df_saida
-    except Exception:
+
+    except Exception as e:
+        log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERRO")
+
         df_saida = df_origem.copy()
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
+
         return df_saida
 
 
