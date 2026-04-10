@@ -181,7 +181,10 @@ class BlingAuthManager:
 
             resp = httpx.post(self.settings.token_url, headers=headers, data=data, timeout=30)
 
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except Exception:
+                return False, f"Resposta inválida do Bling: {resp.text}"
 
             if resp.status_code >= 400:
                 return False, str(payload)
@@ -215,7 +218,10 @@ class BlingAuthManager:
 
             resp = httpx.post(self.settings.token_url, headers=headers, data=data, timeout=30)
 
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except Exception:
+                return False, f"Resposta inválida do Bling: {resp.text}"
 
             if resp.status_code >= 400:
                 return False, str(payload)
@@ -230,12 +236,13 @@ class BlingAuthManager:
             return False, str(e)
 
     def handle_oauth_callback(self) -> Dict[str, str]:
-        if st.session_state.get("_oauth_processado"):
-            return {"status": "idle", "message": ""}
-
         qp = st.query_params
 
         if "code" not in qp and "error" not in qp:
+            return {"status": "idle", "message": ""}
+
+        # 🔥 evita travamento permanente
+        if st.session_state.get("_oauth_processado"):
             return {"status": "idle", "message": ""}
 
         st.session_state["_oauth_processado"] = True
@@ -258,6 +265,9 @@ class BlingAuthManager:
 
         self._clear_oauth_query_params()
         clear_state(self.user_key)
+
+        # 🔥 libera novamente para futuro login
+        st.session_state["_oauth_processado"] = False
 
         if not ok:
             return {"status": "error", "message": msg}
