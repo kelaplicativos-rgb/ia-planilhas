@@ -16,6 +16,7 @@ except Exception:
     def render_bling_panel():
         st.warning("Painel do Bling indisponível no momento.")
 
+
 # ==========================================================
 # IMPORTS OPCIONAIS / BLINDAGEM
 # ==========================================================
@@ -153,19 +154,42 @@ def _normalizar_coluna(nome: Any) -> str:
 
 
 def _tem_coluna_gtin(df: pd.DataFrame) -> bool:
-    return any("gtin" in _normalizar_coluna(col) or "ean" in _normalizar_coluna(col) for col in df.columns)
+    return any(
+        "gtin" in _normalizar_coluna(col) or "ean" in _normalizar_coluna(col)
+        for col in df.columns
+    )
 
 
 # ==========================================================
-# 🔥 NOVO: LIMPAR GTIN INVÁLIDO (FUNÇÃO QUE FALTAVA)
+# GTIN
 # ==========================================================
+def _validar_gtin(valor: Any) -> str:
+    try:
+        if valor is None:
+            return ""
+
+        valor = str(valor).strip()
+
+        if not valor or valor.lower() in {"none", "nan"}:
+            return ""
+
+        if not valor.isdigit():
+            return ""
+
+        if len(valor) not in {8, 12, 13, 14}:
+            return ""
+
+        return valor
+    except Exception:
+        return ""
+
+
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.copy()
 
         for col in df.columns:
             nome = _normalizar_coluna(col)
-
             if "gtin" in nome or "ean" in nome:
                 df[col] = df[col].apply(_validar_gtin)
 
@@ -176,28 +200,6 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
-def _validar_gtin(valor):
-    try:
-        if valor is None:
-            return ""
-
-        valor = str(valor).strip()
-
-        if not valor.isdigit():
-            return ""
-
-        if len(valor) not in [8, 12, 13, 14]:
-            return ""
-
-        return valor
-
-    except Exception:
-        return ""
-
-
-# ==========================================================
-# GTIN AUTOMÁTICO (já existente)
-# ==========================================================
 def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
     if aplicar_validacao_gtin_em_colunas_automaticas is None:
         return df
@@ -226,6 +228,64 @@ def _aplicar_tratamento_gtin(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
+# VALIDAÇÃO
+# ==========================================================
+def validar_campos_obrigatorios(df: pd.DataFrame):
+    try:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            st.session_state["preview_final_valido"] = False
+            st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
+            st.session_state["campos_obrigatorios_alertas"] = ["Nenhum dado disponível para validar."]
+            return False
+
+        faltantes: list[str] = []
+        alertas: list[str] = []
+
+        candidatos = {
+            "Descrição": ["descrição", "descricao"],
+        }
+
+        colunas_normalizadas = {str(col): _normalizar_coluna(col) for col in df.columns}
+
+        for nome_campo, aliases in candidatos.items():
+            col_encontrada = None
+
+            for col_real, col_norm in colunas_normalizadas.items():
+                if any(alias in col_norm for alias in aliases):
+                    col_encontrada = col_real
+                    break
+
+            if col_encontrada is None:
+                faltantes.append(nome_campo)
+                alertas.append(f"Coluna obrigatória ausente: {nome_campo}")
+                continue
+
+            serie = df[col_encontrada].copy()
+            serie = serie.replace({None: ""}).fillna("").astype(str).str.strip()
+
+            if serie.eq("").all():
+                faltantes.append(nome_campo)
+                alertas.append(f"Coluna obrigatória sem dados: {col_encontrada}")
+
+        st.session_state["campos_obrigatorios_faltantes"] = faltantes
+        st.session_state["campos_obrigatorios_alertas"] = alertas
+        st.session_state["preview_final_valido"] = len(faltantes) == 0
+
+        if alertas:
+            for alerta in alertas:
+                log_debug(alerta, "WARNING")
+
+        return len(faltantes) == 0
+
+    except Exception as e:
+        log_debug(f"Erro validar campos obrigatórios: {e}", "ERROR")
+        st.session_state["preview_final_valido"] = False
+        st.session_state["campos_obrigatorios_faltantes"] = ["Erro na validação"]
+        st.session_state["campos_obrigatorios_alertas"] = [str(e)]
+        return False
+
+
+# ==========================================================
 # EXPORTAÇÃO
 # ==========================================================
 def _exportar_excel_fallback(df: pd.DataFrame) -> bytes:
@@ -247,10 +307,9 @@ def exportar_excel_bytes(df: pd.DataFrame) -> bytes:
 
 def exportar_download_bytes(df: pd.DataFrame) -> bytes:
     try:
-        df_modelo = (
-            st.session_state.get("df_modelo_cadastro")
-            or st.session_state.get("df_modelo_estoque")
-        )
+        df_modelo = st.session_state.get("df_modelo_cadastro")
+        if not isinstance(df_modelo, pd.DataFrame):
+            df_modelo = st.session_state.get("df_modelo_estoque")
 
         if _exportar_excel_com_modelo and isinstance(df_modelo, pd.DataFrame):
             return _exportar_excel_com_modelo(df, df_modelo)
