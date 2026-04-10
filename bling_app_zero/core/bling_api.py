@@ -97,6 +97,7 @@ class BlingAPIClient:
         json: Optional[Dict[str, Any]] = None,
         timeout: float = 30.0,
     ) -> Tuple[bool, Any]:
+
         ok, token_or_msg = self.auth.get_valid_access_token()
         if not ok:
             return self._error("Erro de autenticação", token_or_msg)
@@ -167,7 +168,7 @@ class BlingAPIClient:
         )
 
     # =========================
-    # PRODUTO (UPSERT REAL)
+    # NORMALIZAÇÃO PRODUTO
     # =========================
     def _normalize_product_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
         nome = self._clean_str(row.get("nome") or row.get("descricao"))
@@ -193,6 +194,9 @@ class BlingAPIClient:
 
         return payload
 
+    # =========================
+    # UPSERT PRODUTO (ROBUSTO)
+    # =========================
     def upsert_product(self, row: Dict[str, Any]) -> Tuple[bool, Any]:
         payload = self._normalize_product_payload(row)
 
@@ -204,15 +208,16 @@ class BlingAPIClient:
         ok, resp = self.get_product_by_codigo(codigo)
 
         if ok:
-            data = resp.get("data", {})
+            data = resp.get("data")
 
             lista = []
+
             if isinstance(data, dict):
-                lista = data.get("data", [])
+                lista = data.get("data") or data.get("produtos") or []
             elif isinstance(data, list):
                 lista = data
 
-            if isinstance(lista, list) and len(lista) > 0:
+            if isinstance(lista, list) and lista:
                 produto_id = lista[0].get("id")
 
                 if produto_id:
@@ -222,6 +227,7 @@ class BlingAPIClient:
                         json=payload,
                     )
 
+        # fallback seguro
         return self.request("POST", "/produtos", json=payload)
 
     # =========================
@@ -233,6 +239,7 @@ class BlingAPIClient:
         codigo: str,
         estoque: float,
         deposito_id: Optional[str] = None,
+        preco: Optional[float] = None,
     ) -> Tuple[bool, Any]:
 
         if not codigo:
@@ -242,6 +249,9 @@ class BlingAPIClient:
             "codigo": codigo,
             "saldo": float(estoque or 0),
         }
+
+        if preco is not None:
+            body["preco"] = float(preco)
 
         if deposito_id:
             try:
