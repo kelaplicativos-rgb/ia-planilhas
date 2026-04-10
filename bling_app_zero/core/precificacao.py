@@ -48,6 +48,8 @@ def calcular_preco_venda(
     custo_fixo: float,
     taxa_extra: float,
 ) -> float:
+    base = 0.0  # 🔥 GARANTIA contra erro
+
     try:
         base = max(0.0, _to_float(preco_compra) + _to_float(custo_fixo))
 
