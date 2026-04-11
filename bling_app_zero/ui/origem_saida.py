@@ -29,6 +29,28 @@ def mapa_colunas_equivalentes() -> dict[str, list[str]]:
         "preço": ["preço", "preco", "valor", "valor venda", "preço de venda", "preco de venda"],
         "preço de venda": ["preço de venda", "preco de venda", "preço", "preco", "valor", "valor venda"],
         "preço de custo": ["preço de custo", "preco de custo", "custo", "valor custo"],
+        "preço unitário": [
+            "preço unitário",
+            "preco unitario",
+            "preço unitário (obrigatório)",
+            "preco unitario (obrigatorio)",
+            "preço",
+            "preco",
+            "preço de venda",
+            "preco de venda",
+            "valor venda",
+        ],
+        "preço unitário (obrigatório)": [
+            "preço unitário (obrigatório)",
+            "preco unitario (obrigatorio)",
+            "preço unitário",
+            "preco unitario",
+            "preço",
+            "preco",
+            "preço de venda",
+            "preco de venda",
+            "valor venda",
+        ],
         "marca": ["marca", "fabricante"],
         "ncm": ["ncm"],
         "gtin": ["gtin", "ean", "código de barras", "codigo de barras"],
@@ -52,7 +74,6 @@ def encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> st
         return colunas_normalizadas[nome_modelo]
 
     equivalentes = mapa_colunas_equivalentes().get(nome_modelo, [])
-
     for alias in equivalentes:
         alias_norm = normalizar_texto(alias)
         if alias_norm in colunas_normalizadas:
@@ -70,6 +91,171 @@ def encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> st
     return None
 
 
+def _safe_float(valor) -> float | None:
+    try:
+        if valor is None:
+            return None
+
+        if isinstance(valor, bool):
+            return None
+
+        if pd.isna(valor):
+            return None
+
+        texto = str(valor).strip()
+        if not texto:
+            return None
+
+        texto = texto.replace("R$", "").replace("r$", "")
+        texto = texto.replace(".", "").replace(",", ".")
+        texto = texto.strip()
+
+        if not texto:
+            return None
+
+        return float(texto)
+    except Exception:
+        return None
+
+
+def _valor_preco_invalido(valor) -> bool:
+    numero = _safe_float(valor)
+    if numero is None:
+        return True
+    return numero <= 0
+
+
+def _detectar_coluna_preco_unitario(df: pd.DataFrame) -> str | None:
+    if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
+        return None
+
+    prioridades = [
+        "preço unitário (obrigatório)",
+        "preco unitario (obrigatorio)",
+        "preço unitário",
+        "preco unitario",
+        "preço",
+        "preco",
+    ]
+
+    mapa = {normalizar_texto(col): col for col in df.columns}
+
+    for nome in prioridades:
+        if nome in mapa:
+            return mapa[nome]
+
+    for col in df.columns:
+        nome = normalizar_texto(col)
+        if "preço unitário" in nome or "preco unitario" in nome:
+            return col
+
+    return None
+
+
+def _detectar_coluna_preco_precificado(df: pd.DataFrame) -> str | None:
+    if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
+        return None
+
+    candidatos_sessao = [
+        st.session_state.get("coluna_preco_unitario_destino"),
+        st.session_state.get("coluna_preco_unitario_origem"),
+    ]
+
+    for candidato in candidatos_sessao:
+        candidato = str(candidato or "").strip()
+        if candidato and candidato in df.columns:
+            return candidato
+
+    prioridades = [
+        "preço de venda",
+        "preco de venda",
+        "valor venda",
+        "preço",
+        "preco",
+        "preço unitário",
+        "preco unitario",
+    ]
+
+    mapa = {normalizar_texto(col): col for col in df.columns}
+
+    for nome in prioridades:
+        if nome in mapa:
+            return mapa[nome]
+
+    for col in df.columns:
+        nome = normalizar_texto(col)
+        if "venda" in nome:
+            return col
+
+    for col in df.columns:
+        nome = normalizar_texto(col)
+        if "preço" in nome or "preco" in nome:
+            return col
+
+    return None
+
+
+def _obter_df_precificacao() -> pd.DataFrame | None:
+    for chave in ["df_precificado", "df_calc_precificado"]:
+        df = st.session_state.get(chave)
+        if isinstance(df, pd.DataFrame) and len(df.columns) > 0 and len(df) > 0:
+            return df.copy()
+    return None
+
+
+def _aplicar_fallback_preco_unitario(df_saida: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if not isinstance(df_saida, pd.DataFrame) or len(df_saida.columns) == 0:
+            return df_saida
+
+        col_preco_unitario = _detectar_coluna_preco_unitario(df_saida)
+        if not col_preco_unitario:
+            log_debug("[DF_SAIDA] fallback de preço ignorado: coluna de preço unitário não encontrada no modelo.", "INFO")
+            return df_saida
+
+        df_prec = _obter_df_precificacao()
+        if not isinstance(df_prec, pd.DataFrame):
+            log_debug("[DF_SAIDA] fallback de preço ignorado: df_precificado indisponível.", "INFO")
+            return df_saida
+
+        col_preco_prec = _detectar_coluna_preco_precificado(df_prec)
+        if not col_preco_prec:
+            log_debug("[DF_SAIDA] fallback de preço ignorado: coluna de preço da precificação não encontrada.", "INFO")
+            return df_saida
+
+        total_preenchidos = 0
+        limite = min(len(df_saida), len(df_prec))
+
+        for idx in range(limite):
+            valor_atual = df_saida.at[idx, col_preco_unitario]
+            if not _valor_preco_invalido(valor_atual):
+                continue
+
+            valor_prec = df_prec.iloc[idx][col_preco_prec]
+            if _valor_preco_invalido(valor_prec):
+                continue
+
+            df_saida.at[idx, col_preco_unitario] = valor_prec
+            total_preenchidos += 1
+
+        if total_preenchidos > 0:
+            log_debug(
+                f"[DF_SAIDA] fallback aplicado em '{col_preco_unitario}' usando '{col_preco_prec}' da precificação em {total_preenchidos} linha(s).",
+                "INFO",
+            )
+        else:
+            log_debug(
+                f"[DF_SAIDA] fallback de preço não precisou preencher linhas em '{col_preco_unitario}'.",
+                "INFO",
+            )
+
+        return df_saida
+
+    except Exception as e:
+        log_debug(f"[DF_SAIDA] erro ao aplicar fallback de preço unitário: {e}", "ERROR")
+        return df_saida
+
+
 # ==========================================================
 # DF SAÍDA
 # ==========================================================
@@ -79,6 +265,8 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
 
         if not isinstance(modelo, pd.DataFrame) or len(modelo.columns) == 0:
             df_saida = df_origem.copy()
+            df_saida = _aplicar_fallback_preco_unitario(df_saida)
+
             st.session_state["df_saida"] = df_saida.copy()
             st.session_state["df_final"] = df_saida.copy()
 
@@ -90,6 +278,7 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
 
         colunas_modelo = list(modelo.columns)
         df_saida = pd.DataFrame(index=range(len(df_origem)), columns=colunas_modelo)
+
         colunas_preenchidas = 0
 
         for col_modelo in colunas_modelo:
@@ -100,6 +289,8 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
                     colunas_preenchidas += 1
                 except Exception:
                     pass
+
+        df_saida = _aplicar_fallback_preco_unitario(df_saida)
 
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
@@ -114,6 +305,8 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERROR")
         df_saida = df_origem.copy()
+        df_saida = _aplicar_fallback_preco_unitario(df_saida)
+
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
         return df_saida
@@ -133,8 +326,9 @@ def _arquivo_origem_eh_pdf() -> bool:
 def _usar_base_modelada(chave: str, rotulo: str) -> pd.DataFrame | None:
     try:
         df_ref = st.session_state.get(chave)
-
         if safe_df_estrutura(df_ref):
+            df_ref = _aplicar_fallback_preco_unitario(df_ref.copy())
+
             st.session_state["df_saida"] = df_ref.copy()
             st.session_state["df_final"] = df_ref.copy()
 
@@ -145,6 +339,7 @@ def _usar_base_modelada(chave: str, rotulo: str) -> pd.DataFrame | None:
             return df_ref.copy()
 
         return None
+
     except Exception as e:
         log_debug(f"[BASE] erro ao priorizar {rotulo}: {e}", "ERROR")
         return None
