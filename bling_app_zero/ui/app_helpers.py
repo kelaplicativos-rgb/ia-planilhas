@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+
 # ==========================================================
 # BLING PANEL (BLINDADO)
 # ==========================================================
@@ -45,6 +46,12 @@ try:
     from bling_app_zero.utils.gtin import aplicar_validacao_gtin_em_colunas_automaticas
 except Exception:
     aplicar_validacao_gtin_em_colunas_automaticas = None
+
+try:
+    from bling_app_zero.core.enriquecimento_real import sanitizar_dados_reais
+except Exception:
+    def sanitizar_dados_reais(df):
+        return df
 
 
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
@@ -133,7 +140,7 @@ def render_debug_panel() -> None:
             debug_aberto = bool(st.session_state.get("debug_open", False))
 
             if st.button(
-                "📋 Log debug" if not debug_aberto else "❌ Fechar log debug",
+                "📜 Log debug" if not debug_aberto else "❌ Fechar log debug",
                 key="btn_toggle_debug_global",
                 use_container_width=True,
             ):
@@ -186,7 +193,6 @@ def render_debug_panel() -> None:
                         key="btn_baixar_logs_global",
                         use_container_width=True,
                     )
-
     except Exception as e:
         try:
             st.sidebar.warning(f"Debug indisponível: {e}")
@@ -205,7 +211,15 @@ def safe_df_from_state(key: str) -> pd.DataFrame | None:
 
 
 def get_df_fluxo() -> pd.DataFrame | None:
-    for key in ["df_final", "df_saida", "df_dados", "df_base", "df_precificado", "df_calc_precificado", "df_origem"]:
+    for key in [
+        "df_final",
+        "df_saida",
+        "df_dados",
+        "df_base",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
+    ]:
         df = safe_df_from_state(key)
         if df is not None:
             return df
@@ -245,7 +259,6 @@ def _validar_gtin(valor: Any) -> str:
             return ""
 
         valor = str(valor).strip()
-
         if not valor or valor.lower() in {"none", "nan"}:
             return ""
 
@@ -263,12 +276,10 @@ def _validar_gtin(valor: Any) -> str:
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.copy()
-
         for col in df.columns:
             nome = _normalizar_coluna(col)
             if "gtin" in nome or "ean" in nome:
                 df[col] = df[col].apply(_validar_gtin)
-
         return df
     except Exception as e:
         log_debug(f"Erro limpar GTIN: {e}", "ERROR")
@@ -309,7 +320,9 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         if not isinstance(df, pd.DataFrame) or df.empty:
             st.session_state["preview_final_valido"] = False
             st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
-            st.session_state["campos_obrigatorios_alertas"] = ["Nenhum dado disponível para validar."]
+            st.session_state["campos_obrigatorios_alertas"] = [
+                "Nenhum dado disponível para validar."
+            ]
             return False
 
         faltantes: list[str] = []
@@ -397,7 +410,6 @@ def _obter_modelo_exportacao() -> pd.DataFrame | None:
         if tipo_operacao in {"cadastro", "estoque"}:
             state_key = "df_modelo_cadastro" if tipo_operacao == "cadastro" else "df_modelo_estoque"
             df_modelo = st.session_state.get(state_key)
-
             if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
                 return df_modelo.copy()
 
@@ -407,7 +419,6 @@ def _obter_modelo_exportacao() -> pd.DataFrame | None:
                 return df_modelo.copy()
 
         return None
-
     except Exception as e:
         log_debug(f"Erro ao obter modelo de exportação: {e}", "ERROR")
         return None
@@ -434,11 +445,14 @@ def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
             df_saida = base
 
         df_saida = df_saida.replace({None: ""}).fillna("")
-        return df_saida
+        df_saida = sanitizar_dados_reais(df_saida)
 
+        return df_saida
     except Exception as e:
         log_debug(f"Erro ao preparar DataFrame para download: {e}", "ERROR")
-        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+        if isinstance(df, pd.DataFrame):
+            return sanitizar_dados_reais(df.copy())
+        return pd.DataFrame()
 
 
 def exportar_download_bytes(df: pd.DataFrame) -> bytes:
@@ -464,7 +478,6 @@ def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
             lineterminator="\n",
         )
         return csv_texto.encode("utf-8-sig")
-
     except Exception as e:
         log_debug(f"Erro ao exportar CSV: {e}", "ERROR")
         return b""
@@ -495,6 +508,7 @@ def render_preview_final() -> None:
 
     df_final = _aplicar_tratamento_gtin(df.copy())
     df_final = limpar_gtin_invalido(df_final)
+    df_final = sanitizar_dados_reais(df_final)
 
     st.session_state["df_final"] = df_final.copy()
     st.session_state["df_saida"] = df_final.copy()
@@ -529,4 +543,8 @@ def render_preview_final() -> None:
             key="btn_download_planilha_final_csv",
         )
 
-    render_bling_panel()
+    try:
+        render_bling_panel()
+    except Exception as e:
+        log_debug(f"Erro ao renderizar painel do Bling: {e}", "ERROR")
+        st.warning("Painel do Bling indisponível no momento.")
