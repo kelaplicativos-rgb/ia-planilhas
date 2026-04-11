@@ -296,6 +296,21 @@ def _usa_preco_calculado(col_modelo: str, col_origem: str) -> bool:
         return False
 
 
+def _label_opcao_coluna(coluna: str) -> str:
+    try:
+        coluna = str(coluna or "").strip()
+        if not coluna:
+            return ""
+
+        col_preco = _obter_coluna_preco_calculado()
+        if col_preco and coluna == col_preco:
+            return f"💰 {coluna} (calculado automaticamente)"
+
+        return coluna
+    except Exception:
+        return str(coluna or "")
+
+
 def _render_label_coluna(col_modelo: str, col_origem: str) -> None:
     if _usa_preco_calculado(col_modelo, col_origem):
         st.markdown(
@@ -460,8 +475,8 @@ def render_origem_mapeamento():
                 margin-bottom:12px;
                 color:#1f5d2b;
             ">
-                💰 Algumas colunas podem aparecer destacadas em verde porque estão
-                usando o valor calculado automaticamente pela calculadora.
+                💰 A opção com este ícone é o resultado da precificação.
+                Quando ela estiver selecionada em uma coluna de preço, o campo também ficará destacado em verde.
             </div>
             """,
             unsafe_allow_html=True,
@@ -513,6 +528,7 @@ def render_origem_mapeamento():
             index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
             key=f"map_{col_modelo}",
             label_visibility="collapsed",
+            format_func=_label_opcao_coluna,
         )
         mapping[col_modelo] = valor
 
