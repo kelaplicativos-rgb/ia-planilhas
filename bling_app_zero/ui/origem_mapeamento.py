@@ -59,7 +59,8 @@ def _normalizar_nome_coluna(nome) -> str:
 
 def _is_coluna_preco_venda(nome) -> bool:
     nome = _normalizar_nome_coluna(nome)
-    return nome in {
+
+    prioridades_exatas = {
         "preço de venda",
         "preco de venda",
         "valor venda",
@@ -67,12 +68,17 @@ def _is_coluna_preco_venda(nome) -> bool:
         "preco unitario",
         "preço unitário (obrigatório)",
         "preco unitario (obrigatorio)",
-    } or (
-        "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome)
-    ) or (
-        ("unitário" in nome or "unitario" in nome)
-        and ("preço" in nome or "preco" in nome)
-    )
+    }
+    if nome in prioridades_exatas:
+        return True
+
+    if "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome):
+        return True
+
+    if ("unitário" in nome or "unitario" in nome) and ("preço" in nome or "preco" in nome):
+        return True
+
+    return False
 
 
 def _is_coluna_imagem(nome) -> bool:
@@ -266,6 +272,9 @@ def _normalizar_urls_imagem(valor) -> str:
         return _sanitizar_valor(valor)
 
 
+# =========================================================
+# PREÇO CALCULADO / VISUAL
+# =========================================================
 def _obter_coluna_preco_calculado() -> str:
     try:
         return str(st.session_state.get("coluna_preco_unitario_origem") or "").strip()
@@ -337,6 +346,42 @@ def _aplicar_mapeamento_automatico_preco(
         return novo_mapping
     except Exception:
         return mapping
+
+
+# =========================================================
+# OPÇÕES ÚNICAS DE MAPEAMENTO
+# =========================================================
+def _colunas_ja_usadas(mapping: dict, ignorar_col_modelo: str = "") -> set[str]:
+    usadas: set[str] = set()
+
+    for col_modelo, col_origem in mapping.items():
+        if str(col_modelo or "") == str(ignorar_col_modelo or ""):
+            continue
+
+        col_origem = str(col_origem or "").strip()
+        if col_origem:
+            usadas.add(col_origem)
+
+    return usadas
+
+
+def _montar_opcoes_disponiveis(
+    df_fonte: pd.DataFrame,
+    mapping: dict,
+    col_modelo_atual: str,
+) -> list[str]:
+    try:
+        valor_atual = str(mapping.get(col_modelo_atual, "") or "").strip()
+        usadas_por_outros = _colunas_ja_usadas(mapping, ignorar_col_modelo=col_modelo_atual)
+
+        opcoes = [""]
+        for col in list(df_fonte.columns):
+            if col == valor_atual or col not in usadas_por_outros:
+                opcoes.append(col)
+
+        return opcoes
+    except Exception:
+        return [""] + list(df_fonte.columns)
 
 
 # =========================================================
@@ -450,10 +495,18 @@ def render_origem_mapeamento():
         if _is_coluna_deposito(col_modelo):
             continue
 
-        valor_atual = mapping.get(col_modelo, "")
+        valor_atual = str(mapping.get(col_modelo, "") or "").strip()
         _render_label_coluna(col_modelo, valor_atual)
 
-        opcoes = [""] + list(df_fonte.columns)
+        opcoes = _montar_opcoes_disponiveis(
+            df_fonte=df_fonte,
+            mapping=mapping,
+            col_modelo_atual=col_modelo,
+        )
+
+        if valor_atual and valor_atual not in opcoes:
+            opcoes.append(valor_atual)
+
         valor = st.selectbox(
             col_modelo,
             opcoes,
