@@ -226,32 +226,32 @@ def extrair_dataframe_pdf_catalogo(texto_pdf: str) -> pd.DataFrame:
             if valor != "":
                 precos_atuais.append(valor)
 
-            prox_eh_nome = bool(prox) and not _eh_codigo(prox) and not _eh_preco(prox) and not _eh_categoria_candidata(prox)
+            prox_eh_nome = (
+                bool(prox)
+                and not _eh_codigo(prox)
+                and not _eh_preco(prox)
+                and not _eh_categoria_candidata(prox)
+            )
             prox_eh_categoria = _eh_categoria_candidata(prox)
 
             if not prox_eh_nome or prox_eh_categoria:
                 finalizar_produto()
             continue
 
-        # categoria nova: curta, sem números, fora de produto aberto
         if _eh_categoria_candidata(linha):
             if not nome_partes and not codigo_atual and not precos_atuais:
                 categoria_atual = linha
                 continue
 
-            # se já há produto em construção e entrou uma linha curta logo após preço/código,
-            # fecha o produto anterior e trata como categoria
             if codigo_atual and precos_atuais:
                 finalizar_produto()
                 categoria_atual = linha
                 continue
 
-            # evita perder nomes curtos de produto
             if ant and _eh_categoria_candidata(ant) and not codigo_atual:
                 nome_partes.append(linha)
                 continue
 
-        # se já houve código + preço e chegou outra linha comum, provavelmente começa novo produto
         if codigo_atual and precos_atuais:
             finalizar_produto()
 
@@ -281,7 +281,6 @@ def extrair_dataframe_pdf_catalogo(texto_pdf: str) -> pd.DataFrame:
         ]
     )
 
-    # limpeza final
     if not df.empty:
         df = df.drop_duplicates(subset=["Código", "Descrição"], keep="first").reset_index(drop=True)
 
