@@ -25,8 +25,20 @@ def _safe_df_com_linhas(df) -> bool:
         return False
 
 
+def _safe_copy_df(df):
+    try:
+        if isinstance(df, pd.DataFrame):
+            return df.copy()
+        return df
+    except Exception:
+        return df
+
+
 def _set_etapa(etapa: str):
     etapa = str(etapa).strip().lower()
+    if etapa not in ETAPAS_VALIDAS_ORIGEM:
+        etapa = "origem"
+
     st.session_state["etapa_origem"] = etapa
     st.session_state["etapa"] = etapa
     st.session_state["etapa_fluxo"] = etapa
@@ -59,26 +71,9 @@ def _normalizar_nome_coluna(nome) -> str:
 
 def _is_coluna_preco_venda(nome) -> bool:
     nome = _normalizar_nome_coluna(nome)
-
-    prioridades_exatas = {
-        "preço de venda",
-        "preco de venda",
-        "valor venda",
-        "preço unitário",
-        "preco unitario",
-        "preço unitário (obrigatório)",
-        "preco unitario (obrigatorio)",
-    }
-    if nome in prioridades_exatas:
-        return True
-
-    if "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome):
-        return True
-
-    if ("unitário" in nome or "unitario" in nome) and ("preço" in nome or "preco" in nome):
-        return True
-
-    return False
+    return nome in {"preço de venda", "preco de venda", "valor venda"} or (
+        "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome)
+    )
 
 
 def _is_coluna_imagem(nome) -> bool:
@@ -272,71 +267,6 @@ def _normalizar_urls_imagem(valor) -> str:
         return _sanitizar_valor(valor)
 
 
-# =========================================================
-# PREÇO CALCULADO / VISUAL
-# =========================================================
-def _obter_coluna_preco_calculado() -> str:
-    try:
-        return str(st.session_state.get("coluna_preco_unitario_origem") or "").strip()
-    except Exception:
-        return ""
-
-
-def _usa_preco_calculado(col_modelo: str, col_origem: str) -> bool:
-    try:
-        if not _is_coluna_preco_venda(col_modelo):
-            return False
-
-        col_preco_origem = _obter_coluna_preco_calculado()
-        if not col_preco_origem:
-            return False
-
-        return str(col_origem or "").strip() == col_preco_origem
-    except Exception:
-        return False
-
-
-def _label_opcao_coluna(coluna: str) -> str:
-    try:
-        coluna = str(coluna or "").strip()
-        if not coluna:
-            return ""
-
-        col_preco = _obter_coluna_preco_calculado()
-        if col_preco and coluna == col_preco:
-            return f"💰 {coluna} (calculado automaticamente)"
-
-        return coluna
-    except Exception:
-        return str(coluna or "")
-
-
-def _render_label_coluna(col_modelo: str, col_origem: str) -> None:
-    if _usa_preco_calculado(col_modelo, col_origem):
-        st.markdown(
-            f"""
-            <div style="
-                background:#eaffea;
-                border:1px solid #33aa55;
-                border-left:6px solid #2e9f4d;
-                border-radius:8px;
-                padding:8px 10px;
-                margin:0 0 6px 0;
-                font-weight:600;
-                color:#145a24;
-            ">
-                💰 {col_modelo}<br>
-                <span style="font-size:12px; font-weight:500;">
-                    Calculado automaticamente
-                </span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(f"**{col_modelo}**")
-
-
 def _aplicar_mapeamento_automatico_preco(
     mapping: dict,
     df_modelo: pd.DataFrame,
@@ -363,40 +293,43 @@ def _aplicar_mapeamento_automatico_preco(
         return mapping
 
 
-# =========================================================
-# OPÇÕES ÚNICAS DE MAPEAMENTO
-# =========================================================
-def _colunas_ja_usadas(mapping: dict, ignorar_col_modelo: str = "") -> set[str]:
-    usadas: set[str] = set()
-
-    for col_modelo, col_origem in mapping.items():
-        if str(col_modelo or "") == str(ignorar_col_modelo or ""):
-            continue
-
-        col_origem = str(col_origem or "").strip()
-        if col_origem:
-            usadas.add(col_origem)
-
-    return usadas
-
-
-def _montar_opcoes_disponiveis(
-    df_fonte: pd.DataFrame,
+def _preservar_estado_antes_de_voltar(
+    df_fonte: pd.DataFrame | None,
+    df_saida: pd.DataFrame | None,
     mapping: dict,
-    col_modelo_atual: str,
-) -> list[str]:
+) -> None:
+    """
+    Blindagem extra:
+    voltar para origem não pode ser interpretado como troca de origem
+    nem pode derrubar os dfs já montados.
+    """
     try:
-        valor_atual = str(mapping.get(col_modelo_atual, "") or "").strip()
-        usadas_por_outros = _colunas_ja_usadas(mapping, ignorar_col_modelo=col_modelo_atual)
+        if _safe_df_com_linhas(df_fonte):
+            if _safe_df_com_linhas(st.session_state.get("df_calc_precificado")):
+                st.session_state["df_calc_precificado"] = _safe_copy_df(
+                    st.session_state.get("df_calc_precificado")
+                )
+            elif _safe_df_com_linhas(st.session_state.get("df_precificado")):
+                st.session_state["df_precificado"] = _safe_copy_df(
+                    st.session_state.get("df_precificado")
+                )
+            elif _safe_df_com_linhas(st.session_state.get("df_origem")):
+                st.session_state["df_origem"] = _safe_copy_df(
+                    st.session_state.get("df_origem")
+                )
+            else:
+                st.session_state["df_origem"] = _safe_copy_df(df_fonte)
 
-        opcoes = [""]
-        for col in list(df_fonte.columns):
-            if col == valor_atual or col not in usadas_por_outros:
-                opcoes.append(col)
+        if _safe_df(df_saida):
+            st.session_state["df_saida"] = _safe_copy_df(df_saida)
+            st.session_state["df_final"] = _safe_copy_df(df_saida)
 
-        return opcoes
+        st.session_state["mapping_origem"] = dict(mapping or {})
+        st.session_state["_voltando_do_mapeamento"] = True
+        st.session_state["_origem_trocada_manual"] = False
+        st.session_state["_nao_limpar_ao_voltar_origem"] = True
     except Exception:
-        return [""] + list(df_fonte.columns)
+        pass
 
 
 # =========================================================
@@ -463,25 +396,6 @@ def render_origem_mapeamento():
 
     st.subheader("Mapeamento de colunas")
 
-    col_preco_origem = _obter_coluna_preco_calculado()
-    if col_preco_origem and col_preco_origem in list(df_fonte.columns):
-        st.markdown(
-            """
-            <div style="
-                background:#f3fff3;
-                border:1px solid #98d79f;
-                border-radius:8px;
-                padding:8px 10px;
-                margin-bottom:12px;
-                color:#1f5d2b;
-            ">
-                💰 A opção com este ícone é o resultado da precificação.
-                Quando ela estiver selecionada em uma coluna de preço, o campo também ficará destacado em verde.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     st.text_input(
         "Nome do Depósito (Bling)",
         value=str(st.session_state.get("deposito_nome", "") or ""),
@@ -497,12 +411,10 @@ def render_origem_mapeamento():
 
     for col_modelo in df_modelo.columns:
         if _is_coluna_id(col_modelo):
-            _render_label_coluna(col_modelo, "")
             st.text_input(
                 col_modelo,
                 value="(Automático / Bloqueado)",
                 disabled=True,
-                label_visibility="collapsed",
             )
             mapping[col_modelo] = ""
             continue
@@ -510,25 +422,14 @@ def render_origem_mapeamento():
         if _is_coluna_deposito(col_modelo):
             continue
 
-        valor_atual = str(mapping.get(col_modelo, "") or "").strip()
-        _render_label_coluna(col_modelo, valor_atual)
-
-        opcoes = _montar_opcoes_disponiveis(
-            df_fonte=df_fonte,
-            mapping=mapping,
-            col_modelo_atual=col_modelo,
-        )
-
-        if valor_atual and valor_atual not in opcoes:
-            opcoes.append(valor_atual)
+        opcoes = [""] + list(df_fonte.columns)
+        valor_atual = mapping.get(col_modelo, "")
 
         valor = st.selectbox(
             col_modelo,
             opcoes,
             index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
             key=f"map_{col_modelo}",
-            label_visibility="collapsed",
-            format_func=_label_opcao_coluna,
         )
         mapping[col_modelo] = valor
 
@@ -543,7 +444,6 @@ def render_origem_mapeamento():
         st.session_state["mapping_origem"] = mapping
 
     df_saida = _montar_df_saida(df_fonte, df_modelo, mapping)
-
     st.dataframe(df_saida.head(15), use_container_width=True)
 
     st.session_state["df_saida"] = df_saida.copy()
@@ -553,10 +453,17 @@ def render_origem_mapeamento():
 
     with col1:
         if st.button("Avançar", use_container_width=True, disabled=erro):
+            st.session_state["_voltando_do_mapeamento"] = False
+            st.session_state["_nao_limpar_ao_voltar_origem"] = False
             _set_etapa("final")
             st.rerun()
 
     with col2:
         if st.button("⬅️ Voltar", use_container_width=True):
+            _preservar_estado_antes_de_voltar(
+                df_fonte=df_fonte,
+                df_saida=df_saida,
+                mapping=mapping,
+            )
             _set_etapa("origem")
             st.rerun()
