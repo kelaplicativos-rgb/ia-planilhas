@@ -36,7 +36,7 @@ def safe_df_estrutura(df: Any) -> bool:
 def _safe_str(valor: Any) -> str:
     try:
         texto = str(valor or "").strip()
-        if texto.lower() in {"none", "nan", "<na>", "nat"}:
+        if texto.lower() in {"none", "nan", "", "nat"}:
             return ""
         return texto
     except Exception:
@@ -145,10 +145,12 @@ def resetar_estado_fluxo(preservar_origem: bool = True) -> None:
 
     if preservar_origem and safe_df_dados(df_origem):
         st.session_state["df_origem"] = df_origem.copy()
-        if fp_origem:
-            st.session_state["origem_dados_fingerprint"] = fp_origem
-        if origem_tipo:
-            st.session_state["_origem_anterior_origem_dados"] = origem_tipo
+
+    if fp_origem:
+        st.session_state["origem_dados_fingerprint"] = fp_origem
+
+    if origem_tipo:
+        st.session_state["_origem_anterior_origem_dados"] = origem_tipo
 
 
 # ==========================================================
@@ -167,9 +169,6 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
     if operacao_anterior == operacao_atual:
         return
 
-    # Corrigido:
-    # ao trocar entre cadastro e estoque, limpamos SOMENTE a saída/mapeamento,
-    # preservando a origem carregada e os modelos internos.
     log_debug(
         f"Operação alterada: {operacao_anterior} → {operacao_atual}. "
         f"Resetando saída/mapeamento e preservando origem.",
@@ -184,6 +183,12 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
 # CONTROLE DE ORIGEM
 # ==========================================================
 def controlar_troca_origem(origem: str, log_debug) -> None:
+    """
+    Blindagem principal:
+    trocar a origem na interface não deve apagar imediatamente os dados já carregados.
+    A limpeza real só deve acontecer quando um NOVO df_origem for efetivamente carregado
+    e o fingerprint mudar em sincronizar_estado_com_origem().
+    """
     origem_atual = _safe_str(origem)
     origem_anterior = _safe_str(
         st.session_state.get("_origem_anterior_origem_dados")
@@ -191,6 +196,7 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
 
     if not origem_anterior:
         st.session_state["_origem_anterior_origem_dados"] = origem_atual
+        st.session_state["_origem_trocada_manual"] = False
         return
 
     if origem_anterior == origem_atual:
@@ -198,17 +204,15 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
 
     log_debug(
         f"Origem alterada: {origem_anterior} → {origem_atual}. "
-        f"Limpando saída/mapeamento e preservando modelos.",
+        f"Preservando dados atuais até uma nova carga real da origem.",
         "INFO",
     )
 
-    # Quando a origem muda, a base precisa ser refeita.
-    for chave in ["df_origem", "df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
-        st.session_state.pop(chave, None)
-
-    st.session_state.pop("origem_dados_fingerprint", None)
-    limpar_mapeamento_widgets()
+    # Não apagar df_origem / df_saida / df_final aqui.
+    # Isso evita perder tudo ao apenas voltar de etapa.
     st.session_state["_origem_anterior_origem_dados"] = origem_atual
+    st.session_state["_origem_trocada_manual"] = True
+    st.session_state["site_processado"] = False
 
 
 # ==========================================================
@@ -223,13 +227,16 @@ def garantir_estado_origem() -> None:
         "deposito_nome": "",
         "quantidade_fallback": 0,
         "site_processado": False,
+        "_origem_trocada_manual": False,
     }
 
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
-    etapa_atual = _normalizar_valor_fluxo(st.session_state.get("etapa_origem", "origem"))
+    etapa_atual = _normalizar_valor_fluxo(
+        st.session_state.get("etapa_origem", "origem")
+    )
     if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
         etapa_atual = "origem"
 
@@ -245,6 +252,7 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
 
     fp_novo = fingerprint_df(df_origem)
     fp_atual = _safe_str(st.session_state.get("origem_dados_fingerprint"))
+    houve_troca_manual = bool(st.session_state.get("_origem_trocada_manual", False))
 
     if not fp_atual:
         st.session_state["origem_dados_fingerprint"] = fp_novo
@@ -253,17 +261,38 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
         # Só semeia df_saida/df_final se eles ainda não existirem.
         if not safe_df_estrutura(st.session_state.get("df_saida")):
             st.session_state["df_saida"] = df_origem.copy()
+
         if not safe_df_estrutura(st.session_state.get("df_final")):
             st.session_state["df_final"] = df_origem.copy()
+
+        st.session_state["_origem_trocada_manual"] = False
         return
 
     if fp_atual != fp_novo:
-        log_debug("Nova origem detectada. Limpando saída anterior.", "INFO")
+        log_debug("Nova origem real detectada. Limpando saída anterior.", "INFO")
+
         st.session_state["origem_dados_fingerprint"] = fp_novo
         st.session_state["df_origem"] = df_origem.copy()
 
-        # Nova origem deve limpar montagem anterior para evitar preview quebrado.
-        for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+        # Aqui sim limpa porque chegou uma NOVA base de dados de verdade.
+        for chave in [
+            "df_saida",
+            "df_final",
+            "df_precificado",
+            "df_calc_precificado",
+        ]:
             st.session_state.pop(chave, None)
 
         limpar_mapeamento_widgets()
+        st.session_state["_origem_trocada_manual"] = False
+        return
+
+    # Se o fingerprint não mudou, não limpar nada.
+    # Isso cobre o caso de "voltar uma tela" sem trocar os dados reais.
+    if houve_troca_manual:
+        log_debug(
+            "Troca de origem na interface detectada sem nova carga de dados. "
+            "Mantendo estado atual preservado.",
+            "INFO",
+        )
+        st.session_state["_origem_trocada_manual"] = False
