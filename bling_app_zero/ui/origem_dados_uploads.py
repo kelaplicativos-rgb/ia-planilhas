@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import xml.etree.ElementTree as ET
 
+from bling_app_zero.core.xml_bling_mapper import mapear_xml_para_modelo_bling
 from bling_app_zero.core.xml_nfe import converter_upload_xml_para_dataframe
 from bling_app_zero.ui.app_helpers import log_debug, limpar_gtin_invalido
 from bling_app_zero.ui.origem_dados_site import render_origem_site as render_origem_site_real
@@ -72,6 +73,8 @@ def _limpar_estado_origem() -> None:
         "df_origem_site",
         "site_processado",
         "crawler_rodando",
+        "df_origem_xml_bruto",
+        "df_xml_mapeado_modelo",
     ]:
         if chave in st.session_state:
             del st.session_state[chave]
@@ -79,7 +82,7 @@ def _limpar_estado_origem() -> None:
 
 def _resetar_fluxo_para_origem() -> None:
     try:
-        for chave in ["df_saida", "df_final", "df_precificado", "mapping_origem"]:
+        for chave in ["df_saida", "df_final", "df_precificado", "mapping_origem", "df_xml_mapeado_modelo"]:
             if chave in st.session_state:
                 del st.session_state[chave]
 
@@ -150,10 +153,6 @@ def _df_preview_seguro(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _df_preview_modelo(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Garante que a prévia do modelo nunca apareça como "empty"
-    quando o arquivo oficial tiver apenas cabeçalhos.
-    """
     try:
         df = _normalizar_df(df)
 
@@ -244,6 +243,34 @@ def _processar_upload_planilha(arquivo_planilha) -> pd.DataFrame | None:
         return None
 
 
+def _obter_modelo_ativo_para_xml() -> pd.DataFrame | None:
+    try:
+        tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
+        if tipo == "estoque":
+            return st.session_state.get("df_modelo_estoque")
+        return st.session_state.get("df_modelo_cadastro")
+    except Exception:
+        return None
+
+
+def _obter_deposito_padrao_xml() -> str:
+    chaves = [
+        "deposito_padrao",
+        "nome_deposito",
+        "deposito_nome",
+        "deposito_manual",
+        "deposito_estoque_manual",
+    ]
+    for chave in chaves:
+        try:
+            valor = str(st.session_state.get(chave) or "").strip()
+            if valor:
+                return valor
+        except Exception:
+            continue
+    return ""
+
+
 def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
     try:
         if arquivo_xml is None:
@@ -267,12 +294,31 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
         df_xml = _normalizar_df(df_xml)
         df_xml = limpar_gtin_invalido(df_xml)
 
+        st.session_state["df_origem_xml_bruto"] = df_xml.copy()
+
         _salvar_df_origem(
             df_xml,
             origem="xml",
             nome_ref=nome_xml,
             hash_ref=hash_xml,
         )
+
+        modelo_ativo = _obter_modelo_ativo_para_xml()
+        tipo_operacao = str(st.session_state.get("tipo_operacao_bling") or "cadastro").strip().lower()
+        deposito_padrao = _obter_deposito_padrao_xml()
+
+        if _safe_df_estrutura(modelo_ativo):
+            df_xml_modelado = mapear_xml_para_modelo_bling(
+                df_xml=df_xml,
+                df_modelo=modelo_ativo,
+                tipo_operacao=tipo_operacao,
+                deposito_padrao=deposito_padrao,
+            )
+
+            if _safe_df_com_linhas(df_xml_modelado):
+                st.session_state["df_xml_mapeado_modelo"] = df_xml_modelado.copy()
+                st.session_state["df_saida"] = df_xml_modelado.copy()
+                st.session_state["df_final"] = df_xml_modelado.copy()
 
         log_debug(
             f"XML convertido para planilha: {nome_xml} "
