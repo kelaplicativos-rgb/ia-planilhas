@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import re
+import unicodedata
 from datetime import datetime
 from io import BytesIO
 from typing import Any
@@ -140,7 +143,7 @@ def render_debug_panel() -> None:
             debug_aberto = bool(st.session_state.get("debug_open", False))
 
             if st.button(
-                "📜 Log debug" if not debug_aberto else "❌ Fechar log debug",
+                "📋 Log debug" if not debug_aberto else "❌ Fechar log debug",
                 key="btn_toggle_debug_global",
                 use_container_width=True,
             ):
@@ -193,6 +196,7 @@ def render_debug_panel() -> None:
                         key="btn_baixar_logs_global",
                         use_container_width=True,
                     )
+
     except Exception as e:
         try:
             st.sidebar.warning(f"Debug indisponível: {e}")
@@ -259,6 +263,7 @@ def _validar_gtin(valor: Any) -> str:
             return ""
 
         valor = str(valor).strip()
+
         if not valor or valor.lower() in {"none", "nan"}:
             return ""
 
@@ -276,10 +281,12 @@ def _validar_gtin(valor: Any) -> str:
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.copy()
+
         for col in df.columns:
             nome = _normalizar_coluna(col)
             if "gtin" in nome or "ean" in nome:
                 df[col] = df[col].apply(_validar_gtin)
+
         return df
     except Exception as e:
         log_debug(f"Erro limpar GTIN: {e}", "ERROR")
@@ -419,9 +426,56 @@ def _obter_modelo_exportacao() -> pd.DataFrame | None:
                 return df_modelo.copy()
 
         return None
+
     except Exception as e:
         log_debug(f"Erro ao obter modelo de exportação: {e}", "ERROR")
         return None
+
+
+def _limpar_valor_csv(valor: Any) -> Any:
+    try:
+        if pd.isna(valor):
+            return ""
+
+        if isinstance(valor, (int, float, bool)):
+            return valor
+
+        texto = str(valor)
+
+        if not texto:
+            return ""
+
+        texto = unicodedata.normalize("NFC", texto)
+        texto = texto.replace("\ufeff", "")
+        texto = texto.replace("\x00", "")
+        texto = texto.replace("\r\n", " ")
+        texto = texto.replace("\r", " ")
+        texto = texto.replace("\n", " ")
+        texto = texto.replace("\t", " ")
+        texto = re.sub(r"[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F]", "", texto)
+        texto = re.sub(r"\s{2,}", " ", texto).strip()
+
+        return texto
+    except Exception:
+        try:
+            return str(valor)
+        except Exception:
+            return ""
+
+
+def _sanitizar_df_para_csv(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        df = df.copy()
+
+        for col in df.columns:
+            if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
+                df[col] = df[col].apply(_limpar_valor_csv)
+
+        df.columns = [_limpar_valor_csv(col) for col in df.columns]
+        return df
+    except Exception as e:
+        log_debug(f"Erro ao sanitizar DataFrame para CSV: {e}", "ERROR")
+        return df
 
 
 def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
@@ -446,12 +500,17 @@ def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
 
         df_saida = df_saida.replace({None: ""}).fillna("")
         df_saida = sanitizar_dados_reais(df_saida)
+        df_saida = _sanitizar_df_para_csv(df_saida)
 
         return df_saida
+
     except Exception as e:
         log_debug(f"Erro ao preparar DataFrame para download: {e}", "ERROR")
+
         if isinstance(df, pd.DataFrame):
-            return sanitizar_dados_reais(df.copy())
+            df_fallback = sanitizar_dados_reais(df.copy())
+            return _sanitizar_df_para_csv(df_fallback)
+
         return pd.DataFrame()
 
 
@@ -468,16 +527,19 @@ def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
     try:
         df_download = _preparar_df_download(df)
 
-        if not isinstance(df_download, pd.DataFrame):
+        if not isinstance(df_download, pd.DataFrame) or df_download.empty and len(df_download.columns) == 0:
             return b""
 
         csv_texto = df_download.to_csv(
             index=False,
-            sep=",",
+            sep=";",
             encoding="utf-8-sig",
-            lineterminator="\n",
+            lineterminator="\r\n",
+            quoting=csv.QUOTE_MINIMAL,
         )
+
         return csv_texto.encode("utf-8-sig")
+
     except Exception as e:
         log_debug(f"Erro ao exportar CSV: {e}", "ERROR")
         return b""
@@ -509,6 +571,7 @@ def render_preview_final() -> None:
     df_final = _aplicar_tratamento_gtin(df.copy())
     df_final = limpar_gtin_invalido(df_final)
     df_final = sanitizar_dados_reais(df_final)
+    df_final = _sanitizar_df_para_csv(df_final)
 
     st.session_state["df_final"] = df_final.copy()
     st.session_state["df_saida"] = df_final.copy()
