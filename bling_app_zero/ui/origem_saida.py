@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.enriquecimento_real import sanitizar_dados_reais
 from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import safe_df_estrutura
 from bling_app_zero.ui.origem_dados_validacao import obter_modelo_ativo
@@ -26,7 +27,7 @@ def mapa_colunas_equivalentes() -> dict[str, list[str]]:
         "preço": ["preço", "preco", "valor", "valor venda", "preço de venda", "preco de venda"],
         "preço de venda": ["preço de venda", "preco de venda", "preço", "preco", "valor", "valor venda"],
         "preço de custo": ["preço de custo", "preco de custo", "custo", "valor custo"],
-        "marca": ["marca", "fabricante"],
+        "marca": ["marca"],
         "ncm": ["ncm"],
         "gtin": ["gtin", "ean", "código de barras", "codigo de barras"],
         "gtin tributário": ["gtin tributário", "gtin tributario", "ean tributário", "ean tributario"],
@@ -38,6 +39,7 @@ def mapa_colunas_equivalentes() -> dict[str, list[str]]:
         "imagens": ["imagens", "imagem", "fotos", "foto", "url imagem", "url da imagem"],
         "link externo": ["link externo", "url", "link", "produto url"],
         "depósito": ["depósito", "deposito", "armazém", "armazem"],
+        "categoria": ["categoria"],
     }
 
 
@@ -72,12 +74,12 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
         modelo = obter_modelo_ativo()
 
         if not isinstance(modelo, pd.DataFrame) or len(modelo.columns) == 0:
-            df_saida = df_origem.copy()
+            df_saida = sanitizar_dados_reais(df_origem.copy())
             st.session_state["df_saida"] = df_saida.copy()
             st.session_state["df_final"] = df_saida.copy()
 
             log_debug(
-                f"[DF_SAIDA] modelo indisponível; usando origem direta com {len(df_saida)} linha(s).",
+                f"[DF_SAIDA] modelo indisponível; usando origem direta saneada com {len(df_saida)} linha(s).",
                 "INFO",
             )
             return df_saida
@@ -95,19 +97,22 @@ def sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
 
+        df_saida = sanitizar_dados_reais(df_saida)
+
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
 
         log_debug(
             f"[DF_SAIDA] base preparada com {len(df_saida)} linha(s), "
-            f"{len(df_saida.columns)} coluna(s) e {colunas_preenchidas} coluna(s) preenchida(s) automaticamente.",
+            f"{len(df_saida.columns)} coluna(s) e {colunas_preenchidas} coluna(s) preenchida(s) automaticamente, "
+            f"sem geração artificial de dados.",
             "INFO",
         )
         return df_saida
 
     except Exception as e:
         log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERROR")
-        df_saida = df_origem.copy()
+        df_saida = sanitizar_dados_reais(df_origem.copy())
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
         return df_saida
@@ -126,11 +131,13 @@ def _usar_base_modelada(chave: str, rotulo: str) -> pd.DataFrame | None:
         df_ref = st.session_state.get(chave)
 
         if safe_df_estrutura(df_ref):
+            df_ref = sanitizar_dados_reais(df_ref.copy())
             st.session_state["df_saida"] = df_ref.copy()
             st.session_state["df_final"] = df_ref.copy()
 
             log_debug(
-                f"[BASE] priorizando {rotulo} com {len(df_ref)} linha(s) e {len(df_ref.columns)} coluna(s).",
+                f"[BASE] priorizando {rotulo} com {len(df_ref)} linha(s) e {len(df_ref.columns)} coluna(s), "
+                f"mantendo apenas dados reais.",
                 "INFO",
             )
             return df_ref.copy()
@@ -150,6 +157,10 @@ def obter_df_base_prioritaria(df_origem: pd.DataFrame, origem_atual: str) -> pd.
     2) PDF modelado
     3) base genérica modelada
     4) sincronização padrão a partir de df_origem
+
+    Em todos os casos:
+    - não gera dados artificiais
+    - o que não for real fica vazio
     """
     try:
         origem_norm = str(origem_atual or "").strip().lower()
