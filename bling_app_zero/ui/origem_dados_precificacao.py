@@ -10,9 +10,6 @@ from bling_app_zero.ui.app_helpers import log_debug
 from bling_app_zero.ui.origem_dados_estado import safe_df_dados
 
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 def safe_float(valor, default: float = 0.0) -> float:
     try:
         if valor is None or valor == "":
@@ -50,43 +47,87 @@ def _copiar_coluna_com_cast(
         return df_destino
 
 
-# ==========================================================
-# DETECÇÃO DE COLUNA DESTINO
-# ==========================================================
-def _detectar_coluna_venda(df: pd.DataFrame) -> str | None:
-    prioridades = [
+def _is_coluna_custo(nome: str) -> bool:
+    nome = _normalizar_nome_coluna(nome)
+    return (
+        "custo" in nome
+        or "compra" in nome
+        or nome in {
+            "preço de custo",
+            "preco de custo",
+            "preço de compra",
+            "preco de compra",
+            "valor custo",
+            "valor de custo",
+        }
+    )
+
+
+def _is_coluna_venda(nome: str) -> bool:
+    nome = _normalizar_nome_coluna(nome)
+
+    if nome in {
         "preço de venda",
         "preco de venda",
         "valor venda",
+        "valor de venda",
         "preço unitário (obrigatório)",
         "preco unitario (obrigatorio)",
         "preço unitário",
         "preco unitario",
-        "preço",
-        "preco",
-    ]
+    }:
+        return True
 
-    for prioridade in prioridades:
+    if "venda" in nome:
+        return True
+
+    if ("unitário" in nome or "unitario" in nome) and ("preço" in nome or "preco" in nome):
+        return True
+
+    return False
+
+
+def _detectar_coluna_base_selecionada(df: pd.DataFrame) -> str | None:
+    try:
+        coluna = str(st.session_state.get("coluna_preco_base") or "").strip()
+        if coluna and coluna in df.columns:
+            return coluna
+        return None
+    except Exception:
+        return None
+
+
+def _detectar_coluna_venda_gerada(df: pd.DataFrame, coluna_base: str | None) -> str | None:
+    try:
+        base_norm = _normalizar_nome_coluna(coluna_base)
+
+        prioridades = [
+            "preço de venda",
+            "preco de venda",
+            "valor venda",
+            "valor de venda",
+            "preço unitário (obrigatório)",
+            "preco unitario (obrigatorio)",
+            "preço unitário",
+            "preco unitario",
+        ]
+
+        for prioridade in prioridades:
+            for col in df.columns:
+                nome = _normalizar_nome_coluna(col)
+                if nome == prioridade and nome != base_norm and not _is_coluna_custo(nome):
+                    return col
+
         for col in df.columns:
-            if _normalizar_nome_coluna(col) == prioridade:
+            nome = _normalizar_nome_coluna(col)
+            if _is_coluna_venda(nome) and nome != base_norm and not _is_coluna_custo(nome):
                 return col
 
-    for col in df.columns:
-        nome = _normalizar_nome_coluna(col)
-        if "unitario" in nome and ("preço" in nome or "preco" in nome):
-            return col
-
-    for col in df.columns:
-        nome = _normalizar_nome_coluna(col)
-        if "venda" in nome or "preço" in nome or "preco" in nome:
-            return col
-
-    return None
+        return None
+    except Exception:
+        return None
 
 
-# ==========================================================
-# PARAMETROS
-# ==========================================================
 def coletar_parametros_precificacao() -> dict:
     return {
         "coluna_preco": st.session_state.get("coluna_preco_base"),
@@ -97,9 +138,6 @@ def coletar_parametros_precificacao() -> dict:
     }
 
 
-# ==========================================================
-# CACHE BASE
-# ==========================================================
 def _garantir_base_precificacao(df_base: pd.DataFrame) -> pd.DataFrame:
     try:
         hash_atual = hashlib.md5(str(df_base).encode()).hexdigest()
@@ -114,26 +152,44 @@ def _garantir_base_precificacao(df_base: pd.DataFrame) -> pd.DataFrame:
         return df_base.copy()
 
 
-def _salvar_bases_precificadas(df_calc: pd.DataFrame, coluna_venda: str | None) -> None:
+def _limpar_estado_precificacao_automatica() -> None:
+    try:
+        st.session_state["coluna_preco_unitario_origem"] = ""
+        st.session_state["coluna_preco_unitario_destino"] = ""
+    except Exception:
+        pass
+
+
+def _salvar_bases_precificadas(
+    df_calc: pd.DataFrame,
+    coluna_venda: str | None,
+    coluna_base: str | None,
+) -> None:
     try:
         st.session_state["df_calc_precificado"] = df_calc.copy()
         st.session_state["df_precificado"] = df_calc.copy()
 
-        if coluna_venda:
+        if (
+            coluna_venda
+            and coluna_venda in df_calc.columns
+            and str(coluna_venda).strip() != str(coluna_base or "").strip()
+        ):
             st.session_state["coluna_preco_unitario_origem"] = coluna_venda
             st.session_state["coluna_preco_unitario_destino"] = coluna_venda
-
-        log_debug(
-            f"Precificação salva para mapeamento com {len(df_calc)} linha(s) e coluna de venda '{coluna_venda or ''}'.",
-            "INFO",
-        )
+            log_debug(
+                f"Precificação salva para mapeamento com coluna automática '{coluna_venda}'.",
+                "INFO",
+            )
+        else:
+            _limpar_estado_precificacao_automatica()
+            log_debug(
+                "Precificação calculada sem coluna automática válida; mapeamento seguirá manual.",
+                "INFO",
+            )
     except Exception as e:
         log_debug(f"Erro ao salvar bases precificadas: {e}", "ERROR")
 
 
-# ==========================================================
-# APLICAÇÃO CORRIGIDA
-# ==========================================================
 def _aplicar_precificacao(
     df_base_origem: pd.DataFrame,
     df_fluxo_destino: pd.DataFrame,
@@ -146,50 +202,54 @@ def _aplicar_precificacao(
             return None, None
 
         params = coletar_parametros_precificacao()
-        coluna_preco = str(params.get("coluna_preco") or "").strip()
+        coluna_preco_base = _detectar_coluna_base_selecionada(df_base_origem)
 
-        if not coluna_preco or coluna_preco not in df_base_origem.columns:
+        if not coluna_preco_base or coluna_preco_base not in df_base_origem.columns:
+            _limpar_estado_precificacao_automatica()
             return None, None
 
         df_calc_origem = aplicar_precificacao_no_fluxo(df_base_origem.copy(), params)
         if not safe_df_dados(df_calc_origem):
+            _limpar_estado_precificacao_automatica()
             return None, None
 
-        col_venda_origem = _detectar_coluna_venda(df_calc_origem)
-        if not col_venda_origem or col_venda_origem not in df_calc_origem.columns:
-            return None, None
+        col_venda_origem = _detectar_coluna_venda_gerada(df_calc_origem, coluna_preco_base)
 
-        # Salva a base precificada para a próxima etapa (mapeamento)
-        _salvar_bases_precificadas(df_calc_origem, col_venda_origem)
+        _salvar_bases_precificadas(
+            df_calc=df_calc_origem,
+            coluna_venda=col_venda_origem,
+            coluna_base=coluna_preco_base,
+        )
 
-        # Preview da própria base precificada
         df_preview = df_calc_origem.copy()
-
-        # Grava no dataframe real do fluxo/modelo, quando houver
         df_destino = df_fluxo_destino.copy()
-        col_venda_destino = _detectar_coluna_venda(df_destino)
 
-        if col_venda_destino:
-            df_destino = _copiar_coluna_com_cast(
-                df_origem=df_calc_origem,
-                df_destino=df_destino,
-                col_origem=col_venda_origem,
-                col_destino=col_venda_destino,
-            )
-            st.session_state["coluna_preco_unitario_destino"] = col_venda_destino
-        else:
-            st.session_state["coluna_preco_unitario_destino"] = col_venda_origem
+        if (
+            col_venda_origem
+            and col_venda_origem in df_calc_origem.columns
+            and isinstance(df_destino, pd.DataFrame)
+        ):
+            col_venda_destino = _detectar_coluna_venda_gerada(df_destino, coluna_preco_base)
+
+            if col_venda_destino and col_venda_destino in df_destino.columns:
+                df_destino = _copiar_coluna_com_cast(
+                    df_origem=df_calc_origem,
+                    df_destino=df_destino,
+                    col_origem=col_venda_origem,
+                    col_destino=col_venda_destino,
+                )
+                st.session_state["coluna_preco_unitario_destino"] = col_venda_destino
+            else:
+                st.session_state["coluna_preco_unitario_destino"] = col_venda_origem
 
         return df_destino, df_preview
 
     except Exception as e:
         log_debug(f"Erro na precificação: {e}", "ERROR")
+        _limpar_estado_precificacao_automatica()
         return None, None
 
 
-# ==========================================================
-# UI
-# ==========================================================
 def render_precificacao(df_base):
     if not safe_df_dados(df_base):
         return
