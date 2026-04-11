@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -57,8 +59,7 @@ def _normalizar_nome_coluna(nome) -> str:
 
 def _is_coluna_preco_venda(nome) -> bool:
     nome = _normalizar_nome_coluna(nome)
-
-    prioridades_exatas = {
+    return nome in {
         "preço de venda",
         "preco de venda",
         "valor venda",
@@ -66,14 +67,41 @@ def _is_coluna_preco_venda(nome) -> bool:
         "preco unitario",
         "preço unitário (obrigatório)",
         "preco unitario (obrigatorio)",
+    } or (
+        "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome)
+    ) or (
+        ("unitário" in nome or "unitario" in nome)
+        and ("preço" in nome or "preco" in nome)
+    )
+
+
+def _is_coluna_imagem(nome) -> bool:
+    nome = _normalizar_nome_coluna(nome)
+
+    candidatos_exatos = {
+        "url da imagem",
+        "url imagem",
+        "url imagens",
+        "url das imagens",
+        "url de imagem",
+        "url de imagens",
+        "imagens",
+        "imagem",
+        "imagens externas",
+        "imagem externa",
+        "url imagens externas",
     }
-    if nome in prioridades_exatas:
+
+    if nome in candidatos_exatos:
         return True
 
-    if "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome):
+    if "imagem" in nome or "imagens" in nome:
         return True
 
-    if ("unitário" in nome or "unitario" in nome) and ("preço" in nome or "preco" in nome):
+    if "image" in nome or "images" in nome:
+        return True
+
+    if "url" in nome and ("foto" in nome or "fotos" in nome):
         return True
 
     return False
@@ -145,6 +173,146 @@ def _normalizar_situacao(valor):
         return "Inativo"
 
 
+def _extrair_urls_do_texto(texto: str) -> list[str]:
+    try:
+        texto = str(texto or "").strip()
+        if not texto:
+            return []
+
+        urls = re.findall(r"https?://[^\s|,;]+", texto, flags=re.IGNORECASE)
+
+        resultado: list[str] = []
+        vistos = set()
+
+        for url in urls:
+            url_limpa = str(url).strip()
+            if not url_limpa:
+                continue
+            if url_limpa in vistos:
+                continue
+            vistos.add(url_limpa)
+            resultado.append(url_limpa)
+
+        return resultado
+    except Exception:
+        return []
+
+
+def _normalizar_urls_imagem(valor) -> str:
+    try:
+        if valor is None:
+            return ""
+
+        if isinstance(valor, (list, tuple, set)):
+            partes = []
+            vistos = set()
+
+            for item in valor:
+                item = _sanitizar_valor(item)
+                if not item:
+                    continue
+
+                urls_item = _extrair_urls_do_texto(item)
+                if urls_item:
+                    for url in urls_item:
+                        if url not in vistos:
+                            vistos.add(url)
+                            partes.append(url)
+                else:
+                    if item not in vistos:
+                        vistos.add(item)
+                        partes.append(item)
+
+            return "|".join(partes)
+
+        texto = _sanitizar_valor(valor)
+        if not texto:
+            return ""
+
+        if "|" in texto:
+            partes = [p.strip() for p in texto.split("|") if str(p).strip()]
+            partes_unicas: list[str] = []
+            vistos = set()
+
+            for parte in partes:
+                if parte not in vistos:
+                    vistos.add(parte)
+                    partes_unicas.append(parte)
+
+            return "|".join(partes_unicas)
+
+        urls = _extrair_urls_do_texto(texto)
+        if len(urls) >= 2:
+            return "|".join(urls)
+
+        if any(sep in texto for sep in [",", ";", "\n", "\r"]):
+            partes = re.split(r"[,\n\r;]+", texto)
+            partes = [_sanitizar_valor(p) for p in partes]
+            partes = [p for p in partes if p]
+
+            if len(partes) >= 2:
+                partes_unicas: list[str] = []
+                vistos = set()
+
+                for parte in partes:
+                    if parte not in vistos:
+                        vistos.add(parte)
+                        partes_unicas.append(parte)
+
+                return "|".join(partes_unicas)
+
+        return texto
+    except Exception:
+        return _sanitizar_valor(valor)
+
+
+def _obter_coluna_preco_calculado() -> str:
+    try:
+        return str(st.session_state.get("coluna_preco_unitario_origem") or "").strip()
+    except Exception:
+        return ""
+
+
+def _usa_preco_calculado(col_modelo: str, col_origem: str) -> bool:
+    try:
+        if not _is_coluna_preco_venda(col_modelo):
+            return False
+
+        col_preco_origem = _obter_coluna_preco_calculado()
+        if not col_preco_origem:
+            return False
+
+        return str(col_origem or "").strip() == col_preco_origem
+    except Exception:
+        return False
+
+
+def _render_label_coluna(col_modelo: str, col_origem: str) -> None:
+    if _usa_preco_calculado(col_modelo, col_origem):
+        st.markdown(
+            f"""
+            <div style="
+                background:#eaffea;
+                border:1px solid #33aa55;
+                border-left:6px solid #2e9f4d;
+                border-radius:8px;
+                padding:8px 10px;
+                margin:0 0 6px 0;
+                font-weight:600;
+                color:#145a24;
+            ">
+                💰 {col_modelo}<br>
+                <span style="font-size:12px; font-weight:500;">
+                    Calculado automaticamente
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(f"**{col_modelo}**")
+
+
 def _aplicar_mapeamento_automatico_preco(
     mapping: dict,
     df_modelo: pd.DataFrame,
@@ -202,6 +370,10 @@ def _montar_df_saida(df_fonte, df_modelo, mapping):
         if origem and origem in df_fonte.columns:
             serie = df_fonte[origem].reset_index(drop=True)
             serie = serie.apply(_sanitizar_valor)
+
+            if _is_coluna_imagem(col):
+                serie = serie.apply(_normalizar_urls_imagem)
+
             df_saida[col] = serie
         else:
             if col not in df_saida.columns:
@@ -231,6 +403,25 @@ def render_origem_mapeamento():
 
     st.subheader("Mapeamento de colunas")
 
+    col_preco_origem = _obter_coluna_preco_calculado()
+    if col_preco_origem and col_preco_origem in list(df_fonte.columns):
+        st.markdown(
+            """
+            <div style="
+                background:#f3fff3;
+                border:1px solid #98d79f;
+                border-radius:8px;
+                padding:8px 10px;
+                margin-bottom:12px;
+                color:#1f5d2b;
+            ">
+                💰 Algumas colunas podem aparecer destacadas em verde porque estão
+                usando o valor calculado automaticamente pela calculadora.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     st.text_input(
         "Nome do Depósito (Bling)",
         value=str(st.session_state.get("deposito_nome", "") or ""),
@@ -246,10 +437,12 @@ def render_origem_mapeamento():
 
     for col_modelo in df_modelo.columns:
         if _is_coluna_id(col_modelo):
+            _render_label_coluna(col_modelo, "")
             st.text_input(
                 col_modelo,
                 value="(Automático / Bloqueado)",
                 disabled=True,
+                label_visibility="collapsed",
             )
             mapping[col_modelo] = ""
             continue
@@ -257,14 +450,16 @@ def render_origem_mapeamento():
         if _is_coluna_deposito(col_modelo):
             continue
 
-        opcoes = [""] + list(df_fonte.columns)
         valor_atual = mapping.get(col_modelo, "")
+        _render_label_coluna(col_modelo, valor_atual)
 
+        opcoes = [""] + list(df_fonte.columns)
         valor = st.selectbox(
             col_modelo,
             opcoes,
             index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
             key=f"map_{col_modelo}",
+            label_visibility="collapsed",
         )
         mapping[col_modelo] = valor
 
