@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from typing import Callable
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import streamlit as st
-import xml.etree.ElementTree as ET
 
+from bling_app_zero.core.pdf_parser import converter_upload_pdf_para_dataframe
 from bling_app_zero.core.xml_bling_mapper import mapear_xml_para_modelo_bling
 from bling_app_zero.core.xml_nfe import converter_upload_xml_para_dataframe
 from bling_app_zero.ui.app_helpers import log_debug, limpar_gtin_invalido
@@ -82,7 +83,13 @@ def _limpar_estado_origem() -> None:
 
 def _resetar_fluxo_para_origem() -> None:
     try:
-        for chave in ["df_saida", "df_final", "df_precificado", "mapping_origem", "df_xml_mapeado_modelo"]:
+        for chave in [
+            "df_saida",
+            "df_final",
+            "df_precificado",
+            "mapping_origem",
+            "df_xml_mapeado_modelo",
+        ]:
             if chave in st.session_state:
                 del st.session_state[chave]
 
@@ -135,7 +142,7 @@ def _nome_arquivo(uploaded_file) -> str:
 
 
 def texto_extensoes_planilha() -> str:
-    return ".xlsx, .xls, .xlsb, .csv"
+    return ".xlsx, .xls, .xlsb, .csv, .pdf"
 
 
 def tem_upload_ativo() -> bool:
@@ -171,21 +178,27 @@ def _df_preview_modelo(df: pd.DataFrame) -> pd.DataFrame:
             return pd.DataFrame()
 
 
-def _ler_planilha(uploaded_file) -> pd.DataFrame | None:
-    if uploaded_file is None:
-        return None
-
-    nome = _nome_arquivo(uploaded_file).lower()
-
+# ==========================================================
+# LEITURA DE PLANILHA / PDF
+# ==========================================================
+def _ler_csv(uploaded_file) -> pd.DataFrame | None:
     try:
-        if nome.endswith(".csv"):
+        uploaded_file.seek(0)
+        return pd.read_csv(uploaded_file)
+    except Exception:
+        try:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, sep=";", encoding="utf-8")
+        except Exception:
             try:
                 uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file)
+                return pd.read_csv(uploaded_file, sep=";", encoding="latin-1")
             except Exception:
-                uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file, sep=";", encoding="utf-8")
+                return None
 
+
+def _ler_excel(uploaded_file, nome: str) -> pd.DataFrame | None:
+    try:
         if nome.endswith(".xlsb"):
             uploaded_file.seek(0)
             return pd.read_excel(uploaded_file, engine="pyxlsb")
@@ -195,8 +208,52 @@ def _ler_planilha(uploaded_file) -> pd.DataFrame | None:
             return pd.read_excel(uploaded_file)
 
         return None
+    except Exception:
+        return None
+
+
+def _ler_pdf(uploaded_file) -> pd.DataFrame | None:
+    try:
+        df_pdf = converter_upload_pdf_para_dataframe(uploaded_file)
+        if _safe_df_com_linhas(df_pdf):
+            return df_pdf
+        return None
     except Exception as e:
-        log_debug(f"Erro ao ler planilha {nome}: {e}", "ERRO")
+        log_debug(f"Erro ao converter PDF: {e}", "ERRO")
+        return None
+
+
+def _ler_planilha(uploaded_file) -> pd.DataFrame | None:
+    if uploaded_file is None:
+        return None
+
+    nome = _nome_arquivo(uploaded_file).lower()
+
+    try:
+        if nome.endswith(".csv"):
+            df_csv = _ler_csv(uploaded_file)
+            if _safe_df_com_linhas(df_csv):
+                return df_csv
+
+        if nome.endswith(".xlsb") or nome.endswith(".xlsx") or nome.endswith(".xls"):
+            df_excel = _ler_excel(uploaded_file, nome)
+            if _safe_df_com_linhas(df_excel):
+                return df_excel
+
+        if nome.endswith(".pdf"):
+            df_pdf = _ler_pdf(uploaded_file)
+            if _safe_df_com_linhas(df_pdf):
+                return df_pdf
+
+            log_debug(
+                f"PDF sem estrutura válida para conversão automática: {nome}",
+                "ERRO",
+            )
+            return None
+
+        return None
+    except Exception as e:
+        log_debug(f"Erro ao ler arquivo de origem {nome}: {e}", "ERRO")
         return None
 
 
@@ -217,7 +274,13 @@ def _processar_upload_planilha(arquivo_planilha) -> pd.DataFrame | None:
         df_planilha = _ler_planilha(arquivo_planilha)
 
         if not _safe_df_com_linhas(df_planilha):
-            st.error("Não foi possível ler a planilha do fornecedor.")
+            if nome_planilha.lower().endswith(".pdf"):
+                st.error(
+                    "Não foi possível converter o PDF em tabela útil. "
+                    "Tente um PDF com catálogo em texto selecionável."
+                )
+            else:
+                st.error("Não foi possível ler a planilha do fornecedor.")
             return None
 
         df_planilha = _normalizar_df(df_planilha)
@@ -231,15 +294,20 @@ def _processar_upload_planilha(arquivo_planilha) -> pd.DataFrame | None:
         )
 
         log_debug(
-            f"Planilha de origem carregada: {nome_planilha} "
+            f"Arquivo de origem carregado: {nome_planilha} "
             f"({len(df_planilha)} linha(s), {len(df_planilha.columns)} coluna(s))"
         )
+
+        if nome_planilha.lower().endswith(".pdf"):
+            st.success(
+                f"PDF convertido com sucesso: {len(df_planilha)} produto(s) encontrado(s)."
+            )
 
         return df_planilha
 
     except Exception as e:
-        st.error("Erro ao carregar a planilha do fornecedor.")
-        log_debug(f"Erro ao carregar planilha de origem: {e}", "ERRO")
+        st.error("Erro ao carregar o arquivo do fornecedor.")
+        log_debug(f"Erro ao carregar arquivo de origem: {e}", "ERRO")
         return None
 
 
@@ -304,7 +372,9 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
         )
 
         modelo_ativo = _obter_modelo_ativo_para_xml()
-        tipo_operacao = str(st.session_state.get("tipo_operacao_bling") or "cadastro").strip().lower()
+        tipo_operacao = str(
+            st.session_state.get("tipo_operacao_bling") or "cadastro"
+        ).strip().lower()
         deposito_padrao = _obter_deposito_padrao_xml()
 
         if _safe_df_estrutura(modelo_ativo):
@@ -469,9 +539,12 @@ def render_origem_entrada(
     elif origem_atual == "planilha":
         arquivo_planilha = st.file_uploader(
             "Anexar planilha do fornecedor",
-            type=["xlsx", "xls", "xlsb", "csv"],
+            type=["xlsx", "xls", "xlsb", "csv", "pdf"],
             key="arquivo_origem_planilha",
-            help=f"Formatos aceitos: {texto_extensoes_planilha()}.",
+            help=(
+                f"Formatos aceitos: {texto_extensoes_planilha()}. "
+                "PDF com texto selecionável também é aceito."
+            ),
         )
         df_origem = _processar_upload_planilha(arquivo_planilha)
 
