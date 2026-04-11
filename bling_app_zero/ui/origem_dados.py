@@ -13,6 +13,10 @@ from bling_app_zero.ui.origem_dados_estado import (
     set_etapa_origem,
     sincronizar_estado_com_origem,
 )
+from bling_app_zero.ui.origem_dados_estoque import (
+    aplicar_bloco_estoque,
+    persistir_estoque_em_todas_etapas,
+)
 from bling_app_zero.ui.origem_dados_precificacao import render_precificacao
 from bling_app_zero.ui.origem_dados_uploads import (
     render_modelo_bling,
@@ -54,22 +58,6 @@ def _normalizar_texto(valor) -> str:
         return ""
 
 
-def _normalizar_quantidade(valor, fallback: int) -> int:
-    try:
-        texto = str(valor or "").strip().lower()
-
-        if texto in {"", "nan", "none"}:
-            return int(fallback)
-
-        if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
-            return 0
-
-        numero = int(float(str(valor).replace(",", ".")))
-        return max(numero, 0)
-    except Exception:
-        return int(fallback)
-
-
 def _sincronizar_tipo_operacao(operacao: str) -> None:
     try:
         controlar_troca_operacao(operacao, log_debug)
@@ -97,6 +85,7 @@ def _mapa_colunas_equivalentes() -> dict[str, list[str]]:
         "unidade": ["unidade", "und", "ucom"],
         "estoque": ["estoque", "saldo", "quantidade", "qtd"],
         "quantidade": ["quantidade", "qtd", "estoque", "saldo"],
+        "saldo": ["saldo", "estoque", "quantidade", "qtd"],
         "situação": ["situação", "situacao", "status"],
         "imagens": ["imagens", "imagem", "fotos", "foto", "url imagem", "url da imagem"],
         "link externo": ["link externo", "url", "link", "produto url"],
@@ -173,57 +162,6 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
         df_saida = df_origem.copy()
         st.session_state["df_saida"] = df_saida.copy()
         st.session_state["df_final"] = df_saida.copy()
-        return df_saida
-
-
-def _garantir_coluna(df: pd.DataFrame, nome: str, valor_padrao="") -> pd.DataFrame:
-    try:
-        if nome not in df.columns:
-            df[nome] = valor_padrao
-        return df
-    except Exception:
-        return df
-
-
-def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
-    try:
-        df_saida = df_saida.copy()
-
-        st.markdown("### Dados de estoque")
-
-        deposito = st.text_input(
-            "Nome do depósito",
-            value=str(st.session_state.get("deposito_nome", "") or ""),
-            key="deposito_nome",
-            placeholder="Ex.: ifood",
-        )
-
-        qtd = st.number_input(
-            "Quantidade padrão",
-            min_value=0,
-            value=int(st.session_state.get("quantidade_fallback", 0) or 0),
-            step=1,
-            key="quantidade_fallback",
-            help="Usado como fallback quando não houver quantidade válida.",
-        )
-
-        if deposito:
-            df_saida = _garantir_coluna(df_saida, "Depósito", "")
-            df_saida["Depósito"] = deposito
-
-        df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
-
-        if "site" in origem_atual:
-            df_saida["Quantidade"] = df_saida["Quantidade"].apply(
-                lambda v: _normalizar_quantidade(v, qtd)
-            )
-        else:
-            df_saida["Quantidade"] = df_saida["Quantidade"].fillna(qtd)
-
-        return df_saida
-
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida
 
 
@@ -308,7 +246,6 @@ def render_origem_dados() -> None:
 
     st.markdown("---")
 
-    # Mantém compatibilidade com upload manual e com modelo interno salvo no sistema.
     render_modelo_bling(operacao)
 
     modelo_ativo = obter_modelo_ativo()
@@ -316,31 +253,31 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Modelo do Bling não encontrado.")
         return
 
-    # Para XML, prioriza a base já modelada no formato do modelo do Bling.
-    # Para as demais origens, segue o comportamento padrão.
     df_saida = _obter_df_base_prioritaria(df_origem, origem_atual)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
-        # Se a base já veio modelada do XML, preserva a estrutura e só reforça o bloco.
-        df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
+        df_saida = aplicar_bloco_estoque(df_saida, origem_atual)
 
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
 
+    persistir_estoque_em_todas_etapas(origem_atual)
+
     st.markdown("---")
 
-    # A precificação trabalha sobre a origem/base, mas não pode destruir a estrutura da saída.
     render_precificacao(df_origem)
 
-    # Se existir precificação válida, ela pode servir como base-fonte para o mapeamento,
-    # mas a estrutura final permanece em df_saida.
     df_prec = st.session_state.get("df_calc_precificado")
     if safe_df_estrutura(df_prec):
         st.session_state["df_precificado"] = df_prec.copy()
 
+    persistir_estoque_em_todas_etapas(origem_atual)
+
     st.markdown("---")
 
     if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
+        persistir_estoque_em_todas_etapas(origem_atual)
+
         valido, erros = validar_antes_mapeamento()
 
         if not valido:
@@ -348,7 +285,6 @@ def render_origem_dados() -> None:
                 st.warning(erro)
             return
 
-        # Garante que o fluxo siga com a base montada e não com a origem crua.
         if safe_df_estrutura(st.session_state.get("df_saida")):
             st.session_state["df_final"] = st.session_state["df_saida"].copy()
 
