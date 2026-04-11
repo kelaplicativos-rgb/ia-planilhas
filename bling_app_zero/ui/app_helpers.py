@@ -478,6 +478,26 @@ def _sanitizar_df_para_csv(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
+def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if not isinstance(df, pd.DataFrame):
+            return pd.DataFrame()
+
+        df_blindado = df.copy()
+        df_blindado = _aplicar_tratamento_gtin(df_blindado)
+        df_blindado = limpar_gtin_invalido(df_blindado)
+        df_blindado = sanitizar_dados_reais(df_blindado)
+        df_blindado = df_blindado.replace({None: ""}).fillna("")
+        df_blindado = _sanitizar_df_para_csv(df_blindado)
+
+        return df_blindado
+    except Exception as e:
+        log_debug(f"Erro em blindar_df_para_download: {e}", "ERROR")
+        if isinstance(df, pd.DataFrame):
+            return df.copy()
+        return pd.DataFrame()
+
+
 def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
@@ -498,9 +518,7 @@ def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
 
             df_saida = base
 
-        df_saida = df_saida.replace({None: ""}).fillna("")
-        df_saida = sanitizar_dados_reais(df_saida)
-        df_saida = _sanitizar_df_para_csv(df_saida)
+        df_saida = blindar_df_para_download(df_saida)
 
         return df_saida
 
@@ -508,8 +526,7 @@ def _preparar_df_download(df: pd.DataFrame) -> pd.DataFrame:
         log_debug(f"Erro ao preparar DataFrame para download: {e}", "ERROR")
 
         if isinstance(df, pd.DataFrame):
-            df_fallback = sanitizar_dados_reais(df.copy())
-            return _sanitizar_df_para_csv(df_fallback)
+            return blindar_df_para_download(df.copy())
 
         return pd.DataFrame()
 
@@ -527,7 +544,10 @@ def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
     try:
         df_download = _preparar_df_download(df)
 
-        if not isinstance(df_download, pd.DataFrame) or df_download.empty and len(df_download.columns) == 0:
+        if not isinstance(df_download, pd.DataFrame):
+            return b""
+
+        if len(df_download.columns) == 0:
             return b""
 
         csv_texto = df_download.to_csv(
@@ -568,10 +588,7 @@ def render_preview_final() -> None:
         st.warning("Nenhum dado disponível.")
         return
 
-    df_final = _aplicar_tratamento_gtin(df.copy())
-    df_final = limpar_gtin_invalido(df_final)
-    df_final = sanitizar_dados_reais(df_final)
-    df_final = _sanitizar_df_para_csv(df_final)
+    df_final = blindar_df_para_download(df.copy())
 
     st.session_state["df_final"] = df_final.copy()
     st.session_state["df_saida"] = df_final.copy()
