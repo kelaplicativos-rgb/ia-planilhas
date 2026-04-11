@@ -57,10 +57,13 @@ def _normalizar_texto(valor) -> str:
 def _normalizar_quantidade(valor, fallback: int) -> int:
     try:
         texto = str(valor or "").strip().lower()
-        if texto in {"", "nan", "none", "<na>"}:
+
+        if texto in {"", "nan", "none"}:
             return int(fallback)
+
         if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
             return 0
+
         numero = int(float(str(valor).replace(",", ".")))
         return max(numero, 0)
     except Exception:
@@ -109,6 +112,7 @@ def _encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> s
         return colunas_normalizadas[nome_modelo]
 
     equivalentes = _mapa_colunas_equivalentes().get(nome_modelo, [])
+
     for alias in equivalentes:
         alias_norm = _normalizar_texto(alias)
         if alias_norm in colunas_normalizadas:
@@ -116,8 +120,10 @@ def _encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> s
 
     for col in colunas_origem:
         nome_origem = _normalizar_texto(col)
+
         if nome_modelo and nome_modelo in nome_origem:
             return col
+
         if nome_origem and nome_origem in nome_modelo:
             return col
 
@@ -132,6 +138,7 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
             df_saida = df_origem.copy()
             st.session_state["df_saida"] = df_saida.copy()
             st.session_state["df_final"] = df_saida.copy()
+
             log_debug(
                 f"[DF_SAIDA] modelo indisponível; usando origem direta com {len(df_saida)} linha(s).",
                 "INFO",
@@ -140,8 +147,8 @@ def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
 
         colunas_modelo = list(modelo.columns)
         df_saida = pd.DataFrame(index=range(len(df_origem)), columns=colunas_modelo)
-
         colunas_preenchidas = 0
+
         for col_modelo in colunas_modelo:
             col_origem = _encontrar_coluna_origem(col_modelo, list(df_origem.columns))
             if col_origem is not None:
@@ -220,6 +227,35 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
         return df_saida
 
 
+def _obter_df_base_prioritaria(df_origem: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
+    """
+    Prioriza a base já modelada do XML quando existir.
+    Para as demais origens, mantém o comportamento padrão com df_origem.
+    """
+    try:
+        origem_norm = str(origem_atual or "").strip().lower()
+
+        if "xml" in origem_norm:
+            df_xml_modelado = st.session_state.get("df_xml_mapeado_modelo")
+
+            if safe_df_estrutura(df_xml_modelado):
+                st.session_state["df_saida"] = df_xml_modelado.copy()
+                st.session_state["df_final"] = df_xml_modelado.copy()
+
+                log_debug(
+                    f"[XML] priorizando df_xml_mapeado_modelo com {len(df_xml_modelado)} linha(s) "
+                    f"e {len(df_xml_modelado.columns)} coluna(s).",
+                    "INFO",
+                )
+                return df_xml_modelado.copy()
+
+        return _sincronizar_df_saida_base(df_origem)
+
+    except Exception as e:
+        log_debug(f"[XML] erro ao priorizar base modelada do XML: {e}", "ERROR")
+        return _sincronizar_df_saida_base(df_origem)
+
+
 def _render_header_fluxo() -> None:
     st.subheader("Origem dos dados")
     st.caption(
@@ -280,13 +316,16 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Modelo do Bling não encontrado.")
         return
 
-    # Recria a base de saída sempre que a origem/operação estiver válida.
-    df_saida = _sincronizar_df_saida_base(df_origem)
+    # Para XML, prioriza a base já modelada no formato do modelo do Bling.
+    # Para as demais origens, segue o comportamento padrão.
+    df_saida = _obter_df_base_prioritaria(df_origem, origem_atual)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
+        # Se a base já veio modelada do XML, preserva a estrutura e só reforça o bloco.
         df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
+
+    st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
 
     st.markdown("---")
 
@@ -303,6 +342,7 @@ def render_origem_dados() -> None:
 
     if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
         valido, erros = validar_antes_mapeamento()
+
         if not valido:
             for erro in erros:
                 st.warning(erro)
