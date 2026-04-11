@@ -4,9 +4,9 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
+    blindar_df_para_download,
     exportar_csv_bytes,
     gerar_nome_arquivo_download,
-    limpar_gtin_invalido,
     log_debug,
     validar_campos_obrigatorios,
 )
@@ -56,29 +56,32 @@ def render_preview_final() -> None:
     df_fluxo = _get_df_fluxo()
     if not _safe_df(df_fluxo):
         st.warning("Nenhum dado disponível para o preview final.")
-        log_debug("Preview final sem DataFrame disponível", "ERRO")
+        log_debug("Preview final sem DataFrame disponível", "ERROR")
         return
 
     try:
         log_debug(
-            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)"
+            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)",
+            "INFO",
         )
     except Exception:
         pass
 
-    with st.expander("Ver dados finais", expanded=False):
-        st.dataframe(df_fluxo.head(20), use_container_width=True)
-
     try:
-        df_download = limpar_gtin_invalido(df_fluxo.copy())
+        df_download = blindar_df_para_download(df_fluxo.copy())
+        st.session_state["df_final"] = df_download.copy()
+        st.session_state["df_saida"] = df_download.copy()
     except Exception as e:
-        log_debug(f"Erro ao limpar GTIN inválido no preview final: {e}", "ERRO")
+        log_debug(f"Erro na blindagem extra do preview final: {e}", "ERROR")
         df_download = df_fluxo.copy()
+
+    with st.expander("Ver dados finais", expanded=False):
+        st.dataframe(df_download.head(20), use_container_width=True)
 
     try:
         validacao_ok = _normalizar_validacao(validar_campos_obrigatorios(df_download))
     except Exception as e:
-        log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERRO")
+        log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERROR")
         validacao_ok = False
 
     if not validacao_ok:
@@ -86,9 +89,14 @@ def render_preview_final() -> None:
         return
 
     try:
+        df_download = blindar_df_para_download(df_download.copy())
+    except Exception as e:
+        log_debug(f"Erro na segunda blindagem do download final: {e}", "ERROR")
+
+    try:
         csv_bytes = exportar_csv_bytes(df_download)
     except Exception as e:
-        log_debug(f"Erro ao gerar CSV final: {e}", "ERRO")
+        log_debug(f"Erro ao gerar CSV final: {e}", "ERROR")
         st.error("Não foi possível gerar a planilha final em CSV.")
         return
 
@@ -124,5 +132,6 @@ def render_preview_final() -> None:
             use_container_width=True,
             key="btn_atualizar_preview_final",
         ):
-            st.session_state["df_final"] = df_fluxo.copy()
+            st.session_state["df_final"] = df_download.copy()
+            st.session_state["df_saida"] = df_download.copy()
             st.rerun()
