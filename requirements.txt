@@ -11,3 +11,4 @@ pyxlsb==1.0.10
 
 # 🔥 ADICIONADO (CRÍTICO)
 playwright==1.44.0
+pypdf==4.2.0
