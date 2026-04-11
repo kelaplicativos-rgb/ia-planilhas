@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import re
-
 import pandas as pd
 import streamlit as st
-
 
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
@@ -60,38 +57,23 @@ def _normalizar_nome_coluna(nome) -> str:
 
 def _is_coluna_preco_venda(nome) -> bool:
     nome = _normalizar_nome_coluna(nome)
-    return nome in {"preço de venda", "preco de venda", "valor venda"} or (
-        "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome)
-    )
 
-
-def _is_coluna_imagem(nome) -> bool:
-    nome = _normalizar_nome_coluna(nome)
-
-    candidatos_exatos = {
-        "url da imagem",
-        "url imagem",
-        "url imagens",
-        "url das imagens",
-        "url de imagem",
-        "url de imagens",
-        "imagens",
-        "imagem",
-        "imagens externas",
-        "imagem externa",
-        "url imagens externas",
+    prioridades_exatas = {
+        "preço de venda",
+        "preco de venda",
+        "valor venda",
+        "preço unitário",
+        "preco unitario",
+        "preço unitário (obrigatório)",
+        "preco unitario (obrigatorio)",
     }
-
-    if nome in candidatos_exatos:
+    if nome in prioridades_exatas:
         return True
 
-    if "imagem" in nome or "imagens" in nome:
+    if "venda" in nome and ("preço" in nome or "preco" in nome or "valor" in nome):
         return True
 
-    if "image" in nome or "images" in nome:
-        return True
-
-    if "url" in nome and ("foto" in nome or "fotos" in nome):
+    if ("unitário" in nome or "unitario" in nome) and ("preço" in nome or "preco" in nome):
         return True
 
     return False
@@ -115,9 +97,11 @@ def _obter_df_modelo():
         st.session_state.get("df_modelo_cadastro"),
         st.session_state.get("df_modelo_estoque"),
     ]
+
     for df in candidatos:
         if _safe_df(df):
             return df
+
     return None
 
 
@@ -127,9 +111,11 @@ def _obter_df_fonte():
         st.session_state.get("df_precificado"),
         st.session_state.get("df_origem"),
     ]
+
     for df in candidatos:
         if _safe_df_com_linhas(df):
             return df
+
     return None
 
 
@@ -157,104 +143,6 @@ def _normalizar_situacao(valor):
         return "Inativo"
     except Exception:
         return "Inativo"
-
-
-def _extrair_urls_do_texto(texto: str) -> list[str]:
-    try:
-        texto = str(texto or "").strip()
-        if not texto:
-            return []
-
-        # Extrai URLs explícitas do texto
-        urls = re.findall(r"https?://[^\s|,;]+", texto, flags=re.IGNORECASE)
-
-        # Remove duplicadas preservando ordem
-        resultado: list[str] = []
-        vistos = set()
-
-        for url in urls:
-            url_limpa = str(url).strip()
-            if not url_limpa:
-                continue
-            if url_limpa in vistos:
-                continue
-            vistos.add(url_limpa)
-            resultado.append(url_limpa)
-
-        return resultado
-    except Exception:
-        return []
-
-
-def _normalizar_urls_imagem(valor) -> str:
-    try:
-        if valor is None:
-            return ""
-
-        if isinstance(valor, (list, tuple, set)):
-            partes = []
-            vistos = set()
-
-            for item in valor:
-                item = _sanitizar_valor(item)
-                if not item:
-                    continue
-
-                urls_item = _extrair_urls_do_texto(item)
-                if urls_item:
-                    for url in urls_item:
-                        if url not in vistos:
-                            vistos.add(url)
-                            partes.append(url)
-                else:
-                    if item not in vistos:
-                        vistos.add(item)
-                        partes.append(item)
-
-            return "|".join(partes)
-
-        texto = _sanitizar_valor(valor)
-        if not texto:
-            return ""
-
-        # Caso já venha correto, apenas limpa duplicações e espaços
-        if "|" in texto:
-            partes = [p.strip() for p in texto.split("|") if str(p).strip()]
-            partes_unicas: list[str] = []
-            vistos = set()
-
-            for parte in partes:
-                if parte not in vistos:
-                    vistos.add(parte)
-                    partes_unicas.append(parte)
-
-            return "|".join(partes_unicas)
-
-        # Se houver múltiplas URLs no mesmo texto, força separador pipe
-        urls = _extrair_urls_do_texto(texto)
-        if len(urls) >= 2:
-            return "|".join(urls)
-
-        # Fallback para textos separados manualmente por vírgula/ponto e vírgula/quebra de linha
-        if any(sep in texto for sep in [",", ";", "\n", "\r"]):
-            partes = re.split(r"[,\n\r;]+", texto)
-            partes = [_sanitizar_valor(p) for p in partes]
-            partes = [p for p in partes if p]
-
-            if len(partes) >= 2:
-                partes_unicas: list[str] = []
-                vistos = set()
-
-                for parte in partes:
-                    if parte not in vistos:
-                        vistos.add(parte)
-                        partes_unicas.append(parte)
-
-                return "|".join(partes_unicas)
-
-        return texto
-    except Exception:
-        return _sanitizar_valor(valor)
 
 
 def _aplicar_mapeamento_automatico_preco(
@@ -314,10 +202,6 @@ def _montar_df_saida(df_fonte, df_modelo, mapping):
         if origem and origem in df_fonte.columns:
             serie = df_fonte[origem].reset_index(drop=True)
             serie = serie.apply(_sanitizar_valor)
-
-            if _is_coluna_imagem(col):
-                serie = serie.apply(_normalizar_urls_imagem)
-
             df_saida[col] = serie
         else:
             if col not in df_saida.columns:
@@ -395,6 +279,7 @@ def render_origem_mapeamento():
         st.session_state["mapping_origem"] = mapping
 
     df_saida = _montar_df_saida(df_fonte, df_modelo, mapping)
+
     st.dataframe(df_saida.head(15), use_container_width=True)
 
     st.session_state["df_saida"] = df_saida.copy()
