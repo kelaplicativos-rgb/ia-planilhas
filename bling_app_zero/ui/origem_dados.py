@@ -13,10 +13,6 @@ from bling_app_zero.ui.origem_dados_estado import (
     set_etapa_origem,
     sincronizar_estado_com_origem,
 )
-from bling_app_zero.ui.origem_dados_estoque import (
-    aplicar_bloco_estoque,
-    persistir_estoque_em_todas_etapas,
-)
 from bling_app_zero.ui.origem_dados_precificacao import render_precificacao
 from bling_app_zero.ui.origem_dados_uploads import (
     render_modelo_bling,
@@ -25,6 +21,9 @@ from bling_app_zero.ui.origem_dados_uploads import (
 from bling_app_zero.ui.origem_dados_validacao import (
     obter_modelo_ativo,
     validar_antes_mapeamento,
+)
+from bling_app_zero.ui.origem_saida import (
+    obter_df_base_prioritaria,
 )
 
 
@@ -49,13 +48,20 @@ def _modelo_tem_estrutura(df) -> bool:
         return False
 
 
-def _normalizar_texto(valor) -> str:
+def _normalizar_quantidade(valor, fallback: int) -> int:
     try:
-        if valor is None:
-            return ""
-        return str(valor).strip().lower()
+        texto = str(valor or "").strip().lower()
+
+        if texto in {"", "nan", "none"}:
+            return int(fallback)
+
+        if texto in {"sem estoque", "indisponível", "indisponivel", "zerado"}:
+            return 0
+
+        numero = int(float(str(valor).replace(",", ".")))
+        return max(numero, 0)
     except Exception:
-        return ""
+        return int(fallback)
 
 
 def _sincronizar_tipo_operacao(operacao: str) -> None:
@@ -69,129 +75,55 @@ def _sincronizar_tipo_operacao(operacao: str) -> None:
     )
 
 
-def _mapa_colunas_equivalentes() -> dict[str, list[str]]:
-    return {
-        "id": ["id"],
-        "código": ["código", "codigo", "sku", "ref", "referencia", "referência", "cód", "cod"],
-        "descrição": ["descrição", "descricao", "nome", "título", "titulo", "produto"],
-        "descrição curta": ["descrição curta", "descricao curta", "descrição", "descricao", "nome", "produto"],
-        "preço": ["preço", "preco", "valor", "valor venda", "preço de venda", "preco de venda"],
-        "preço de venda": ["preço de venda", "preco de venda", "preço", "preco", "valor", "valor venda"],
-        "preço de custo": ["preço de custo", "preco de custo", "custo", "valor custo"],
-        "marca": ["marca", "fabricante"],
-        "ncm": ["ncm"],
-        "gtin": ["gtin", "ean", "código de barras", "codigo de barras"],
-        "gtin tributário": ["gtin tributário", "gtin tributario", "ean tributário", "ean tributario"],
-        "unidade": ["unidade", "und", "ucom"],
-        "estoque": ["estoque", "saldo", "quantidade", "qtd"],
-        "quantidade": ["quantidade", "qtd", "estoque", "saldo"],
-        "saldo": ["saldo", "estoque", "quantidade", "qtd"],
-        "situação": ["situação", "situacao", "status"],
-        "imagens": ["imagens", "imagem", "fotos", "foto", "url imagem", "url da imagem"],
-        "link externo": ["link externo", "url", "link", "produto url"],
-        "depósito": ["depósito", "deposito", "armazém", "armazem"],
-    }
-
-
-def _encontrar_coluna_origem(coluna_modelo: str, colunas_origem: list[str]) -> str | None:
-    nome_modelo = _normalizar_texto(coluna_modelo)
-    colunas_normalizadas = {_normalizar_texto(col): col for col in colunas_origem}
-
-    if nome_modelo in colunas_normalizadas:
-        return colunas_normalizadas[nome_modelo]
-
-    equivalentes = _mapa_colunas_equivalentes().get(nome_modelo, [])
-
-    for alias in equivalentes:
-        alias_norm = _normalizar_texto(alias)
-        if alias_norm in colunas_normalizadas:
-            return colunas_normalizadas[alias_norm]
-
-    for col in colunas_origem:
-        nome_origem = _normalizar_texto(col)
-
-        if nome_modelo and nome_modelo in nome_origem:
-            return col
-
-        if nome_origem and nome_origem in nome_modelo:
-            return col
-
-    return None
-
-
-def _sincronizar_df_saida_base(df_origem: pd.DataFrame) -> pd.DataFrame:
+def _garantir_coluna(df: pd.DataFrame, nome: str, valor_padrao="") -> pd.DataFrame:
     try:
-        modelo = obter_modelo_ativo()
+        if nome not in df.columns:
+            df[nome] = valor_padrao
+        return df
+    except Exception:
+        return df
 
-        if not isinstance(modelo, pd.DataFrame) or len(modelo.columns) == 0:
-            df_saida = df_origem.copy()
-            st.session_state["df_saida"] = df_saida.copy()
-            st.session_state["df_final"] = df_saida.copy()
 
-            log_debug(
-                f"[DF_SAIDA] modelo indisponível; usando origem direta com {len(df_saida)} linha(s).",
-                "INFO",
-            )
-            return df_saida
+def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
+    try:
+        df_saida = df_saida.copy()
 
-        colunas_modelo = list(modelo.columns)
-        df_saida = pd.DataFrame(index=range(len(df_origem)), columns=colunas_modelo)
-        colunas_preenchidas = 0
+        st.markdown("### Dados de estoque")
 
-        for col_modelo in colunas_modelo:
-            col_origem = _encontrar_coluna_origem(col_modelo, list(df_origem.columns))
-            if col_origem is not None:
-                try:
-                    df_saida[col_modelo] = df_origem[col_origem].values
-                    colunas_preenchidas += 1
-                except Exception:
-                    pass
-
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
-
-        log_debug(
-            f"[DF_SAIDA] base preparada com {len(df_saida)} linha(s), "
-            f"{len(df_saida.columns)} coluna(s) e {colunas_preenchidas} coluna(s) preenchida(s) automaticamente.",
-            "INFO",
+        deposito = st.text_input(
+            "Nome do depósito",
+            value=str(st.session_state.get("deposito_nome", "") or ""),
+            key="deposito_nome",
+            placeholder="Ex.: ifood",
         )
+
+        qtd = st.number_input(
+            "Quantidade padrão",
+            min_value=0,
+            value=int(st.session_state.get("quantidade_fallback", 0) or 0),
+            step=1,
+            key="quantidade_fallback",
+            help="Usado como fallback quando não houver quantidade válida.",
+        )
+
+        if deposito:
+            df_saida = _garantir_coluna(df_saida, "Depósito", "")
+            df_saida["Depósito"] = deposito
+
+        df_saida = _garantir_coluna(df_saida, "Quantidade", qtd)
+
+        if "site" in origem_atual:
+            df_saida["Quantidade"] = df_saida["Quantidade"].apply(
+                lambda v: _normalizar_quantidade(v, qtd)
+            )
+        else:
+            df_saida["Quantidade"] = df_saida["Quantidade"].fillna(qtd)
+
         return df_saida
 
     except Exception as e:
-        log_debug(f"[DF_SAIDA] erro ao sincronizar base de saída: {e}", "ERROR")
-        df_saida = df_origem.copy()
-        st.session_state["df_saida"] = df_saida.copy()
-        st.session_state["df_final"] = df_saida.copy()
+        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida
-
-
-def _obter_df_base_prioritaria(df_origem: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
-    """
-    Prioriza a base já modelada do XML quando existir.
-    Para as demais origens, mantém o comportamento padrão com df_origem.
-    """
-    try:
-        origem_norm = str(origem_atual or "").strip().lower()
-
-        if "xml" in origem_norm:
-            df_xml_modelado = st.session_state.get("df_xml_mapeado_modelo")
-
-            if safe_df_estrutura(df_xml_modelado):
-                st.session_state["df_saida"] = df_xml_modelado.copy()
-                st.session_state["df_final"] = df_xml_modelado.copy()
-
-                log_debug(
-                    f"[XML] priorizando df_xml_mapeado_modelo com {len(df_xml_modelado)} linha(s) "
-                    f"e {len(df_xml_modelado.columns)} coluna(s).",
-                    "INFO",
-                )
-                return df_xml_modelado.copy()
-
-        return _sincronizar_df_saida_base(df_origem)
-
-    except Exception as e:
-        log_debug(f"[XML] erro ao priorizar base modelada do XML: {e}", "ERROR")
-        return _sincronizar_df_saida_base(df_origem)
 
 
 def _render_header_fluxo() -> None:
@@ -253,15 +185,13 @@ def render_origem_dados() -> None:
         st.warning("⚠️ Modelo do Bling não encontrado.")
         return
 
-    df_saida = _obter_df_base_prioritaria(df_origem, origem_atual)
+    df_saida = obter_df_base_prioritaria(df_origem, origem_atual)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
-        df_saida = aplicar_bloco_estoque(df_saida, origem_atual)
+        df_saida = _aplicar_bloco_estoque(df_saida, origem_atual)
 
     st.session_state["df_saida"] = df_saida.copy()
     st.session_state["df_final"] = df_saida.copy()
-
-    persistir_estoque_em_todas_etapas(origem_atual)
 
     st.markdown("---")
 
@@ -271,13 +201,9 @@ def render_origem_dados() -> None:
     if safe_df_estrutura(df_prec):
         st.session_state["df_precificado"] = df_prec.copy()
 
-    persistir_estoque_em_todas_etapas(origem_atual)
-
     st.markdown("---")
 
     if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
-        persistir_estoque_em_todas_etapas(origem_atual)
-
         valido, erros = validar_antes_mapeamento()
 
         if not valido:
