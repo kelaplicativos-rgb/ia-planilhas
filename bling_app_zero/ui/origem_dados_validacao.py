@@ -8,10 +8,6 @@ from bling_app_zero.ui.origem_dados_estado import safe_df_dados
 
 
 def obter_modelo_ativo():
-    """
-    Retorna o modelo ativo conforme o tipo da operação.
-    Mantém fallback para carregar o modelo interno e evita qualquer import circular.
-    """
     tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
 
     if tipo == "cadastro":
