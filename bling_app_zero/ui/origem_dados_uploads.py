@@ -4,7 +4,9 @@ from typing import Callable
 
 import pandas as pd
 import streamlit as st
+import xml.etree.ElementTree as ET
 
+from bling_app_zero.core.xml_nfe import converter_upload_xml_para_dataframe
 from bling_app_zero.ui.app_helpers import log_debug, limpar_gtin_invalido
 from bling_app_zero.ui.origem_dados_site import render_origem_site as render_origem_site_real
 
@@ -256,19 +258,12 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
         if hash_xml != hash_anterior or nome_xml != nome_anterior:
             _limpar_estado_origem()
 
-        try:
-            arquivo_xml.seek(0)
-            conteudo = arquivo_xml.read()
-            if isinstance(conteudo, bytes):
-                conteudo = conteudo.decode("utf-8", errors="ignore")
-        except Exception:
-            conteudo = ""
+        df_xml = converter_upload_xml_para_dataframe(arquivo_xml)
 
-        if not conteudo.strip():
-            st.error("Não foi possível ler o XML da nota fiscal.")
+        if not _safe_df_com_linhas(df_xml):
+            st.error("Não foi possível converter o XML da nota fiscal em planilha.")
             return None
 
-        df_xml = pd.DataFrame([{"XML": conteudo[:5000]}])
         df_xml = _normalizar_df(df_xml)
         df_xml = limpar_gtin_invalido(df_xml)
 
@@ -280,14 +275,19 @@ def _processar_upload_xml(arquivo_xml) -> pd.DataFrame | None:
         )
 
         log_debug(
-            f"XML de origem carregado: {nome_xml} "
-            f"({len(df_xml)} linha(s), {len(df_xml.columns)} coluna(s))"
+            f"XML convertido para planilha: {nome_xml} "
+            f"({len(df_xml)} item(ns), {len(df_xml.columns)} coluna(s))"
         )
 
+        st.success(f"XML convertido com sucesso: {len(df_xml)} item(ns) encontrado(s).")
         return df_xml
 
+    except ET.ParseError as e:
+        st.error("O XML enviado é inválido ou está mal formatado.")
+        log_debug(f"XML inválido ao processar origem: {e}", "ERRO")
+        return None
     except Exception as e:
-        st.error("Erro ao carregar o XML da nota fiscal.")
+        st.error("Erro ao converter o XML da nota fiscal em planilha.")
         log_debug(f"Erro ao carregar XML de origem: {e}", "ERRO")
         return None
 
