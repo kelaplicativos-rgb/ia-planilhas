@@ -28,10 +28,19 @@ def _get_df_fluxo() -> pd.DataFrame | None:
     4) df_calc_precificado
     5) df_origem
     """
-    for chave in ["df_final", "df_saida", "df_precificado", "df_calc_precificado", "df_origem"]:
+    for chave in [
+        "df_final",
+        "df_saida",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
+    ]:
         df = st.session_state.get(chave)
         if _safe_df(df):
-            return df.copy()
+            try:
+                return df.copy()
+            except Exception:
+                return df
     return None
 
 
@@ -48,6 +57,18 @@ def _normalizar_validacao(resultado_validacao) -> bool:
         return bool(resultado_validacao)
     except Exception:
         return False
+
+
+def _sincronizar_df_final(df_download: pd.DataFrame) -> None:
+    try:
+        st.session_state["df_final"] = df_download.copy()
+    except Exception:
+        st.session_state["df_final"] = df_download
+
+    try:
+        st.session_state["df_saida"] = df_download.copy()
+    except Exception:
+        st.session_state["df_saida"] = df_download
 
 
 def render_preview_final() -> None:
@@ -69,11 +90,19 @@ def render_preview_final() -> None:
 
     try:
         df_download = blindar_df_para_download(df_fluxo.copy())
-        st.session_state["df_final"] = df_download.copy()
-        st.session_state["df_saida"] = df_download.copy()
     except Exception as e:
         log_debug(f"Erro na blindagem extra do preview final: {e}", "ERROR")
-        df_download = df_fluxo.copy()
+        try:
+            df_download = df_fluxo.copy()
+        except Exception:
+            df_download = df_fluxo
+
+    if not _safe_df(df_download):
+        st.error("Não foi possível preparar os dados finais para visualização.")
+        log_debug("Preview final ficou inválido após blindagem", "ERROR")
+        return
+
+    _sincronizar_df_final(df_download)
 
     with st.expander("Ver dados finais", expanded=False):
         st.dataframe(df_download.head(20), use_container_width=True)
@@ -89,7 +118,9 @@ def render_preview_final() -> None:
         return
 
     try:
+        # Blindagem final extra imediatamente antes do download
         df_download = blindar_df_para_download(df_download.copy())
+        _sincronizar_df_final(df_download)
     except Exception as e:
         log_debug(f"Erro na segunda blindagem do download final: {e}", "ERROR")
 
@@ -102,36 +133,24 @@ def render_preview_final() -> None:
 
     if not csv_bytes:
         st.error("Não foi possível gerar a planilha final em CSV.")
+        log_debug("CSV final vazio no preview_final.py", "ERROR")
         return
 
     st.download_button(
         "⬇️ Baixar planilha final",
-        csv_bytes,
-        gerar_nome_arquivo_download(),
+        data=csv_bytes,
+        file_name=gerar_nome_arquivo_download(),
         mime="text/csv",
         use_container_width=True,
         key="btn_download_preview_final_csv",
     )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button(
-            "⬅️ Voltar para mapeamento",
-            use_container_width=True,
-            key="btn_voltar_mapeamento_preview",
-        ):
-            st.session_state["etapa_origem"] = "mapeamento"
-            st.session_state["etapa"] = "mapeamento"
-            st.session_state["etapa_fluxo"] = "mapeamento"
-            st.rerun()
-
-    with col2:
-        if st.button(
-            "Atualizar preview",
-            use_container_width=True,
-            key="btn_atualizar_preview_final",
-        ):
-            st.session_state["df_final"] = df_download.copy()
-            st.session_state["df_saida"] = df_download.copy()
-            st.rerun()
+    # Mantém apenas ação interna de atualização de preview.
+    # Navegação entre etapas fica centralizada no app.py
+    if st.button(
+        "Atualizar preview",
+        use_container_width=True,
+        key="btn_atualizar_preview_final",
+    ):
+        _sincronizar_df_final(df_download)
+        st.rerun()
