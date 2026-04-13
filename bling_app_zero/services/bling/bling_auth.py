@@ -12,10 +12,7 @@ from urllib.parse import urlencode
 import httpx
 import streamlit as st
 
-try:
-    from bling_app_zero.services.bling.bling_token_store import BlingTokenStore
-except ImportError:
-    from bling_app_zero.core.bling_token_store import BlingTokenStore
+from bling_app_zero.services.bling.bling_token_store import BlingTokenStore
 
 
 STATE_PATH = Path("bling_app_zero/output/oauth_state.json")
@@ -175,9 +172,6 @@ class BlingAuthManager:
         return f"Basic {base64.b64encode(raw).decode('utf-8')}"
 
     def _redirect_uri_exata(self) -> str:
-        # IMPORTANTÍSSIMO:
-        # não alterar a redirect_uri cadastrada no Bling.
-        # O valor precisa sair exatamente igual ao que está em st.secrets["bling"]["redirect_uri"].
         return _safe_str(self.settings.redirect_uri)
 
     def build_authorize_url(self, force_reauth: bool = False) -> Optional[str]:
