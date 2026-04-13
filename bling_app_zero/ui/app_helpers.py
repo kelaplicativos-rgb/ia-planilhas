@@ -57,7 +57,7 @@ except Exception:
         return df
 
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
+ETAPAS_VALIDAS_ORIGEM = {"conexao", "origem", "mapeamento", "final", "envio"}
 
 
 # ==========================================================
@@ -70,13 +70,21 @@ def garantir_estado_base() -> None:
 
         etapa_atual = str(st.session_state.get("etapa_origem", "") or "").strip().lower()
         if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
-            st.session_state["etapa_origem"] = "origem"
+            etapa_atual = "conexao"
 
-        if "etapa" not in st.session_state:
-            st.session_state["etapa"] = st.session_state.get("etapa_origem", "origem")
+        st.session_state["etapa_origem"] = etapa_atual
 
-        if "etapa_fluxo" not in st.session_state:
-            st.session_state["etapa_fluxo"] = st.session_state.get("etapa_origem", "origem")
+        etapa_global = str(st.session_state.get("etapa", "") or "").strip().lower()
+        if etapa_global not in ETAPAS_VALIDAS_ORIGEM:
+            st.session_state["etapa"] = etapa_atual
+        else:
+            st.session_state["etapa"] = etapa_global
+
+        etapa_fluxo = str(st.session_state.get("etapa_fluxo", "") or "").strip().lower()
+        if etapa_fluxo not in ETAPAS_VALIDAS_ORIGEM:
+            st.session_state["etapa_fluxo"] = etapa_atual
+        else:
+            st.session_state["etapa_fluxo"] = etapa_fluxo
 
         if "area_app" not in st.session_state:
             st.session_state["area_app"] = "Fluxo principal"
@@ -104,9 +112,9 @@ def garantir_estado_base() -> None:
 
     except Exception:
         st.session_state["logs"] = []
-        st.session_state["etapa_origem"] = "origem"
-        st.session_state["etapa"] = "origem"
-        st.session_state["etapa_fluxo"] = "origem"
+        st.session_state["etapa_origem"] = "conexao"
+        st.session_state["etapa"] = "conexao"
+        st.session_state["etapa_fluxo"] = "conexao"
         st.session_state["area_app"] = "Fluxo principal"
         st.session_state["bloquear_campos_auto"] = {}
         st.session_state["gtin_modo_valor"] = "limpar"
@@ -601,6 +609,8 @@ def render_preview_final() -> None:
     with col_voltar:
         if st.button("⬅️ Voltar", use_container_width=True):
             st.session_state["etapa_origem"] = "mapeamento"
+            st.session_state["etapa"] = "mapeamento"
+            st.session_state["etapa_fluxo"] = "mapeamento"
             st.rerun()
 
     csv_bytes = None
@@ -624,7 +634,4 @@ def render_preview_final() -> None:
         )
 
     try:
-        render_bling_panel()
-    except Exception as e:
-        log_debug(f"Erro ao renderizar painel do Bling: {e}", "ERROR")
-        st.warning("Painel do Bling indisponível no momento.")
+                
