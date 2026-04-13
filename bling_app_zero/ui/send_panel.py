@@ -52,13 +52,19 @@ def _garantir_estado():
         "bling_hash_enviado": "",
         "bling_deposito_id": "",
         "bling_primeiro_acesso_decidido": False,
-        "bling_primeiro_acesso_escolha": "",
+        "bling_primeiro_acesso_escolha": "Conectar depois",
         "bling_modo_envio": "cadastro",
     }
 
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
+
+    if _safe_str(st.session_state.get("bling_primeiro_acesso_escolha")) not in {
+        "Conectar depois",
+        "Conectar agora",
+    }:
+        st.session_state["bling_primeiro_acesso_escolha"] = "Conectar depois"
 
 
 def _resolver_user_key() -> str:
@@ -105,15 +111,22 @@ def _hash_df(df: pd.DataFrame, tipo_api: str, deposito_id: str = "") -> str:
 def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
     """
     Mantido explicitamente para compatibilidade com app.py.
+    Blindado contra valor inválido em session_state no st.radio.
     """
     _garantir_estado()
 
     st.subheader("Conexão com Bling")
     st.caption("Conecte agora ou avance e conecte depois na etapa de envio.")
 
+    opcoes = ["Conectar depois", "Conectar agora"]
+
+    valor_atual = _safe_str(st.session_state.get("bling_primeiro_acesso_escolha"))
+    if valor_atual not in opcoes:
+        st.session_state["bling_primeiro_acesso_escolha"] = "Conectar depois"
+
     escolha = st.radio(
         "Como deseja seguir?",
-        ["Conectar depois", "Conectar agora"],
+        opcoes,
         horizontal=True,
         key="bling_primeiro_acesso_escolha",
     )
@@ -272,10 +285,20 @@ def render_send_panel():
         "Cadastro + Estoque": "catalogo_completo",
     }
 
+    modo_atual = _safe_str(st.session_state.get("bling_modo_envio"))
+    if modo_atual not in modos.values():
+        st.session_state["bling_modo_envio"] = "cadastro"
+
+    labels = list(modos.keys())
+    valor_para_label = {v: k for k, v in modos.items()}
+    label_default = valor_para_label.get(st.session_state["bling_modo_envio"], "Cadastro de Produtos")
+    index_default = labels.index(label_default) if label_default in labels else 0
+
     tipo = st.radio(
         "Tipo de envio:",
-        list(modos.keys()),
+        labels,
         horizontal=True,
+        index=index_default,
     )
     tipo_api = modos[tipo]
     st.session_state["bling_modo_envio"] = tipo_api
