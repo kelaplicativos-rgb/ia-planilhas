@@ -8,10 +8,12 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
+    blindar_df_para_download,
+    exportar_csv_bytes,
     garantir_estado_base,
+    gerar_nome_arquivo_download,
     log_debug,
     render_debug_panel,
-    render_preview_final,
 )
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
@@ -25,9 +27,10 @@ from bling_app_zero.utils.init_app import inicializar_app
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
 APP_VERSION = "1.0.27"
-APP_CHANGELOG_TITULO = "Sistema de versionamento automático"
+APP_CHANGELOG_TITULO = "Fluxo slim + correções do preview final"
 APP_CHANGELOG_DESCRICAO = (
-    "Sincronização automática com version.json + histórico de mudanças."
+    "Remove duplicidade de preview final, separa envio do preview, "
+    "mantém fluxo mais enxuto e preserva exportação CSV."
 )
 
 
@@ -194,17 +197,77 @@ def _render_home_inicial() -> None:
 
     st.markdown("### Transforme seus dados em planilha pronta para o Bling")
     st.caption(
-        "Fluxo slim: uma pergunta por etapa, menos poluição visual e navegação mais direta."
+        "Fluxo mais slim, uma pergunta por etapa, com preview final separado do envio."
     )
 
     st.markdown("---")
 
-    col_centro_esq, col_centro, col_centro_dir = st.columns([1, 2, 1])
+    col_esq, col_centro, col_dir = st.columns([1, 2, 1])
     with col_centro:
         if st.button("Começar", use_container_width=True, type="primary"):
             st.session_state["_home_fluxo_iniciado"] = True
-            st.session_state["wizard_origem_step"] = "origem"
+            st.session_state["wizard_origem_step"] = "operacao"
             _ir_para("origem")
+
+
+def _render_etapa_final() -> None:
+    st.title("IA Planilhas → Bling")
+    st.caption(f"Versão: {APP_VERSION}")
+    st.subheader("Prévia final")
+
+    df_fluxo = _obter_df_fluxo()
+    if not _safe_df(df_fluxo):
+        log_debug("FINAL sem dados válidos", "ERROR")
+        st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
+        if st.button("⬅️ Voltar", use_container_width=True):
+            _ir_para("mapeamento")
+        st.stop()
+
+    try:
+        df_final = blindar_df_para_download(df_fluxo.copy())
+    except Exception:
+        df_final = df_fluxo.copy()
+
+    try:
+        st.session_state["df_final"] = df_final.copy()
+    except Exception:
+        st.session_state["df_final"] = df_final
+
+    try:
+        st.session_state["df_saida"] = df_final.copy()
+    except Exception:
+        st.session_state["df_saida"] = df_final
+
+    st.dataframe(df_final.head(20), use_container_width=True)
+
+    csv_bytes = None
+    try:
+        csv_bytes = exportar_csv_bytes(df_final)
+        if not csv_bytes:
+            raise ValueError("Arquivo CSV vazio")
+    except Exception as e:
+        log_debug(f"Erro download CSV: {e}", "ERROR")
+        st.error(f"Erro ao gerar arquivo CSV: {e}")
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
+            _ir_para("mapeamento")
+    with col2:
+        st.download_button(
+            "⬇️ Baixar planilha",
+            data=csv_bytes,
+            file_name=gerar_nome_arquivo_download(),
+            mime="text/csv",
+            use_container_width=True,
+            disabled=(csv_bytes is None),
+            key="btn_download_planilha_final_csv_app",
+        )
+
+    st.markdown("---")
+    if st.button("Ir para envio", use_container_width=True, type="primary"):
+        _ir_para("envio")
 
 
 # =========================
@@ -227,47 +290,17 @@ if etapa == "origem" and not st.session_state.get("_home_fluxo_iniciado", False)
 
 
 # =========================
-# ETAPA 1 — ORIGEM
+# ETAPAS
 # =========================
 if etapa == "origem":
     render_origem_dados()
 
-# =========================
-# ETAPA 2 — MAPEAMENTO
-# =========================
 elif etapa == "mapeamento":
     render_origem_mapeamento()
 
-# =========================
-# ETAPA 3 — FINAL
-# =========================
 elif etapa == "final":
-    st.title("IA Planilhas → Bling")
-    st.caption(f"Versão: {APP_VERSION}")
+    _render_etapa_final()
 
-    df_fluxo = _obter_df_fluxo()
-    if not _safe_df(df_fluxo):
-        log_debug("FINAL sem dados válidos", "ERROR")
-        st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
-        if st.button("⬅️ Voltar", use_container_width=True):
-            _ir_para("mapeamento")
-        st.stop()
-
-    st.subheader("Prévia final")
-    render_preview_final()
-
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
-            _ir_para("mapeamento")
-    with col2:
-        if st.button("Ir para envio", use_container_width=True, type="primary"):
-            _ir_para("envio")
-
-# =========================
-# ETAPA 4 — ENVIO
-# =========================
 elif etapa == "envio":
     st.title("IA Planilhas → Bling")
     st.caption(f"Versão: {APP_VERSION}")
@@ -286,9 +319,6 @@ elif etapa == "envio":
     st.markdown("---")
     render_send_panel()
 
-# =========================
-# FALLBACK
-# =========================
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("origem")
