@@ -22,17 +22,12 @@ from bling_app_zero.ui.origem_dados_validacao import (
     obter_modelo_ativo,
     validar_antes_mapeamento,
 )
-from bling_app_zero.ui.origem_saida import (
-    obter_df_base_prioritaria,
-)
+from bling_app_zero.ui.origem_saida import obter_df_base_prioritaria
 
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 WIZARD_STEPS = {
-    "origem",
     "operacao",
+    "origem",
     "modelo",
     "configuracoes",
     "revisao",
@@ -94,6 +89,8 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
     try:
         df_saida = df_saida.copy()
 
+        st.markdown("#### Dados de estoque")
+
         deposito = st.text_input(
             "Nome do depósito",
             value=str(st.session_state.get("deposito_nome", "") or ""),
@@ -131,19 +128,19 @@ def _aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.Data
 
 def _obter_wizard_step() -> str:
     try:
-        step = str(st.session_state.get("wizard_origem_step") or "origem").strip().lower()
+        step = str(st.session_state.get("wizard_origem_step") or "operacao").strip().lower()
     except Exception:
-        step = "origem"
+        step = "operacao"
 
     if step not in WIZARD_STEPS:
-        return "origem"
+        return "operacao"
     return step
 
 
 def _set_wizard_step(step: str) -> None:
     step = str(step or "").strip().lower()
     if step not in WIZARD_STEPS:
-        step = "origem"
+        step = "operacao"
     st.session_state["wizard_origem_step"] = step
 
 
@@ -153,7 +150,12 @@ def _reset_precificacao_se_desativada() -> None:
         if usar:
             return
 
-        for chave in ["df_calc_precificado", "df_precificado"]:
+        for chave in [
+            "df_calc_precificado",
+            "df_precificado",
+            "coluna_preco_unitario_origem",
+            "coluna_preco_unitario_destino",
+        ]:
             if chave in st.session_state:
                 del st.session_state[chave]
     except Exception:
@@ -232,13 +234,10 @@ def _preparar_df_saida_base(df_origem: pd.DataFrame, origem_atual: str) -> pd.Da
 
 def _voltar_para_home() -> None:
     st.session_state["_home_fluxo_iniciado"] = False
-    st.session_state["wizard_origem_step"] = "origem"
+    st.session_state["wizard_origem_step"] = "operacao"
     set_etapa_origem("origem")
 
 
-# ==========================================================
-# RENDER
-# ==========================================================
 def render_origem_dados() -> None:
     garantir_estado_origem()
 
@@ -251,18 +250,66 @@ def render_origem_dados() -> None:
     df_origem_atual = st.session_state.get("df_origem")
 
     # ======================================================
-    # PASSO 1 — ORIGEM
+    # PASSO 1 — OPERAÇÃO
+    # ======================================================
+    if step == "operacao":
+        _render_topo_etapa(
+            "O que você quer fazer?",
+            "Escolha se você quer cadastrar produto ou atualizar o estoque.",
+            1,
+        )
+
+        operacao_atual = str(
+            st.session_state.get("tipo_operacao") or "Cadastro de Produtos"
+        ).strip()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Cadastro de Produtos", use_container_width=True):
+                operacao_atual = "Cadastro de Produtos"
+                st.session_state["tipo_operacao"] = operacao_atual
+                _sincronizar_tipo_operacao(operacao_atual)
+
+        with col2:
+            if st.button("Atualização de Estoque", use_container_width=True):
+                operacao_atual = "Atualização de Estoque"
+                st.session_state["tipo_operacao"] = operacao_atual
+                _sincronizar_tipo_operacao(operacao_atual)
+
+        if operacao_atual not in {"Cadastro de Produtos", "Atualização de Estoque"}:
+            operacao_atual = "Cadastro de Produtos"
+            st.session_state["tipo_operacao"] = operacao_atual
+            _sincronizar_tipo_operacao(operacao_atual)
+
+        st.info(f"Fluxo selecionado: **{operacao_atual}**")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⟵ Início", use_container_width=True):
+                _voltar_para_home()
+                st.rerun()
+        with col2:
+            if st.button("Continuar", use_container_width=True, type="primary"):
+                _sincronizar_tipo_operacao(operacao_atual)
+                _set_wizard_step("origem")
+                st.rerun()
+        return
+
+    # ======================================================
+    # PASSO 2 — ORIGEM
     # ======================================================
     if step == "origem":
         _render_topo_etapa(
             "De onde virão os dados?",
             "Escolha a origem e carregue os dados antes de seguir.",
-            1,
+            2,
         )
 
         df_origem = render_origem_entrada(
             lambda origem: controlar_troca_origem(origem, log_debug)
         )
+
+        origem_atual = _obter_origem_atual()
 
         if safe_df_dados(df_origem):
             try:
@@ -283,65 +330,17 @@ def render_origem_dados() -> None:
         else:
             st.info("Selecione a origem e carregue os dados para continuar.")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⟵ Início", use_container_width=True):
-                _voltar_para_home()
-                st.rerun()
-        with col2:
-            if st.button(
-                "Continuar",
-                use_container_width=True,
-                type="primary",
-                disabled=not safe_df_dados(st.session_state.get("df_origem")),
-            ):
-                _set_wizard_step("operacao")
-                st.rerun()
+        _render_botoes_navegacao(
+            voltar_para="operacao",
+            continuar_para="modelo",
+            bloquear_continuar=not safe_df_dados(st.session_state.get("df_origem")),
+        )
         return
 
     # segurança
     if not safe_df_dados(df_origem_atual):
         _set_wizard_step("origem")
         st.rerun()
-        return
-
-    # ======================================================
-    # PASSO 2 — OPERAÇÃO
-    # ======================================================
-    if step == "operacao":
-        _render_topo_etapa(
-            "O que você vai fazer agora?",
-            "Escolha o fluxo que o sistema deve preparar.",
-            2,
-        )
-
-        operacao_atual = str(st.session_state.get("tipo_operacao") or "Cadastro de Produtos")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Cadastro de Produtos", use_container_width=True):
-                operacao_atual = "Cadastro de Produtos"
-                st.session_state["tipo_operacao"] = operacao_atual
-                _sincronizar_tipo_operacao(operacao_atual)
-        with col2:
-            if st.button("Atualização de Estoque", use_container_width=True):
-                operacao_atual = "Atualização de Estoque"
-                st.session_state["tipo_operacao"] = operacao_atual
-                _sincronizar_tipo_operacao(operacao_atual)
-
-        if operacao_atual not in {"Cadastro de Produtos", "Atualização de Estoque"}:
-            operacao_atual = "Cadastro de Produtos"
-            st.session_state["tipo_operacao"] = operacao_atual
-            _sincronizar_tipo_operacao(operacao_atual)
-
-        st.info(f"Fluxo selecionado: **{operacao_atual}**")
-
-        _render_botoes_navegacao(
-            voltar_para="origem",
-            continuar_para="modelo",
-            continuar_label="Continuar",
-            on_before_continue=lambda: _sincronizar_tipo_operacao(operacao_atual),
-        )
         return
 
     # ======================================================
@@ -372,13 +371,12 @@ def render_origem_dados() -> None:
             st.warning("⚠️ Modelo do Bling não encontrado.")
 
         st.caption(
-            "A seleção das colunas do modelo acontecerá na próxima etapa de mapeamento."
+            "A seleção das colunas do modelo será feita no mapeamento, sem poluir esta etapa."
         )
 
         _render_botoes_navegacao(
-            voltar_para="operacao",
+            voltar_para="origem",
             continuar_para="configuracoes",
-            continuar_label="Continuar",
             bloquear_continuar=not modelo_ok,
         )
         return
@@ -389,7 +387,7 @@ def render_origem_dados() -> None:
     if step == "configuracoes":
         _render_topo_etapa(
             "Configurações do fluxo",
-            "Defina somente o necessário antes do mapeamento.",
+            "Defina só o necessário antes do mapeamento.",
             4,
         )
 
@@ -414,10 +412,6 @@ def render_origem_dados() -> None:
 
         st.session_state["usar_calculadora_precificacao"] = usar_calculadora == "Sim"
 
-        if st.session_state.get("tipo_operacao_bling") == "estoque":
-            st.markdown("#### Dados de estoque")
-            _preparar_df_saida_base(df_origem_atual, origem_atual)
-
         if st.session_state.get("usar_calculadora_precificacao", False):
             st.markdown("#### Precificação")
             render_precificacao(df_origem_atual)
@@ -428,13 +422,27 @@ def render_origem_dados() -> None:
                     st.session_state["df_precificado"] = df_prec.copy()
                 except Exception:
                     st.session_state["df_precificado"] = df_prec
+
+            col_auto = str(
+                st.session_state.get("coluna_preco_unitario_destino")
+                or st.session_state.get("coluna_preco_unitario_origem")
+                or ""
+            ).strip()
+
+            if col_auto:
+                st.success(f"Coluna marcada como precificada automaticamente: **{col_auto}**")
+            else:
+                st.info(
+                    "A calculadora foi aplicada, mas sem coluna automática válida. "
+                    "Nesse caso, o mapeamento seguirá manualmente."
+                )
         else:
             _reset_precificacao_se_desativada()
+            st.info("Sem calculadora: o mapeamento seguirá com as colunas originais.")
 
         _render_botoes_navegacao(
             voltar_para="modelo",
             continuar_para="revisao",
-            continuar_label="Continuar",
         )
         return
 
@@ -456,7 +464,15 @@ def render_origem_dados() -> None:
             pass
 
         if st.session_state.get("usar_calculadora_precificacao", False):
-            st.success("Precificação habilitada para o fluxo.")
+            col_auto = str(
+                st.session_state.get("coluna_preco_unitario_destino")
+                or st.session_state.get("coluna_preco_unitario_origem")
+                or ""
+            ).strip()
+            if col_auto:
+                st.success(f"Precificação automática pronta com a coluna **{col_auto}**.")
+            else:
+                st.info("Precificação ligada, mas sem coluna automática válida.")
         else:
             st.info("Precificação manual: o mapeamento seguirá com as colunas originais.")
 
@@ -487,6 +503,5 @@ def render_origem_dados() -> None:
                 st.rerun()
         return
 
-    # fallback
-    _set_wizard_step("origem")
+    _set_wizard_step("operacao")
     st.rerun()
