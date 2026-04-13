@@ -537,7 +537,7 @@ def _executar_login(
 
 
 # ==========================================================
-# FETCH PRINCIPAL
+# # FETCH PRINCIPAL
 # ==========================================================
 def fetch_url_playwright(
     url: str,
@@ -653,4 +653,228 @@ def fetch_playwright_payload(
             try:
                 page.add_init_script(
                     """
-                    Object.defineProperty(navigator, 'webdri
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+                    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US'] });
+                    """
+                )
+            except Exception:
+                pass
+
+            registros: list[dict[str, Any]] = []
+            _preparar_captura_network(page, registros)
+
+            # --------------------------------------------------
+            # LOGIN, QUANDO NECESSÁRIO
+            # --------------------------------------------------
+            login_result = _executar_login(
+                page,
+                url_destino=url,
+                auth_context=auth_context,
+            )
+            payload["login_attempted"] = bool(login_result.get("login_attempted"))
+            payload["login_success"] = bool(login_result.get("login_success"))
+            payload["login_error"] = _safe_str(login_result.get("login_error"))
+            payload["login_url_final"] = _safe_str(login_result.get("login_url_final"))
+
+            if payload["login_required"] and not payload["login_success"]:
+                payload["error"] = payload["login_error"] or "falha_login"
+                if screenshot_on_error and page is not None:
+                    try:
+                        screenshot_path = _arquivo_temp("playwright_login_error", ".png")
+                        page.screenshot(path=screenshot_path, full_page=True)
+                        payload["screenshot_path"] = screenshot_path
+                    except Exception:
+                        pass
+                return payload
+
+            # --------------------------------------------------
+            # NAVEGAÇÃO FINAL NA URL DE DESTINO
+            # --------------------------------------------------
+            response = page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=PLAYWRIGHT_NAV_TIMEOUT_MS,
+            )
+
+            if response is not None:
+                try:
+                    payload["status_hint"] = int(response.status)
+                except Exception:
+                    pass
+
+            if wait_selector:
+                try:
+                    page.wait_for_selector(wait_selector, timeout=10000)
+                    log_debug(f"[PLAYWRIGHT] wait_selector OK | {wait_selector}")
+                except Exception as exc:
+                    log_debug(
+                        f"[PLAYWRIGHT] wait_selector falhou | seletor={wait_selector} | "
+                        f"{type(exc).__name__}: {exc}",
+                        "WARNING",
+                    )
+
+            _esperar_estabilidade_basica(page)
+            _auto_scroll(page)
+
+            try:
+                html = page.content()
+            except Exception:
+                html = ""
+
+            html = _normalizar_html(html)
+
+            try:
+                payload["title"] = _safe_str(page.title())
+            except Exception:
+                pass
+
+            try:
+                payload["final_url"] = _safe_str(page.url) or url
+            except Exception:
+                pass
+
+            payload["html"] = html or None
+            payload["network_records"] = registros
+            payload["blocked_hint"] = _parece_bloqueio(html)
+
+            if storage_state_path:
+                try:
+                    context.storage_state(path=storage_state_path)
+                    payload["storage_state_path"] = storage_state_path
+                except Exception:
+                    pass
+
+            if payload["login_required"] and _parece_pagina_login(html):
+                payload["error"] = "pagina_login_retornada_apos_tentativa"
+                log_debug(
+                    "[PLAYWRIGHT] HTML final ainda parece tela de login.",
+                    "WARNING",
+                )
+            elif html and len(html) > 500 and not payload["blocked_hint"]:
+                payload["ok"] = True
+                log_debug(
+                    f"[PLAYWRIGHT] Sucesso | final_url={payload['final_url']} | "
+                    f"html_len={len(html)} | network_records={len(registros)}"
+                )
+            elif html:
+                payload["error"] = "HTML retornado com indício de bloqueio ou insuficiente."
+                log_debug(
+                    f"[PLAYWRIGHT] HTML insuficiente/bloqueado | "
+                    f"html_len={len(html)} | blocked={payload['blocked_hint']}",
+                    "WARNING",
+                )
+            else:
+                payload["error"] = "Página carregada sem HTML útil."
+                log_debug("[PLAYWRIGHT] HTML vazio.", "WARNING")
+
+    except PlaywrightTimeoutError as exc:
+        payload["error"] = f"Timeout Playwright: {type(exc).__name__}: {exc}"
+        log_debug(f"[PLAYWRIGHT] Timeout | url={url} | detalhe={payload['error']}", "ERROR")
+
+        if screenshot_on_error and page is not None:
+            try:
+                screenshot_path = _arquivo_temp("playwright_timeout", ".png")
+                page.screenshot(path=screenshot_path, full_page=True)
+                payload["screenshot_path"] = screenshot_path
+            except Exception:
+                pass
+
+    except Exception as exc:
+        payload["error"] = f"{type(exc).__name__}: {exc}"
+        log_debug(f"[PLAYWRIGHT] Erro geral | url={url} | detalhe={payload['error']}", "ERROR")
+
+        if screenshot_on_error and page is not None:
+            try:
+                screenshot_path = _arquivo_temp("playwright_error", ".png")
+                page.screenshot(path=screenshot_path, full_page=True)
+                payload["screenshot_path"] = screenshot_path
+            except Exception:
+                pass
+
+    finally:
+        try:
+            if context is not None and storage_state_path:
+                try:
+                    context.storage_state(path=storage_state_path)
+                    payload["storage_state_path"] = storage_state_path
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            if page is not None:
+                page.close()
+        except Exception:
+            pass
+
+        try:
+            if context is not None:
+                context.close()
+        except Exception:
+            pass
+
+        try:
+            if browser is not None:
+                browser.close()
+        except Exception:
+            pass
+
+    return payload
+
+
+# ==========================================================
+# FALLBACK
+# ==========================================================
+def tentar_fetch_com_fallback_js(
+    url: str,
+    html_requests: str | None = None,
+    wait_selector: str | None = None,
+    storage_state_path: str | None = None,
+    *,
+    usuario: str = "",
+    senha: str = "",
+    precisa_login: bool = False,
+    auth_config: dict[str, Any] | None = None,
+):
+    html_requests = html_requests or ""
+
+    if html_requests and len(html_requests) > 1500 and not precisa_login:
+        return {
+            "ok": True,
+            "engine": "requests",
+            "url": _normalizar_url(url),
+            "final_url": _normalizar_url(url),
+            "html": html_requests,
+            "network_records": [],
+            "error": "",
+            "auth_used": False,
+            "auth_mode": "none",
+            "login_required": False,
+            "login_configured": False,
+            "login_attempted": False,
+            "login_success": False,
+            "login_error": "",
+        }
+
+    log_debug(f"[PLAYWRIGHT] fallback ativado | {url}")
+    return fetch_playwright_payload(
+        url=url,
+        wait_selector=wait_selector,
+        storage_state_path=storage_state_path,
+        screenshot_on_error=True,
+        headless=True,
+        usuario=usuario,
+        senha=senha,
+        precisa_login=precisa_login,
+        auth_config=auth_config,
+    )
+
+
+def storage_state_path_por_dominio(url: str) -> str:
+    dominio = _dominio(url) or "site"
+    pasta = Path(tempfile.gettempdir()) / "pw_state"
+    pasta.mkdir(parents=True, exist_ok=True)
+    return str(pasta / f"{dominio}.json")
