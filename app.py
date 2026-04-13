@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -85,7 +81,7 @@ def _sincronizar_etapa_global(etapa_destino: str) -> str:
     return etapa_ok
 
 
-def _ir_para(etapa: str):
+def _ir_para(etapa: str) -> None:
     _sincronizar_etapa_global(etapa)
     st.rerun()
 
@@ -120,7 +116,7 @@ def _obter_df_fluxo():
     return None
 
 
-def _garantir_estado_fluxo_inicial():
+def _garantir_estado_fluxo_inicial() -> None:
     if "bling_primeiro_acesso_decidido" not in st.session_state:
         st.session_state["bling_primeiro_acesso_decidido"] = False
 
@@ -129,7 +125,7 @@ def _garantir_estado_fluxo_inicial():
 
 
 # =========================
-# UI
+# UI BASE
 # =========================
 st.title("IA Planilhas → Bling")
 st.caption(f"Versão: {APP_VERSION}")
@@ -141,6 +137,7 @@ if st.session_state.get("_cache_log"):
 
 _garantir_estado_fluxo_inicial()
 
+
 # =========================
 # CONTROLE DE ETAPA
 # =========================
@@ -149,6 +146,7 @@ etapa = _sincronizar_etapa_global(_obter_etapa_atual())
 if etapa not in ETAPAS_VALIDAS:
     log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
     _ir_para("conexao")
+
 
 # =========================
 # ETAPA 0 — CONEXÃO
@@ -159,17 +157,20 @@ if etapa == "conexao":
         on_continue=lambda: _ir_para("origem"),
     )
 
+
 # =========================
 # ETAPA 1 — ORIGEM
 # =========================
 elif etapa == "origem":
     render_origem_dados()
 
+
 # =========================
 # ETAPA 2 — MAPEAMENTO
 # =========================
 elif etapa == "mapeamento":
     render_origem_mapeamento()
+
 
 # =========================
 # ETAPA 3 — FINAL
@@ -197,6 +198,7 @@ elif etapa == "final":
         if st.button("Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
 
+
 # =========================
 # ETAPA 4 — ENVIO
 # =========================
@@ -217,6 +219,7 @@ elif etapa == "envio":
 
     st.markdown("---")
     render_send_panel()
+
 
 # =========================
 # FALLBACK
