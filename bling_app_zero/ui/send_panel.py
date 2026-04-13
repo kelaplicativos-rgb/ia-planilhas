@@ -81,23 +81,26 @@ def _hash_df(df: pd.DataFrame, tipo_api: str = "", deposito_id: str = "") -> str
 
 
 def _garantir_estado() -> None:
-    if "bling_enviando" not in st.session_state:
-        st.session_state["bling_enviando"] = False
+    defaults = {
+        "bling_enviando": False,
+        "bling_hash_enviado": "",
+        "bling_resultado": None,
+        "bling_deposito_id": "",
+        "bling_tipo_envio": "",
+        "_bling_oauth_feedback": None,
+        "_bling_oauth_processado_local": False,
+    }
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
 
-    if "bling_hash_enviado" not in st.session_state:
-        st.session_state["bling_hash_enviado"] = ""
 
-    if "bling_resultado" not in st.session_state:
-        st.session_state["bling_resultado"] = None
-
-    if "bling_deposito_id" not in st.session_state:
-        st.session_state["bling_deposito_id"] = ""
-
-    if "bling_tipo_envio" not in st.session_state:
-        st.session_state["bling_tipo_envio"] = ""
-
-    if "_bling_oauth_feedback" not in st.session_state:
-        st.session_state["_bling_oauth_feedback"] = None
+def _tem_callback_pendente() -> bool:
+    try:
+        qp = st.query_params
+        return any(chave in qp for chave in ("code", "state", "error", "error_description"))
+    except Exception:
+        return False
 
 
 # =========================================================
@@ -105,27 +108,43 @@ def _garantir_estado() -> None:
 # =========================================================
 def _processar_callback(auth: BlingAuthManager) -> None:
     """
-    Processa o callback do OAuth de forma compatível com a versão atual
-    e com versões anteriores do auth manager.
+    Processa o callback OAuth de forma compatível com:
+    - auth novo: handle_oauth_callback()
+    - auth antigo: handle_callback(code)
     """
     try:
+        if not _tem_callback_pendente():
+            st.session_state["_bling_oauth_processado_local"] = False
+            return
+
+        if st.session_state.get("_bling_oauth_processado_local"):
+            return
+
+        st.session_state["_bling_oauth_processado_local"] = True
         resultado = None
 
         if hasattr(auth, "handle_oauth_callback"):
             resultado = auth.handle_oauth_callback()
+
         elif hasattr(auth, "handle_callback"):
             code = st.query_params.get("code")
             if isinstance(code, list):
                 code = code[0] if code else ""
+
+            code = _safe_str(code)
             if code:
-                ok = auth.handle_callback(code)
+                retorno = auth.handle_callback(code)
+
+                if isinstance(retorno, tuple) and len(retorno) >= 2:
+                    ok = bool(retorno[0])
+                    msg = _safe_str(retorno[1])
+                else:
+                    ok = bool(retorno)
+                    msg = "Conta Bling conectada com sucesso." if ok else "Falha ao conectar com o Bling."
+
                 resultado = {
                     "status": "success" if ok else "error",
-                    "message": (
-                        "Conta Bling conectada com sucesso."
-                        if ok
-                        else "Falha ao conectar com o Bling."
-                    ),
+                    "message": msg,
                 }
 
         if not isinstance(resultado, dict):
@@ -164,6 +183,35 @@ def _render_feedback_callback() -> None:
         st.error(f"❌ {mensagem}")
 
 
+def _obter_status_conexao(auth: BlingAuthManager) -> dict:
+    try:
+        status = auth.get_connection_status()
+        if isinstance(status, dict):
+            return status
+    except Exception:
+        pass
+
+    return {
+        "connected": False,
+        "company_name": None,
+        "last_auth_at": None,
+        "expires_at": None,
+    }
+
+
+def _gerar_url_conexao(auth: BlingAuthManager) -> str:
+    try:
+        if hasattr(auth, "build_authorize_url"):
+            return _safe_str(auth.build_authorize_url())
+
+        if hasattr(auth, "generate_auth_url"):
+            return _safe_str(auth.generate_auth_url())
+    except Exception:
+        return ""
+
+    return ""
+
+
 def _render_conexao(auth: BlingAuthManager) -> bool:
     _processar_callback(auth)
     _render_feedback_callback()
@@ -176,12 +224,8 @@ def _render_conexao(auth: BlingAuthManager) -> bool:
         st.error(f"Erro ao validar configuração do Bling: {e}")
         return False
 
-    try:
-        status = auth.get_connection_status()
-        conectado = bool(status.get("connected"))
-    except Exception as e:
-        st.error(f"Erro ao verificar conexão com Bling: {e}")
-        return False
+    status = _obter_status_conexao(auth)
+    conectado = bool(status.get("connected"))
 
     st.subheader("Integração Bling")
 
@@ -205,12 +249,7 @@ def _render_conexao(auth: BlingAuthManager) -> bool:
 
     with col1:
         try:
-            url = None
-            if hasattr(auth, "build_authorize_url"):
-                url = auth.build_authorize_url()
-            elif hasattr(auth, "generate_auth_url"):
-                url = auth.generate_auth_url()
-
+            url = _gerar_url_conexao(auth)
             if url:
                 st.link_button(
                     "Conectar com Bling",
@@ -230,7 +269,15 @@ def _render_conexao(auth: BlingAuthManager) -> bool:
         if hasattr(auth, "refresh_access_token"):
             if st.button("Atualizar Token", use_container_width=True):
                 try:
-                    ok, msg = auth.refresh_access_token()
+                    retorno = auth.refresh_access_token()
+
+                    if isinstance(retorno, tuple) and len(retorno) >= 2:
+                        ok = bool(retorno[0])
+                        msg = _safe_str(retorno[1])
+                    else:
+                        ok = bool(retorno)
+                        msg = "Token atualizado com sucesso." if ok else "Falha ao atualizar token."
+
                     if ok:
                         st.success(f"✅ {msg}")
                         st.rerun()
@@ -296,9 +343,11 @@ def _render_resultado() -> None:
 # ENVIO
 # =========================================================
 def render_send_panel():
-    _garantir_estado()
+    st.subheader("Enviar para Bling")
 
+    _garantir_estado()
     df = _obter_df_envio()
+
     if not _safe_df(df):
         st.warning("⚠️ Nenhum dado disponível para envio.")
         return
@@ -319,26 +368,19 @@ def render_send_panel():
 
     conectado = _render_conexao(auth)
 
-    st.markdown("---")
-    st.subheader("Envio para Bling")
-
     if not conectado:
         st.warning("⚠️ Conecte ao Bling antes de enviar.")
         return
 
+    tipo_atual = _safe_str(st.session_state.get("bling_tipo_envio"))
     opcoes = ["Cadastro de Produtos", "Atualização de Estoque"]
-    valor_atual = _safe_str(st.session_state.get("bling_tipo_envio"))
-
-    if valor_atual not in opcoes:
-        tipo_default = 0
-    else:
-        tipo_default = opcoes.index(valor_atual)
+    indice = opcoes.index(tipo_atual) if tipo_atual in opcoes else 0
 
     tipo = st.radio(
-        "Tipo de envio",
+        "Tipo de envio:",
         opcoes,
         horizontal=True,
-        index=tipo_default,
+        index=indice,
     )
     st.session_state["bling_tipo_envio"] = tipo
 
@@ -349,12 +391,13 @@ def render_send_panel():
         deposito_id = st.text_input(
             "ID do Depósito",
             value=_safe_str(st.session_state.get("bling_deposito_id")),
-            placeholder="Ex.: 123456",
+            placeholder="Ex: 123456",
             help="Obrigatório para atualização de estoque.",
         )
         st.session_state["bling_deposito_id"] = deposito_id
 
-    st.info(f"{len(df)} registros prontos para envio.")
+    st.markdown("---")
+    st.info(f"{len(df)} registros prontos para envio")
 
     with st.expander("Ver dados que serão enviados", expanded=False):
         st.dataframe(df.head(20), use_container_width=True)
@@ -403,7 +446,9 @@ def render_send_panel():
                     "sucesso": 0,
                     "erro": len(df),
                     "erros": ["Retorno inválido do serviço de sincronização."],
-                    "detalhes": {},
+                    "detalhes": {
+                        "deposito_id": _safe_str(deposito_id) or None,
+                    },
                 }
 
             st.session_state["bling_resultado"] = resultado
