@@ -6,7 +6,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
+
+ETAPAS_VALIDAS_ORIGEM = {"conexao", "origem", "mapeamento", "final", "envio"}
 
 
 # ==========================================================
@@ -93,9 +94,10 @@ def fingerprint_df(df: pd.DataFrame) -> str:
 # ETAPA
 # ==========================================================
 def _set_etapa_global(valor: str) -> None:
-    etapa = _normalizar_valor_fluxo(valor or "origem")
+    etapa = _normalizar_valor_fluxo(valor or "conexao")
+
     if etapa not in ETAPAS_VALIDAS_ORIGEM:
-        etapa = "origem"
+        etapa = "conexao"
 
     st.session_state["etapa_origem"] = etapa
     st.session_state["etapa"] = etapa
@@ -112,10 +114,10 @@ def set_etapa_origem(valor: str) -> None:
 def limpar_mapeamento_widgets() -> None:
     try:
         chaves_para_remover = [
-            chave
-            for chave in list(st.session_state.keys())
+            chave for chave in list(st.session_state.keys())
             if str(chave).startswith("map_")
         ]
+
         for chave in chaves_para_remover:
             st.session_state.pop(chave, None)
 
@@ -183,12 +185,6 @@ def controlar_troca_operacao(operacao: str, log_debug) -> None:
 # CONTROLE DE ORIGEM
 # ==========================================================
 def controlar_troca_origem(origem: str, log_debug) -> None:
-    """
-    Blindagem principal:
-    trocar a origem na interface não deve apagar imediatamente os dados já carregados.
-    A limpeza real só deve acontecer quando um NOVO df_origem for efetivamente carregado
-    e o fingerprint mudar em sincronizar_estado_com_origem().
-    """
     origem_atual = _safe_str(origem)
     origem_anterior = _safe_str(
         st.session_state.get("_origem_anterior_origem_dados")
@@ -196,7 +192,6 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
 
     if not origem_anterior:
         st.session_state["_origem_anterior_origem_dados"] = origem_atual
-        st.session_state["_origem_trocada_manual"] = False
         return
 
     if origem_anterior == origem_atual:
@@ -204,15 +199,16 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
 
     log_debug(
         f"Origem alterada: {origem_anterior} → {origem_atual}. "
-        f"Preservando dados atuais até uma nova carga real da origem.",
+        f"Limpando saída/mapeamento e preservando modelos.",
         "INFO",
     )
 
-    # Não apagar df_origem / df_saida / df_final aqui.
-    # Isso evita perder tudo ao apenas voltar de etapa.
+    for chave in ["df_origem", "df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+        st.session_state.pop(chave, None)
+
+    st.session_state.pop("origem_dados_fingerprint", None)
+    limpar_mapeamento_widgets()
     st.session_state["_origem_anterior_origem_dados"] = origem_atual
-    st.session_state["_origem_trocada_manual"] = True
-    st.session_state["site_processado"] = False
 
 
 # ==========================================================
@@ -220,25 +216,23 @@ def controlar_troca_origem(origem: str, log_debug) -> None:
 # ==========================================================
 def garantir_estado_origem() -> None:
     defaults = {
-        "etapa_origem": "origem",
-        "etapa": "origem",
-        "etapa_fluxo": "origem",
+        "etapa_origem": "conexao",
+        "etapa": "conexao",
+        "etapa_fluxo": "conexao",
         "tipo_operacao_bling": "",
         "deposito_nome": "",
         "quantidade_fallback": 0,
         "site_processado": False,
-        "_origem_trocada_manual": False,
     }
 
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
-    etapa_atual = _normalizar_valor_fluxo(
-        st.session_state.get("etapa_origem", "origem")
-    )
+    etapa_atual = _normalizar_valor_fluxo(st.session_state.get("etapa_origem", "conexao"))
+
     if etapa_atual not in ETAPAS_VALIDAS_ORIGEM:
-        etapa_atual = "origem"
+        etapa_atual = "conexao"
 
     _set_etapa_global(etapa_atual)
 
@@ -252,47 +246,24 @@ def sincronizar_estado_com_origem(df_origem, log_debug) -> None:
 
     fp_novo = fingerprint_df(df_origem)
     fp_atual = _safe_str(st.session_state.get("origem_dados_fingerprint"))
-    houve_troca_manual = bool(st.session_state.get("_origem_trocada_manual", False))
 
     if not fp_atual:
         st.session_state["origem_dados_fingerprint"] = fp_novo
         st.session_state["df_origem"] = df_origem.copy()
 
-        # Só semeia df_saida/df_final se eles ainda não existirem.
         if not safe_df_estrutura(st.session_state.get("df_saida")):
             st.session_state["df_saida"] = df_origem.copy()
 
         if not safe_df_estrutura(st.session_state.get("df_final")):
             st.session_state["df_final"] = df_origem.copy()
-
-        st.session_state["_origem_trocada_manual"] = False
         return
 
     if fp_atual != fp_novo:
-        log_debug("Nova origem real detectada. Limpando saída anterior.", "INFO")
-
+        log_debug("Nova origem detectada. Limpando saída anterior.", "INFO")
         st.session_state["origem_dados_fingerprint"] = fp_novo
         st.session_state["df_origem"] = df_origem.copy()
 
-        # Aqui sim limpa porque chegou uma NOVA base de dados de verdade.
-        for chave in [
-            "df_saida",
-            "df_final",
-            "df_precificado",
-            "df_calc_precificado",
-        ]:
+        for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
             st.session_state.pop(chave, None)
 
         limpar_mapeamento_widgets()
-        st.session_state["_origem_trocada_manual"] = False
-        return
-
-    # Se o fingerprint não mudou, não limpar nada.
-    # Isso cobre o caso de "voltar uma tela" sem trocar os dados reais.
-    if houve_troca_manual:
-        log_debug(
-            "Troca de origem na interface detectada sem nova carga de dados. "
-            "Mantendo estado atual preservado.",
-            "INFO",
-        )
-        st.session_state["_origem_trocada_manual"] = False
