@@ -26,7 +26,9 @@ st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
 APP_VERSION = "1.0.27"
 APP_CHANGELOG_TITULO = "Sistema de versionamento automático"
-APP_CHANGELOG_DESCRICAO = "Sincronização automática com version.json + histórico de mudanças."
+APP_CHANGELOG_DESCRICAO = (
+    "Sincronização automática com version.json + histórico de mudanças."
+)
 
 
 # =========================
@@ -48,7 +50,7 @@ def _carregar_json(caminho: Path) -> dict:
         return {}
 
 
-def _salvar_json(caminho: Path, data: dict):
+def _salvar_json(caminho: Path, data: dict) -> None:
     try:
         caminho.write_text(
             json.dumps(data, indent=2, ensure_ascii=False),
@@ -58,7 +60,7 @@ def _salvar_json(caminho: Path, data: dict):
         pass
 
 
-def _sync_version():
+def _sync_version() -> None:
     try:
         path = Path("version.json")
         data = _carregar_json(path)
@@ -86,14 +88,11 @@ def _sync_version():
             "last_description": APP_CHANGELOG_DESCRICAO,
             "history": historico,
         }
-
         _salvar_json(path, novo)
-
     except Exception:
         pass
 
 
-# 🔥 EXECUTA AUTOMÁTICO
 _sync_version()
 
 
@@ -125,7 +124,6 @@ def _normalizar_etapa(valor: object) -> str:
 
     if etapa_normalizada not in ETAPAS_VALIDAS:
         return "origem"
-
     return etapa_normalizada
 
 
@@ -146,15 +144,13 @@ def _obter_etapa_atual() -> str:
 
 def _sincronizar_etapa_global(etapa_destino: str) -> str:
     etapa_ok = _normalizar_etapa(etapa_destino)
-
     st.session_state["etapa_origem"] = etapa_ok
     st.session_state["etapa"] = etapa_ok
     st.session_state["etapa_fluxo"] = etapa_ok
-
     return etapa_ok
 
 
-def _ir_para(etapa: str):
+def _ir_para(etapa: str) -> None:
     _sincronizar_etapa_global(etapa)
     st.rerun()
 
@@ -189,26 +185,45 @@ def _obter_df_fluxo():
     return None
 
 
-# =========================
-# UI
-# =========================
-st.title("IA Planilhas → Bling")
-st.caption(f"Versão: {APP_VERSION}")
+def _render_home_inicial() -> None:
+    st.title("IA Planilhas → Bling")
+    st.caption(f"Versão: {APP_VERSION}")
 
+    if st.session_state.get("_cache_log"):
+        st.info(st.session_state.get("_cache_log"))
+
+    st.markdown("### Transforme seus dados em planilha pronta para o Bling")
+    st.caption(
+        "Fluxo slim: uma pergunta por etapa, menos poluição visual e navegação mais direta."
+    )
+
+    st.markdown("---")
+
+    col_centro_esq, col_centro, col_centro_dir = st.columns([1, 2, 1])
+    with col_centro:
+        if st.button("Começar", use_container_width=True, type="primary"):
+            st.session_state["_home_fluxo_iniciado"] = True
+            st.session_state["wizard_origem_step"] = "origem"
+            _ir_para("origem")
+
+
+# =========================
+# UI GLOBAL
+# =========================
 render_debug_panel()
 
-if st.session_state.get("_cache_log"):
-    st.info(st.session_state.get("_cache_log"))
-
-
-# =========================
-# CONTROLE DE ETAPA
-# =========================
 etapa = _sincronizar_etapa_global(_obter_etapa_atual())
-
 if etapa not in ETAPAS_VALIDAS:
     log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
     _ir_para("origem")
+
+
+# =========================
+# HOME ENXUTA
+# =========================
+if etapa == "origem" and not st.session_state.get("_home_fluxo_iniciado", False):
+    _render_home_inicial()
+    st.stop()
 
 
 # =========================
@@ -217,68 +232,59 @@ if etapa not in ETAPAS_VALIDAS:
 if etapa == "origem":
     render_origem_dados()
 
-
 # =========================
 # ETAPA 2 — MAPEAMENTO
 # =========================
 elif etapa == "mapeamento":
     render_origem_mapeamento()
 
-
 # =========================
 # ETAPA 3 — FINAL
 # =========================
 elif etapa == "final":
-    df_fluxo = _obter_df_fluxo()
+    st.title("IA Planilhas → Bling")
+    st.caption(f"Versão: {APP_VERSION}")
 
+    df_fluxo = _obter_df_fluxo()
     if not _safe_df(df_fluxo):
         log_debug("FINAL sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
-
         if st.button("⬅️ Voltar", use_container_width=True):
             _ir_para("mapeamento")
-
         st.stop()
 
+    st.subheader("Prévia final")
     render_preview_final()
 
     st.markdown("---")
-
     col1, col2 = st.columns(2)
-
     with col1:
         if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
             _ir_para("mapeamento")
-
     with col2:
-        if st.button("🚀 Ir para envio", use_container_width=True, type="primary"):
+        if st.button("Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
-
 
 # =========================
 # ETAPA 4 — ENVIO
 # =========================
 elif etapa == "envio":
-    df_fluxo = _obter_df_fluxo()
+    st.title("IA Planilhas → Bling")
+    st.caption(f"Versão: {APP_VERSION}")
 
+    df_fluxo = _obter_df_fluxo()
     if not _safe_df(df_fluxo):
         log_debug("ENVIO sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível para envio.")
-
         if st.button("⬅️ Voltar para final", use_container_width=True):
             _ir_para("final")
-
         st.stop()
-
-    st.markdown("---")
 
     if st.button("⬅️ Voltar para final", use_container_width=True):
         _ir_para("final")
 
     st.markdown("---")
-
     render_send_panel()
-
 
 # =========================
 # FALLBACK
