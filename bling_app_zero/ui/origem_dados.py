@@ -19,6 +19,7 @@ from bling_app_zero.ui.app_helpers import (
 def garantir_estado_origem() -> None:
     defaults = {
         "tipo_operacao": "Cadastro de Produtos",
+        "tipo_operacao_radio": "Cadastro de Produtos",
         "tipo_operacao_bling": "cadastro",
         "origem_dados_tipo": "planilha",
         "site_processado": False,
@@ -42,6 +43,24 @@ def garantir_estado_origem() -> None:
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
+    if _safe_str(st.session_state.get("tipo_operacao_radio")) not in {
+        "Cadastro de Produtos",
+        "Atualização de Estoque",
+    }:
+        st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
+
+    if _safe_str(st.session_state.get("tipo_operacao")) not in {
+        "Cadastro de Produtos",
+        "Atualização de Estoque",
+    }:
+        st.session_state["tipo_operacao"] = "Cadastro de Produtos"
+
+    if _safe_str(st.session_state.get("tipo_operacao_bling")) not in {
+        "cadastro",
+        "estoque",
+    }:
+        st.session_state["tipo_operacao_bling"] = "cadastro"
+
 
 def set_etapa_origem(etapa: str) -> None:
     etapa = str(etapa or "origem").strip().lower()
@@ -52,6 +71,10 @@ def set_etapa_origem(etapa: str) -> None:
 
 def _sincronizar_tipo_operacao(operacao: str) -> None:
     operacao = str(operacao or "Cadastro de Produtos").strip()
+
+    # IMPORTANTE:
+    # Não escrever mais em uma key de widget ativa.
+    # O radio usa "tipo_operacao_radio". Aqui sincronizamos apenas o estado lógico.
     st.session_state["tipo_operacao"] = operacao
     st.session_state["tipo_operacao_bling"] = (
         "cadastro" if operacao == "Cadastro de Produtos" else "estoque"
@@ -574,11 +597,20 @@ def render_origem_dados() -> None:
             st.rerun()
         return
 
+    labels_operacao = ["Cadastro de Produtos", "Atualização de Estoque"]
+    valor_radio = _safe_str(st.session_state.get("tipo_operacao_radio"))
+    if valor_radio not in labels_operacao:
+        st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
+        valor_radio = "Cadastro de Produtos"
+
+    index_operacao = labels_operacao.index(valor_radio)
+
     operacao = st.radio(
         "Você quer cadastrar produto ou atualizar o estoque?",
-        ["Cadastro de Produtos", "Atualização de Estoque"],
-        key="tipo_operacao",
+        labels_operacao,
+        key="tipo_operacao_radio",
         horizontal=True,
+        index=index_operacao,
     )
     _sincronizar_tipo_operacao(operacao)
 
@@ -643,4 +675,20 @@ def render_origem_dados() -> None:
 
         if nome_preco in df_saida_prec.columns:
             st.session_state["df_saida"] = df_saida_prec.copy()
-            st.session_state["df_final"] = df_saida_pre
+            st.session_state["df_final"] = df_saida_prec.copy()
+
+    st.markdown("---")
+
+    if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
+        valido, erros = validar_antes_mapeamento()
+
+        if not valido:
+            for erro in erros:
+                st.warning(erro)
+            return
+
+        if safe_df_estrutura(st.session_state.get("df_saida")):
+            st.session_state["df_final"] = st.session_state["df_saida"].copy()
+
+        set_etapa_origem("mapeamento")
+        st.rerun()
