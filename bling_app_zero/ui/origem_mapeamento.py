@@ -5,7 +5,7 @@ import re
 import pandas as pd
 import streamlit as st
 
-ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
+ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final", "envio"}
 
 
 # =========================================================
@@ -34,7 +34,7 @@ def _safe_copy_df(df):
         return df
 
 
-def _set_etapa(etapa: str):
+def _set_etapa(etapa: str) -> None:
     etapa = str(etapa).strip().lower()
     if etapa not in ETAPAS_VALIDAS_ORIGEM:
         etapa = "origem"
@@ -152,13 +152,10 @@ def _sanitizar_valor(valor):
     try:
         if valor is None:
             return ""
-
         valor = str(valor)
         valor = valor.replace("⚠️", "").strip()
-
         if valor.lower() in ["none", "nan"]:
             return ""
-
         return valor
     except Exception:
         return ""
@@ -166,12 +163,20 @@ def _sanitizar_valor(valor):
 
 def _normalizar_situacao(valor):
     try:
-        valor = str(valor).strip().lower()
-        if valor in ["ativo", "1", "true"]:
+        valor = str(valor or "").strip().lower()
+
+        if valor in {"", "nan", "none"}:
             return "Ativo"
-        return "Inativo"
+
+        if valor in {"ativo", "1", "true", "sim", "yes"}:
+            return "Ativo"
+
+        if valor in {"inativo", "0", "false", "não", "nao", "no"}:
+            return "Inativo"
+
+        return "Ativo"
     except Exception:
-        return "Inativo"
+        return "Ativo"
 
 
 def _extrair_urls_do_texto(texto: str) -> list[str]:
@@ -298,11 +303,6 @@ def _preservar_estado_antes_de_voltar(
     df_saida: pd.DataFrame | None,
     mapping: dict,
 ) -> None:
-    """
-    Blindagem extra:
-    voltar para origem não pode ser interpretado como troca de origem
-    nem pode derrubar os dfs já montados.
-    """
     try:
         if _safe_df_com_linhas(df_fonte):
             if _safe_df_com_linhas(st.session_state.get("df_calc_precificado")):
@@ -330,6 +330,26 @@ def _preservar_estado_antes_de_voltar(
         st.session_state["_nao_limpar_ao_voltar_origem"] = True
     except Exception:
         pass
+
+
+def _opcoes_disponiveis(mapping: dict, col_modelo: str, colunas_fonte: list[str]) -> list[str]:
+    valor_atual = str(mapping.get(col_modelo, "") or "").strip()
+
+    usados_por_outros = {
+        str(valor or "").strip()
+        for chave, valor in mapping.items()
+        if chave != col_modelo and str(valor or "").strip()
+    }
+
+    opcoes = [""]
+    for col in colunas_fonte:
+        if col == valor_atual or col not in usados_por_outros:
+            opcoes.append(col)
+
+    if valor_atual and valor_atual not in opcoes:
+        opcoes.append(valor_atual)
+
+    return opcoes
 
 
 # =========================================================
@@ -396,6 +416,14 @@ def render_origem_mapeamento():
 
     st.subheader("Mapeamento de colunas")
 
+    col_preco_auto = str(
+        st.session_state.get("coluna_preco_unitario_origem")
+        or st.session_state.get("coluna_preco_unitario_destino")
+        or ""
+    ).strip()
+    if col_preco_auto and col_preco_auto in df_fonte.columns:
+        st.info(f"Coluna precificada automaticamente detectada: **{col_preco_auto}**")
+
     st.text_input(
         "Nome do Depósito (Bling)",
         value=str(st.session_state.get("deposito_nome", "") or ""),
@@ -408,6 +436,8 @@ def render_origem_mapeamento():
 
     mapping = dict(st.session_state["mapping_origem"])
     mapping = _aplicar_mapeamento_automatico_preco(mapping, df_modelo, df_fonte)
+
+    colunas_fonte = list(df_fonte.columns)
 
     for col_modelo in df_modelo.columns:
         if _is_coluna_id(col_modelo):
@@ -422,8 +452,8 @@ def render_origem_mapeamento():
         if _is_coluna_deposito(col_modelo):
             continue
 
-        opcoes = [""] + list(df_fonte.columns)
-        valor_atual = mapping.get(col_modelo, "")
+        opcoes = _opcoes_disponiveis(mapping, col_modelo, colunas_fonte)
+        valor_atual = str(mapping.get(col_modelo, "") or "").strip()
 
         valor = st.selectbox(
             col_modelo,
@@ -431,6 +461,7 @@ def render_origem_mapeamento():
             index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
             key=f"map_{col_modelo}",
         )
+
         mapping[col_modelo] = valor
 
     duplicidades = _detectar_duplicidades(mapping)
@@ -440,8 +471,7 @@ def render_origem_mapeamento():
         erro = True
         st.error("❌ Existe coluna sendo usada mais de uma vez.")
 
-    if not erro:
-        st.session_state["mapping_origem"] = mapping
+    st.session_state["mapping_origem"] = mapping
 
     df_saida = _montar_df_saida(df_fonte, df_modelo, mapping)
     st.dataframe(df_saida.head(15), use_container_width=True)
