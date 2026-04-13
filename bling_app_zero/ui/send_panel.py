@@ -6,8 +6,36 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.services.bling.bling_auth import BlingAuthManager
-from bling_app_zero.services.bling.bling_sync import BlingSync
+try:
+    from bling_app_zero.core.bling_auth import BlingAuthManager
+except Exception:
+    BlingAuthManager = None
+
+try:
+    from bling_app_zero.services.bling.bling_sync import BlingSync
+except Exception:
+    try:
+        from bling_app_zero.services.bling_sync import BlingSync
+    except Exception:
+        BlingSync = None
+
+
+# ==========================================================
+# HELPERS
+# ==========================================================
+def _safe_str(valor) -> str:
+    try:
+        if valor is None:
+            return ""
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+
+    try:
+        return str(valor).strip()
+    except Exception:
+        return ""
 
 
 def _safe_df(df) -> bool:
@@ -17,73 +45,15 @@ def _safe_df(df) -> bool:
         return False
 
 
-def _safe_str(valor) -> str:
-    try:
-        return str(valor or "").strip()
-    except Exception:
-        return ""
-
-
-def _resolver_user_key() -> str:
-    try:
-        qp_user = st.query_params.get("bi")
-        if isinstance(qp_user, list):
-            qp_user = qp_user[0] if qp_user else ""
-        return _safe_str(qp_user) or "default"
-    except Exception:
-        return "default"
-
-
-def _normalizar_df_envio(df: pd.DataFrame) -> pd.DataFrame:
-    try:
-        df = df.copy()
-        for col in df.columns:
-            df[col] = df[col].replace({None: ""}).fillna("")
-            df[col] = df[col].astype(str).str.replace("⚠️", "", regex=False).str.strip()
-        return df
-    except Exception:
-        return df
-
-
-def _obter_df_envio():
-    df_final = st.session_state.get("df_final")
-    df_saida = st.session_state.get("df_saida")
-
-    if _safe_df(df_final):
-        return _normalizar_df_envio(df_final)
-
-    if _safe_df(df_saida):
-        try:
-            st.session_state["df_final"] = df_saida.copy()
-        except Exception:
-            st.session_state["df_final"] = df_saida
-        return _normalizar_df_envio(df_saida)
-
-    return None
-
-
-def _hash_df(df: pd.DataFrame, tipo_api: str = "", deposito_id: str = "") -> str:
-    try:
-        if not _safe_df(df):
-            return ""
-
-        base_hash = hashlib.md5(
-            pd.util.hash_pandas_object(df.fillna(""), index=True).values.tobytes()
-        ).hexdigest()
-
-        contexto = f"{_safe_str(tipo_api)}|{_safe_str(deposito_id)}"
-        return hashlib.md5(f"{base_hash}|{contexto}".encode("utf-8")).hexdigest()
-    except Exception:
-        return ""
-
-
 def _garantir_estado():
     defaults = {
+        "bling_resultado": None,
         "bling_enviando": False,
         "bling_hash_enviado": "",
-        "bling_resultado": None,
         "bling_deposito_id": "",
-        "bling_modo_envio": "catalogo_completo",
+        "bling_primeiro_acesso_decidido": False,
+        "bling_primeiro_acesso_escolha": "",
+        "bling_modo_envio": "cadastro",
     }
 
     for chave, valor in defaults.items():
@@ -91,66 +61,114 @@ def _garantir_estado():
             st.session_state[chave] = valor
 
 
-# =========================================================
-# CALLBACK AUTOMÁTICO DO BLING
-# =========================================================
-def _processar_callback(auth: BlingAuthManager):
+def _resolver_user_key() -> str:
+    for chave in ["bling_user_key", "user_key", "bi"]:
+        valor = _safe_str(st.session_state.get(chave))
+        if valor:
+            return valor
+
     try:
-        query = st.query_params
-        code = query.get("code")
-        if isinstance(code, list):
-            code = code[0]
+        qp = st.query_params
+        for chave in ["bi", "user_key"]:
+            valor = _safe_str(qp.get(chave))
+            if valor:
+                return valor
+    except Exception:
+        pass
 
-        error = query.get("error")
-        if isinstance(error, list):
-            error = error[0]
+    return "default"
 
-        if error:
-            st.error(f"Erro de autorização do Bling: {error}")
+
+def _obter_df_envio():
+    for chave in ["df_final", "df_saida", "df_precificado", "df_calc_precificado", "df_origem"]:
+        df = st.session_state.get(chave)
+        if _safe_df(df):
             try:
-                st.query_params.clear()
+                return df.copy()
             except Exception:
-                pass
-            return
-
-        if code:
-            with st.spinner("Conectando com Bling..."):
-                ok = auth.handle_callback(code)
-
-            if ok:
-                st.success("✅ Conectado com sucesso ao Bling!")
-                try:
-                    st.query_params.clear()
-                except Exception:
-                    pass
-                st.rerun()
-            else:
-                st.error("❌ Falha ao conectar com Bling")
-    except Exception as e:
-        st.error(f"Erro no callback: {e}")
+                return df
+    return None
 
 
-def _render_conexao(auth: BlingAuthManager) -> bool:
-    _processar_callback(auth)
-
+def _hash_df(df: pd.DataFrame, tipo_api: str, deposito_id: str = "") -> str:
     try:
-        if not auth.is_configured():
-            st.warning("⚠️ Bling não configurado. Verifique as credenciais.")
-            return False
-    except Exception as e:
-        st.error(f"Erro ao validar configuração do Bling: {e}")
-        return False
+        base = df.to_csv(index=False, sep=";", lineterminator="\n")
+        assinatura = f"{tipo_api}|{deposito_id}|{base}"
+        return hashlib.sha256(assinatura.encode("utf-8")).hexdigest()
+    except Exception:
+        return ""
 
-    try:
-        status = auth.get_connection_status()
-        conectado = bool(status.get("connected"))
-    except Exception as e:
-        st.error(f"Erro ao verificar conexão com Bling: {e}")
-        return False
+
+# ==========================================================
+# ETAPA 0 - PRIMEIRO ACESSO
+# ==========================================================
+def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
+    """
+    Mantido explicitamente para compatibilidade com app.py.
+    """
+    _garantir_estado()
+
+    st.subheader("Conexão com Bling")
+    st.caption("Conecte agora ou avance e conecte depois na etapa de envio.")
+
+    escolha = st.radio(
+        "Como deseja seguir?",
+        ["Conectar depois", "Conectar agora"],
+        horizontal=True,
+        key="bling_primeiro_acesso_escolha",
+    )
+
+    st.session_state["bling_primeiro_acesso_decidido"] = True
 
     col1, col2 = st.columns(2)
 
     with col1:
+        if st.button("Continuar", use_container_width=True, type="primary"):
+            if escolha == "Conectar depois":
+                if callable(on_skip):
+                    on_skip()
+                else:
+                    st.session_state["etapa_origem"] = "origem"
+                    st.session_state["etapa"] = "origem"
+                    st.session_state["etapa_fluxo"] = "origem"
+                    st.rerun()
+            else:
+                if callable(on_continue):
+                    on_continue()
+                else:
+                    st.session_state["etapa_origem"] = "origem"
+                    st.session_state["etapa"] = "origem"
+                    st.session_state["etapa_fluxo"] = "origem"
+                    st.rerun()
+
+    with col2:
+        st.info("Você poderá autenticar o Bling novamente na tela final de envio.")
+
+
+# ==========================================================
+# CONEXÃO
+# ==========================================================
+def _render_conexao(auth) -> bool:
+    conectado = False
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        try:
+            if auth and auth.is_configured():
+                if hasattr(auth, "has_valid_token"):
+                    conectado = bool(auth.has_valid_token())
+                elif hasattr(auth, "get_connection_status"):
+                    status = auth.get_connection_status()
+                    conectado = bool(status.get("connected"))
+                else:
+                    conectado = False
+            else:
+                conectado = False
+        except Exception:
+            conectado = False
+
         if conectado:
             st.success("✅ Conectado ao Bling")
         else:
@@ -158,15 +176,19 @@ def _render_conexao(auth: BlingAuthManager) -> bool:
 
     with col2:
         try:
-            url = auth.build_authorize_url()
-            if url:
-                st.link_button("Conectar com Bling", url, use_container_width=True)
+            if auth and auth.is_configured():
+                url = auth.build_authorize_url()
+                if url:
+                    st.link_button("Conectar com Bling", url, use_container_width=True)
         except Exception as e:
             st.error(f"Erro ao gerar URL: {e}")
 
     return conectado
 
 
+# ==========================================================
+# RESULTADO
+# ==========================================================
 def _render_resultado():
     resultado = st.session_state.get("bling_resultado")
     if not isinstance(resultado, dict):
@@ -204,6 +226,9 @@ def _render_resultado():
         st.rerun()
 
 
+# ==========================================================
+# PAINEL DE ENVIO
+# ==========================================================
 def render_send_panel():
     st.subheader("Enviar para Bling")
 
@@ -212,6 +237,14 @@ def render_send_panel():
     df = _obter_df_envio()
     if not _safe_df(df):
         st.warning("⚠️ Nenhum dado disponível para envio.")
+        return
+
+    if BlingAuthManager is None:
+        st.error("Classe BlingAuthManager não encontrada no projeto.")
+        return
+
+    if BlingSync is None:
+        st.error("Classe BlingSync não encontrada no projeto.")
         return
 
     user_key = _resolver_user_key()
@@ -233,21 +266,18 @@ def render_send_panel():
         st.warning("Conecte ao Bling antes de enviar.")
         return
 
-    st.markdown("---")
-
-    opcoes = {
+    modos = {
         "Cadastro de Produtos": "cadastro",
         "Atualização de Estoque": "estoque",
-        "Cadastro automático + atualização de estoque": "catalogo_completo",
+        "Cadastro + Estoque": "catalogo_completo",
     }
 
-    tipo_label = st.radio(
-        "Modo de sincronização",
-        list(opcoes.keys()),
-        horizontal=False,
-        key="bling_tipo_envio_radio",
+    tipo = st.radio(
+        "Tipo de envio:",
+        list(modos.keys()),
+        horizontal=True,
     )
-    tipo_api = opcoes[tipo_label]
+    tipo_api = modos[tipo]
     st.session_state["bling_modo_envio"] = tipo_api
 
     deposito_id = ""
@@ -259,25 +289,16 @@ def render_send_panel():
         )
         st.session_state["bling_deposito_id"] = deposito_id
 
-    st.info(
-        f"{len(df)} registros prontos para envio.\n\n"
-        f"Modo atual: {tipo_label}"
-    )
-
-    if tipo_api == "catalogo_completo":
-        st.success(
-            "Neste modo, o sistema tenta cadastrar/atualizar o produto e, em seguida, atualizar o estoque."
-        )
-
     st.markdown("---")
+    st.info(f"{len(df)} registros prontos para envio")
 
     with st.expander("Ver dados que serão enviados", expanded=False):
-        st.dataframe(df.head(50), use_container_width=True)
+        st.dataframe(df.head(20), use_container_width=True)
 
     df_hash = _hash_df(df, tipo_api=tipo_api, deposito_id=deposito_id)
 
     botao = st.button(
-        "Enviar para Bling agora",
+        "Enviar para Bling",
         use_container_width=True,
         disabled=bool(st.session_state.get("bling_enviando")),
         type="primary",
@@ -338,9 +359,3 @@ def render_send_panel():
         st.rerun()
 
     _render_resultado()
-
-    st.markdown("---")
-    st.caption(
-        "Observação: este painel já fica pronto para envio instantâneo. "
-        "A atualização automática por intervalo exige uma camada extra de agendamento/worker."
-    )
