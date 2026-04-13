@@ -22,8 +22,7 @@ from bling_app_zero.core.site_crawler_helpers import (
 # ==========================================================
 # VERSION
 # ==========================================================
-SITE_CRAWLER_VERSION = "V2_MODULAR_IMG_FIX"
-
+SITE_CRAWLER_VERSION = "V3_AUTH_SYNC_READY"
 
 # ==========================================================
 # LOG
@@ -42,12 +41,26 @@ def _safe_list(v: Any) -> list[Any]:
     return v if isinstance(v, list) else []
 
 
+def _safe_dict(v: Any) -> dict[str, Any]:
+    return v if isinstance(v, dict) else {}
+
+
 def _safe_int(valor: Any, padrao: int) -> int:
     try:
         n = int(valor)
         return n if n >= 0 else padrao
     except Exception:
         return padrao
+
+
+def _safe_bool(valor: Any) -> bool:
+    if isinstance(valor, bool):
+        return valor
+    try:
+        texto = str(valor or "").strip().lower()
+    except Exception:
+        return False
+    return texto in {"1", "true", "sim", "yes", "y", "on"}
 
 
 def _safe_str(valor: Any) -> str:
@@ -57,11 +70,30 @@ def _safe_str(valor: Any) -> str:
         return ""
 
 
+def _normalizar_url(url: str) -> str:
+    url = _safe_str(url)
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        return "https://" + url
+    return url
+
+
+def _dominio(url: str) -> str:
+    try:
+        return urlparse(_normalizar_url(url)).netloc.lower().replace("www.", "")
+    except Exception:
+        return ""
+
+
+def _mesmo_dominio(url_a: str, url_b: str) -> bool:
+    return bool(_dominio(url_a)) and _dominio(url_a) == _dominio(url_b)
+
+
 def _normalizar_estoque_df(valor: Any) -> int:
     try:
         if valor is None:
             return 0
-
         if isinstance(valor, bool):
             return 0
 
@@ -69,10 +101,24 @@ def _normalizar_estoque_df(valor: Any) -> int:
         if not texto:
             return 0
 
-        numero = int(float(texto.replace(",", ".")))
-        if numero < 0:
+        texto_lower = texto.lower()
+        if any(
+            token in texto_lower
+            for token in [
+                "sem estoque",
+                "esgotado",
+                "indisponível",
+                "indisponivel",
+                "zerado",
+                "sold out",
+                "out of stock",
+            ]
+        ):
             return 0
 
+        numero = int(float(texto.replace(".", "").replace(",", ".")))
+        if numero < 0:
+            return 0
         return numero
     except Exception:
         return 0
@@ -158,666 +204,679 @@ def _normalizar_url_imagem(url: str, base_url: str = "") -> str:
         return ""
 
 
-def _quebrar_urls_imagem(valor: Any) -> list[str]:
-    try:
+def _lista_imagens_para_pipe(valor: Any, base_url: str = "") -> str:
+    itens: list[str] = []
+
+    if isinstance(valor, list):
+        origem = valor
+    else:
         texto = _safe_str(valor)
         if not texto:
-            return []
+            origem = []
+        else:
+            origem = [p.strip() for p in texto.replace(";", ",").split(",") if p.strip()]
 
-        partes: list[str] = []
-        bruto = texto.replace("\n", " | ").replace(";", " | ")
-
-        for item in bruto.split("|"):
-            pedaco = _safe_str(item)
-            if pedaco:
-                partes.append(pedaco)
-
-        if not partes and texto.startswith(("http://", "https://")):
-            partes.append(texto)
-
-        return partes
-    except Exception:
-        return []
-
-
-def _sanear_lista_imagens(valor: Any, base_url: str = "") -> str:
-    urls: list[str] = []
     vistos: set[str] = set()
 
-    for item in _quebrar_urls_imagem(valor):
-        normalizada = _normalizar_url_imagem(item, base_url=base_url)
-        if not normalizada:
+    for item in origem:
+        img = _normalizar_url_imagem(item, base_url=base_url)
+        if not img:
             continue
-        if normalizada in vistos:
+        if img in vistos:
             continue
-        vistos.add(normalizada)
-        urls.append(normalizada)
+        vistos.add(img)
+        itens.append(img)
 
-    return " | ".join(urls)
-
-
-def _obter_primeiro_valor_produto(produto: dict[str, Any], chaves: list[str]) -> str:
-    for chave in chaves:
-        valor = _safe_str(produto.get(chave))
-        if valor:
-            return valor
-    return ""
-
-
-def _sanear_produto(produto: dict[str, Any], link_base: str) -> dict[str, Any]:
-    try:
-        produto = dict(produto or {})
-
-        imagem_origem = _obter_primeiro_valor_produto(
-            produto,
-            [
-                "URL Imagens Externas",
-                "Imagens",
-                "imagens",
-                "Imagem",
-                "imagem",
-            ],
-        )
-
-        imagens_limpas = _sanear_lista_imagens(imagem_origem, base_url=link_base)
-
-        if "URL Imagens Externas" in produto or imagens_limpas:
-            produto["URL Imagens Externas"] = imagens_limpas
-
-        if "Imagens" in produto and not _safe_str(produto.get("Imagens")):
-            produto["Imagens"] = imagens_limpas
-
-        if not _safe_str(produto.get("Link Externo")):
-            produto["Link Externo"] = link_base
-
-        produto["Estoque"] = _normalizar_estoque_df(produto.get("Estoque", 0))
-
-        return produto
-    except Exception as e:
-        log_debug(f"[CRAWLER] erro sanear produto: {link_base} | {e}", "WARNING")
-        return produto
-
-
-def _sanear_dataframe_final(df: pd.DataFrame) -> pd.DataFrame:
-    try:
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return df
-
-        df_saida = df.copy()
-
-        coluna_link = "Link Externo" if "Link Externo" in df_saida.columns else ""
-
-        colunas_imagem_candidatas = [
-            "URL Imagens Externas",
-            "Imagens",
-            "imagens",
-            "Imagem",
-            "imagem",
-        ]
-        colunas_imagem = [c for c in colunas_imagem_candidatas if c in df_saida.columns]
-
-        if colunas_imagem:
-            base_links = df_saida[coluna_link] if coluna_link else pd.Series([""] * len(df_saida))
-
-            imagem_final: list[str] = []
-            for idx in range(len(df_saida)):
-                acumulado = ""
-                for coluna in colunas_imagem:
-                    valor = _safe_str(df_saida.iloc[idx][coluna])
-                    if valor:
-                        acumulado = valor
-                        if coluna == "URL Imagens Externas":
-                            break
-
-                imagem_limpa = _sanear_lista_imagens(acumulado, base_url=_safe_str(base_links.iloc[idx]))
-                imagem_final.append(imagem_limpa)
-
-            df_saida["URL Imagens Externas"] = imagem_final
-
-            if "Imagens" in df_saida.columns:
-                df_saida["Imagens"] = [
-                    _safe_str(df_saida.iloc[i]["Imagens"]) or imagem_final[i]
-                    for i in range(len(df_saida))
-                ]
-
-        if coluna_link:
-            try:
-                df_saida[coluna_link] = df_saida[coluna_link].astype(str).str.strip()
-                df_saida = df_saida.drop_duplicates(subset=[coluna_link])
-            except Exception:
-                pass
-
-        if "Estoque" in df_saida.columns:
-            try:
-                df_saida["Estoque"] = df_saida["Estoque"].apply(_normalizar_estoque_df)
-            except Exception:
-                df_saida["Estoque"] = 0
-
-        return df_saida.reset_index(drop=True)
-    except Exception as e:
-        log_debug(f"[CRAWLER] erro sanitizar dataframe final: {e}", "WARNING")
-        return df.reset_index(drop=True)
+    return "|".join(itens)
 
 
 # ==========================================================
-# URL HELPERS
+# AUTH / CONTEXTO
 # ==========================================================
-def _mesmo_dominio(url_base: str, url: str) -> bool:
-    try:
-        d1 = urlparse(_safe_str(url_base)).netloc.replace("www.", "").lower()
-        d2 = urlparse(_safe_str(url)).netloc.replace("www.", "").lower()
+def _resolver_auth_config(
+    *,
+    usuario: str = "",
+    senha: str = "",
+    precisa_login: bool = False,
+    auth_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    auth_config = _safe_dict(auth_config)
 
-        if not d1 or not d2:
-            return False
+    usuario_final = _safe_str(
+        auth_config.get("usuario")
+        or auth_config.get("username")
+        or auth_config.get("email")
+        or usuario
+    )
+    senha_final = _safe_str(
+        auth_config.get("senha")
+        or auth_config.get("password")
+        or senha
+    )
+    precisa_login_final = _safe_bool(
+        auth_config["precisa_login"] if "precisa_login" in auth_config else precisa_login
+    )
 
-        return d1 == d2 or d2.endswith("." + d1) or d1.endswith("." + d2)
-    except Exception:
-        return False
-
-
-def _normalizar_link(base_url: str, href: Any) -> str:
-    try:
-        href = _safe_str(href)
-        if not href:
-            return ""
-
-        href_low = href.lower()
-
-        if href_low.startswith(("javascript:", "mailto:", "tel:", "data:")):
-            return ""
-
-        url = urljoin(base_url, href).strip()
-
-        if not url.startswith(("http://", "https://")):
-            return ""
-
-        return url
-    except Exception:
-        return ""
+    saida = dict(auth_config)
+    saida["usuario"] = usuario_final
+    saida["senha"] = senha_final
+    saida["precisa_login"] = precisa_login_final
+    return saida
 
 
-def _eh_link_ruim(url: str) -> bool:
-    try:
-        u = _safe_str(url).lower()
-        if not u:
-            return True
+# ==========================================================
+# EXTRAÇÃO SEGURA
+# ==========================================================
+def _extrair_produto_seguro(
+    html: str,
+    url_produto: str,
+    *,
+    url_base: str = "",
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Tenta chamar o extrator existente com múltiplas assinaturas,
+    preservando compatibilidade com a base.
+    """
+    payload = _safe_dict(payload)
 
-        bloqueados = [
-            "#",
-            "/cart",
-            "/carrinho",
-            "/checkout",
-            "/login",
-            "/entrar",
-            "/conta",
-            "/account",
-            "/register",
-            "/cadastro",
-            "/favoritos",
-            "/wishlist",
-            "/politica",
-            "/privacy",
-            "/termos",
-            "/terms",
-            "/atendimento",
-            "/contato",
-            "/contact",
-            "/blog",
-            "/noticia",
-            "/news",
-            "/pagina/",
-            "?page=",
-            "&page=",
-            "?pagina=",
-            "&pagina=",
-            "/categoria/",
-            "/category/",
-            "/collections/",
-            "/search",
-            "/busca",
-            "whatsapp",
-            "instagram",
-            "facebook",
-            "youtube",
-        ]
+    tentativas = [
+        lambda: extrair_produto_crawler(html, url_produto, url_base, payload),
+        lambda: extrair_produto_crawler(html, url_produto, url_base),
+        lambda: extrair_produto_crawler(html, url_produto),
+        lambda: extrair_produto_crawler(html=html, url=url_produto, url_base=url_base, payload=payload),
+        lambda: extrair_produto_crawler(html=html, url=url_produto, url_base=url_base),
+        lambda: extrair_produto_crawler(html=html, url=url_produto),
+    ]
 
-        return any(item in u for item in bloqueados)
-    except Exception:
-        return True
-
-
-def _parece_link_produto_flexivel(url: str) -> bool:
-    try:
-        if not url or _eh_link_ruim(url):
-            return False
-
-        low = url.lower()
-
+    for fn in tentativas:
         try:
-            if link_parece_produto_crawler(url):
-                return True
-        except Exception:
-            pass
-
-        sinais_fortes = [
-            "/produto",
-            "/product",
-            "/prod/",
-            "/item/",
-            "/p/",
-            "/sku/",
-            "-p",
-            "produto-",
-            "product-",
-            "/loja/",
-        ]
-        if any(s in low for s in sinais_fortes):
-            return True
-
-        path = urlparse(low).path or ""
-        partes = [p for p in path.split("/") if p.strip()]
-
-        if len(partes) >= 2 and len(path) >= 12:
-            return True
-
-        return False
-    except Exception:
-        return False
-
-
-# ==========================================================
-# FETCH INTELIGENTE
-# ==========================================================
-def _fetch(url: str) -> dict[str, Any]:
-    try:
-        payload = fetch_payload_router(url=url, preferir_js=True) or {}
-        html = _safe_str(payload.get("html"))
-
-        if not html:
-            log_debug(f"[CRAWLER] HTML vazio: {url}", "WARNING")
-            return payload
-
-        if len(html) < 2000:
-            log_debug(
-                f"[CRAWLER] HTML suspeito (pequeno={len(html)}): {url}",
-                "WARNING",
-            )
-
-        engine = _safe_str(payload.get("engine")) or "desconhecido"
-        log_debug(
-            f"[CRAWLER] FETCH OK | engine={engine} | url={url}",
-            "INFO",
-        )
-        return payload
-
-    except Exception as e:
-        log_debug(f"[CRAWLER] Erro fetch: {url} | {e}", "ERROR")
-        return {}
-
-
-# ==========================================================
-# BAIXAR PRODUTO
-# ==========================================================
-def _baixar(link: str, padrao_disponivel: int) -> dict[str, Any] | None:
-    payload = _fetch(link)
-    html = _safe_str(payload.get("html"))
-
-    if not html:
-        log_debug(f"[CRAWLER] Produto sem HTML: {link}", "WARNING")
-        return None
-
-    try:
-        produto = extrair_produto_crawler(
-            html=html,
-            url=link,
-            padrao_disponivel=padrao_disponivel,
-            network_records=_safe_list(payload.get("network_records")),
-            payload_origem=payload,
-        )
-    except Exception as e:
-        log_debug(f"[CRAWLER] erro extrair produto: {link} | {e}", "ERROR")
-        return None
-
-    if not isinstance(produto, dict):
-        log_debug(f"[CRAWLER] retorno inválido do extractor: {link}", "WARNING")
-        return None
-
-    nome = _safe_str(produto.get("Nome"))
-    if not nome:
-        log_debug(f"[CRAWLER] produto sem Nome: {link}", "WARNING")
-        return None
-
-    produto = _sanear_produto(produto, link_base=link)
-
-    return produto
-
-
-# ==========================================================
-# PAGINAÇÃO
-# ==========================================================
-def _coletar_paginas_listagem(url_inicial: str, max_paginas: int) -> list[tuple[str, str]]:
-    visitadas: set[str] = set()
-    fila: list[str] = [url_inicial]
-    paginas: list[tuple[str, str]] = []
-
-    while fila and len(paginas) < max_paginas:
-        url = fila.pop(0)
-
-        if not url or url in visitadas:
+            resultado = fn()
+            if isinstance(resultado, dict):
+                return resultado
+        except TypeError:
             continue
-
-        visitadas.add(url)
-
-        payload = _fetch(url)
-        html = _safe_str(payload.get("html"))
-
-        if not html:
-            continue
-
-        paginas.append((url, html))
-
-        try:
-            novos = extrair_links_paginacao_crawler(html, url) or []
-            for n in novos:
-                n_norm = _normalizar_link(url, n)
-                if not n_norm:
-                    continue
-                if not _mesmo_dominio(url_inicial, n_norm):
-                    continue
-                if n_norm not in visitadas and n_norm not in fila:
-                    fila.append(n_norm)
         except Exception as e:
-            log_debug(f"[CRAWLER] erro paginação: {url} | {e}", "WARNING")
+            log_debug(f"[SITE_CRAWLER] extrator falhou em uma tentativa: {e}", "WARNING")
+            break
 
-    return paginas
+    return {}
+
+
+def _normalizar_registro_produto(
+    registro: dict[str, Any],
+    *,
+    url_produto: str,
+    url_base: str,
+    estoque_padrao_disponivel: int = 1,
+) -> dict[str, Any]:
+    registro = _safe_dict(registro)
+
+    codigo = _safe_str(
+        registro.get("codigo")
+        or registro.get("Código")
+        or registro.get("sku")
+        or registro.get("SKU")
+        or registro.get("referencia")
+        or registro.get("Referência")
+    )
+
+    nome = _safe_str(
+        registro.get("nome")
+        or registro.get("Nome")
+        or registro.get("titulo")
+        or registro.get("Título")
+        or registro.get("descricao")
+        or registro.get("Descrição")
+        or registro.get("produto")
+    )
+
+    descricao = _safe_str(
+        registro.get("descricao")
+        or registro.get("Descrição")
+        or registro.get("descricao_curta")
+        or registro.get("Descrição Curta")
+        or nome
+    )
+
+    preco = (
+        registro.get("preco")
+        or registro.get("Preço")
+        or registro.get("preco_venda")
+        or registro.get("Preço de venda")
+        or registro.get("valor")
+        or ""
+    )
+
+    estoque_raw = (
+        registro.get("estoque")
+        or registro.get("Estoque")
+        or registro.get("quantidade")
+        or registro.get("Quantidade")
+        or registro.get("saldo")
+        or ""
+    )
+
+    estoque = _normalizar_estoque_df(estoque_raw)
+
+    # fallback: se extrator não trouxe estoque e não há sinal de indisponível, usa o padrão
+    if estoque == 0:
+        texto_geral = " ".join(
+            [
+                _safe_str(registro.get("disponibilidade")),
+                _safe_str(registro.get("status_estoque")),
+                _safe_str(registro.get("observacao_estoque")),
+            ]
+        ).lower()
+        if texto_geral and not any(
+            token in texto_geral
+            for token in ["sem estoque", "esgotado", "indisponível", "indisponivel", "zerado"]
+        ):
+            estoque = max(0, _safe_int(estoque_padrao_disponivel, 1))
+
+    imagens_pipe = _lista_imagens_para_pipe(
+        registro.get("imagens")
+        or registro.get("Imagens")
+        or registro.get("imagem")
+        or registro.get("Imagem")
+        or registro.get("url_imagem")
+        or registro.get("URL Imagem"),
+        base_url=url_produto or url_base,
+    )
+
+    categoria = _safe_str(
+        registro.get("categoria")
+        or registro.get("Categoria")
+        or registro.get("breadcrumb")
+        or registro.get("Breadcrumb")
+    )
+
+    marca = _safe_str(registro.get("marca") or registro.get("Marca"))
+    gtin = _safe_str(
+        registro.get("gtin")
+        or registro.get("GTIN")
+        or registro.get("ean")
+        or registro.get("EAN")
+    )
+    ncm = _safe_str(registro.get("ncm") or registro.get("NCM"))
+
+    saida = dict(registro)
+    saida["codigo"] = codigo
+    saida["nome"] = nome or descricao
+    saida["descricao"] = descricao or nome
+    saida["preco"] = preco
+    saida["estoque"] = estoque
+    saida["categoria"] = categoria
+    saida["marca"] = marca
+    saida["gtin"] = gtin
+    saida["ncm"] = ncm
+    saida["imagens"] = imagens_pipe
+    saida["url"] = _safe_str(registro.get("url") or url_produto)
+    saida["origem"] = "site"
+    saida["situacao"] = _safe_str(registro.get("situacao") or registro.get("Situação") or "ativo")
+    return saida
 
 
 # ==========================================================
-# EXTRAÇÃO FORTE DE LINKS
+# LINKS
 # ==========================================================
-def _extrair_links_agressivo(html: str, base_url: str) -> list[str]:
-    links: list[str] = []
+def _coletar_links_categoria(
+    html: str,
+    url_atual: str,
+) -> tuple[list[str], list[str]]:
+    produtos: list[str] = []
+    paginas: list[str] = []
 
     try:
-        links = extrair_links_produtos_crawler(html, base_url) or []
+        produtos = _safe_list(extrair_links_produtos_crawler(html, url_atual))
     except Exception as e:
-        log_debug(f"[CRAWLER] erro extrair_links_produtos_crawler: {e}", "WARNING")
-        links = []
+        log_debug(f"[SITE_CRAWLER] falha ao extrair links de produto: {e}", "WARNING")
 
-    normalizados: list[str] = []
+    try:
+        paginas = _safe_list(extrair_links_paginacao_crawler(html, url_atual))
+    except Exception as e:
+        log_debug(f"[SITE_CRAWLER] falha ao extrair links de paginação: {e}", "WARNING")
+
+    return produtos, paginas
+
+
+def _filtrar_links_mesmo_dominio(links: list[str], url_base: str) -> list[str]:
+    saida: list[str] = []
     vistos: set[str] = set()
-
-    for item in links:
-        url = _normalizar_link(base_url, item)
-        if not url or url in vistos:
-            continue
-        if not _mesmo_dominio(base_url, url):
-            continue
-        vistos.add(url)
-        normalizados.append(url)
-
-    links = normalizados
-
-    if len(links) < 3:
-        soup = BeautifulSoup(html, "html.parser")
-        candidatos: list[str] = []
-
-        for a in soup.find_all("a"):
-            href = a.get("href")
-            url = _normalizar_link(base_url, href)
-
-            if not url:
-                continue
-
-            if not _mesmo_dominio(base_url, url):
-                continue
-
-            texto_link = " ".join(a.get_text(" ", strip=True).split()).lower()
-            low = url.lower()
-
-            score = 0
-
-            if any(x in low for x in ["/produto", "/product", "/prod/", "/item/", "/p/", "/sku/"]):
-                score += 3
-
-            if any(x in texto_link for x in ["comprar", "ver produto", "detalhes", "saiba mais"]):
-                score += 2
-
-            path = urlparse(low).path or ""
-            partes = [p for p in path.split("/") if p.strip()]
-            if len(partes) >= 2:
-                score += 1
-
-            if _parece_link_produto_flexivel(url):
-                score += 2
-
-            if score >= 2:
-                candidatos.append(url)
-
-        for item in candidatos:
-            if item not in vistos:
-                vistos.add(item)
-                links.append(item)
-
-    links_filtrados: list[str] = []
-    vistos_finais: set[str] = set()
 
     for link in links:
-        if not link:
+        url = _normalizar_url(link)
+        if not url:
             continue
-        if link in vistos_finais:
+        if not _mesmo_dominio(url, url_base):
             continue
-        if not _mesmo_dominio(base_url, link):
+        if url in vistos:
             continue
-        if not _parece_link_produto_flexivel(link):
-            continue
+        vistos.add(url)
+        saida.append(url)
 
-        vistos_finais.add(link)
-        links_filtrados.append(link)
-
-    log_debug(f"[LINKS DETECTADOS] {len(links_filtrados)}", "INFO")
-    return links_filtrados
+    return saida
 
 
 # ==========================================================
-# EXECUÇÃO ESTÁVEL
+# FETCH WRAPPER
 # ==========================================================
-def _executar_extracao_sequencial(
-    links: list[str],
-    padrao_disponivel: int,
-    progress_bar,
-    status,
-    detalhe,
-) -> list[dict[str, Any]]:
-    resultados: list[dict[str, Any]] = []
-    total = len(links)
+def _fetch_url_crawler(
+    url: str,
+    *,
+    preferir_js: bool,
+    auth_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    auth_config = _safe_dict(auth_config)
 
-    for i, link in enumerate(links, start=1):
-        try:
-            resultado = _baixar(link, padrao_disponivel)
-            if resultado:
-                resultados.append(resultado)
-        except Exception as e:
-            log_debug(f"[CRAWLER] erro produto sequencial: {link} | {e}", "ERROR")
-
-        progresso_extra = int((i / max(total, 1)) * 50)
-        progress_bar.progress(min(100, 50 + progresso_extra))
-        detalhe.info(f"⚙️ Produto {i}/{total}")
-        status.info(f"📦 Extraindo {i}/{total}")
-
-    return resultados
-
-
-def _executar_extracao_threads(
-    links: list[str],
-    padrao_disponivel: int,
-    max_threads: int,
-    progress_bar,
-    status,
-    detalhe,
-) -> list[dict[str, Any]]:
-    resultados: list[dict[str, Any]] = []
-    total = len(links)
-
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futuros = {
-            executor.submit(_baixar, link, padrao_disponivel): link
-            for link in links
+    try:
+        payload = fetch_payload_router(
+            url=url,
+            preferir_js=preferir_js,
+            usuario=_safe_str(auth_config.get("usuario")),
+            senha=_safe_str(auth_config.get("senha")),
+            precisa_login=_safe_bool(auth_config.get("precisa_login")),
+            auth_config=auth_config,
+        )
+        return _safe_dict(payload)
+    except Exception as e:
+        log_debug(f"[SITE_CRAWLER] fetch falhou | url={url} | erro={e}", "ERROR")
+        return {
+            "ok": False,
+            "url": url,
+            "html": "",
+            "error": str(e),
+            "engine": "none",
         }
 
-        for i, futuro in enumerate(as_completed(futuros), start=1):
-            link = futuros.get(futuro, "")
 
-            try:
-                resultado = futuro.result()
-                if resultado:
-                    resultados.append(resultado)
-            except Exception as e:
-                log_debug(f"[CRAWLER] erro future produto: {link} | {e}", "ERROR")
+# ==========================================================
+# PRODUTO INDIVIDUAL
+# ==========================================================
+def _processar_produto(
+    url_produto: str,
+    *,
+    url_base: str,
+    preferir_js: bool,
+    auth_config: dict[str, Any] | None = None,
+    estoque_padrao_disponivel: int = 1,
+) -> dict[str, Any]:
+    payload = _fetch_url_crawler(
+        url_produto,
+        preferir_js=preferir_js,
+        auth_config=auth_config,
+    )
 
-            progresso_extra = int((i / max(total, 1)) * 50)
-            progress_bar.progress(min(100, 50 + progresso_extra))
-            detalhe.info(f"⚙️ Produto {i}/{total}")
-            status.info(f"📦 Extraindo {i}/{total}")
+    html = _safe_str(payload.get("html"))
+    if not payload.get("ok") or not html:
+        return {
+            "ok": False,
+            "url": url_produto,
+            "erro": _safe_str(payload.get("error")) or "falha_fetch_produto",
+            "engine": _safe_str(payload.get("engine")),
+        }
 
-    return resultados
+    try:
+        extraido = _extrair_produto_seguro(
+            html,
+            url_produto,
+            url_base=url_base,
+            payload=payload,
+        )
+        registro = _normalizar_registro_produto(
+            extraido,
+            url_produto=url_produto,
+            url_base=url_base,
+            estoque_padrao_disponivel=estoque_padrao_disponivel,
+        )
+
+        # mínimo para aproveitar o registro
+        if not _safe_str(registro.get("nome")) and not _safe_str(registro.get("codigo")):
+            return {
+                "ok": False,
+                "url": url_produto,
+                "erro": "extracao_sem_nome_e_sem_codigo",
+                "engine": _safe_str(payload.get("engine")),
+            }
+
+        return {
+            "ok": True,
+            "url": url_produto,
+            "engine": _safe_str(payload.get("engine")),
+            "registro": registro,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "url": url_produto,
+            "erro": f"erro_extracao_produto: {e}",
+            "engine": _safe_str(payload.get("engine")),
+        }
 
 
 # ==========================================================
-# MAIN
+# DATAFRAME
 # ==========================================================
-def executar_crawler(
-    url: str,
-    max_paginas: int = MAX_PAGINAS,
-    max_threads: int = MAX_THREADS,
-    padrao_disponivel: int = 0,
-) -> pd.DataFrame:
-    if not url:
+def _produtos_para_dataframe(produtos: list[dict[str, Any]]) -> pd.DataFrame:
+    if not produtos:
         return pd.DataFrame()
 
-    max_paginas = _safe_int(max_paginas, MAX_PAGINAS)
-    max_threads = _safe_int(max_threads, MAX_THREADS)
+    df = pd.DataFrame(produtos).copy()
 
-    # regra correta do projeto: nunca depender de 10 fake
-    padrao_disponivel = _safe_int(padrao_disponivel, 0)
+    ordem_preferencial = [
+        "codigo",
+        "nome",
+        "descricao",
+        "preco",
+        "estoque",
+        "categoria",
+        "marca",
+        "gtin",
+        "ncm",
+        "imagens",
+        "url",
+        "situacao",
+        "origem",
+    ]
 
-    # blindagem de estabilidade para evitar ScriptRunContext em produção
-    max_threads = 1
+    colunas_existentes = [c for c in ordem_preferencial if c in df.columns]
+    demais = [c for c in df.columns if c not in colunas_existentes]
+    df = df[colunas_existentes + demais]
 
-    progress_bar = st.progress(0)
-    status = st.empty()
-    detalhe = st.empty()
+    try:
+        if "estoque" in df.columns:
+            df["estoque"] = df["estoque"].apply(_normalizar_estoque_df)
+    except Exception:
+        pass
 
-    progresso = 0
+    try:
+        if "imagens" in df.columns:
+            df["imagens"] = df["imagens"].apply(lambda x: _lista_imagens_para_pipe(x))
+    except Exception:
+        pass
 
-    def tick(valor: int, msg: str) -> None:
-        nonlocal progresso
-        progresso = min(100, progresso + max(0, int(valor)))
-        progress_bar.progress(progresso)
-        status.info(msg)
+    return df.fillna("")
+
+
+# ==========================================================
+# CRAWLER PRINCIPAL
+# ==========================================================
+def crawl_site_produtos(
+    url: str,
+    *,
+    preferir_js: bool = False,
+    max_paginas: int | None = None,
+    max_produtos: int | None = None,
+    max_threads: int | None = None,
+    usuario: str = "",
+    senha: str = "",
+    precisa_login: bool = False,
+    auth_config: dict[str, Any] | None = None,
+    estoque_padrao_disponivel: int = 1,
+    progresso_callback=None,
+    atualizar_streamlit_state: bool = True,
+) -> dict[str, Any]:
+    url = _normalizar_url(url)
+    if not url:
+        return {
+            "ok": False,
+            "erro": "url_invalida",
+            "produtos": [],
+            "df": pd.DataFrame(),
+            "links_produto": [],
+            "paginas_visitadas": [],
+            "stats": {},
+            "version": SITE_CRAWLER_VERSION,
+        }
+
+    auth_final = _resolver_auth_config(
+        usuario=usuario,
+        senha=senha,
+        precisa_login=precisa_login,
+        auth_config=auth_config,
+    )
+
+    limite_paginas = min(max(1, _safe_int(max_paginas, MAX_PAGINAS)), max(1, MAX_PAGINAS))
+    limite_produtos = min(max(1, _safe_int(max_produtos, MAX_PRODUTOS)), max(1, MAX_PRODUTOS))
+    limite_threads = min(max(1, _safe_int(max_threads, MAX_THREADS)), max(1, MAX_THREADS))
 
     log_debug(
-        f"[CRAWLER] iniciar | version={SITE_CRAWLER_VERSION} | url={url} | max_paginas={max_paginas} | max_threads={max_threads}",
+        (
+            f"[SITE_CRAWLER] START | url={url} | preferir_js={preferir_js} | "
+            f"max_paginas={limite_paginas} | max_produtos={limite_produtos} | "
+            f"max_threads={limite_threads} | precisa_login={auth_final.get('precisa_login')}"
+        ),
         "INFO",
     )
 
-    # ======================================================
-    # ETAPA 1 - PAGINAÇÃO
-    # ======================================================
-    tick(5, "🔎 Iniciando crawler...")
+    paginas_visitadas: list[str] = []
+    links_produto: list[str] = []
+    erros: list[str] = []
+    produtos_extraidos: list[dict[str, Any]] = []
 
-    paginas = _coletar_paginas_listagem(url, max_paginas)
+    fila_paginas: list[str] = [url]
+    paginas_vistas: set[str] = set()
+    produtos_vistos: set[str] = set()
 
-    tick(10, f"📄 {len(paginas)} páginas carregadas")
+    # ------------------------------------------------------
+    # 1) SE A URL JÁ PARECE PRODUTO, PROCESSA DIRETO
+    # ------------------------------------------------------
+    if link_parece_produto_crawler(url):
+        log_debug("[SITE_CRAWLER] URL inicial já parece produto", "INFO")
+        resultado = _processar_produto(
+            url,
+            url_base=url,
+            preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
+            auth_config=auth_final,
+            estoque_padrao_disponivel=estoque_padrao_disponivel,
+        )
+        if resultado.get("ok") and isinstance(resultado.get("registro"), dict):
+            produtos_extraidos.append(resultado["registro"])
+            links_produto.append(url)
+        else:
+            erros.append(_safe_str(resultado.get("erro")) or "falha_produto_direto")
 
-    # ======================================================
-    # ETAPA 2 - COLETA DE LINKS
-    # ======================================================
-    links: list[str] = []
-    total_paginas = max(len(paginas), 1)
+        df = _produtos_para_dataframe(produtos_extraidos)
+        retorno = {
+            "ok": not df.empty,
+            "erro": "" if not df.empty else "; ".join([e for e in erros if e]),
+            "produtos": produtos_extraidos,
+            "df": df,
+            "links_produto": links_produto,
+            "paginas_visitadas": [url],
+            "erros": erros,
+            "stats": {
+                "paginas_visitadas": 1,
+                "links_produto": len(links_produto),
+                "produtos_extraidos": len(produtos_extraidos),
+                "login_required": _safe_bool(auth_final.get("precisa_login")),
+                "auth_used": bool(_safe_str(auth_final.get("usuario")) and _safe_str(auth_final.get("s
+# ------------------------------------------------------
+    # 1) SE A URL JÁ PARECE PRODUTO, PROCESSA DIRETO
+    # ------------------------------------------------------
+    if link_parece_produto_crawler(url):
+        log_debug("[SITE_CRAWLER] URL inicial já parece produto", "INFO")
 
-    for i, (pagina_url, html) in enumerate(paginas, start=1):
-        detalhe.info(f"🔗 Página {i}/{total_paginas}")
+        resultado = _processar_produto(
+            url,
+            url_base=url,
+            preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
+            auth_config=auth_final,
+            estoque_padrao_disponivel=estoque_padrao_disponivel,
+        )
 
-        try:
-            novos = _extrair_links_agressivo(html, pagina_url)
-            links.extend(novos)
-            status.info(f"🔗 {len(links)} links coletados")
-        except Exception as e:
-            log_debug(f"[CRAWLER] erro ao extrair links da página {pagina_url}: {e}", "WARNING")
+        if resultado.get("ok") and isinstance(resultado.get("registro"), dict):
+            produtos_extraidos.append(resultado["registro"])
+            links_produto.append(url)
+        else:
+            erros.append(_safe_str(resultado.get("erro")) or "falha_produto_direto")
 
-        progress_bar.progress(15 + int((i / total_paginas) * 25))
+        df = _produtos_para_dataframe(produtos_extraidos)
 
-    dedup_links: list[str] = []
-    vistos_links: set[str] = set()
+        retorno = {
+            "ok": not df.empty,
+            "erro": "" if not df.empty else "; ".join([e for e in erros if e]),
+            "produtos": produtos_extraidos,
+            "df": df,
+            "links_produto": links_produto,
+            "paginas_visitadas": [url],
+            "erros": erros,
+            "stats": {
+                "paginas_visitadas": 1,
+                "links_produto": len(links_produto),
+                "produtos_extraidos": len(produtos_extraidos),
+                "login_required": _safe_bool(auth_final.get("precisa_login")),
+                "auth_used": bool(
+                    _safe_str(auth_final.get("usuario")) and _safe_str(auth_final.get("senha"))
+                ),
+            },
+            "version": SITE_CRAWLER_VERSION,
+        }
 
-    for link in links:
-        if not link or link in vistos_links:
+        if atualizar_streamlit_state:
+            _persistir_estado_crawler(retorno)
+
+        return retorno
+
+    # ------------------------------------------------------
+    # 2) VARREDURA DE CATEGORIAS / PAGINAÇÃO
+    # ------------------------------------------------------
+    while fila_paginas and len(paginas_visitadas) < limite_paginas and len(links_produto) < limite_produtos:
+        url_pagina = _normalizar_url(fila_paginas.pop(0))
+
+        if not url_pagina:
             continue
-        vistos_links.add(link)
-        dedup_links.append(link)
+        if url_pagina in paginas_vistas:
+            continue
 
-    links = dedup_links[:MAX_PRODUTOS]
+        paginas_vistas.add(url_pagina)
+        paginas_visitadas.append(url_pagina)
 
-    # ======================================================
-    # FALLBACK DIRETO
-    # ======================================================
-    if not links:
-        status.warning("⚠️ Tentando fallback direto...")
+        payload = _fetch_url_crawler(
+            url_pagina,
+            preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
+            auth_config=auth_final,
+        )
 
-        payload = _fetch(url)
         html = _safe_str(payload.get("html"))
 
-        if html:
-            try:
-                links = _extrair_links_agressivo(html, url)
-            except Exception as e:
-                log_debug(f"[CRAWLER] erro no fallback direto: {e}", "WARNING")
-                links = []
+        if not payload.get("ok") or not html:
+            erros.append(
+                f"falha_pagina::{url_pagina}::{_safe_str(payload.get('error')) or 'sem_html'}"
+            )
+            continue
 
-    tick(10, f"🔗 {len(links)} produtos detectados")
+        links_prod, links_pag = _coletar_links_categoria(html, url_pagina)
 
-    # ======================================================
-    # EXTRAÇÃO
-    # ======================================================
-    if not links:
-        status.error("❌ Nenhum produto encontrado")
-        log_debug("[CRAWLER] nenhum link de produto encontrado", "WARNING")
-        return pd.DataFrame()
+        links_prod = _filtrar_links_mesmo_dominio(links_prod, url)
+        links_pag = _filtrar_links_mesmo_dominio(links_pag, url)
 
-    tick(5, "📦 Extraindo produtos...")
+        for lp in links_prod:
+            if lp in produtos_vistos:
+                continue
 
-    if max_threads <= 1:
-        resultados = _executar_extracao_sequencial(
-            links=links,
-            padrao_disponivel=padrao_disponivel,
-            progress_bar=progress_bar,
-            status=status,
-            detalhe=detalhe,
-        )
-    else:
-        resultados = _executar_extracao_threads(
-            links=links,
-            padrao_disponivel=padrao_disponivel,
-            max_threads=max_threads,
-            progress_bar=progress_bar,
-            status=status,
-            detalhe=detalhe,
-        )
+            produtos_vistos.add(lp)
+            links_produto.append(lp)
 
-    # ======================================================
-    # FINAL
-    # ======================================================
-    if not resultados:
-        status.error("❌ Nenhum produto válido")
-        log_debug("[CRAWLER] nenhum produto válido após extração", "WARNING")
-        return pd.DataFrame()
+            if len(links_produto) >= limite_produtos:
+                break
 
-    df = pd.DataFrame(resultados)
-    df = _sanear_dataframe_final(df)
+        for pg in links_pag:
+            if pg in paginas_vistas or pg in fila_paginas:
+                continue
 
-    progress_bar.progress(100)
-    status.success(f"✅ {len(df)} produtos extraídos")
-    log_debug(f"[CRAWLER] finalizado com {len(df)} produtos", "INFO")
+            fila_paginas.append(pg)
+        # ------------------------------------------------------
+    # 3) EXTRAÇÃO DOS PRODUTOS
+    # ------------------------------------------------------
+    links_produto = links_produto[:limite_produtos]
 
-    return df.reset_index(drop=True)
+    if links_produto:
+        with ThreadPoolExecutor(max_workers=limite_threads) as executor:
+            futures = {
+                executor.submit(
+                    _processar_produto,
+                    link,
+                    url_base=url,
+                    preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
+                    auth_config=auth_final,
+                    estoque_padrao_disponivel=estoque_padrao_disponivel,
+                ): link
+                for link in links_produto
+            }
+
+            for future in as_completed(futures):
+                link = futures[future]
+
+                try:
+                    resultado = future.result()
+                except Exception as e:
+                    erros.append(f"erro_future::{link}::{e}")
+                    continue
+
+                if resultado.get("ok") and isinstance(resultado.get("registro"), dict):
+                    produtos_extraidos.append(resultado["registro"])
+                else:
+                    erros.append(
+                        f"falha_produto::{link}::{_safe_str(resultado.get('erro')) or 'desconhecida'}"
+                    )
+
+    # ------------------------------------------------------
+    # 4) DEDUP FINAL
+    # ------------------------------------------------------
+    produtos_unicos = []
+    chaves_vistas = set()
+
+    for item in produtos_extraidos:
+        codigo = _safe_str(item.get("codigo"))
+        nome = _safe_str(item.get("nome"))
+        url_item = _safe_str(item.get("url"))
+
+        chave = codigo or url_item or nome
+
+        if not chave:
+            continue
+        if chave in chaves_vistas:
+            continue
+
+        chaves_vistas.add(chave)
+        produtos_unicos.append(item)
+
+    df = _produtos_para_dataframe(produtos_unicos)
+
+    retorno = {
+        "ok": not df.empty,
+        "erro": "" if not df.empty else ("; ".join([e for e in erros if e]) or "nenhum_produto_extraido"),
+        "produtos": produtos_unicos,
+        "df": df,
+        "links_produto": links_produto,
+        "paginas_visitadas": paginas_visitadas,
+        "erros": erros,
+        "stats": {
+            "paginas_visitadas": len(paginas_visitadas),
+            "links_produto": len(links_produto),
+            "produtos_extraidos": len(produtos_unicos),
+            "erros": len(erros),
+            "login_required": _safe_bool(auth_final.get("precisa_login")),
+            "auth_used": bool(
+                _safe_str(auth_final.get("usuario")) and _safe_str(auth_final.get("senha"))
+            ),
+        },
+        "version": SITE_CRAWLER_VERSION,
+    }
+
+    if atualizar_streamlit_state:
+        _persistir_estado_crawler(retorno)
+
+    log_debug(
+        (
+            f"[SITE_CRAWLER] END | ok={retorno['ok']} | "
+            f"paginas={retorno['stats']['paginas_visitadas']} | "
+            f"links={retorno['stats']['links_produto']} | "
+            f"produtos={retorno['stats']['produtos_extraidos']} | "
+            f"erros={retorno['stats']['erros']}"
+        ),
+        "INFO",
+    )
+
+    return retorno
