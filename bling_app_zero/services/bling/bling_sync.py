@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 
@@ -8,26 +8,25 @@ from bling_app_zero.services.bling.api import BlingServices
 
 
 class BlingSync:
-    """
-    Camada de orquestração entre o DataFrame final da aplicação
-    e os serviços do Bling.
-
-    Objetivos:
-    - manter cadastro e estoque separados;
-    - permitir fluxo combinado (cadastro + estoque);
-    - preparar o caminho para sincronização automática futura;
-    - devolver retornos consistentes para a UI.
-    """
-
-    BATCH_SIZE = 50
-
     def __init__(self, user_key: str = "default") -> None:
-        self.user_key = str(user_key or "default").strip() or "default"
+        self.user_key = self._safe_str(user_key) or "default"
         self.services = BlingServices(user_key=self.user_key)
 
-    # =========================================================
+    # =========================
+    # CONFIG PRO
+    # =========================
+    BATCH_SIZE = 50
+
+    # =========================
     # HELPERS
-    # =========================================================
+    # =========================
+    @staticmethod
+    def _safe_str(value: Any) -> str:
+        try:
+            return str(value or "").strip()
+        except Exception:
+            return ""
+
     @staticmethod
     def _safe_df(df: Any) -> pd.DataFrame:
         if isinstance(df, pd.DataFrame):
@@ -38,11 +37,26 @@ class BlingSync:
         return pd.DataFrame()
 
     @staticmethod
-    def _clean_str(value: Any) -> str:
-        try:
-            return str(value or "").strip()
-        except Exception:
-            return ""
+    def _normalize_rows(rows: Any) -> List[Dict[str, Any]]:
+        if isinstance(rows, pd.DataFrame):
+            try:
+                df = rows.copy()
+                df = df.fillna("")
+                return df.to_dict(orient="records")
+            except Exception:
+                return []
+
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+
+        return []
+
+    @staticmethod
+    def _chunk(lista: List[Any], size: int) -> Iterable[List[Any]]:
+        if size <= 0:
+            size = 1
+        for i in range(0, len(lista), size):
+            yield lista[i : i + size]
 
     @staticmethod
     def _to_float(value: Any) -> Optional[float]:
@@ -64,18 +78,97 @@ class BlingSync:
         except Exception:
             return None
 
-    def _normalize_rows(self, rows: Any) -> List[Dict[str, Any]]:
-        if isinstance(rows, pd.DataFrame):
-            try:
-                df = rows.copy().fillna("")
-                return df.to_dict(orient="records")
-            except Exception:
-                return []
+    def _pick(self, row: Dict[str, Any], *keys: str) -> Any:
+        if not isinstance(row, dict):
+            return None
 
-        if isinstance(rows, list):
-            return [r for r in rows if isinstance(r, dict)]
+        for key in keys:
+            if key in row and row.get(key) not in (None, ""):
+                return row.get(key)
+        return None
 
-        return []
+    def _resolver_codigo(self, row: Dict[str, Any]) -> str:
+        return self._safe_str(
+            self._pick(
+                row,
+                "codigo",
+                "Código",
+                "Codigo",
+                "sku",
+                "SKU",
+                "codigo_sku",
+                "Código do produto",
+            )
+        )
+
+    def _resolver_nome(self, row: Dict[str, Any]) -> str:
+        return self._safe_str(
+            self._pick(
+                row,
+                "nome",
+                "Nome",
+                "descricao",
+                "Descrição",
+                "Descrição Curta",
+                "titulo",
+                "Título",
+                "produto",
+            )
+        )
+
+    def _resolver_estoque(self, row: Dict[str, Any]) -> Optional[float]:
+        return self._to_float(
+            self._pick(
+                row,
+                "estoque",
+                "Estoque",
+                "saldo",
+                "Saldo",
+                "quantidade",
+                "Quantidade",
+            )
+        )
+
+    def _resolver_preco(self, row: Dict[str, Any]) -> Optional[float]:
+        return self._to_float(
+            self._pick(
+                row,
+                "preco",
+                "Preço",
+                "Preço de venda",
+                "Preço unitário (OBRIGATÓRIO)",
+                "preco_venda",
+                "valor",
+                "valor_venda",
+            )
+        )
+
+    @classmethod
+    def _registro_valido(cls, row: Dict[str, Any]) -> bool:
+        if not isinstance(row, dict):
+            return False
+
+        codigo = cls._safe_str(
+            row.get("codigo")
+            or row.get("sku")
+            or row.get("Código")
+            or row.get("Codigo")
+        )
+        id_produto = cls._safe_str(
+            row.get("id")
+            or row.get("id_produto")
+            or row.get("ID")
+        )
+        return bool(codigo or id_produto)
+
+    def _registro_tem_cadastro(self, row: Dict[str, Any]) -> bool:
+        codigo = self._resolver_codigo(row)
+        nome = self._resolver_nome(row)
+        return bool(codigo and nome)
+
+    def _registro_tem_estoque(self, row: Dict[str, Any]) -> bool:
+        codigo = self._resolver_codigo(row)
+        return bool(codigo)
 
     @staticmethod
     def _build_result(
@@ -98,85 +191,126 @@ class BlingSync:
             "detalhes": detalhes or {},
         }
 
-    def _pick(self, row: Dict[str, Any], *keys: str) -> Any:
-        if not isinstance(row, dict):
-            return None
+    @staticmethod
+    def _extrair_lista_erros(payload: Any) -> List[Any]:
+        if isinstance(payload, dict):
+            erros = payload.get("erros", [])
+            if isinstance(erros, list):
+                return erros
+            if erros not in (None, ""):
+                return [erros]
+            return []
 
-        for key in keys:
-            if key in row and row.get(key) not in (None, ""):
-                return row.get(key)
-        return None
+        if isinstance(payload, list):
+            return payload
 
-    def _resolver_codigo(self, row: Dict[str, Any]) -> str:
-        return self._clean_str(
-            self._pick(
-                row,
-                "codigo",
-                "Código",
-                "sku",
-                "SKU",
-                "codigo_sku",
-                "Código do produto",
-            )
-        )
+        if payload not in (None, ""):
+            return [payload]
 
-    def _resolver_nome(self, row: Dict[str, Any]) -> str:
-        return self._clean_str(
-            self._pick(
-                row,
-                "nome",
-                "Nome",
-                "descricao",
-                "Descrição",
-                "Descrição Curta",
-                "titulo",
-                "Título",
-            )
-        )
-
-    def _resolver_estoque(self, row: Dict[str, Any]) -> Optional[float]:
-        return self._to_float(
-            self._pick(
-                row,
-                "estoque",
-                "Estoque",
-                "saldo",
-                "Saldo",
-                "quantidade",
-                "Quantidade",
-            )
-        )
-
-    def _resolver_preco(self, row: Dict[str, Any]) -> Optional[float]:
-        return self._to_float(
-            self._pick(
-                row,
-                "preco",
-                "Preço de venda",
-                "Preço unitário (OBRIGATÓRIO)",
-                "preco_venda",
-                "valor",
-                "valor_venda",
-            )
-        )
-
-    def _registro_tem_cadastro(self, row: Dict[str, Any]) -> bool:
-        codigo = self._resolver_codigo(row)
-        nome = self._resolver_nome(row)
-        return bool(codigo and nome)
-
-    def _registro_tem_estoque(self, row: Dict[str, Any]) -> bool:
-        codigo = self._resolver_codigo(row)
-        return bool(codigo)
+        return []
 
     @staticmethod
-    def _chunk(lista: List[Any], size: int):
-        for i in range(0, len(lista), size):
-            yield lista[i : i + size]
+    def _merge_detalhes(
+        base: Optional[Dict[str, Any]],
+        extra: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        resultado: Dict[str, Any] = {}
 
-    # =========================================================
-    # NORMALIZAÇÃO DE LINHA
-    # =========================================================
+        if isinstance(base, dict):
+            resultado.update(base)
+
+        if isinstance(extra, dict):
+            for chave, valor in extra.items():
+                if chave not in resultado or resultado.get(chave) in (None, "", [], {}):
+                    resultado[chave] = valor
+                elif isinstance(resultado.get(chave), dict) and isinstance(valor, dict):
+                    combinado = dict(resultado[chave])
+                    combinado.update(valor)
+                    resultado[chave] = combinado
+
+        return resultado
+
+    @classmethod
+    def _resultado_from_service(
+        cls,
+        *,
+        fallback_operacao: str,
+        fallback_total: int,
+        fallback_detalhes: Optional[Dict[str, Any]] = None,
+        service_ok: bool,
+        service_resp: Any,
+    ) -> Dict[str, Any]:
+        if isinstance(service_resp, dict):
+            return cls._build_result(
+                ok=bool(service_resp.get("ok", service_ok)),
+                operacao=cls._safe_str(service_resp.get("operacao")) or fallback_operacao,
+                total=int(service_resp.get("total", fallback_total) or fallback_total),
+                sucesso=int(service_resp.get("sucesso", 0) or 0),
+                erro=int(service_resp.get("erro", 0) or 0),
+                erros=cls._extrair_lista_erros(service_resp),
+                detalhes=cls._merge_detalhes(
+                    fallback_detalhes,
+                    service_resp.get("detalhes"),
+                ),
+            )
+
+        erros = cls._extrair_lista_erros(service_resp)
+
+        return cls._build_result(
+            ok=bool(service_ok),
+            operacao=fallback_operacao,
+            total=int(fallback_total or 0),
+            sucesso=int(fallback_total if service_ok else 0),
+            erro=int(0 if service_ok else fallback_total),
+            erros=erros,
+            detalhes=fallback_detalhes or {},
+        )
+
+    @classmethod
+    def _consolidar_lotes(
+        cls,
+        *,
+        operacao: str,
+        total_esperado: int,
+        resultados: List[Dict[str, Any]],
+        detalhes_finais: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        sucesso = 0
+        erro = 0
+        erros: List[Any] = []
+        detalhes: Dict[str, Any] = {}
+
+        for resultado in resultados:
+            if not isinstance(resultado, dict):
+                continue
+
+            sucesso += int(resultado.get("sucesso", 0) or 0)
+            erro += int(resultado.get("erro", 0) or 0)
+
+            lista_erros = resultado.get("erros", [])
+            if isinstance(lista_erros, list):
+                erros.extend(lista_erros)
+            elif lista_erros not in (None, ""):
+                erros.append(lista_erros)
+
+            detalhes = cls._merge_detalhes(detalhes, resultado.get("detalhes"))
+
+        detalhes = cls._merge_detalhes(detalhes, detalhes_finais)
+
+        total_real = sucesso + erro
+        if total_real <= 0:
+            total_real = int(total_esperado or 0)
+
+        return cls._build_result(
+            ok=(erro == 0 and sucesso > 0),
+            operacao=operacao,
+            total=total_real,
+            sucesso=sucesso,
+            erro=erro,
+            erros=erros,
+            detalhes=detalhes,
+        )
+
     def _normalizar_row_produto(self, row: Dict[str, Any]) -> Dict[str, Any]:
         codigo = self._resolver_codigo(row)
         nome = self._resolver_nome(row)
@@ -190,10 +324,11 @@ class BlingSync:
             "unidade": self._pick(row, "unidade", "Unidade") or "UN",
         }
 
-        # Mantém campos extras importantes se existirem
         for origem, destino in [
             ("descricao_curta", "descricao_curta"),
             ("Descrição Curta", "descricao_curta"),
+            ("descricao", "descricao"),
+            ("Descrição", "descricao"),
             ("marca", "marca"),
             ("Marca", "marca"),
             ("ncm", "ncm"),
@@ -220,16 +355,12 @@ class BlingSync:
             "preco": preco,
         }
 
-    # =========================================================
+    # =========================
     # PRODUTOS
-    # =========================================================
+    # =========================
     def sync_produtos(self, rows: Any) -> Dict[str, Any]:
-        registros_brutos = self._normalize_rows(rows)
-        registros = [
-            self._normalizar_row_produto(r)
-            for r in registros_brutos
-            if self._registro_tem_cadastro(r)
-        ]
+        registros = self._normalize_rows(rows)
+        registros = [self._normalizar_row_produto(r) for r in registros if self._registro_tem_cadastro(r)]
 
         if not registros:
             return self._build_result(
@@ -241,9 +372,7 @@ class BlingSync:
                 erros=["Nenhum produto válido para sincronizar."],
             )
 
-        sucesso = 0
-        erro = 0
-        erros: List[Any] = []
+        resultados_lotes: List[Dict[str, Any]] = []
 
         for lote in self._chunk(registros, self.BATCH_SIZE):
             try:
@@ -251,35 +380,32 @@ class BlingSync:
             except Exception as e:
                 ok, resp = False, str(e)
 
-            if ok:
-                sucesso += len(lote)
-            else:
-                erro += len(lote)
-                erros.append(resp)
+            resultado_lote = self._resultado_from_service(
+                fallback_operacao="upsert_products",
+                fallback_total=len(lote),
+                fallback_detalhes={},
+                service_ok=ok,
+                service_resp=resp,
+            )
+            resultados_lotes.append(resultado_lote)
 
-        return self._build_result(
-            ok=erro == 0 and sucesso > 0,
+        return self._consolidar_lotes(
             operacao="produtos",
-            total=len(registros),
-            sucesso=sucesso,
-            erro=erro,
-            erros=erros,
+            total_esperado=len(registros),
+            resultados=resultados_lotes,
         )
 
-    # =========================================================
+    # =========================
     # ESTOQUE
-    # =========================================================
+    # =========================
     def sync_estoques(
         self,
         rows: Any,
         deposito_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        registros_brutos = self._normalize_rows(rows)
-        registros = [
-            self._normalizar_row_estoque(r)
-            for r in registros_brutos
-            if self._registro_tem_estoque(r)
-        ]
+        registros = self._normalize_rows(rows)
+        registros = [self._normalizar_row_estoque(r) for r in registros if self._registro_tem_estoque(r)]
+        deposito_id = self._safe_str(deposito_id)
 
         if not registros:
             return self._build_result(
@@ -289,53 +415,45 @@ class BlingSync:
                 sucesso=0,
                 erro=0,
                 erros=["Nenhum estoque válido para sincronizar."],
-                detalhes={"deposito_id": deposito_id},
+                detalhes={"deposito_id": deposito_id or None},
             )
 
-        sucesso = 0
-        erro = 0
-        erros: List[Any] = []
+        resultados_lotes: List[Dict[str, Any]] = []
 
         for lote in self._chunk(registros, self.BATCH_SIZE):
             try:
                 ok, resp = self.services.update_stocks(
                     lote,
-                    deposito_id=deposito_id,
+                    deposito_id=deposito_id or None,
                 )
             except Exception as e:
                 ok, resp = False, str(e)
 
-            if ok:
-                sucesso += len(lote)
-            else:
-                erro += len(lote)
-                erros.append(resp)
+            resultado_lote = self._resultado_from_service(
+                fallback_operacao="update_stocks",
+                fallback_total=len(lote),
+                fallback_detalhes={"deposito_id": deposito_id or None},
+                service_ok=ok,
+                service_resp=resp,
+            )
+            resultados_lotes.append(resultado_lote)
 
-        return self._build_result(
-            ok=erro == 0 and sucesso > 0,
+        return self._consolidar_lotes(
             operacao="estoques",
-            total=len(registros),
-            sucesso=sucesso,
-            erro=erro,
-            erros=erros,
-            detalhes={"deposito_id": deposito_id},
+            total_esperado=len(registros),
+            resultados=resultados_lotes,
+            detalhes_finais={"deposito_id": deposito_id or None},
         )
 
-    # =========================================================
+    # =========================
     # FLUXO COMPLETO
-    # =========================================================
+    # =========================
     def sync_catalogo_completo(
         self,
         rows: Any,
         *,
         deposito_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Fluxo que você descreveu:
-        - se não existir no Bling, cadastra;
-        - se já existir, atualiza;
-        - depois atualiza o estoque.
-        """
         registros_df = self._safe_df(rows)
 
         if registros_df.empty:
@@ -346,7 +464,7 @@ class BlingSync:
                 sucesso=0,
                 erro=0,
                 erros=["DataFrame vazio para sincronização completa."],
-                detalhes={"deposito_id": deposito_id},
+                detalhes={"deposito_id": self._safe_str(deposito_id) or None},
             )
 
         resultado_produtos = self.sync_produtos(registros_df)
@@ -374,15 +492,15 @@ class BlingSync:
             erro=erro,
             erros=erros,
             detalhes={
-                "deposito_id": deposito_id,
+                "deposito_id": self._safe_str(deposito_id) or None,
                 "produtos": resultado_produtos,
                 "estoques": resultado_estoques,
             },
         )
 
-    # =========================================================
+    # =========================
     # DATAFRAME
-    # =========================================================
+    # =========================
     def sync_dataframe(
         self,
         df: pd.DataFrame,
@@ -400,10 +518,10 @@ class BlingSync:
                 sucesso=0,
                 erro=0,
                 erros=["DataFrame vazio para sincronização."],
-                detalhes={"tipo": tipo, "deposito_id": deposito_id},
+                detalhes={"tipo": tipo, "deposito_id": self._safe_str(deposito_id) or None},
             )
 
-        tipo_normalizado = self._clean_str(tipo).lower()
+        tipo_normalizado = self._safe_str(tipo).lower()
 
         if tipo_normalizado in {"cadastro", "produto", "produtos"}:
             return self.sync_produtos(df_local)
@@ -427,12 +545,12 @@ class BlingSync:
             sucesso=0,
             erro=0,
             erros=[f"Tipo inválido: {tipo}"],
-            detalhes={"tipo": tipo, "deposito_id": deposito_id},
+            detalhes={"tipo": tipo, "deposito_id": self._safe_str(deposito_id) or None},
         )
 
-    # =========================================================
-    # FLUXO DUPLO EXPLÍCITO
-    # =========================================================
+    # =========================
+    # FLUXO COMPLETO DUPLO
+    # =========================
     def sync_tudo(
         self,
         *,
@@ -457,7 +575,7 @@ class BlingSync:
         erro = 0
         erros: List[Any] = []
 
-        for resultado in [resultado_produtos, resultado_estoques]:
+        for resultado in (resultado_produtos, resultado_estoques):
             if not isinstance(resultado, dict):
                 continue
 
@@ -465,23 +583,26 @@ class BlingSync:
             sucesso += int(resultado.get("sucesso", 0) or 0)
             erro += int(resultado.get("erro", 0) or 0)
 
-            if isinstance(resultado.get("erros"), list):
-                erros.extend(resultado["erros"])
+            lista_erros = resultado.get("erros", [])
+            if isinstance(lista_erros, list):
+                erros.extend(lista_erros)
+            elif lista_erros not in (None, ""):
+                erros.append(lista_erros)
 
         return self._build_result(
-            ok=erro == 0 and sucesso > 0,
+            ok=(erro == 0 and total > 0 and sucesso > 0),
             operacao="sync_tudo",
             total=total,
             sucesso=sucesso,
             erro=erro,
             erros=erros,
             detalhes={
-                "deposito_id": deposito_id,
                 "produtos": resultado_produtos,
                 "estoques": resultado_estoques,
+                "deposito_id": self._safe_str(deposito_id) or None,
             },
         )
 
 
-# Alias de compatibilidade
+# Alias para compatibilidade com o core
 BlingSyncService = BlingSync
