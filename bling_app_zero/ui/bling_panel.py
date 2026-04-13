@@ -3,361 +3,261 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-
-# ==========================================================
-# IMPORTS (PROTEGIDOS)
-# ==========================================================
-try:
-    from bling_app_zero.core.bling_api import BlingAPIClient
-except Exception:
-    BlingAPIClient = None
-
-try:
-    from bling_app_zero.core.bling_auth import BlingAuthManager
-except Exception:
-    BlingAuthManager = None
-
-try:
-    from bling_app_zero.core.bling_user_session import (
-        ensure_current_user_defaults,
-        get_current_user_key,
-        get_current_user_label,
-        set_pending_oauth_user,
-    )
-except Exception:
-    ensure_current_user_defaults = None
-    get_current_user_key = None
-    get_current_user_label = None
-    set_pending_oauth_user = None
-
-try:
-    from bling_app_zero.ui.bling_panel_helpers import (
-        bloquear_importacao,
-        bloquear_painel_principal,
-        clear_callback_params,
-        has_callback_params,
-        safe_df,
-        status_texto,
-    )
-except Exception:
-    def bloquear_importacao():
-        return False
-
-    def bloquear_painel_principal():
-        return False
-
-    def clear_callback_params():
-        return None
-
-    def has_callback_params():
-        return False
-
-    def safe_df(x):
-        return x
-
-    def status_texto(x):
-        return str(x)
-
-try:
-    from bling_app_zero.ui.bling_panel_usuario import (
-        processar_callback_oauth,
-        render_usuario_bling,
-    )
-except Exception:
-    def processar_callback_oauth(*args, **kwargs):
-        return False
-
-    def render_usuario_bling():
-        return None
+from bling_app_zero.services.bling.bling_auth import BlingAuthManager
+from bling_app_zero.services.bling.bling_sync import BlingSync
 
 
 # ==========================================================
-# SAFE SESSION
+# HELPERS
 # ==========================================================
-def _safe_session() -> bool:
+def _safe_str(value) -> str:
     try:
-        if not hasattr(st, "session_state"):
-            return False
-        _ = st.session_state
-        return True
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _safe_df(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
 
-def _safe_status_dict(auth) -> dict:
-    """
-    Blindagem para cenários em que a classe BlingAuthManager
-    ainda não expõe get_connection_status().
-    """
+def _resolver_user_key() -> str:
     try:
-        if auth is None:
-            return {"connected": False, "configured": False}
+        qp_user = st.query_params.get("bi")
+        if isinstance(qp_user, list):
+            qp_user = qp_user[0] if qp_user else ""
+        return _safe_str(qp_user) or "default"
+    except Exception:
+        return "default"
 
-        if hasattr(auth, "get_connection_status") and callable(auth.get_connection_status):
-            status = auth.get_connection_status()
-            if isinstance(status, dict):
-                return status
 
-        token_info = None
-        for nome_attr in [
-            "get_token_info",
-            "load_tokens",
-            "load_token_data",
-            "get_tokens",
-        ]:
-            try:
-                if hasattr(auth, nome_attr):
-                    metodo = getattr(auth, nome_attr)
-                    if callable(metodo):
-                        token_info = metodo()
-                        break
-            except Exception:
-                continue
+def _garantir_estado_local() -> None:
+    defaults = {
+        "_bling_panel_feedback": None,
+        "_bling_panel_processado_local": False,
+        "bling_panel_deposito_id": "",
+    }
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
 
-        connected = False
-        if isinstance(token_info, dict):
-            connected = bool(
-                token_info.get("access_token")
-                or token_info.get("refresh_token")
-                or token_info.get("connected")
-            )
 
-        return {
-            "connected": connected,
-            "configured": bool(getattr(auth, "is_configured", lambda: False)()),
+def _tem_callback_pendente() -> bool:
+    try:
+        qp = st.query_params
+        return any(chave in qp for chave in ("code", "state", "error", "error_description"))
+    except Exception:
+        return False
+
+
+def _processar_callback(auth: BlingAuthManager) -> None:
+    try:
+        if not _tem_callback_pendente():
+            st.session_state["_bling_panel_processado_local"] = False
+            return
+
+        if st.session_state.get("_bling_panel_processado_local"):
+            return
+
+        st.session_state["_bling_panel_processado_local"] = True
+
+        if not hasattr(auth, "handle_oauth_callback"):
+            return
+
+        resultado = auth.handle_oauth_callback()
+        if not isinstance(resultado, dict):
+            return
+
+        status = _safe_str(resultado.get("status")).lower()
+        mensagem = _safe_str(resultado.get("message"))
+
+        if status in {"success", "error"}:
+            st.session_state["_bling_panel_feedback"] = {
+                "status": status,
+                "message": mensagem,
+            }
+
+            if status == "success":
+                st.rerun()
+
+    except Exception as e:
+        st.session_state["_bling_panel_feedback"] = {
+            "status": "error",
+            "message": f"Erro no callback do Bling: {e}",
         }
+
+
+def _render_feedback() -> None:
+    feedback = st.session_state.get("_bling_panel_feedback")
+    if not isinstance(feedback, dict):
+        return
+
+    status = _safe_str(feedback.get("status")).lower()
+    mensagem = _safe_str(feedback.get("message"))
+
+    if status == "success" and mensagem:
+        st.success(f"✅ {mensagem}")
+    elif status == "error" and mensagem:
+        st.error(f"❌ {mensagem}")
+
+
+def _obter_status_conexao(auth: BlingAuthManager) -> dict:
+    try:
+        status = auth.get_connection_status()
+        if isinstance(status, dict):
+            return status
     except Exception:
-        return {"connected": False, "configured": False}
+        pass
+
+    return {
+        "connected": False,
+        "company_name": None,
+        "last_auth_at": None,
+        "expires_at": None,
+    }
 
 
-# ==========================================================
-# ENVIO PRO
-# ==========================================================
-def _enviar_produtos(df: pd.DataFrame, client: BlingAPIClient):
-    total = len(df)
-    progresso = st.progress(0)
-    log_area = st.empty()
-    sucesso = 0
-    erros = []
-
-    for i, row in df.iterrows():
-        ok, resp = client.upsert_product(row.to_dict())
-
-        if ok:
-            sucesso += 1
-        else:
-            erros.append({"linha": i, "erro": resp})
-
-        progresso.progress((i + 1) / total)
-        log_area.write(f"Processando {i + 1}/{total}")
-
-    st.success(f"{sucesso}/{total} produtos enviados com sucesso.")
-
-    if erros:
-        st.warning(f"{len(erros)} erros encontrados.")
-        st.dataframe(pd.DataFrame(erros), use_container_width=True, hide_index=True)
-
-
-def _enviar_estoque(df: pd.DataFrame, client: BlingAPIClient):
-    total = len(df)
-    progresso = st.progress(0)
-    sucesso = 0
-    erros = []
-
-    for i, row in df.iterrows():
-        ok, resp = client.update_stock(
-            codigo=row.get("codigo"),
-            estoque=row.get("saldo"),
-            deposito_id=row.get("deposito_id"),
-            preco=row.get("preco"),
-        )
-
-        if ok:
-            sucesso += 1
-        else:
-            erros.append({"linha": i, "erro": resp})
-
-        progresso.progress((i + 1) / total)
-
-    st.success(f"{sucesso}/{total} estoques enviados.")
-
-    if erros:
-        st.warning(f"{len(erros)} erros.")
-        st.dataframe(pd.DataFrame(erros), use_container_width=True, hide_index=True)
+def _obter_df_para_envio():
+    for key in ["df_final", "df_saida", "df_resultado_final", "df_precificado", "df_origem"]:
+        df = st.session_state.get(key)
+        if _safe_df(df):
+            return df.copy()
+    return None
 
 
 # ==========================================================
 # PAINEL PRINCIPAL
 # ==========================================================
-def render_bling_panel():
-    if not _safe_session():
-        st.warning("Sessão ainda não inicializada.")
+def render_bling_panel() -> None:
+    _garantir_estado_local()
+
+    user_key = _resolver_user_key()
+
+    try:
+        auth = BlingAuthManager(user_key=user_key)
+    except Exception as e:
+        st.warning(f"Painel do Bling indisponível: {e}")
         return
 
-    if bloquear_painel_principal():
-        return
-
-    render_usuario_bling()
-
-    if processar_callback_oauth(has_callback_params, clear_callback_params):
-        return
-
-    if BlingAuthManager is None:
-        st.warning("⚠️ Módulo de autenticação do Bling indisponível.")
-        return
-
-    if get_current_user_key is None:
-        st.warning("⚠️ Sessão de usuário do Bling indisponível.")
-        return
-
-    user_key = get_current_user_key()
-    auth = BlingAuthManager(user_key=user_key)
+    _processar_callback(auth)
+    _render_feedback()
 
     if not auth.is_configured():
-        st.warning("⚠️ Configure o Bling.")
+        st.info("Integração com Bling ainda não configurada.")
         return
 
-    status = _safe_status_dict(auth)
+    status = _obter_status_conexao(auth)
+    conectado = bool(status.get("connected"))
 
-    st.markdown("### 🔗 Integração Bling")
+    st.markdown("### Integração Bling")
 
-    col1, col2, col3 = st.columns(3)
+    empresa = _safe_str(status.get("company_name"))
+    ultima_auth = _safe_str(status.get("last_auth_at"))
+    expira_em = _safe_str(status.get("expires_at"))
 
-    with col1:
-        try:
-            url = auth.build_authorize_url(force_reauth=True)
-            st.link_button("Conectar / Reconectar", url, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao gerar URL de conexão: {e}")
-
-    with col2:
-        if st.button("Atualizar Token", use_container_width=True):
-            try:
-                ok, msg = auth.get_valid_access_token()
-                if ok:
-                    st.success("Token atualizado com sucesso.")
-                else:
-                    st.warning(str(msg))
-            except Exception as e:
-                st.error(f"Erro ao atualizar token: {e}")
-
-    with col3:
-        if st.button("Desconectar", use_container_width=True):
-            try:
-                ok, msg = auth.disconnect()
-                if ok:
-                    st.success(str(msg))
-                else:
-                    st.warning(str(msg))
-            except Exception as e:
-                st.error(f"Erro ao desconectar: {e}")
-
-    try:
-        st.write(status_texto(status))
-    except Exception:
-        st.write(status)
-
-    # ======================================================
-    # ENVIO
-    # ======================================================
-    st.markdown("---")
-    st.markdown("## Envio para Bling")
-
-    if BlingAPIClient is None:
-        st.warning("⚠️ API do Bling indisponível.")
-        return
-
-    try:
-        ok, msg = auth.get_valid_access_token()
-    except Exception as e:
-        st.warning(f"Falha ao validar token do Bling: {e}")
-        return
-
-    if not ok:
-        st.warning("⚠️ Conecte ao Bling antes de enviar.")
-        return
-
-    client = BlingAPIClient(user_key=user_key)
-
-    df_final = st.session_state.get("df_resultado_final")
-    if df_final is None or len(df_final) == 0:
-        st.warning("⚠️ Nenhum dado para envio.")
-        return
-
-    tipo = str(st.session_state.get("tipo_operacao_bling") or "").strip().lower()
-
-    if tipo == "cadastro":
-        if st.button("Enviar PRODUTOS para Bling", use_container_width=True):
-            _enviar_produtos(df_final, client)
-
-    elif tipo == "estoque":
-        if st.button("Enviar ESTOQUE para Bling", use_container_width=True):
-            _enviar_estoque(df_final, client)
-
+    if conectado:
+        st.success("✅ Conectado ao Bling")
     else:
+        st.info("ℹ️ Não conectado ao Bling")
+
+    if empresa:
+        st.caption(f"Conta: {empresa}")
+    if ultima_auth:
+        st.caption(f"Última autenticação: {ultima_auth}")
+    if expira_em:
+        st.caption(f"Expira em: {expira_em}")
+
+    st.caption("A conexão principal agora acontece no início do fluxo.")
+    st.markdown("---")
+
+    df_envio = _obter_df_para_envio()
+    if not _safe_df(df_envio):
+        st.info("Nenhum dado disponível para envio/importação neste momento.")
+        return
+
+    if not conectado:
+        st.warning("Conecte ao Bling no início do fluxo para liberar o envio.")
+        return
+
+    tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+    if tipo not in {"cadastro", "estoque"}:
         st.info("Selecione o tipo de operação para liberar o envio.")
-
-
-# ==========================================================
-# IMPORTAÇÃO (mantido)
-# ==========================================================
-def render_bling_import_panel():
-    if not _safe_session():
         return
-
-    if bloquear_importacao():
-        return
-
-    st.markdown("### Importar do Bling")
-
-    if ensure_current_user_defaults is not None:
-        ensure_current_user_defaults()
-
-    if BlingAuthManager is None or BlingAPIClient is None or get_current_user_key is None:
-        st.warning("⚠️ Integração do Bling indisponível.")
-        return
-
-    user_key = get_current_user_key()
-    auth = BlingAuthManager(user_key=user_key)
 
     try:
-        ok, msg = auth.get_valid_access_token()
+        sync = BlingSync(user_key=user_key)
     except Exception as e:
-        st.warning(f"Falha ao validar token: {e}")
+        st.error(f"Erro ao iniciar sincronização do Bling: {e}")
         return
 
-    if not ok:
-        st.warning(str(msg))
-        return
+    deposito_id = ""
+    if tipo == "estoque":
+        deposito_id = st.text_input(
+            "ID do depósito",
+            value=_safe_str(st.session_state.get("bling_panel_deposito_id")),
+            placeholder="Ex.: 123456",
+            key="bling_panel_deposito_id",
+        )
 
-    client = BlingAPIClient(user_key=user_key)
+    with st.expander("Prévia de dados do painel Bling", expanded=False):
+        st.dataframe(df_envio.head(20), use_container_width=True)
 
-    tab1, tab2 = st.tabs(["Produtos", "Estoque"])
+    label_botao = (
+        "Enviar produtos pelo painel Bling"
+        if tipo == "cadastro"
+        else "Enviar estoque pelo painel Bling"
+    )
 
-    with tab1:
-        if st.button("Importar produtos", use_container_width=True):
-            ok, payload = client.list_products()
-            if ok:
-                df = safe_df(client.products_to_dataframe(payload))
-                st.session_state["bling_produtos_df"] = df
-                st.success(f"{len(df)} produtos")
+    if st.button(label_botao, use_container_width=True):
+        if tipo == "estoque" and not _safe_str(deposito_id):
+            st.warning("Informe o ID do depósito.")
+            return
+
+        try:
+            with st.spinner("Enviando dados para o Bling..."):
+                resultado = sync.sync_dataframe(
+                    df=df_envio.copy(),
+                    tipo=tipo,
+                    deposito_id=_safe_str(deposito_id) or None,
+                )
+
+            if not isinstance(resultado, dict):
+                st.error("Retorno inválido do envio para Bling.")
+                return
+
+            if resultado.get("ok"):
+                st.success("✅ Envio concluído com sucesso.")
             else:
-                st.error(payload)
+                st.error("❌ Falha no envio para o Bling.")
 
-        df = st.session_state.get("bling_produtos_df")
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            total = int(resultado.get("total", 0) or 0)
+            sucesso = int(resultado.get("sucesso", 0) or 0)
+            erro = int(resultado.get("erro", 0) or 0)
 
-    with tab2:
-        if st.button("Importar estoque", use_container_width=True):
-            ok, payload = client.list_stocks()
-            if ok:
-                df = safe_df(client.stocks_to_dataframe(payload))
-                st.session_state["bling_estoque_df"] = df
-                st.success(f"{len(df)} registros")
-            else:
-                st.error(payload)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total", total)
+            with col2:
+                st.metric("Sucesso", sucesso)
+            with col3:
+                st.metric("Erros", erro)
 
-        df = st.session_state.get("bling_estoque_df")
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            erros = resultado.get("erros", [])
+            if isinstance(erros, list) and erros:
+                with st.expander("Logs do painel Bling", expanded=True):
+                    for item in erros:
+                        st.error(str(item))
+
+        except Exception as e:
+            st.error(f"Erro ao enviar pelo painel Bling: {e}")
+
+
+# ==========================================================
+# IMPORT PANEL
+# ==========================================================
+def render_bling_import_panel() -> None:
+    st.markdown("### Importar do Bling")
+    st.info("Painel de importação temporariamente simplificado até a estabilização da integração.")
