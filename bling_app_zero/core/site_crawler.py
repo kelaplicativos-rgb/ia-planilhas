@@ -301,8 +301,6 @@ def _extrair_produto_seguro(
             break
 
     return {}
-
-
 def _normalizar_registro_produto(
     registro: dict[str, Any],
     *,
@@ -359,7 +357,6 @@ def _normalizar_registro_produto(
 
     estoque = _normalizar_estoque_df(estoque_raw)
 
-    # fallback: se extrator não trouxe estoque e não há sinal de indisponível, usa o padrão
     if estoque == 0:
         texto_geral = " ".join(
             [
@@ -437,6 +434,29 @@ def _coletar_links_categoria(
     except Exception as e:
         log_debug(f"[SITE_CRAWLER] falha ao extrair links de paginação: {e}", "WARNING")
 
+    if not produtos or not paginas:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            anchors = [a.get("href") for a in soup.select("a[href]")]
+            absolutos = [_normalizar_url(urljoin(url_atual, href or "")) for href in anchors]
+
+            if not produtos:
+                produtos = [
+                    link for link in absolutos
+                    if link and link_parece_produto_crawler(link)
+                ]
+
+            if not paginas:
+                paginas = [
+                    link for link in absolutos
+                    if link and any(
+                        token in link.lower()
+                        for token in ["page=", "/page/", "pagina=", "p="]
+                    )
+                ]
+        except Exception:
+            pass
+
     return produtos, paginas
 
 
@@ -488,8 +508,6 @@ def _fetch_url_crawler(
             "error": str(e),
             "engine": "none",
         }
-
-
 # ==========================================================
 # PRODUTO INDIVIDUAL
 # ==========================================================
@@ -530,7 +548,6 @@ def _processar_produto(
             estoque_padrao_disponivel=estoque_padrao_disponivel,
         )
 
-        # mínimo para aproveitar o registro
         if not _safe_str(registro.get("nome")) and not _safe_str(registro.get("codigo")):
             return {
                 "ok": False,
@@ -599,6 +616,21 @@ def _produtos_para_dataframe(produtos: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 # ==========================================================
+# STREAMLIT STATE
+# ==========================================================
+def _persistir_estado_crawler(resultado: dict) -> None:
+    try:
+        df = resultado.get("df")
+        if isinstance(df, pd.DataFrame):
+            st.session_state["df_origem"] = df.copy()
+            st.session_state["df_saida"] = df.copy()
+            st.session_state["df_final"] = df.copy()
+
+        st.session_state["site_processado"] = bool(resultado.get("ok"))
+        st.session_state["site_ultimo_resultado"] = resultado
+    except Exception as e:
+        log_debug(f"[SITE_CRAWLER] falha ao persistir estado: {e}", "WARNING")
+# ==========================================================
 # CRAWLER PRINCIPAL
 # ==========================================================
 def crawl_site_produtos(
@@ -658,9 +690,6 @@ def crawl_site_produtos(
     paginas_vistas: set[str] = set()
     produtos_vistos: set[str] = set()
 
-    # ------------------------------------------------------
-    # 1) SE A URL JÁ PARECE PRODUTO, PROCESSA DIRETO
-    # ------------------------------------------------------
     if link_parece_produto_crawler(url):
         log_debug("[SITE_CRAWLER] URL inicial já parece produto", "INFO")
         resultado = _processar_produto(
@@ -677,42 +706,6 @@ def crawl_site_produtos(
             erros.append(_safe_str(resultado.get("erro")) or "falha_produto_direto")
 
         df = _produtos_para_dataframe(produtos_extraidos)
-        retorno = {
-            "ok": not df.empty,
-            "erro": "" if not df.empty else "; ".join([e for e in erros if e]),
-            "produtos": produtos_extraidos,
-            "df": df,
-            "links_produto": links_produto,
-            "paginas_visitadas": [url],
-            "erros": erros,
-            "stats": {
-                "paginas_visitadas": 1,
-                "links_produto": len(links_produto),
-                "produtos_extraidos": len(produtos_extraidos),
-                "login_required": _safe_bool(auth_final.get("precisa_login")),
-                "auth_used": bool(_safe_str(auth_final.get("usuario")) and _safe_str(auth_final.get("s
-# ------------------------------------------------------
-    # 1) SE A URL JÁ PARECE PRODUTO, PROCESSA DIRETO
-    # ------------------------------------------------------
-    if link_parece_produto_crawler(url):
-        log_debug("[SITE_CRAWLER] URL inicial já parece produto", "INFO")
-
-        resultado = _processar_produto(
-            url,
-            url_base=url,
-            preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
-            auth_config=auth_final,
-            estoque_padrao_disponivel=estoque_padrao_disponivel,
-        )
-
-        if resultado.get("ok") and isinstance(resultado.get("registro"), dict):
-            produtos_extraidos.append(resultado["registro"])
-            links_produto.append(url)
-        else:
-            erros.append(_safe_str(resultado.get("erro")) or "falha_produto_direto")
-
-        df = _produtos_para_dataframe(produtos_extraidos)
-
         retorno = {
             "ok": not df.empty,
             "erro": "" if not df.empty else "; ".join([e for e in erros if e]),
@@ -738,12 +731,8 @@ def crawl_site_produtos(
 
         return retorno
 
-    # ------------------------------------------------------
-    # 2) VARREDURA DE CATEGORIAS / PAGINAÇÃO
-    # ------------------------------------------------------
     while fila_paginas and len(paginas_visitadas) < limite_paginas and len(links_produto) < limite_produtos:
         url_pagina = _normalizar_url(fila_paginas.pop(0))
-
         if not url_pagina:
             continue
         if url_pagina in paginas_vistas:
@@ -752,6 +741,19 @@ def crawl_site_produtos(
         paginas_vistas.add(url_pagina)
         paginas_visitadas.append(url_pagina)
 
+        if callable(progresso_callback):
+            try:
+                progresso_callback(
+                    {
+                        "fase": "paginas",
+                        "pagina_atual": url_pagina,
+                        "paginas_visitadas": len(paginas_visitadas),
+                        "links_produto": len(links_produto),
+                    }
+                )
+            except Exception:
+                pass
+
         payload = _fetch_url_crawler(
             url_pagina,
             preferir_js=preferir_js or _safe_bool(auth_final.get("precisa_login")),
@@ -759,14 +761,17 @@ def crawl_site_produtos(
         )
 
         html = _safe_str(payload.get("html"))
-
         if not payload.get("ok") or not html:
             erros.append(
                 f"falha_pagina::{url_pagina}::{_safe_str(payload.get('error')) or 'sem_html'}"
             )
             continue
 
-        links_prod, links_pag = _coletar_links_categoria(html, url_pagina)
+        try:
+            links_prod, links_pag = _coletar_links_categoria(html, url_pagina)
+        except Exception as e:
+            erros.append(f"erro_links::{url_pagina}::{e}")
+            continue
 
         links_prod = _filtrar_links_mesmo_dominio(links_prod, url)
         links_pag = _filtrar_links_mesmo_dominio(links_pag, url)
@@ -786,10 +791,20 @@ def crawl_site_produtos(
                 continue
 
             fila_paginas.append(pg)
-        # ------------------------------------------------------
-    # 3) EXTRAÇÃO DOS PRODUTOS
-    # ------------------------------------------------------
+
     links_produto = links_produto[:limite_produtos]
+
+    if callable(progresso_callback):
+        try:
+            progresso_callback(
+                {
+                    "fase": "produtos",
+                    "total_links_produto": len(links_produto),
+                    "paginas_visitadas": len(paginas_visitadas),
+                }
+            )
+        except Exception:
+            pass
 
     if links_produto:
         with ThreadPoolExecutor(max_workers=limite_threads) as executor:
@@ -805,8 +820,23 @@ def crawl_site_produtos(
                 for link in links_produto
             }
 
+            concluidos = 0
             for future in as_completed(futures):
                 link = futures[future]
+                concluidos += 1
+
+                if callable(progresso_callback):
+                    try:
+                        progresso_callback(
+                            {
+                                "fase": "extraindo_produto",
+                                "produto_atual": link,
+                                "concluidos": concluidos,
+                                "total": len(links_produto),
+                            }
+                        )
+                    except Exception:
+                        pass
 
                 try:
                     resultado = future.result()
@@ -821,11 +851,8 @@ def crawl_site_produtos(
                         f"falha_produto::{link}::{_safe_str(resultado.get('erro')) or 'desconhecida'}"
                     )
 
-    # ------------------------------------------------------
-    # 4) DEDUP FINAL
-    # ------------------------------------------------------
-    produtos_unicos = []
-    chaves_vistas = set()
+    produtos_unicos: list[dict[str, Any]] = []
+    chaves_vistas: set[str] = set()
 
     for item in produtos_extraidos:
         codigo = _safe_str(item.get("codigo"))
@@ -880,3 +907,68 @@ def crawl_site_produtos(
     )
 
     return retorno
+
+
+def buscar_produtos_site(
+    url: str,
+    *,
+    preferir_js: bool = False,
+    max_paginas: int | None = None,
+    max_produtos: int | None = None,
+    max_threads: int | None = None,
+    usuario: str = "",
+    senha: str = "",
+    precisa_login: bool = False,
+    auth_config: dict[str, Any] | None = None,
+    estoque_padrao_disponivel: int = 1,
+    progresso_callback=None,
+    atualizar_streamlit_state: bool = True,
+) -> dict[str, Any]:
+    return crawl_site_produtos(
+        url=url,
+        preferir_js=preferir_js,
+        max_paginas=max_paginas,
+        max_produtos=max_produtos,
+        max_threads=max_threads,
+        usuario=usuario,
+        senha=senha,
+        precisa_login=precisa_login,
+        auth_config=auth_config,
+        estoque_padrao_disponivel=estoque_padrao_disponivel,
+        progresso_callback=progresso_callback,
+        atualizar_streamlit_state=atualizar_streamlit_state,
+    )
+
+
+def buscar_produtos_site_df(
+    url: str,
+    *,
+    preferir_js: bool = False,
+    max_paginas: int | None = None,
+    max_produtos: int | None = None,
+    max_threads: int | None = None,
+    usuario: str = "",
+    senha: str = "",
+    precisa_login: bool = False,
+    auth_config: dict[str, Any] | None = None,
+    estoque_padrao_disponivel: int = 1,
+) -> pd.DataFrame:
+    resultado = crawl_site_produtos(
+        url=url,
+        preferir_js=preferir_js,
+        max_paginas=max_paginas,
+        max_produtos=max_produtos,
+        max_threads=max_threads,
+        usuario=usuario,
+        senha=senha,
+        precisa_login=precisa_login,
+        auth_config=auth_config,
+        estoque_padrao_disponivel=estoque_padrao_disponivel,
+        atualizar_streamlit_state=True,
+    )
+    df = resultado.get("df")
+    return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+
+def executar_crawler_site(*args, **kwargs):
+    return crawl_site_produtos(*args, **kwargs)
