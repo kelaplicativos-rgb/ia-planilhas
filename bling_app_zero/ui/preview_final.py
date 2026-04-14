@@ -96,6 +96,22 @@ def _render_erros_validacao(erros: list[str]) -> None:
             st.write(f"- {erro}")
 
 
+def _render_resumo_fluxo(df_download: pd.DataFrame) -> None:
+    try:
+        total_linhas = len(df_download)
+        total_colunas = len(df_download.columns)
+        st.caption(
+            f"Base final pronta para download: {total_linhas} linha(s) e {total_colunas} coluna(s)."
+        )
+    except Exception:
+        pass
+
+    st.info(
+        "A conexão com o Bling fica somente no início do fluxo. "
+        "Nesta etapa final você apenas revisa e baixa a planilha."
+    )
+
+
 def render_preview_final() -> None:
     st.subheader("Preview final")
 
@@ -107,13 +123,15 @@ def render_preview_final() -> None:
 
     try:
         log_debug(
-            f"[PREVIEW_FINAL] preview carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s).",
+            f"[PREVIEW_FINAL] preview carregado com {len(df_fluxo)} linha(s) e "
+            f"{len(df_fluxo.columns)} coluna(s).",
             "INFO",
         )
     except Exception:
         pass
 
     df_download = _blindar_df_final(df_fluxo)
+    _render_resumo_fluxo(df_download)
 
     with st.expander("Ver dados finais", expanded=False):
         st.dataframe(df_download.head(20), use_container_width=True)
@@ -165,3 +183,4 @@ def render_preview_final() -> None:
             _persistir_df_final(df_download)
             log_debug("[PREVIEW_FINAL] atualização manual do preview final acionada.", "INFO")
             st.rerun()
+            
