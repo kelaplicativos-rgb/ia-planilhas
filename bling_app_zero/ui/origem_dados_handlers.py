@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import streamlit as st
@@ -14,19 +15,28 @@ from bling_app_zero.ui.origem_dados_estado import (
     safe_str,
 )
 
+try:
+    from bling_app_zero.core.xml_nfe import extrair_produtos_nfe
+except Exception:
+    extrair_produtos_nfe = None
+
+try:
+    from bling_app_zero.core.xml_bling_mapper import mapear_xml_para_bling
+except Exception:
+    mapear_xml_para_bling = None
+
+
 # ==========================================================
 # NORMALIZAÇÃO
 # ==========================================================
-
-
 def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame()
 
         df_out = df.copy()
-
         colunas_finais: list[str] = []
+
         for col in df_out.columns:
             nome = (
                 safe_str(col)
@@ -47,8 +57,6 @@ def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 # LEITURA ROBUSTA
 # ==========================================================
-
-
 def _ler_csv_robusto(upload) -> pd.DataFrame | None:
     try:
         conteudo = upload.read()
@@ -92,7 +100,7 @@ def _ler_excel_robusto(upload) -> pd.DataFrame | None:
         if not conteudo:
             return None
 
-        for engine in [None, "openpyxl", "xlrd"]:
+        for engine in [None, "openpyxl", "xlrd", "pyxlsb"]:
             try:
                 buffer = io.BytesIO(conteudo)
                 if engine:
@@ -107,7 +115,25 @@ def _ler_excel_robusto(upload) -> pd.DataFrame | None:
         return None
 
 
-def _ler_xml_robusto(upload) -> pd.DataFrame | None:
+def _ler_xml_nfe_especifico(upload) -> pd.DataFrame | None:
+    try:
+        conteudo = upload.read()
+        if not conteudo:
+            return None
+
+        if extrair_produtos_nfe is not None:
+            produtos = extrair_produtos_nfe(conteudo)
+            if isinstance(produtos, pd.DataFrame) and not produtos.empty:
+                log_debug("[ORIGEM_DADOS] XML lido com parser específico de NFe.", "INFO")
+                return produtos
+
+        return None
+    except Exception as e:
+        log_debug(f"[ORIGEM_DADOS] parser específico de XML/NFe falhou: {e}", "WARNING")
+        return None
+
+
+def _ler_xml_generico(upload) -> pd.DataFrame | None:
     try:
         conteudo = upload.read()
         if not conteudo:
@@ -117,11 +143,64 @@ def _ler_xml_robusto(upload) -> pd.DataFrame | None:
             try:
                 buffer = io.BytesIO(conteudo)
                 df = pd.read_xml(buffer, parser=parser) if parser else pd.read_xml(buffer)
-                if isinstance(df, pd.DataFrame):
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    log_debug("[ORIGEM_DADOS] XML lido com parser genérico.", "INFO")
                     return df
             except Exception:
                 continue
 
+        return None
+    except Exception as e:
+        log_debug(f"[ORIGEM_DADOS] erro ao ler XML: {e}", "ERROR")
+        return None
+
+
+def _ler_xml_robusto(upload) -> pd.DataFrame | None:
+    try:
+        nome = safe_str(getattr(upload, "name", "xml")).strip() or "xml"
+
+        try:
+            upload.seek(0)
+        except Exception:
+            pass
+
+        df_xml = _ler_xml_nfe_especifico(upload)
+        if isinstance(df_xml, pd.DataFrame) and not df_xml.empty:
+            try:
+                upload.seek(0)
+            except Exception:
+                pass
+
+            if mapear_xml_para_bling is not None:
+                try:
+                    df_mapeado = mapear_xml_para_bling(df_xml)
+                    if isinstance(df_mapeado, pd.DataFrame) and not df_mapeado.empty:
+                        st.session_state["df_saida"] = df_mapeado.copy()
+                        st.session_state["df_final"] = df_mapeado.copy()
+                        log_debug(
+                            f"[ORIGEM_DADOS] XML/NFe convertido com sucesso: {nome} ({len(df_mapeado)} linha(s)).",
+                            "INFO",
+                        )
+                        return aplicar_normalizacao_basica(df_mapeado)
+                except Exception as e:
+                    log_debug(f"[ORIGEM_DADOS] falha ao mapear XML para Bling: {e}", "WARNING")
+
+            return aplicar_normalizacao_basica(df_xml)
+
+        try:
+            upload.seek(0)
+        except Exception:
+            pass
+
+        df_generico = _ler_xml_generico(upload)
+        if isinstance(df_generico, pd.DataFrame) and not df_generico.empty:
+            return aplicar_normalizacao_basica(df_generico)
+
+        st.warning("Não foi possível interpretar o XML enviado.")
+        return None
+    except ET.ParseError as e:
+        st.error("O XML enviado é inválido ou está mal formatado.")
+        log_debug(f"[ORIGEM_DADOS] XML inválido: {e}", "ERROR")
         return None
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao ler XML: {e}", "ERROR")
@@ -138,12 +217,11 @@ def ler_planilha(upload) -> pd.DataFrame | None:
         if nome.endswith(".csv"):
             return _ler_csv_robusto(upload)
 
-        if nome.endswith((".xlsx", ".xls")):
+        if nome.endswith((".xlsx", ".xls", ".xlsb")):
             return _ler_excel_robusto(upload)
 
         if nome.endswith(".xml"):
             return _ler_xml_robusto(upload)
-
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao ler arquivo: {e}", "ERROR")
 
@@ -153,55 +231,14 @@ def ler_planilha(upload) -> pd.DataFrame | None:
 # ==========================================================
 # ESTADO / TROCAS
 # ==========================================================
-
-
-def _normalizar_tipo_origem(origem: str) -> str:
-    valor = safe_str(origem).strip().lower()
-
-    mapa = {
-        "site": "site",
-        "buscar em site": "site",
-        "busca em site": "site",
-        "planilha": "planilha",
-        "planilha / csv / xml": "planilha",
-        "planilha/csv/xml": "planilha",
-        "arquivo": "planilha",
-        "upload": "planilha",
-    }
-
-    return mapa.get(valor, valor or "planilha")
-
-
-def _limpar_estado_dependente_origem() -> None:
-    for chave in [
-        "df_origem",
-        "df_saida",
-        "df_final",
-        "df_precificado",
-        "df_calc_precificado",
-        "origem_dados_fingerprint",
-        "site_processado",
-        "site_autoavanco_realizado",
-    ]:
-        st.session_state.pop(chave, None)
-
-    limpar_mapeamento_widgets()
-
-
 def controlar_troca_origem(origem: str, log_fn=None) -> None:
-    origem_atual = _normalizar_tipo_origem(origem)
-    origem_anterior = _normalizar_tipo_origem(
-        st.session_state.get("_origem_anterior_origem_dados")
-    )
+    origem_atual = safe_str(origem).lower()
+    origem_anterior = safe_str(st.session_state.get("_origem_anterior_origem_dados")).lower()
 
     st.session_state["origem_dados_tipo"] = origem_atual
-    st.session_state["origem_dados"] = origem_atual
 
-    if not safe_str(st.session_state.get("_origem_anterior_origem_dados")).strip():
+    if not origem_anterior:
         st.session_state["_origem_anterior_origem_dados"] = origem_atual
-        st.session_state["site_processado"] = False
-        st.session_state["site_autoavanco_realizado"] = False
-
         if callable(log_fn):
             log_fn(f"[ORIGEM_DADOS] origem inicial definida: {origem_atual}", "INFO")
         return
@@ -211,15 +248,16 @@ def controlar_troca_origem(origem: str, log_fn=None) -> None:
 
     if callable(log_fn):
         log_fn(
-            f"[ORIGEM_DADOS] origem alterada: {origem_anterior} → {origem_atual}. "
-            "Limpando saída e mapeamento.",
+            f"[ORIGEM_DADOS] origem alterada: {origem_anterior} → {origem_atual}. Limpando saída e mapeamento.",
             "INFO",
         )
 
-    _limpar_estado_dependente_origem()
+    for chave in ["df_origem", "df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+        st.session_state.pop(chave, None)
 
+    st.session_state.pop("origem_dados_fingerprint", None)
     st.session_state["site_processado"] = False
-    st.session_state["site_autoavanco_realizado"] = False
+    limpar_mapeamento_widgets()
     st.session_state["_origem_anterior_origem_dados"] = origem_atual
 
 
@@ -242,14 +280,8 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
             if not safe_df_estrutura(st.session_state.get("df_final")):
                 st.session_state["df_final"] = df_limpo.copy()
 
-            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
-                st.session_state["site_processado"] = True
-
             if callable(log_fn):
-                log_fn(
-                    f"[ORIGEM_DADOS] df_origem sincronizado com {len(df_limpo)} linha(s)",
-                    "INFO",
-                )
+                log_fn(f"[ORIGEM_DADOS] df_origem sincronizado com {len(df_limpo)} linha(s)", "INFO")
             return
 
         if fp_atual != fp_novo:
@@ -262,12 +294,7 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
             for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
                 st.session_state.pop(chave, None)
 
-            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
-                st.session_state["site_processado"] = True
-                st.session_state["site_autoavanco_realizado"] = False
-
             limpar_mapeamento_widgets()
-
     except Exception as e:
         if callable(log_fn):
             log_fn(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
@@ -276,8 +303,6 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
 # ==========================================================
 # MODELO / BASE
 # ==========================================================
-
-
 def obter_modelo_ativo():
     if st.session_state.get("tipo_operacao_bling") == "estoque":
         return st.session_state.get("df_modelo_estoque")
@@ -294,27 +319,20 @@ def obter_df_base_prioritaria(df_origem: pd.DataFrame) -> pd.DataFrame:
 
     if safe_df_estrutura(df_prec):
         return df_prec.copy()
-
     if safe_df_estrutura(df_calc):
         return df_calc.copy()
-
     return df_origem.copy()
 
 
 # ==========================================================
 # ESTOQUE
 # ==========================================================
-
-
 def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
     try:
         df_out = df_saida.copy()
 
         qtd_padrao = 0 if "site" in safe_str(origem_atual).lower() else 1
-        qtd_padrao = safe_int(
-            st.session_state.get("site_estoque_padrao_disponivel"),
-            qtd_padrao,
-        )
+        qtd_padrao = safe_int(st.session_state.get("site_estoque_padrao_disponivel"), qtd_padrao)
 
         if "Quantidade" not in df_out.columns:
             df_out["Quantidade"] = qtd_padrao
@@ -341,7 +359,6 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
             df_out["Balanço (OBRIGATÓRIO)"] = "S"
 
         return df_out
-
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida.copy() if isinstance(df_saida, pd.DataFrame) else pd.DataFrame()
@@ -350,8 +367,6 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
 # ==========================================================
 # PRECIFICAÇÃO
 # ==========================================================
-
-
 def nome_coluna_preco_saida() -> str:
     return (
         "Preço unitário (OBRIGATÓRIO)"
@@ -407,7 +422,6 @@ def aplicar_precificacao(
         st.session_state["df_calc_precificado"] = df_prec.copy()
         st.session_state["df_precificado"] = df_prec.copy()
         return df_prec
-
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro na precificação: {e}", "ERROR")
         st.session_state["df_calc_precificado"] = None
@@ -417,8 +431,6 @@ def aplicar_precificacao(
 # ==========================================================
 # VALIDAÇÃO
 # ==========================================================
-
-
 def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     erros: list[str] = []
 
@@ -426,12 +438,11 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     if not safe_df_dados(df_origem):
         erros.append("Carregue os dados de origem antes de continuar.")
 
-    origem_atual = _normalizar_tipo_origem(obter_origem_atual())
+    origem_atual = obter_origem_atual()
     if "site" in origem_atual:
         url = safe_str(st.session_state.get("site_url"))
         if not url:
             erros.append("Informe a URL do site.")
-
         if not st.session_state.get("site_processado") and not safe_df_dados(df_origem):
             erros.append("Execute a busca do site antes de continuar.")
 
