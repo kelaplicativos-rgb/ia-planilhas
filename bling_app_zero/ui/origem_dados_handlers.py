@@ -14,18 +14,19 @@ from bling_app_zero.ui.origem_dados_estado import (
     safe_str,
 )
 
-
 # ==========================================================
 # NORMALIZAÇÃO
 # ==========================================================
+
+
 def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame()
 
         df_out = df.copy()
-        colunas_finais: list[str] = []
 
+        colunas_finais: list[str] = []
         for col in df_out.columns:
             nome = (
                 safe_str(col)
@@ -46,6 +47,8 @@ def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 # LEITURA ROBUSTA
 # ==========================================================
+
+
 def _ler_csv_robusto(upload) -> pd.DataFrame | None:
     try:
         conteudo = upload.read()
@@ -134,10 +137,13 @@ def ler_planilha(upload) -> pd.DataFrame | None:
     try:
         if nome.endswith(".csv"):
             return _ler_csv_robusto(upload)
+
         if nome.endswith((".xlsx", ".xls")):
             return _ler_excel_robusto(upload)
+
         if nome.endswith(".xml"):
             return _ler_xml_robusto(upload)
+
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro ao ler arquivo: {e}", "ERROR")
 
@@ -147,14 +153,55 @@ def ler_planilha(upload) -> pd.DataFrame | None:
 # ==========================================================
 # ESTADO / TROCAS
 # ==========================================================
+
+
+def _normalizar_tipo_origem(origem: str) -> str:
+    valor = safe_str(origem).strip().lower()
+
+    mapa = {
+        "site": "site",
+        "buscar em site": "site",
+        "busca em site": "site",
+        "planilha": "planilha",
+        "planilha / csv / xml": "planilha",
+        "planilha/csv/xml": "planilha",
+        "arquivo": "planilha",
+        "upload": "planilha",
+    }
+
+    return mapa.get(valor, valor or "planilha")
+
+
+def _limpar_estado_dependente_origem() -> None:
+    for chave in [
+        "df_origem",
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "df_calc_precificado",
+        "origem_dados_fingerprint",
+        "site_processado",
+        "site_autoavanco_realizado",
+    ]:
+        st.session_state.pop(chave, None)
+
+    limpar_mapeamento_widgets()
+
+
 def controlar_troca_origem(origem: str, log_fn=None) -> None:
-    origem_atual = safe_str(origem).lower()
-    origem_anterior = safe_str(st.session_state.get("_origem_anterior_origem_dados")).lower()
+    origem_atual = _normalizar_tipo_origem(origem)
+    origem_anterior = _normalizar_tipo_origem(
+        st.session_state.get("_origem_anterior_origem_dados")
+    )
 
     st.session_state["origem_dados_tipo"] = origem_atual
+    st.session_state["origem_dados"] = origem_atual
 
-    if not origem_anterior:
+    if not safe_str(st.session_state.get("_origem_anterior_origem_dados")).strip():
         st.session_state["_origem_anterior_origem_dados"] = origem_atual
+        st.session_state["site_processado"] = False
+        st.session_state["site_autoavanco_realizado"] = False
+
         if callable(log_fn):
             log_fn(f"[ORIGEM_DADOS] origem inicial definida: {origem_atual}", "INFO")
         return
@@ -165,23 +212,20 @@ def controlar_troca_origem(origem: str, log_fn=None) -> None:
     if callable(log_fn):
         log_fn(
             f"[ORIGEM_DADOS] origem alterada: {origem_anterior} → {origem_atual}. "
-            f"Limpando saída e mapeamento.",
+            "Limpando saída e mapeamento.",
             "INFO",
         )
 
-    for chave in ["df_origem", "df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
-        st.session_state.pop(chave, None)
+    _limpar_estado_dependente_origem()
 
-    st.session_state.pop("origem_dados_fingerprint", None)
     st.session_state["site_processado"] = False
-    limpar_mapeamento_widgets()
+    st.session_state["site_autoavanco_realizado"] = False
     st.session_state["_origem_anterior_origem_dados"] = origem_atual
 
 
 def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
     try:
         df_limpo = aplicar_normalizacao_basica(df_origem)
-
         if not safe_df_dados(df_limpo):
             return
 
@@ -197,6 +241,9 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
 
             if not safe_df_estrutura(st.session_state.get("df_final")):
                 st.session_state["df_final"] = df_limpo.copy()
+
+            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
+                st.session_state["site_processado"] = True
 
             if callable(log_fn):
                 log_fn(
@@ -215,7 +262,12 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
             for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
                 st.session_state.pop(chave, None)
 
+            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
+                st.session_state["site_processado"] = True
+                st.session_state["site_autoavanco_realizado"] = False
+
             limpar_mapeamento_widgets()
+
     except Exception as e:
         if callable(log_fn):
             log_fn(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
@@ -224,6 +276,8 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
 # ==========================================================
 # MODELO / BASE
 # ==========================================================
+
+
 def obter_modelo_ativo():
     if st.session_state.get("tipo_operacao_bling") == "estoque":
         return st.session_state.get("df_modelo_estoque")
@@ -250,12 +304,17 @@ def obter_df_base_prioritaria(df_origem: pd.DataFrame) -> pd.DataFrame:
 # ==========================================================
 # ESTOQUE
 # ==========================================================
+
+
 def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
     try:
         df_out = df_saida.copy()
 
         qtd_padrao = 0 if "site" in safe_str(origem_atual).lower() else 1
-        qtd_padrao = safe_int(st.session_state.get("site_estoque_padrao_disponivel"), qtd_padrao)
+        qtd_padrao = safe_int(
+            st.session_state.get("site_estoque_padrao_disponivel"),
+            qtd_padrao,
+        )
 
         if "Quantidade" not in df_out.columns:
             df_out["Quantidade"] = qtd_padrao
@@ -264,7 +323,6 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
             df_out["Quantidade"] = serie.fillna(qtd_padrao)
 
         deposito_nome = safe_str(st.session_state.get("deposito_nome"))
-
         if deposito_nome:
             if "Depósito (OBRIGATÓRIO)" not in df_out.columns:
                 df_out["Depósito (OBRIGATÓRIO)"] = deposito_nome
@@ -283,6 +341,7 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
             df_out["Balanço (OBRIGATÓRIO)"] = "S"
 
         return df_out
+
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
         return df_saida.copy() if isinstance(df_saida, pd.DataFrame) else pd.DataFrame()
@@ -291,6 +350,8 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
 # ==========================================================
 # PRECIFICAÇÃO
 # ==========================================================
+
+
 def nome_coluna_preco_saida() -> str:
     return (
         "Preço unitário (OBRIGATÓRIO)"
@@ -345,8 +406,8 @@ def aplicar_precificacao(
 
         st.session_state["df_calc_precificado"] = df_prec.copy()
         st.session_state["df_precificado"] = df_prec.copy()
-
         return df_prec
+
     except Exception as e:
         log_debug(f"[ORIGEM_DADOS] erro na precificação: {e}", "ERROR")
         st.session_state["df_calc_precificado"] = None
@@ -356,6 +417,8 @@ def aplicar_precificacao(
 # ==========================================================
 # VALIDAÇÃO
 # ==========================================================
+
+
 def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     erros: list[str] = []
 
@@ -363,7 +426,7 @@ def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     if not safe_df_dados(df_origem):
         erros.append("Carregue os dados de origem antes de continuar.")
 
-    origem_atual = obter_origem_atual()
+    origem_atual = _normalizar_tipo_origem(obter_origem_atual())
     if "site" in origem_atual:
         url = safe_str(st.session_state.get("site_url"))
         if not url:
