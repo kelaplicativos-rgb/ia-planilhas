@@ -105,18 +105,119 @@ def _hash_df(df: pd.DataFrame, tipo_api: str, deposito_id: str = "") -> str:
         return ""
 
 
+def _processar_callback_oauth(auth) -> bool:
+    """
+    Processa retorno do OAuth tanto na home quanto na tela de envio.
+    Retorna True se conectou com sucesso nesta execução.
+    """
+    if auth is None:
+        return False
+
+    try:
+        retorno = auth.handle_oauth_callback()
+    except Exception as e:
+        st.error(f"Erro ao processar retorno do Bling: {e}")
+        return False
+
+    if not isinstance(retorno, dict):
+        return False
+
+    status = _safe_str(retorno.get("status")).lower()
+    mensagem = _safe_str(retorno.get("message"))
+
+    if status == "success":
+        st.success(mensagem or "Conta conectada com sucesso.")
+        return True
+
+    if status == "error":
+        st.error(mensagem or "Falha ao autenticar com o Bling.")
+        return False
+
+    return False
+
+
+def _auth_url_segura(auth) -> str:
+    if auth is None:
+        return ""
+
+    try:
+        if hasattr(auth, "build_authorize_url"):
+            url = auth.build_authorize_url()
+            if _safe_str(url):
+                return _safe_str(url)
+    except Exception:
+        pass
+
+    try:
+        if hasattr(auth, "generate_auth_url"):
+            url = auth.generate_auth_url()
+            if _safe_str(url):
+                return _safe_str(url)
+    except Exception:
+        pass
+
+    return ""
+
+
+def _esta_conectado(auth) -> bool:
+    if auth is None:
+        return False
+
+    try:
+        if hasattr(auth, "has_valid_token"):
+            return bool(auth.has_valid_token())
+    except Exception:
+        pass
+
+    try:
+        if hasattr(auth, "get_connection_status"):
+            status = auth.get_connection_status()
+            return bool((status or {}).get("connected"))
+    except Exception:
+        pass
+
+    try:
+        if hasattr(auth, "get_valid_access_token"):
+            ok, _ = auth.get_valid_access_token()
+            return bool(ok)
+    except Exception:
+        pass
+
+    return False
+
+
 # ==========================================================
 # ETAPA 0 - PRIMEIRO ACESSO
 # ==========================================================
 def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
     """
-    Mantido explicitamente para compatibilidade com app.py.
-    Blindado contra valor inválido em session_state no st.radio.
+    Tela inicial de conexão.
+    Agora conecta de verdade quando o usuário escolhe "Conectar agora".
     """
     _garantir_estado()
 
     st.subheader("Conexão com Bling")
     st.caption("Conecte agora ou avance e conecte depois na etapa de envio.")
+
+    if BlingAuthManager is None:
+        st.error("Classe BlingAuthManager não encontrada no projeto.")
+        return
+
+    user_key = _resolver_user_key()
+
+    try:
+        auth = BlingAuthManager(user_key=user_key)
+    except Exception as e:
+        st.error(f"Erro ao iniciar autenticação do Bling: {e}")
+        return
+
+    conectou_agora = _processar_callback_oauth(auth)
+    conectado = _esta_conectado(auth)
+
+    if conectado or conectou_agora:
+        st.success("✅ Conta conectada ao Bling.")
+    else:
+        st.info("ℹ️ Conta ainda não conectada.")
 
     opcoes = ["Conectar depois", "Conectar agora"]
 
@@ -133,6 +234,18 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
 
     st.session_state["bling_primeiro_acesso_decidido"] = True
 
+    if escolha == "Conectar agora":
+        if not auth.is_configured():
+            st.error("Credenciais do Bling não configuradas em secrets.")
+        elif not conectado:
+            url = _auth_url_segura(auth)
+            if url:
+                st.link_button("Conectar com Bling", url, use_container_width=True)
+            else:
+                st.error("Não foi possível gerar a URL de autenticação.")
+        else:
+            st.success("Você já está conectado ao Bling.")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -146,6 +259,10 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
                     st.session_state["etapa_fluxo"] = "origem"
                     st.rerun()
             else:
+                if not _esta_conectado(auth):
+                    st.warning("Conclua a conexão com o Bling antes de continuar.")
+                    st.stop()
+
                 if callable(on_continue):
                     on_continue()
                 else:
@@ -162,26 +279,13 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
 # CONEXÃO
 # ==========================================================
 def _render_conexao(auth) -> bool:
-    conectado = False
+    _processar_callback_oauth(auth)
+    conectado = _esta_conectado(auth)
 
     st.markdown("---")
     col1, col2 = st.columns(2)
 
     with col1:
-        try:
-            if auth and auth.is_configured():
-                if hasattr(auth, "has_valid_token"):
-                    conectado = bool(auth.has_valid_token())
-                elif hasattr(auth, "get_connection_status"):
-                    status = auth.get_connection_status()
-                    conectado = bool(status.get("connected"))
-                else:
-                    conectado = False
-            else:
-                conectado = False
-        except Exception:
-            conectado = False
-
         if conectado:
             st.success("✅ Conectado ao Bling")
         else:
@@ -190,9 +294,16 @@ def _render_conexao(auth) -> bool:
     with col2:
         try:
             if auth and auth.is_configured():
-                url = auth.build_authorize_url()
-                if url:
-                    st.link_button("Conectar com Bling", url, use_container_width=True)
+                if not conectado:
+                    url = _auth_url_segura(auth)
+                    if url:
+                        st.link_button("Conectar com Bling", url, use_container_width=True)
+                    else:
+                        st.error("Não foi possível gerar a URL de autenticação.")
+                else:
+                    st.success("Conta já conectada.")
+            else:
+                st.error("Credenciais do Bling não configuradas.")
         except Exception as e:
             st.error(f"Erro ao gerar URL: {e}")
 
@@ -291,7 +402,10 @@ def render_send_panel():
 
     labels = list(modos.keys())
     valor_para_label = {v: k for k, v in modos.items()}
-    label_default = valor_para_label.get(st.session_state["bling_modo_envio"], "Cadastro de Produtos")
+    label_default = valor_para_label.get(
+        st.session_state["bling_modo_envio"],
+        "Cadastro de Produtos",
+    )
     index_default = labels.index(label_default) if label_default in labels else 0
 
     tipo = st.radio(
