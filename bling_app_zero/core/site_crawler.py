@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 
 from bling_app_zero.core.site_crawler_helpers import MAX_PAGINAS, MAX_THREADS
-
 from .site_crawler_runtime import executar_pipeline_crawler
 from .site_crawler_shared import safe_int
 
