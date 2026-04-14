@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug, safe_df_dados, safe_df_estrutura
+from bling_app_zero.ui.app_helpers import (
+    log_debug,
+    safe_df_dados,
+    safe_df_estrutura,
+)
 from bling_app_zero.ui.origem_dados_estado import (
     garantir_estado_origem,
     obter_origem_atual,
@@ -31,7 +36,6 @@ from bling_app_zero.ui.origem_dados_ui import (
     render_preview_origem,
 )
 
-
 NavCallback = Callable[[], None] | None
 
 
@@ -46,9 +50,71 @@ def _navegar(destino: str, callback: NavCallback = None) -> None:
     if callable(callback):
         callback()
         return
-
     set_etapa_origem(destino)
     st.rerun()
+
+
+def _resolver_df_origem_site() -> pd.DataFrame | None:
+    """
+    Corrige o fluxo do modo site quando o crawler/fetcher preenche
+    df_saida/df_final/df_precificado, mas não devolve df_origem diretamente.
+    """
+    candidatos = [
+        "df_origem",
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "df_calc_precificado",
+    ]
+
+    for chave in candidatos:
+        df = st.session_state.get(chave)
+        if safe_df_dados(df):
+            try:
+                df_resolvido = df.copy()
+            except Exception:
+                df_resolvido = df
+
+            if chave != "df_origem":
+                try:
+                    st.session_state["df_origem"] = df_resolvido.copy()
+                except Exception:
+                    st.session_state["df_origem"] = df_resolvido
+
+                log_debug(
+                    f"[ORIGEM_DADOS] origem por site reaproveitou dados de '{chave}' "
+                    "para compor df_origem.",
+                    "INFO",
+                )
+
+            st.session_state["site_processado"] = True
+            return df_resolvido
+
+    return None
+
+
+def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
+    origem_atual = safe_str(obter_origem_atual()).lower()
+
+    if safe_df_dados(df_origem_render):
+        return df_origem_render
+
+    if "site" in origem_atual:
+        return _resolver_df_origem_site()
+
+    return df_origem_render
+
+
+def _site_configurada_minimamente() -> bool:
+    try:
+        origem_atual = safe_str(obter_origem_atual()).lower()
+        if "site" not in origem_atual:
+            return False
+
+        url = safe_str(st.session_state.get("site_url"))
+        return bool(url)
+    except Exception:
+        return False
 
 
 def _render_botoes_origem(
@@ -78,15 +144,21 @@ def _render_botoes_origem(
                 key=f"origem_btn_continuar_{'ok' if continuar_habilitado else 'bloq'}",
             ):
                 valido, erros = validar_antes_mapeamento()
-
                 if not valido:
                     for erro in erros:
                         st.warning(erro)
                     return
 
                 if safe_df_estrutura(st.session_state.get("df_saida")):
-                    st.session_state["df_final"] = st.session_state["df_saida"].copy()
+                    try:
+                        st.session_state["df_final"] = st.session_state["df_saida"].copy()
+                    except Exception:
+                        st.session_state["df_final"] = st.session_state["df_saida"]
 
+                log_debug(
+                    "[ORIGEM_DADOS] origem validada. Avançando para mapeamento.",
+                    "INFO",
+                )
                 _navegar("mapeamento", on_continue)
         else:
             st.caption("Carregue a origem para liberar o próximo passo.")
@@ -102,7 +174,11 @@ def render_origem_dados(
     col_topo_1, col_topo_2 = st.columns(2)
 
     with col_topo_1:
-        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_conexao_topo"):
+        if st.button(
+            "⬅️ Voltar para conexão",
+            use_container_width=True,
+            key="origem_btn_voltar_conexao_topo",
+        ):
             _navegar("conexao", on_back)
 
     with col_topo_2:
@@ -139,29 +215,24 @@ def render_origem_dados(
 
     st.markdown("---")
 
-    df_origem = render_origem_entrada(
+    df_origem_render = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
+    df_origem = _obter_df_origem_renderizado(df_origem_render)
+    origem_atual = safe_str(obter_origem_atual()).lower()
 
-    origem_atual = obter_origem_atual()
-
-    if (
-        "site" in origem_atual
-        and not st.session_state.get("site_processado")
-        and not safe_df_dados(df_origem)
-    ):
-        st.info("Configure o site e execute a busca para continuar.")
-        st.markdown("---")
-        _render_botoes_origem(
-            on_back=on_back,
-            on_continue=on_continue,
-            mostrar_continuar=False,
-            continuar_habilitado=False,
-        )
-        return
+    if "site" in origem_atual:
+        if safe_df_dados(df_origem):
+            st.session_state["site_processado"] = True
+        elif _site_configurada_minimamente():
+            st.info(
+                "A URL do site já foi preenchida. Assim que o crawler/fetcher carregar os "
+                "dados na sessão, o fluxo será liberado automaticamente."
+            )
+        else:
+            st.info("Configure o site e execute a busca para continuar.")
 
     if not safe_df_dados(df_origem):
-        st.info("Selecione a origem e carregue os dados para continuar.")
         st.markdown("---")
         _render_botoes_origem(
             on_back=on_back,
@@ -172,7 +243,12 @@ def render_origem_dados(
         return
 
     df_origem = aplicar_normalizacao_basica(df_origem)
-    st.session_state["df_origem"] = df_origem.copy()
+
+    try:
+        st.session_state["df_origem"] = df_origem.copy()
+    except Exception:
+        st.session_state["df_origem"] = df_origem
+
     sincronizar_estado_com_origem(df_origem, log_debug)
 
     st.markdown("---")
@@ -195,8 +271,15 @@ def render_origem_dados(
     if st.session_state.get("tipo_operacao_bling") == "estoque":
         df_saida = aplicar_bloco_estoque(df_saida, origem_atual)
 
-    st.session_state["df_saida"] = df_saida.copy()
-    st.session_state["df_final"] = df_saida.copy()
+    try:
+        st.session_state["df_saida"] = df_saida.copy()
+    except Exception:
+        st.session_state["df_saida"] = df_saida
+
+    try:
+        st.session_state["df_final"] = df_saida.copy()
+    except Exception:
+        st.session_state["df_final"] = df_saida
 
     render_preview_origem(df_origem)
 
@@ -218,8 +301,15 @@ def render_origem_dados(
         if st.session_state.get("tipo_operacao_bling") == "estoque":
             df_saida_prec = aplicar_bloco_estoque(df_saida_prec, origem_atual)
 
-        st.session_state["df_saida"] = df_saida_prec.copy()
-        st.session_state["df_final"] = df_saida_prec.copy()
+        try:
+            st.session_state["df_saida"] = df_saida_prec.copy()
+        except Exception:
+            st.session_state["df_saida"] = df_saida_prec
+
+        try:
+            st.session_state["df_final"] = df_saida_prec.copy()
+        except Exception:
+            st.session_state["df_final"] = df_saida_prec
 
     st.markdown("---")
     _render_botoes_origem(
@@ -228,4 +318,3 @@ def render_origem_dados(
         mostrar_continuar=True,
         continuar_habilitado=True,
     )
-    
