@@ -21,18 +21,12 @@ from bling_app_zero.ui.send_panel import (
 from bling_app_zero.utils.init_app import inicializar_app
 
 
-# =========================
-# CONFIG
-# =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.30"
+APP_VERSION = "1.0.31"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
-# =========================
-# VERSIONAMENTO
-# =========================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -44,7 +38,6 @@ def _ler_version_json() -> dict:
     try:
         if not VERSION_JSON_PATH.exists():
             return {}
-
         bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
         data = json.loads(bruto)
         return data if isinstance(data, dict) else {}
@@ -121,9 +114,6 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     return APP_VERSION
 
 
-# =========================
-# LIMPEZA DE SESSÃO POR VERSÃO
-# =========================
 def _garantir_estado_versionamento() -> None:
     if "_app_loaded_version" not in st.session_state:
         st.session_state["_app_loaded_version"] = APP_VERSION
@@ -155,8 +145,6 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "acesso_cliente_id",
         "acesso_liberado",
         "_debug_logs",
-        "_debug_logs_text",
-        "_debug_panel_open",
     }
 
 
@@ -250,42 +238,7 @@ def _render_controle_versao(version_data: dict) -> None:
                 log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
 
-    last_title = str((version_data or {}).get("last_title") or "").strip()
-    last_description = str((version_data or {}).get("last_description") or "").strip()
 
-    if last_title or last_description:
-        with st.expander("Controle de versão", expanded=False):
-            if last_title:
-                st.write(f"**Última mudança:** {last_title}")
-            if last_description:
-                st.write(last_description)
-
-            history = (version_data or {}).get("history", [])
-            if isinstance(history, list) and history:
-                st.markdown("**Histórico recente**")
-                for item in reversed(history[-5:]):
-                    if not isinstance(item, dict):
-                        continue
-
-                    versao = str(item.get("version") or "").strip()
-                    data = str(item.get("date") or "").strip()
-                    titulo = str(item.get("title") or "").strip()
-                    descricao = str(item.get("description") or "").strip()
-
-                    linha = f"- **{versao}**"
-                    if data:
-                        linha += f" · {data}"
-                    if titulo:
-                        linha += f" · {titulo}"
-                    if descricao:
-                        linha += f" — {descricao}"
-
-                    st.markdown(linha)
-
-
-# =========================
-# CONTROLE DE ACESSO
-# =========================
 def _safe_str(valor) -> str:
     try:
         if valor is None:
@@ -430,9 +383,6 @@ def _validar_acesso_cliente() -> None:
     _liberar_sessao_cliente(cliente_id)
 
 
-# =========================
-# INIT
-# =========================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
@@ -443,9 +393,6 @@ if houve_limpeza_versao:
     st.rerun()
 
 
-# =========================
-# HELPERS DE FLUXO
-# =========================
 ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
 
 
@@ -573,9 +520,6 @@ def _resolver_autoetapa() -> str:
     return etapa_atual
 
 
-# =========================
-# UI BASE
-# =========================
 st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
@@ -584,40 +528,24 @@ _garantir_estado_fluxo_inicial()
 _validar_acesso_cliente()
 _render_banner_cliente(_safe_str(st.session_state.get("acesso_cliente_id")))
 
-
-# =========================
-# CONTROLE DE ETAPA
-# =========================
 etapa = _sincronizar_etapa_global(_resolver_autoetapa())
 
 if etapa not in ETAPAS_VALIDAS:
     log_debug(f"[APP] etapa inválida detectada: {etapa}", "ERROR")
     _ir_para("conexao")
 
-
-# =========================
-# ETAPA 0 — CONEXÃO
-# =========================
 if etapa == "conexao":
     render_bling_primeiro_acesso(
         on_skip=lambda: _ir_para("origem"),
         on_continue=lambda: _ir_para("origem"),
     )
 
-
-# =========================
-# ETAPA 1 — ORIGEM
-# =========================
 elif etapa == "origem":
     render_origem_dados(
         on_back=lambda: _ir_para("conexao"),
         on_continue=lambda: _ir_para("mapeamento"),
     )
 
-
-# =========================
-# ETAPA 2 — MAPEAMENTO
-# =========================
 elif etapa == "mapeamento":
     if not _pode_ir_para_mapeamento():
         st.warning("⚠️ Carregue os dados na origem antes de acessar o mapeamento.")
@@ -630,10 +558,6 @@ elif etapa == "mapeamento":
         on_continue=lambda: _ir_para("final"),
     )
 
-
-# =========================
-# ETAPA 3 — FINAL
-# =========================
 elif etapa == "final":
     _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
@@ -658,10 +582,6 @@ elif etapa == "final":
         if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
 
-
-# =========================
-# ETAPA 4 — ENVIO
-# =========================
 elif etapa == "envio":
     _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
@@ -680,10 +600,6 @@ elif etapa == "envio":
     st.markdown("---")
     render_send_panel()
 
-
-# =========================
-# FALLBACK
-# =========================
 else:
     log_debug(f"[APP] fallback de etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
