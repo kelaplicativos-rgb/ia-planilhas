@@ -14,13 +14,13 @@ from bling_app_zero.ui.origem_mapeamento_estado import (
     get_etapa_mapeamento,
     set_etapa_mapeamento,
 )
-from bling_app_zero.ui.origem_mapeamento_validacao import (
-    detectar_duplicidades_mapping,
-)
 from bling_app_zero.ui.origem_mapeamento_ui import (
     render_cabecalho_mapeamento,
     render_formulario_mapeamento,
     render_preview_mapeamento,
+)
+from bling_app_zero.ui.origem_mapeamento_validacao import (
+    detectar_duplicidades_mapping,
 )
 
 NavCallback = Callable[[], None] | None
@@ -229,4 +229,3 @@ def render_origem_mapeamento(
         topo=False,
         df_saida=df_saida,
     )
-    
