@@ -22,7 +22,6 @@ from bling_app_zero.utils.init_app import inicializar_app
 # CONFIG
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
-
 APP_VERSION = "1.0.29"
 
 
@@ -42,6 +41,13 @@ ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _safe_df_com_linhas(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
@@ -106,7 +112,6 @@ def _obter_df_fluxo():
 
     if df_final_valido:
         return df_final
-
     if df_saida_valido:
         return df_saida
 
@@ -118,6 +123,17 @@ def _garantir_estado_fluxo_inicial() -> None:
         st.session_state["bling_primeiro_acesso_decidido"] = False
     if "bling_primeiro_acesso_escolha" not in st.session_state:
         st.session_state["bling_primeiro_acesso_escolha"] = ""
+
+
+def _pode_ir_para_mapeamento() -> bool:
+    for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado", "df_origem"]:
+        if _safe_df_com_linhas(st.session_state.get(chave)):
+            return True
+    return False
+
+
+def _pode_ir_para_final() -> bool:
+    return _safe_df_com_linhas(_obter_df_fluxo())
 
 
 # =========================
@@ -165,6 +181,12 @@ elif etapa == "origem":
 # ETAPA 2 — MAPEAMENTO
 # =========================
 elif etapa == "mapeamento":
+    if not _pode_ir_para_mapeamento():
+        st.warning("⚠️ Carregue os dados na origem antes de acessar o mapeamento.")
+        if st.button("⬅️ Voltar para origem", use_container_width=True):
+            _ir_para("origem")
+        st.stop()
+
     render_origem_mapeamento()
 
 
@@ -173,6 +195,7 @@ elif etapa == "mapeamento":
 # =========================
 elif etapa == "final":
     df_fluxo = _obter_df_fluxo()
+
     if not _safe_df(df_fluxo):
         log_debug("FINAL sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível.\nVolte para o mapeamento.")
@@ -184,9 +207,11 @@ elif etapa == "final":
 
     st.markdown("---")
     col1, col2 = st.columns(2)
+
     with col1:
         if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
             _ir_para("mapeamento")
+
     with col2:
         if st.button("Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
@@ -197,6 +222,7 @@ elif etapa == "final":
 # =========================
 elif etapa == "envio":
     df_fluxo = _obter_df_fluxo()
+
     if not _safe_df(df_fluxo):
         log_debug("ENVIO sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível para envio.")
