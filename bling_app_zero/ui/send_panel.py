@@ -55,18 +55,7 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(float(value))
-    except Exception:
-        return int(default)
-
-
 def _get_df_base_envio() -> pd.DataFrame | None:
-    """
-    Nunca modificar df_final ou df_saida direto.
-    Sempre trabalhar com cópia isolada.
-    """
     for chave in ["df_final", "df_saida"]:
         df = st.session_state.get(chave)
         if _safe_df(df):
@@ -101,15 +90,51 @@ def _get_auth_manager() -> BlingAuthManager:
     return BlingAuthManager(user_key=_get_user_key())
 
 
+def _set_connection_state(
+    connected: bool,
+    message: str = "",
+    *,
+    source: str = "",
+) -> None:
+    st.session_state["bling_conectado"] = bool(connected)
+    st.session_state["bling_conexao_ok"] = bool(connected)
+    st.session_state["bling_connection_message"] = _safe_str(message)
+    st.session_state["bling_connection_checked"] = True
+    st.session_state["bling_ultimo_status"] = "conectado" if connected else "desconectado"
+    st.session_state["bling_connection_source"] = _safe_str(source)
+
+
+def _clear_connection_state(message: str = "") -> None:
+    _set_connection_state(False, message=message, source="clear")
+
+
 def _is_connected() -> tuple[bool, str]:
+    persisted = bool(st.session_state.get("bling_conectado"))
+    persisted_msg = _safe_str(st.session_state.get("bling_connection_message"))
+
+    if persisted:
+        return True, persisted_msg or "Conta conectada ao Bling."
+
     try:
         auth = _get_auth_manager()
         ok, token_or_msg = auth.get_valid_access_token()
+        msg = _safe_str(token_or_msg)
+
         if ok:
-            return True, "Conta conectada ao Bling."
-        return False, _safe_str(token_or_msg) or "Conta não conectada."
+            _set_connection_state(
+                True,
+                message=msg or "Conta conectada ao Bling.",
+                source="auth_check",
+            )
+            return True, msg or "Conta conectada ao Bling."
+
+        _clear_connection_state(msg or "Conta não conectada.")
+        return False, msg or "Conta não conectada."
+
     except Exception as e:
-        return False, f"Falha ao verificar conexão: {e}"
+        msg = f"Falha ao verificar conexão: {e}"
+        _clear_connection_state(msg)
+        return False, msg
 
 
 def _oauth_status_key() -> str:
@@ -158,32 +183,36 @@ def _processar_callback_oauth(on_continue=None) -> None:
 
         if status == "success":
             clear_pending_oauth_user()
+            _set_connection_state(
+                True,
+                message=message or "Conta conectada com sucesso.",
+                source="oauth_callback",
+            )
             _set_oauth_feedback("success", message or "Conta conectada com sucesso.")
             log_debug("[SEND_PANEL] callback OAuth concluído com sucesso.", "INFO")
-            st.session_state["bling_conectado"] = True
-            st.session_state["bling_conexao_ok"] = True
-            st.session_state["bling_ultimo_status"] = "conectado"
+
+            st.session_state["etapa_origem"] = "origem"
+            st.session_state["etapa"] = "origem"
+            st.session_state["etapa_fluxo"] = "origem"
+
             if callable(on_continue):
                 on_continue()
             else:
                 st.rerun()
             return
 
+        _clear_connection_state(message or "Falha ao concluir a conexão com o Bling.")
         _set_oauth_feedback("error", message or "Falha ao concluir a conexão com o Bling.")
         log_debug(f"[SEND_PANEL] callback OAuth falhou: {message}", "ERROR")
-        st.session_state["bling_conectado"] = False
-        st.session_state["bling_conexao_ok"] = False
 
     except Exception as e:
-        _set_oauth_feedback("error", f"Erro ao processar o retorno do Bling: {e}")
+        msg = f"Erro ao processar o retorno do Bling: {e}"
+        _clear_connection_state(msg)
+        _set_oauth_feedback("error", msg)
         log_debug(f"[SEND_PANEL] erro no callback OAuth: {e}", "ERROR")
 
 
 def _render_connect_button_same_tab(auth_url: str) -> None:
-    """
-    Usa navegação nativa do Streamlit para evitar problemas de HTML customizado
-    na abertura do OAuth do Bling.
-    """
     if not auth_url:
         st.error("URL de autenticação do Bling não foi gerada.")
         return
@@ -544,7 +573,13 @@ def render_bling_primeiro_acesso(
     conectado, status_msg = _is_connected()
 
     if conectado:
+        _set_connection_state(True, message=status_msg, source="render_primeiro_acesso")
         st.success(f"Conta conectada com sucesso. Operação atual: {user_label}")
+
+        if st.session_state.get("etapa_origem") == "conexao":
+            st.session_state["etapa_origem"] = "origem"
+            st.session_state["etapa"] = "origem"
+            st.session_state["etapa_fluxo"] = "origem"
 
         col_a, col_b = st.columns(2)
 
