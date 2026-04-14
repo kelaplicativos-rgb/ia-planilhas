@@ -56,8 +56,9 @@ def _navegar(destino: str, callback: NavCallback = None) -> None:
 
 def _resolver_df_origem_site() -> pd.DataFrame | None:
     """
-    Corrige o fluxo do modo site quando o crawler/fetcher preenche
-    df_saida/df_final/df_precificado, mas não devolve df_origem diretamente.
+    No fluxo por site, o crawler/fetcher às vezes preenche a sessão em
+    df_saida / df_final / df_precificado antes de popular df_origem.
+    Este resolver recompõe a origem a partir desses pontos.
     """
     candidatos = [
         "df_origem",
@@ -82,8 +83,7 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
                     st.session_state["df_origem"] = df_resolvido
 
                 log_debug(
-                    f"[ORIGEM_DADOS] origem por site reaproveitou dados de '{chave}' "
-                    "para compor df_origem.",
+                    f"[ORIGEM_DADOS] modo site reaproveitou '{chave}' para reconstruir df_origem.",
                     "INFO",
                 )
 
@@ -106,15 +106,55 @@ def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.Da
 
 
 def _site_configurada_minimamente() -> bool:
-    try:
-        origem_atual = safe_str(obter_origem_atual()).lower()
-        if "site" not in origem_atual:
-            return False
-
-        url = safe_str(st.session_state.get("site_url"))
-        return bool(url)
-    except Exception:
+    origem_atual = safe_str(obter_origem_atual()).lower()
+    if "site" not in origem_atual:
         return False
+
+    url = safe_str(st.session_state.get("site_url")).strip()
+    return bool(url)
+
+
+def _resetar_autoavanco_site_se_necessario(origem_atual: str, df_origem: pd.DataFrame | None) -> None:
+    if "site" not in safe_str(origem_atual).lower():
+        st.session_state["site_autoavanco_realizado"] = False
+        return
+
+    if not safe_df_dados(df_origem):
+        st.session_state["site_autoavanco_realizado"] = False
+
+
+def _autoavancar_site_se_pronto(on_continue: NavCallback = None) -> bool:
+    origem_atual = safe_str(obter_origem_atual()).lower()
+
+    if "site" not in origem_atual:
+        return False
+
+    if st.session_state.get("site_autoavanco_realizado"):
+        return False
+
+    df_origem = st.session_state.get("df_origem")
+    if not safe_df_dados(df_origem):
+        return False
+
+    valido, erros = validar_antes_mapeamento()
+    if not valido:
+        for erro in erros:
+            log_debug(f"[ORIGEM_DADOS] autoavanço site bloqueado: {erro}", "WARNING")
+        return False
+
+    if safe_df_estrutura(st.session_state.get("df_saida")):
+        try:
+            st.session_state["df_final"] = st.session_state["df_saida"].copy()
+        except Exception:
+            st.session_state["df_final"] = st.session_state["df_saida"]
+
+    st.session_state["site_autoavanco_realizado"] = True
+    log_debug(
+        "[ORIGEM_DADOS] site processado com sucesso. Autoavanço para mapeamento acionado.",
+        "INFO",
+    )
+    _navegar("mapeamento", on_continue)
+    return True
 
 
 def _render_botoes_origem(
@@ -156,7 +196,7 @@ def _render_botoes_origem(
                         st.session_state["df_final"] = st.session_state["df_saida"]
 
                 log_debug(
-                    "[ORIGEM_DADOS] origem validada. Avançando para mapeamento.",
+                    "[ORIGEM_DADOS] origem validada manualmente. Avançando para mapeamento.",
                     "INFO",
                 )
                 _navegar("mapeamento", on_continue)
@@ -169,6 +209,10 @@ def render_origem_dados(
     on_continue: NavCallback = None,
 ) -> None:
     garantir_estado_origem()
+
+    if "site_autoavanco_realizado" not in st.session_state:
+        st.session_state["site_autoavanco_realizado"] = False
+
     render_header_fluxo()
 
     col_topo_1, col_topo_2 = st.columns(2)
@@ -221,13 +265,15 @@ def render_origem_dados(
     df_origem = _obter_df_origem_renderizado(df_origem_render)
     origem_atual = safe_str(obter_origem_atual()).lower()
 
+    _resetar_autoavanco_site_se_necessario(origem_atual, df_origem)
+
     if "site" in origem_atual:
         if safe_df_dados(df_origem):
             st.session_state["site_processado"] = True
         elif _site_configurada_minimamente():
             st.info(
-                "A URL do site já foi preenchida. Assim que o crawler/fetcher carregar os "
-                "dados na sessão, o fluxo será liberado automaticamente."
+                "A URL do site já foi preenchida. Assim que o crawler/fetcher carregar "
+                "os dados na sessão, o sistema vai liberar e autoavançar."
             )
         else:
             st.info("Configure o site e execute a busca para continuar.")
@@ -310,6 +356,9 @@ def render_origem_dados(
             st.session_state["df_final"] = df_saida_prec.copy()
         except Exception:
             st.session_state["df_final"] = df_saida_prec
+
+    if _autoavancar_site_se_pronto(on_continue):
+        return
 
     st.markdown("---")
     _render_botoes_origem(
