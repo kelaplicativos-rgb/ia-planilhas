@@ -154,12 +154,14 @@ def render_origem_entrada(on_change_callback=None):
 
     opcoes = ["Planilha / CSV / XML", "Buscar em site"]
 
+    if "origem_dados_radio" not in st.session_state:
+        st.session_state["origem_dados_radio"] = label_atual
+
     origem_label = st.radio(
         "Escolha a origem dos dados",
         opcoes,
         horizontal=True,
         key="origem_dados_radio",
-        index=opcoes.index(label_atual),
     )
 
     origem_alias = _normalizar_alias_origem(origem_label)
@@ -168,7 +170,9 @@ def render_origem_entrada(on_change_callback=None):
         or st.session_state.get("origem_dados_tipo")
     )
 
-    st.session_state["origem_dados_radio"] = origem_label
+    # IMPORTANTE:
+    # não reatribuir st.session_state["origem_dados_radio"] aqui.
+    # Essa chave pertence ao widget acima.
     st.session_state["origem_dados_tipo"] = origem_alias
     st.session_state["origem_dados"] = origem_alias
 
@@ -254,4 +258,3 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
         st.success(
             f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}"
         )
-        
