@@ -7,17 +7,14 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
-
 # ==========================================================
 # VERSION
 # ==========================================================
 HELPERS_VERSION = "V2_MODULAR_OK"
 
-
 MAX_THREADS = 12
 MAX_PAGINAS = 12
 MAX_PRODUTOS = 1200
-
 
 # ==========================================================
 # URL / TEXTO
@@ -330,6 +327,7 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
         "disponivel",
         "in stock",
     ]
+
     if any(x in texto for x in sinais_disponivel_sem_qtd):
         return 0
 
@@ -343,17 +341,20 @@ def detectar_estoque_crawler(html: str, soup: BeautifulSoup, padrao: int) -> int
 def link_parece_produto_crawler(url: str) -> bool:
     u = (url or "").lower()
 
-    if any(x in u for x in [
-        "javascript:",
-        "mailto:",
-        "#",
-        "login",
-        "conta",
-        "carrinho",
-        "checkout",
-        "categoria",
-        "category",
-    ]):
+    if any(
+        x in u
+        for x in [
+            "javascript:",
+            "mailto:",
+            "#",
+            "login",
+            "conta",
+            "carrinho",
+            "checkout",
+            "categoria",
+            "category",
+        ]
+    ):
         return False
 
     sinais = [
@@ -379,8 +380,8 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
 
     for a in soup.select("a[href]"):
         href = a.get("href")
-
         url = normalizar_url_crawler(base_url, href)
+
         if not url:
             continue
 
@@ -390,17 +391,20 @@ def extrair_links_produtos_crawler(html: str, base_url: str) -> list[str]:
         u = url.lower()
 
         # ignora lixo
-        if any(x in u for x in [
-            "login",
-            "conta",
-            "carrinho",
-            "checkout",
-            "categoria",
-            "category",
-            "blog",
-            "javascript:",
-            "#",
-        ]):
+        if any(
+            x in u
+            for x in [
+                "login",
+                "conta",
+                "carrinho",
+                "checkout",
+                "categoria",
+                "category",
+                "blog",
+                "javascript:",
+                "#",
+            ]
+        ):
             continue
 
         # 1) mantém compatibilidade com padrão clássico
@@ -439,17 +443,20 @@ def extrair_links_paginacao_crawler(html: str, base_url: str) -> list[str]:
         if not url_mesmo_dominio_crawler(base_url, url):
             continue
 
-        if any(x in url.lower() for x in [
-            "page=",
-            "pagina",
-            "/page/",
-            "/pagina/",
-            "?p=",
-            "&p=",
-            "pg=",
-            "offset",
-            "start",
-        ]):
+        if any(
+            x in url.lower()
+            for x in [
+                "page=",
+                "pagina",
+                "/page/",
+                "/pagina/",
+                "?p=",
+                "&p=",
+                "pg=",
+                "offset",
+                "start",
+            ]
+        ):
             links.append(url)
 
     return list(dict.fromkeys(links))
