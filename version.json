@@ -1,8 +1,8 @@
 {
   "version": "1.0.29",
   "updated_at": "2026-04-14 23:00:00",
-  "last_title": "Sincronização de versão com app.py",
-  "last_description": "Alinha o version.json com a versão atual do app e permite fallback seguro de exibição da versão na interface.",
+  "last_title": "Controle de versão com sincronização automática",
+  "last_description": "Version.json alinhado com APP_VERSION do app.py e botão de atualização manual do app com recarga automática.",
   "history": [
     {
       "version": "1.0.20",
@@ -19,8 +19,8 @@
     {
       "version": "1.0.29",
       "date": "2026-04-14 23:00:00",
-      "title": "Sincronização de versão com app.py",
-      "description": "Alinha o version.json com a versão atual do app e permite fallback seguro de exibição da versão na interface."
+      "title": "Controle de versão com sincronização automática",
+      "description": "Version.json alinhado com APP_VERSION do app.py e botão de atualização manual do app com recarga automática."
     }
   ]
 }
