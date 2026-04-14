@@ -21,12 +21,18 @@ from bling_app_zero.ui.send_panel import (
 from bling_app_zero.utils.init_app import inicializar_app
 
 
+# =========================
+# CONFIG
+# =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.31"
+APP_VERSION = "1.0.32"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
+# =========================
+# VERSIONAMENTO
+# =========================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -40,7 +46,9 @@ def _ler_version_json() -> dict:
             return {}
         bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
         data = json.loads(bruto)
-        return data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            return data
+        return {}
     except Exception as e:
         log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
         return {}
@@ -100,7 +108,6 @@ def _sincronizar_version_json_com_app() -> dict:
     if salvou:
         log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
         return novo
-
     return atual if atual else novo
 
 
@@ -114,6 +121,9 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     return APP_VERSION
 
 
+# =========================
+# LIMPEZA DE SESSÃO POR VERSÃO
+# =========================
 def _garantir_estado_versionamento() -> None:
     if "_app_loaded_version" not in st.session_state:
         st.session_state["_app_loaded_version"] = APP_VERSION
@@ -142,9 +152,14 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "etapa_fluxo",
         "bling_primeiro_acesso_decidido",
         "bling_primeiro_acesso_escolha",
+        "_debug_logs",
+        "_debug_logs_text",
+        "_debug_panel_open",
         "acesso_cliente_id",
         "acesso_liberado",
-        "_debug_logs",
+        "bling_user_key",
+        "user_key",
+        "bi",
     }
 
 
@@ -154,6 +169,10 @@ def _limpar_lixos_de_sessao() -> None:
 
 
 def _limpar_sessao_por_versao() -> bool:
+    """
+    Quando APP_VERSION mudar, limpa estados antigos/lixos de sessão
+    sem destruir cegamente tudo que ainda precisa permanecer.
+    """
     versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
 
     _limpar_lixos_de_sessao()
@@ -173,7 +192,11 @@ def _limpar_sessao_por_versao() -> bool:
     )
 
     preservadas = _chaves_preservadas_na_limpeza()
-    snapshot = {k: st.session_state.get(k) for k in preservadas if k in st.session_state}
+    snapshot = {
+        k: st.session_state.get(k)
+        for k in preservadas
+        if k in st.session_state
+    }
 
     for chave in list(st.session_state.keys()):
         if chave not in preservadas:
@@ -238,161 +261,53 @@ def _render_controle_versao(version_data: dict) -> None:
                 log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
 
+        last_title = str((version_data or {}).get("last_title") or "").strip()
+        last_description = str((version_data or {}).get("last_description") or "").strip()
 
-def _safe_str(valor) -> str:
-    try:
-        if valor is None:
-            return ""
-        if pd.isna(valor):
-            return ""
-    except Exception:
-        pass
+        if last_title or last_description:
+            with st.expander("📦 Controle de versão", expanded=False):
+                if last_title:
+                    st.write(f"**Última mudança:** {last_title}")
+                if last_description:
+                    st.write(last_description)
 
-    try:
-        return str(valor).strip()
-    except Exception:
-        return ""
+                history = (version_data or {}).get("history", [])
+                if isinstance(history, list) and history:
+                    st.markdown("**Histórico recente**")
+                    for item in reversed(history[-5:]):
+                        if not isinstance(item, dict):
+                            continue
+                        versao = str(item.get("version") or "").strip()
+                        data = str(item.get("date") or "").strip()
+                        titulo = str(item.get("title") or "").strip()
+                        descricao = str(item.get("description") or "").strip()
 
-
-def _safe_bool_secret(nome: str, default: bool = False) -> bool:
-    try:
-        bruto = st.secrets.get(nome, default)
-    except Exception:
-        return default
-
-    if isinstance(bruto, bool):
-        return bruto
-
-    valor = str(bruto).strip().lower()
-    return valor in {"1", "true", "yes", "sim", "on"}
-
-
-def _safe_list_secret(nome: str) -> list[str]:
-    try:
-        bruto = st.secrets.get(nome, [])
-    except Exception:
-        return []
-
-    if isinstance(bruto, (list, tuple, set)):
-        return [str(x).strip() for x in bruto if str(x).strip()]
-
-    texto = str(bruto or "").strip()
-    if not texto:
-        return []
-
-    separadores = [",", ";", "\n", "|"]
-    valores = [texto]
-
-    for sep in separadores:
-        novos = []
-        for item in valores:
-            novos.extend(item.split(sep))
-        valores = novos
-
-    return [str(x).strip() for x in valores if str(x).strip()]
+                        linha = f"- **{versao}**"
+                        if data:
+                            linha += f" · {data}"
+                        if titulo:
+                            linha += f" · {titulo}"
+                        if descricao:
+                            linha += f" — {descricao}"
+                        st.markdown(linha)
 
 
-def _resolver_cliente_query() -> str:
-    for chave in ["acesso_cliente_id", "bling_user_key", "user_key", "bi"]:
-        valor = _safe_str(st.session_state.get(chave))
-        if valor:
-            return valor
-
-    try:
-        qp = st.query_params
-        for chave in ["bi", "user_key", "cliente"]:
-            valor = _safe_str(qp.get(chave))
-            if valor:
-                return valor
-    except Exception:
-        pass
-
-    return ""
-
-
-def _usuarios_autorizados() -> list[str]:
-    valores = []
-    valores.extend(_safe_list_secret("ACCESS_USER_KEYS"))
-    valores.extend(_safe_list_secret("ACCESS_USERS"))
-    valores.extend(_safe_list_secret("ALLOWED_USER_KEYS"))
-    valores.extend(_safe_list_secret("ALLOWED_USERS"))
-
-    vistos = set()
-    resultado = []
-
-    for item in valores:
-        chave = item.strip()
-        if not chave or chave in vistos:
-            continue
-        vistos.add(chave)
-        resultado.append(chave)
-
-    return resultado
-
-
-def _acesso_exige_chave() -> bool:
-    if _safe_bool_secret("ACCESS_REQUIRE_USER_KEY", False):
-        return True
-    return len(_usuarios_autorizados()) > 0
-
-
-def _liberar_sessao_cliente(cliente_id: str) -> None:
-    cliente = _safe_str(cliente_id)
-    st.session_state["acesso_cliente_id"] = cliente
-    st.session_state["acesso_liberado"] = bool(cliente)
-    st.session_state["bling_user_key"] = cliente
-    st.session_state["user_key"] = cliente
-    st.session_state["bi"] = cliente
-
-    try:
-        st.query_params["bi"] = cliente
-    except Exception:
-        pass
-
-
-def _render_banner_cliente(cliente_id: str) -> None:
-    if not cliente_id:
-        return
-
-    st.caption(f"Cliente ativo: {cliente_id}")
-
-    with st.expander("Link personalizado do cliente", expanded=False):
-        st.code(f"?bi={cliente_id}", language="text")
-        st.caption("Use esse sufixo no link público do app para abrir direto com a chave do cliente.")
-
-
-def _validar_acesso_cliente() -> None:
-    cliente_id = _resolver_cliente_query()
-    lista_autorizada = _usuarios_autorizados()
-    exige_chave = _acesso_exige_chave()
-
-    if not exige_chave:
-        if cliente_id:
-            _liberar_sessao_cliente(cliente_id)
-        return
-
-    if not cliente_id:
-        st.error("Acesso bloqueado. Este app exige chave de cliente na URL.")
-        st.info("Exemplo: https://ia-planilhas-bling.streamlit.app/?bi=cliente1")
-        st.stop()
-
-    if lista_autorizada and cliente_id not in lista_autorizada:
-        st.error("Acesso não autorizado para esta chave de cliente.")
-        st.stop()
-
-    _liberar_sessao_cliente(cliente_id)
-
-
+# =========================
+# INIT
+# =========================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
-
 VERSION_DATA = _sincronizar_version_json_com_app()
+
 houve_limpeza_versao = _limpar_sessao_por_versao()
 if houve_limpeza_versao:
     st.rerun()
 
 
+# =========================
+# HELPERS
+# =========================
 ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
 
 
@@ -405,7 +320,7 @@ def _safe_df(df) -> bool:
 
 def _safe_df_com_linhas(df) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
@@ -418,7 +333,6 @@ def _normalizar_etapa(valor: object) -> str:
 
     if etapa_normalizada not in ETAPAS_VALIDAS:
         return "conexao"
-
     return etapa_normalizada
 
 
@@ -428,12 +342,10 @@ def _obter_etapa_atual() -> str:
         st.session_state.get("etapa"),
         st.session_state.get("etapa_fluxo"),
     ]
-
     for valor in candidatos:
         etapa_lida = _normalizar_etapa(valor)
         if etapa_lida in ETAPAS_VALIDAS:
             return etapa_lida
-
     return "conexao"
 
 
@@ -442,28 +354,27 @@ def _sincronizar_etapa_global(etapa_destino: str) -> str:
     st.session_state["etapa_origem"] = etapa_ok
     st.session_state["etapa"] = etapa_ok
     st.session_state["etapa_fluxo"] = etapa_ok
+    log_debug(f"[APP] navegação para etapa: {etapa_ok}", "INFO")
     return etapa_ok
 
 
 def _ir_para(etapa: str) -> None:
-    etapa_ok = _sincronizar_etapa_global(etapa)
-    log_debug(f"[APP] navegação para etapa: {etapa_ok}", "INFO")
+    _sincronizar_etapa_global(etapa)
     st.rerun()
 
 
 def _obter_df_fluxo():
     candidatos = [
-        st.session_state.get("df_final"),
-        st.session_state.get("df_saida"),
-        st.session_state.get("df_precificado"),
-        st.session_state.get("df_calc_precificado"),
-        st.session_state.get("df_origem"),
+        "df_final",
+        "df_saida",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
     ]
-
-    for df in candidatos:
+    for chave in candidatos:
+        df = st.session_state.get(chave)
         if _safe_df(df):
             return df
-
     return None
 
 
@@ -489,7 +400,6 @@ def _sincronizar_df_fluxo() -> None:
 def _garantir_estado_fluxo_inicial() -> None:
     if "bling_primeiro_acesso_decidido" not in st.session_state:
         st.session_state["bling_primeiro_acesso_decidido"] = False
-
     if "bling_primeiro_acesso_escolha" not in st.session_state:
         st.session_state["bling_primeiro_acesso_escolha"] = ""
 
@@ -514,38 +424,49 @@ def _resolver_autoetapa() -> str:
         return "origem"
 
     if etapa_atual in {"final", "envio"} and not _pode_ir_para_final():
-        log_debug("[APP] final/envio bloqueado por ausência de dados. Retornando para mapeamento.", "WARNING")
-        return "mapeamento"
+        log_debug("[APP] final/envio bloqueado por ausência de dados. Retornando para origem.", "WARNING")
+        return "origem"
 
     return etapa_atual
 
 
+# =========================
+# UI BASE
+# =========================
 st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
-
 _garantir_estado_fluxo_inicial()
-_validar_acesso_cliente()
-_render_banner_cliente(_safe_str(st.session_state.get("acesso_cliente_id")))
 
+
+# =========================
+# CONTROLE DE ETAPA
+# =========================
 etapa = _sincronizar_etapa_global(_resolver_autoetapa())
 
 if etapa not in ETAPAS_VALIDAS:
-    log_debug(f"[APP] etapa inválida detectada: {etapa}", "ERROR")
+    log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
     _ir_para("conexao")
 
+
+# =========================
+# ETAPA 0 — CONEXÃO
+# =========================
 if etapa == "conexao":
     render_bling_primeiro_acesso(
         on_skip=lambda: _ir_para("origem"),
         on_continue=lambda: _ir_para("origem"),
     )
 
+# =========================
+# ETAPA 1 — ORIGEM
+# =========================
 elif etapa == "origem":
-    render_origem_dados(
-        on_back=lambda: _ir_para("conexao"),
-        on_continue=lambda: _ir_para("mapeamento"),
-    )
+    render_origem_dados()
 
+# =========================
+# ETAPA 2 — MAPEAMENTO
+# =========================
 elif etapa == "mapeamento":
     if not _pode_ir_para_mapeamento():
         st.warning("⚠️ Carregue os dados na origem antes de acessar o mapeamento.")
@@ -553,19 +474,18 @@ elif etapa == "mapeamento":
             _ir_para("origem")
         st.stop()
 
-    render_origem_mapeamento(
-        on_back=lambda: _ir_para("origem"),
-        on_continue=lambda: _ir_para("final"),
-    )
+    render_origem_mapeamento()
 
+# =========================
+# ETAPA 3 — FINAL
+# =========================
 elif etapa == "final":
-    _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
 
     if not _safe_df(df_fluxo):
-        log_debug("[APP] etapa final sem dados válidos.", "ERROR")
-        st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
+        log_debug("FINAL sem dados válidos", "ERROR")
+        st.warning("⚠️ Nenhum dado disponível.\nVolte para o mapeamento.")
+        if st.button("⬅️ Voltar", use_container_width=True):
             _ir_para("mapeamento")
         st.stop()
 
@@ -582,25 +502,29 @@ elif etapa == "final":
         if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
 
+# =========================
+# ETAPA 4 — ENVIO
+# =========================
 elif etapa == "envio":
-    _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
 
     if not _safe_df(df_fluxo):
-        log_debug("[APP] etapa envio sem dados válidos.", "ERROR")
+        log_debug("ENVIO sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível para envio.")
         if st.button("⬅️ Voltar para final", use_container_width=True):
             _ir_para("final")
         st.stop()
 
     st.markdown("---")
-    if st.button("⬅️ Voltar para final", use_container_width=True):
+    if st.button("⬅️ Voltar para final", use_container_width=True, key="btn_envio_voltar_final"):
         _ir_para("final")
 
     st.markdown("---")
     render_send_panel()
 
+# =========================
+# FALLBACK
+# =========================
 else:
-    log_debug(f"[APP] fallback de etapa inesperada: {etapa}", "ERROR")
+    log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
-    
