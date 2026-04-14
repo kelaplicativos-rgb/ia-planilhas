@@ -181,31 +181,17 @@ def _processar_callback_oauth(on_continue=None) -> None:
 
 def _render_connect_button_same_tab(auth_url: str) -> None:
     """
-    Abre o OAuth do Bling na mesma aba, sem iframe nem componente embutido.
+    Usa navegação nativa do Streamlit para evitar problemas de HTML customizado
+    na abertura do OAuth do Bling.
     """
     if not auth_url:
         st.error("URL de autenticação do Bling não foi gerada.")
         return
 
-    st.markdown(
-        f"""
-        <a href="{auth_url}" target="_self" style="
-            display:block;
-            width:100%;
-            text-align:center;
-            text-decoration:none;
-            padding:0.85rem 1rem;
-            border-radius:0.6rem;
-            background:#ff4b4b;
-            color:white;
-            font-weight:700;
-            border:none;
-            box-sizing:border-box;
-        ">
-            🔌 Conectar com Bling
-        </a>
-        """,
-        unsafe_allow_html=True,
+    st.link_button(
+        "🔌 Conectar com Bling",
+        auth_url,
+        use_container_width=True,
     )
 
 
@@ -617,7 +603,7 @@ def render_bling_primeiro_acesso(
     with col1:
         if auth_url:
             _render_connect_button_same_tab(auth_url)
-            st.caption("A conexão será aberta na mesma aba e o retorno será tratado aqui automaticamente.")
+            st.caption("A conexão será aberta pelo link nativo do Streamlit.")
             with st.expander("Debug OAuth", expanded=False):
                 st.code(auth_url, language="text")
 
