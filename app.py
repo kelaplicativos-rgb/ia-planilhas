@@ -21,13 +21,18 @@ from bling_app_zero.ui.send_panel import (
 )
 from bling_app_zero.utils.init_app import inicializar_app
 
-
+# =========================
+# CONFIG
+# =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.33"
+APP_VERSION = "1.0.34"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
+# =========================
+# VERSIONAMENTO
+# =========================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -41,7 +46,9 @@ def _ler_version_json() -> dict:
             return {}
         bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
         data = json.loads(bruto)
-        return data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            return data
+        return {}
     except Exception as e:
         log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
         return {}
@@ -96,12 +103,10 @@ def _sincronizar_version_json_com_app() -> dict:
         "last_description": "Version.json sincronizado automaticamente com APP_VERSION do app.py.",
         "history": history,
     }
-
     salvou = _salvar_version_json(novo)
     if salvou:
         log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
         return novo
-
     return atual if atual else novo
 
 
@@ -115,6 +120,9 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     return APP_VERSION
 
 
+# =========================
+# LIMPEZA DE SESSÃO POR VERSÃO
+# =========================
 def _garantir_estado_versionamento() -> None:
     if "_app_loaded_version" not in st.session_state:
         st.session_state["_app_loaded_version"] = APP_VERSION
@@ -170,6 +178,10 @@ def _limpar_lixos_de_sessao() -> None:
 
 
 def _limpar_sessao_por_versao() -> bool:
+    """
+    Quando APP_VERSION mudar, limpa estados antigos/lixos de sessão sem destruir
+    todo o fluxo do usuário de forma cega.
+    """
     versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
 
     _limpar_lixos_de_sessao()
@@ -187,7 +199,6 @@ def _limpar_sessao_por_versao() -> bool:
         f"[VERSION] mudança detectada: sessão {versao_sessao} -> código {APP_VERSION}. Limpando sessão antiga.",
         "INFO",
     )
-
     preservadas = _chaves_preservadas_na_limpeza()
     snapshot = {k: st.session_state.get(k) for k in preservadas if k in st.session_state}
 
@@ -246,11 +257,7 @@ def _render_controle_versao(version_data: dict) -> None:
                 st.caption(f"Última atualização registrada: {updated_at}")
 
         with col2:
-            if st.button(
-                "🔄 Recarregar app",
-                use_container_width=True,
-                key="btn_recarregar_app_topo",
-            ):
+            if st.button(" Recarregar app", use_container_width=True, key="btn_recarregar_app_topo"):
                 log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
 
@@ -258,7 +265,7 @@ def _render_controle_versao(version_data: dict) -> None:
     last_description = str((version_data or {}).get("last_description") or "").strip()
 
     if last_title or last_description:
-        with st.expander("📦 Controle de versão", expanded=False):
+        with st.expander(" Controle de versão", expanded=False):
             if last_title:
                 st.write(f"**Última mudança:** {last_title}")
             if last_description:
@@ -270,7 +277,6 @@ def _render_controle_versao(version_data: dict) -> None:
                 for item in reversed(history[-5:]):
                     if not isinstance(item, dict):
                         continue
-
                     versao = str(item.get("version") or "").strip()
                     data = str(item.get("date") or "").strip()
                     titulo = str(item.get("title") or "").strip()
@@ -287,16 +293,23 @@ def _render_controle_versao(version_data: dict) -> None:
                     st.markdown(linha)
 
 
+# =========================
+# INIT
+# =========================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
 
 VERSION_DATA = _sincronizar_version_json_com_app()
+
 houve_limpeza_versao = _limpar_sessao_por_versao()
 if houve_limpeza_versao:
     st.rerun()
 
 
+# =========================
+# HELPERS
+# =========================
 ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
 
 
@@ -322,7 +335,6 @@ def _normalizar_etapa(valor: object) -> str:
 
     if etapa_normalizada not in ETAPAS_VALIDAS:
         return "conexao"
-
     return etapa_normalizada
 
 
@@ -405,17 +417,67 @@ def _pode_ir_para_final() -> bool:
     return _safe_df_com_linhas(_obter_df_fluxo())
 
 
-def _esta_conectado_persistido() -> bool:
-    return bool(st.session_state.get("bling_conectado")) or bool(st.session_state.get("bling_conexao_ok"))
+def _resolver_bling_user_key() -> str:
+    for chave in ["bling_user_key", "user_key", "bi"]:
+        valor = str(st.session_state.get(chave) or "").strip()
+        if valor:
+            return valor
+    return "default"
+
+
+def _sanear_estado_bling_invalido(motivo: str = "") -> None:
+    if motivo:
+        log_debug(f"[APP] limpando estado Bling inválido: {motivo}", "WARNING")
+
+    for chave in [
+        "bling_conectado",
+        "bling_conexao_ok",
+        "bling_connection_checked",
+        "bling_connection_source",
+        "bling_ultimo_status",
+    ]:
+        st.session_state[chave] = False
+
+    if motivo:
+        st.session_state["bling_connection_message"] = motivo
+
+
+def _token_bling_valido_real() -> bool:
+    try:
+        auth = BlingAuthManager(user_key=_resolver_bling_user_key())
+        ok, token = auth.get_token()
+        token = str(token or "").strip()
+
+        if ok and token:
+            return True
+
+        _sanear_estado_bling_invalido("Sem token real salvo para este usuário.")
+        return False
+    except Exception as e:
+        _sanear_estado_bling_invalido(f"Falha ao validar token real: {e}")
+        log_debug(f"[APP] erro ao validar token Bling real: {e}", "ERROR")
+        return False
+
+
+def _esta_conectado_real() -> bool:
+    return _token_bling_valido_real()
 
 
 def _resolver_autoetapa() -> str:
     etapa_atual = _obter_etapa_atual()
     _sincronizar_df_fluxo()
 
-    if etapa_atual == "conexao" and _esta_conectado_persistido():
-        log_debug("[APP] conexão persistida detectada. Autoavançando para origem.", "INFO")
-        return "origem"
+    if etapa_atual == "conexao":
+        if _esta_conectado_real():
+            st.session_state["bling_conectado"] = True
+            st.session_state["bling_conexao_ok"] = True
+            st.session_state["bling_connection_checked"] = True
+            st.session_state["bling_connection_source"] = "token_real"
+            log_debug("[APP] token real detectado. Autoavançando para origem.", "INFO")
+            return "origem"
+
+        _sanear_estado_bling_invalido("Conexão real não encontrada. Permanecendo na etapa de conexão.")
+        return "conexao"
 
     if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
         log_debug(
@@ -436,86 +498,100 @@ def _resolver_autoetapa() -> str:
 
 def _processar_callback_bling() -> None:
     try:
-        auth = BlingAuthManager(
-            user_key=str(
-                st.session_state.get("bling_user_key")
-                or st.session_state.get("user_key")
-                or st.session_state.get("bi")
-                or "default"
-            )
-        )
-
+        auth = BlingAuthManager(user_key=_resolver_bling_user_key())
         resultado = auth.handle_oauth_callback()
+
         status = str(resultado.get("status") or "").strip().lower()
         mensagem = str(resultado.get("message") or "").strip()
 
+        if status == "idle":
+            return
+
+        st.session_state["_bling_callback_status"] = status
+        st.session_state["_bling_callback_message"] = mensagem
+
         if status == "success":
-            log_debug(f"[APP][OAUTH] callback processado com sucesso: {mensagem}", "INFO")
-            st.session_state["_bling_callback_status"] = "success"
-            st.session_state["_bling_callback_message"] = mensagem or "Conta conectada com sucesso."
-            st.session_state["bling_primeiro_acesso_decidido"] = True
-            st.session_state["bling_primeiro_acesso_escolha"] = "conectado"
-            st.session_state["bling_conectado"] = True
-            st.session_state["bling_conexao_ok"] = True
-            st.session_state["bling_connection_message"] = mensagem or "Conta conectada com sucesso."
-            _sincronizar_etapa_global("origem")
+            if _token_bling_valido_real():
+                st.session_state["bling_conectado"] = True
+                st.session_state["bling_conexao_ok"] = True
+                st.session_state["bling_connection_checked"] = True
+                st.session_state["bling_ultimo_status"] = "success"
+                st.session_state["bling_connection_source"] = "oauth_callback"
+                st.session_state["bling_connection_message"] = (
+                    mensagem or "Conectado com sucesso."
+                )
+                _sincronizar_etapa_global("origem")
+                log_debug("[APP] callback OAuth concluído com token real válido.", "INFO")
+                st.rerun()
+
+            _sanear_estado_bling_invalido(
+                "OAuth retornou sucesso, mas o token real não foi encontrado."
+            )
+            st.session_state["bling_ultimo_status"] = "error"
+            st.session_state["bling_connection_message"] = (
+                "OAuth retornou sucesso, mas não foi possível validar o token salvo."
+            )
+            _sincronizar_etapa_global("conexao")
             st.rerun()
 
-        if status == "error":
-            log_debug(f"[APP][OAUTH] erro no callback: {mensagem}", "ERROR")
-            st.session_state["_bling_callback_status"] = "error"
-            st.session_state["_bling_callback_message"] = mensagem or "Erro ao conectar com o Bling."
-            st.session_state["bling_conectado"] = False
-            st.session_state["bling_conexao_ok"] = False
-            _sincronizar_etapa_global("conexao")
+        st.session_state["bling_ultimo_status"] = "error"
+        st.session_state["bling_connection_message"] = mensagem or "Falha ao conectar com o Bling."
+        _sanear_estado_bling_invalido(mensagem or "Falha ao conectar com o Bling.")
+        _sincronizar_etapa_global("conexao")
+        log_debug(f"[APP] callback OAuth retornou erro: {mensagem}", "ERROR")
+        st.rerun()
 
     except Exception as e:
-        log_debug(f"[APP][OAUTH] falha inesperada ao processar callback: {e}", "ERROR")
-        st.session_state["_bling_callback_status"] = "error"
-        st.session_state["_bling_callback_message"] = f"Falha ao processar callback do Bling: {e}"
-        st.session_state["bling_conectado"] = False
-        st.session_state["bling_conexao_ok"] = False
+        _sanear_estado_bling_invalido(f"Erro ao processar callback do Bling: {e}")
+        st.session_state["bling_ultimo_status"] = "error"
+        st.session_state["bling_connection_message"] = f"Erro ao processar callback: {e}"
+        _sincronizar_etapa_global("conexao")
+        log_debug(f"[APP] erro no callback do Bling: {e}", "ERROR")
 
 
-def _render_feedback_callback() -> None:
-    status = str(st.session_state.get("_bling_callback_status") or "").strip().lower()
-    mensagem = str(st.session_state.get("_bling_callback_message") or "").strip()
-
-    if not status or not mensagem:
-        return
-
-    if status == "success":
-        st.success(mensagem)
-    elif status == "error":
-        st.error(mensagem)
-
-    st.session_state.pop("_bling_callback_status", None)
-    st.session_state.pop("_bling_callback_message", None)
-
-
+# =========================
+# CALLBACK OAUTH
+# =========================
 _processar_callback_bling()
 
+
+# =========================
+# UI BASE
+# =========================
 st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
 _garantir_estado_fluxo_inicial()
-_render_feedback_callback()
 
+
+# =========================
+# CONTROLE DE ETAPA
+# =========================
 etapa = _sincronizar_etapa_global(_resolver_autoetapa())
 
 if etapa not in ETAPAS_VALIDAS:
     log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
     _ir_para("conexao")
 
+
+# =========================
+# ETAPA 0 — CONEXÃO
+# =========================
 if etapa == "conexao":
     render_bling_primeiro_acesso(
         on_skip=lambda: _ir_para("origem"),
         on_continue=lambda: _ir_para("origem"),
     )
 
+# =========================
+# ETAPA 1 — ORIGEM
+# =========================
 elif etapa == "origem":
     render_origem_dados()
 
+# =========================
+# ETAPA 2 — MAPEAMENTO
+# =========================
 elif etapa == "mapeamento":
     if not _pode_ir_para_mapeamento():
         st.warning("⚠️ Carregue os dados na origem antes de acessar o mapeamento.")
@@ -525,9 +601,11 @@ elif etapa == "mapeamento":
 
     render_origem_mapeamento()
 
+# =========================
+# ETAPA 3 — FINAL
+# =========================
 elif etapa == "final":
     df_fluxo = _obter_df_fluxo()
-
     if not _safe_df(df_fluxo):
         log_debug("FINAL sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível.\nVolte para o mapeamento.")
@@ -543,12 +621,14 @@ elif etapa == "final":
         if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
             _ir_para("mapeamento")
     with col2:
-        if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
+        if st.button("Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
 
+# =========================
+# ETAPA 4 — ENVIO
+# =========================
 elif etapa == "envio":
     df_fluxo = _obter_df_fluxo()
-
     if not _safe_df(df_fluxo):
         log_debug("ENVIO sem dados válidos", "ERROR")
         st.warning("⚠️ Nenhum dado disponível para envio.")
@@ -557,12 +637,16 @@ elif etapa == "envio":
         st.stop()
 
     st.markdown("---")
-    if st.button("⬅️ Voltar para final", use_container_width=True, key="btn_envio_voltar_final"):
+    if st.button("⬅️ Voltar para final", use_container_width=True):
         _ir_para("final")
 
     st.markdown("---")
     render_send_panel()
 
+# =========================
+# FALLBACK
+# =========================
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
+    
