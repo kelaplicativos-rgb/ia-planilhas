@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import log_debug, safe_df_dados, safe_df_estrutura
@@ -30,6 +32,9 @@ from bling_app_zero.ui.origem_dados_ui import (
 )
 
 
+NavCallback = Callable[[], None] | None
+
+
 def _float_session(key: str, default: float = 0.0) -> float:
     try:
         return float(st.session_state.get(key, default) or default)
@@ -37,17 +42,34 @@ def _float_session(key: str, default: float = 0.0) -> float:
         return default
 
 
-def render_origem_dados() -> None:
+def _navegar(destino: str, callback: NavCallback = None) -> None:
+    if callable(callback):
+        callback()
+        return
+
+    set_etapa_origem(destino)
+    st.rerun()
+
+
+def render_origem_dados(
+    on_back: NavCallback = None,
+    on_continue: NavCallback = None,
+) -> None:
     garantir_estado_origem()
     render_header_fluxo()
 
-    etapa = safe_str(st.session_state.get("etapa_origem", "origem") or "origem").lower()
+    col_topo_1, col_topo_2 = st.columns(2)
 
-    if etapa == "mapeamento":
-        if st.button("⬅️ Voltar para origem", use_container_width=True):
-            set_etapa_origem("origem")
-            st.rerun()
-        return
+    with col_topo_1:
+        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_conexao"):
+            _navegar("conexao", on_back)
+
+    with col_topo_2:
+        st.caption("Fluxo atual: conexão → origem → mapeamento → final → envio")
+
+    etapa = safe_str(st.session_state.get("etapa_origem", "origem") or "origem").lower()
+    if etapa != "origem":
+        set_etapa_origem("origem")
 
     labels_operacao = ["Cadastro de Produtos", "Atualização de Estoque"]
     valor_radio = safe_str(st.session_state.get("tipo_operacao_radio"))
@@ -138,17 +160,24 @@ def render_origem_dados() -> None:
         st.session_state["df_final"] = df_saida_prec.copy()
 
     st.markdown("---")
+    col_acao_1, col_acao_2 = st.columns(2)
 
-    if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
-        valido, erros = validar_antes_mapeamento()
+    with col_acao_1:
+        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_rodape"):
+            _navegar("conexao", on_back)
 
-        if not valido:
-            for erro in erros:
-                st.warning(erro)
-            return
+    with col_acao_2:
+        if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
+            valido, erros = validar_antes_mapeamento()
 
-        if safe_df_estrutura(st.session_state.get("df_saida")):
-            st.session_state["df_final"] = st.session_state["df_saida"].copy()
+            if not valido:
+                for erro in erros:
+                    st.warning(erro)
+                return
 
-        set_etapa_origem("mapeamento")
-        st.rerun()
+            if safe_df_estrutura(st.session_state.get("df_saida")):
+                st.session_state["df_final"] = st.session_state["df_saida"].copy()
+
+            _navegar("mapeamento", on_continue)
+
+
