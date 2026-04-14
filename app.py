@@ -30,31 +30,192 @@ APP_VERSION = "1.0.29"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
+# =========================
+# VERSIONAMENTO
+# =========================
+def _safe_now_str() -> str:
+    try:
+        return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
+
 def _ler_version_json() -> dict:
     try:
         if not VERSION_JSON_PATH.exists():
             return {}
 
-        conteudo = VERSION_JSON_PATH.read_text(encoding="utf-8")
-        data = json.loads(conteudo)
+        bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
+        data = json.loads(bruto)
 
         if isinstance(data, dict):
             return data
 
         return {}
     except Exception as e:
-        log_debug(f"Erro ao ler version.json: {e}", "ERROR")
+        log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
         return {}
 
 
-def _resolver_app_version() -> str:
-    data = _ler_version_json()
-    version_json = str(data.get("version") or "").strip()
+def _salvar_version_json(data: dict) -> bool:
+    try:
+        VERSION_JSON_PATH.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return True
+    except Exception as e:
+        log_debug(f"[VERSION] erro ao salvar version.json: {e}", "ERROR")
+        return False
 
-    if version_json:
-        return version_json
+
+def _sincronizar_version_json_com_app() -> dict:
+    """
+    APP_VERSION é a fonte principal.
+    O version.json é sincronizado automaticamente.
+    """
+    atual = _ler_version_json()
+
+    history = atual.get("history", [])
+    if not isinstance(history, list):
+        history = []
+
+    version_json = str(atual.get("version") or "").strip()
+
+    if version_json == APP_VERSION:
+        return atual if atual else {
+            "version": APP_VERSION,
+            "updated_at": _safe_now_str(),
+            "last_title": "Versionamento sincronizado",
+            "last_description": "Version.json alinhado com APP_VERSION.",
+            "history": history,
+        }
+
+    novo_registro = {
+        "version": APP_VERSION,
+        "date": _safe_now_str(),
+        "title": "Atualização automática de versão",
+        "description": "Sincronizado automaticamente com APP_VERSION do app.py.",
+    }
+
+    if not any(str(item.get("version") or "").strip() == APP_VERSION for item in history if isinstance(item, dict)):
+        history.append(novo_registro)
+
+    novo = {
+        "version": APP_VERSION,
+        "updated_at": _safe_now_str(),
+        "last_title": "Atualização automática de versão",
+        "last_description": "Version.json sincronizado automaticamente com APP_VERSION do app.py.",
+        "history": history,
+    }
+
+    salvou = _salvar_version_json(novo)
+
+    if salvou:
+        log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
+        return novo
+
+    return atual if atual else novo
+
+
+def _resolver_app_version_exibida(version_data: dict) -> str:
+    try:
+        version_json = str((version_data or {}).get("version") or "").strip()
+        if version_json:
+            return version_json
+    except Exception:
+        pass
 
     return APP_VERSION
+
+
+def _garantir_estado_versionamento() -> None:
+    if "_app_loaded_version" not in st.session_state:
+        st.session_state["_app_loaded_version"] = APP_VERSION
+
+    if "_app_last_seen_version" not in st.session_state:
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+
+    if "_version_reload_requested" not in st.session_state:
+        st.session_state["_version_reload_requested"] = False
+
+
+def _executar_reload_app() -> None:
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    st.session_state["_app_loaded_version"] = APP_VERSION
+    st.session_state["_app_last_seen_version"] = APP_VERSION
+    st.session_state["_version_reload_requested"] = False
+    st.rerun()
+
+
+def _render_controle_versao(version_data: dict) -> None:
+    versao_exibida = _resolver_app_version_exibida(version_data)
+    versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip() or APP_VERSION
+    mudou_versao = versao_sessao != APP_VERSION
+
+    with st.container():
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            st.caption(f"Versão: {versao_exibida}")
+
+            updated_at = str((version_data or {}).get("updated_at") or "").strip()
+            if updated_at:
+                st.caption(f"Última atualização registrada: {updated_at}")
+
+        with col2:
+            botao_label = "🔄 Atualizar app agora" if mudou_versao else "🔄 Recarregar app"
+
+            if st.button(botao_label, use_container_width=True, key="btn_recarregar_app_topo"):
+                log_debug("[VERSION] atualização manual acionada pelo usuário", "INFO")
+                _executar_reload_app()
+
+    if mudou_versao:
+        st.warning(
+            f"⚠️ Nova versão detectada no código: {APP_VERSION}. "
+            f"Versão carregada nesta sessão: {versao_sessao}. "
+            f"Clique em “Atualizar app agora” para recarregar."
+        )
+
+    last_title = str((version_data or {}).get("last_title") or "").strip()
+    last_description = str((version_data or {}).get("last_description") or "").strip()
+
+    if last_title or last_description:
+        with st.expander("📦 Controle de versão", expanded=False):
+            if last_title:
+                st.write(f"**Última mudança:** {last_title}")
+            if last_description:
+                st.write(last_description)
+
+            history = (version_data or {}).get("history", [])
+            if isinstance(history, list) and history:
+                st.markdown("**Histórico recente**")
+                for item in reversed(history[-5:]):
+                    if not isinstance(item, dict):
+                        continue
+                    versao = str(item.get("version") or "").strip()
+                    data = str(item.get("date") or "").strip()
+                    titulo = str(item.get("title") or "").strip()
+                    descricao = str(item.get("description") or "").strip()
+
+                    linha = f"- **{versao}**"
+                    if data:
+                        linha += f" · {data}"
+                    if titulo:
+                        linha += f" · {titulo}"
+                    if descricao:
+                        linha += f" — {descricao}"
+
+                    st.markdown(linha)
 
 
 # =========================
@@ -62,6 +223,8 @@ def _resolver_app_version() -> str:
 # =========================
 inicializar_app()
 garantir_estado_base()
+_garantir_estado_versionamento()
+VERSION_DATA = _sincronizar_version_json_com_app()
 
 
 # =========================
@@ -163,13 +326,7 @@ def _garantir_estado_fluxo_inicial() -> None:
 
 
 def _pode_ir_para_mapeamento() -> bool:
-    for chave in [
-        "df_saida",
-        "df_final",
-        "df_precificado",
-        "df_calc_precificado",
-        "df_origem",
-    ]:
+    for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado", "df_origem"]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
 
@@ -183,10 +340,8 @@ def _pode_ir_para_final() -> bool:
 # =========================
 # UI BASE
 # =========================
-VERSAO_EXIBIDA = _resolver_app_version()
-
 st.title("IA Planilhas → Bling")
-st.caption(f"Versão: {VERSAO_EXIBIDA}")
+_render_controle_versao(VERSION_DATA)
 
 render_debug_panel()
 
@@ -291,3 +446,4 @@ elif etapa == "envio":
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
+    
