@@ -26,11 +26,26 @@ def sanitizar_valor(valor):
 
 
 def normalizar_situacao(valor) -> str:
-    texto = safe_str(valor).lower()
+    texto = safe_str(valor).strip().lower()
+
     if not texto:
         return "Ativo"
-    if texto in {"inativo", "inactive", "0"}:
+
+    mapa_inativo_para_ativo = {
+        "inativo",
+        "inactive",
+        "0",
+        "false",
+        "nao",
+        "não",
+    }
+
+    if texto in mapa_inativo_para_ativo:
         return "Ativo"
+
+    if texto in {"ativo", "active", "1", "true", "sim", "yes"}:
+        return "Ativo"
+
     return "Ativo"
 
 
@@ -39,7 +54,13 @@ def normalizar_urls_imagem(valor) -> str:
     if not texto:
         return ""
 
-    texto = texto.replace("\n", "|").replace(";", "|").replace(",", "|")
+    texto = (
+        texto.replace("\n", "|")
+        .replace("\r", "|")
+        .replace(";", "|")
+        .replace(",", "|")
+    )
+
     partes = [p.strip() for p in texto.split("|") if p.strip()]
 
     unicos: list[str] = []
@@ -86,42 +107,112 @@ def obter_df_modelo_mapeamento():
 def inferir_coluna_preco(df_fonte: pd.DataFrame) -> str:
     for col in df_fonte.columns:
         nome = normalizar_coluna(col)
-        if "preco" in nome or "preço" in str(col).lower():
+
+        if (
+            "preco" in nome
+            or "preço" in str(col).lower()
+            or "valor" in nome
+            or "custo" in nome
+        ):
             return str(col)
+
     return ""
 
 
-def aplicar_mapeamento_automatico_preco(mapping: dict, df_modelo: pd.DataFrame, df_fonte: pd.DataFrame) -> dict:
-    try:
-        coluna_preco = safe_str(st.session_state.get("coluna_precificacao_resultado"))
+def _coluna_preco_destino(col_modelo: str) -> bool:
+    nome = normalizar_coluna(col_modelo)
+    return "preco de venda" in nome or "preco unitario" in nome
 
+
+def aplicar_mapeamento_automatico_preco(
+    mapping: dict,
+    df_modelo: pd.DataFrame,
+    df_fonte: pd.DataFrame,
+) -> dict:
+    try:
+        mapping_out = dict(mapping or {})
+
+        coluna_preco = safe_str(st.session_state.get("coluna_precificacao_resultado"))
         if not coluna_preco:
             coluna_preco = inferir_coluna_preco(df_fonte)
 
         if not coluna_preco or coluna_preco not in df_fonte.columns:
-            return dict(mapping)
-
-        mapping_out = dict(mapping)
+            return mapping_out
 
         for col_modelo in df_modelo.columns:
-            nome = normalizar_coluna(col_modelo)
-            if "preco de venda" in nome or "preco unitario" in nome:
-                mapping_out[col_modelo] = coluna_preco
+            if not _coluna_preco_destino(str(col_modelo)):
+                continue
+
+            valor_atual = safe_str(mapping_out.get(col_modelo))
+            if valor_atual and valor_atual in df_fonte.columns:
+                continue
+
+            mapping_out[col_modelo] = coluna_preco
 
         return mapping_out
+
     except Exception:
-        return dict(mapping)
+        return dict(mapping or {})
 
 
-def montar_df_saida_mapeado(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+def _nova_base_saida(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
+    colunas_modelo = [str(col) for col in df_modelo.columns]
+    return pd.DataFrame("", index=range(len(df_fonte)), columns=colunas_modelo)
+
+
+def _reaproveitar_base_saida_se_compativel(
+    df_fonte: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+) -> pd.DataFrame:
     df_saida_base = st.session_state.get("df_saida")
 
-    if isinstance(df_saida_base, pd.DataFrame) and len(df_saida_base) == len(df_fonte):
-        df_saida = df_saida_base.copy()
-    else:
-        df_saida = pd.DataFrame(index=range(len(df_fonte)))
+    if not isinstance(df_saida_base, pd.DataFrame):
+        return _nova_base_saida(df_fonte, df_modelo)
 
-    deposito = str(st.session_state.get("deposito_nome", "") or "").strip()
+    if len(df_saida_base) != len(df_fonte):
+        return _nova_base_saida(df_fonte, df_modelo)
+
+    try:
+        df_out = df_saida_base.copy()
+    except Exception:
+        return _nova_base_saida(df_fonte, df_modelo)
+
+    for col in df_modelo.columns:
+        if col not in df_out.columns:
+            df_out[col] = ""
+
+    df_out = df_out[[str(col) for col in df_modelo.columns]].copy()
+    return df_out.fillna("")
+
+
+def _serie_origem(df_fonte: pd.DataFrame, origem: str) -> pd.Series:
+    serie = df_fonte[origem].reset_index(drop=True)
+    return serie.apply(sanitizar_valor)
+
+
+def _aplicar_coluna_mapeada(
+    df_saida: pd.DataFrame,
+    df_fonte: pd.DataFrame,
+    col_modelo: str,
+    origem: str,
+) -> None:
+    if not origem or origem not in df_fonte.columns:
+        if col_modelo not in df_saida.columns:
+            df_saida[col_modelo] = ""
+        else:
+            df_saida[col_modelo] = df_saida[col_modelo].fillna("")
+        return
+
+    serie = _serie_origem(df_fonte, origem)
+
+    if is_coluna_imagem(col_modelo):
+        serie = serie.apply(normalizar_urls_imagem)
+
+    df_saida[col_modelo] = serie
+
+
+def _aplicar_defaults_sistema(df_saida: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
+    deposito = safe_str(st.session_state.get("deposito_nome"))
 
     for col in df_modelo.columns:
         if is_coluna_id(col):
@@ -132,23 +223,52 @@ def montar_df_saida_mapeado(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame, map
             df_saida[col] = deposito
             continue
 
-        origem = str(mapping.get(col, "") or "").strip()
-
-        if origem and origem in df_fonte.columns:
-            serie = df_fonte[origem].reset_index(drop=True)
-            serie = serie.apply(sanitizar_valor)
-
-            if is_coluna_imagem(col):
-                serie = serie.apply(normalizar_urls_imagem)
-
-            df_saida[col] = serie
-        else:
-            if col not in df_saida.columns:
-                df_saida[col] = ""
-            else:
-                df_saida[col] = df_saida[col].fillna("")
-
         if "situa" in str(col).lower():
             df_saida[col] = df_saida[col].apply(normalizar_situacao)
+
+    return df_saida
+
+
+def montar_df_saida_mapeado(
+    df_fonte: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping: dict,
+) -> pd.DataFrame:
+    if not safe_df_com_linhas(df_fonte) or not safe_df(df_modelo):
+        return pd.DataFrame()
+
+    mapping_limpo = {
+        str(k): safe_str(v)
+        for k, v in dict(mapping or {}).items()
+    }
+
+    df_saida = _reaproveitar_base_saida_se_compativel(df_fonte, df_modelo)
+
+    for col in df_modelo.columns:
+        col_modelo = str(col)
+
+        if is_coluna_id(col_modelo):
+            df_saida[col_modelo] = ""
+            continue
+
+        if is_coluna_deposito(col_modelo):
+            continue
+
+        origem = mapping_limpo.get(col_modelo, "")
+        _aplicar_coluna_mapeada(df_saida, df_fonte, col_modelo, origem)
+
+    df_saida = _aplicar_defaults_sistema(df_saida, df_modelo)
+
+    for col in df_modelo.columns:
+        if col not in df_saida.columns:
+            df_saida[col] = ""
+
+    df_saida = df_saida[[str(col) for col in df_modelo.columns]].copy()
+    df_saida = df_saida.fillna("")
+
+    try:
+        st.session_state["df_preview_mapeamento"] = df_saida.copy()
+    except Exception:
+        st.session_state["df_preview_mapeamento"] = df_saida
 
     return df_saida
