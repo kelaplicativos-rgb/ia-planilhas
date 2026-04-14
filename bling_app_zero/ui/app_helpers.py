@@ -31,14 +31,58 @@ def log_debug(mensagem: str, nivel: str = "INFO") -> None:
         pass
 
 
+def _get_debug_logs() -> list[str]:
+    try:
+        logs = st.session_state.get("_debug_logs", [])
+        if not isinstance(logs, list):
+            return []
+        return [str(item) for item in logs if str(item).strip()]
+    except Exception:
+        return []
+
+
+def _get_debug_logs_texto() -> str:
+    try:
+        logs = _get_debug_logs()
+        if not logs:
+            return "Sem logs até o momento.\n"
+        return "\n".join(logs[-500:])
+    except Exception:
+        return "Sem logs até o momento.\n"
+
+
 def render_debug_panel() -> None:
     try:
         with st.expander("LOG DEBUG", expanded=False):
-            logs = st.session_state.get("_debug_logs", [])
+            logs = _get_debug_logs()
+            texto_logs = _get_debug_logs_texto()
+
             if not logs:
                 st.caption("Sem logs até o momento.")
             else:
                 st.text("\n".join(logs[-200:]))
+
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                st.download_button(
+                    label="Baixar log TXT",
+                    data=texto_logs.encode("utf-8"),
+                    file_name=f"debug_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key="download_debug_log_txt",
+                )
+
+            with col2:
+                if st.button(
+                    "Limpar log",
+                    use_container_width=True,
+                    key="limpar_debug_log",
+                ):
+                    st.session_state["_debug_logs"] = []
+                    st.rerun()
+
     except Exception:
         pass
 
@@ -66,6 +110,7 @@ def garantir_estado_base() -> None:
         "campos_obrigatorios_faltantes": [],
         "campos_obrigatorios_alertas": [],
     }
+
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
@@ -133,10 +178,12 @@ def sincronizar_df_final() -> None:
     df = get_df_fluxo()
     if not safe_df_estrutura(df):
         return
+
     try:
         st.session_state["df_final"] = df.copy()
     except Exception:
         st.session_state["df_final"] = df
+
     try:
         st.session_state["df_saida"] = df.copy()
     except Exception:
@@ -153,15 +200,18 @@ def _so_digitos(valor) -> str:
 def _checksum_gtin_ok(gtin: str) -> bool:
     if len(gtin) not in {8, 12, 13, 14}:
         return False
+
     try:
         numeros = [int(c) for c in gtin]
         corpo = numeros[:-1]
         verificador = numeros[-1]
+
         soma = 0
         peso3 = True
         for n in reversed(corpo):
             soma += n * (3 if peso3 else 1)
             peso3 = not peso3
+
         calculado = (10 - (soma % 10)) % 10
         return calculado == verificador
     except Exception:
@@ -177,6 +227,7 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame()
+
         df_limpo = df.copy()
         for col in df_limpo.columns:
             if _is_coluna_gtin(col):
@@ -193,14 +244,17 @@ def _normalizar_urls_imagem(valor) -> str:
     texto = _safe_str(valor)
     if not texto:
         return ""
+
     texto = texto.replace("\n", "|").replace(";", "|").replace(",", "|")
     partes = [p.strip() for p in texto.split("|") if p.strip()]
+
     unicos = []
     vistos = set()
     for item in partes:
         if item not in vistos:
             vistos.add(item)
             unicos.append(item)
+
     return "|".join(unicos)
 
 
@@ -218,6 +272,7 @@ def _aplicar_tratamento_imagens(df: pd.DataFrame) -> pd.DataFrame:
 
 def _normalizar_situacao(valor) -> str:
     texto = _safe_str(valor).lower()
+
     if not texto:
         return "Ativo"
     if texto in {"inativo", "inactive", "0"}:
@@ -243,10 +298,13 @@ def sanitizar_dados_reais(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame()
+
         df_out = df.copy()
         df_out = df_out.replace({None: ""}).fillna("")
+
         for col in df_out.columns:
             df_out[col] = df_out[col].apply(lambda v: "" if _safe_str(v).lower() == "nan" else v)
+
         return df_out
     except Exception as e:
         log_debug(f"Erro sanitizar_dados_reais: {e}", "ERROR")
@@ -276,7 +334,6 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         df_blindado = sanitizar_dados_reais(df_blindado)
         df_blindado = df_blindado.replace({None: ""}).fillna("")
         df_blindado = _sanitizar_df_para_csv(df_blindado)
-
         return df_blindado
     except Exception as e:
         log_debug(f"Erro em blindar_df_para_download: {e}", "ERROR")
@@ -309,6 +366,7 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
 
         for nome_campo, aliases in candidatos.items():
             col_encontrada = None
+
             for col_real, col_norm in colunas_normalizadas.items():
                 if any(alias in col_norm for alias in aliases):
                     col_encontrada = col_real
@@ -341,6 +399,7 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
 def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
     try:
         df_download = blindar_df_para_download(df)
+
         if not isinstance(df_download, pd.DataFrame):
             return b""
         if len(df_download.columns) == 0:
@@ -354,6 +413,7 @@ def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
             quoting=csv.QUOTE_MINIMAL,
         )
         return csv_texto.encode("utf-8-sig")
+
     except Exception as e:
         log_debug(f"Erro ao exportar CSV: {e}", "ERROR")
         return b""
@@ -361,6 +421,7 @@ def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
 
 def gerar_nome_arquivo_download() -> str:
     tipo_operacao = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+
     if tipo_operacao == "estoque":
         return "bling_export_estoque.csv"
     if tipo_operacao == "cadastro":
