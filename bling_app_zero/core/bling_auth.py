@@ -12,11 +12,9 @@ import httpx
 import streamlit as st
 
 from bling_app_zero.core.bling_token_store import BlingTokenStore
+from bling_app_zero.core.bling_user_session import clear_pending_oauth_user
 
 
-# =========================
-# HELPERS
-# =========================
 def _safe_json_load(text: str) -> Dict[str, Any]:
     try:
         data = json.loads(text)
@@ -36,6 +34,13 @@ def _safe_str(value: object) -> str:
         return ""
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
 def _first_non_empty(*values: object) -> str:
     for value in values:
         text = _safe_str(value)
@@ -44,9 +49,6 @@ def _first_non_empty(*values: object) -> str:
     return ""
 
 
-# =========================
-# SETTINGS
-# =========================
 @dataclass
 class BlingSettings:
     client_id: str
@@ -60,9 +62,6 @@ class BlingSettings:
     stock_write_path: str
 
 
-# =========================
-# AUTH MANAGER
-# =========================
 class BlingAuthManager:
     def __init__(self, user_key: str = "default") -> None:
         qp_user = ""
@@ -109,19 +108,34 @@ class BlingAuthManager:
         raw = f"{self.settings.client_id}:{self.settings.client_secret}".encode("utf-8")
         return f"Basic {base64.b64encode(raw).decode('utf-8')}"
 
+    def _oauth_session_key(self, suffix: str) -> str:
+        return f"_oauth_{suffix}_{self.user_key}"
+
+    def _save_state(self, state: str) -> None:
+        st.session_state["_oauth_state"] = state
+        st.session_state[self._oauth_session_key("state")] = state
+        st.session_state["_oauth_pending_user_key"] = self.user_key
+        st.session_state[self._oauth_session_key("pending_user_key")] = self.user_key
+        st.session_state[self._oauth_session_key("started_at")] = int(time.time())
+
+    def _get_saved_state(self) -> str:
+        global_state = _safe_str(st.session_state.get("_oauth_state"))
+        scoped_state = _safe_str(st.session_state.get(self._oauth_session_key("state")))
+        return scoped_state or global_state
+
+    def _clear_saved_state(self) -> None:
+        st.session_state["_oauth_state"] = ""
+        for key in [
+            self._oauth_session_key("state"),
+            self._oauth_session_key("pending_user_key"),
+            self._oauth_session_key("started_at"),
+        ]:
+            st.session_state.pop(key, None)
+
     def _clear_oauth_query_params(self) -> None:
-        """
-        Remove apenas parâmetros do OAuth, preservando bi/user_key quando existirem.
-        """
         try:
             qp = st.query_params
-            for key in [
-                "code",
-                "state",
-                "error",
-                "error_description",
-                "bling_callback",
-            ]:
+            for key in ["code", "state", "error", "error_description", "bling_callback"]:
                 try:
                     del qp[key]
                 except Exception:
@@ -135,23 +149,28 @@ class BlingAuthManager:
         if not _safe_str(data.get("token_type")):
             data["token_type"] = "Bearer"
 
-        try:
-            expires_in = int(data.get("expires_in", 0) or 0)
-        except Exception:
-            expires_in = 0
-
+        expires_in = _safe_int(data.get("expires_in"), 0)
         if expires_in <= 0:
             data["expires_in"] = 3600
+
+        if not _safe_str(data.get("refresh_token")):
+            existing = self.store.get(self.user_key) or {}
+            previous_refresh = _safe_str(existing.get("refresh_token"))
+            if previous_refresh:
+                data["refresh_token"] = previous_refresh
 
         data["created_at"] = int(time.time())
         return data
 
-    def _parse_response_payload(self, resp: httpx.Response) -> Dict[str, Any]:
-        try:
-            payload = resp.json()
-            return payload if isinstance(payload, dict) else {}
-        except Exception:
-            return _safe_json_load(resp.text)
+    def _extract_response_payload(self, resp: httpx.Response) -> Dict[str, Any]:
+        content_type = _safe_str(resp.headers.get("content-type")).lower()
+        if "application/json" in content_type:
+            try:
+                data = resp.json()
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+        return _safe_json_load(resp.text)
 
     def _extract_error_message(
         self,
@@ -181,15 +200,7 @@ class BlingAuthManager:
 
         return f"{resp.status_code} - erro ao comunicar com o Bling"
 
-    def _request_token(
-        self,
-        data: Dict[str, Any],
-    ) -> Tuple[bool, Dict[str, Any], str]:
-        """
-        Faz a troca do token com fallback:
-        1) Basic Auth + form body
-        2) client_id/client_secret no body
-        """
+    def _request_token(self, data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
         attempts = [
             {
                 "headers": {
@@ -221,7 +232,7 @@ class BlingAuthManager:
                     headers=attempt["headers"],
                     data=attempt["data"],
                 )
-                payload = self._parse_response_payload(resp)
+                payload = self._extract_response_payload(resp)
 
                 if resp.status_code >= 400:
                     last_error = self._extract_error_message(resp, payload)
@@ -241,16 +252,12 @@ class BlingAuthManager:
 
         return False, {}, last_error
 
-    # =========================
-    # AUTH URL
-    # =========================
     def generate_auth_url(self) -> str:
         if not self.is_configured():
             return ""
 
         state = secrets.token_urlsafe(24)
-        st.session_state["_oauth_state"] = state
-        st.session_state["_oauth_pending_user_key"] = self.user_key
+        self._save_state(state)
 
         params = {
             "response_type": "code",
@@ -261,14 +268,8 @@ class BlingAuthManager:
         return f"{self.settings.authorize_url}?{urlencode(params)}"
 
     def build_authorize_url(self) -> str:
-        """
-        Alias de compatibilidade com chamadas antigas do projeto.
-        """
         return self.generate_auth_url()
 
-    # =========================
-    # TOKEN
-    # =========================
     def exchange_code_for_token(self, code: str) -> Tuple[bool, str]:
         code = _safe_str(code)
         if not code:
@@ -324,9 +325,42 @@ class BlingAuthManager:
 
         return True, "Token renovado"
 
-    # =========================
-    # CALLBACK
-    # =========================
+    def revoke_token(self) -> Tuple[bool, str]:
+        current = self.store.get(self.user_key) or {}
+        access_token = _safe_str(current.get("access_token"))
+        if not access_token:
+            return False, "Nenhum token para revogar"
+
+        if not self.is_configured():
+            return False, "Credenciais do Bling não configuradas"
+
+        try:
+            headers = {
+                "Authorization": self._basic_auth_header(),
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            }
+            data = {"token": access_token}
+
+            resp = self._client.post(
+                self.settings.revoke_url,
+                headers=headers,
+                data=data,
+            )
+            payload = self._extract_response_payload(resp)
+
+            if resp.status_code >= 400:
+                return False, self._extract_error_message(resp, payload)
+
+            try:
+                self.store.delete(self.user_key)
+            except Exception:
+                pass
+
+            return True, "Token revogado com sucesso"
+        except Exception as e:
+            return False, str(e)
+
     def handle_oauth_callback(self) -> Dict[str, str]:
         try:
             qp = st.query_params
@@ -350,34 +384,36 @@ class BlingAuthManager:
                 or "Erro ao autenticar no Bling"
             )
             self._clear_oauth_query_params()
-            st.session_state["_oauth_state"] = ""
+            self._clear_saved_state()
+            clear_pending_oauth_user()
             return {"status": "error", "message": msg}
 
         code = _safe_str(qp.get("code"))
         incoming_state = _safe_str(qp.get("state"))
-        saved_state = _safe_str(st.session_state.get("_oauth_state"))
+        saved_state = self._get_saved_state()
 
         if not code:
             self._clear_oauth_query_params()
+            self._clear_saved_state()
             return {"status": "error", "message": "Código OAuth ausente"}
 
         if saved_state and incoming_state and incoming_state != saved_state:
             self._clear_oauth_query_params()
-            st.session_state["_oauth_state"] = ""
+            self._clear_saved_state()
+            clear_pending_oauth_user()
             return {"status": "error", "message": "State inválido"}
 
         ok, msg = self.exchange_code_for_token(code)
         self._clear_oauth_query_params()
-        st.session_state["_oauth_state"] = ""
+        self._clear_saved_state()
 
         if not ok:
+            clear_pending_oauth_user()
             return {"status": "error", "message": msg}
 
+        clear_pending_oauth_user()
         return {"status": "success", "message": "Conta conectada com sucesso"}
 
-    # =========================
-    # TOKEN VÁLIDO
-    # =========================
     def get_valid_access_token(self) -> Tuple[bool, str]:
         if not self.is_configured():
             return False, "Bling não configurado"
@@ -387,7 +423,12 @@ class BlingAuthManager:
         if not token:
             return False, "Token inválido"
 
-        if not self.store.is_expired(current):
+        try:
+            expired = bool(self.store.is_expired(current))
+        except Exception:
+            expired = True
+
+        if not expired:
             return True, token
 
         ok, msg = self.refresh_access_token()
@@ -408,6 +449,7 @@ class BlingAuthManager:
                 "configured": False,
                 "connected": False,
                 "message": "Credenciais do Bling não configuradas",
+                "user_key": self.user_key,
             }
 
         current = self.store.get(self.user_key) or {}
@@ -418,19 +460,33 @@ class BlingAuthManager:
                 "configured": True,
                 "connected": False,
                 "message": "Conta ainda não conectada",
+                "user_key": self.user_key,
             }
 
-        if self.store.is_expired(current):
+        try:
+            expired = bool(self.store.is_expired(current))
+        except Exception:
+            expired = True
+
+        if expired:
             ok, msg = self.refresh_access_token()
             if not ok:
                 return {
                     "configured": True,
                     "connected": False,
                     "message": msg,
+                    "user_key": self.user_key,
                 }
+
+        refreshed = self.store.get(self.user_key) or {}
+        created_at = _safe_int(refreshed.get("created_at"), 0)
+        expires_in = _safe_int(refreshed.get("expires_in"), 0)
 
         return {
             "configured": True,
             "connected": True,
             "message": "Conta conectada",
+            "user_key": self.user_key,
+            "created_at": created_at,
+            "expires_in": expires_in,
         }
