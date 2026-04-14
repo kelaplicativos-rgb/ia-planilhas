@@ -271,3 +271,105 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
             else:
                 coluna = (
                     df_out["Depósito (OBRIGATÓRIO)"]
+                    .replace({None: ""})
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_out["Depósito (OBRIGATÓRIO)"] = coluna
+                df_out.loc[coluna.eq(""), "Depósito (OBRIGATÓRIO)"] = deposito_nome
+
+        if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
+            df_out["Balanço (OBRIGATÓRIO)"] = "S"
+
+        return df_out
+    except Exception as e:
+        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
+        return df_saida.copy() if isinstance(df_saida, pd.DataFrame) else pd.DataFrame()
+
+
+# ==========================================================
+# PRECIFICAÇÃO
+# ==========================================================
+def nome_coluna_preco_saida() -> str:
+    return (
+        "Preço unitário (OBRIGATÓRIO)"
+        if st.session_state.get("tipo_operacao_bling") == "estoque"
+        else "Preço de venda"
+    )
+
+
+def to_numeric_series(serie: pd.Series) -> pd.Series:
+    try:
+        texto = (
+            serie.replace({None: ""})
+            .fillna("")
+            .astype(str)
+            .str.replace("R$", "", regex=False)
+            .str.replace(" ", "", regex=False)
+        )
+
+        possui_virgula = texto.str.contains(",", regex=False)
+        possui_ponto = texto.str.contains(".", regex=False)
+
+        texto = texto.where(
+            ~(possui_virgula & possui_ponto),
+            texto.str.replace(".", "", regex=False),
+        )
+        texto = texto.str.replace(",", ".", regex=False)
+
+        return pd.to_numeric(texto, errors="coerce").fillna(0.0)
+    except Exception:
+        return pd.to_numeric(serie, errors="coerce").fillna(0.0)
+
+
+def aplicar_precificacao(
+    df_origem: pd.DataFrame,
+    coluna_custo: str,
+    margem: float,
+    impostos: float,
+    custo_fixo: float,
+    taxa_extra: float,
+) -> pd.DataFrame | None:
+    if not coluna_custo or coluna_custo not in df_origem.columns:
+        st.session_state["df_calc_precificado"] = None
+        return None
+
+    try:
+        base = to_numeric_series(df_origem[coluna_custo])
+        fator_percentual = 1 + (margem / 100.0) + (impostos / 100.0)
+        preco = (base * fator_percentual) + custo_fixo + taxa_extra
+
+        df_prec = df_origem.copy()
+        df_prec[nome_coluna_preco_saida()] = preco.round(2)
+
+        st.session_state["df_calc_precificado"] = df_prec.copy()
+        st.session_state["df_precificado"] = df_prec.copy()
+
+        return df_prec
+    except Exception as e:
+        log_debug(f"[ORIGEM_DADOS] erro na precificação: {e}", "ERROR")
+        st.session_state["df_calc_precificado"] = None
+        return None
+
+
+# ==========================================================
+# VALIDAÇÃO
+# ==========================================================
+def validar_antes_mapeamento() -> tuple[bool, list[str]]:
+    erros: list[str] = []
+
+    df_origem = st.session_state.get("df_origem")
+    if not safe_df_dados(df_origem):
+        erros.append("Carregue os dados de origem antes de continuar.")
+
+    origem_atual = obter_origem_atual()
+    if "site" in origem_atual:
+        url = safe_str(st.session_state.get("site_url"))
+        if not url:
+            erros.append("Informe a URL do site.")
+
+        if not st.session_state.get("site_processado") and not safe_df_dados(df_origem):
+            erros.append("Execute a busca do site antes de continuar.")
+
+    return len(erros) == 0, erros
