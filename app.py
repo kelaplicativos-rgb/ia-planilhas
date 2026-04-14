@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.ui.app_helpers import (
     garantir_estado_base,
     log_debug,
@@ -108,6 +109,7 @@ def _sincronizar_version_json_com_app() -> dict:
     if salvou:
         log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
         return novo
+
     return atual if atual else novo
 
 
@@ -160,6 +162,10 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "bling_user_key",
         "user_key",
         "bi",
+        "_oauth_state",
+        "_oauth_pending_user_key",
+        "_bling_callback_status",
+        "_bling_callback_message",
     }
 
 
@@ -192,11 +198,7 @@ def _limpar_sessao_por_versao() -> bool:
     )
 
     preservadas = _chaves_preservadas_na_limpeza()
-    snapshot = {
-        k: st.session_state.get(k)
-        for k in preservadas
-        if k in st.session_state
-    }
+    snapshot = {k: st.session_state.get(k) for k in preservadas if k in st.session_state}
 
     for chave in list(st.session_state.keys()):
         if chave not in preservadas:
@@ -261,35 +263,37 @@ def _render_controle_versao(version_data: dict) -> None:
                 log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
 
-        last_title = str((version_data or {}).get("last_title") or "").strip()
-        last_description = str((version_data or {}).get("last_description") or "").strip()
+    last_title = str((version_data or {}).get("last_title") or "").strip()
+    last_description = str((version_data or {}).get("last_description") or "").strip()
 
-        if last_title or last_description:
-            with st.expander("📦 Controle de versão", expanded=False):
-                if last_title:
-                    st.write(f"**Última mudança:** {last_title}")
-                if last_description:
-                    st.write(last_description)
+    if last_title or last_description:
+        with st.expander("📦 Controle de versão", expanded=False):
+            if last_title:
+                st.write(f"**Última mudança:** {last_title}")
+            if last_description:
+                st.write(last_description)
 
-                history = (version_data or {}).get("history", [])
-                if isinstance(history, list) and history:
-                    st.markdown("**Histórico recente**")
-                    for item in reversed(history[-5:]):
-                        if not isinstance(item, dict):
-                            continue
-                        versao = str(item.get("version") or "").strip()
-                        data = str(item.get("date") or "").strip()
-                        titulo = str(item.get("title") or "").strip()
-                        descricao = str(item.get("description") or "").strip()
+            history = (version_data or {}).get("history", [])
+            if isinstance(history, list) and history:
+                st.markdown("**Histórico recente**")
+                for item in reversed(history[-5:]):
+                    if not isinstance(item, dict):
+                        continue
 
-                        linha = f"- **{versao}**"
-                        if data:
-                            linha += f" · {data}"
-                        if titulo:
-                            linha += f" · {titulo}"
-                        if descricao:
-                            linha += f" — {descricao}"
-                        st.markdown(linha)
+                    versao = str(item.get("version") or "").strip()
+                    data = str(item.get("date") or "").strip()
+                    titulo = str(item.get("title") or "").strip()
+                    descricao = str(item.get("description") or "").strip()
+
+                    linha = f"- **{versao}**"
+                    if data:
+                        linha += f" · {data}"
+                    if titulo:
+                        linha += f" · {titulo}"
+                    if descricao:
+                        linha += f" — {descricao}"
+
+                    st.markdown(linha)
 
 
 # =========================
@@ -298,8 +302,8 @@ def _render_controle_versao(version_data: dict) -> None:
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
-VERSION_DATA = _sincronizar_version_json_com_app()
 
+VERSION_DATA = _sincronizar_version_json_com_app()
 houve_limpeza_versao = _limpar_sessao_por_versao()
 if houve_limpeza_versao:
     st.rerun()
@@ -333,6 +337,7 @@ def _normalizar_etapa(valor: object) -> str:
 
     if etapa_normalizada not in ETAPAS_VALIDAS:
         return "conexao"
+
     return etapa_normalizada
 
 
@@ -420,14 +425,83 @@ def _resolver_autoetapa() -> str:
     _sincronizar_df_fluxo()
 
     if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
-        log_debug("[APP] mapeamento bloqueado por ausência de dados. Retornando para origem.", "WARNING")
+        log_debug(
+            "[APP] mapeamento bloqueado por ausência de dados. Retornando para origem.",
+            "WARNING",
+        )
         return "origem"
 
     if etapa_atual in {"final", "envio"} and not _pode_ir_para_final():
-        log_debug("[APP] final/envio bloqueado por ausência de dados. Retornando para origem.", "WARNING")
+        log_debug(
+            "[APP] final/envio bloqueado por ausência de dados. Retornando para origem.",
+            "WARNING",
+        )
         return "origem"
 
     return etapa_atual
+
+
+def _processar_callback_bling() -> None:
+    """
+    Processa o retorno do OAuth antes do controle de etapa.
+    Isso evita que o app siga mostrando 'Token inválido' quando o code
+    voltou na URL mas ainda não foi trocado por token.
+    """
+    try:
+        auth = BlingAuthManager(
+            user_key=str(
+                st.session_state.get("bling_user_key")
+                or st.session_state.get("user_key")
+                or st.session_state.get("bi")
+                or "default"
+            )
+        )
+
+        resultado = auth.handle_oauth_callback()
+        status = str(resultado.get("status") or "").strip().lower()
+        mensagem = str(resultado.get("message") or "").strip()
+
+        if status == "success":
+            log_debug(f"[APP][OAUTH] callback processado com sucesso: {mensagem}", "INFO")
+            st.session_state["_bling_callback_status"] = "success"
+            st.session_state["_bling_callback_message"] = mensagem or "Conta conectada com sucesso."
+            st.session_state["bling_primeiro_acesso_decidido"] = True
+            st.session_state["bling_primeiro_acesso_escolha"] = "conectado"
+            _sincronizar_etapa_global("origem")
+            st.rerun()
+
+        if status == "error":
+            log_debug(f"[APP][OAUTH] erro no callback: {mensagem}", "ERROR")
+            st.session_state["_bling_callback_status"] = "error"
+            st.session_state["_bling_callback_message"] = mensagem or "Erro ao conectar com o Bling."
+            _sincronizar_etapa_global("conexao")
+
+    except Exception as e:
+        log_debug(f"[APP][OAUTH] falha inesperada ao processar callback: {e}", "ERROR")
+        st.session_state["_bling_callback_status"] = "error"
+        st.session_state["_bling_callback_message"] = f"Falha ao processar callback do Bling: {e}"
+
+
+def _render_feedback_callback() -> None:
+    status = str(st.session_state.get("_bling_callback_status") or "").strip().lower()
+    mensagem = str(st.session_state.get("_bling_callback_message") or "").strip()
+
+    if not status or not mensagem:
+        return
+
+    if status == "success":
+        st.success(mensagem)
+    elif status == "error":
+        st.error(mensagem)
+
+    st.session_state.pop("_bling_callback_status", None)
+    st.session_state.pop("_bling_callback_message", None)
+
+
+# =========================
+# CALLBACK OAUTH
+# =========================
+_processar_callback_bling()
 
 
 # =========================
@@ -437,6 +511,7 @@ st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
 _garantir_estado_fluxo_inicial()
+_render_feedback_callback()
 
 
 # =========================
@@ -458,11 +533,13 @@ if etapa == "conexao":
         on_continue=lambda: _ir_para("origem"),
     )
 
+
 # =========================
 # ETAPA 1 — ORIGEM
 # =========================
 elif etapa == "origem":
     render_origem_dados()
+
 
 # =========================
 # ETAPA 2 — MAPEAMENTO
@@ -475,6 +552,7 @@ elif etapa == "mapeamento":
         st.stop()
 
     render_origem_mapeamento()
+
 
 # =========================
 # ETAPA 3 — FINAL
@@ -490,17 +568,16 @@ elif etapa == "final":
         st.stop()
 
     render_preview_final()
-
     st.markdown("---")
-    col1, col2 = st.columns(2)
 
+    col1, col2 = st.columns(2)
     with col1:
         if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
             _ir_para("mapeamento")
-
     with col2:
         if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
+
 
 # =========================
 # ETAPA 4 — ENVIO
@@ -522,9 +599,11 @@ elif etapa == "envio":
     st.markdown("---")
     render_send_panel()
 
+
 # =========================
 # FALLBACK
 # =========================
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
+    
