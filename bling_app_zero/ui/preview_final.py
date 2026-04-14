@@ -48,7 +48,11 @@ def _normalizar_validacao(resultado_validacao) -> tuple[bool, list[str]]:
 
         if isinstance(resultado_validacao, dict):
             ok = bool(resultado_validacao.get("ok"))
-            erros = list(resultado_validacao.get("alertas") or resultado_validacao.get("faltantes") or [])
+            erros = list(
+                resultado_validacao.get("alertas")
+                or resultado_validacao.get("faltantes")
+                or []
+            )
             return ok, [str(item) for item in erros if str(item).strip()]
 
         if isinstance(resultado_validacao, (list, tuple, set)):
@@ -83,11 +87,9 @@ def _blindar_df_final(df_base: pd.DataFrame) -> pd.DataFrame:
 
 
 def _render_erros_validacao(erros: list[str]) -> None:
-    if not erros:
-        st.error("Preencha os campos obrigatórios antes do download.")
-        return
-
     st.error("Preencha os campos obrigatórios antes do download.")
+    if not erros:
+        return
 
     with st.expander("Ver detalhes da validação", expanded=False):
         for erro in erros:
@@ -163,4 +165,3 @@ def render_preview_final() -> None:
             _persistir_df_final(df_download)
             log_debug("[PREVIEW_FINAL] atualização manual do preview final acionada.", "INFO")
             st.rerun()
-            
