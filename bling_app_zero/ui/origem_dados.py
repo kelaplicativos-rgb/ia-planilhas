@@ -51,6 +51,47 @@ def _navegar(destino: str, callback: NavCallback = None) -> None:
     st.rerun()
 
 
+def _render_botoes_origem(
+    on_back: NavCallback = None,
+    on_continue: NavCallback = None,
+    *,
+    mostrar_continuar: bool,
+    continuar_habilitado: bool,
+) -> None:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "⬅️ Voltar para conexão",
+            use_container_width=True,
+            key=f"origem_btn_voltar_{'ok' if mostrar_continuar else 'base'}",
+        ):
+            _navegar("conexao", on_back)
+
+    with col2:
+        if mostrar_continuar:
+            if st.button(
+                "➡️ Continuar para mapeamento",
+                use_container_width=True,
+                type="primary",
+                disabled=not continuar_habilitado,
+                key=f"origem_btn_continuar_{'ok' if continuar_habilitado else 'bloq'}",
+            ):
+                valido, erros = validar_antes_mapeamento()
+
+                if not valido:
+                    for erro in erros:
+                        st.warning(erro)
+                    return
+
+                if safe_df_estrutura(st.session_state.get("df_saida")):
+                    st.session_state["df_final"] = st.session_state["df_saida"].copy()
+
+                _navegar("mapeamento", on_continue)
+        else:
+            st.caption("Carregue a origem para liberar o próximo passo.")
+
+
 def render_origem_dados(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
@@ -61,7 +102,7 @@ def render_origem_dados(
     col_topo_1, col_topo_2 = st.columns(2)
 
     with col_topo_1:
-        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_conexao"):
+        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_conexao_topo"):
             _navegar("conexao", on_back)
 
     with col_topo_2:
@@ -110,10 +151,24 @@ def render_origem_dados(
         and not safe_df_dados(df_origem)
     ):
         st.info("Configure o site e execute a busca para continuar.")
+        st.markdown("---")
+        _render_botoes_origem(
+            on_back=on_back,
+            on_continue=on_continue,
+            mostrar_continuar=False,
+            continuar_habilitado=False,
+        )
         return
 
     if not safe_df_dados(df_origem):
         st.info("Selecione a origem e carregue os dados para continuar.")
+        st.markdown("---")
+        _render_botoes_origem(
+            on_back=on_back,
+            on_continue=on_continue,
+            mostrar_continuar=False,
+            continuar_habilitado=False,
+        )
         return
 
     df_origem = aplicar_normalizacao_basica(df_origem)
@@ -126,6 +181,13 @@ def render_origem_dados(
     modelo_ativo = obter_modelo_ativo()
     if modelo_ativo is not None and not modelo_tem_estrutura(modelo_ativo):
         st.warning("⚠️ Modelo do Bling não encontrado.")
+        st.markdown("---")
+        _render_botoes_origem(
+            on_back=on_back,
+            on_continue=on_continue,
+            mostrar_continuar=False,
+            continuar_habilitado=False,
+        )
         return
 
     df_saida = obter_df_base_prioritaria(df_origem)
@@ -160,24 +222,10 @@ def render_origem_dados(
         st.session_state["df_final"] = df_saida_prec.copy()
 
     st.markdown("---")
-    col_acao_1, col_acao_2 = st.columns(2)
-
-    with col_acao_1:
-        if st.button("⬅️ Voltar para conexão", use_container_width=True, key="origem_btn_voltar_rodape"):
-            _navegar("conexao", on_back)
-
-    with col_acao_2:
-        if st.button("➡️ Continuar para mapeamento", use_container_width=True, type="primary"):
-            valido, erros = validar_antes_mapeamento()
-
-            if not valido:
-                for erro in erros:
-                    st.warning(erro)
-                return
-
-            if safe_df_estrutura(st.session_state.get("df_saida")):
-                st.session_state["df_final"] = st.session_state["df_saida"].copy()
-
-            _navegar("mapeamento", on_continue)
-
-
+    _render_botoes_origem(
+        on_back=on_back,
+        on_continue=on_continue,
+        mostrar_continuar=True,
+        continuar_habilitado=True,
+    )
+    
