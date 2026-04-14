@@ -53,6 +53,7 @@ def _garantir_estado():
         "bling_deposito_id": "",
         "bling_primeiro_acesso_decidido": False,
         "bling_primeiro_acesso_escolha": "Conectar depois",
+        "bling_primeiro_acesso_autoavanço_feito": False,
         "bling_modo_envio": "cadastro",
     }
 
@@ -182,6 +183,21 @@ def _esta_conectado(auth) -> bool:
     return False
 
 
+def _ir_para_origem_primeiro_acesso(on_continue=None) -> None:
+    st.session_state["bling_primeiro_acesso_decidido"] = True
+    st.session_state["bling_primeiro_acesso_escolha"] = "Conectar agora"
+    st.session_state["bling_primeiro_acesso_autoavanço_feito"] = True
+
+    if callable(on_continue):
+        on_continue()
+        return
+
+    st.session_state["etapa_origem"] = "origem"
+    st.session_state["etapa"] = "origem"
+    st.session_state["etapa_fluxo"] = "origem"
+    st.rerun()
+
+
 # ==========================================================
 # ETAPA 0 - PRIMEIRO ACESSO
 # ==========================================================
@@ -206,13 +222,34 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
     conectou_agora = _processar_callback_oauth(auth)
     conectado = _esta_conectado(auth)
 
-    if conectado or conectou_agora:
+    if conectou_agora:
+        st.session_state["bling_primeiro_acesso_escolha"] = "Conectar agora"
+        st.session_state["bling_primeiro_acesso_decidido"] = True
+
+        if not bool(st.session_state.get("bling_primeiro_acesso_autoavanço_feito")):
+            _ir_para_origem_primeiro_acesso(on_continue=on_continue)
+            return
+
+    if conectado:
+        st.session_state["bling_primeiro_acesso_escolha"] = "Conectar agora"
+        st.session_state["bling_primeiro_acesso_decidido"] = True
         st.success("✅ Conta conectada ao Bling.")
-    else:
-        st.info("ℹ️ Conta ainda não conectada.")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("Continuar para origem", use_container_width=True, type="primary"):
+                _ir_para_origem_primeiro_acesso(on_continue=on_continue)
+
+        with col2:
+            st.info("Conexão concluída. O próximo passo é seguir para a origem dos dados.")
+
+        return
+
+    st.session_state["bling_primeiro_acesso_autoavanço_feito"] = False
+    st.info("ℹ️ Conta ainda não conectada.")
 
     opcoes = ["Conectar depois", "Conectar agora"]
-
     valor_atual = _safe_str(st.session_state.get("bling_primeiro_acesso_escolha"))
     if valor_atual not in opcoes:
         st.session_state["bling_primeiro_acesso_escolha"] = "Conectar depois"
@@ -229,14 +266,12 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
     if escolha == "Conectar agora":
         if not auth.is_configured():
             st.error("Credenciais do Bling não configuradas em secrets.")
-        elif not conectado:
+        else:
             url = _auth_url_segura(auth)
             if url:
                 st.link_button("Conectar com Bling", url, use_container_width=True)
             else:
                 st.error("Não foi possível gerar a URL de autenticação.")
-        else:
-            st.success("Você já está conectado ao Bling.")
 
     col1, col2 = st.columns(2)
 
@@ -255,13 +290,7 @@ def render_bling_primeiro_acesso(on_skip=None, on_continue=None):
                     st.warning("Conclua a conexão com o Bling antes de continuar.")
                     st.stop()
 
-                if callable(on_continue):
-                    on_continue()
-                else:
-                    st.session_state["etapa_origem"] = "origem"
-                    st.session_state["etapa"] = "origem"
-                    st.session_state["etapa_fluxo"] = "origem"
-                    st.rerun()
+                _ir_para_origem_primeiro_acesso(on_continue=on_continue)
 
     with col2:
         st.info("Você poderá autenticar o Bling novamente na tela final de envio.")
@@ -347,7 +376,6 @@ def _render_resultado():
 # ==========================================================
 def render_send_panel():
     st.subheader("Enviar para Bling")
-
     _garantir_estado()
 
     df = _obter_df_envio()
@@ -406,6 +434,7 @@ def render_send_panel():
         horizontal=True,
         index=index_default,
     )
+
     tipo_api = modos[tipo]
     st.session_state["bling_modo_envio"] = tipo_api
 
@@ -443,7 +472,7 @@ def render_send_panel():
             return
 
         if st.session_state.get("bling_hash_enviado") == df_hash:
-            st.warning("⚠️ Mesmo lote já enviado. Clique em limpar para reenviar.")
+            st.warning("⚠️ Mesmo lote já enviado.\nClique em limpar para reenviar.")
             return
 
         if tipo_api in {"estoque", "catalogo_completo"} and not _safe_str(deposito_id):
@@ -484,7 +513,8 @@ def render_send_panel():
             }
         finally:
             st.session_state["bling_enviando"] = False
-
-        st.rerun()
+            st.rerun()
 
     _render_resultado()
+
+
