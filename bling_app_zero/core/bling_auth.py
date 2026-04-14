@@ -101,7 +101,7 @@ class BlingAuthManager:
 
     def _clear_oauth_query_params(self) -> None:
         """
-        Remove apenas parâmetros de OAuth, preservando bi/user_key.
+        Remove apenas parâmetros do OAuth, preservando bi/user_key quando existirem.
         """
         try:
             qp = st.query_params
@@ -138,8 +138,10 @@ class BlingAuthManager:
 
         return f"{self.settings.authorize_url}?{urlencode(params)}"
 
-    # alias para compatibilidade com código legado
     def build_authorize_url(self) -> str:
+        """
+        Alias de compatibilidade com chamadas antigas do projeto.
+        """
         return self.generate_auth_url()
 
     # =========================
@@ -242,7 +244,11 @@ class BlingAuthManager:
             return {"status": "idle", "message": ""}
 
         if has_error:
-            msg = _safe_str(qp.get("error_description")) or _safe_str(qp.get("error")) or "Erro ao autenticar no Bling"
+            msg = (
+                _safe_str(qp.get("error_description"))
+                or _safe_str(qp.get("error"))
+                or "Erro ao autenticar no Bling"
+            )
             self._clear_oauth_query_params()
             st.session_state["_oauth_state"] = ""
             return {"status": "error", "message": msg}
