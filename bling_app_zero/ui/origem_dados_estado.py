@@ -12,6 +12,8 @@ ETAPAS_VALIDAS_ORIGEM = {"conexao", "origem", "mapeamento", "final", "envio"}
 # ==========================================================
 # HELPERS BÁSICOS
 # ==========================================================
+
+
 def safe_str(valor: Any) -> str:
     try:
         if valor is None:
@@ -65,9 +67,41 @@ def _normalizar_fluxo(valor: Any, default: str = "conexao") -> str:
     return etapa
 
 
+def _normalizar_tipo_origem(valor: Any, default: str = "") -> str:
+    texto = safe_str(valor or default).strip().lower()
+
+    mapa = {
+        "site": "site",
+        "buscar em site": "site",
+        "busca em site": "site",
+        "origem por site": "site",
+        "buscar no site": "site",
+        "planilha": "planilha",
+        "planilha / csv / xml": "planilha",
+        "planilha/csv/xml": "planilha",
+        "arquivo": "planilha",
+        "upload": "planilha",
+        "anexar planilha": "planilha",
+        "planilha, csv ou xml": "planilha",
+    }
+
+    if texto in mapa:
+        return mapa[texto]
+
+    if "site" in texto:
+        return "site"
+
+    if any(token in texto for token in ["planilha", "csv", "xml", "arquivo", "upload"]):
+        return "planilha"
+
+    return default
+
+
 # ==========================================================
 # ETAPA / FLUXO
 # ==========================================================
+
+
 def _set_etapa_global(valor: str) -> None:
     etapa = _normalizar_fluxo(valor, "conexao")
     st.session_state["etapa_origem"] = etapa
@@ -82,17 +116,22 @@ def set_etapa_origem(valor: str) -> None:
 # ==========================================================
 # ORIGEM / OPERAÇÃO
 # ==========================================================
+
+
 def obter_origem_atual() -> str:
     try:
-        origem = safe_str(st.session_state.get("origem_dados_tipo")).lower()
-        if origem:
-            return origem
+        candidatos = [
+            st.session_state.get("origem_dados_tipo"),
+            st.session_state.get("origem_dados"),
+            st.session_state.get("origem_dados_radio"),
+            st.session_state.get("_origem_anterior_origem_dados"),
+        ]
 
-        radio = safe_str(st.session_state.get("origem_dados_radio")).lower()
-        if "site" in radio:
-            return "site"
-        if "planilha" in radio or "csv" in radio or "xml" in radio:
-            return "planilha"
+        for candidato in candidatos:
+            origem = _normalizar_tipo_origem(candidato)
+            if origem:
+                return origem
+
         return ""
     except Exception:
         return ""
@@ -106,13 +145,13 @@ def _tipo_operacao_para_bling(operacao: str) -> str:
 
 
 def sincronizar_tipo_operacao(operacao: str) -> None:
-    operacao_limpa = safe_str(operacao)
+    operacao_limpa = safe_str(operacao) or "Cadastro de Produtos"
     tipo_bling = _tipo_operacao_para_bling(operacao_limpa)
-
     operacao_anterior = safe_str(st.session_state.get("_operacao_anterior_origem_dados"))
 
-    st.session_state["tipo_operacao"] = operacao_limpa or "Cadastro de Produtos"
+    st.session_state["tipo_operacao"] = operacao_limpa
     st.session_state["tipo_operacao_bling"] = tipo_bling
+    st.session_state["tipo_operacao_radio"] = operacao_limpa
 
     if not operacao_anterior:
         st.session_state["_operacao_anterior_origem_dados"] = operacao_limpa
@@ -128,17 +167,23 @@ def sincronizar_tipo_operacao(operacao: str) -> None:
 # ==========================================================
 # SITE
 # ==========================================================
+
+
 def reset_site_processado() -> None:
     st.session_state["site_processado"] = False
+    st.session_state["site_autoavanco_realizado"] = False
 
 
 # ==========================================================
 # WIDGETS / LIMPEZA
 # ==========================================================
+
+
 def limpar_mapeamento_widgets() -> None:
     try:
         chaves_para_remover = [
-            chave for chave in list(st.session_state.keys())
+            chave
+            for chave in list(st.session_state.keys())
             if str(chave).startswith("map_")
         ]
         for chave in chaves_para_remover:
@@ -152,8 +197,9 @@ def limpar_mapeamento_widgets() -> None:
 def resetar_estado_fluxo(preservar_origem: bool = True) -> None:
     df_origem = _safe_copy_df(st.session_state.get("df_origem"))
     fp_origem = safe_str(st.session_state.get("origem_dados_fingerprint"))
-    origem_tipo = safe_str(st.session_state.get("_origem_anterior_origem_dados"))
-    origem_radio = safe_str(st.session_state.get("origem_dados_tipo"))
+    origem_tipo = _normalizar_tipo_origem(st.session_state.get("_origem_anterior_origem_dados"))
+    origem_radio = _normalizar_tipo_origem(st.session_state.get("origem_dados_tipo"))
+    origem_dados = _normalizar_tipo_origem(st.session_state.get("origem_dados"))
 
     chaves_limpar = [
         "df_saida",
@@ -162,6 +208,7 @@ def resetar_estado_fluxo(preservar_origem: bool = True) -> None:
         "df_calc_precificado",
         "df_modelo_mapeamento",
         "preview_download_df",
+        "site_autoavanco_realizado",
     ]
 
     for chave in chaves_limpar:
@@ -181,10 +228,15 @@ def resetar_estado_fluxo(preservar_origem: bool = True) -> None:
     if origem_radio:
         st.session_state["origem_dados_tipo"] = origem_radio
 
+    if origem_dados:
+        st.session_state["origem_dados"] = origem_dados
+
 
 # ==========================================================
 # FINGERPRINT / SINCRONIZAÇÃO
 # ==========================================================
+
+
 def fingerprint_df(df: pd.DataFrame) -> str:
     try:
         if not isinstance(df, pd.DataFrame):
@@ -204,6 +256,8 @@ def fingerprint_df(df: pd.DataFrame) -> str:
 # ==========================================================
 # ESTADO BASE
 # ==========================================================
+
+
 def garantir_estado_origem() -> None:
     defaults = {
         "etapa_origem": "conexao",
@@ -213,9 +267,12 @@ def garantir_estado_origem() -> None:
         "tipo_operacao_bling": "cadastro",
         "tipo_operacao_radio": "Cadastro de Produtos",
         "origem_dados_tipo": "",
+        "origem_dados": "",
+        "_origem_anterior_origem_dados": "",
         "deposito_nome": "",
         "quantidade_fallback": 0,
         "site_processado": False,
+        "site_autoavanco_realizado": False,
         "site_url": "",
         "site_precisa_login": False,
         "site_usuario": "",
@@ -234,5 +291,13 @@ def garantir_estado_origem() -> None:
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
+    origem_atual = obter_origem_atual()
+    if origem_atual:
+        st.session_state["origem_dados_tipo"] = origem_atual
+        st.session_state["origem_dados"] = origem_atual
+        if not safe_str(st.session_state.get("_origem_anterior_origem_dados")):
+            st.session_state["_origem_anterior_origem_dados"] = origem_atual
+
     etapa_atual = _normalizar_fluxo(st.session_state.get("etapa_origem"), "conexao")
     _set_etapa_global(etapa_atual)
+    
