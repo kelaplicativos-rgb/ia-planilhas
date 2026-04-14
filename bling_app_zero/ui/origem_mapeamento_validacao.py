@@ -25,7 +25,16 @@ def safe_str(valor) -> str:
             return ""
     except Exception:
         pass
-    return str(valor).strip()
+
+    try:
+        texto = str(valor).strip()
+    except Exception:
+        return ""
+
+    if texto.lower() in {"none", "nan", "nat"}:
+        return ""
+
+    return texto
 
 
 def normalizar_coluna(nome) -> str:
@@ -35,20 +44,30 @@ def normalizar_coluna(nome) -> str:
         .replace("á", "a")
         .replace("à", "a")
         .replace("â", "a")
+        .replace("ä", "a")
         .replace("é", "e")
         .replace("ê", "e")
+        .replace("ë", "e")
         .replace("í", "i")
+        .replace("ï", "i")
         .replace("ó", "o")
         .replace("ô", "o")
         .replace("õ", "o")
+        .replace("ö", "o")
         .replace("ú", "u")
+        .replace("ü", "u")
         .replace("ç", "c")
     )
-    return texto
+    return " ".join(texto.split())
+
+
+def normalizar_chave_origem(nome) -> str:
+    return normalizar_coluna(nome)
 
 
 def is_coluna_deposito(nome) -> bool:
-    return "deposit" in normalizar_coluna(nome)
+    nome_normalizado = normalizar_coluna(nome)
+    return "deposit" in nome_normalizado
 
 
 def is_coluna_id(nome) -> bool:
@@ -62,38 +81,79 @@ def is_coluna_imagem(nome) -> bool:
 
 
 def detectar_duplicidades_mapping(mapping: dict) -> dict[str, list[str]]:
-    usados: dict[str, list[str]] = {}
+    usados_normalizados: dict[str, list[str]] = {}
+    rotulo_original_por_chave: dict[str, str] = {}
 
-    for col_modelo, col_origem in mapping.items():
+    for col_modelo, col_origem in dict(mapping or {}).items():
+        col_modelo_limpa = safe_str(col_modelo)
         col_origem_limpa = safe_str(col_origem)
-        if not col_origem_limpa:
-            continue
-        usados.setdefault(col_origem_limpa, []).append(str(col_modelo))
 
-    return {k: v for k, v in usados.items() if len(v) > 1}
+        if not col_modelo_limpa or not col_origem_limpa:
+            continue
+
+        chave = normalizar_chave_origem(col_origem_limpa)
+        if not chave:
+            continue
+
+        usados_normalizados.setdefault(chave, []).append(col_modelo_limpa)
+        rotulo_original_por_chave.setdefault(chave, col_origem_limpa)
+
+    duplicados: dict[str, list[str]] = {}
+
+    for chave, colunas_modelo in usados_normalizados.items():
+        if len(colunas_modelo) > 1:
+            rotulo = rotulo_original_por_chave.get(chave, chave)
+            duplicados[rotulo] = colunas_modelo
+
+    return duplicados
 
 
 def colunas_usadas_por_outros(mapping: dict, coluna_atual: str) -> set[str]:
-    usados = set()
+    usados_normalizados: set[str] = set()
 
-    for col_modelo, col_origem in mapping.items():
-        if str(col_modelo) == str(coluna_atual):
+    for col_modelo, col_origem in dict(mapping or {}).items():
+        if safe_str(col_modelo) == safe_str(coluna_atual):
             continue
+
         col_origem_limpa = safe_str(col_origem)
-        if col_origem_limpa:
-            usados.add(col_origem_limpa)
+        if not col_origem_limpa:
+            continue
 
-    return usados
+        chave = normalizar_chave_origem(col_origem_limpa)
+        if chave:
+            usados_normalizados.add(chave)
+
+    return usados_normalizados
 
 
-def opcoes_select_mapeamento(df_fonte: pd.DataFrame, mapping: dict, coluna_atual: str) -> list[str]:
-    atual = safe_str(mapping.get(coluna_atual))
+def opcoes_select_mapeamento(
+    df_fonte: pd.DataFrame,
+    mapping: dict,
+    coluna_atual: str,
+) -> list[str]:
+    if not safe_df(df_fonte):
+        return [""]
+
+    atual = safe_str(dict(mapping or {}).get(coluna_atual))
+    atual_normalizado = normalizar_chave_origem(atual)
     usados = colunas_usadas_por_outros(mapping, coluna_atual)
 
     opcoes = [""]
+    adicionados_normalizados: set[str] = set()
+
     for col in df_fonte.columns:
-        nome = str(col)
-        if nome == atual or nome not in usados:
-            opcoes.append(nome)
+        nome = safe_str(col)
+        if not nome:
+            continue
+
+        chave = normalizar_chave_origem(nome)
+        if not chave:
+            continue
+
+        if chave == atual_normalizado or chave not in usados:
+            if chave not in adicionados_normalizados:
+                opcoes.append(nome)
+                adicionados_normalizados.add(chave)
 
     return opcoes
+    
