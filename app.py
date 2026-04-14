@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -22,7 +25,36 @@ from bling_app_zero.utils.init_app import inicializar_app
 # CONFIG
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
+
 APP_VERSION = "1.0.29"
+VERSION_JSON_PATH = Path(__file__).with_name("version.json")
+
+
+def _ler_version_json() -> dict:
+    try:
+        if not VERSION_JSON_PATH.exists():
+            return {}
+
+        conteudo = VERSION_JSON_PATH.read_text(encoding="utf-8")
+        data = json.loads(conteudo)
+
+        if isinstance(data, dict):
+            return data
+
+        return {}
+    except Exception as e:
+        log_debug(f"Erro ao ler version.json: {e}", "ERROR")
+        return {}
+
+
+def _resolver_app_version() -> str:
+    data = _ler_version_json()
+    version_json = str(data.get("version") or "").strip()
+
+    if version_json:
+        return version_json
+
+    return APP_VERSION
 
 
 # =========================
@@ -60,6 +92,7 @@ def _normalizar_etapa(valor: object) -> str:
 
     if etapa_normalizada not in ETAPAS_VALIDAS:
         return "conexao"
+
     return etapa_normalizada
 
 
@@ -69,10 +102,12 @@ def _obter_etapa_atual() -> str:
         st.session_state.get("etapa"),
         st.session_state.get("etapa_fluxo"),
     ]
+
     for valor in candidatos:
         etapa_lida = _normalizar_etapa(valor)
         if etapa_lida in ETAPAS_VALIDAS:
             return etapa_lida
+
     return "conexao"
 
 
@@ -112,6 +147,7 @@ def _obter_df_fluxo():
 
     if df_final_valido:
         return df_final
+
     if df_saida_valido:
         return df_saida
 
@@ -121,14 +157,22 @@ def _obter_df_fluxo():
 def _garantir_estado_fluxo_inicial() -> None:
     if "bling_primeiro_acesso_decidido" not in st.session_state:
         st.session_state["bling_primeiro_acesso_decidido"] = False
+
     if "bling_primeiro_acesso_escolha" not in st.session_state:
         st.session_state["bling_primeiro_acesso_escolha"] = ""
 
 
 def _pode_ir_para_mapeamento() -> bool:
-    for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado", "df_origem"]:
+    for chave in [
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
+    ]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
+
     return False
 
 
@@ -139,8 +183,10 @@ def _pode_ir_para_final() -> bool:
 # =========================
 # UI BASE
 # =========================
+VERSAO_EXIBIDA = _resolver_app_version()
+
 st.title("IA Planilhas → Bling")
-st.caption(f"Versão: {APP_VERSION}")
+st.caption(f"Versão: {VERSAO_EXIBIDA}")
 
 render_debug_panel()
 
@@ -231,6 +277,7 @@ elif etapa == "envio":
         st.stop()
 
     st.markdown("---")
+
     if st.button("⬅️ Voltar para final", use_container_width=True):
         _ir_para("final")
 
