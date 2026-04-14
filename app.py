@@ -47,11 +47,7 @@ def _ler_version_json() -> dict:
 
         bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
         data = json.loads(bruto)
-
-        if isinstance(data, dict):
-            return data
-
-        return {}
+        return data if isinstance(data, dict) else {}
     except Exception as e:
         log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
         return {}
@@ -71,13 +67,11 @@ def _salvar_version_json(data: dict) -> bool:
 
 def _sincronizar_version_json_com_app() -> dict:
     atual = _ler_version_json()
-
     history = atual.get("history", [])
     if not isinstance(history, list):
         history = []
 
     version_json = str(atual.get("version") or "").strip()
-
     if version_json == APP_VERSION:
         return atual if atual else {
             "version": APP_VERSION,
@@ -95,7 +89,8 @@ def _sincronizar_version_json_com_app() -> dict:
     }
 
     if not any(
-        isinstance(item, dict) and str(item.get("version") or "").strip() == APP_VERSION
+        isinstance(item, dict)
+        and str(item.get("version") or "").strip() == APP_VERSION
         for item in history
     ):
         history.append(novo_registro)
@@ -109,7 +104,6 @@ def _sincronizar_version_json_com_app() -> dict:
     }
 
     salvou = _salvar_version_json(novo)
-
     if salvou:
         log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
         return novo
@@ -124,7 +118,6 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
             return version_json
     except Exception:
         pass
-
     return APP_VERSION
 
 
@@ -134,7 +127,6 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
 def _garantir_estado_versionamento() -> None:
     if "_app_loaded_version" not in st.session_state:
         st.session_state["_app_loaded_version"] = APP_VERSION
-
     if "_app_last_seen_version" not in st.session_state:
         st.session_state["_app_last_seen_version"] = APP_VERSION
 
@@ -217,7 +209,6 @@ def _limpar_sessao_por_versao() -> bool:
     st.session_state["etapa_origem"] = "conexao"
     st.session_state["etapa"] = "conexao"
     st.session_state["etapa_fluxo"] = "conexao"
-
     return True
 
 
@@ -246,13 +237,16 @@ def _render_controle_versao(version_data: dict) -> None:
 
         with col1:
             st.caption(f"Versão: {versao_exibida}")
-
             updated_at = str((version_data or {}).get("updated_at") or "").strip()
             if updated_at:
                 st.caption(f"Última atualização registrada: {updated_at}")
 
         with col2:
-            if st.button("🔄 Recarregar app", use_container_width=True, key="btn_recarregar_app_topo"):
+            if st.button(
+                "🔄 Recarregar app",
+                use_container_width=True,
+                key="btn_recarregar_app_topo",
+            ):
                 log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
 
@@ -260,7 +254,7 @@ def _render_controle_versao(version_data: dict) -> None:
     last_description = str((version_data or {}).get("last_description") or "").strip()
 
     if last_title or last_description:
-        with st.expander("📦 Controle de versão", expanded=False):
+        with st.expander("Controle de versão", expanded=False):
             if last_title:
                 st.write(f"**Última mudança:** {last_title}")
             if last_description:
@@ -335,6 +329,7 @@ def _safe_list_secret(nome: str) -> list[str]:
 
     separadores = [",", ";", "\n", "|"]
     valores = [texto]
+
     for sep in separadores:
         novos = []
         for item in valores:
@@ -371,11 +366,10 @@ def _usuarios_autorizados() -> list[str]:
 
     vistos = set()
     resultado = []
+
     for item in valores:
         chave = item.strip()
-        if not chave:
-            continue
-        if chave in vistos:
+        if not chave or chave in vistos:
             continue
         vistos.add(chave)
         resultado.append(chave)
@@ -386,13 +380,11 @@ def _usuarios_autorizados() -> list[str]:
 def _acesso_exige_chave() -> bool:
     if _safe_bool_secret("ACCESS_REQUIRE_USER_KEY", False):
         return True
-
     return len(_usuarios_autorizados()) > 0
 
 
 def _liberar_sessao_cliente(cliente_id: str) -> None:
     cliente = _safe_str(cliente_id)
-
     st.session_state["acesso_cliente_id"] = cliente
     st.session_state["acesso_liberado"] = bool(cliente)
     st.session_state["bling_user_key"] = cliente
@@ -411,7 +403,7 @@ def _render_banner_cliente(cliente_id: str) -> None:
 
     st.caption(f"Cliente ativo: {cliente_id}")
 
-    with st.expander("🔐 Link personalizado do cliente", expanded=False):
+    with st.expander("Link personalizado do cliente", expanded=False):
         st.code(f"?bi={cliente_id}", language="text")
         st.caption("Use esse sufixo no link público do app para abrir direto com a chave do cliente.")
 
@@ -444,15 +436,15 @@ def _validar_acesso_cliente() -> None:
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
-VERSION_DATA = _sincronizar_version_json_com_app()
 
+VERSION_DATA = _sincronizar_version_json_com_app()
 houve_limpeza_versao = _limpar_sessao_por_versao()
 if houve_limpeza_versao:
     st.rerun()
 
 
 # =========================
-# HELPERS
+# HELPERS DE FLUXO
 # =========================
 ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
 
@@ -466,7 +458,7 @@ def _safe_df(df) -> bool:
 
 def _safe_df_com_linhas(df) -> bool:
     try:
-        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
     except Exception:
         return False
 
@@ -507,38 +499,44 @@ def _sincronizar_etapa_global(etapa_destino: str) -> str:
 
 
 def _ir_para(etapa: str) -> None:
-    _sincronizar_etapa_global(etapa)
+    etapa_ok = _sincronizar_etapa_global(etapa)
+    log_debug(f"[APP] navegação para etapa: {etapa_ok}", "INFO")
     st.rerun()
 
 
 def _obter_df_fluxo():
+    candidatos = [
+        st.session_state.get("df_final"),
+        st.session_state.get("df_saida"),
+        st.session_state.get("df_precificado"),
+        st.session_state.get("df_calc_precificado"),
+        st.session_state.get("df_origem"),
+    ]
+
+    for df in candidatos:
+        if _safe_df(df):
+            return df
+
+    return None
+
+
+def _sincronizar_df_fluxo() -> None:
     df_final = st.session_state.get("df_final")
     df_saida = st.session_state.get("df_saida")
 
-    df_final_valido = _safe_df(df_final)
-    df_saida_valido = _safe_df(df_saida)
-
-    if df_final_valido and not df_saida_valido:
+    if _safe_df(df_final) and not _safe_df(df_saida):
         try:
             st.session_state["df_saida"] = df_final.copy()
         except Exception:
             st.session_state["df_saida"] = df_final
-        return df_final
+        return
 
-    if df_saida_valido and not df_final_valido:
+    if _safe_df(df_saida) and not _safe_df(df_final):
         try:
             st.session_state["df_final"] = df_saida.copy()
         except Exception:
             st.session_state["df_final"] = df_saida
-        return df_saida
-
-    if df_final_valido:
-        return df_final
-
-    if df_saida_valido:
-        return df_saida
-
-    return None
+        return
 
 
 def _garantir_estado_fluxo_inicial() -> None:
@@ -556,12 +554,32 @@ def _pode_ir_para_mapeamento() -> bool:
     return False
 
 
+def _pode_ir_para_final() -> bool:
+    return _safe_df_com_linhas(_obter_df_fluxo())
+
+
+def _resolver_autoetapa() -> str:
+    etapa_atual = _obter_etapa_atual()
+    _sincronizar_df_fluxo()
+
+    if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
+        log_debug("[APP] mapeamento bloqueado por ausência de dados. Retornando para origem.", "WARNING")
+        return "origem"
+
+    if etapa_atual in {"final", "envio"} and not _pode_ir_para_final():
+        log_debug("[APP] final/envio bloqueado por ausência de dados. Retornando para mapeamento.", "WARNING")
+        return "mapeamento"
+
+    return etapa_atual
+
+
 # =========================
 # UI BASE
 # =========================
 st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
+
 _garantir_estado_fluxo_inicial()
 _validar_acesso_cliente()
 _render_banner_cliente(_safe_str(st.session_state.get("acesso_cliente_id")))
@@ -570,10 +588,10 @@ _render_banner_cliente(_safe_str(st.session_state.get("acesso_cliente_id")))
 # =========================
 # CONTROLE DE ETAPA
 # =========================
-etapa = _sincronizar_etapa_global(_obter_etapa_atual())
+etapa = _sincronizar_etapa_global(_resolver_autoetapa())
 
 if etapa not in ETAPAS_VALIDAS:
-    log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
+    log_debug(f"[APP] etapa inválida detectada: {etapa}", "ERROR")
     _ir_para("conexao")
 
 
@@ -617,12 +635,13 @@ elif etapa == "mapeamento":
 # ETAPA 3 — FINAL
 # =========================
 elif etapa == "final":
+    _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
 
     if not _safe_df(df_fluxo):
-        log_debug("FINAL sem dados válidos", "ERROR")
-        st.warning("⚠️ Nenhum dado disponível.\nVolte para o mapeamento.")
-        if st.button("⬅️ Voltar", use_container_width=True):
+        log_debug("[APP] etapa final sem dados válidos.", "ERROR")
+        st.warning("⚠️ Nenhum dado disponível. Volte para o mapeamento.")
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
             _ir_para("mapeamento")
         st.stop()
 
@@ -644,17 +663,17 @@ elif etapa == "final":
 # ETAPA 4 — ENVIO
 # =========================
 elif etapa == "envio":
+    _sincronizar_df_fluxo()
     df_fluxo = _obter_df_fluxo()
 
     if not _safe_df(df_fluxo):
-        log_debug("ENVIO sem dados válidos", "ERROR")
+        log_debug("[APP] etapa envio sem dados válidos.", "ERROR")
         st.warning("⚠️ Nenhum dado disponível para envio.")
         if st.button("⬅️ Voltar para final", use_container_width=True):
             _ir_para("final")
         st.stop()
 
     st.markdown("---")
-
     if st.button("⬅️ Voltar para final", use_container_width=True):
         _ir_para("final")
 
@@ -666,6 +685,6 @@ elif etapa == "envio":
 # FALLBACK
 # =========================
 else:
-    log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
+    log_debug(f"[APP] fallback de etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
     
