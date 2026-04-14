@@ -8,7 +8,6 @@ import streamlit as st
 from bling_app_zero.core.bling_api import BlingAPIClient
 from bling_app_zero.core.bling_auth import BlingAuthManager
 from bling_app_zero.core.bling_user_session import (
-    clear_pending_oauth_user,
     ensure_current_user_defaults,
     get_current_user_key,
     get_current_user_label,
@@ -169,47 +168,6 @@ def _render_oauth_feedback() -> None:
 def _clear_oauth_feedback() -> None:
     st.session_state.pop(_oauth_status_key(), None)
     st.session_state.pop(_oauth_message_key(), None)
-
-
-def _processar_callback_oauth(on_continue=None) -> None:
-    try:
-        auth = _get_auth_manager()
-        callback = auth.handle_oauth_callback()
-        status = _safe_str(callback.get("status"))
-        message = _safe_str(callback.get("message"))
-
-        if status == "idle":
-            return
-
-        if status == "success":
-            clear_pending_oauth_user()
-            _set_connection_state(
-                True,
-                message=message or "Conta conectada com sucesso.",
-                source="oauth_callback",
-            )
-            _set_oauth_feedback("success", message or "Conta conectada com sucesso.")
-            log_debug("[SEND_PANEL] callback OAuth concluído com sucesso.", "INFO")
-
-            st.session_state["etapa_origem"] = "origem"
-            st.session_state["etapa"] = "origem"
-            st.session_state["etapa_fluxo"] = "origem"
-
-            if callable(on_continue):
-                on_continue()
-            else:
-                st.rerun()
-            return
-
-        _clear_connection_state(message or "Falha ao concluir a conexão com o Bling.")
-        _set_oauth_feedback("error", message or "Falha ao concluir a conexão com o Bling.")
-        log_debug(f"[SEND_PANEL] callback OAuth falhou: {message}", "ERROR")
-
-    except Exception as e:
-        msg = f"Erro ao processar o retorno do Bling: {e}"
-        _clear_connection_state(msg)
-        _set_oauth_feedback("error", msg)
-        log_debug(f"[SEND_PANEL] erro no callback OAuth: {e}", "ERROR")
 
 
 def _render_connect_button_same_tab(auth_url: str) -> None:
@@ -561,8 +519,10 @@ def render_bling_primeiro_acesso(
     on_continue=None,
 ) -> None:
     ensure_current_user_defaults()
-    _processar_callback_oauth(on_continue=on_continue)
 
+    # IMPORTANTE:
+    # O callback OAuth é processado APENAS no app.py.
+    # Aqui a tela só lê o estado persistido e renderiza a UX.
     st.subheader("Conectar ao Bling")
     st.caption("Conecte sua conta Bling para envio automático ou continue sem integração.")
     _render_oauth_feedback()
@@ -652,3 +612,4 @@ def render_bling_primeiro_acesso(
             log_debug("[SEND_PANEL] usuário optou por continuar sem conexão.", "INFO")
             if callable(on_skip):
                 on_skip()
+                
