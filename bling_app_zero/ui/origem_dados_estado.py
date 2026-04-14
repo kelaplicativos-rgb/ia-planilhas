@@ -145,13 +145,17 @@ def _tipo_operacao_para_bling(operacao: str) -> str:
 
 
 def sincronizar_tipo_operacao(operacao: str) -> None:
+    """
+    IMPORTANTE:
+    Não escrever em st.session_state["tipo_operacao_radio"] aqui,
+    porque essa chave pertence ao st.radio já criado na UI.
+    """
     operacao_limpa = safe_str(operacao) or "Cadastro de Produtos"
     tipo_bling = _tipo_operacao_para_bling(operacao_limpa)
     operacao_anterior = safe_str(st.session_state.get("_operacao_anterior_origem_dados"))
 
     st.session_state["tipo_operacao"] = operacao_limpa
     st.session_state["tipo_operacao_bling"] = tipo_bling
-    st.session_state["tipo_operacao_radio"] = operacao_limpa
 
     if not operacao_anterior:
         st.session_state["_operacao_anterior_origem_dados"] = operacao_limpa
@@ -269,6 +273,7 @@ def garantir_estado_origem() -> None:
         "origem_dados_tipo": "",
         "origem_dados": "",
         "_origem_anterior_origem_dados": "",
+        "_operacao_anterior_origem_dados": "",
         "deposito_nome": "",
         "quantidade_fallback": 0,
         "site_processado": False,
