@@ -445,7 +445,10 @@ if etapa == "conexao":
 # ETAPA 1 — ORIGEM
 # =========================
 elif etapa == "origem":
-    render_origem_dados()
+    render_origem_dados(
+        on_back=lambda: _ir_para("conexao"),
+        on_continue=lambda: _ir_para("mapeamento"),
+    )
 
 
 # =========================
@@ -458,7 +461,10 @@ elif etapa == "mapeamento":
             _ir_para("origem")
         st.stop()
 
-    render_origem_mapeamento()
+    render_origem_mapeamento(
+        on_back=lambda: _ir_para("origem"),
+        on_continue=lambda: _ir_para("final"),
+    )
 
 
 # =========================
@@ -516,5 +522,4 @@ elif etapa == "envio":
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
-
-
+    
