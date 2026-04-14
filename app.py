@@ -70,10 +70,6 @@ def _salvar_version_json(data: dict) -> bool:
 
 
 def _sincronizar_version_json_com_app() -> dict:
-    """
-    APP_VERSION é a fonte principal.
-    O version.json é sincronizado automaticamente.
-    """
     atual = _ler_version_json()
 
     history = atual.get("history", [])
@@ -98,7 +94,10 @@ def _sincronizar_version_json_com_app() -> dict:
         "description": "Sincronizado automaticamente com APP_VERSION do app.py.",
     }
 
-    if not any(str(item.get("version") or "").strip() == APP_VERSION for item in history if isinstance(item, dict)):
+    if not any(
+        isinstance(item, dict) and str(item.get("version") or "").strip() == APP_VERSION
+        for item in history
+    ):
         history.append(novo_registro)
 
     novo = {
@@ -129,6 +128,9 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     return APP_VERSION
 
 
+# =========================
+# LIMPEZA DE SESSÃO POR VERSÃO
+# =========================
 def _garantir_estado_versionamento() -> None:
     if "_app_loaded_version" not in st.session_state:
         st.session_state["_app_loaded_version"] = APP_VERSION
@@ -136,8 +138,90 @@ def _garantir_estado_versionamento() -> None:
     if "_app_last_seen_version" not in st.session_state:
         st.session_state["_app_last_seen_version"] = APP_VERSION
 
-    if "_version_reload_requested" not in st.session_state:
-        st.session_state["_version_reload_requested"] = False
+
+def _chaves_lixo_legado() -> set[str]:
+    return {
+        "_cache_log",
+        "_cache_log_exibido",
+        "_version_reload_requested",
+        "_update_available",
+        "_legacy_version_notice",
+        "_toast_cache_version",
+        "_build_notice",
+    }
+
+
+def _chaves_preservadas_na_limpeza() -> set[str]:
+    return {
+        "_app_loaded_version",
+        "_app_last_seen_version",
+        "etapa_origem",
+        "etapa",
+        "etapa_fluxo",
+        "bling_primeiro_acesso_decidido",
+        "bling_primeiro_acesso_escolha",
+        "_debug_logs",
+        "_debug_logs_text",
+        "_debug_panel_open",
+    }
+
+
+def _limpar_lixos_de_sessao() -> None:
+    for chave in _chaves_lixo_legado():
+        st.session_state.pop(chave, None)
+
+
+def _limpar_sessao_por_versao() -> bool:
+    """
+    Quando APP_VERSION mudar, limpa estados antigos/lixos de sessão
+    sem destruir todo o fluxo do usuário de forma cega.
+    """
+    versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
+
+    # limpa fantasmas antigos sempre
+    _limpar_lixos_de_sessao()
+
+    if not versao_sessao:
+        st.session_state["_app_loaded_version"] = APP_VERSION
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    if versao_sessao == APP_VERSION:
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    log_debug(
+        f"[VERSION] mudança detectada: sessão {versao_sessao} -> código {APP_VERSION}. Limpando sessão antiga.",
+        "INFO",
+    )
+
+    preservadas = _chaves_preservadas_na_limpeza()
+    snapshot = {k: st.session_state.get(k) for k in preservadas if k in st.session_state}
+
+    for chave in list(st.session_state.keys()):
+        if chave not in preservadas:
+            st.session_state.pop(chave, None)
+
+    for chave, valor in snapshot.items():
+        st.session_state[chave] = valor
+
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    st.session_state["_app_loaded_version"] = APP_VERSION
+    st.session_state["_app_last_seen_version"] = APP_VERSION
+    st.session_state["etapa_origem"] = "conexao"
+    st.session_state["etapa"] = "conexao"
+    st.session_state["etapa_fluxo"] = "conexao"
+
+    return True
 
 
 def _executar_reload_app() -> None:
@@ -151,16 +235,14 @@ def _executar_reload_app() -> None:
     except Exception:
         pass
 
+    _limpar_lixos_de_sessao()
     st.session_state["_app_loaded_version"] = APP_VERSION
     st.session_state["_app_last_seen_version"] = APP_VERSION
-    st.session_state["_version_reload_requested"] = False
     st.rerun()
 
 
 def _render_controle_versao(version_data: dict) -> None:
     versao_exibida = _resolver_app_version_exibida(version_data)
-    versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip() or APP_VERSION
-    mudou_versao = versao_sessao != APP_VERSION
 
     with st.container():
         col1, col2 = st.columns([3, 1])
@@ -173,18 +255,9 @@ def _render_controle_versao(version_data: dict) -> None:
                 st.caption(f"Última atualização registrada: {updated_at}")
 
         with col2:
-            botao_label = "🔄 Atualizar app agora" if mudou_versao else "🔄 Recarregar app"
-
-            if st.button(botao_label, use_container_width=True, key="btn_recarregar_app_topo"):
-                log_debug("[VERSION] atualização manual acionada pelo usuário", "INFO")
+            if st.button("🔄 Recarregar app", use_container_width=True, key="btn_recarregar_app_topo"):
+                log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
                 _executar_reload_app()
-
-    if mudou_versao:
-        st.warning(
-            f"⚠️ Nova versão detectada no código: {APP_VERSION}. "
-            f"Versão carregada nesta sessão: {versao_sessao}. "
-            f"Clique em “Atualizar app agora” para recarregar."
-        )
 
     last_title = str((version_data or {}).get("last_title") or "").strip()
     last_description = str((version_data or {}).get("last_description") or "").strip()
@@ -202,6 +275,7 @@ def _render_controle_versao(version_data: dict) -> None:
                 for item in reversed(history[-5:]):
                     if not isinstance(item, dict):
                         continue
+
                     versao = str(item.get("version") or "").strip()
                     data = str(item.get("date") or "").strip()
                     titulo = str(item.get("title") or "").strip()
@@ -225,6 +299,10 @@ inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
 VERSION_DATA = _sincronizar_version_json_com_app()
+
+houve_limpeza_versao = _limpar_sessao_por_versao()
+if houve_limpeza_versao:
+    st.rerun()
 
 
 # =========================
@@ -329,12 +407,7 @@ def _pode_ir_para_mapeamento() -> bool:
     for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado", "df_origem"]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
-
     return False
-
-
-def _pode_ir_para_final() -> bool:
-    return _safe_df_com_linhas(_obter_df_fluxo())
 
 
 # =========================
@@ -344,9 +417,6 @@ st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 
 render_debug_panel()
-
-if st.session_state.get("_cache_log"):
-    st.info(st.session_state.get("_cache_log"))
 
 _garantir_estado_fluxo_inicial()
 
@@ -446,4 +516,5 @@ elif etapa == "envio":
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
-    
+
+
