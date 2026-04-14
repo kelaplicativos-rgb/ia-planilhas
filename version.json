@@ -1,8 +1,8 @@
 {
-  "version": "1.0.27",
-  "updated_at": "2026-04-10 07:00:00",
-  "last_title": "Sistema de versionamento automático",
-  "last_description": "Sincronização automática com version.json + histórico de mudanças.",
+  "version": "1.0.29",
+  "updated_at": "2026-04-14 23:00:00",
+  "last_title": "Sincronização de versão com app.py",
+  "last_description": "Alinha o version.json com a versão atual do app e permite fallback seguro de exibição da versão na interface.",
   "history": [
     {
       "version": "1.0.20",
@@ -15,6 +15,12 @@
       "date": "2026-04-10 07:00:00",
       "title": "Sistema de versionamento automático",
       "description": "Sincronização automática com version.json + histórico de mudanças."
+    },
+    {
+      "version": "1.0.29",
+      "date": "2026-04-14 23:00:00",
+      "title": "Sincronização de versão com app.py",
+      "description": "Alinha o version.json com a versão atual do app e permite fallback seguro de exibição da versão na interface."
     }
   ]
 }
