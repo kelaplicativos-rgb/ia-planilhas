@@ -46,12 +46,14 @@ def render_config_site() -> None:
 
     if st.session_state.get("site_precisa_login"):
         col1, col2 = st.columns(2)
+
         with col1:
             st.text_input(
                 "Usuário / e-mail do site",
                 key="site_usuario",
                 placeholder="login@site.com",
             )
+
         with col2:
             st.text_input(
                 "Senha do site",
@@ -61,7 +63,8 @@ def render_config_site() -> None:
             )
 
         st.info(
-            "Os campos de login já ficam preparados no estado da aplicação para uso pelo crawler autenticado."
+            "Os campos de login já ficam preparados no estado da aplicação "
+            "para uso pelo crawler autenticado."
         )
 
     st.markdown("---")
@@ -74,8 +77,8 @@ def render_config_site() -> None:
             ["manual", "instantaneo", "delay"],
             key="site_modo_sincronizacao",
             help=(
-                "Manual: processa quando você mandar. "
-                "Instantâneo: pronto para envio logo após a captura. "
+                "Manual: processa quando você mandar.\n"
+                "Instantâneo: pronto para envio logo após a captura.\n"
                 "Delay: prepara a configuração de intervalo."
             ),
         )
@@ -116,16 +119,16 @@ def render_origem_entrada(on_change_callback=None):
 
     origem_valor = "site" if "site" in origem.lower() else "planilha"
     origem_anterior = str(st.session_state.get("origem_dados_tipo") or "").strip().lower()
+
     st.session_state["origem_dados_tipo"] = origem_valor
 
     if origem_anterior != origem_valor:
         reset_site_processado()
-
-    if callable(on_change_callback):
-        try:
-            on_change_callback(origem_valor)
-        except Exception:
-            pass
+        if callable(on_change_callback):
+            try:
+                on_change_callback(origem_valor)
+            except Exception:
+                pass
 
     if origem_valor == "site":
         render_config_site()
@@ -154,6 +157,7 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
     st.caption("Precificação")
 
     opcoes = [""] + [str(c) for c in df_origem.columns]
+
     coluna_custo = st.selectbox(
         "Qual coluna de origem deve ser usada como base do preço?",
         opcoes,
@@ -196,4 +200,6 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
         )
 
     if coluna_custo and coluna_custo in df_origem.columns:
-        st.success(f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}")
+        st.success(
+            f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}"
+        )
