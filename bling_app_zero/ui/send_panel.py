@@ -1,184 +1,630 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug
+from bling_app_zero.core.bling_auth import BlingAuthManager
+from bling_app_zero.ui.app_helpers import (
+    garantir_estado_base,
+    log_debug,
+    render_debug_panel,
+)
+from bling_app_zero.ui.origem_dados import render_origem_dados
+from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
+from bling_app_zero.ui.preview_final import render_preview_final
+from bling_app_zero.ui.send_panel import (
+    render_bling_primeiro_acesso,
+    render_send_panel,
+)
+from bling_app_zero.utils.init_app import inicializar_app
 
 
 # ==========================================================
-# HELPERS
+# CONFIG
 # ==========================================================
+st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
+
+APP_VERSION = "1.0.33"
+VERSION_JSON_PATH = Path(__file__).with_name("version.json")
+
+
+# ==========================================================
+# VERSIONAMENTO
+# ==========================================================
+def _safe_now_str() -> str:
+    try:
+        return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
+
+def _ler_version_json() -> dict:
+    try:
+        if not VERSION_JSON_PATH.exists():
+            return {}
+        bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
+        data = json.loads(bruto)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
+        return {}
+
+
+def _salvar_version_json(data: dict) -> bool:
+    try:
+        VERSION_JSON_PATH.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return True
+    except Exception as e:
+        log_debug(f"[VERSION] erro ao salvar version.json: {e}", "ERROR")
+        return False
+
+
+def _sincronizar_version_json_com_app() -> dict:
+    atual = _ler_version_json()
+    history = atual.get("history", [])
+    if not isinstance(history, list):
+        history = []
+
+    version_json = str(atual.get("version") or "").strip()
+    if version_json == APP_VERSION:
+        return atual if atual else {
+            "version": APP_VERSION,
+            "updated_at": _safe_now_str(),
+            "last_title": "Versionamento sincronizado",
+            "last_description": "Version.json alinhado com APP_VERSION.",
+            "history": history,
+        }
+
+    novo_registro = {
+        "version": APP_VERSION,
+        "date": _safe_now_str(),
+        "title": "Atualização automática de versão",
+        "description": "Sincronizado automaticamente com APP_VERSION do app.py.",
+    }
+
+    if not any(
+        isinstance(item, dict)
+        and str(item.get("version") or "").strip() == APP_VERSION
+        for item in history
+    ):
+        history.append(novo_registro)
+
+    novo = {
+        "version": APP_VERSION,
+        "updated_at": _safe_now_str(),
+        "last_title": "Atualização automática de versão",
+        "last_description": "Version.json sincronizado automaticamente com APP_VERSION do app.py.",
+        "history": history,
+    }
+
+    salvou = _salvar_version_json(novo)
+    if salvou:
+        log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
+        return novo
+
+    return atual if atual else novo
+
+
+def _resolver_app_version_exibida(version_data: dict) -> str:
+    try:
+        version_json = str((version_data or {}).get("version") or "").strip()
+        if version_json:
+            return version_json
+    except Exception:
+        pass
+    return APP_VERSION
+
+
+def _garantir_estado_versionamento() -> None:
+    if "_app_loaded_version" not in st.session_state:
+        st.session_state["_app_loaded_version"] = APP_VERSION
+    if "_app_last_seen_version" not in st.session_state:
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+
+
+def _chaves_lixo_legado() -> set[str]:
+    return {
+        "_cache_log",
+        "_cache_log_exibido",
+        "_version_reload_requested",
+        "_update_available",
+        "_legacy_version_notice",
+        "_toast_cache_version",
+        "_build_notice",
+    }
+
+
+def _chaves_preservadas_na_limpeza() -> set[str]:
+    return {
+        "_app_loaded_version",
+        "_app_last_seen_version",
+        "etapa_origem",
+        "etapa",
+        "etapa_fluxo",
+        "bling_primeiro_acesso_decidido",
+        "bling_primeiro_acesso_escolha",
+        "_debug_logs",
+        "_debug_logs_text",
+        "_debug_panel_open",
+        "acesso_cliente_id",
+        "acesso_liberado",
+        "bling_user_key",
+        "user_key",
+        "bi",
+        "_oauth_state",
+        "_oauth_pending_user_key",
+        "_bling_callback_status",
+        "_bling_callback_message",
+        "bling_conectado",
+        "bling_conexao_ok",
+        "bling_connection_message",
+        "bling_connection_checked",
+        "bling_ultimo_status",
+        "bling_connection_source",
+    }
+
+
+def _limpar_lixos_de_sessao() -> None:
+    for chave in _chaves_lixo_legado():
+        st.session_state.pop(chave, None)
+
+
+def _limpar_sessao_por_versao() -> bool:
+    versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
+
+    _limpar_lixos_de_sessao()
+
+    if not versao_sessao:
+        st.session_state["_app_loaded_version"] = APP_VERSION
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    if versao_sessao == APP_VERSION:
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    log_debug(
+        f"[VERSION] mudança detectada: sessão {versao_sessao} -> código {APP_VERSION}. "
+        "Limpando sessão antiga.",
+        "INFO",
+    )
+
+    preservadas = _chaves_preservadas_na_limpeza()
+    snapshot = {k: st.session_state.get(k) for k in preservadas if k in st.session_state}
+
+    for chave in list(st.session_state.keys()):
+        if chave not in preservadas:
+            st.session_state.pop(chave, None)
+
+    for chave, valor in snapshot.items():
+        st.session_state[chave] = valor
+
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    st.session_state["_app_loaded_version"] = APP_VERSION
+    st.session_state["_app_last_seen_version"] = APP_VERSION
+    st.session_state["etapa_origem"] = "conexao"
+    st.session_state["etapa"] = "conexao"
+    st.session_state["etapa_fluxo"] = "conexao"
+    return True
+
+
+def _executar_reload_app() -> None:
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    _limpar_lixos_de_sessao()
+    st.session_state["_app_loaded_version"] = APP_VERSION
+    st.session_state["_app_last_seen_version"] = APP_VERSION
+    st.rerun()
+
+
+def _render_controle_versao(version_data: dict) -> None:
+    versao_exibida = _resolver_app_version_exibida(version_data)
+
+    with st.container():
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            st.caption(f"Versão: {versao_exibida}")
+            updated_at = str((version_data or {}).get("updated_at") or "").strip()
+            if updated_at:
+                st.caption(f"Última atualização registrada: {updated_at}")
+
+        with col2:
+            if st.button(
+                "🔄 Recarregar app",
+                use_container_width=True,
+                key="btn_recarregar_app_topo",
+            ):
+                log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
+                _executar_reload_app()
+
+        last_title = str((version_data or {}).get("last_title") or "").strip()
+        last_description = str((version_data or {}).get("last_description") or "").strip()
+
+        if last_title or last_description:
+            with st.expander("📦 Controle de versão", expanded=False):
+                if last_title:
+                    st.write(f"**Última mudança:** {last_title}")
+                if last_description:
+                    st.write(last_description)
+
+                history = (version_data or {}).get("history", [])
+                if isinstance(history, list) and history:
+                    st.markdown("**Histórico recente**")
+                    for item in reversed(history[-5:]):
+                        if not isinstance(item, dict):
+                            continue
+                        versao = str(item.get("version") or "").strip()
+                        data = str(item.get("date") or "").strip()
+                        titulo = str(item.get("title") or "").strip()
+                        descricao = str(item.get("description") or "").strip()
+
+                        linha = f"- **{versao}**"
+                        if data:
+                            linha += f" · {data}"
+                        if titulo:
+                            linha += f" · {titulo}"
+                        if descricao:
+                            linha += f" — {descricao}"
+
+                        st.markdown(linha)
+
+
+# ==========================================================
+# INIT
+# ==========================================================
+inicializar_app()
+garantir_estado_base()
+_garantir_estado_versionamento()
+
+VERSION_DATA = _sincronizar_version_json_com_app()
+houve_limpeza_versao = _limpar_sessao_por_versao()
+if houve_limpeza_versao:
+    st.rerun()
+
+
+# ==========================================================
+# HELPERS DE FLUXO
+# ==========================================================
+ETAPAS_VALIDAS = {"conexao", "origem", "mapeamento", "final", "envio"}
+
+
 def _safe_df(df) -> bool:
+    try:
+        return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+    except Exception:
+        return False
+
+
+def _safe_df_com_linhas(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
 
-def _safe_copy_df(df):
+def _normalizar_etapa(valor: object) -> str:
     try:
-        return df.copy()
+        etapa_normalizada = str(valor or "conexao").strip().lower()
     except Exception:
-        return df
+        etapa_normalizada = "conexao"
+
+    if etapa_normalizada not in ETAPAS_VALIDAS:
+        return "conexao"
+    return etapa_normalizada
 
 
-def _get_df_base_envio() -> pd.DataFrame | None:
-    """
-    EXTREMAMENTE IMPORTANTE:
-    Nunca modificar df_final ou df_saida direto.
-    Sempre trabalhar com cópia isolada.
-    """
-    for chave in ["df_final", "df_saida"]:
+def _obter_etapa_atual() -> str:
+    candidatos = [
+        st.session_state.get("etapa_origem"),
+        st.session_state.get("etapa"),
+        st.session_state.get("etapa_fluxo"),
+    ]
+    for valor in candidatos:
+        etapa_lida = _normalizar_etapa(valor)
+        if etapa_lida in ETAPAS_VALIDAS:
+            return etapa_lida
+    return "conexao"
+
+
+def _sincronizar_etapa_global(etapa_destino: str) -> str:
+    etapa_ok = _normalizar_etapa(etapa_destino)
+    st.session_state["etapa_origem"] = etapa_ok
+    st.session_state["etapa"] = etapa_ok
+    st.session_state["etapa_fluxo"] = etapa_ok
+    log_debug(f"[APP] navegação para etapa: {etapa_ok}", "INFO")
+    return etapa_ok
+
+
+def _ir_para(etapa: str) -> None:
+    _sincronizar_etapa_global(etapa)
+    st.rerun()
+
+
+def _obter_df_fluxo():
+    candidatos = [
+        "df_final",
+        "df_saida",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
+    ]
+    for chave in candidatos:
         df = st.session_state.get(chave)
         if _safe_df(df):
-            log_debug(f"[SEND_PANEL] base de envio carregada de '{chave}'", "INFO")
-            return _safe_copy_df(df)
+            return df
     return None
 
 
-def _persistir_df_envio(df_envio: pd.DataFrame) -> None:
-    """
-    Salva apenas para envio — NÃO altera df_final/df_saida
-    """
-    try:
-        st.session_state["df_envio"] = df_envio.copy()
-    except Exception:
-        st.session_state["df_envio"] = df_envio
+def _sincronizar_df_fluxo() -> None:
+    df_final = st.session_state.get("df_final")
+    df_saida = st.session_state.get("df_saida")
 
-
-def _get_etapa_atual() -> str:
-    """
-    Lê a etapa atual do fluxo de forma tolerante.
-    Isso blinda o botão de conexão para aparecer apenas no início.
-    """
-    for chave in ("etapa_origem", "etapa", "etapa_fluxo"):
-        valor = str(st.session_state.get(chave) or "").strip().lower()
-        if valor:
-            return valor
-    return ""
-
-
-# ==========================================================
-# UI
-# ==========================================================
-def render_send_panel() -> None:
-    st.subheader("Envio para o Bling")
-
-    df_base = _get_df_base_envio()
-    if not _safe_df(df_base):
-        st.warning("Nenhum dado disponível para envio.")
-        log_debug("[SEND_PANEL] nenhum DataFrame disponível para envio.", "ERROR")
+    if _safe_df(df_final) and not _safe_df(df_saida):
+        try:
+            st.session_state["df_saida"] = df_final.copy()
+        except Exception:
+            st.session_state["df_saida"] = df_final
         return
 
-    # CRIA CÓPIA ISOLADA PARA ENVIO
-    df_envio = _safe_copy_df(df_base)
-    _persistir_df_envio(df_envio)
+    if _safe_df(df_saida) and not _safe_df(df_final):
+        try:
+            st.session_state["df_final"] = df_saida.copy()
+        except Exception:
+            st.session_state["df_final"] = df_saida
+        return
 
-    st.caption(
-        "Os dados abaixo são apenas para envio. "
-        "A conexão com o Bling pertence ao início do fluxo e o download não será afetado."
-    )
 
-    with st.expander("Visualizar dados de envio", expanded=False):
-        st.dataframe(df_envio.head(20), use_container_width=True)
+def _garantir_estado_fluxo_inicial() -> None:
+    if "bling_primeiro_acesso_decidido" not in st.session_state:
+        st.session_state["bling_primeiro_acesso_decidido"] = False
+    if "bling_primeiro_acesso_escolha" not in st.session_state:
+        st.session_state["bling_primeiro_acesso_escolha"] = ""
 
-    st.markdown("---")
 
-    # ==========================================================
-    # SIMULAÇÃO DE ENVIO (placeholder API)
-    # ==========================================================
-    col1, col2 = st.columns(2)
+def _pode_ir_para_mapeamento() -> bool:
+    for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado", "df_origem"]:
+        if _safe_df_com_linhas(st.session_state.get(chave)):
+            return True
+    return False
 
-    with col1:
-        if st.button(
-            "📤 Enviar para Bling",
-            use_container_width=True,
-            type="primary",
-        ):
-            try:
-                # Aqui entra futura integração com API
-                total = len(df_envio)
-                log_debug(
-                    f"[SEND_PANEL] envio simulado iniciado com {total} registro(s).",
-                    "INFO",
-                )
-                st.success(f"Envio simulado com sucesso ({total} registros).")
-            except Exception as e:
-                log_debug(f"[SEND_PANEL] erro no envio: {e}", "ERROR")
-                st.error("Erro ao enviar para o Bling.")
 
-    with col2:
-        if st.button(
-            "🔄 Atualizar dados de envio",
-            use_container_width=True,
-        ):
-            df_base = _get_df_base_envio()
-            if _safe_df(df_base):
-                _persistir_df_envio(df_base)
-                log_debug("[SEND_PANEL] dados de envio atualizados.", "INFO")
-                st.rerun()
+def _pode_ir_para_final() -> bool:
+    return _safe_df_com_linhas(_obter_df_fluxo())
 
-    st.markdown("---")
-    st.info(
-        "⚠️ O envio utiliza uma cópia dos dados. "
-        "O download final permanece intacto."
+
+def _esta_conectado_persistido() -> bool:
+    return bool(st.session_state.get("bling_conectado")) or bool(
+        st.session_state.get("bling_conexao_ok")
     )
 
 
-# ==========================================================
-# PRIMEIRO ACESSO
-# ==========================================================
-def render_bling_primeiro_acesso(
-    on_skip=None,
-    on_continue=None,
-) -> None:
-    """
-    Tela de conexão do início do fluxo.
+def _primeiro_acesso_ja_decidido() -> bool:
+    return bool(st.session_state.get("bling_primeiro_acesso_decidido"))
 
-    Blindagem:
-    - Só renderiza quando a etapa atual for realmente 'conexao'.
-    - Se por qualquer motivo essa função for chamada no final/envio,
-      ela não mostra novamente a opção de conectar.
+
+def _deve_pular_conexao() -> bool:
     """
-    etapa_atual = _get_etapa_atual()
-    if etapa_atual and etapa_atual != "conexao":
+    Regra do fluxo:
+    - conexão só existe no início;
+    - se o usuário já decidiu (conectou ou pulou), não mostramos isso de novo;
+    - o final/envio nunca deve empurrar o usuário de volta para conexão.
+    """
+    if _esta_conectado_persistido():
+        return True
+
+    escolha = str(st.session_state.get("bling_primeiro_acesso_escolha") or "").strip().lower()
+    if _primeiro_acesso_ja_decidido() and escolha in {"conectado", "pular", "skip", "sem_conexao"}:
+        return True
+
+    return False
+
+
+def _resolver_autoetapa() -> str:
+    etapa_atual = _obter_etapa_atual()
+    _sincronizar_df_fluxo()
+
+    if etapa_atual == "conexao" and _deve_pular_conexao():
+        log_debug("[APP] conexão já resolvida. Autoavançando para origem.", "INFO")
+        return "origem"
+
+    if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
         log_debug(
-            f"[SEND_PANEL] render_bling_primeiro_acesso bloqueado fora da etapa inicial "
-            f"(etapa atual: {etapa_atual}).",
-            "INFO",
+            "[APP] mapeamento bloqueado por ausência de dados. Retornando para origem.",
+            "WARNING",
         )
+        return "origem"
+
+    if etapa_atual in {"final", "envio"} and not _pode_ir_para_final():
+        log_debug(
+            "[APP] final/envio bloqueado por ausência de dados. Retornando para origem.",
+            "WARNING",
+        )
+        return "origem"
+
+    return etapa_atual
+
+
+# ==========================================================
+# OAUTH / CALLBACK
+# ==========================================================
+def _processar_callback_bling() -> None:
+    try:
+        auth = BlingAuthManager(
+            user_key=str(
+                st.session_state.get("bling_user_key")
+                or st.session_state.get("user_key")
+                or st.session_state.get("bi")
+                or "default"
+            )
+        )
+        resultado = auth.handle_oauth_callback()
+
+        status = str(resultado.get("status") or "").strip().lower()
+        mensagem = str(resultado.get("message") or "").strip()
+
+        if status == "success":
+            log_debug(f"[APP][OAUTH] callback processado com sucesso: {mensagem}", "INFO")
+            st.session_state["_bling_callback_status"] = "success"
+            st.session_state["_bling_callback_message"] = (
+                mensagem or "Conta conectada com sucesso."
+            )
+            st.session_state["bling_primeiro_acesso_decidido"] = True
+            st.session_state["bling_primeiro_acesso_escolha"] = "conectado"
+            st.session_state["bling_conectado"] = True
+            st.session_state["bling_conexao_ok"] = True
+            st.session_state["bling_connection_message"] = (
+                mensagem or "Conta conectada com sucesso."
+            )
+            _sincronizar_etapa_global("origem")
+            st.rerun()
+
+        if status == "error":
+            log_debug(f"[APP][OAUTH] erro no callback: {mensagem}", "ERROR")
+            st.session_state["_bling_callback_status"] = "error"
+            st.session_state["_bling_callback_message"] = (
+                mensagem or "Erro ao conectar com o Bling."
+            )
+            st.session_state["bling_conectado"] = False
+            st.session_state["bling_conexao_ok"] = False
+            _sincronizar_etapa_global("conexao")
+
+    except Exception as e:
+        log_debug(f"[APP][OAUTH] falha inesperada ao processar callback: {e}", "ERROR")
+        st.session_state["_bling_callback_status"] = "error"
+        st.session_state["_bling_callback_message"] = (
+            f"Falha ao processar callback do Bling: {e}"
+        )
+        st.session_state["bling_conectado"] = False
+        st.session_state["bling_conexao_ok"] = False
+
+
+def _render_feedback_callback() -> None:
+    status = str(st.session_state.get("_bling_callback_status") or "").strip().lower()
+    mensagem = str(st.session_state.get("_bling_callback_message") or "").strip()
+
+    if not status or not mensagem:
         return
 
-    st.subheader("Conectar ao Bling")
-    st.caption(
-        "Conecte sua conta Bling para envio automático ou continue sem integração."
+    if status == "success":
+        st.success(mensagem)
+    elif status == "error":
+        st.error(mensagem)
+
+    st.session_state.pop("_bling_callback_status", None)
+    st.session_state.pop("_bling_callback_message", None)
+
+
+# ==========================================================
+# APP
+# ==========================================================
+_processar_callback_bling()
+
+st.title("IA Planilhas → Bling")
+_render_controle_versao(VERSION_DATA)
+render_debug_panel()
+
+_garantir_estado_fluxo_inicial()
+_render_feedback_callback()
+
+etapa = _sincronizar_etapa_global(_resolver_autoetapa())
+
+if etapa not in ETAPAS_VALIDAS:
+    log_debug(f"Etapa inválida detectada no app.py: {etapa}", "ERROR")
+    _ir_para("conexao")
+
+if etapa == "conexao":
+    render_bling_primeiro_acesso(
+        on_skip=lambda: (
+            st.session_state.__setitem__("bling_primeiro_acesso_decidido", True),
+            st.session_state.__setitem__("bling_primeiro_acesso_escolha", "sem_conexao"),
+            _ir_para("origem"),
+        )[-1],
+        on_continue=lambda: (
+            st.session_state.__setitem__("bling_primeiro_acesso_decidido", True),
+            st.session_state.__setitem__("bling_primeiro_acesso_escolha", "conectado"),
+            _ir_para("origem"),
+        )[-1],
     )
 
+elif etapa == "origem":
+    render_origem_dados()
+
+elif etapa == "mapeamento":
+    if not _pode_ir_para_mapeamento():
+        st.warning("⚠️ Carregue os dados na origem antes de acessar o mapeamento.")
+        if st.button("⬅️ Voltar para origem", use_container_width=True):
+            _ir_para("origem")
+        st.stop()
+
+    render_origem_mapeamento()
+
+elif etapa == "final":
+    df_fluxo = _obter_df_fluxo()
+    if not _safe_df(df_fluxo):
+        log_debug("FINAL sem dados válidos", "ERROR")
+        st.warning("⚠️ Nenhum dado disponível.\nVolte para o mapeamento.")
+        if st.button("⬅️ Voltar", use_container_width=True):
+            _ir_para("mapeamento")
+        st.stop()
+
+    render_preview_final()
+
+    st.markdown("---")
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button(
-            "🔗 Conectar com Bling",
-            use_container_width=True,
-            type="primary",
-        ):
-            log_debug("[SEND_PANEL] conexão com Bling acionada.", "INFO")
-            # Aqui entrará OAuth real
-            st.success("Conexão simulada com sucesso.")
-
-            if callable(on_continue):
-                on_continue()
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
+            _ir_para("mapeamento")
 
     with col2:
-        if st.button(
-            "➡️ Continuar sem conectar",
-            use_container_width=True,
-        ):
-            log_debug(
-                "[SEND_PANEL] usuário optou por continuar sem conexão.",
-                "INFO",
-            )
-            if callable(on_skip):
-                on_skip()
-                
+        if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
+            _ir_para("envio")
+
+elif etapa == "envio":
+    df_fluxo = _obter_df_fluxo()
+    if not _safe_df(df_fluxo):
+        log_debug("ENVIO sem dados válidos", "ERROR")
+        st.warning("⚠️ Nenhum dado disponível para envio.")
+        if st.button("⬅️ Voltar para final", use_container_width=True):
+            _ir_para("final")
+        st.stop()
+
+    st.markdown("---")
+    if st.button(
+        "⬅️ Voltar para final",
+        use_container_width=True,
+        key="btn_envio_voltar_final",
+    ):
+        _ir_para("final")
+
+    st.markdown("---")
+    render_send_panel()
+
+else:
+    log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
+    _ir_para("conexao")
+    
