@@ -174,3 +174,4 @@ def render_preview_final() -> None:
             _persistir_df_final(df_download)
             log_debug("[PREVIEW_FINAL] atualização manual do preview final acionada.", "INFO")
             st.rerun()
+            
