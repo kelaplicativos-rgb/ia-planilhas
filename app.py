@@ -26,7 +26,7 @@ from bling_app_zero.utils.init_app import inicializar_app
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.29"
+APP_VERSION = "1.0.30"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
@@ -160,6 +160,8 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "etapa_fluxo",
         "bling_primeiro_acesso_decidido",
         "bling_primeiro_acesso_escolha",
+        "acesso_cliente_id",
+        "acesso_liberado",
         "_debug_logs",
         "_debug_logs_text",
         "_debug_panel_open",
@@ -172,13 +174,8 @@ def _limpar_lixos_de_sessao() -> None:
 
 
 def _limpar_sessao_por_versao() -> bool:
-    """
-    Quando APP_VERSION mudar, limpa estados antigos/lixos de sessão
-    sem destruir todo o fluxo do usuário de forma cega.
-    """
     versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
 
-    # limpa fantasmas antigos sempre
     _limpar_lixos_de_sessao()
 
     if not versao_sessao:
@@ -290,6 +287,155 @@ def _render_controle_versao(version_data: dict) -> None:
                         linha += f" — {descricao}"
 
                     st.markdown(linha)
+
+
+# =========================
+# CONTROLE DE ACESSO
+# =========================
+def _safe_str(valor) -> str:
+    try:
+        if valor is None:
+            return ""
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+
+    try:
+        return str(valor).strip()
+    except Exception:
+        return ""
+
+
+def _safe_bool_secret(nome: str, default: bool = False) -> bool:
+    try:
+        bruto = st.secrets.get(nome, default)
+    except Exception:
+        return default
+
+    if isinstance(bruto, bool):
+        return bruto
+
+    valor = str(bruto).strip().lower()
+    return valor in {"1", "true", "yes", "sim", "on"}
+
+
+def _safe_list_secret(nome: str) -> list[str]:
+    try:
+        bruto = st.secrets.get(nome, [])
+    except Exception:
+        return []
+
+    if isinstance(bruto, (list, tuple, set)):
+        return [str(x).strip() for x in bruto if str(x).strip()]
+
+    texto = str(bruto or "").strip()
+    if not texto:
+        return []
+
+    separadores = [",", ";", "\n", "|"]
+    valores = [texto]
+    for sep in separadores:
+        novos = []
+        for item in valores:
+            novos.extend(item.split(sep))
+        valores = novos
+
+    return [str(x).strip() for x in valores if str(x).strip()]
+
+
+def _resolver_cliente_query() -> str:
+    for chave in ["acesso_cliente_id", "bling_user_key", "user_key", "bi"]:
+        valor = _safe_str(st.session_state.get(chave))
+        if valor:
+            return valor
+
+    try:
+        qp = st.query_params
+        for chave in ["bi", "user_key", "cliente"]:
+            valor = _safe_str(qp.get(chave))
+            if valor:
+                return valor
+    except Exception:
+        pass
+
+    return ""
+
+
+def _usuarios_autorizados() -> list[str]:
+    valores = []
+    valores.extend(_safe_list_secret("ACCESS_USER_KEYS"))
+    valores.extend(_safe_list_secret("ACCESS_USERS"))
+    valores.extend(_safe_list_secret("ALLOWED_USER_KEYS"))
+    valores.extend(_safe_list_secret("ALLOWED_USERS"))
+
+    vistos = set()
+    resultado = []
+    for item in valores:
+        chave = item.strip()
+        if not chave:
+            continue
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        resultado.append(chave)
+
+    return resultado
+
+
+def _acesso_exige_chave() -> bool:
+    if _safe_bool_secret("ACCESS_REQUIRE_USER_KEY", False):
+        return True
+
+    return len(_usuarios_autorizados()) > 0
+
+
+def _liberar_sessao_cliente(cliente_id: str) -> None:
+    cliente = _safe_str(cliente_id)
+
+    st.session_state["acesso_cliente_id"] = cliente
+    st.session_state["acesso_liberado"] = bool(cliente)
+    st.session_state["bling_user_key"] = cliente
+    st.session_state["user_key"] = cliente
+    st.session_state["bi"] = cliente
+
+    try:
+        st.query_params["bi"] = cliente
+    except Exception:
+        pass
+
+
+def _render_banner_cliente(cliente_id: str) -> None:
+    if not cliente_id:
+        return
+
+    st.caption(f"Cliente ativo: {cliente_id}")
+
+    with st.expander("🔐 Link personalizado do cliente", expanded=False):
+        st.code(f"?bi={cliente_id}", language="text")
+        st.caption("Use esse sufixo no link público do app para abrir direto com a chave do cliente.")
+
+
+def _validar_acesso_cliente() -> None:
+    cliente_id = _resolver_cliente_query()
+    lista_autorizada = _usuarios_autorizados()
+    exige_chave = _acesso_exige_chave()
+
+    if not exige_chave:
+        if cliente_id:
+            _liberar_sessao_cliente(cliente_id)
+        return
+
+    if not cliente_id:
+        st.error("Acesso bloqueado. Este app exige chave de cliente na URL.")
+        st.info("Exemplo: https://ia-planilhas-bling.streamlit.app/?bi=cliente1")
+        st.stop()
+
+    if lista_autorizada and cliente_id not in lista_autorizada:
+        st.error("Acesso não autorizado para esta chave de cliente.")
+        st.stop()
+
+    _liberar_sessao_cliente(cliente_id)
 
 
 # =========================
@@ -415,10 +561,10 @@ def _pode_ir_para_mapeamento() -> bool:
 # =========================
 st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
-
 render_debug_panel()
-
 _garantir_estado_fluxo_inicial()
+_validar_acesso_cliente()
+_render_banner_cliente(_safe_str(st.session_state.get("acesso_cliente_id")))
 
 
 # =========================
@@ -490,7 +636,7 @@ elif etapa == "final":
             _ir_para("mapeamento")
 
     with col2:
-        if st.button("Ir para envio", use_container_width=True, type="primary"):
+        if st.button("➡️ Ir para envio", use_container_width=True, type="primary"):
             _ir_para("envio")
 
 
