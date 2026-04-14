@@ -9,11 +9,6 @@ import pandas as pd
 import streamlit as st
 
 
-# ==========================================================
-# LOG / DEBUG
-# ==========================================================
-
-
 def _agora() -> str:
     try:
         return datetime.now().strftime("%H:%M:%S")
@@ -89,11 +84,6 @@ def render_debug_panel() -> None:
         pass
 
 
-# ==========================================================
-# ESTADO BASE
-# ==========================================================
-
-
 def garantir_estado_base() -> None:
     defaults = {
         "etapa_origem": "conexao",
@@ -123,11 +113,6 @@ def garantir_estado_base() -> None:
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
-
-
-# ==========================================================
-# HELPERS GERAIS
-# ==========================================================
 
 
 def _safe_str(valor) -> str:
@@ -164,13 +149,6 @@ def safe_df_dados(df) -> bool:
         return False
 
 
-def _safe_copy_df(df):
-    try:
-        return df.copy()
-    except Exception:
-        return df
-
-
 def _normalizar_coluna(nome) -> str:
     texto = _safe_str(nome).lower()
     texto = (
@@ -193,38 +171,6 @@ def _normalizar_coluna(nome) -> str:
         .replace("ç", "c")
     )
     return " ".join(texto.split())
-
-
-def get_df_fluxo() -> pd.DataFrame | None:
-    for chave in ["df_final", "df_saida", "df_precificado", "df_calc_precificado", "df_origem"]:
-        df = st.session_state.get(chave)
-        if safe_df_estrutura(df):
-            try:
-                return df.copy()
-            except Exception:
-                return df
-    return None
-
-
-def sincronizar_df_final() -> None:
-    df = get_df_fluxo()
-    if not safe_df_estrutura(df):
-        return
-
-    try:
-        st.session_state["df_final"] = df.copy()
-    except Exception:
-        st.session_state["df_final"] = df
-
-    try:
-        st.session_state["df_saida"] = df.copy()
-    except Exception:
-        st.session_state["df_saida"] = df
-
-
-# ==========================================================
-# GTIN / LIMPEZA
-# ==========================================================
 
 
 def _so_digitos(valor) -> str:
@@ -254,10 +200,7 @@ def _checksum_gtin_ok(gtin: str) -> bool:
 
 def _is_coluna_gtin(nome_coluna: str) -> bool:
     nome = _normalizar_coluna(nome_coluna)
-    return any(
-        token in nome
-        for token in ["gtin", "ean", "codigo de barras", "codigo barras"]
-    )
+    return any(token in nome for token in ["gtin", "ean", "codigo de barras", "codigo barras"])
 
 
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
@@ -391,7 +334,6 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         df_blindado = sanitizar_dados_reais(df_blindado)
         df_blindado = df_blindado.replace({None: ""}).fillna("")
         df_blindado = _sanitizar_df_para_csv(df_blindado)
-
         return df_blindado
     except Exception as e:
         log_debug(f"Erro em blindar_df_para_download: {e}", "ERROR")
@@ -400,16 +342,8 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-# ==========================================================
-# VALIDAÇÃO
-# ==========================================================
-
-
 def _encontrar_primeira_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
-    colunas_normalizadas = {
-        str(col): _normalizar_coluna(col)
-        for col in df.columns
-    }
+    colunas_normalizadas = {str(col): _normalizar_coluna(col) for col in df.columns}
 
     for col_real, col_norm in colunas_normalizadas.items():
         if any(alias in col_norm for alias in aliases):
@@ -431,9 +365,7 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         if not isinstance(df, pd.DataFrame) or df.empty:
             st.session_state["preview_final_valido"] = False
             st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
-            st.session_state["campos_obrigatorios_alertas"] = [
-                "Nenhum dado disponível para validar."
-            ]
+            st.session_state["campos_obrigatorios_alertas"] = ["Nenhum dado disponível para validar."]
             return {
                 "ok": False,
                 "faltantes": ["DataFrame vazio"],
@@ -482,19 +414,12 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         log_debug(f"Erro validar_campos_obrigatorios: {e}", "ERROR")
         st.session_state["preview_final_valido"] = False
         st.session_state["campos_obrigatorios_faltantes"] = ["Falha na validação"]
-        st.session_state["campos_obrigatorios_alertas"] = [
-            "Erro interno durante a validação dos campos obrigatórios."
-        ]
+        st.session_state["campos_obrigatorios_alertas"] = ["Erro interno durante a validação dos campos obrigatórios."]
         return {
             "ok": False,
             "faltantes": ["Falha na validação"],
             "alertas": ["Erro interno durante a validação dos campos obrigatórios."],
         }
-
-
-# ==========================================================
-# EXPORTAÇÃO
-# ==========================================================
 
 
 def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -531,4 +456,4 @@ def gerar_nome_arquivo_download() -> str:
         return "bling_export_cadastro.csv"
 
     return "bling_export.csv"
-  
+    
