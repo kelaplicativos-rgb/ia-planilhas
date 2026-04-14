@@ -19,6 +19,13 @@ def _safe_df(df) -> bool:
         return False
 
 
+def _safe_copy_df(df):
+    try:
+        return df.copy()
+    except Exception:
+        return df
+
+
 def _get_df_fluxo() -> pd.DataFrame | None:
     """
     Ordem de prioridade do fluxo final:
@@ -32,25 +39,68 @@ def _get_df_fluxo() -> pd.DataFrame | None:
         df = st.session_state.get(chave)
         if _safe_df(df):
             try:
-                return df.copy()
+                log_debug(f"[PREVIEW_FINAL] usando DataFrame de '{chave}'", "INFO")
             except Exception:
-                return df
+                pass
+            return _safe_copy_df(df)
     return None
 
 
-def _normalizar_validacao(resultado_validacao) -> bool:
+def _normalizar_validacao(resultado_validacao) -> tuple[bool, list[str]]:
     try:
         if isinstance(resultado_validacao, bool):
-            return resultado_validacao
+            return resultado_validacao, []
+
         if resultado_validacao is None:
-            return True
+            return True, []
+
         if isinstance(resultado_validacao, dict):
-            return len(resultado_validacao) == 0
+            if len(resultado_validacao) == 0:
+                return True, []
+            erros = [f"{k}: {v}" for k, v in resultado_validacao.items()]
+            return False, erros
+
         if isinstance(resultado_validacao, (list, tuple, set)):
-            return len(resultado_validacao) == 0
-        return bool(resultado_validacao)
+            erros = [str(item) for item in resultado_validacao if str(item).strip()]
+            return len(erros) == 0, erros
+
+        return bool(resultado_validacao), []
     except Exception:
-        return False
+        return False, ["Falha ao interpretar a validação dos campos obrigatórios."]
+
+
+def _persistir_df_final(df_final: pd.DataFrame) -> None:
+    try:
+        st.session_state["df_final"] = df_final.copy()
+    except Exception:
+        st.session_state["df_final"] = df_final
+
+    try:
+        st.session_state["df_saida"] = df_final.copy()
+    except Exception:
+        st.session_state["df_saida"] = df_final
+
+
+def _blindar_df_final(df_base: pd.DataFrame) -> pd.DataFrame:
+    try:
+        df_blindado = blindar_df_para_download(df_base.copy())
+        _persistir_df_final(df_blindado)
+        return df_blindado
+    except Exception as e:
+        log_debug(f"[PREVIEW_FINAL] erro na blindagem do DataFrame final: {e}", "ERROR")
+        return _safe_copy_df(df_base)
+
+
+def _render_erros_validacao(erros: list[str]) -> None:
+    if not erros:
+        st.error("Preencha os campos obrigatórios antes do download.")
+        return
+
+    st.error("Preencha os campos obrigatórios antes do download.")
+
+    with st.expander("Ver detalhes da validação", expanded=False):
+        for erro in erros:
+            st.write(f"- {erro}")
 
 
 def render_preview_final() -> None:
@@ -59,70 +109,68 @@ def render_preview_final() -> None:
     df_fluxo = _get_df_fluxo()
     if not _safe_df(df_fluxo):
         st.warning("Nenhum dado disponível para o preview final.")
-        log_debug("Preview final sem DataFrame disponível", "ERROR")
+        log_debug("[PREVIEW_FINAL] nenhum DataFrame disponível para renderização.", "ERROR")
         return
 
     try:
         log_debug(
-            f"Preview final carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s)",
+            f"[PREVIEW_FINAL] preview carregado com {len(df_fluxo)} linha(s) e {len(df_fluxo.columns)} coluna(s).",
             "INFO",
         )
     except Exception:
         pass
 
-    try:
-        df_download = blindar_df_para_download(df_fluxo.copy())
-        st.session_state["df_final"] = df_download.copy()
-        st.session_state["df_saida"] = df_download.copy()
-    except Exception as e:
-        log_debug(f"Erro na blindagem extra do preview final: {e}", "ERROR")
-        df_download = df_fluxo.copy()
+    df_download = _blindar_df_final(df_fluxo)
 
     with st.expander("Ver dados finais", expanded=False):
         st.dataframe(df_download.head(20), use_container_width=True)
 
     try:
-        validacao_ok = _normalizar_validacao(validar_campos_obrigatorios(df_download))
+        validacao_ok, erros_validacao = _normalizar_validacao(
+            validar_campos_obrigatorios(df_download)
+        )
     except Exception as e:
-        log_debug(f"Erro na validação de campos obrigatórios: {e}", "ERROR")
-        validacao_ok = False
+        log_debug(f"[PREVIEW_FINAL] erro na validação de campos obrigatórios: {e}", "ERROR")
+        validacao_ok, erros_validacao = False, [
+            "Falha ao validar os campos obrigatórios."
+        ]
 
     if not validacao_ok:
-        st.error("Preencha os campos obrigatórios antes do download.")
+        _render_erros_validacao(erros_validacao)
         return
 
-    try:
-        df_download = blindar_df_para_download(df_download.copy())
-        st.session_state["df_final"] = df_download.copy()
-        st.session_state["df_saida"] = df_download.copy()
-    except Exception as e:
-        log_debug(f"Erro na segunda blindagem do download final: {e}", "ERROR")
+    df_download = _blindar_df_final(df_download)
 
     try:
         csv_bytes = exportar_csv_bytes(df_download)
     except Exception as e:
-        log_debug(f"Erro ao gerar CSV final: {e}", "ERROR")
+        log_debug(f"[PREVIEW_FINAL] erro ao gerar CSV final: {e}", "ERROR")
         st.error("Não foi possível gerar a planilha final em CSV.")
         return
 
     if not csv_bytes:
+        log_debug("[PREVIEW_FINAL] CSV final vazio ou inválido.", "ERROR")
         st.error("Não foi possível gerar a planilha final em CSV.")
         return
 
-    st.download_button(
-        "⬇️ Baixar planilha final",
-        csv_bytes,
-        gerar_nome_arquivo_download(),
-        mime="text/csv",
-        use_container_width=True,
-        key="btn_download_preview_final_csv",
-    )
+    col1, col2 = st.columns(2)
 
-    if st.button(
-        "Atualizar preview",
-        use_container_width=True,
-        key="btn_atualizar_preview_final",
-    ):
-        st.session_state["df_final"] = df_download.copy()
-        st.session_state["df_saida"] = df_download.copy()
-        st.rerun()
+    with col1:
+        st.download_button(
+            "⬇️ Baixar planilha final",
+            csv_bytes,
+            gerar_nome_arquivo_download(),
+            mime="text/csv",
+            use_container_width=True,
+            key="btn_download_preview_final_csv",
+        )
+
+    with col2:
+        if st.button(
+            "🔄 Atualizar preview",
+            use_container_width=True,
+            key="btn_atualizar_preview_final",
+        ):
+            _persistir_df_final(df_download)
+            log_debug("[PREVIEW_FINAL] atualização manual do preview final acionada.", "INFO")
+            st.rerun()
