@@ -55,11 +55,6 @@ def _navegar(destino: str, callback: NavCallback = None) -> None:
 
 
 def _resolver_df_origem_site() -> pd.DataFrame | None:
-    """
-    No fluxo por site, o crawler/fetcher às vezes preenche a sessão em
-    df_saida / df_final / df_precificado antes de popular df_origem.
-    Este resolver recompõe a origem a partir desses pontos.
-    """
     candidatos = [
         "df_origem",
         "df_saida",
@@ -367,3 +362,4 @@ def render_origem_dados(
         mostrar_continuar=True,
         continuar_habilitado=True,
     )
+    
