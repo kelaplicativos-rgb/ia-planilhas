@@ -117,7 +117,7 @@ def _render_status_conexao() -> None:
     st.info("ℹ️ Nenhuma conexão válida encontrada. Conecte com o Bling para liberar o envio real.")
 
 
-def _render_botao_oauth_self(auth_url: str) -> None:
+def _render_botao_oauth_same_tab(auth_url: str) -> None:
     auth_url_safe = html.escape(auth_url, quote=True)
 
     st.markdown(
@@ -126,19 +126,49 @@ def _render_botao_oauth_self(auth_url: str) -> None:
             display:block;
             width:100%;
             text-align:center;
-            padding:0.75rem 1rem;
-            border-radius:0.5rem;
+            padding:0.85rem 1rem;
+            border-radius:0.6rem;
             text-decoration:none;
-            font-weight:600;
+            font-weight:700;
             background:#ff4b4b;
             color:white;
             border:1px solid #ff4b4b;
+            box-sizing:border-box;
         ">
             🔐 Conectar com Bling
         </a>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_diagnostico_conexao(auth: BlingAuthManager) -> None:
+    with st.expander("Diagnóstico da conexão", expanded=False):
+        st.write(f"**Usuário OAuth:** `{_resolver_bling_user_key()}`")
+        st.write(f"**Configuração carregada:** {'Sim' if auth.is_configured() else 'Não'}")
+
+        debug_redirect = str(st.session_state.get("_bling_debug_redirect_uri") or "").strip()
+        debug_auth_url = str(st.session_state.get("_bling_debug_auth_url") or "").strip()
+        debug_auth_error = str(st.session_state.get("_bling_debug_auth_error") or "").strip()
+
+        if debug_redirect:
+            st.caption("Redirect URI")
+            st.code(debug_redirect, language="text")
+
+        if debug_auth_url:
+            st.caption("Auth URL")
+            st.code(debug_auth_url, language="text")
+
+        if debug_auth_error:
+            st.error(debug_auth_error)
+
+        if st.button(
+            "🧹 Limpar estado sujo da conexão",
+            use_container_width=True,
+            key="btn_clear_dirty_bling_state",
+        ):
+            _sanear_estado_bling_invalido("Estado de conexão limpo manualmente.")
+            st.rerun()
 
 
 # ==========================================================
@@ -153,10 +183,10 @@ def render_bling_primeiro_acesso(
         "Conecte sua conta Bling para envio automático ou continue sem integração."
     )
 
-    _render_status_conexao()
-
     auth = _get_auth_manager()
     conectado_real = _token_bling_valido_real()
+
+    _render_status_conexao()
 
     col1, col2 = st.columns(2)
 
@@ -178,8 +208,12 @@ def render_bling_primeiro_acesso(
             else:
                 auth_url = auth.generate_auth_url()
                 if auth_url:
-                    _render_botao_oauth_self(auth_url)
-                    st.caption("Ao clicar, o login do Bling abrirá na mesma aba.")
+                    st.session_state["_oauth_pending_user_key"] = _resolver_bling_user_key()
+                    st.session_state["bling_connection_message"] = "Redirecionando para o login do Bling..."
+                    log_debug("[SEND_PANEL] URL OAuth gerada. Login abrirá na mesma aba.", "INFO")
+
+                    _render_botao_oauth_same_tab(auth_url)
+                    st.caption("Ao clicar, o login do Bling abrirá na mesma aba e, ao voltar, o sistema seguirá automaticamente.")
                 else:
                     st.error("Não foi possível gerar a URL de autorização do Bling.")
                     log_debug("[SEND_PANEL] falha ao gerar auth_url do Bling.", "ERROR")
@@ -199,28 +233,7 @@ def render_bling_primeiro_acesso(
                 on_skip()
 
     if not conectado_real:
-        with st.expander("Diagnóstico da conexão", expanded=False):
-            st.write(f"**Usuário OAuth:** `{_resolver_bling_user_key()}`")
-            st.write(f"**Configuração carregada:** {'Sim' if auth.is_configured() else 'Não'}")
-
-            debug_redirect = str(st.session_state.get("_bling_debug_redirect_uri") or "").strip()
-            debug_auth_url = str(st.session_state.get("_bling_debug_auth_url") or "").strip()
-            debug_auth_error = str(st.session_state.get("_bling_debug_auth_error") or "").strip()
-
-            if debug_redirect:
-                st.code(debug_redirect, language="text")
-            if debug_auth_error:
-                st.error(debug_auth_error)
-            elif debug_auth_url:
-                st.code(debug_auth_url, language="text")
-
-            if st.button(
-                "🧹 Limpar estado sujo da conexão",
-                use_container_width=True,
-                key="btn_clear_dirty_bling_state",
-            ):
-                _sanear_estado_bling_invalido("Estado de conexão limpo manualmente.")
-                st.rerun()
+        _render_diagnostico_conexao(auth)
 
 
 # ==========================================================
@@ -300,4 +313,4 @@ def render_send_panel() -> None:
         "⚠️ O envio utiliza uma cópia dos dados. "
         "O download final permanece intacto."
     )
-    
+
