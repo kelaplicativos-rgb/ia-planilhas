@@ -27,14 +27,6 @@ def _safe_copy_df(df):
 
 
 def _get_df_fluxo() -> pd.DataFrame | None:
-    """
-    Ordem de prioridade do fluxo final:
-    1) df_final
-    2) df_saida
-    3) df_precificado
-    4) df_calc_precificado
-    5) df_origem
-    """
     for chave in ["df_final", "df_saida", "df_precificado", "df_calc_precificado", "df_origem"]:
         df = st.session_state.get(chave)
         if _safe_df(df):
@@ -55,10 +47,9 @@ def _normalizar_validacao(resultado_validacao) -> tuple[bool, list[str]]:
             return True, []
 
         if isinstance(resultado_validacao, dict):
-            if len(resultado_validacao) == 0:
-                return True, []
-            erros = [f"{k}: {v}" for k, v in resultado_validacao.items()]
-            return False, erros
+            ok = bool(resultado_validacao.get("ok"))
+            erros = list(resultado_validacao.get("alertas") or resultado_validacao.get("faltantes") or [])
+            return ok, [str(item) for item in erros if str(item).strip()]
 
         if isinstance(resultado_validacao, (list, tuple, set)):
             erros = [str(item) for item in resultado_validacao if str(item).strip()]
@@ -131,9 +122,7 @@ def render_preview_final() -> None:
         )
     except Exception as e:
         log_debug(f"[PREVIEW_FINAL] erro na validação de campos obrigatórios: {e}", "ERROR")
-        validacao_ok, erros_validacao = False, [
-            "Falha ao validar os campos obrigatórios."
-        ]
+        validacao_ok, erros_validacao = False, ["Falha ao validar os campos obrigatórios."]
 
     if not validacao_ok:
         _render_erros_validacao(erros_validacao)
