@@ -17,11 +17,6 @@ from bling_app_zero.core.bling_user_session import (
 from bling_app_zero.ui.app_helpers import log_debug
 
 
-# ==========================================================
-# HELPERS BASE
-# ==========================================================
-
-
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
@@ -50,13 +45,11 @@ def _safe_float(value: Any) -> float | None:
         text = str(value).strip()
         if not text:
             return None
-
         text = text.replace("R$", "").replace(" ", "")
         if "," in text:
             text = text.replace(".", "").replace(",", ".")
         else:
             text = text.replace(",", "")
-
         return float(text)
     except Exception:
         return None
@@ -135,7 +128,6 @@ def _set_oauth_feedback(status: str, message: str) -> None:
 def _render_oauth_feedback() -> None:
     status = _safe_str(st.session_state.get(_oauth_status_key()))
     message = _safe_str(st.session_state.get(_oauth_message_key()))
-
     if not status or not message:
         return
 
@@ -168,11 +160,9 @@ def _processar_callback_oauth(on_continue=None) -> None:
             clear_pending_oauth_user()
             _set_oauth_feedback("success", message or "Conta conectada com sucesso.")
             log_debug("[SEND_PANEL] callback OAuth concluído com sucesso.", "INFO")
-
             st.session_state["bling_conectado"] = True
             st.session_state["bling_conexao_ok"] = True
             st.session_state["bling_ultimo_status"] = "conectado"
-
             if callable(on_continue):
                 on_continue()
             else:
@@ -183,35 +173,40 @@ def _processar_callback_oauth(on_continue=None) -> None:
         log_debug(f"[SEND_PANEL] callback OAuth falhou: {message}", "ERROR")
         st.session_state["bling_conectado"] = False
         st.session_state["bling_conexao_ok"] = False
+
     except Exception as e:
         _set_oauth_feedback("error", f"Erro ao processar o retorno do Bling: {e}")
         log_debug(f"[SEND_PANEL] erro no callback OAuth: {e}", "ERROR")
 
 
 def _render_connect_button_same_tab(auth_url: str) -> None:
+    """
+    Abre o OAuth do Bling na mesma aba, sem iframe nem componente embutido.
+    """
+    if not auth_url:
+        st.error("URL de autenticação do Bling não foi gerada.")
+        return
+
     st.markdown(
         f"""
         <a href="{auth_url}" target="_self" style="
             display:block;
             width:100%;
             text-align:center;
-            padding:0.75rem 1rem;
-            border-radius:0.5rem;
             text-decoration:none;
-            font-weight:600;
+            padding:0.85rem 1rem;
+            border-radius:0.6rem;
             background:#ff4b4b;
             color:white;
+            font-weight:700;
             border:none;
             box-sizing:border-box;
-        ">🔌 Conectar com Bling</a>
+        ">
+            🔌 Conectar com Bling
+        </a>
         """,
         unsafe_allow_html=True,
     )
-
-
-# ==========================================================
-# HELPERS DE ENVIO REAL
-# ==========================================================
 
 
 def _tipo_operacao() -> str:
@@ -262,7 +257,6 @@ def _normalize_row_for_product(row: dict[str, Any]) -> dict[str, Any]:
             "preço unitário (obrigatório)",
         ],
     )
-
     return {
         "codigo": _safe_str(codigo),
         "descricao": _safe_str(nome),
@@ -276,14 +270,7 @@ def _normalize_row_for_stock(row: dict[str, Any]) -> dict[str, Any]:
     codigo = _first_existing(row, ["Código", "codigo", "SKU", "sku"])
     estoque = _first_existing(
         row,
-        [
-            "Estoque",
-            "estoque",
-            "Quantidade",
-            "quantidade",
-            "Saldo",
-            "saldo",
-        ],
+        ["Estoque", "estoque", "Quantidade", "quantidade", "Saldo", "saldo"],
     )
     deposito = _first_existing(
         row,
@@ -309,7 +296,6 @@ def _normalize_row_for_stock(row: dict[str, Any]) -> dict[str, Any]:
             "preco de venda",
         ],
     )
-
     return {
         "codigo": _safe_str(codigo),
         "estoque": _safe_float(estoque),
@@ -327,7 +313,7 @@ def _validar_df_para_envio(df_envio: pd.DataFrame, operacao: str) -> tuple[bool,
 
     colunas = {str(c).strip().lower() for c in df_envio.columns}
 
-    if "código".lower() not in colunas and "codigo" not in colunas and "sku" not in colunas:
+    if "código" not in colunas and "codigo" not in colunas and "sku" not in colunas:
         erros.append("A base de envio precisa ter uma coluna de Código ou SKU.")
 
     if operacao == "cadastro":
@@ -352,26 +338,16 @@ def _enviar_cadastro(df_envio: pd.DataFrame, user_key: str) -> tuple[int, int, l
     erros: list[str] = []
 
     try:
-        for idx, row in df_envio.fillna("").to_dict(orient="records"):
-            pass
-    except Exception:
-        pass
-
-    try:
         registros = df_envio.fillna("").to_dict(orient="records")
-
         for idx, row in enumerate(registros, start=1):
             payload = _normalize_row_for_product(row)
 
             if not payload["codigo"] or not payload["descricao"]:
                 fail_count += 1
-                erros.append(
-                    f"Linha {idx}: produto ignorado por falta de Código/SKU ou Descrição."
-                )
+                erros.append(f"Linha {idx}: produto ignorado por falta de Código/SKU ou Descrição.")
                 continue
 
             ok, resp = client.upsert_product(payload)
-
             if ok:
                 ok_count += 1
             else:
@@ -413,7 +389,6 @@ def _enviar_estoque(df_envio: pd.DataFrame, user_key: str) -> tuple[int, int, li
 
     try:
         registros = df_envio.fillna("").to_dict(orient="records")
-
         for idx, row in enumerate(registros, start=1):
             payload = _normalize_row_for_stock(row)
 
@@ -427,7 +402,6 @@ def _enviar_estoque(df_envio: pd.DataFrame, user_key: str) -> tuple[int, int, li
                 estoque = 0.0
 
             deposito_id = _resolver_deposito_id(payload["deposito"])
-
             ok, resp = client.update_stock(
                 codigo=payload["codigo"],
                 estoque=float(estoque),
@@ -459,11 +433,6 @@ def _executar_envio_real(df_envio: pd.DataFrame, user_key: str, operacao: str) -
     return _enviar_cadastro(df_envio, user_key)
 
 
-# ==========================================================
-# UI DE ENVIO
-# ==========================================================
-
-
 def render_send_panel() -> None:
     st.subheader("Envio para o Bling")
 
@@ -477,7 +446,6 @@ def render_send_panel() -> None:
         st.warning(f"Bling não conectado. {status_msg}")
 
     df_base = _get_df_base_envio()
-
     if not _safe_df(df_base):
         st.warning("Nenhum dado disponível para envio.")
         log_debug("[SEND_PANEL] nenhum DataFrame disponível para envio.", "ERROR")
@@ -494,7 +462,6 @@ def render_send_panel() -> None:
     st.markdown("---")
 
     valido, erros_validacao = _validar_df_para_envio(df_envio, operacao)
-
     if not valido:
         st.error("A base ainda não está pronta para envio ao Bling.")
         for erro in erros_validacao:
@@ -574,11 +541,6 @@ def render_send_panel() -> None:
     st.info("⚠️ O envio utiliza uma cópia dos dados. O download final permanece intacto.")
 
 
-# ==========================================================
-# PRIMEIRO ACESSO / CONEXÃO
-# ==========================================================
-
-
 def render_bling_primeiro_acesso(
     on_skip=None,
     on_continue=None,
@@ -588,17 +550,16 @@ def render_bling_primeiro_acesso(
 
     st.subheader("Conectar ao Bling")
     st.caption("Conecte sua conta Bling para envio automático ou continue sem integração.")
-
     _render_oauth_feedback()
 
     user_key = _get_user_key()
     user_label = get_current_user_label()
     auth = _get_auth_manager()
-
     conectado, status_msg = _is_connected()
 
     if conectado:
         st.success(f"Conta conectada com sucesso. Operação atual: {user_label}")
+
         col_a, col_b = st.columns(2)
 
         with col_a:
@@ -625,7 +586,8 @@ def render_bling_primeiro_acesso(
 
     if not auth.is_configured():
         st.error(
-            "Bling não configurado no ambiente. Verifique client_id, client_secret e redirect_uri no secrets.toml."
+            "Bling não configurado no ambiente. "
+            "Verifique client_id, client_secret e redirect_uri no secrets.toml."
         )
         log_debug("[SEND_PANEL] configuração OAuth do Bling ausente ou incompleta.", "ERROR")
 
@@ -645,6 +607,7 @@ def render_bling_primeiro_acesso(
     try:
         set_pending_oauth_user(user_key, user_label)
         auth_url = auth.generate_auth_url()
+        log_debug(f"[SEND_PANEL] auth_url gerada: {auth_url}", "INFO")
     except Exception as e:
         log_debug(f"[SEND_PANEL] erro ao gerar URL OAuth: {e}", "ERROR")
         st.error(f"Não foi possível iniciar a conexão com o Bling: {e}")
@@ -655,6 +618,8 @@ def render_bling_primeiro_acesso(
         if auth_url:
             _render_connect_button_same_tab(auth_url)
             st.caption("A conexão será aberta na mesma aba e o retorno será tratado aqui automaticamente.")
+            with st.expander("Debug OAuth", expanded=False):
+                st.code(auth_url, language="text")
 
     with col2:
         if st.button(
