@@ -84,16 +84,12 @@ def _sincronizar_dirty_site() -> None:
     st.session_state["_site_config_fingerprint"] = fp_atual
 
     if st.session_state.get("site_processado"):
-        log_debug(
-            "[ORIGEM_SITE] configuração alterada após carga. Limpando dados anteriores.",
-            "INFO",
-        )
+        log_debug("[ORIGEM_SITE] configuração alterada após carga. Limpando dados anteriores.", "INFO")
         _limpar_estado_site_carregado()
 
 
 def _executar_busca_site() -> pd.DataFrame | None:
     url = safe_str(st.session_state.get("site_url"))
-
     if not url:
         st.warning("Informe a URL do site antes de executar a busca.")
         return None
@@ -110,7 +106,6 @@ def _executar_busca_site() -> pd.DataFrame | None:
 
     try:
         log_debug(f"[ORIGEM_SITE] iniciando busca no site: {url}", "INFO")
-
         with st.spinner("Buscando produtos no site..."):
             df_site = executar_crawler(
                 url=url,
@@ -163,14 +158,12 @@ def render_config_site() -> pd.DataFrame | None:
 
     if st.session_state.get("site_precisa_login"):
         col1, col2 = st.columns(2)
-
         with col1:
             st.text_input(
                 "Usuário / e-mail do site",
                 key="site_usuario",
                 placeholder="login@site.com",
             )
-
         with col2:
             st.text_input(
                 "Senha do site",
@@ -187,7 +180,6 @@ def render_config_site() -> pd.DataFrame | None:
     st.markdown("---")
 
     col1, col2 = st.columns(2)
-
     with col1:
         st.selectbox(
             "Modo de sincronização desejado",
@@ -228,7 +220,6 @@ def render_config_site() -> pd.DataFrame | None:
     _sincronizar_dirty_site()
 
     col_exec_1, col_exec_2 = st.columns(2)
-
     with col_exec_1:
         if st.button(
             "Executar busca no site",
@@ -269,10 +260,7 @@ def render_origem_entrada(on_change_callback=None):
     opcoes = ["Planilha / CSV / XML", "Buscar em site"]
 
     origem_salva = safe_str(st.session_state.get("origem_dados_tipo")).lower()
-    if origem_salva == "site":
-        index_inicial = 1
-    else:
-        index_inicial = 0
+    index_inicial = 1 if origem_salva == "site" else 0
 
     origem = st.radio(
         "Escolha a origem dos dados",
@@ -285,8 +273,6 @@ def render_origem_entrada(on_change_callback=None):
     origem_valor = "site" if "site" in origem.lower() else "planilha"
     origem_anterior = safe_str(st.session_state.get("_origem_dados_tipo_anterior")).lower()
 
-    # Nunca reatribuir st.session_state["origem_dados_radio"] aqui,
-    # porque o widget já foi instanciado com essa key.
     st.session_state["origem_dados_tipo"] = origem_valor
     st.session_state["origem_dados"] = origem_valor
     st.session_state["_origem_dados_tipo_anterior"] = origem_valor
@@ -294,20 +280,21 @@ def render_origem_entrada(on_change_callback=None):
     if origem_anterior and origem_anterior != origem_valor:
         reset_site_processado()
         st.session_state["_origem_site_autoavancar"] = False
-        if callable(on_change_callback):
-            try:
-                on_change_callback(origem_valor)
-            except Exception:
-                pass
+
+    if callable(on_change_callback):
+        try:
+            on_change_callback(origem_valor)
+        except Exception:
+            pass
 
     if origem_valor == "site":
         return render_config_site()
 
     arquivo = st.file_uploader(
         "Anexe sua planilha ou XML",
-        type=["xlsx", "xls", "csv", "xml"],
+        type=["xlsx", "xls", "xlsb", "csv", "xml"],
         key="upload_origem_dados",
-        help="Formatos aceitos: XLSX, XLS, CSV e XML.",
+        help="Formatos aceitos: XLSX, XLS, XLSB, CSV e XML.",
     )
     return ler_planilha(arquivo)
 
@@ -316,7 +303,6 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
     st.caption("Precificação")
 
     opcoes = [""] + [str(c) for c in df_origem.columns]
-
     coluna_custo = st.selectbox(
         "Qual coluna de origem deve ser usada como base do preço?",
         opcoes,
@@ -362,4 +348,3 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
         st.success(
             f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}"
         )
-        
