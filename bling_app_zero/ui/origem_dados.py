@@ -30,6 +30,13 @@ from bling_app_zero.ui.origem_dados_ui import (
 )
 
 
+def _float_session(key: str, default: float = 0.0) -> float:
+    try:
+        return float(st.session_state.get(key, default) or default)
+    except Exception:
+        return default
+
+
 def render_origem_dados() -> None:
     garantir_estado_origem()
     render_header_fluxo()
@@ -56,6 +63,7 @@ def render_origem_dados() -> None:
         horizontal=True,
         index=labels_operacao.index(valor_radio),
     )
+
     sincronizar_tipo_operacao(operacao)
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
@@ -71,6 +79,7 @@ def render_origem_dados() -> None:
     df_origem = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
+
     origem_atual = obter_origem_atual()
 
     if (
@@ -113,10 +122,10 @@ def render_origem_dados() -> None:
     df_prec = aplicar_precificacao(
         df_origem=df_origem,
         coluna_custo=safe_str(st.session_state.get("coluna_precificacao_resultado")),
-        margem=float(st.session_state.get("margem_bling", 0.0) or 0.0),
-        impostos=float(st.session_state.get("impostos_bling", 0.0) or 0.0),
-        custo_fixo=float(st.session_state.get("custofixo_bling", 0.0) or 0.0),
-        taxa_extra=float(st.session_state.get("taxaextra_bling", 0.0) or 0.0),
+        margem=_float_session("margem_bling"),
+        impostos=_float_session("impostos_bling"),
+        custo_fixo=_float_session("custofixo_bling"),
+        taxa_extra=_float_session("taxaextra_bling"),
     )
 
     if safe_df_estrutura(df_prec):
