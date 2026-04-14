@@ -26,7 +26,7 @@ from bling_app_zero.utils.init_app import inicializar_app
 # =========================
 st.set_page_config(page_title="IA Planilhas Bling", layout="wide")
 
-APP_VERSION = "1.0.34"
+APP_VERSION = "1.0.35"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 
@@ -163,6 +163,7 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "_oauth_pending_user_key",
         "_bling_callback_status",
         "_bling_callback_message",
+        "_bling_auto_continue_after_oauth",
         "bling_conectado",
         "bling_conexao_ok",
         "bling_connection_message",
@@ -178,10 +179,6 @@ def _limpar_lixos_de_sessao() -> None:
 
 
 def _limpar_sessao_por_versao() -> bool:
-    """
-    Quando APP_VERSION mudar, limpa estados antigos/lixos de sessão sem destruir
-    todo o fluxo do usuário de forma cega.
-    """
     versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
 
     _limpar_lixos_de_sessao()
@@ -404,6 +401,8 @@ def _garantir_estado_fluxo_inicial() -> None:
         st.session_state["bling_primeiro_acesso_decidido"] = False
     if "bling_primeiro_acesso_escolha" not in st.session_state:
         st.session_state["bling_primeiro_acesso_escolha"] = ""
+    if "_bling_auto_continue_after_oauth" not in st.session_state:
+        st.session_state["_bling_auto_continue_after_oauth"] = False
 
 
 def _pode_ir_para_mapeamento() -> bool:
@@ -434,9 +433,10 @@ def _sanear_estado_bling_invalido(motivo: str = "") -> None:
         "bling_conexao_ok",
         "bling_connection_checked",
         "bling_connection_source",
-        "bling_ultimo_status",
     ]:
         st.session_state[chave] = False
+
+    st.session_state["_bling_auto_continue_after_oauth"] = False
 
     if motivo:
         st.session_state["bling_connection_message"] = motivo
@@ -459,20 +459,22 @@ def _token_bling_valido_real() -> bool:
         return False
 
 
-def _esta_conectado_real() -> bool:
-    return _token_bling_valido_real()
-
-
 def _resolver_autoetapa() -> str:
     etapa_atual = _obter_etapa_atual()
     _sincronizar_df_fluxo()
 
     if etapa_atual == "conexao":
-        if _esta_conectado_real():
+        if _token_bling_valido_real():
             st.session_state["bling_conectado"] = True
             st.session_state["bling_conexao_ok"] = True
             st.session_state["bling_connection_checked"] = True
             st.session_state["bling_connection_source"] = "token_real"
+
+            if st.session_state.get("_bling_auto_continue_after_oauth"):
+                log_debug("[APP] callback OAuth confirmado. Autoavanço imediato para origem.", "INFO")
+                st.session_state["_bling_auto_continue_after_oauth"] = False
+                return "origem"
+
             log_debug("[APP] token real detectado. Autoavançando para origem.", "INFO")
             return "origem"
 
@@ -515,13 +517,15 @@ def _processar_callback_bling() -> None:
                 st.session_state["bling_conectado"] = True
                 st.session_state["bling_conexao_ok"] = True
                 st.session_state["bling_connection_checked"] = True
-                st.session_state["bling_ultimo_status"] = "success"
                 st.session_state["bling_connection_source"] = "oauth_callback"
-                st.session_state["bling_connection_message"] = (
-                    mensagem or "Conectado com sucesso."
-                )
-                _sincronizar_etapa_global("origem")
+                st.session_state["bling_ultimo_status"] = "success"
+                st.session_state["bling_connection_message"] = mensagem or "Conectado com sucesso."
+                st.session_state["bling_primeiro_acesso_decidido"] = True
+                st.session_state["bling_primeiro_acesso_escolha"] = "conectado"
+                st.session_state["_bling_auto_continue_after_oauth"] = True
+
                 log_debug("[APP] callback OAuth concluído com token real válido.", "INFO")
+                _sincronizar_etapa_global("origem")
                 st.rerun()
 
             _sanear_estado_bling_invalido(
@@ -549,6 +553,22 @@ def _processar_callback_bling() -> None:
         log_debug(f"[APP] erro no callback do Bling: {e}", "ERROR")
 
 
+def _render_feedback_callback() -> None:
+    status = str(st.session_state.get("_bling_callback_status") or "").strip().lower()
+    mensagem = str(st.session_state.get("_bling_callback_message") or "").strip()
+
+    if not status or not mensagem:
+        return
+
+    if status == "success":
+        st.success(f"✅ {mensagem}")
+    elif status == "error":
+        st.error(f"❌ {mensagem}")
+
+    st.session_state["_bling_callback_status"] = ""
+    st.session_state["_bling_callback_message"] = ""
+
+
 # =========================
 # CALLBACK OAUTH
 # =========================
@@ -562,6 +582,7 @@ st.title("IA Planilhas → Bling")
 _render_controle_versao(VERSION_DATA)
 render_debug_panel()
 _garantir_estado_fluxo_inicial()
+_render_feedback_callback()
 
 
 # =========================
@@ -649,4 +670,3 @@ elif etapa == "envio":
 else:
     log_debug(f"Fallback etapa inesperada: {etapa}", "ERROR")
     _ir_para("conexao")
-    
