@@ -1,19 +1,24 @@
-
 from __future__ import annotations
 
 import csv
 import io
 import re
+import unicodedata
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
-ETAPA_INICIAL = "origem"
+MAX_DEBUG_LOGS = 500
+MAX_DEBUG_LOGS_EXIBICAO = 200
 
 
+# =========================
+# LOG / DEBUG
+# =========================
 def _agora() -> str:
     try:
         return datetime.now().strftime("%H:%M:%S")
@@ -28,7 +33,7 @@ def log_debug(mensagem: str, nivel: str = "INFO") -> None:
         if not isinstance(logs, list):
             logs = []
         logs.append(linha)
-        st.session_state["_debug_logs"] = logs[-500:]
+        st.session_state["_debug_logs"] = logs[-MAX_DEBUG_LOGS:]
     except Exception:
         pass
 
@@ -48,195 +53,105 @@ def _get_debug_logs_texto() -> str:
         logs = _get_debug_logs()
         if not logs:
             return "Sem logs até o momento.\n"
-        return "\n".join(logs[-500:])
+        return "\n".join(logs[-MAX_DEBUG_LOGS:])
     except Exception:
         return "Sem logs até o momento.\n"
 
 
 def render_debug_panel() -> None:
     try:
-        with st.expander("LOG DEBUG", expanded=False):
-            logs = _get_debug_logs()
-            texto_logs = _get_debug_logs_texto()
+        logs = _get_debug_logs()
+        texto_logs = _get_debug_logs_texto()
 
-            if not logs:
-                st.caption("Sem logs até o momento.")
-            else:
-                st.text("\n".join(logs[-200:]))
+        if not logs:
+            st.caption("Sem logs até o momento.")
+        else:
+            st.text("\n".join(logs[-MAX_DEBUG_LOGS_EXIBICAO:]))
 
-            col1, col2 = st.columns([1, 1])
+        col1, col2 = st.columns(2)
 
-            with col1:
-                st.download_button(
-                    label="Baixar log TXT",
-                    data=texto_logs.encode("utf-8"),
-                    file_name=f"debug_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                    key="download_debug_log_txt",
-                )
+        with col1:
+            st.download_button(
+                label="Baixar log TXT",
+                data=texto_logs.encode("utf-8"),
+                file_name=f"debug_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True,
+                key="download_debug_log_txt",
+            )
 
-            with col2:
-                if st.button(
-                    "Limpar log",
-                    use_container_width=True,
-                    key="limpar_debug_log",
-                ):
-                    st.session_state["_debug_logs"] = []
-                    st.rerun()
+        with col2:
+            if st.button(
+                "Limpar log",
+                use_container_width=True,
+                key="limpar_debug_log",
+            ):
+                st.session_state["_debug_logs"] = []
+                st.rerun()
     except Exception as e:
         log_debug(f"Erro render_debug_panel: {e}", "ERROR")
 
 
+# =========================
+# ESTADO GLOBAL
+# =========================
 def _normalizar_etapa(valor: object) -> str:
     try:
-        etapa = str(valor or ETAPA_INICIAL).strip().lower()
+        etapa = str(valor or "origem").strip().lower()
     except Exception:
-        etapa = ETAPA_INICIAL
+        etapa = "origem"
 
     if etapa not in ETAPAS_VALIDAS:
-        return ETAPA_INICIAL
+        return "origem"
     return etapa
 
 
-def sincronizar_etapa_global(etapa_destino: str) -> str:
-    etapa_ok = _normalizar_etapa(etapa_destino)
-    st.session_state["etapa_origem"] = etapa_ok
-    st.session_state["etapa"] = etapa_ok
-    st.session_state["etapa_fluxo"] = etapa_ok
-    return etapa_ok
-
-
 def obter_etapa_global() -> str:
-    for chave in ("etapa_origem", "etapa", "etapa_fluxo"):
-        valor = st.session_state.get(chave)
-        etapa = _normalizar_etapa(valor)
-        if etapa in ETAPAS_VALIDAS:
-            return etapa
-    return ETAPA_INICIAL
-
-
-def ir_para_etapa(etapa_destino: str, rerun: bool = True) -> str:
-    etapa_ok = sincronizar_etapa_global(etapa_destino)
-    if rerun:
-        st.rerun()
-    return etapa_ok
-
-
-def limpar_estados_fluxo(manter_origem: bool = True) -> None:
     try:
-        df_origem_atual = st.session_state.get("df_origem")
-        mapping_atual = st.session_state.get("mapping_origem", {})
-        mapping_rascunho_atual = st.session_state.get("mapping_origem_rascunho", {})
-        deposito_atual = st.session_state.get("deposito_nome", "")
-        tipo_operacao_atual = st.session_state.get("tipo_operacao", "Cadastro de Produtos")
-        tipo_operacao_bling_atual = st.session_state.get("tipo_operacao_bling", "cadastro")
-        logs_atuais = st.session_state.get("_debug_logs", [])
+        for chave in ("etapa_fluxo", "etapa_origem", "etapa"):
+            valor = st.session_state.get(chave)
+            if valor:
+                return _normalizar_etapa(valor)
+    except Exception:
+        pass
+    return "origem"
 
-        chaves_limpar = [
-            "df_saida",
-            "df_final",
-            "df_precificado",
-            "df_calc_precificado",
-            "df_preview_mapeamento",
-            "preview_final_valido",
-            "campos_obrigatorios_faltantes",
-            "campos_obrigatorios_alertas",
-            "site_processado",
-            "site_autoavanco_realizado",
-            "mapeamento_retorno_preservado",
-            "origem_dados_radio",
-            "origem_upload_key",
-            "origem_site_url",
-            "origem_site_ultima_url",
-            "origem_site_df_hash",
-            "origem_planilha_df_hash",
-            "precificacao_coluna_custo",
-            "precificacao_coluna_resultado",
-            "precificacao_usa_calculadora",
-            "mapeamento_colunas_usadas",
-            "mapeamento_alertas",
-            "mapeamento_validado",
-        ]
 
-        if not manter_origem:
-            chaves_limpar.extend(
-                [
-                    "df_origem",
-                    "mapping_origem",
-                    "mapping_origem_rascunho",
-                    "deposito_nome",
-                    "tipo_operacao",
-                    "tipo_operacao_bling",
-                ]
-            )
-
-        for chave in chaves_limpar:
-            if chave in st.session_state:
-                del st.session_state[chave]
-
-        st.session_state["_debug_logs"] = logs_atuais if isinstance(logs_atuais, list) else []
-
-        if manter_origem:
-            st.session_state["df_origem"] = df_origem_atual
-            st.session_state["mapping_origem"] = (
-                mapping_atual if isinstance(mapping_atual, dict) else {}
-            )
-            st.session_state["mapping_origem_rascunho"] = (
-                mapping_rascunho_atual if isinstance(mapping_rascunho_atual, dict) else {}
-            )
-            st.session_state["deposito_nome"] = str(deposito_atual or "")
-            st.session_state["tipo_operacao"] = str(
-                tipo_operacao_atual or "Cadastro de Produtos"
-            )
-            st.session_state["tipo_operacao_bling"] = str(
-                tipo_operacao_bling_atual or "cadastro"
-            )
-        else:
-            st.session_state["df_origem"] = None
-            st.session_state["mapping_origem"] = {}
-            st.session_state["mapping_origem_rascunho"] = {}
-            st.session_state["deposito_nome"] = ""
-            st.session_state["tipo_operacao"] = "Cadastro de Produtos"
-            st.session_state["tipo_operacao_bling"] = "cadastro"
-
-        st.session_state["df_saida"] = None
-        st.session_state["df_final"] = None
-        st.session_state["df_precificado"] = None
-        st.session_state["df_calc_precificado"] = None
-        st.session_state["df_preview_mapeamento"] = None
-        st.session_state["preview_final_valido"] = False
-        st.session_state["campos_obrigatorios_faltantes"] = []
-        st.session_state["campos_obrigatorios_alertas"] = []
-        st.session_state["site_processado"] = False
-        st.session_state["site_autoavanco_realizado"] = False
-        st.session_state["mapeamento_retorno_preservado"] = False
-
-    except Exception as e:
-        log_debug(f"Erro limpar_estados_fluxo: {e}", "ERROR")
+def sincronizar_etapa_global(etapa: str) -> str:
+    etapa_normalizada = _normalizar_etapa(etapa)
+    st.session_state["etapa_fluxo"] = etapa_normalizada
+    st.session_state["etapa_origem"] = etapa_normalizada
+    st.session_state["etapa"] = etapa_normalizada
+    return etapa_normalizada
 
 
 def garantir_estado_base() -> None:
     defaults = {
-        "etapa_origem": ETAPA_INICIAL,
-        "etapa": ETAPA_INICIAL,
-        "etapa_fluxo": ETAPA_INICIAL,
+        # fluxo principal atual
+        "etapa_origem": "origem",
+        "etapa": "origem",
+        "etapa_fluxo": "origem",
+        # dataframes
         "df_origem": None,
         "df_saida": None,
         "df_final": None,
         "df_precificado": None,
         "df_calc_precificado": None,
         "df_preview_mapeamento": None,
+        # mapeamento / operação
         "mapping_origem": {},
         "mapping_origem_rascunho": {},
         "deposito_nome": "",
         "tipo_operacao": "Cadastro de Produtos",
         "tipo_operacao_bling": "cadastro",
+        # logs / cache
         "_debug_logs": [],
         "_cache_log": "",
+        # validações
         "preview_final_valido": False,
         "campos_obrigatorios_faltantes": [],
         "campos_obrigatorios_alertas": [],
+        # controles de fluxo
         "site_processado": False,
         "site_autoavanco_realizado": False,
         "mapeamento_retorno_preservado": False,
@@ -246,15 +161,15 @@ def garantir_estado_base() -> None:
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
-    sincronizar_etapa_global(
-        st.session_state.get("etapa_origem")
-        or st.session_state.get("etapa")
-        or st.session_state.get("etapa_fluxo")
-        or ETAPA_INICIAL
-    )
+    # blindagem para sessões antigas que ainda ficaram em "conexao"
+    for chave in ("etapa_origem", "etapa", "etapa_fluxo"):
+        st.session_state[chave] = _normalizar_etapa(st.session_state.get(chave))
 
 
-def _safe_str(valor) -> str:
+# =========================
+# SAFE HELPERS
+# =========================
+def _safe_str(valor: Any) -> str:
     try:
         if valor is None:
             return ""
@@ -273,48 +188,41 @@ def _safe_str(valor) -> str:
     return texto
 
 
-def safe_df_estrutura(df) -> bool:
+def safe_df_estrutura(df: Any) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
     except Exception:
         return False
 
 
-def safe_df_dados(df) -> bool:
+def safe_df_dados(df: Any) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
         return False
 
 
-def _normalizar_coluna(nome) -> str:
+# =========================
+# NORMALIZAÇÃO DE TEXTO
+# =========================
+def _normalizar_coluna(nome: Any) -> str:
     texto = _safe_str(nome).lower()
-    texto = (
-        texto.replace("ã", "a")
-        .replace("á", "a")
-        .replace("à", "a")
-        .replace("â", "a")
-        .replace("ä", "a")
-        .replace("é", "e")
-        .replace("ê", "e")
-        .replace("ë", "e")
-        .replace("í", "i")
-        .replace("ï", "i")
-        .replace("ó", "o")
-        .replace("ô", "o")
-        .replace("õ", "o")
-        .replace("ö", "o")
-        .replace("ú", "u")
-        .replace("ü", "u")
-        .replace("ç", "c")
-    )
-    return " ".join(texto.split())
+    if not texto:
+        return ""
+
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
-def _so_digitos(valor) -> str:
+def _so_digitos(valor: Any) -> str:
     return re.sub(r"\D+", "", _safe_str(valor))
 
 
+# =========================
+# GTIN / EAN
+# =========================
 def _checksum_gtin_ok(gtin: str) -> bool:
     if len(gtin) not in {8, 12, 13, 14}:
         return False
@@ -323,11 +231,11 @@ def _checksum_gtin_ok(gtin: str) -> bool:
         numeros = [int(c) for c in gtin]
         corpo = numeros[:-1]
         verificador = numeros[-1]
+
         soma = 0
         peso3 = True
-
-        for n in reversed(corpo):
-            soma += n * (3 if peso3 else 1)
+        for numero in reversed(corpo):
+            soma += numero * (3 if peso3 else 1)
             peso3 = not peso3
 
         calculado = (10 - (soma % 10)) % 10
@@ -340,7 +248,7 @@ def _is_coluna_gtin(nome_coluna: str) -> bool:
     nome = _normalizar_coluna(nome_coluna)
     return any(
         token in nome
-        for token in ["gtin", "ean", "codigo de barras", "codigo barras"]
+        for token in ("gtin", "ean", "codigo de barras", "codigo barras")
     )
 
 
@@ -352,7 +260,7 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
         df_limpo = df.copy()
 
         for col in df_limpo.columns:
-            if _is_coluna_gtin(col):
+            if _is_coluna_gtin(str(col)):
                 df_limpo[col] = df_limpo[col].apply(
                     lambda v: (_so_digitos(v) if _checksum_gtin_ok(_so_digitos(v)) else "")
                 )
@@ -363,7 +271,10 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
-def _normalizar_urls_imagem(valor) -> str:
+# =========================
+# IMAGENS
+# =========================
+def _normalizar_urls_imagem(valor: Any) -> str:
     texto = _safe_str(valor)
     if not texto:
         return ""
@@ -372,10 +283,10 @@ def _normalizar_urls_imagem(valor) -> str:
         texto.replace("\n", "|")
         .replace("\r", "|")
         .replace(";", "|")
-        .replace(",", "|")
     )
 
-    partes = [p.strip() for p in texto.split("|") if p.strip()]
+    partes = [parte.strip() for parte in texto.split("|") if parte.strip()]
+
     unicos: list[str] = []
     vistos: set[str] = set()
 
@@ -395,16 +306,21 @@ def _aplicar_tratamento_imagens(df: pd.DataFrame) -> pd.DataFrame:
             if "imagem" in nome or "url" in nome:
                 df_out[col] = df_out[col].apply(_normalizar_urls_imagem)
         return df_out
-    except Exception:
+    except Exception as e:
+        log_debug(f"Erro _aplicar_tratamento_imagens: {e}", "ERROR")
         return df.copy()
 
 
-def _normalizar_situacao(valor) -> str:
+# =========================
+# SITUAÇÃO
+# =========================
+def _normalizar_situacao(valor: Any) -> str:
     texto = _safe_str(valor).lower()
 
     if not texto:
         return "Ativo"
 
+    # regra pedida: não deixar sair inativo
     if texto in {"inativo", "inactive", "0", "false", "nao", "não"}:
         return "Ativo"
 
@@ -422,10 +338,14 @@ def _aplicar_tratamento_situacao(df: pd.DataFrame) -> pd.DataFrame:
             if "situacao" in nome or "situação" in str(col).lower():
                 df_out[col] = df_out[col].apply(_normalizar_situacao)
         return df_out
-    except Exception:
+    except Exception as e:
+        log_debug(f"Erro _aplicar_tratamento_situacao: {e}", "ERROR")
         return df.copy()
 
 
+# =========================
+# SANITIZAÇÃO
+# =========================
 def sanitizar_dados_reais(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
@@ -471,16 +391,19 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         return df_blindado
     except Exception as e:
         log_debug(f"Erro em blindar_df_para_download: {e}", "ERROR")
-        if isinstance(df, pd.DataFrame):
-            return df.copy()
-        return pd.DataFrame()
+        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
+# =========================
+# VALIDAÇÃO
+# =========================
 def _encontrar_primeira_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
     colunas_normalizadas = {str(col): _normalizar_coluna(col) for col in df.columns}
+
     for col_real, col_norm in colunas_normalizadas.items():
         if any(alias in col_norm for alias in aliases):
             return col_real
+
     return None
 
 
@@ -492,23 +415,22 @@ def _coluna_tem_algum_valor(df: pd.DataFrame, coluna: str) -> bool:
         return False
 
 
-def validar_campos_obrigatorios(df: pd.DataFrame):
+def validar_campos_obrigatorios(df: pd.DataFrame) -> dict[str, Any]:
     try:
         if not isinstance(df, pd.DataFrame) or df.empty:
-            st.session_state["preview_final_valido"] = False
-            st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
-            st.session_state["campos_obrigatorios_alertas"] = [
-                "Nenhum dado disponível para validar."
-            ]
-            return {
+            resultado = {
                 "ok": False,
                 "faltantes": ["DataFrame vazio"],
                 "alertas": ["Nenhum dado disponível para validar."],
             }
+            st.session_state["preview_final_valido"] = False
+            st.session_state["campos_obrigatorios_faltantes"] = resultado["faltantes"]
+            st.session_state["campos_obrigatorios_alertas"] = resultado["alertas"]
+            return resultado
 
         tipo_operacao = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
 
-        candidatos = {
+        candidatos: dict[str, list[str]] = {
             "Descrição": ["descricao", "descrição"],
         }
 
@@ -544,7 +466,6 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
             "faltantes": faltantes,
             "alertas": alertas,
         }
-
     except Exception as e:
         log_debug(f"Erro validar_campos_obrigatorios: {e}", "ERROR")
         st.session_state["preview_final_valido"] = False
@@ -559,6 +480,9 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         }
 
 
+# =========================
+# EXPORTAÇÃO
+# =========================
 def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
     try:
         df_download = blindar_df_para_download(df)
@@ -593,9 +517,3 @@ def gerar_nome_arquivo_download() -> str:
         return "bling_export_cadastro.csv"
 
     return "bling_export.csv"
-
-
-def render_preview_final(*args, **kwargs):
-    from bling_app_zero.ui.preview_final import render_preview_final as _render_preview_final
-
-    return _render_preview_final(*args, **kwargs)
