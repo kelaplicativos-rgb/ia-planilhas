@@ -23,9 +23,6 @@ NavCallback = Callable[[], None] | None
 ETAPAS_VALIDAS_ORIGEM = {"origem", "mapeamento", "final"}
 
 
-# =========================================================
-# HELPERS BASE
-# =========================================================
 def _safe_dict(valor) -> dict:
     try:
         return dict(valor or {})
@@ -130,7 +127,6 @@ def _navegar(destino: str, callback: NavCallback = None) -> None:
     if callable(callback):
         callback()
         return
-
     set_etapa_mapeamento(destino)
     st.rerun()
 
@@ -168,9 +164,6 @@ def _continuar_para_final(
     _navegar("final", on_continue)
 
 
-# =========================================================
-# HELPERS VISUAIS LIMPOS
-# =========================================================
 def _render_resumo_operacional(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     operacao = _safe_str(
         st.session_state.get("tipo_operacao")
@@ -230,34 +223,8 @@ def _render_configuracao_mapeamento() -> None:
         value=deposito_atual,
         key="deposito_nome",
         placeholder="Ex: principal, ifood, loja 1",
-        help="Esse valor é aplicado automaticamente ao campo de depósito no fluxo de estoque.",
+        help="Este valor vai preencher automaticamente a coluna de depósito do modelo de estoque.",
     )
-
-
-def _resolver_colunas_modelo_visuais(df_modelo: pd.DataFrame) -> list[str]:
-    colunas_visuais: list[str] = []
-
-    for col in df_modelo.columns:
-        nome = _safe_str(col)
-
-        if not nome:
-            continue
-
-        if nome == "Balanço (OBRIGATÓRIO)":
-            colunas_visuais.append("Balanço (OBRIGATÓRIO) — automático do estoque")
-            continue
-
-        if nome == "Depósito (OBRIGATÓRIO)":
-            colunas_visuais.append("Depósito (OBRIGATÓRIO) — preenchido pelo campo de depósito")
-            continue
-
-        if nome == "Quantidade":
-            colunas_visuais.append("Quantidade — quantidade do estoque")
-            continue
-
-        colunas_visuais.append(nome)
-
-    return colunas_visuais
 
 
 def _render_preview_curto(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -265,16 +232,19 @@ def _render_preview_curto(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> No
 
     with col1:
         with st.expander("Colunas da origem", expanded=False):
-            st.write(list(df_fonte.columns))
+            st.dataframe(
+                pd.DataFrame({"Coluna da origem": list(df_fonte.columns)}),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with col2:
         with st.expander("Colunas do modelo", expanded=False):
-            st.write(_resolver_colunas_modelo_visuais(df_modelo))
-            if "Balanço (OBRIGATÓRIO)" in list(df_modelo.columns):
-                st.caption(
-                    "No estoque, Quantidade e Balanço não são a mesma coluna. "
-                    "Quantidade recebe o valor do estoque; Balanço é um campo técnico obrigatório do modelo."
-                )
+            st.dataframe(
+                pd.DataFrame({"Coluna do modelo": [str(c) for c in df_modelo.columns]}),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def _render_alertas_duplicidade(duplicidades: dict[str, list[str]]) -> None:
@@ -338,9 +308,6 @@ def _render_footer_nav(
         st.caption("Remova as duplicidades para liberar a próxima etapa.")
 
 
-# =========================================================
-# RENDER PRINCIPAL
-# =========================================================
 def render_origem_mapeamento(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
@@ -380,7 +347,7 @@ def render_origem_mapeamento(
 
     _render_cabecalho_bloco(
         "Como usar esta etapa",
-        "Mapeie cada coluna do modelo para uma coluna da origem. O campo ID permanece bloqueado e o preview abaixo mostra como a saída final ficará.",
+        "Mapeie apenas as colunas realmente necessárias. ID, Depósito e Balanço são controlados automaticamente pelo sistema.",
     )
 
     st.divider()
@@ -390,38 +357,6 @@ def render_origem_mapeamento(
         "Revise o depósito padrão e use a referência rápida para mapear com mais segurança.",
     )
     _render_configuracao_mapeamento()
-    _render_preview_curto(df_fonte, df_modelo)
+    _render_preview_curto(df_fonte, df_model
 
-    st.divider()
-
-    _render_cabecalho_bloco(
-        "Formulário de mapeamento",
-        "Relacione as colunas da origem com o modelo final.",
-    )
-
-    mapping_inicial = _restaurar_mapping_inicial()
-    mapping_atualizado = render_formulario_mapeamento(
-        df_fonte,
-        df_modelo,
-        mapping_inicial,
-    )
-    mapping_atualizado = _safe_dict(mapping_atualizado)
-
-    st.session_state["mapping_origem_rascunho"] = _safe_dict(mapping_atualizado)
-
-    duplicidades = detectar_duplicidades_mapping(mapping_atualizado)
-    erro = bool(duplicidades)
-
-    df_saida = None
-
-    if not erro:
-        _persistir_mapping(mapping_atualizado)
-        df_saida = montar_df_saida_mapeado(df_fonte, df_modelo, mapping_atualizado)
-
-        if _tem_estrutura_df(df_saida):
-            _persistir_df_saida(df_saida)
-
-    st.divider()
-
-    _render_cabecalho_bloco(
-      
+                          
