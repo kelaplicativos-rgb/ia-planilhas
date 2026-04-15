@@ -11,7 +11,6 @@ from bling_app_zero.ui.app_helpers import (
     sincronizar_etapa_global,
 )
 
-
 try:
     from bling_app_zero.ui.origem_mapeamento_core import (
         montar_df_saida_mapeado as _montar_df_saida_mapeado_core,
