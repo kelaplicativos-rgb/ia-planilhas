@@ -4,106 +4,110 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_helpers import safe_df_dados
+from bling_app_zero.ui.origem_dados_handlers import safe_str
 from bling_app_zero.ui.origem_mapeamento_core import (
-    aplicar_mapeamento_automatico_identificacao,
-    aplicar_mapeamento_automatico_preco,
-    aplicar_mapeamento_automatico_quantidade,
-)
-from bling_app_zero.ui.origem_mapeamento_validacao import (
-    is_coluna_deposito,
-    is_coluna_id,
-    opcoes_select_mapeamento,
-    safe_str,
+    colunas_bloqueadas,
+    construir_df_mapeado,
+    inicializar_mapeamento,
 )
 
 
-def render_cabecalho_mapeamento() -> None:
-    st.subheader("Mapeamento de colunas")
-    st.text_input(
-        "Nome do Depósito (Bling)",
-        value=str(st.session_state.get("deposito_nome", "") or ""),
-        key="deposito_nome",
-        placeholder="Ex: ifood, geral, principal",
+def render_header_mapeamento(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
+    st.markdown("### Etapa de mapeamento")
+    st.caption(
+        f"Base de origem: {len(df_origem)} linha(s) | "
+        f"Modelo de destino: {len(df_modelo.columns)} coluna(s)"
     )
 
 
-def _render_campo_bloqueado(rotulo: str, valor: str, chave: str) -> None:
-    st.text_input(
-        rotulo,
-        value=valor,
-        disabled=True,
-        key=chave,
-    )
+def render_resumo_colunas(df_origem: pd.DataFrame) -> None:
+    with st.expander("Colunas disponíveis da origem", expanded=False):
+        st.write(", ".join([safe_str(c) for c in df_origem.columns]))
 
 
-def render_formulario_mapeamento(
-    df_fonte: pd.DataFrame,
+def render_tabela_mapeamento(
+    df_origem: pd.DataFrame,
     df_modelo: pd.DataFrame,
-    mapping: dict,
-) -> dict:
-    mapping_local = aplicar_mapeamento_automatico_preco(mapping, df_modelo, df_fonte)
-    mapping_local = aplicar_mapeamento_automatico_quantidade(mapping_local, df_modelo, df_fonte)
-    mapping_local = aplicar_mapeamento_automatico_identificacao(mapping_local, df_modelo, df_fonte)
+    mapping_atual: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    colunas_origem = [""] + [safe_str(c) for c in df_origem.columns]
+    bloqueadas = colunas_bloqueadas()
+    usados: set[str] = set()
+    mapping_novo: dict[str, str] = {}
+    defaults_novos: dict[str, str] = {}
 
-    for col_modelo in df_modelo.columns:
-        col_modelo = str(col_modelo)
+    for destino in df_modelo.columns:
+        st.markdown(f"**{destino}**")
 
-        if is_coluna_id(col_modelo):
-            _render_campo_bloqueado(
-                col_modelo,
-                "(Automático / Bloqueado)",
-                f"id_lock_{col_modelo}",
+        c1, c2 = st.columns([2, 1])
+
+        with c1:
+            valor_inicial = safe_str(mapping_atual.get(destino))
+            if valor_inicial not in colunas_origem:
+                valor_inicial = ""
+
+            opcoes = colunas_origem.copy()
+
+            if destino not in bloqueadas:
+                opcoes_filtradas = [""]
+                for opcao in colunas_origem[1:]:
+                    if opcao == valor_inicial or opcao not in usados:
+                        opcoes_filtradas.append(opcao)
+                opcoes = opcoes_filtradas
+
+            escolha = st.selectbox(
+                f"Origem para {destino}",
+                options=opcoes,
+                index=opcoes.index(valor_inicial) if valor_inicial in opcoes else 0,
+                key=f"map_src_{destino}",
+                disabled=destino in bloqueadas,
+                label_visibility="collapsed",
             )
-            mapping_local[col_modelo] = ""
-            continue
 
-        if is_coluna_deposito(col_modelo):
-            _render_campo_bloqueado(
-                col_modelo,
-                safe_str(st.session_state.get("deposito_nome")) or "(Depósito padrão do sistema)",
-                f"deposito_lock_{col_modelo}",
+        with c2:
+            default_value = st.text_input(
+                f"Default {destino}",
+                value=safe_str(st.session_state.get(f"map_default_{destino}", "")),
+                key=f"map_default_{destino}",
+                label_visibility="collapsed",
+                disabled=destino in bloqueadas,
+                placeholder="Valor fixo",
             )
-            mapping_local[col_modelo] = ""
-            continue
 
-        opcoes = opcoes_select_mapeamento(df_fonte, mapping_local, col_modelo)
-        valor_atual = safe_str(mapping_local.get(col_modelo))
+        if destino in bloqueadas:
+            escolha = ""
+            if destino == "Deposito (OBRIGATÓRIO)":
+                default_value = safe_str(st.session_state.get("deposito_nome"))
 
-        valor = st.selectbox(
-            col_modelo,
-            opcoes,
-            index=opcoes.index(valor_atual) if valor_atual in opcoes else 0,
-            key=f"map_{col_modelo}",
-        )
-        mapping_local[col_modelo] = valor
+        if escolha:
+            usados.add(escolha)
 
-    return mapping_local
+        mapping_novo[destino] = escolha
+        defaults_novos[destino] = default_value
+
+    return mapping_novo, defaults_novos
 
 
-def render_preview_mapeamento(
-    df_saida: pd.DataFrame,
-    duplicidades: dict[str, list[str]],
-) -> None:
-    if duplicidades:
-        mensagens = []
-        for coluna_origem, colunas_modelo in duplicidades.items():
-            mensagens.append(
-                f"'{coluna_origem}' usada em: {', '.join([str(c) for c in colunas_modelo])}"
-            )
-        st.error("❌ Existe coluna sendo usada mais de uma vez.\n\n" + "\n".join(mensagens))
+def render_preview_mapeamento(df_preview: pd.DataFrame) -> None:
+    if not safe_df_dados(df_preview):
+        return
 
-    st.dataframe(df_saida.head(15), use_container_width=True)
+    with st.expander("Preview do mapeamento", expanded=False):
+        st.dataframe(df_preview.head(5), use_container_width=True, hide_index=True)
 
 
-def render_acoes_mapeamento(erro: bool) -> tuple[bool, bool]:
-    col1, col2 = st.columns(2)
-    avancar = False
-    voltar = False
+def render_bloco_mapeamento(
+    df_origem: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+) -> tuple[dict[str, str], dict[str, str], pd.DataFrame]:
+    mapping_atual = inicializar_mapeamento(df_origem, df_modelo)
+    render_header_mapeamento(df_origem, df_modelo)
+    render_resumo_colunas(df_origem)
 
-    with col1:
-        avancar = st.button("➡️ Avançar", use_container_width=True, disabled=erro)
+    mapping_novo, defaults_novos = render_tabela_mapeamento(df_origem, df_modelo, mapping_atual)
+    df_preview = construir_df_mapeado(df_origem, df_modelo, mapping_novo, defaults_novos)
+    render_preview_mapeamento(df_preview)
 
-    with col2:
-        voltar = st.button("⬅️ Voltar", use_container_width=True)
-
-    return avancar, voltar
+    st.session_state["mapping_origem_rascunho"] = mapping_novo.copy()
+    return mapping_novo, defaults_novos, df_preview
