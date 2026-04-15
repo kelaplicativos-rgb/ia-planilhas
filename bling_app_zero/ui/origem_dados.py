@@ -36,11 +36,17 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
+def _set_etapa_global(destino: str) -> None:
+    set_etapa_origem(destino)
+    st.session_state["etapa"] = destino
+    st.session_state["etapa_fluxo"] = destino
+
+
 def _navegar(destino: str, callback: NavCallback = None) -> None:
     if callable(callback):
         callback()
         return
-    set_etapa_origem(destino)
+    _set_etapa_global(destino)
     st.rerun()
 
 
@@ -106,7 +112,6 @@ def _render_css_local() -> None:
                 font-weight: 700;
                 margin-bottom: 0.30rem;
             }
-
             .od-title {
                 font-size: 2rem;
                 line-height: 1.05;
@@ -115,13 +120,11 @@ def _render_css_local() -> None:
                 margin: 0 0 0.40rem 0;
                 letter-spacing: -0.02em;
             }
-
             .od-sub {
                 font-size: 1rem;
                 color: #667085;
                 margin: 0 0 1rem 0;
             }
-
             .od-summary {
                 background: #FFFFFF;
                 border: 1px solid #EAECF0;
@@ -129,7 +132,6 @@ def _render_css_local() -> None:
                 padding: 0.9rem 1rem;
                 margin: 0.75rem 0 1rem 0;
             }
-
             .od-summary-line {
                 font-size: 0.94rem;
                 color: #344054;
@@ -307,11 +309,7 @@ def render_origem_dados(
     )
 
     if _deve_exibir_deposito():
-        st.text_input(
-            "Nome do depósito",
-            key="deposito_nome",
-            placeholder="Ex: Depósito principal",
-        )
+        st.text_input("Nome do depósito", key="deposito_nome", placeholder="Ex: Depósito principal")
 
     df_origem_render = _render_entrada_somente_da_origem_escolhida()
     df_origem = _obter_df_origem_renderizado(df_origem_render)
