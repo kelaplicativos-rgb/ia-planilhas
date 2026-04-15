@@ -24,7 +24,7 @@ st.set_page_config(
     layout="wide",
 )
 
-APP_VERSION = "1.0.40"
+APP_VERSION = "1.0.41"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
@@ -36,6 +36,9 @@ ETAPAS_CONFIG = [
 ]
 
 
+# =========================================================
+# VERSIONAMENTO
+# =========================================================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -50,7 +53,11 @@ def _ler_version_json() -> dict:
         bruto = VERSION_JSON_PATH.read_text(encoding="utf-8")
         data = json.loads(bruto)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as e:
+        try:
+            log_debug(f"[VERSION] erro ao ler version.json: {e}", "ERROR")
+        except Exception:
+            pass
         return {}
 
 
@@ -61,7 +68,11 @@ def _salvar_version_json(data: dict) -> bool:
             encoding="utf-8",
         )
         return True
-    except Exception:
+    except Exception as e:
+        try:
+            log_debug(f"[VERSION] erro ao salvar version.json: {e}", "ERROR")
+        except Exception:
+            pass
         return False
 
 
@@ -76,16 +87,16 @@ def _sincronizar_version_json_com_app() -> dict:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Fluxo com etapa de precificação",
-            "last_description": "A calculadora sai da origem e vira etapa própria.",
+            "last_title": "Fluxo com precificação separada",
+            "last_description": "Origem, precificação, mapeamento e final em etapas distintas.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Fluxo com etapa de precificação",
-        "description": "A calculadora sai da origem e vira etapa própria.",
+        "title": "Fluxo com precificação separada",
+        "description": "Origem, precificação, mapeamento e final em etapas distintas.",
     }
 
     if not any(
@@ -98,13 +109,19 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Fluxo com etapa de precificação",
-        "last_description": "A calculadora sai da origem e vira etapa própria.",
+        "last_title": "Fluxo com precificação separada",
+        "last_description": "Origem, precificação, mapeamento e final em etapas distintas.",
         "history": history,
     }
 
-    _salvar_version_json(novo)
-    return novo
+    salvou = _salvar_version_json(novo)
+    if salvou:
+        try:
+            log_debug(f"[VERSION] version.json sincronizado para {APP_VERSION}", "INFO")
+        except Exception:
+            pass
+
+    return novo if salvou else (atual or novo)
 
 
 def _resolver_app_version_exibida(version_data: dict) -> str:
@@ -124,6 +141,132 @@ def _garantir_estado_versionamento() -> None:
         st.session_state["_app_last_seen_version"] = APP_VERSION
 
 
+def _chaves_lixo_legado() -> set[str]:
+    return {
+        "_cache_log",
+        "_cache_log_exibido",
+        "_version_reload_requested",
+        "_update_available",
+        "_legacy_version_notice",
+        "_toast_cache_version",
+        "_build_notice",
+        "_oauth_state",
+        "_oauth_pending_user_key",
+        "_bling_callback_status",
+        "_bling_callback_message",
+        "bling_conectado",
+        "bling_conexao_ok",
+        "bling_connection_message",
+        "bling_connection_checked",
+        "bling_ultimo_status",
+        "bling_connection_source",
+        "bling_primeiro_acesso_decidido",
+        "bling_primeiro_acesso_escolha",
+        "bling_user_key",
+        "user_key",
+        "bi",
+        "df_envio",
+    }
+
+
+def _chaves_preservadas_na_limpeza() -> set[str]:
+    return {
+        "_app_loaded_version",
+        "_app_last_seen_version",
+        "etapa_origem",
+        "etapa",
+        "etapa_fluxo",
+        "_debug_logs",
+        "_debug_logs_text",
+        "_debug_panel_open",
+        "acesso_cliente_id",
+        "acesso_liberado",
+        "df_origem",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_saida",
+        "df_final",
+        "df_modelo",
+        "df_modelo_estoque",
+        "tipo_operacao",
+        "tipo_operacao_bling",
+        "tipo_operacao_radio",
+        "operacao",
+        "operacao_selecionada",
+        "origem_dados_tipo",
+        "origem_dados_radio",
+        "mapeamento_fornecedor",
+        "fornecedor_nome",
+        "coluna_preco_origem",
+        "deposito_padrao",
+        "deposito_nome",
+        "site_url",
+        "fluxo_origem_passo",
+        "site_processado",
+        "site_autoavanco_realizado",
+        "usar_calculadora_precificacao",
+        "comissao_canal_percentual",
+        "coluna_precificacao_resultado",
+        "margem_bling",
+        "impostos_bling",
+        "custofixo_bling",
+        "taxaextra_bling",
+    }
+
+
+def _limpar_lixos_de_sessao() -> None:
+    for chave in _chaves_lixo_legado():
+        st.session_state.pop(chave, None)
+
+
+def _limpar_sessao_por_versao() -> bool:
+    versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
+    _limpar_lixos_de_sessao()
+
+    if not versao_sessao:
+        st.session_state["_app_loaded_version"] = APP_VERSION
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    if versao_sessao == APP_VERSION:
+        st.session_state["_app_last_seen_version"] = APP_VERSION
+        return False
+
+    preservadas = _chaves_preservadas_na_limpeza()
+    snapshot = {
+        chave: st.session_state.get(chave)
+        for chave in preservadas
+        if chave in st.session_state
+    }
+
+    for chave in list(st.session_state.keys()):
+        if chave not in preservadas:
+            st.session_state.pop(chave, None)
+
+    for chave, valor in snapshot.items():
+        st.session_state[chave] = valor
+
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    st.session_state["_app_loaded_version"] = APP_VERSION
+    st.session_state["_app_last_seen_version"] = APP_VERSION
+    st.session_state["etapa_origem"] = "origem"
+    st.session_state["etapa"] = "origem"
+    st.session_state["etapa_fluxo"] = "origem"
+    return True
+
+
+# =========================================================
+# HELPERS DE FLUXO
+# =========================================================
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
@@ -167,6 +310,10 @@ def _sincronizar_etapa_global(etapa_destino: str) -> str:
     st.session_state["etapa_origem"] = etapa_ok
     st.session_state["etapa"] = etapa_ok
     st.session_state["etapa_fluxo"] = etapa_ok
+    try:
+        log_debug(f"[APP] navegação para etapa: {etapa_ok}", "INFO")
+    except Exception:
+        pass
     return etapa_ok
 
 
@@ -181,6 +328,24 @@ def _obter_df_fluxo():
         if _safe_df(df):
             return df
     return None
+
+
+def _sincronizar_df_fluxo() -> None:
+    df_final = st.session_state.get("df_final")
+    df_saida = st.session_state.get("df_saida")
+
+    if _safe_df(df_final) and not _safe_df(df_saida):
+        try:
+            st.session_state["df_saida"] = df_final.copy()
+        except Exception:
+            st.session_state["df_saida"] = df_final
+        return
+
+    if _safe_df(df_saida) and not _safe_df(df_final):
+        try:
+            st.session_state["df_final"] = df_saida.copy()
+        except Exception:
+            st.session_state["df_final"] = df_saida
 
 
 def _pode_ir_para_precificacao() -> bool:
@@ -200,6 +365,7 @@ def _pode_ir_para_final() -> bool:
 
 def _resolver_autoetapa() -> str:
     etapa_atual = _obter_etapa_atual()
+    _sincronizar_df_fluxo()
 
     if etapa_atual == "precificacao" and not _pode_ir_para_precificacao():
         return "origem"
@@ -213,6 +379,9 @@ def _resolver_autoetapa() -> str:
     return etapa_atual
 
 
+# =========================================================
+# LAYOUT
+# =========================================================
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -359,11 +528,17 @@ def _render_etapa(etapa_atual: str) -> None:
     render_preview_final()
 
 
+# =========================================================
+# EXECUÇÃO
+# =========================================================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
 
 VERSION_DATA = _sincronizar_version_json_com_app()
+if _limpar_sessao_por_versao():
+    st.rerun()
+
 _inject_layout_css()
 
 etapa_atual = _resolver_autoetapa()
@@ -376,4 +551,3 @@ _render_nav(etapa_atual)
 
 with st.expander("Debug", expanded=False):
     render_debug_panel()
-  
