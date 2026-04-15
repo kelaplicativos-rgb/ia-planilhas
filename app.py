@@ -1,4 +1,4 @@
-
+here
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ st.set_page_config(
     layout="wide",
 )
 
-APP_VERSION = "1.0.36"
+APP_VERSION = "1.0.37"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
@@ -35,9 +35,6 @@ ETAPAS_CONFIG = [
 ]
 
 
-# =========================================================
-# VERSIONAMENTO
-# =========================================================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -86,16 +83,16 @@ def _sincronizar_version_json_com_app() -> dict:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Layout mobile guiado",
-            "last_description": "Fluxo simplificado em uma pergunta por vez.",
+            "last_title": "Layout mobile clicável",
+            "last_description": "Seleção por botões grandes em vez de radio.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Layout mobile guiado",
-        "description": "Fluxo simplificado em uma pergunta por vez.",
+        "title": "Layout mobile clicável",
+        "description": "Seleção por botões grandes em vez de radio.",
     }
 
     if not any(
@@ -108,8 +105,8 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Layout mobile guiado",
-        "last_description": "Fluxo simplificado em uma pergunta por vez.",
+        "last_title": "Layout mobile clicável",
+        "last_description": "Seleção por botões grandes em vez de radio.",
         "history": history,
     }
 
@@ -198,6 +195,8 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "deposito_padrao",
         "deposito_nome",
         "site_url",
+        "tipo_operacao_card",
+        "origem_card",
     }
 
 
@@ -251,26 +250,6 @@ def _limpar_sessao_por_versao() -> bool:
     return True
 
 
-def _executar_reload_app() -> None:
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-
-    try:
-        st.cache_resource.clear()
-    except Exception:
-        pass
-
-    _limpar_lixos_de_sessao()
-    st.session_state["_app_loaded_version"] = APP_VERSION
-    st.session_state["_app_last_seen_version"] = APP_VERSION
-    st.rerun()
-
-
-# =========================================================
-# HELPERS DE FLUXO
-# =========================================================
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
@@ -376,9 +355,6 @@ def _resolver_autoetapa() -> str:
     return etapa_atual
 
 
-# =========================================================
-# LAYOUT
-# =========================================================
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -393,10 +369,6 @@ def _inject_layout_css() -> None:
                 background: transparent;
             }
 
-            .ia-shell {
-                padding-top: 0.25rem;
-            }
-
             .ia-top {
                 display: flex;
                 align-items: center;
@@ -405,10 +377,9 @@ def _inject_layout_css() -> None:
             }
 
             .ia-logo {
-                font-size: 0.90rem;
+                font-size: 0.95rem;
                 font-weight: 700;
                 color: #0A2259;
-                opacity: 0.9;
             }
 
             .ia-version {
@@ -419,17 +390,17 @@ def _inject_layout_css() -> None:
             .ia-progress {
                 display: flex;
                 gap: 8px;
-                margin: 0.5rem 0 1rem 0;
+                margin: 0.6rem 0 1rem 0;
                 flex-wrap: wrap;
             }
 
             .ia-progress-pill {
                 flex: 1 1 120px;
                 border-radius: 999px;
-                padding: 8px 10px;
+                padding: 10px 12px;
                 text-align: center;
-                font-size: 0.82rem;
-                font-weight: 600;
+                font-size: 0.84rem;
+                font-weight: 700;
                 background: #F1F4F9;
                 color: #667085;
                 border: 1px solid #E4E7EC;
@@ -469,7 +440,7 @@ def _inject_layout_css() -> None:
 
             .stButton > button,
             .stDownloadButton > button {
-                min-height: 52px;
+                min-height: 54px;
                 border-radius: 18px;
                 font-weight: 700;
             }
@@ -487,7 +458,6 @@ def _inject_layout_css() -> None:
 
 def _render_topbar(version_data: dict) -> None:
     versao_exibida = _resolver_app_version_exibida(version_data)
-    st.markdown('<div class="ia-shell">', unsafe_allow_html=True)
     st.markdown(
         f"""
         <div class="ia-top">
@@ -516,7 +486,7 @@ def _render_question_header(etapa_atual: str) -> None:
         "origem": (
             "Começo",
             "O que você quer fazer?",
-            "Responda o mínimo necessário para seguir.",
+            "Toque em uma opção grande para continuar.",
         ),
         "mapeamento": (
             "Próxima etapa",
@@ -544,7 +514,6 @@ def _render_question_header(etapa_atual: str) -> None:
 
 
 def _render_nav(etapa_atual: str) -> None:
-    # A etapa "origem" já controla os próprios botões.
     if etapa_atual == "origem":
         return
 
@@ -582,16 +551,12 @@ def _render_etapa(etapa_atual: str) -> None:
     render_preview_final()
 
 
-# =========================================================
-# EXECUÇÃO
-# =========================================================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
 
 VERSION_DATA = _sincronizar_version_json_com_app()
-houve_limpeza_versao = _limpar_sessao_por_versao()
-if houve_limpeza_versao:
+if _limpar_sessao_por_versao():
     st.rerun()
 
 _inject_layout_css()
@@ -608,5 +573,6 @@ _render_nav(etapa_atual)
 with st.expander("Debug", expanded=False):
     render_debug_panel()
 
-st.markdown("</div>", unsafe_allow_html=True)
+
+
 
