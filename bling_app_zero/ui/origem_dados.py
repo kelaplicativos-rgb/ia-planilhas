@@ -40,9 +40,6 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 def _float_session(key: str, default: float = 0.0) -> float:
     try:
         return float(st.session_state.get(key, default) or default)
@@ -81,20 +78,13 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
                 except Exception:
                     st.session_state["df_origem"] = df_resolvido
 
-                log_debug(
-                    f"[ORIGEM_DADOS] modo site reaproveitou '{chave}' para reconstruir df_origem.",
-                    "INFO",
-                )
-
             st.session_state["site_processado"] = True
             return df_resolvido
 
     return None
 
 
-def _obter_df_origem_renderizado(
-    df_origem_render: pd.DataFrame | None,
-) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -115,53 +105,80 @@ def _site_configurada_minimamente() -> bool:
     return bool(url)
 
 
-def _resetar_autoavanco_site_se_necessario(
-    origem_atual: str,
-    df_origem: pd.DataFrame | None,
-) -> None:
-    if "site" not in safe_str(origem_atual).lower():
-        st.session_state["site_autoavanco_realizado"] = False
-        return
+def _render_mobile_css() -> None:
+    st.markdown(
+        """
+        <style>
+            .od-card {
+                background: #F5F7FA;
+                border: 1px solid #EAECF0;
+                border-radius: 28px;
+                padding: 1rem;
+                margin-bottom: 1rem;
+            }
 
-    if not safe_df_dados(df_origem):
-        st.session_state["site_autoavanco_realizado"] = False
+            .od-kicker {
+                font-size: 0.82rem;
+                color: #667085;
+                font-weight: 700;
+                margin-bottom: 0.35rem;
+            }
 
+            .od-title {
+                font-size: 1.6rem;
+                line-height: 1.1;
+                color: #0A2259;
+                font-weight: 800;
+                margin: 0 0 0.25rem 0;
+                letter-spacing: -0.02em;
+            }
 
-def _autoavancar_site_se_pronto(on_continue: NavCallback = None) -> bool:
-    origem_atual = safe_str(obter_origem_atual()).lower()
+            .od-sub {
+                font-size: 0.96rem;
+                color: #667085;
+                margin: 0;
+            }
 
-    if "site" not in origem_atual:
-        return False
+            .od-mini {
+                font-size: 0.86rem;
+                color: #667085;
+            }
 
-    if st.session_state.get("site_autoavanco_realizado"):
-        return False
+            .od-summary {
+                background: #FFFFFF;
+                border: 1px solid #EAECF0;
+                border-radius: 20px;
+                padding: 0.9rem;
+                margin-top: 0.75rem;
+            }
 
-    df_origem = st.session_state.get("df_origem")
-    if not safe_df_dados(df_origem):
-        return False
+            .od-summary strong {
+                color: #0A2259;
+            }
 
-    valido, erros = validar_antes_mapeamento()
-    if not valido:
-        for erro in erros:
-            log_debug(f"[ORIGEM_DADOS] autoavanço site bloqueado: {erro}", "WARNING")
-        return False
-
-    if safe_df_estrutura(st.session_state.get("df_saida")):
-        try:
-            st.session_state["df_final"] = st.session_state["df_saida"].copy()
-        except Exception:
-            st.session_state["df_final"] = st.session_state["df_saida"]
-
-    st.session_state["site_autoavanco_realizado"] = True
-    log_debug(
-        "[ORIGEM_DADOS] site processado com sucesso. Autoavanço para mapeamento acionado.",
-        "INFO",
+            .od-space {
+                height: 8px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    _navegar("mapeamento", on_continue)
-    return True
 
 
-def _render_resumo_operacional(df_origem: pd.DataFrame | None = None) -> None:
+def _render_question_block(kicker: str, titulo: str, subtitulo: str) -> None:
+    st.markdown(
+        f"""
+        <div class="od-card">
+            <div class="od-kicker">{kicker}</div>
+            <div class="od-title">{titulo}</div>
+            <p class="od-sub">{subtitulo}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
     operacao = safe_str(
         st.session_state.get("tipo_operacao")
         or st.session_state.get("tipo_operacao_bling")
@@ -175,41 +192,28 @@ def _render_resumo_operacional(df_origem: pd.DataFrame | None = None) -> None:
     ).strip()
 
     linhas = 0
-    colunas = 0
     if safe_df_dados(df_origem):
         try:
             linhas = int(len(df_origem))
-            colunas = int(len(df_origem.columns))
         except Exception:
             linhas = 0
-            colunas = 0
 
-    c1, c2, c3 = st.columns(3, gap="small")
-
-    with c1:
-        st.caption("Operação")
-        st.markdown(f"**{operacao or 'Não definida'}**")
-
-    with c2:
-        st.caption("Origem escolhida")
-        st.markdown(f"**{origem or 'Não definida'}**")
-
-    with c3:
-        st.caption("Base carregada")
-        st.markdown(f"**{linhas} linha(s) · {colunas} coluna(s)**")
-
-
-def _render_cabecalho_bloco(titulo: str, descricao: str) -> None:
-    st.markdown(f"#### {titulo}")
-    if descricao:
-        st.caption(descricao)
+    st.markdown(
+        f"""
+        <div class="od-summary">
+            <div class="od-mini"><strong>Operação:</strong> {operacao or "Não definida"}</div>
+            <div class="od-mini"><strong>Origem:</strong> {origem or "Não definida"}</div>
+            <div class="od-mini"><strong>Linhas carregadas:</strong> {linhas}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_botoes_origem(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
     *,
-    mostrar_continuar: bool,
     continuar_habilitado: bool,
 ) -> None:
     col1, col2 = st.columns(2, gap="small")
@@ -218,55 +222,42 @@ def _render_botoes_origem(
         if st.button(
             "⬅️ Voltar",
             use_container_width=True,
-            key=f"origem_btn_voltar_{'ok' if mostrar_continuar else 'base'}",
+            key="origem_btn_voltar_mobile",
         ):
             _navegar("origem", on_back)
 
     with col2:
-        if mostrar_continuar:
-            if st.button(
-                "➡️ Continuar para mapeamento",
-                use_container_width=True,
-                type="primary",
-                disabled=not continuar_habilitado,
-                key=f"origem_btn_continuar_{'ok' if continuar_habilitado else 'bloq'}",
-            ):
-                valido, erros = validar_antes_mapeamento()
-                if not valido:
-                    for erro in erros:
-                        st.warning(erro)
-                    return
+        if st.button(
+            "Continuar ➜",
+            use_container_width=True,
+            type="primary",
+            disabled=not continuar_habilitado,
+            key="origem_btn_continuar_mobile",
+        ):
+            valido, erros = validar_antes_mapeamento()
+            if not valido:
+                for erro in erros:
+                    st.warning(erro)
+                return
 
-                if safe_df_estrutura(st.session_state.get("df_saida")):
-                    try:
-                        st.session_state["df_final"] = st.session_state["df_saida"].copy()
-                    except Exception:
-                        st.session_state["df_final"] = st.session_state["df_saida"]
+            if safe_df_estrutura(st.session_state.get("df_saida")):
+                try:
+                    st.session_state["df_final"] = st.session_state["df_saida"].copy()
+                except Exception:
+                    st.session_state["df_final"] = st.session_state["df_saida"]
 
-                log_debug(
-                    "[ORIGEM_DADOS] origem validada manualmente. Avançando para mapeamento.",
-                    "INFO",
-                )
-                _navegar("mapeamento", on_continue)
-        else:
-            st.caption("Carregue a origem para liberar o próximo passo.")
+            _navegar("mapeamento", on_continue)
 
 
-# =========================================================
-# RENDER PRINCIPAL
-# =========================================================
 def render_origem_dados(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
 ) -> None:
     garantir_estado_origem()
+    _render_mobile_css()
 
     if "site_autoavanco_realizado" not in st.session_state:
         st.session_state["site_autoavanco_realizado"] = False
-
-    etapa = safe_str(st.session_state.get("etapa_origem", "origem") or "origem").lower()
-    if etapa != "origem":
-        set_etapa_origem("origem")
 
     labels_operacao = [
         "Cadastro de Produtos",
@@ -278,16 +269,17 @@ def render_origem_dados(
         st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
         valor_radio = "Cadastro de Produtos"
 
-    _render_cabecalho_bloco(
-        "Operação",
-        "Defina primeiro se a base será usada para cadastro de produtos ou atualização de estoque.",
+    _render_question_block(
+        "Pergunta 1",
+        "O que você quer fazer?",
+        "Escolha só uma opção para seguir.",
     )
 
     operacao = st.radio(
-        "Você quer cadastrar produtos ou atualizar o estoque?",
+        "Operação",
         labels_operacao,
         key="tipo_operacao_radio",
-        horizontal=True,
+        horizontal=False,
         index=labels_operacao.index(valor_radio),
         label_visibility="collapsed",
     )
@@ -298,14 +290,14 @@ def render_origem_dados(
             "Nome do depósito",
             key="deposito_nome",
             placeholder="Ex: Depósito principal",
-            help="Este valor será propagado para a base de estoque quando necessário.",
         )
 
-    st.divider()
+    st.markdown('<div class="od-space"></div>', unsafe_allow_html=True)
 
-    _render_cabecalho_bloco(
-        "Origem dos dados",
-        "Selecione de onde virão os dados e carregue a base principal.",
+    _render_question_block(
+        "Pergunta 2",
+        "De onde virão os dados?",
+        "Selecione a origem e carregue a base.",
     )
 
     df_origem_render = render_origem_entrada(
@@ -314,26 +306,23 @@ def render_origem_dados(
     df_origem = _obter_df_origem_renderizado(df_origem_render)
 
     origem_atual = safe_str(obter_origem_atual()).lower()
-    _resetar_autoavanco_site_se_necessario(origem_atual, df_origem)
 
-    _render_resumo_operacional(df_origem)
+    if "site" in origem_atual and safe_df_dados(df_origem):
+        st.session_state["site_processado"] = True
 
-    if "site" in origem_atual:
-        if safe_df_dados(df_origem):
-            st.session_state["site_processado"] = True
-        elif _site_configurada_minimamente():
-            st.info(
-                "A URL do site já foi preenchida. Assim que o crawler ou fetcher carregar os dados na sessão, o sistema vai liberar e autoavançar."
-            )
+    _render_resumo_curto(df_origem)
+
+    if "site" in origem_atual and not safe_df_dados(df_origem):
+        if _site_configurada_minimamente():
+            st.info("A URL já foi preenchida. Assim que os dados forem carregados, o sistema libera o próximo passo.")
         else:
-            st.info("Configure o site e execute a busca para continuar.")
+            st.info("Informe a URL do site para continuar.")
 
     if not safe_df_dados(df_origem):
-        st.divider()
+        st.markdown('<div class="od-space"></div>', unsafe_allow_html=True)
         _render_botoes_origem(
             on_back=on_back,
             on_continue=on_continue,
-            mostrar_continuar=False,
             continuar_habilitado=False,
         )
         return
@@ -347,25 +336,27 @@ def render_origem_dados(
 
     sincronizar_estado_com_origem(df_origem, log_debug)
 
-    st.divider()
-
-    _render_cabecalho_bloco(
-        "Modelo de saída",
-        "Confira o modelo ativo do sistema antes de seguir para a transformação da base.",
-    )
-    render_modelo_bling(operacao)
-
     modelo_ativo = obter_modelo_ativo()
-    if modelo_ativo is not None and not modelo_tem_estrutura(modelo_ativo):
-        st.warning("⚠️ Modelo do sistema não encontrado.")
-        st.divider()
+    if modelo_ativo is None or not modelo_tem_estrutura(modelo_ativo):
+        _render_question_block(
+            "Modelo",
+            "O modelo do sistema não foi encontrado",
+            "Corrija isso antes de seguir.",
+        )
         _render_botoes_origem(
             on_back=on_back,
             on_continue=on_continue,
-            mostrar_continuar=False,
             continuar_habilitado=False,
         )
         return
+
+    _render_question_block(
+        "Pergunta 3",
+        "Quer revisar o modelo?",
+        "Deixe fechado se não precisar mexer agora.",
+    )
+    with st.expander("Ver modelo ativo", expanded=False):
+        render_modelo_bling(operacao)
 
     df_saida = obter_df_base_prioritaria(df_origem)
 
@@ -382,21 +373,14 @@ def render_origem_dados(
     except Exception:
         st.session_state["df_final"] = df_saida
 
-    st.divider()
-
-    _render_cabecalho_bloco(
-        "Preview da origem",
-        "Visualize rapidamente a base carregada antes da precificação e do mapeamento.",
+    _render_question_block(
+        "Pergunta 4",
+        "Quer aplicar precificação?",
+        "Use só se quiser gerar o preço automaticamente.",
     )
-    render_preview_origem(df_origem)
 
-    st.divider()
-
-    _render_cabecalho_bloco(
-        "Precificação",
-        "Aplique as regras de margem, impostos e custos para atualizar a base de saída.",
-    )
-    render_precificacao(df_origem)
+    with st.expander("Abrir precificação", expanded=False):
+        render_precificacao(df_origem)
 
     df_prec = aplicar_precificacao(
         df_origem=df_origem,
@@ -423,15 +407,19 @@ def render_origem_dados(
         except Exception:
             st.session_state["df_final"] = df_saida_prec
 
-    if _autoavancar_site_se_pronto(on_continue):
-        return
+    _render_question_block(
+        "Pergunta 5",
+        "Quer ver um resumo da base?",
+        "O preview fica recolhido para não poluir a tela.",
+    )
+    with st.expander("Abrir preview da origem", expanded=False):
+        render_preview_origem(df_origem)
 
-    st.divider()
+    st.markdown('<div class="od-space"></div>', unsafe_allow_html=True)
 
     _render_botoes_origem(
         on_back=on_back,
         on_continue=on_continue,
-        mostrar_continuar=True,
         continuar_habilitado=True,
-                        )
+    )
 
