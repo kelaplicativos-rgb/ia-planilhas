@@ -21,14 +21,23 @@ from bling_app_zero.ui.origem_dados_estado import (
 )
 
 
+# ==========================================================
+# NORMALIZAÇÃO
+# ==========================================================
 def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame()
 
         df_out = df.copy()
-        colunas_finais: list[str] = []
 
+        # remove índice exportado indevidamente
+        for coluna in list(df_out.columns):
+            nome = safe_str(coluna).strip().lower()
+            if nome in {"unnamed: 0", "unnamed:0", "index"}:
+                df_out = df_out.drop(columns=[coluna], errors="ignore")
+
+        colunas_finais: list[str] = []
         for col in df_out.columns:
             nome = (
                 safe_str(col)
@@ -46,6 +55,9 @@ def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
         return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
+# ==========================================================
+# LEITURA ROBUSTA
+# ==========================================================
 def _ler_csv_robusto(upload) -> pd.DataFrame | None:
     try:
         conteudo = upload.read()
@@ -67,13 +79,10 @@ def _ler_csv_robusto(upload) -> pd.DataFrame | None:
             try:
                 buffer = io.BytesIO(conteudo)
                 if sep is None:
-                    return pd.read_csv(
-                        buffer,
-                        sep=None,
-                        engine="python",
-                        encoding=encoding,
-                    )
-                return pd.read_csv(buffer, sep=sep, encoding=encoding)
+                    df = pd.read_csv(buffer, sep=None, engine="python", encoding=encoding)
+                else:
+                    df = pd.read_csv(buffer, sep=sep, encoding=encoding)
+                return aplicar_normalizacao_basica(df)
             except Exception:
                 continue
 
@@ -93,8 +102,10 @@ def _ler_excel_robusto(upload) -> pd.DataFrame | None:
             try:
                 buffer = io.BytesIO(conteudo)
                 if engine:
-                    return pd.read_excel(buffer, engine=engine)
-                return pd.read_excel(buffer)
+                    df = pd.read_excel(buffer, engine=engine)
+                else:
+                    df = pd.read_excel(buffer)
+                return aplicar_normalizacao_basica(df)
             except Exception:
                 continue
 
@@ -120,15 +131,10 @@ def _parse_nfe_xml_produtos(conteudo: bytes) -> pd.DataFrame | None:
     except Exception:
         return None
 
-    nsfree_root = root
-    if root.tag.split("}")[-1] == "nfeProc":
-        nsfree_root = root
-
-    rows: list[dict] = []
     ide = None
     emit = None
 
-    for child in nsfree_root.iter():
+    for child in root.iter():
         tag = child.tag.split("}")[-1]
         if tag == "ide" and ide is None:
             ide = child
@@ -140,12 +146,15 @@ def _parse_nfe_xml_produtos(conteudo: bytes) -> pd.DataFrame | None:
     fornecedor = _text_or_empty(emit, "xNome")
     cnpj_emit = _text_or_empty(emit, "CNPJ")
 
-    for det in nsfree_root.iter():
+    rows: list[dict] = []
+
+    for det in root.iter():
         if det.tag.split("}")[-1] != "det":
             continue
 
         prod = None
         imposto = None
+
         for child in det:
             tag = child.tag.split("}")[-1]
             if tag == "prod":
@@ -195,8 +204,7 @@ def _parse_nfe_xml_produtos(conteudo: bytes) -> pd.DataFrame | None:
     if not rows:
         return None
 
-    df = pd.DataFrame(rows)
-    return aplicar_normalizacao_basica(df)
+    return aplicar_normalizacao_basica(pd.DataFrame(rows))
 
 
 def _ler_xml_robusto(upload) -> pd.DataFrame | None:
@@ -249,6 +257,9 @@ def ler_planilha(upload) -> pd.DataFrame | None:
     return None
 
 
+# ==========================================================
+# ESTADO / TROCAS
+# ==========================================================
 def _normalizar_tipo_origem(origem: str) -> str:
     valor = safe_str(origem).strip().lower()
     mapa = {
@@ -363,6 +374,9 @@ def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
             log_fn(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
 
 
+# ==========================================================
+# MODELO / BASE
+# ==========================================================
 def _colunas_modelo_cadastro_padrao() -> list[str]:
     return [
         "Código",
@@ -473,6 +487,9 @@ def obter_df_base_prioritaria(df_origem: pd.DataFrame) -> pd.DataFrame:
     return df_origem.copy()
 
 
+# ==========================================================
+# ESTOQUE
+# ==========================================================
 def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
     try:
         df_out = df_saida.copy()
@@ -504,8 +521,12 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
                 df_out["Depósito (OBRIGATÓRIO)"] = coluna
                 df_out.loc[coluna.eq(""), "Depósito (OBRIGATÓRIO)"] = deposito_nome
 
+        # Balanço acompanha a mesma quantidade do item
         if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
-            df_out["Balanço (OBRIGATÓRIO)"] = "S"
+            df_out["Balanço (OBRIGATÓRIO)"] = df_out["Quantidade"]
+        else:
+            serie_balanco = pd.to_numeric(df_out["Balanço (OBRIGATÓRIO)"], errors="coerce")
+            df_out["Balanço (OBRIGATÓRIO)"] = serie_balanco.fillna(df_out["Quantidade"])
 
         return df_out
     except Exception as e:
@@ -513,6 +534,9 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
         return df_saida.copy() if isinstance(df_saida, pd.DataFrame) else pd.DataFrame()
 
 
+# ==========================================================
+# PRECIFICAÇÃO
+# ==========================================================
 def nome_coluna_preco_saida() -> str:
     return (
         "Preço unitário (OBRIGATÓRIO)"
@@ -574,6 +598,9 @@ def aplicar_precificacao(
         return None
 
 
+# ==========================================================
+# VALIDAÇÃO
+# ==========================================================
 def validar_antes_mapeamento() -> tuple[bool, list[str]]:
     erros: list[str] = []
 
