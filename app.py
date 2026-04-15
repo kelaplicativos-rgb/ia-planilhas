@@ -699,11 +699,11 @@ def _render_resumo_superior(etapa_atual: str) -> None:
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         st.markdown(
-            f"""
-            <div class="ia-mini-stat">
-                <div class="ia-mini-stat-label">Operação</div>
-                <div class="ia-mini-stat-value">{operacao or "Não definida"}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-  
+    """
+    <div class="...">
+        ...
+    </div>
+    """,
+    unsafe_allow_html=True,
+        )
+        
