@@ -190,10 +190,8 @@ def _render_question(titulo: str, subtitulo: str, kicker: str = "Começo") -> No
     st.markdown(f'<div class="od-sub">{subtitulo}</div>', unsafe_allow_html=True)
 
 
-def _render_operacao_clickable() -> str:
+def _render_operacao_clickable() -> None:
     atual = safe_str(st.session_state.get("tipo_operacao_radio"))
-    if atual not in {"Cadastro de Produtos", "Atualização de Estoque"}:
-        atual = ""
 
     col1, col2 = st.columns(2, gap="small")
 
@@ -222,8 +220,6 @@ def _render_operacao_clickable() -> str:
             sincronizar_tipo_operacao(atual)
             _definir_passo_origem(2)
             st.rerun()
-
-    return atual
 
 
 def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
@@ -273,9 +269,11 @@ def _render_botoes_finais_origem(
             key="origem_btn_voltar_final",
         ):
             passo_atual = _obter_passo_origem()
+
             if passo_atual <= 1:
                 _reset_fluxo_origem()
                 st.rerun()
+
             if passo_atual == 2:
                 for chave in [
                     "origem_dados_tipo",
@@ -289,6 +287,7 @@ def _render_botoes_finais_origem(
                     st.session_state.pop(chave, None)
                 _definir_passo_origem(1)
                 st.rerun()
+
             if passo_atual >= 3:
                 for chave in [
                     "df_origem",
@@ -374,8 +373,7 @@ def render_origem_dados(
             lambda origem: controlar_troca_origem(origem, log_debug)
         )
 
-        origem_atual = safe_str(obter_origem_atual()).lower()
-        if origem_atual:
+        if origem_escolhida:
             _definir_passo_origem(3)
 
         if st.button(
@@ -502,4 +500,4 @@ def render_origem_dados(
         on_back=on_back,
         on_continue=on_continue,
         continuar_habilitado=True,
-  )
+    )
