@@ -31,7 +31,7 @@ def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
 
         df_out = df.copy()
 
-        # remove índice exportado indevidamente
+        # remove índices exportados indevidamente
         for coluna in list(df_out.columns):
             nome = safe_str(coluna).strip().lower()
             if nome in {"unnamed: 0", "unnamed:0", "index"}:
@@ -79,7 +79,12 @@ def _ler_csv_robusto(upload) -> pd.DataFrame | None:
             try:
                 buffer = io.BytesIO(conteudo)
                 if sep is None:
-                    df = pd.read_csv(buffer, sep=None, engine="python", encoding=encoding)
+                    df = pd.read_csv(
+                        buffer,
+                        sep=None,
+                        engine="python",
+                        encoding=encoding,
+                    )
                 else:
                     df = pd.read_csv(buffer, sep=sep, encoding=encoding)
                 return aplicar_normalizacao_basica(df)
@@ -388,12 +393,18 @@ def _colunas_modelo_cadastro_padrao() -> list[str]:
 
 
 def _colunas_modelo_estoque_padrao() -> list[str]:
+    # Modelo real de estoque, alinhado ao exemplo correto do usuário
     return [
-        "Código",
-        "Quantidade",
-        "Depósito (OBRIGATÓRIO)",
+        "ID Produto",
+        "Codigo produto *",
+        "GTIN **",
+        "Descrição Produto",
+        "Deposito (OBRIGATÓRIO)",
         "Balanço (OBRIGATÓRIO)",
         "Preço unitário (OBRIGATÓRIO)",
+        "Preço de Custo",
+        "Observação",
+        "Data",
     ]
 
 
@@ -437,6 +448,49 @@ def _sincronizar_alias_modelo(tipo_operacao: str, df_modelo: pd.DataFrame) -> pd
     return df_ok
 
 
+def _padronizar_modelo_estoque(df_modelo: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante que o modelo de estoque siga exatamente a estrutura esperada pelo arquivo exemplo.
+    Se vier um modelo simplificado/legado, normaliza para o modelo real final.
+    """
+    colunas_esperadas = _colunas_modelo_estoque_padrao()
+
+    if not safe_df_estrutura(df_modelo):
+        return pd.DataFrame(columns=colunas_esperadas)
+
+    atuais = [safe_str(c) for c in df_modelo.columns]
+    atuais_norm = {safe_str(c).strip().lower(): c for c in atuais}
+
+    # Se já estiver no modelo correto, só devolve com a ordem garantida
+    if set(colunas_esperadas).issubset(set(atuais)):
+        return df_modelo[colunas_esperadas].copy()
+
+    df_out = pd.DataFrame(columns=colunas_esperadas)
+
+    mapa_legado = {
+        "id produto": None,
+        "codigo produto *": atuais_norm.get("codigo produto *") or atuais_norm.get("código"),
+        "gtin **": atuais_norm.get("gtin **") or atuais_norm.get("ean") or atuais_norm.get("gtin"),
+        "descrição produto": atuais_norm.get("descrição produto") or atuais_norm.get("descricao") or atuais_norm.get("descrição"),
+        "deposito (obrigatório)": atuais_norm.get("deposito (obrigatório)") or atuais_norm.get("depósito (obrigatório)"),
+        "balanço (obrigatório)": atuais_norm.get("balanço (obrigatório)") or atuais_norm.get("balanco (obrigatório)") or atuais_norm.get("quantidade"),
+        "preço unitário (obrigatório)": atuais_norm.get("preço unitário (obrigatório)") or atuais_norm.get("preco unitario (obrigatório)") or atuais_norm.get("preço unitário (obrigatorio)"),
+        "preço de custo": atuais_norm.get("preço de custo") or atuais_norm.get("preco de custo") or atuais_norm.get("custo"),
+        "observação": atuais_norm.get("observação") or atuais_norm.get("observacao"),
+        "data": atuais_norm.get("data"),
+    }
+
+    for col_esperada in colunas_esperadas:
+        chave = col_esperada.strip().lower()
+        col_origem = mapa_legado.get(chave)
+        if col_origem and col_origem in df_modelo.columns:
+            df_out[col_esperada] = df_modelo[col_origem]
+        else:
+            df_out[col_esperada] = ""
+
+    return df_out
+
+
 def obter_modelo_ativo():
     tipo_operacao = _resolver_tipo_operacao_modelo()
 
@@ -447,6 +501,10 @@ def obter_modelo_ativo():
                 log_debug(f"[ORIGEM_DADOS] modelo ativo encontrado em '{chave}'", "INFO")
             except Exception:
                 pass
+
+            if tipo_operacao == "estoque":
+                df_modelo = _padronizar_modelo_estoque(df_modelo)
+
             return _sincronizar_alias_modelo(tipo_operacao, df_modelo)
 
     df_fallback = _criar_modelo_fallback(tipo_operacao)
@@ -500,33 +558,35 @@ def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataF
             qtd_padrao,
         )
 
-        if "Quantidade" not in df_out.columns:
-            df_out["Quantidade"] = qtd_padrao
+        if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
+            df_out["Balanço (OBRIGATÓRIO)"] = qtd_padrao
         else:
-            serie = pd.to_numeric(df_out["Quantidade"], errors="coerce")
-            df_out["Quantidade"] = serie.fillna(qtd_padrao)
+            serie_balanco = pd.to_numeric(df_out["Balanço (OBRIGATÓRIO)"], errors="coerce")
+            df_out["Balanço (OBRIGATÓRIO)"] = serie_balanco.fillna(qtd_padrao)
 
         deposito_nome = safe_str(st.session_state.get("deposito_nome"))
         if deposito_nome:
-            if "Depósito (OBRIGATÓRIO)" not in df_out.columns:
-                df_out["Depósito (OBRIGATÓRIO)"] = deposito_nome
+            if "Deposito (OBRIGATÓRIO)" not in df_out.columns:
+                df_out["Deposito (OBRIGATÓRIO)"] = deposito_nome
             else:
                 coluna = (
-                    df_out["Depósito (OBRIGATÓRIO)"]
+                    df_out["Deposito (OBRIGATÓRIO)"]
                     .replace({None: ""})
                     .fillna("")
                     .astype(str)
                     .str.strip()
                 )
-                df_out["Depósito (OBRIGATÓRIO)"] = coluna
-                df_out.loc[coluna.eq(""), "Depósito (OBRIGATÓRIO)"] = deposito_nome
+                df_out["Deposito (OBRIGATÓRIO)"] = coluna
+                df_out.loc[coluna.eq(""), "Deposito (OBRIGATÓRIO)"] = deposito_nome
 
-        # Balanço acompanha a mesma quantidade do item
-        if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
-            df_out["Balanço (OBRIGATÓRIO)"] = df_out["Quantidade"]
-        else:
-            serie_balanco = pd.to_numeric(df_out["Balanço (OBRIGATÓRIO)"], errors="coerce")
-            df_out["Balanço (OBRIGATÓRIO)"] = serie_balanco.fillna(df_out["Quantidade"])
+        if "ID Produto" not in df_out.columns:
+            df_out["ID Produto"] = ""
+
+        if "Observação" not in df_out.columns:
+            df_out["Observação"] = ""
+
+        if "Data" not in df_out.columns:
+            df_out["Data"] = ""
 
         return df_out
     except Exception as e:
