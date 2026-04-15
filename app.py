@@ -23,7 +23,7 @@ st.set_page_config(
     layout="wide",
 )
 
-APP_VERSION = "1.0.38"
+APP_VERSION = "1.0.39"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
@@ -86,7 +86,7 @@ def _sincronizar_version_json_com_app() -> dict:
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
             "last_title": "Fluxo slim progressivo",
-            "last_description": "A home não repete a pergunta da etapa de origem.",
+            "last_description": "Home limpa e pergunta da origem só dentro da etapa.",
             "history": history,
         }
 
@@ -94,7 +94,7 @@ def _sincronizar_version_json_com_app() -> dict:
         "version": APP_VERSION,
         "date": _safe_now_str(),
         "title": "Fluxo slim progressivo",
-        "description": "A home não repete a pergunta da etapa de origem.",
+        "description": "Home limpa e pergunta da origem só dentro da etapa.",
     }
 
     if not any(
@@ -108,7 +108,7 @@ def _sincronizar_version_json_com_app() -> dict:
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
         "last_title": "Fluxo slim progressivo",
-        "last_description": "A home não repete a pergunta da etapa de origem.",
+        "last_description": "Home limpa e pergunta da origem só dentro da etapa.",
         "history": history,
     }
 
@@ -521,4 +521,4 @@ _render_nav(etapa_atual)
 
 with st.expander("Debug", expanded=False):
     render_debug_panel()
-  
+    
