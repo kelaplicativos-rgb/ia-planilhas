@@ -99,4 +99,3 @@ def render_preview_final(df_final: pd.DataFrame | None = None) -> pd.DataFrame |
     st.session_state["df_final"] = df_base.copy()
     log_debug("[PREVIEW_FINAL] preview renderizado com sucesso.", "INFO")
     return df_base
-    
