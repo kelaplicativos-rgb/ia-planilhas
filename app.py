@@ -21,6 +21,7 @@ from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.preview_final import render_preview_final
 from bling_app_zero.utils.init_app import inicializar_app
 
+
 # =========================
 # CONFIG
 # =========================
@@ -33,6 +34,12 @@ APP_VERSION = "1.0.45"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
+ETAPAS_CONFIG = [
+    {"key": "origem", "ordem": 1, "titulo": "Origem"},
+    {"key": "precificacao", "ordem": 2, "titulo": "Precificação"},
+    {"key": "mapeamento", "ordem": 3, "titulo": "Mapeamento"},
+    {"key": "final", "ordem": 4, "titulo": "Final"},
+]
 
 
 # =========================
@@ -71,7 +78,7 @@ def _normalizar_etapa(valor: object) -> str:
 
 
 def _ir_para(etapa: str) -> None:
-    sincronizar_etapa_global(_normalizar_etapa(etapa))
+    sincronizar_etapa_global(etapa)
     st.rerun()
 
 
@@ -107,20 +114,21 @@ def _sincronizar_version_json_com_app() -> dict:
         history = []
 
     version_json = str(atual.get("version") or "").strip()
+
     if version_json == APP_VERSION:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Resgate de layout estável",
-            "last_description": "App.py simplificado para evitar conflito visual com o wizard da origem.",
+            "last_title": "Wizard mobile restaurado",
+            "last_description": "Fluxo guiado por perguntas com origem isolada.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Resgate de layout estável",
-        "description": "App.py simplificado para evitar conflito visual com o wizard da origem.",
+        "title": "Wizard mobile restaurado",
+        "description": "Fluxo guiado por perguntas com origem isolada.",
     }
 
     if not any(
@@ -133,8 +141,8 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Resgate de layout estável",
-        "last_description": "App.py simplificado para evitar conflito visual com o wizard da origem.",
+        "last_title": "Wizard mobile restaurado",
+        "last_description": "Fluxo guiado por perguntas com origem isolada.",
         "history": history,
     }
     _salvar_version_json(novo)
@@ -170,8 +178,7 @@ def _obter_df_fluxo():
 
 
 def _pode_ir_para_precificacao() -> bool:
-    df_origem = st.session_state.get("df_origem")
-    return _safe_df_com_linhas(df_origem)
+    return _safe_df_com_linhas(st.session_state.get("df_origem"))
 
 
 def _pode_ir_para_mapeamento() -> bool:
@@ -210,108 +217,195 @@ def _resolver_autoetapa() -> str:
 # =========================
 # UI BASE
 # =========================
-def _render_topo(version_data: dict) -> None:
+def _inject_layout_css() -> None:
+    st.markdown(
+        """
+        <style>
+            .block-container {
+                padding-top: 1rem;
+                padding-bottom: 3.5rem;
+                max-width: 980px;
+            }
+
+            .ia-shell {
+                margin-bottom: 1rem;
+            }
+
+            .ia-topbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+
+            .ia-brand {
+                font-size: 1.2rem;
+                font-weight: 800;
+                color: #0f172a;
+                line-height: 1.1;
+            }
+
+            .ia-version {
+                font-size: 0.82rem;
+                color: #64748b;
+                white-space: nowrap;
+            }
+
+            .ia-progress {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 0.35rem 0 1.2rem 0;
+            }
+
+            .ia-pill {
+                border: 1px solid #e2e8f0;
+                border-radius: 999px;
+                padding: 0.38rem 0.8rem;
+                font-size: 0.88rem;
+                color: #475569;
+                background: #ffffff;
+            }
+
+            .ia-pill--active {
+                border-color: #111827;
+                background: #111827;
+                color: #ffffff;
+                font-weight: 700;
+            }
+
+            .ia-stage-wrap {
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 24px;
+                padding: 1rem;
+                box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+            }
+
+            .ia-nav {
+                margin-top: 1rem;
+            }
+
+            @media (max-width: 640px) {
+                .block-container {
+                    padding-top: 0.6rem;
+                    padding-left: 0.85rem;
+                    padding-right: 0.85rem;
+                }
+
+                .ia-stage-wrap {
+                    border-radius: 20px;
+                    padding: 0.9rem;
+                }
+
+                .ia-brand {
+                    font-size: 1.05rem;
+                }
+
+                .ia-pill {
+                    font-size: 0.8rem;
+                    padding: 0.32rem 0.7rem;
+                }
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_topbar(version_data: dict) -> None:
     versao_exibida = _resolver_app_version_exibida(version_data)
-    st.title("IA Planilhas")
-    st.caption(f"Versão: {versao_exibida}")
+
+    st.markdown(
+        f"""
+        <div class="ia-shell">
+            <div class="ia-topbar">
+                <div class="ia-brand">IA Planilhas</div>
+                <div class="ia-version">v{versao_exibida}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-def _render_nav_precificacao() -> None:
-    st.markdown("---")
+def _render_progress(etapa_atual: str) -> None:
+    partes = []
+    for item in ETAPAS_CONFIG:
+        classe = "ia-pill ia-pill--active" if item["key"] == etapa_atual else "ia-pill"
+        partes.append(
+            f'<div class="{classe}">{item["ordem"]}. {item["titulo"]}</div>'
+        )
+
+    st.markdown(
+        f'<div class="ia-progress">{"".join(partes)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_nav(etapa_atual: str) -> None:
+    if etapa_atual == "origem":
+        return
+
+    st.markdown('<div class="ia-nav">', unsafe_allow_html=True)
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
         if st.button(
-            "⬅️ Voltar para origem",
+            "⬅️ Voltar",
             use_container_width=True,
-            key="app_btn_voltar_precificacao",
+            key=f"app_btn_voltar_{etapa_atual}",
         ):
-            _ir_para("origem")
+            if etapa_atual == "precificacao":
+                _ir_para("origem")
+            elif etapa_atual == "mapeamento":
+                _ir_para("precificacao")
+            elif etapa_atual == "final":
+                _ir_para("mapeamento")
 
     with col2:
-        if st.button(
-            "Continuar ➜",
-            use_container_width=True,
-            key="app_btn_continuar_precificacao",
-            type="primary",
-            disabled=not _pode_ir_para_mapeamento(),
-        ):
-            _ir_para("mapeamento")
+        if etapa_atual == "precificacao":
+            if st.button(
+                "Continuar ➜",
+                use_container_width=True,
+                key="app_btn_continuar_precificacao",
+                disabled=not _pode_ir_para_mapeamento(),
+            ):
+                _ir_para("mapeamento")
 
+        elif etapa_atual == "mapeamento":
+            if st.button(
+                "Continuar ➜",
+                use_container_width=True,
+                key="app_btn_continuar_mapeamento",
+                disabled=not _pode_ir_para_final(),
+            ):
+                _ir_para("final")
 
-def _render_nav_mapeamento() -> None:
-    st.markdown("---")
-    col1, col2 = st.columns(2, gap="small")
-
-    with col1:
-        if st.button(
-            "⬅️ Voltar para precificação",
-            use_container_width=True,
-            key="app_btn_voltar_mapeamento",
-        ):
-            _ir_para("precificacao")
-
-    with col2:
-        if st.button(
-            "Continuar ➜",
-            use_container_width=True,
-            key="app_btn_continuar_mapeamento",
-            type="primary",
-            disabled=not _pode_ir_para_final(),
-        ):
-            _ir_para("final")
-
-
-def _render_nav_final() -> None:
-    st.markdown("---")
-    if st.button(
-        "⬅️ Voltar para mapeamento",
-        use_container_width=True,
-        key="app_btn_voltar_final",
-    ):
-        _ir_para("mapeamento")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_etapa(etapa_atual: str) -> None:
+    st.markdown('<div class="ia-stage-wrap">', unsafe_allow_html=True)
+
     if etapa_atual == "origem":
         render_origem_dados()
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     if etapa_atual == "precificacao":
-        if not _pode_ir_para_precificacao():
-            st.warning("⚠️ Carregue a base na origem antes de acessar a precificação.")
-            if st.button("⬅️ Voltar para origem", use_container_width=True):
-                _ir_para("origem")
-            st.stop()
-
         render_origem_precificacao()
-        _render_nav_precificacao()
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     if etapa_atual == "mapeamento":
-        if not _pode_ir_para_mapeamento():
-            st.warning("⚠️ Carregue os dados antes de acessar o mapeamento.")
-            if st.button("⬅️ Voltar para origem", use_container_width=True):
-                _ir_para("origem")
-            st.stop()
-
         render_origem_mapeamento()
-        _render_nav_mapeamento()
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    if etapa_atual == "final":
-        df_fluxo = _obter_df_fluxo()
-        if not _safe_df(df_fluxo):
-            st.warning("⚠️ Nenhum dado disponível para a etapa final.")
-            if st.button("⬅️ Voltar para mapeamento", use_container_width=True):
-                _ir_para("mapeamento")
-            st.stop()
-
-        render_preview_final()
-        _render_nav_final()
-        return
-
-    _ir_para("origem")
+    render_preview_final()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # =========================
@@ -321,12 +415,17 @@ inicializar_app()
 garantir_estado_base()
 
 VERSION_DATA = _sincronizar_version_json_com_app()
+_inject_layout_css()
 
 etapa_atual = _resolver_autoetapa()
 sincronizar_etapa_global(etapa_atual)
 
-_render_topo(VERSION_DATA)
+_render_topbar(VERSION_DATA)
+_render_progress(etapa_atual)
 _render_etapa(etapa_atual)
+
+if etapa_atual != "origem":
+    _render_nav(etapa_atual)
 
 with st.expander("Debug", expanded=False):
     render_debug_panel()
