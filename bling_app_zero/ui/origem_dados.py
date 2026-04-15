@@ -71,7 +71,6 @@ def _resolver_tipo_operacao_atual() -> str:
 
 def _definir_modelo_padrao_se_necessario() -> pd.DataFrame:
     df_modelo = obter_modelo_ativo()
-
     if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
         tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
         if tipo == "estoque":
@@ -82,12 +81,10 @@ def _definir_modelo_padrao_se_necessario() -> pd.DataFrame:
 
     df_modelo = criar_modelo_vazio_para_operacao()
     tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
-
     if tipo == "estoque":
         st.session_state["df_modelo_estoque"] = _safe_copy_df(df_modelo)
     else:
         st.session_state["df_modelo_cadastro"] = _safe_copy_df(df_modelo)
-
     return df_modelo
 
 
@@ -117,6 +114,7 @@ def _persistir_origem(df_origem: pd.DataFrame | None) -> pd.DataFrame | None:
 
     df_base = _safe_copy_df(df_origem)
     sincronizar_estado_com_origem(df_base, log_debug)
+
     df_saida = consolidar_saida_da_origem(df_base)
 
     st.session_state["df_origem"] = _safe_copy_df(df_base)
@@ -126,12 +124,116 @@ def _persistir_origem(df_origem: pd.DataFrame | None) -> pd.DataFrame | None:
     return df_saida
 
 
+def _render_css() -> None:
+    st.markdown(
+        """
+        <style>
+            .wiz-kicker {
+                font-size: 0.78rem;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: #64748b;
+                margin-bottom: 0.25rem;
+            }
+
+            .wiz-title {
+                font-size: 2rem;
+                font-weight: 800;
+                line-height: 1.08;
+                color: #0f172a;
+                margin-bottom: 0.4rem;
+            }
+
+            .wiz-subtitle {
+                font-size: 1rem;
+                color: #475569;
+                margin-bottom: 1rem;
+            }
+
+            .wiz-block {
+                border: 1px solid #e5e7eb;
+                border-radius: 22px;
+                padding: 1rem;
+                background: #ffffff;
+                margin-bottom: 0.95rem;
+            }
+
+            .wiz-block-title {
+                font-size: 1.15rem;
+                font-weight: 800;
+                color: #111827;
+                margin-bottom: 0.2rem;
+            }
+
+            .wiz-block-subtitle {
+                font-size: 0.95rem;
+                color: #6b7280;
+                margin-bottom: 0.85rem;
+            }
+
+            .wiz-choice-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.75rem;
+            }
+
+            .wiz-summary {
+                border: 1px solid #e2e8f0;
+                background: #f8fafc;
+                color: #334155;
+                border-radius: 18px;
+                padding: 0.85rem 1rem;
+                font-size: 0.94rem;
+                margin-top: 0.9rem;
+            }
+
+            @media (max-width: 640px) {
+                .wiz-title {
+                    font-size: 1.75rem;
+                }
+
+                .wiz-choice-row {
+                    grid-template-columns: 1fr;
+                }
+
+                .wiz-block {
+                    border-radius: 18px;
+                    padding: 0.9rem;
+                }
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_header() -> None:
+    st.markdown('<div class="wiz-kicker">Etapa 1</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="wiz-title">Vamos montar sua base?</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="wiz-subtitle">Responda as perguntas abaixo. O sistema monta o fluxo e só depois libera a próxima etapa.</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_operacao() -> None:
     atual = _resolver_tipo_operacao_atual()
 
-    st.subheader("Operação")
+    st.markdown('<div class="wiz-block">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="wiz-block-title">O que você quer fazer?</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="wiz-block-subtitle">Escolha se o fluxo será de cadastro de produtos ou atualização de estoque.</div>',
+        unsafe_allow_html=True,
+    )
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2, gap="small")
 
     with col1:
         if st.button(
@@ -153,9 +255,19 @@ def _render_operacao() -> None:
             _sincronizar_tipo_operacao("Atualização de Estoque")
             st.rerun()
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 def _render_modelo() -> pd.DataFrame:
-    st.subheader("Modelo Bling")
+    st.markdown('<div class="wiz-block">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="wiz-block-title">Qual modelo Bling será usado?</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="wiz-block-subtitle">O modelo é definido automaticamente pela operação escolhida.</div>',
+        unsafe_allow_html=True,
+    )
 
     df_modelo = _definir_modelo_padrao_se_necessario()
     tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
@@ -165,9 +277,30 @@ def _render_modelo() -> pd.DataFrame:
 
     if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0:
         with st.expander("Preview do modelo", expanded=False):
-            st.dataframe(df_modelo.head(3), use_container_width=True, hide_index=True)
+            st.dataframe(
+                df_modelo.head(3),
+                use_container_width=True,
+                hide_index=True,
+            )
 
+    st.markdown("</div>", unsafe_allow_html=True)
     return df_modelo
+
+
+def _render_origem() -> None:
+    st.markdown('<div class="wiz-block">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="wiz-block-title">De onde virão os dados?</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="wiz-block-subtitle">Selecione a fonte e carregue a base antes de seguir para a precificação.</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_origem_entrada()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
@@ -176,7 +309,6 @@ def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
         or st.session_state.get("tipo_operacao_radio")
         or st.session_state.get("tipo_operacao_bling")
     )
-
     origem = _safe_str(
         st.session_state.get("origem_dados_tipo")
         or st.session_state.get("origem_dados_radio")
@@ -189,10 +321,17 @@ def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
         except Exception:
             linhas = 0
 
-    st.info(
-        f"Operação: {operacao or 'Não definida'} | "
-        f"Origem: {origem or 'Não definida'} | "
-        f"Linhas carregadas: {linhas}"
+    st.markdown(
+        (
+            '<div class="wiz-summary">'
+            f"<strong>Operação:</strong> {operacao or 'Não definida'}"
+            f" &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"<strong>Origem:</strong> {origem or 'Não definida'}"
+            f" &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"<strong>Linhas carregadas:</strong> {linhas}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
     )
 
 
@@ -201,7 +340,11 @@ def _render_preview_origem(df_origem: pd.DataFrame | None) -> None:
         return
 
     with st.expander("Preview da origem", expanded=False):
-        st.dataframe(df_origem.head(8), use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_origem.head(8),
+            use_container_width=True,
+            hide_index=True,
+        )
         st.caption(f"{len(df_origem)} linha(s) | {len(df_origem.columns)} coluna(s)")
 
 
@@ -211,22 +354,28 @@ def render_origem_dados() -> pd.DataFrame | None:
             _safe_str(st.session_state.get("tipo_operacao") or "Cadastro de Produtos")
         )
 
+    _render_css()
+    _render_header()
     _render_operacao()
     _render_modelo()
+    _render_origem()
 
-    st.subheader("Origem dos dados")
-    df_origem_render = render_origem_entrada()
-
-    df_origem = _resolver_df_origem_atual(df_origem_render)
+    df_origem = _resolver_df_origem_atual(st.session_state.get("df_origem"))
     df_saida = _persistir_origem(df_origem)
 
     _render_resumo_curto(df_origem)
     _render_preview_origem(df_origem)
+
     render_bloco_acoes_origem(df_origem)
 
     if safe_df_dados(df_saida):
+        try:
+            total = len(df_saida)
+        except Exception:
+            total = 0
+
         log_debug(
-            f"[ORIGEM_DADOS] etapa concluída com {len(df_saida)} linha(s) prontas para precificação.",
+            f"[ORIGEM_DADOS] etapa concluída com {total} linha(s) prontas para precificação.",
             "INFO",
         )
 
