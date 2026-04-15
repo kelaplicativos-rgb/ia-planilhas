@@ -9,7 +9,6 @@ import streamlit as st
 from bling_app_zero.ui.app_helpers import (
     log_debug,
     safe_df_dados,
-    safe_df_estrutura,
 )
 from bling_app_zero.ui.origem_dados_estado import (
     garantir_estado_origem,
@@ -37,9 +36,6 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 def _navegar(destino: str, callback: NavCallback = None) -> None:
     if callable(callback):
         callback()
@@ -77,9 +73,7 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_origem_renderizado(
-    df_origem_render: pd.DataFrame | None,
-) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -89,35 +83,6 @@ def _obter_df_origem_renderizado(
         return _resolver_df_origem_site()
 
     return df_origem_render
-
-
-def _reset_fluxo_origem() -> None:
-    for chave in [
-        "tipo_operacao",
-        "tipo_operacao_bling",
-        "tipo_operacao_radio",
-        "origem_dados_tipo",
-        "origem_dados_radio",
-        "df_origem",
-        "df_saida",
-        "df_final",
-        "df_precificado",
-        "df_calc_precificado",
-        "site_url",
-        "site_processado",
-        "site_autoavanco_realizado",
-        "fluxo_origem_passo",
-        "_origem_dados_tipo_anterior",
-        "upload_origem_dados",
-        "usar_calculadora_precificacao",
-        "coluna_precificacao_resultado",
-        "margem_bling",
-        "impostos_bling",
-        "custofixo_bling",
-        "taxaextra_bling",
-        "comissao_canal_percentual",
-    ]:
-        st.session_state.pop(chave, None)
 
 
 def _definir_passo_origem(passo: int) -> None:
@@ -287,9 +252,6 @@ def _persistir_df_saida(df_saida: pd.DataFrame) -> None:
         st.session_state["df_final"] = df_saida
 
 
-# =========================================================
-# RENDER PRINCIPAL
-# =========================================================
 def render_origem_dados(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
@@ -332,22 +294,7 @@ def render_origem_dados(
             _definir_passo_origem(3)
             st.rerun()
 
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            key="origem_btn_voltar_passo_2",
-        ):
-            for chave in [
-                "origem_dados_tipo",
-                "origem_dados_radio",
-                "df_origem",
-                "df_saida",
-                "df_final",
-                "df_precificado",
-                "df_calc_precificado",
-                "upload_origem_dados",
-            ]:
-                st.session_state.pop(chave, None)
+        if st.button("⬅️ Voltar", use_container_width=True, key="origem_btn_voltar_passo_2"):
             _definir_passo_origem(1)
             st.rerun()
 
@@ -378,32 +325,12 @@ def render_origem_dados(
 
     if not safe_df_dados(df_origem):
         col1, col2 = st.columns(2, gap="small")
-
         with col1:
-            if st.button(
-                "⬅️ Voltar",
-                use_container_width=True,
-                key="origem_btn_voltar_sem_base",
-            ):
-                for chave in [
-                    "df_origem",
-                    "df_saida",
-                    "df_final",
-                    "df_precificado",
-                    "df_calc_precificado",
-                    "upload_origem_dados",
-                ]:
-                    st.session_state.pop(chave, None)
+            if st.button("⬅️ Voltar", use_container_width=True, key="origem_btn_voltar_sem_base"):
                 _definir_passo_origem(2)
                 st.rerun()
-
         with col2:
-            st.button(
-                "Continuar ➜",
-                use_container_width=True,
-                disabled=True,
-                key="origem_btn_continuar_sem_base",
-            )
+            st.button("Continuar ➜", use_container_width=True, disabled=True, key="origem_btn_continuar_sem_base")
         return
 
     df_origem = aplicar_normalizacao_basica(df_origem)
@@ -436,20 +363,7 @@ def render_origem_dados(
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            key="origem_btn_voltar_com_base",
-        ):
-            for chave in [
-                "df_origem",
-                "df_saida",
-                "df_final",
-                "df_precificado",
-                "df_calc_precificado",
-                "upload_origem_dados",
-            ]:
-                st.session_state.pop(chave, None)
+        if st.button("⬅️ Voltar", use_container_width=True, key="origem_btn_voltar_com_base"):
             _definir_passo_origem(2)
             st.rerun()
 
