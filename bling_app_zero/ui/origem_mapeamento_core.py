@@ -391,3 +391,5 @@ def montar_df_saida_mapeado(
         st.session_state["df_preview_mapeamento"] = df_saida
 
     return df_saida
+
+
