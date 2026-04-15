@@ -1,8 +1,8 @@
-
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -30,7 +30,7 @@ st.set_page_config(
     layout="wide",
 )
 
-APP_VERSION = "1.0.45"
+APP_VERSION = "1.0.46"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
@@ -52,14 +52,14 @@ def _safe_now_str() -> str:
         return ""
 
 
-def _safe_df(df) -> bool:
+def _safe_df(df: Any) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
     except Exception:
         return False
 
 
-def _safe_df_com_linhas(df) -> bool:
+def _safe_df_com_linhas(df: Any) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
     except Exception:
@@ -78,8 +78,15 @@ def _normalizar_etapa(valor: object) -> str:
 
 
 def _ir_para(etapa: str) -> None:
-    sincronizar_etapa_global(etapa)
+    sincronizar_etapa_global(_normalizar_etapa(etapa))
     st.rerun()
+
+
+def _copiar_df(df: Any) -> Any:
+    try:
+        return df.copy()
+    except Exception:
+        return df
 
 
 # =========================
@@ -110,11 +117,11 @@ def _salvar_version_json(data: dict) -> bool:
 def _sincronizar_version_json_com_app() -> dict:
     atual = _ler_version_json()
     history = atual.get("history", [])
+
     if not isinstance(history, list):
         history = []
 
     version_json = str(atual.get("version") or "").strip()
-
     if version_json == APP_VERSION:
         return atual or {
             "version": APP_VERSION,
@@ -162,11 +169,11 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
 # =========================
 # FLUXO GLOBAL
 # =========================
-def _obter_df_fluxo():
+def _obter_df_fluxo() -> pd.DataFrame | None:
     for chave in [
         "df_final",
-        "df_saida",
         "df_preview_mapeamento",
+        "df_saida",
         "df_precificado",
         "df_calc_precificado",
         "df_origem",
@@ -177,41 +184,82 @@ def _obter_df_fluxo():
     return None
 
 
-def _pode_ir_para_precificacao() -> bool:
-    return _safe_df_com_linhas(st.session_state.get("df_origem"))
+def _tem_origem_valida() -> bool:
+    df_origem = st.session_state.get("df_origem")
+    if _safe_df_com_linhas(df_origem):
+        return True
+
+    for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+        df = st.session_state.get(chave)
+        if _safe_df_com_linhas(df):
+            st.session_state["df_origem"] = _copiar_df(df)
+            return True
+
+    return False
 
 
-def _pode_ir_para_mapeamento() -> bool:
+def _tem_dados_precificados_ou_preparados() -> bool:
     for chave in [
-        "df_saida",
-        "df_final",
         "df_precificado",
         "df_calc_precificado",
-        "df_origem",
+        "df_saida",
+        "df_final",
     ]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
     return False
 
 
+def _tem_dados_mapeados_ou_finais() -> bool:
+    for chave in [
+        "df_preview_mapeamento",
+        "df_final",
+        "df_saida",
+    ]:
+        if _safe_df_com_linhas(st.session_state.get(chave)):
+            return True
+    return False
+
+
+def _pode_ir_para_precificacao() -> bool:
+    return _tem_origem_valida()
+
+
+def _pode_ir_para_mapeamento() -> bool:
+    if _tem_dados_precificados_ou_preparados():
+        return True
+    return _tem_origem_valida()
+
+
 def _pode_ir_para_final() -> bool:
-    df_final = _obter_df_fluxo()
-    return _safe_df_com_linhas(df_final)
+    return _tem_dados_mapeados_ou_finais()
 
 
 def _resolver_autoetapa() -> str:
     etapa_atual = _normalizar_etapa(obter_etapa_global())
 
-    if etapa_atual == "precificacao" and not _pode_ir_para_precificacao():
+    if etapa_atual == "final":
+        if _pode_ir_para_final():
+            return "final"
+        if _pode_ir_para_mapeamento():
+            return "mapeamento"
+        if _pode_ir_para_precificacao():
+            return "precificacao"
         return "origem"
 
-    if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
+    if etapa_atual == "mapeamento":
+        if _pode_ir_para_mapeamento():
+            return "mapeamento"
+        if _pode_ir_para_precificacao():
+            return "precificacao"
         return "origem"
 
-    if etapa_atual == "final" and not _pode_ir_para_final():
+    if etapa_atual == "precificacao":
+        if _pode_ir_para_precificacao():
+            return "precificacao"
         return "origem"
 
-    return etapa_atual
+    return "origem"
 
 
 # =========================
@@ -221,92 +269,63 @@ def _inject_layout_css() -> None:
     st.markdown(
         """
         <style>
-            .block-container {
+            .main .block-container {
                 padding-top: 1rem;
-                padding-bottom: 3.5rem;
-                max-width: 980px;
-            }
-
-            .ia-shell {
-                margin-bottom: 1rem;
+                padding-bottom: 2rem;
             }
 
             .ia-topbar {
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                gap: 12px;
-                margin-bottom: 10px;
+                gap: .75rem;
+                margin-bottom: 1rem;
+                padding: .85rem 1rem;
+                border: 1px solid rgba(120, 120, 120, 0.18);
+                border-radius: 16px;
+                background: rgba(255, 255, 255, 0.02);
             }
 
-            .ia-brand {
-                font-size: 1.2rem;
-                font-weight: 800;
-                color: #0f172a;
-                line-height: 1.1;
+            .ia-topbar__title {
+                font-size: 1.05rem;
+                font-weight: 700;
+                line-height: 1.2;
+                margin: 0;
             }
 
-            .ia-version {
-                font-size: 0.82rem;
-                color: #64748b;
+            .ia-topbar__version {
+                font-size: .86rem;
+                opacity: .82;
                 white-space: nowrap;
             }
 
             .ia-progress {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 8px;
-                margin: 0.35rem 0 1.2rem 0;
+                gap: .5rem;
+                margin-bottom: 1rem;
             }
 
             .ia-pill {
-                border: 1px solid #e2e8f0;
+                border: 1px solid rgba(120, 120, 120, 0.18);
                 border-radius: 999px;
-                padding: 0.38rem 0.8rem;
-                font-size: 0.88rem;
-                color: #475569;
-                background: #ffffff;
+                padding: .45rem .8rem;
+                font-size: .9rem;
+                opacity: .82;
             }
 
             .ia-pill--active {
-                border-color: #111827;
-                background: #111827;
-                color: #ffffff;
+                border-color: rgba(255, 255, 255, 0.28);
                 font-weight: 700;
+                opacity: 1;
             }
 
-            .ia-stage-wrap {
-                background: #ffffff;
-                border: 1px solid #e5e7eb;
-                border-radius: 24px;
-                padding: 1rem;
-                box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+            .ia-stage-shell {
+                margin-top: .25rem;
             }
 
-            .ia-nav {
+            .ia-nav-wrap {
                 margin-top: 1rem;
-            }
-
-            @media (max-width: 640px) {
-                .block-container {
-                    padding-top: 0.6rem;
-                    padding-left: 0.85rem;
-                    padding-right: 0.85rem;
-                }
-
-                .ia-stage-wrap {
-                    border-radius: 20px;
-                    padding: 0.9rem;
-                }
-
-                .ia-brand {
-                    font-size: 1.05rem;
-                }
-
-                .ia-pill {
-                    font-size: 0.8rem;
-                    padding: 0.32rem 0.7rem;
-                }
             }
         </style>
         """,
@@ -316,14 +335,11 @@ def _inject_layout_css() -> None:
 
 def _render_topbar(version_data: dict) -> None:
     versao_exibida = _resolver_app_version_exibida(version_data)
-
     st.markdown(
         f"""
-        <div class="ia-shell">
-            <div class="ia-topbar">
-                <div class="ia-brand">IA Planilhas</div>
-                <div class="ia-version">v{versao_exibida}</div>
-            </div>
+        <div class="ia-topbar">
+            <div class="ia-topbar__title">IA Planilhas</div>
+            <div class="ia-topbar__version">v{versao_exibida}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -344,11 +360,22 @@ def _render_progress(etapa_atual: str) -> None:
     )
 
 
+def _etapa_tem_navegacao_interna(etapa_atual: str) -> bool:
+    """
+    Evita duplicar botões quando a própria tela já controla voltar/continuar.
+    A etapa de precificação já possui navegação interna confirmada.
+    """
+    return etapa_atual in {"precificacao"}
+
+
 def _render_nav(etapa_atual: str) -> None:
     if etapa_atual == "origem":
         return
 
-    st.markdown('<div class="ia-nav">', unsafe_allow_html=True)
+    if _etapa_tem_navegacao_interna(etapa_atual):
+        return
+
+    st.markdown('<div class="ia-nav-wrap">', unsafe_allow_html=True)
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
@@ -373,7 +400,6 @@ def _render_nav(etapa_atual: str) -> None:
                 disabled=not _pode_ir_para_mapeamento(),
             ):
                 _ir_para("mapeamento")
-
         elif etapa_atual == "mapeamento":
             if st.button(
                 "Continuar ➜",
@@ -387,7 +413,7 @@ def _render_nav(etapa_atual: str) -> None:
 
 
 def _render_etapa(etapa_atual: str) -> None:
-    st.markdown('<div class="ia-stage-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="ia-stage-shell">', unsafe_allow_html=True)
 
     if etapa_atual == "origem":
         render_origem_dados()
@@ -415,6 +441,7 @@ inicializar_app()
 garantir_estado_base()
 
 VERSION_DATA = _sincronizar_version_json_com_app()
+
 _inject_layout_css()
 
 etapa_atual = _resolver_autoetapa()
@@ -423,9 +450,7 @@ sincronizar_etapa_global(etapa_atual)
 _render_topbar(VERSION_DATA)
 _render_progress(etapa_atual)
 _render_etapa(etapa_atual)
-
-if etapa_atual != "origem":
-    _render_nav(etapa_atual)
+_render_nav(etapa_atual)
 
 with st.expander("Debug", expanded=False):
     render_debug_panel()
