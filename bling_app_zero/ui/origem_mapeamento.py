@@ -357,6 +357,55 @@ def render_origem_mapeamento(
         "Revise o depósito padrão e use a referência rápida para mapear com mais segurança.",
     )
     _render_configuracao_mapeamento()
-    _render_preview_curto(df_fonte, df_model
+    _render_preview_curto(df_fonte, df_modelo)
 
-                          
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Formulário de mapeamento",
+        "Relacione as colunas da origem com o modelo final.",
+    )
+
+    mapping_inicial = _restaurar_mapping_inicial()
+    mapping_atualizado = render_formulario_mapeamento(
+        df_fonte,
+        df_modelo,
+        mapping_inicial,
+    )
+    mapping_atualizado = _safe_dict(mapping_atualizado)
+
+    st.session_state["mapping_origem_rascunho"] = _safe_dict(mapping_atualizado)
+
+    duplicidades = detectar_duplicidades_mapping(mapping_atualizado)
+    erro = bool(duplicidades)
+
+    df_saida = None
+
+    if not erro:
+        _persistir_mapping(mapping_atualizado)
+        df_saida = montar_df_saida_mapeado(df_fonte, df_modelo, mapping_atualizado)
+
+        if _tem_estrutura_df(df_saida):
+            _persistir_df_saida(df_saida)
+
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Preview do mapeamento",
+        "Confira como a saída final está ficando antes de avançar.",
+    )
+
+    if _tem_estrutura_df(df_saida):
+        _render_preview_mapeamento_visual(df_saida, duplicidades)
+    else:
+        _render_alertas_duplicidade(duplicidades)
+        st.warning("Nenhum preview válido foi gerado com o mapeamento atual.")
+
+    st.divider()
+
+    _render_footer_nav(
+        erro=erro,
+        on_back=on_back,
+        on_continue=on_continue,
+        df_saida=df_saida,
+    )
