@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import pandas as pd
@@ -9,16 +10,20 @@ from bling_app_zero.ui.app_helpers import (
     safe_df_estrutura,
     sincronizar_etapa_global,
 )
-from bling_app_zero.ui.origem_mapeamento_core import (
-    montar_df_saida_mapeado,
-    obter_df_fonte_mapeamento,
-    obter_df_modelo_mapeamento,
-)
 
 
-# =========================
-# HELPERS
-# =========================
+try:
+    from bling_app_zero.ui.origem_mapeamento_core import (
+        montar_df_saida_mapeado as _montar_df_saida_mapeado_core,
+        obter_df_fonte_mapeamento as _obter_df_fonte_mapeamento_core,
+        obter_df_modelo_mapeamento as _obter_df_modelo_mapeamento_core,
+    )
+except Exception:
+    _montar_df_saida_mapeado_core = None
+    _obter_df_fonte_mapeamento_core = None
+    _obter_df_modelo_mapeamento_core = None
+
+
 def _safe_str(valor) -> str:
     try:
         if valor is None:
@@ -39,25 +44,78 @@ def _safe_copy_df(df):
 
 
 def _normalizar_texto(valor: str) -> str:
-    try:
-        return (
-            _safe_str(valor)
-            .lower()
-            .replace("ç", "c")
-            .replace("ã", "a")
-            .replace("á", "a")
-            .replace("à", "a")
-            .replace("â", "a")
-            .replace("é", "e")
-            .replace("ê", "e")
-            .replace("í", "i")
-            .replace("ó", "o")
-            .replace("ô", "o")
-            .replace("õ", "o")
-            .replace("ú", "u")
-        )
-    except Exception:
-        return _safe_str(valor).lower()
+    return (
+        _safe_str(valor)
+        .lower()
+        .replace("ç", "c")
+        .replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+    )
+
+
+def _modelo_padrao_local() -> pd.DataFrame:
+    tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+    if tipo == "estoque":
+        colunas = [
+            "Código",
+            "Descrição",
+            "Depósito (OBRIGATÓRIO)",
+            "Balanço (OBRIGATÓRIO)",
+            "Preço unitário (OBRIGATÓRIO)",
+            "Situação",
+        ]
+    else:
+        colunas = [
+            "Código",
+            "Descrição",
+            "Descrição Curta",
+            "Preço de venda",
+            "GTIN/EAN",
+            "Situação",
+            "URL Imagens",
+        ]
+    return pd.DataFrame(columns=colunas)
+
+
+def _obter_df_fonte_mapeamento() -> pd.DataFrame | None:
+    if callable(_obter_df_fonte_mapeamento_core):
+        try:
+            df = _obter_df_fonte_mapeamento_core()
+            if safe_df_dados(df):
+                return df
+        except Exception as e:
+            log_debug(f"Fallback core fonte mapeamento: {e}", "WARNING")
+
+    for chave in ["df_precificado", "df_calc_precificado", "df_saida", "df_final", "df_origem"]:
+        df = st.session_state.get(chave)
+        if safe_df_dados(df):
+            return _safe_copy_df(df)
+    return None
+
+
+def _obter_df_modelo_mapeamento() -> pd.DataFrame | None:
+    if callable(_obter_df_modelo_mapeamento_core):
+        try:
+            df = _obter_df_modelo_mapeamento_core()
+            if safe_df_estrutura(df):
+                return df
+        except Exception as e:
+            log_debug(f"Fallback core modelo mapeamento: {e}", "WARNING")
+
+    df_modelo = st.session_state.get("df_modelo_operacao")
+    if safe_df_estrutura(df_modelo):
+        return _safe_copy_df(df_modelo)
+
+    return _modelo_padrao_local()
 
 
 def _is_coluna_bloqueada(nome_coluna: str) -> bool:
@@ -67,7 +125,6 @@ def _is_coluna_bloqueada(nome_coluna: str) -> bool:
         or nome.startswith("id ")
         or " id " in f" {nome} "
         or "deposito" in nome
-        or "depósito" in _safe_str(nome_coluna).lower()
     )
 
 
@@ -77,18 +134,7 @@ def _is_coluna_preco(nome_coluna: str) -> bool:
 
 
 def _is_coluna_situacao(nome_coluna: str) -> bool:
-    nome = _normalizar_texto(nome_coluna)
-    return "situacao" in nome
-
-
-def _label_operacao() -> str:
-    tipo = _safe_str(
-        st.session_state.get("tipo_operacao")
-        or st.session_state.get("tipo_operacao_bling")
-    ).lower()
-    if tipo == "estoque":
-        return "Atualização de Estoque"
-    return "Cadastro de Produtos"
+    return "situacao" in _normalizar_texto(nome_coluna)
 
 
 def _inferir_mapping_inicial(
@@ -109,9 +155,7 @@ def _inferir_mapping_inicial(
 
     for col_modelo in df_modelo.columns:
         col_modelo = str(col_modelo)
-        if col_modelo in mapping and (
-            not mapping[col_modelo] or mapping[col_modelo] in colunas_fonte
-        ):
+        if col_modelo in mapping and (not mapping[col_modelo] or mapping[col_modelo] in colunas_fonte):
             continue
 
         nome = _normalizar_texto(col_modelo)
@@ -124,7 +168,6 @@ def _inferir_mapping_inicial(
             mapping[col_modelo] = "__DEFAULT_ATIVO__"
             continue
 
-        # Se a precificação já colocou o preço na própria base, tenta reaproveitar.
         if _is_coluna_preco(col_modelo) and col_modelo in colunas_fonte:
             mapping[col_modelo] = col_modelo
             continue
@@ -156,10 +199,6 @@ def _inferir_mapping_inicial(
                     mapping[col_modelo] = col_fonte
                     break
 
-            if "preco de custo" in nome and "custo" in nome_fonte:
-                mapping[col_modelo] = col_fonte
-                break
-
             if _is_coluna_preco(col_modelo):
                 if (
                     "preco de venda" in nome_fonte
@@ -172,6 +211,31 @@ def _inferir_mapping_inicial(
                     break
 
     return mapping
+
+
+def _montar_df_saida_mapeado(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping: dict[str, str],
+) -> pd.DataFrame:
+    if callable(_montar_df_saida_mapeado_core):
+        try:
+            return _montar_df_saida_mapeado_core(df_base, df_modelo, mapping)
+        except Exception as e:
+            log_debug(f"Fallback montar df mapeado: {e}", "WARNING")
+
+    df_saida = pd.DataFrame(index=df_base.index)
+
+    for col_modelo in df_modelo.columns:
+        col_modelo = str(col_modelo)
+        origem = _safe_str(mapping.get(col_modelo))
+
+        if origem and origem in df_base.columns:
+            df_saida[col_modelo] = df_base[origem]
+        else:
+            df_saida[col_modelo] = ""
+
+    return df_saida
 
 
 def _aplicar_defaults_no_df(df_preview: pd.DataFrame, defaults: dict[str, str]) -> pd.DataFrame:
@@ -192,11 +256,7 @@ def _aplicar_defaults_no_df(df_preview: pd.DataFrame, defaults: dict[str, str]) 
         return df_preview if isinstance(df_preview, pd.DataFrame) else pd.DataFrame()
 
 
-def _persistir_resultado(
-    mapping: dict[str, str],
-    defaults: dict[str, str],
-    df_preview: pd.DataFrame,
-) -> None:
+def _persistir_resultado(mapping: dict[str, str], defaults: dict[str, str], df_preview: pd.DataFrame) -> None:
     st.session_state["mapping_origem"] = dict(mapping or {})
     st.session_state["mapping_origem_rascunho"] = dict(mapping or {})
     st.session_state["mapping_origem_defaults"] = dict(defaults or {})
@@ -205,31 +265,14 @@ def _persistir_resultado(
     st.session_state["df_final"] = _safe_copy_df(df_preview)
 
 
-def _render_resumo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
-    operacao = _label_operacao()
-    st.markdown(
-        (
-            f"**Operação:** {operacao}"
-            f" &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"**Linhas da origem:** {len(df_base)}"
-            f" &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"**Colunas do modelo:** {len(df_modelo.columns)}"
-        ),
-        unsafe_allow_html=True,
-    )
-
-
-# =========================
-# RENDER PRINCIPAL
-# =========================
 def render_origem_mapeamento(
     df_origem: pd.DataFrame | None = None,
     df_modelo: pd.DataFrame | None = None,
 ) -> pd.DataFrame | None:
     st.markdown("### 🧩 Mapeamento")
 
-    df_base = df_origem if safe_df_dados(df_origem) else obter_df_fonte_mapeamento()
-    df_destino = df_modelo if safe_df_estrutura(df_modelo) else obter_df_modelo_mapeamento()
+    df_base = df_origem if safe_df_dados(df_origem) else _obter_df_fonte_mapeamento()
+    df_destino = df_modelo if safe_df_estrutura(df_modelo) else _obter_df_modelo_mapeamento()
 
     if not safe_df_dados(df_base):
         st.warning("Carregue uma origem válida antes de abrir o mapeamento.")
@@ -243,70 +286,59 @@ def render_origem_mapeamento(
     mapping_inicial = _inferir_mapping_inicial(df_base, df_destino, mapping_salvo)
 
     colunas_fonte = [str(c) for c in df_base.columns]
-    opcoes_select = [""] + colunas_fonte
-
-    _render_resumo(df_base, df_destino)
-    st.markdown("---")
-
     mapping_novo: dict[str, str] = {}
     defaults_novos: dict[str, str] = {}
+    usados: set[str] = set()
 
-    used_sources: set[str] = set()
-
-    for col_modelo in df_destino.columns:
-        col_modelo = str(col_modelo)
-        valor_inicial = _safe_str(mapping_inicial.get(col_modelo))
-
-        if valor_inicial and valor_inicial in colunas_fonte:
-            used_sources.add(valor_inicial)
+    st.caption(
+        f"Origem: {len(df_base)} linha(s) | Modelo: {len(df_destino.columns)} coluna(s)"
+    )
+    st.markdown("---")
 
     for idx, col_modelo in enumerate(df_destino.columns):
         col_modelo = str(col_modelo)
-        chave_select = f"map_dest_{idx}_{col_modelo}"
-
         st.markdown(f"**{col_modelo}**")
 
         if _is_coluna_bloqueada(col_modelo):
             if "deposito" in _normalizar_texto(col_modelo):
-                deposito = _safe_str(st.session_state.get("deposito_nome"))
-                st.info(f"Preenchido automaticamente pelo depósito informado: **{deposito or 'vazio'}**")
-                defaults_novos[col_modelo] = deposito
+                defaults_novos[col_modelo] = _safe_str(st.session_state.get("deposito_nome"))
+                st.info(
+                    f"Preenchido automaticamente pelo depósito informado: **{defaults_novos[col_modelo] or 'vazio'}**"
+                )
             else:
-                st.info("Campo bloqueado automaticamente.")
                 defaults_novos[col_modelo] = ""
+                st.info("Campo bloqueado automaticamente.")
             continue
 
         if _is_coluna_situacao(col_modelo):
-            st.info("Preenchido automaticamente como **Ativo**.")
             defaults_novos[col_modelo] = "Ativo"
+            st.info("Preenchido automaticamente como **Ativo**.")
             continue
 
         valor_inicial = _safe_str(mapping_inicial.get(col_modelo))
-        if valor_inicial not in opcoes_select:
-            valor_inicial = ""
+        opcoes = [""]
 
-        # Evita dupla seleção da mesma coluna de origem, mas preserva a já escolhida.
-        opcoes_livres = [""]
-        for item in colunas_fonte:
-            if item == valor_inicial or item not in used_sources:
-                opcoes_livres.append(item)
+        for col in colunas_fonte:
+            if col == valor_inicial or col not in usados:
+                opcoes.append(col)
 
-        indice_inicial = opcoes_livres.index(valor_inicial) if valor_inicial in opcoes_livres else 0
+        index = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
 
         selecionado = st.selectbox(
             f"Selecionar coluna de origem para {col_modelo}",
-            options=opcoes_livres,
-            index=indice_inicial,
-            key=chave_select,
+            options=opcoes,
+            index=index,
+            key=f"map_{idx}_{col_modelo}",
             label_visibility="collapsed",
         )
 
-        mapping_novo[col_modelo] = _safe_str(selecionado)
+        selecionado = _safe_str(selecionado)
+        mapping_novo[col_modelo] = selecionado
 
         if selecionado:
-            used_sources.add(selecionado)
+            usados.add(selecionado)
 
-    df_preview = montar_df_saida_mapeado(df_base, df_destino, mapping_novo)
+    df_preview = _montar_df_saida_mapeado(df_base, df_destino, mapping_novo)
     df_preview = _aplicar_defaults_no_df(df_preview, defaults_novos)
 
     with st.expander("🔎 Preview do mapeamento", expanded=False):
@@ -332,7 +364,6 @@ def render_origem_mapeamento(
 
     with col3:
         pode_continuar = safe_df_dados(df_preview)
-
         if st.button(
             "Continuar para preview final ➡️",
             use_container_width=True,
