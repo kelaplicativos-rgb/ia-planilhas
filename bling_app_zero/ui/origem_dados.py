@@ -40,6 +40,9 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def _float_session(key: str, default: float = 0.0) -> float:
     try:
         return float(st.session_state.get(key, default) or default)
@@ -138,6 +141,14 @@ def _obter_passo_origem() -> int:
         return int(st.session_state.get("fluxo_origem_passo", 1) or 1)
     except Exception:
         return 1
+
+
+def _deve_exibir_deposito() -> bool:
+    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
+
+
+def _deve_exibir_deposito_no_passo(passo: int) -> bool:
+    return _deve_exibir_deposito() and passo >= 3
 
 
 def _render_css_local() -> None:
@@ -345,10 +356,6 @@ def _render_entrada_somente_da_origem_escolhida() -> pd.DataFrame | None:
     )
 
 
-def _deve_exibir_deposito() -> bool:
-    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
-
-
 def _resolve_operacao_label() -> str:
     return safe_str(
         st.session_state.get("tipo_operacao_radio")
@@ -433,13 +440,6 @@ def render_origem_dados(
         st.rerun()
         return
 
-    if _deve_exibir_deposito():
-        st.text_input(
-            "Nome do depósito",
-            key="deposito_nome",
-            placeholder="Ex: Depósito principal",
-        )
-
     if passo == 2:
         _render_question(
             "De onde virão os dados?",
@@ -481,6 +481,13 @@ def render_origem_dados(
         "Agora complete somente a origem escolhida.",
         kicker="Pergunta 3",
     )
+
+    if _deve_exibir_deposito_no_passo(passo):
+        st.text_input(
+            "Nome do depósito",
+            key="deposito_nome",
+            placeholder="Ex: Depósito principal",
+        )
 
     df_origem_render = _render_entrada_somente_da_origem_escolhida()
     df_origem = _obter_df_origem_renderizado(df_origem_render)
@@ -544,5 +551,5 @@ def render_origem_dados(
         on_back=on_back,
         on_continue=on_continue,
         continuar_habilitado=True,
-        )
+    )
     
