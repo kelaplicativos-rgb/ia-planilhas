@@ -606,4 +606,199 @@ def to_numeric_series(serie: pd.Series) -> pd.Series:
             .astype(str)
             .str.replace("R$", "", regex=False)
             .str.replace(" ", "", regex=False)
-        
+        )
+
+        possui_virgula = texto.str.contains(",", regex=False)
+        possui_ponto = texto.str.contains(".", regex=False)
+
+        texto = texto.where(
+            ~(possui_virgula & possui_ponto),
+            texto.str.replace(".", "", regex=False),
+        )
+        texto = texto.str.replace(",", ".", regex=False)
+
+        return pd.to_numeric(texto, errors="coerce")
+    except Exception:
+        return pd.to_numeric(serie, errors="coerce")
+
+
+def _float_state(key: str, default: float = 0.0) -> float:
+    try:
+        return float(st.session_state.get(key, default) or default)
+    except Exception:
+        return default
+
+
+def _resolve_coluna_preco_existente(df_origem: pd.DataFrame) -> str:
+    prioridades = [
+        "Preço unitário (OBRIGATÓRIO)",
+        "Preço de venda",
+        "preco_unitario",
+        "preco_unitario_tributavel",
+        "preço unitário",
+        "valor_unitario",
+        "valor total",
+        "valor_total",
+        "preco",
+        "preço",
+        "custo",
+    ]
+
+    mapa = {safe_str(c).strip().lower(): c for c in df_origem.columns}
+    for item in prioridades:
+        chave = safe_str(item).strip().lower()
+        if chave in mapa:
+            return mapa[chave]
+    return ""
+
+
+def _aplicar_fallback_preco_fornecedor(
+    df_resultado: pd.DataFrame,
+    df_origem: pd.DataFrame,
+) -> pd.DataFrame:
+    coluna_saida = nome_coluna_preco_saida()
+    if coluna_saida not in df_resultado.columns:
+        df_resultado[coluna_saida] = ""
+
+    coluna_fornecedor = _resolve_coluna_preco_existente(df_origem)
+    if not coluna_fornecedor or coluna_fornecedor not in df_origem.columns:
+        return df_resultado
+
+    serie = df_origem[coluna_fornecedor].reset_index(drop=True)
+    atual = df_resultado[coluna_saida].reset_index(drop=True)
+
+    serie_atual_num = to_numeric_series(atual)
+    serie_fornecedor_num = to_numeric_series(serie)
+
+    mascara_vazia = serie_atual_num.isna()
+    df_resultado.loc[mascara_vazia, coluna_saida] = serie.loc[mascara_vazia].values
+    return df_resultado
+
+
+def calcular_preco_olist(
+    custo_base: pd.Series,
+    imposto_nf_pct: float,
+    margem_desejada_pct: float,
+    frete_estimado_valor: float,
+    comissao_canal_pct: float,
+    custo_extra_fixo: float,
+) -> pd.Series:
+    custo_num = to_numeric_series(custo_base).fillna(0.0)
+
+    percentual_total = (
+        (imposto_nf_pct / 100.0)
+        + (margem_desejada_pct / 100.0)
+        + (comissao_canal_pct / 100.0)
+    )
+
+    denominador = 1.0 - percentual_total
+    if denominador <= 0:
+        denominador = 0.0001
+
+    numerador = custo_num + float(frete_estimado_valor) + float(custo_extra_fixo)
+    return (numerador / denominador).round(2)
+
+
+def aplicar_precificacao(
+    df_origem: pd.DataFrame,
+    coluna_custo: str,
+    margem: float,
+    impostos: float,
+    custo_fixo: float,
+    taxa_extra: float,
+) -> pd.DataFrame | None:
+    """
+    Padrão Olist:
+    preço_venda = (custo + frete + custo_extra) / (1 - (comissão + imposto + margem))
+
+    Compatibilidade com a UI atual:
+    - margem     -> margem desejada %
+    - impostos   -> imposto NF-e %
+    - custo_fixo -> frete estimado (R$)
+    - taxa_extra -> custo extra fixo (R$)
+
+    Regras:
+    - Se o usuário não quiser usar a calculadora, mantém preço da planilha fornecedora.
+    - Se não existir coluna-base numérica válida, mantém preço da planilha fornecedora.
+    - A saída sempre preenche a coluna final correta:
+      * estoque  -> "Preço unitário (OBRIGATÓRIO)"
+      * cadastro -> "Preço de venda"
+    """
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        st.session_state["df_calc_precificado"] = None
+        return None
+
+    df_resultado = df_origem.copy()
+    coluna_saida = nome_coluna_preco_saida()
+
+    usar_calculadora = bool(st.session_state.get("usar_calculadora_precificacao", True))
+    comissao_canal_pct = _float_state("comissao_canal_percentual", 16.0)
+
+    if coluna_saida not in df_resultado.columns:
+        df_resultado[coluna_saida] = ""
+
+    if not usar_calculadora:
+        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
+        st.session_state["df_calc_precificado"] = df_resultado.copy()
+        st.session_state["df_precificado"] = df_resultado.copy()
+        return df_resultado
+
+    if not coluna_custo or coluna_custo not in df_origem.columns:
+        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
+        st.session_state["df_calc_precificado"] = df_resultado.copy()
+        st.session_state["df_precificado"] = df_resultado.copy()
+        return df_resultado
+
+    serie_base = to_numeric_series(df_origem[coluna_custo])
+
+    if serie_base.isna().all():
+        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
+        st.session_state["df_calc_precificado"] = df_resultado.copy()
+        st.session_state["df_precificado"] = df_resultado.copy()
+        return df_resultado
+
+    try:
+        preco_olist = calcular_preco_olist(
+            custo_base=df_origem[coluna_custo],
+            imposto_nf_pct=impostos,
+            margem_desejada_pct=margem,
+            frete_estimado_valor=custo_fixo,
+            comissao_canal_pct=comissao_canal_pct,
+            custo_extra_fixo=taxa_extra,
+        )
+
+        df_resultado[coluna_saida] = preco_olist
+        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
+
+        st.session_state["df_calc_precificado"] = df_resultado.copy()
+        st.session_state["df_precificado"] = df_resultado.copy()
+        return df_resultado
+    except Exception as e:
+        log_debug(f"[ORIGEM_DADOS] erro na precificação: {e}", "ERROR")
+        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
+        st.session_state["df_calc_precificado"] = df_resultado.copy()
+        st.session_state["df_precificado"] = df_resultado.copy()
+        return df_resultado
+
+
+# ==========================================================
+# VALIDAÇÃO
+# ==========================================================
+def validar_antes_mapeamento() -> tuple[bool, list[str]]:
+    erros: list[str] = []
+
+    df_origem = st.session_state.get("df_origem")
+    if not safe_df_dados(df_origem):
+        erros.append("Carregue os dados de origem antes de continuar.")
+
+    origem_atual = _normalizar_tipo_origem(obter_origem_atual())
+
+    if "site" in origem_atual:
+        url = safe_str(st.session_state.get("site_url"))
+        if not url:
+            erros.append("Informe a URL do site.")
+
+        if not st.session_state.get("site_processado") and not safe_df_dados(df_origem):
+            erros.append("Execute a busca do site antes de continuar.")
+
+    return len(erros) == 0, erros
