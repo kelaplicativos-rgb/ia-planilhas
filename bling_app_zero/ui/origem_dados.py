@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -29,7 +31,6 @@ from bling_app_zero.ui.origem_dados_handlers import (
     validar_antes_mapeamento,
 )
 from bling_app_zero.ui.origem_dados_ui import (
-    render_header_fluxo,
     render_modelo_bling,
     render_origem_entrada,
     render_precificacao,
@@ -91,7 +92,9 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(
+    df_origem_render: pd.DataFrame | None,
+) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -126,6 +129,7 @@ def _resetar_autoavanco_site_se_necessario(
 
 def _autoavancar_site_se_pronto(on_continue: NavCallback = None) -> bool:
     origem_atual = safe_str(obter_origem_atual()).lower()
+
     if "site" not in origem_atual:
         return False
 
@@ -157,90 +161,6 @@ def _autoavancar_site_se_pronto(on_continue: NavCallback = None) -> bool:
     return True
 
 
-def _render_topo_visual() -> None:
-    st.markdown(
-        """
-        <style>
-        .origem-card-topo {
-            border: 1px solid rgba(128,128,128,0.16);
-            border-radius: 18px;
-            padding: 14px 16px;
-            margin-bottom: 14px;
-            background: rgba(255,255,255,0.02);
-        }
-
-        .origem-kicker {
-            font-size: 0.78rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            opacity: 0.72;
-            font-weight: 700;
-            margin-bottom: 6px;
-        }
-
-        .origem-titulo {
-            font-size: 1.16rem;
-            font-weight: 700;
-            line-height: 1.15;
-            margin-bottom: 6px;
-        }
-
-        .origem-subtitulo {
-            font-size: 0.93rem;
-            opacity: 0.82;
-            line-height: 1.3;
-        }
-
-        .origem-resumo-box {
-            border: 1px solid rgba(128,128,128,0.14);
-            border-radius: 14px;
-            padding: 12px 14px;
-            background: rgba(255,255,255,0.015);
-            min-height: 80px;
-        }
-
-        .origem-resumo-label {
-            font-size: 0.75rem;
-            opacity: 0.72;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-bottom: 6px;
-        }
-
-        .origem-resumo-value {
-            font-size: 1rem;
-            font-weight: 700;
-            line-height: 1.2;
-        }
-
-        .origem-bloco {
-            border: 1px solid rgba(128,128,128,0.14);
-            border-radius: 16px;
-            padding: 14px;
-            margin-bottom: 14px;
-            background: rgba(255,255,255,0.015);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="origem-card-topo">
-            <div class="origem-kicker">Etapa 1</div>
-            <div class="origem-titulo">Origem dos dados e preparação da base</div>
-            <div class="origem-subtitulo">
-                Defina a operação, escolha de onde virão os dados, revise a base carregada
-                e aplique a precificação antes de seguir para o mapeamento.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _render_resumo_operacional(df_origem: pd.DataFrame | None = None) -> None:
     operacao = safe_str(
         st.session_state.get("tipo_operacao")
@@ -267,49 +187,22 @@ def _render_resumo_operacional(df_origem: pd.DataFrame | None = None) -> None:
     c1, c2, c3 = st.columns(3, gap="small")
 
     with c1:
-        st.markdown(
-            f"""
-            <div class="origem-resumo-box">
-                <div class="origem-resumo-label">Operação</div>
-                <div class="origem-resumo-value">{operacao or "Não definida"}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("Operação")
+        st.markdown(f"**{operacao or 'Não definida'}**")
 
     with c2:
-        st.markdown(
-            f"""
-            <div class="origem-resumo-box">
-                <div class="origem-resumo-label">Origem escolhida</div>
-                <div class="origem-resumo-value">{origem or "Não definida"}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("Origem escolhida")
+        st.markdown(f"**{origem or 'Não definida'}**")
 
     with c3:
-        st.markdown(
-            f"""
-            <div class="origem-resumo-box">
-                <div class="origem-resumo-label">Base carregada</div>
-                <div class="origem-resumo-value">{linhas} linha(s) · {colunas} coluna(s)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("Base carregada")
+        st.markdown(f"**{linhas} linha(s) · {colunas} coluna(s)**")
 
 
 def _render_cabecalho_bloco(titulo: str, descricao: str) -> None:
-    st.markdown(
-        f"""
-        <div class="origem-bloco">
-            <div class="origem-kicker">{titulo}</div>
-            <div class="origem-subtitulo">{descricao}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"#### {titulo}")
+    if descricao:
+        st.caption(descricao)
 
 
 def _render_botoes_origem(
@@ -371,22 +264,24 @@ def render_origem_dados(
     if "site_autoavanco_realizado" not in st.session_state:
         st.session_state["site_autoavanco_realizado"] = False
 
-    _render_topo_visual()
-    render_header_fluxo()
-
     etapa = safe_str(st.session_state.get("etapa_origem", "origem") or "origem").lower()
     if etapa != "origem":
         set_etapa_origem("origem")
 
-    labels_operacao = ["Cadastro de Produtos", "Atualização de Estoque"]
-    valor_radio = safe_str(st.session_state.get("tipo_operacao_radio"))
+    labels_operacao = [
+        "Cadastro de Produtos",
+        "Atualização de Estoque",
+    ]
 
+    valor_radio = safe_str(st.session_state.get("tipo_operacao_radio"))
     if valor_radio not in labels_operacao:
         st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
         valor_radio = "Cadastro de Produtos"
 
-    st.markdown("---")
-    st.markdown("### Operação")
+    _render_cabecalho_bloco(
+        "Operação",
+        "Defina primeiro se a base será usada para cadastro de produtos ou atualização de estoque.",
+    )
 
     operacao = st.radio(
         "Você quer cadastrar produtos ou atualizar o estoque?",
@@ -394,6 +289,7 @@ def render_origem_dados(
         key="tipo_operacao_radio",
         horizontal=True,
         index=labels_operacao.index(valor_radio),
+        label_visibility="collapsed",
     )
     sincronizar_tipo_operacao(operacao)
 
@@ -405,13 +301,18 @@ def render_origem_dados(
             help="Este valor será propagado para a base de estoque quando necessário.",
         )
 
-    st.markdown("---")
-    st.markdown("### Origem dos dados")
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Origem dos dados",
+        "Selecione de onde virão os dados e carregue a base principal.",
+    )
+
     df_origem_render = render_origem_entrada(
         lambda origem: controlar_troca_origem(origem, log_debug)
     )
-
     df_origem = _obter_df_origem_renderizado(df_origem_render)
+
     origem_atual = safe_str(obter_origem_atual()).lower()
     _resetar_autoavanco_site_se_necessario(origem_atual, df_origem)
 
@@ -422,14 +323,13 @@ def render_origem_dados(
             st.session_state["site_processado"] = True
         elif _site_configurada_minimamente():
             st.info(
-                "A URL do site já foi preenchida. Assim que o crawler ou fetcher carregar "
-                "os dados na sessão, o sistema vai liberar e autoavançar."
+                "A URL do site já foi preenchida. Assim que o crawler ou fetcher carregar os dados na sessão, o sistema vai liberar e autoavançar."
             )
         else:
             st.info("Configure o site e execute a busca para continuar.")
 
     if not safe_df_dados(df_origem):
-        st.markdown("---")
+        st.divider()
         _render_botoes_origem(
             on_back=on_back,
             on_continue=on_continue,
@@ -447,14 +347,18 @@ def render_origem_dados(
 
     sincronizar_estado_com_origem(df_origem, log_debug)
 
-    st.markdown("---")
-    st.markdown("### Modelo de saída")
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Modelo de saída",
+        "Confira o modelo ativo do sistema antes de seguir para a transformação da base.",
+    )
     render_modelo_bling(operacao)
 
     modelo_ativo = obter_modelo_ativo()
     if modelo_ativo is not None and not modelo_tem_estrutura(modelo_ativo):
         st.warning("⚠️ Modelo do sistema não encontrado.")
-        st.markdown("---")
+        st.divider()
         _render_botoes_origem(
             on_back=on_back,
             on_continue=on_continue,
@@ -478,12 +382,20 @@ def render_origem_dados(
     except Exception:
         st.session_state["df_final"] = df_saida
 
-    st.markdown("---")
-    st.markdown("### Preview da origem")
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Preview da origem",
+        "Visualize rapidamente a base carregada antes da precificação e do mapeamento.",
+    )
     render_preview_origem(df_origem)
 
-    st.markdown("---")
-    st.markdown("### Precificação")
+    st.divider()
+
+    _render_cabecalho_bloco(
+        "Precificação",
+        "Aplique as regras de margem, impostos e custos para atualizar a base de saída.",
+    )
     render_precificacao(df_origem)
 
     df_prec = aplicar_precificacao(
@@ -514,11 +426,12 @@ def render_origem_dados(
     if _autoavancar_site_se_pronto(on_continue):
         return
 
-    st.markdown("---")
+    st.divider()
+
     _render_botoes_origem(
         on_back=on_back,
         on_continue=on_continue,
         mostrar_continuar=True,
         continuar_habilitado=True,
-  )
+                        )
 
