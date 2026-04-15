@@ -78,12 +78,26 @@ def normalizar_urls_imagem(valor) -> str:
 
 def is_coluna_balanco(nome) -> bool:
     nome_normalizado = normalizar_coluna(nome)
-    return "balanco" in nome_normalizado
+    return "balanco" in nome_normalizado or "balanço" in str(nome).lower()
 
 
-def is_coluna_quantidade(nome) -> bool:
+def is_coluna_codigo_produto(nome) -> bool:
     nome_normalizado = normalizar_coluna(nome)
-    return nome_normalizado == "quantidade" or "quantidade" in nome_normalizado
+    return (
+        "codigo produto" in nome_normalizado
+        or nome_normalizado == "codigo"
+        or nome_normalizado == "código"
+    )
+
+
+def is_coluna_gtin_destino(nome) -> bool:
+    nome_normalizado = normalizar_coluna(nome)
+    return "gtin" in nome_normalizado or "ean" in nome_normalizado
+
+
+def is_coluna_descricao_destino(nome) -> bool:
+    nome_normalizado = normalizar_coluna(nome)
+    return "descricao produto" in nome_normalizado or nome_normalizado == "descricao"
 
 
 def is_coluna_preco_destino(nome) -> bool:
@@ -114,9 +128,9 @@ def obter_df_fonte_mapeamento():
 def obter_df_modelo_mapeamento():
     candidatos = [
         st.session_state.get("df_modelo_mapeamento"),
-        st.session_state.get("df_modelo_cadastro"),
         st.session_state.get("df_modelo_estoque"),
         st.session_state.get("df_modelo"),
+        st.session_state.get("df_modelo_cadastro"),
     ]
 
     for df in candidatos:
@@ -129,7 +143,88 @@ def obter_df_modelo_mapeamento():
 # =========================================================
 # INFERÊNCIA DE COLUNAS
 # =========================================================
-def _prioridade_coluna_preco(df_fonte: pd.DataFrame) -> list[str]:
+def _colunas_existentes(df_fonte: pd.DataFrame) -> list[str]:
+    return [str(c) for c in df_fonte.columns]
+
+
+def _mapa_normalizado(df_fonte: pd.DataFrame) -> dict[str, str]:
+    return {normalizar_coluna(c): c for c in _colunas_existentes(df_fonte)}
+
+
+def inferir_coluna_codigo(df_fonte: pd.DataFrame) -> str:
+    prioridades = [
+        "codigo_produto",
+        "codigo",
+        "código",
+        "sku",
+        "ean",
+        "gtin",
+        "cProd",
+    ]
+    mapa = _mapa_normalizado(df_fonte)
+
+    for item in prioridades:
+        chave = normalizar_coluna(item)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in _colunas_existentes(df_fonte):
+        nome = normalizar_coluna(col)
+        if "codigo" in nome or "código" in str(col).lower() or nome == "sku":
+            return col
+
+    return ""
+
+
+def inferir_coluna_gtin(df_fonte: pd.DataFrame) -> str:
+    prioridades = [
+        "ean",
+        "gtin",
+        "codigo_barras_tributavel",
+        "cEAN",
+        "cEANTrib",
+    ]
+    mapa = _mapa_normalizado(df_fonte)
+
+    for item in prioridades:
+        chave = normalizar_coluna(item)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in _colunas_existentes(df_fonte):
+        nome = normalizar_coluna(col)
+        if "ean" in nome or "gtin" in nome or "barra" in nome:
+            return col
+
+    return ""
+
+
+def inferir_coluna_descricao(df_fonte: pd.DataFrame) -> str:
+    prioridades = [
+        "descricao",
+        "descrição",
+        "descricao_curta",
+        "descrição curta",
+        "xProd",
+        "nome",
+        "produto",
+    ]
+    mapa = _mapa_normalizado(df_fonte)
+
+    for item in prioridades:
+        chave = normalizar_coluna(item)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in _colunas_existentes(df_fonte):
+        nome = normalizar_coluna(col)
+        if "descricao" in nome or "descrição" in str(col).lower() or "produto" in nome:
+            return col
+
+    return ""
+
+
+def inferir_coluna_preco(df_fonte: pd.DataFrame) -> str:
     prioridades = [
         "Preço unitário (OBRIGATÓRIO)",
         "Preço de venda",
@@ -144,127 +239,109 @@ def _prioridade_coluna_preco(df_fonte: pd.DataFrame) -> list[str]:
         "custo",
         "preco_unitario_tributavel",
     ]
+    mapa = _mapa_normalizado(df_fonte)
 
-    existentes = [str(c) for c in df_fonte.columns]
-    mapa_normalizado = {normalizar_coluna(c): c for c in existentes}
-
-    saida: list[str] = []
     for item in prioridades:
         chave = normalizar_coluna(item)
-        if chave in mapa_normalizado:
-            saida.append(mapa_normalizado[chave])
+        if chave in mapa:
+            return mapa[chave]
 
-    for col in existentes:
+    for col in _colunas_existentes(df_fonte):
         nome = normalizar_coluna(col)
-        if (
-            "preco" in nome
-            or "preço" in str(col).lower()
-            or "valor" in nome
-            or "custo" in nome
-        ) and col not in saida:
-            saida.append(col)
+        if "preco" in nome or "valor" in nome or "custo" in nome:
+            return col
 
-    return saida
+    return ""
 
 
-def inferir_coluna_preco(df_fonte: pd.DataFrame) -> str:
-    prioridades = _prioridade_coluna_preco(df_fonte)
-    return prioridades[0] if prioridades else ""
+def inferir_coluna_custo(df_fonte: pd.DataFrame) -> str:
+    prioridades = [
+        "preco de custo",
+        "preco_custo",
+        "custo",
+        "valor_custo",
+        "preco_unitario",
+        "preco_unitario_tributavel",
+    ]
+    mapa = _mapa_normalizado(df_fonte)
+
+    for item in prioridades:
+        chave = normalizar_coluna(item)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in _colunas_existentes(df_fonte):
+        nome = normalizar_coluna(col)
+        if "custo" in nome:
+            return col
+
+    return ""
 
 
-def inferir_coluna_quantidade(df_fonte: pd.DataFrame) -> str:
-    candidatos = [
-        "Quantidade",
+def inferir_coluna_balanco(df_fonte: pd.DataFrame) -> str:
+    prioridades = [
         "quantidade",
         "qCom",
         "qTrib",
         "quantidade_tributavel",
         "estoque",
         "saldo",
+        "balanco",
+        "balanço",
     ]
+    mapa = _mapa_normalizado(df_fonte)
 
-    existentes = [str(c) for c in df_fonte.columns]
-    mapa_normalizado = {normalizar_coluna(c): c for c in existentes}
-
-    for item in candidatos:
+    for item in prioridades:
         chave = normalizar_coluna(item)
-        if chave in mapa_normalizado:
-            return mapa_normalizado[chave]
+        if chave in mapa:
+            return mapa[chave]
 
-    for col in existentes:
+    for col in _colunas_existentes(df_fonte):
         nome = normalizar_coluna(col)
         if (
             "quantidade" in nome
             or nome in {"qcom", "qtrib"}
             or "estoque" in nome
             or "saldo" in nome
+            or "balanco" in nome
         ):
             return col
 
     return ""
 
 
-def aplicar_mapeamento_automatico_preco(
+def aplicar_mapeamento_automatico(
     mapping: dict,
     df_modelo: pd.DataFrame,
     df_fonte: pd.DataFrame,
 ) -> dict:
     try:
         mapping_out = dict(mapping or {})
-        coluna_preco = ""
 
-        for candidata in [
-            "Preço unitário (OBRIGATÓRIO)",
-            "Preço de venda",
-        ]:
-            if candidata in df_fonte.columns:
-                coluna_preco = candidata
-                break
+        col_codigo = inferir_coluna_codigo(df_fonte)
+        col_gtin = inferir_coluna_gtin(df_fonte)
+        col_desc = inferir_coluna_descricao(df_fonte)
+        col_preco = inferir_coluna_preco(df_fonte)
+        col_custo = inferir_coluna_custo(df_fonte)
+        col_balanco = inferir_coluna_balanco(df_fonte)
 
-        if not coluna_preco:
-            coluna_preco = inferir_coluna_preco(df_fonte)
-
-        if not coluna_preco or coluna_preco not in df_fonte.columns:
-            return mapping_out
-
-        for col_modelo in df_modelo.columns:
-            if not is_coluna_preco_destino(str(col_modelo)):
+        for col_modelo in [str(c) for c in df_modelo.columns]:
+            atual = safe_str(mapping_out.get(col_modelo))
+            if atual and atual in df_fonte.columns:
                 continue
 
-            valor_atual = safe_str(mapping_out.get(col_modelo))
-            if valor_atual and valor_atual in df_fonte.columns:
-                continue
-
-            mapping_out[col_modelo] = coluna_preco
-
-        return mapping_out
-    except Exception:
-        return dict(mapping or {})
-
-
-def aplicar_mapeamento_automatico_quantidade(
-    mapping: dict,
-    df_modelo: pd.DataFrame,
-    df_fonte: pd.DataFrame,
-) -> dict:
-    try:
-        mapping_out = dict(mapping or {})
-        coluna_qtd = inferir_coluna_quantidade(df_fonte)
-
-        if not coluna_qtd or coluna_qtd not in df_fonte.columns:
-            return mapping_out
-
-        for col_modelo in df_modelo.columns:
-            nome_modelo = str(col_modelo)
-
-            if not (is_coluna_quantidade(nome_modelo) or is_coluna_balanco(nome_modelo)):
-                continue
-
-            valor_atual = safe_str(mapping_out.get(col_modelo))
-            if valor_atual and valor_atual in df_fonte.columns:
-                continue
-
-            mapping_out[col_modelo] = coluna_qtd
+            if is_coluna_codigo_produto(col_modelo) and col_codigo:
+                mapping_out[col_modelo] = col_codigo
+            elif is_coluna_gtin_destino(col_modelo) and col_gtin:
+                mapping_out[col_modelo] = col_gtin
+            elif is_coluna_descricao_destino(col_modelo) and col_desc:
+                mapping_out[col_modelo] = col_desc
+            elif is_coluna_balanco(col_modelo) and col_balanco:
+                mapping_out[col_modelo] = col_balanco
+            elif is_coluna_preco_destino(col_modelo) and col_preco:
+                mapping_out[col_modelo] = col_preco
+            elif normalizar_coluna(col_modelo) == "preco de custo" and col_custo:
+                mapping_out[col_modelo] = col_custo
 
         return mapping_out
     except Exception:
@@ -346,6 +423,10 @@ def _aplicar_defaults_sistema(df_saida: pd.DataFrame, df_modelo: pd.DataFrame) -
         if "situa" in str(col_nome).lower():
             df_saida[col_nome] = df_saida[col_nome].apply(normalizar_situacao)
 
+        if normalizar_coluna(col_nome) in {"observacao", "data"}:
+            if col_nome not in df_saida.columns:
+                df_saida[col_nome] = ""
+
     return df_saida
 
 
@@ -358,8 +439,7 @@ def montar_df_saida_mapeado(
         return pd.DataFrame()
 
     mapping_limpo = {str(k): safe_str(v) for k, v in dict(mapping or {}).items()}
-    mapping_limpo = aplicar_mapeamento_automatico_preco(mapping_limpo, df_modelo, df_fonte)
-    mapping_limpo = aplicar_mapeamento_automatico_quantidade(mapping_limpo, df_modelo, df_fonte)
+    mapping_limpo = aplicar_mapeamento_automatico(mapping_limpo, df_modelo, df_fonte)
 
     df_saida = _reaproveitar_base_saida_se_compativel(df_fonte, df_modelo)
 
@@ -391,5 +471,3 @@ def montar_df_saida_mapeado(
         st.session_state["df_preview_mapeamento"] = df_saida
 
     return df_saida
-
-
