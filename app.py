@@ -9,7 +9,6 @@ import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
     garantir_estado_base,
-    log_debug,
     render_debug_panel,
 )
 from bling_app_zero.ui.origem_dados import render_origem_dados
@@ -18,10 +17,9 @@ from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.preview_final import render_preview_final
 from bling_app_zero.utils.init_app import inicializar_app
 
-
 st.set_page_config(page_title="IA Planilhas", layout="wide")
 
-APP_VERSION = "1.0.42"
+APP_VERSION = "1.0.43"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
@@ -33,9 +31,6 @@ ETAPAS_CONFIG = [
 ]
 
 
-# =========================================================
-# VERSIONAMENTO
-# =========================================================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -76,16 +71,16 @@ def _sincronizar_version_json_com_app() -> dict:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Fluxo com precificação separada",
-            "last_description": "Origem, precificação, mapeamento e final em etapas distintas.",
+            "last_title": "Fluxo origem > precificação > mapeamento > final",
+            "last_description": "Separação estável da etapa de precificação.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Fluxo com precificação separada",
-        "description": "Origem, precificação, mapeamento e final em etapas distintas.",
+        "title": "Fluxo origem > precificação > mapeamento > final",
+        "description": "Separação estável da etapa de precificação.",
     }
 
     if not any(
@@ -98,8 +93,8 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Fluxo com precificação separada",
-        "last_description": "Origem, precificação, mapeamento e final em etapas distintas.",
+        "last_title": "Fluxo origem > precificação > mapeamento > final",
+        "last_description": "Separação estável da etapa de precificação.",
         "history": history,
     }
 
@@ -117,9 +112,6 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     return APP_VERSION
 
 
-# =========================================================
-# HELPERS DE FLUXO
-# =========================================================
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
@@ -209,9 +201,6 @@ def _resolver_autoetapa() -> str:
     return etapa_atual
 
 
-# =========================================================
-# LAYOUT
-# =========================================================
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -221,36 +210,30 @@ def _inject_layout_css() -> None:
                 padding-top: 0.65rem;
                 padding-bottom: 2rem;
             }
-
             [data-testid="stHeader"] {
                 background: transparent;
             }
-
             .ia-top {
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
                 margin-bottom: 0.70rem;
             }
-
             .ia-logo {
                 font-size: 0.95rem;
                 font-weight: 800;
                 color: #0A2259;
             }
-
             .ia-version {
                 font-size: 0.78rem;
                 opacity: 0.7;
             }
-
             .ia-progress {
                 display: flex;
                 gap: 8px;
                 margin: 0.35rem 0 1rem 0;
                 flex-wrap: wrap;
             }
-
             .ia-progress-pill {
                 flex: 1 1 120px;
                 border-radius: 999px;
@@ -262,13 +245,11 @@ def _inject_layout_css() -> None:
                 color: #667085;
                 border: 1px solid #E4E7EC;
             }
-
             .ia-progress-pill.active {
                 background: #0A2259;
                 color: white;
                 border-color: #0A2259;
             }
-
             .stButton > button,
             .stDownloadButton > button {
                 min-height: 54px;
@@ -313,11 +294,7 @@ def _render_nav(etapa_atual: str) -> None:
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            key=f"app_btn_voltar_{etapa_atual}",
-        ):
+        if st.button("⬅️ Voltar", use_container_width=True, key=f"app_btn_voltar_{etapa_atual}"):
             if etapa_atual == "precificacao":
                 _ir_para("origem")
             elif etapa_atual == "mapeamento":
@@ -334,7 +311,6 @@ def _render_nav(etapa_atual: str) -> None:
                 disabled=not _pode_ir_para_mapeamento(),
             ):
                 _ir_para("mapeamento")
-
         elif etapa_atual == "mapeamento":
             if st.button(
                 "Continuar ➜",
@@ -358,9 +334,6 @@ def _render_etapa(etapa_atual: str) -> None:
     render_preview_final()
 
 
-# =========================================================
-# EXECUÇÃO
-# =========================================================
 inicializar_app()
 garantir_estado_base()
 
@@ -377,4 +350,3 @@ _render_nav(etapa_atual)
 
 with st.expander("Debug", expanded=False):
     render_debug_panel()
-
