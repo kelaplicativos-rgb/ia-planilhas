@@ -11,9 +11,6 @@ from bling_app_zero.ui.origem_dados_handlers import (
 )
 
 
-# =========================================================
-# HELPERS LOCAIS
-# =========================================================
 def _safe_str(valor) -> str:
     try:
         if valor is None:
@@ -76,9 +73,6 @@ def _origem_atual() -> str:
     ).lower()
 
 
-# =========================================================
-# CSS / CABEÇALHO
-# =========================================================
 def _render_css() -> None:
     st.markdown(
         """
@@ -130,9 +124,6 @@ def _render_header() -> None:
     )
 
 
-# =========================================================
-# UI
-# =========================================================
 def _render_escolha_principal() -> None:
     usar = _bool_state("usar_calculadora_precificacao", False)
 
@@ -194,9 +185,6 @@ def _render_resumo(df_origem: pd.DataFrame) -> None:
     )
 
 
-# =========================================================
-# APLICAÇÃO DA PRECIFICAÇÃO
-# =========================================================
 def _persistir_resultado(df_resultado: pd.DataFrame) -> None:
     st.session_state["df_precificado"] = _safe_copy_df(df_resultado)
     st.session_state["df_calc_precificado"] = _safe_copy_df(df_resultado)
@@ -233,9 +221,6 @@ def _aplicar_precificacao_fluxo(df_origem: pd.DataFrame) -> None:
         _persistir_resultado(df_resultado)
 
 
-# =========================================================
-# RENDER PRINCIPAL
-# =========================================================
 def render_origem_precificacao() -> None:
     _render_css()
 
@@ -245,19 +230,10 @@ def render_origem_precificacao() -> None:
 
         col1, col2 = st.columns(2, gap="small")
         with col1:
-            if st.button(
-                "⬅️ Voltar para origem",
-                use_container_width=True,
-                key="prec_sem_base_voltar",
-            ):
+            if st.button("⬅️ Voltar para origem", use_container_width=True, key="prec_sem_base_voltar"):
                 _navegar("origem")
         with col2:
-            st.button(
-                "Continuar ➜",
-                use_container_width=True,
-                disabled=True,
-                key="prec_sem_base_continuar",
-            )
+            st.button("Continuar ➜", use_container_width=True, disabled=True, key="prec_sem_base_continuar")
         return
 
     _render_header()
@@ -277,12 +253,7 @@ def render_origem_precificacao() -> None:
             if st.button("⬅️ Voltar", use_container_width=True, key="prec_nao_voltar"):
                 _navegar("origem")
         with col2:
-            if st.button(
-                "Continuar ➜",
-                use_container_width=True,
-                type="primary",
-                key="prec_nao_continuar",
-            ):
+            if st.button("Continuar ➜", use_container_width=True, type="primary", key="prec_nao_continuar"):
                 _navegar("mapeamento")
         return
 
@@ -350,10 +321,5 @@ def render_origem_precificacao() -> None:
         if st.button("⬅️ Voltar", use_container_width=True, key="prec_sim_voltar"):
             _navegar("origem")
     with col2:
-        if st.button(
-            "Continuar ➜",
-            use_container_width=True,
-            type="primary",
-            key="prec_sim_continuar",
-        ):
+        if st.button("Continuar ➜", use_container_width=True, type="primary", key="prec_sim_continuar"):
             _navegar("mapeamento")
