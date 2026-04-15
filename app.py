@@ -701,5 +701,93 @@ def _render_navegacao(etapa_atual: str) -> None:
 
     with col1:
         if etapa_atual != "origem":
-            if st.button("⬅️ Voltar", use_container_width=True, key=f"btn_voltar_
-            
+            if st.button("⬅️ Voltar", use_container_width=True, key=f"btn_voltar_{etapa_atual}"):
+                if etapa_atual == "mapeamento":
+                    _ir_para("origem")
+                elif etapa_atual == "final":
+                    _ir_para("mapeamento")
+
+    with col2:
+        if etapa_atual == "origem":
+            if st.button(
+                "Próximo ➡️",
+                use_container_width=True,
+                key="btn_avancar_origem",
+                disabled=not pode_mapeamento,
+            ):
+                _ir_para("mapeamento")
+
+        elif etapa_atual == "mapeamento":
+            if st.button(
+                "Próximo ➡️",
+                use_container_width=True,
+                key="btn_avancar_mapeamento",
+                disabled=not pode_final,
+            ):
+                _ir_para("final")
+
+    with col3:
+        st.markdown(
+            """
+            <div class="nav-box">
+                Use os botões de navegação sem perder os dados já carregados. O avanço só libera quando houver base suficiente para a próxima etapa.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# =========================================================
+# RENDER PRINCIPAL
+# =========================================================
+def _render_origem() -> None:
+    try:
+        render_origem_dados()
+    except TypeError:
+        # fallback para versões antigas da função
+        render_origem_dados
+
+
+def _render_mapeamento() -> None:
+    try:
+        render_origem_mapeamento()
+    except TypeError:
+        render_origem_mapeamento
+
+
+def _render_final() -> None:
+    try:
+        render_preview_final()
+    except TypeError:
+        render_preview_final
+
+
+def _render_etapa(etapa_atual: str) -> None:
+    if etapa_atual == "origem":
+        _render_origem()
+        return
+
+    if etapa_atual == "mapeamento":
+        _render_mapeamento()
+        return
+
+    _render_final()
+
+
+# =========================================================
+# EXECUÇÃO
+# =========================================================
+_inject_layout_css()
+
+etapa_atual = _resolver_autoetapa()
+_sincronizar_etapa_global(etapa_atual)
+
+_render_topbar(VERSION_DATA, etapa_atual)
+_render_stepper(etapa_atual)
+_render_resumo_superior(etapa_atual)
+_render_navegacao(etapa_atual)
+_render_etapa(etapa_atual)
+
+with st.expander("Registro de depuração", expanded=False):
+    render_debug_panel()
+    
