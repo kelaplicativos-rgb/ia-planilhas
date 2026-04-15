@@ -17,11 +17,7 @@ from bling_app_zero.ui.app_helpers import (
 def _resolver_df_final() -> pd.DataFrame | None:
     for chave in [
         "df_final",
-        "df_saida",
         "df_preview_mapeamento",
-        "df_precificado",
-        "df_calc_precificado",
-        "df_origem",
     ]:
         df = st.session_state.get(chave)
         if safe_df_dados(df):
@@ -70,7 +66,11 @@ def render_preview_final(df_final: pd.DataFrame | None = None) -> pd.DataFrame |
     _render_resumo_validacao(resultado_validacao)
 
     with st.expander("🔎 Preview da planilha final", expanded=True):
-        st.dataframe(df_base.head(20), use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_base.head(20),
+            use_container_width=True,
+            hide_index=True,
+        )
         st.caption(f"{len(df_base)} linha(s) | {len(df_base.columns)} coluna(s)")
 
     csv_bytes = exportar_csv_bytes(df_base)
@@ -81,7 +81,11 @@ def render_preview_final(df_final: pd.DataFrame | None = None) -> pd.DataFrame |
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_final_voltar"):
+        if st.button(
+            "⬅️ Voltar para mapeamento",
+            use_container_width=True,
+            key="btn_final_voltar",
+        ):
             sincronizar_etapa_global("mapeamento")
             st.rerun()
 
