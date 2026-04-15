@@ -4,555 +4,175 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.origem_mapeamento_validacao import (
-    is_coluna_deposito,
-    is_coluna_id,
-    is_coluna_imagem,
-    normalizar_coluna,
-    safe_df,
-    safe_df_com_linhas,
+from bling_app_zero.ui.app_helpers import log_debug, safe_df_dados, safe_df_estrutura
+from bling_app_zero.ui.origem_dados_handlers import (
+    criar_modelo_vazio_para_operacao,
+    nome_coluna_preco_saida,
+    safe_float,
+    safe_int,
     safe_str,
 )
 
 
-# =========================================================
-# HELPERS
-# =========================================================
-def sanitizar_valor(valor):
-    try:
-        if valor is None:
-            return ""
-        if pd.isna(valor):
-            return ""
-    except Exception:
-        pass
-    return valor
+def _normalizar_nome(nome) -> str:
+    return (
+        safe_str(nome)
+        .lower()
+        .replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+        .strip()
+    )
 
 
-def normalizar_situacao(valor) -> str:
-    texto = safe_str(valor).strip().lower()
-    if not texto:
-        return "Ativo"
+def obter_df_base_para_mapeamento() -> pd.DataFrame:
+    for chave in ["df_saida", "df_final", "df_precificado", "df_origem"]:
+        df = st.session_state.get(chave)
+        if safe_df_dados(df):
+            return df.copy()
+    return pd.DataFrame()
 
-    mapa_inativo_para_ativo = {
-        "inativo",
-        "inactive",
-        "0",
-        "false",
-        "nao",
-        "não",
+
+def obter_modelo_destino() -> pd.DataFrame:
+    for chave in ["df_modelo_cadastro", "df_modelo_estoque", "df_modelo"]:
+        df = st.session_state.get(chave)
+        if safe_df_estrutura(df):
+            return df.copy()
+    return criar_modelo_vazio_para_operacao()
+
+
+def _sugestoes_automaticas(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> dict[str, str]:
+    origem_norm = {_normalizar_nome(col): col for col in df_origem.columns}
+    mapeamento: dict[str, str] = {}
+
+    aliases = {
+        "Código": ["codigo", "sku", "referencia", "código"],
+        "Descrição": ["titulo", "descricao", "descrição", "nome"],
+        "Descrição Curta": ["descricao", "descrição", "nome", "titulo"],
+        "Preço de venda": ["preco de venda", "preco", "valor", "preço"],
+        "GTIN/EAN": ["gtin", "ean", "codigo de barras"],
+        "Marca": ["marca"],
+        "Categoria": ["categoria", "departamento"],
+        "Imagens": ["imagem", "imagens", "url imagem", "foto"],
+        "ID Produto": ["id", "id produto"],
+        "Codigo produto *": ["codigo", "sku", "referencia"],
+        "GTIN **": ["gtin", "ean", "codigo de barras"],
+        "Descrição Produto": ["descricao", "descrição", "nome", "titulo"],
+        "Balanço (OBRIGATÓRIO)": ["estoque", "saldo", "quantidade"],
+        "Preço unitário (OBRIGATÓRIO)": ["preco", "valor", "preço"],
+        "Preço de Custo": ["custo", "preco custo", "preço de custo"],
+        "Observação": ["observacao", "observação"],
+        "Data": ["data"],
     }
 
-    if texto in mapa_inativo_para_ativo:
-        return "Ativo"
-
-    if texto in {"ativo", "active", "1", "true", "sim", "yes"}:
-        return "Ativo"
-
-    return "Ativo"
-
-
-def normalizar_urls_imagem(valor) -> str:
-    texto = safe_str(valor)
-    if not texto:
-        return ""
-
-    texto = (
-        texto.replace("\n", "|")
-        .replace("\r", "|")
-        .replace(";", "|")
-        .replace(",", "|")
-    )
-
-    partes = [p.strip() for p in texto.split("|") if p.strip()]
-    unicos: list[str] = []
-    vistos: set[str] = set()
-
-    for item in partes:
-        if item not in vistos:
-            vistos.add(item)
-            unicos.append(item)
-
-    return "|".join(unicos)
-
-
-def is_coluna_balanco(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return "balanco" in nome_normalizado or "balanço" in str(nome).lower()
-
-
-def is_coluna_quantidade(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return (
-        nome_normalizado == "quantidade"
-        or "quantidade" in nome_normalizado
-        or "saldo" in nome_normalizado
-        or "estoque" in nome_normalizado
-    )
-
-
-def is_coluna_preco_destino(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return (
-        "preco de venda" in nome_normalizado
-        or "preco unitario" in nome_normalizado
-    )
-
-
-def is_coluna_codigo_produto(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return (
-        "codigo produto" in nome_normalizado
-        or nome_normalizado == "codigo"
-        or nome_normalizado == "código"
-    )
-
-
-def is_coluna_gtin_destino(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return "gtin" in nome_normalizado or "ean" in nome_normalizado
-
-
-def is_coluna_descricao_destino(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return (
-        "descricao produto" in nome_normalizado
-        or nome_normalizado == "descricao"
-        or nome_normalizado == "descrição"
-    )
-
-
-def is_coluna_preco_custo_destino(nome) -> bool:
-    nome_normalizado = normalizar_coluna(nome)
-    return "preco de custo" in nome_normalizado or "preço de custo" in str(nome).lower()
-
-
-# =========================================================
-# RESOLUÇÃO DE DFS
-# =========================================================
-def obter_df_fonte_mapeamento():
-    candidatos = [
-        st.session_state.get("df_precificado"),
-        st.session_state.get("df_calc_precificado"),
-        st.session_state.get("df_origem"),
-    ]
-
-    for df in candidatos:
-        if safe_df_com_linhas(df):
-            return df
-
-    return None
-
-
-def obter_df_modelo_mapeamento():
-    candidatos = [
-        st.session_state.get("df_modelo_mapeamento"),
-        st.session_state.get("df_modelo_estoque"),
-        st.session_state.get("df_modelo"),
-        st.session_state.get("df_modelo_cadastro"),
-    ]
-
-    for df in candidatos:
-        if safe_df(df):
-            return df
-
-    return None
-
-
-# =========================================================
-# INFERÊNCIA DE COLUNAS
-# =========================================================
-def _colunas_existentes(df_fonte: pd.DataFrame) -> list[str]:
-    return [str(c) for c in df_fonte.columns]
-
-
-def _mapa_normalizado(df_fonte: pd.DataFrame) -> dict[str, str]:
-    return {normalizar_coluna(c): c for c in _colunas_existentes(df_fonte)}
-
-
-def inferir_coluna_codigo(df_fonte: pd.DataFrame) -> str:
-    prioridades = [
-        "codigo_produto",
-        "codigo",
-        "código",
-        "sku",
-        "ean",
-        "gtin",
-        "cProd",
-    ]
-    mapa = _mapa_normalizado(df_fonte)
-
-    for item in prioridades:
-        chave = normalizar_coluna(item)
-        if chave in mapa:
-            return mapa[chave]
-
-    for col in _colunas_existentes(df_fonte):
-        nome = normalizar_coluna(col)
-        if "codigo" in nome or "código" in str(col).lower() or nome == "sku":
-            return col
-
-    return ""
-
-
-def inferir_coluna_gtin(df_fonte: pd.DataFrame) -> str:
-    prioridades = [
-        "ean",
-        "gtin",
-        "codigo_barras_tributavel",
-        "cean",
-        "ceantrib",
-    ]
-    mapa = _mapa_normalizado(df_fonte)
-
-    for item in prioridades:
-        chave = normalizar_coluna(item)
-        if chave in mapa:
-            return mapa[chave]
-
-    for col in _colunas_existentes(df_fonte):
-        nome = normalizar_coluna(col)
-        if "ean" in nome or "gtin" in nome or "barra" in nome:
-            return col
-
-    return ""
-
-
-def inferir_coluna_descricao(df_fonte: pd.DataFrame) -> str:
-    prioridades = [
-        "descricao",
-        "descrição",
-        "descricao_curta",
-        "descrição curta",
-        "xprod",
-        "nome",
-        "produto",
-    ]
-    mapa = _mapa_normalizado(df_fonte)
-
-    for item in prioridades:
-        chave = normalizar_coluna(item)
-        if chave in mapa:
-            return mapa[chave]
-
-    for col in _colunas_existentes(df_fonte):
-        nome = normalizar_coluna(col)
-        if "descricao" in nome or "descrição" in str(col).lower() or "produto" in nome:
-            return col
-
-    return ""
-
-
-def _prioridade_coluna_preco(df_fonte: pd.DataFrame) -> list[str]:
-    prioridades = [
-        "Preço unitário (OBRIGATÓRIO)",
-        "Preço de venda",
-        "preco_unitario",
-        "preco de venda",
-        "valor_unitario",
-        "valor unitario",
-        "valor_total",
-        "preco",
-        "preço",
-        "valor",
-        "custo",
-        "preco_unitario_tributavel",
-    ]
-
-    existentes = _colunas_existentes(df_fonte)
-    mapa_normalizado = _mapa_normalizado(df_fonte)
-
-    saida: list[str] = []
-    for item in prioridades:
-        chave = normalizar_coluna(item)
-        if chave in mapa_normalizado:
-            saida.append(mapa_normalizado[chave])
-
-    for col in existentes:
-        nome = normalizar_coluna(col)
-        if (
-            "preco" in nome
-            or "preço" in str(col).lower()
-            or "valor" in nome
-            or "custo" in nome
-        ) and col not in saida:
-            saida.append(col)
-
-    return saida
-
-
-def inferir_coluna_preco(df_fonte: pd.DataFrame) -> str:
-    prioridades = _prioridade_coluna_preco(df_fonte)
-    return prioridades[0] if prioridades else ""
-
-
-def inferir_coluna_custo(df_fonte: pd.DataFrame) -> str:
-    prioridades = [
-        "preco de custo",
-        "preço de custo",
-        "preco_custo",
-        "custo",
-        "valor_custo",
-        "preco_unitario",
-        "preco_unitario_tributavel",
-    ]
-    mapa = _mapa_normalizado(df_fonte)
-
-    for item in prioridades:
-        chave = normalizar_coluna(item)
-        if chave in mapa:
-            return mapa[chave]
-
-    for col in _colunas_existentes(df_fonte):
-        nome = normalizar_coluna(col)
-        if "custo" in nome:
-            return col
-
-    return ""
-
-
-def inferir_coluna_quantidade(df_fonte: pd.DataFrame) -> str:
-    candidatos = [
-        "Quantidade",
-        "quantidade",
-        "qCom",
-        "qTrib",
-        "quantidade_tributavel",
-        "estoque",
-        "saldo",
-        "balanco",
-        "balanço",
-    ]
-    mapa = _mapa_normalizado(df_fonte)
-
-    for item in candidatos:
-        chave = normalizar_coluna(item)
-        if chave in mapa:
-            return mapa[chave]
-
-    for col in _colunas_existentes(df_fonte):
-        nome = normalizar_coluna(col)
-        if (
-            "quantidade" in nome
-            or nome in {"qcom", "qtrib"}
-            or "estoque" in nome
-            or "saldo" in nome
-            or "balanco" in nome
-        ):
-            return col
-
-    return ""
-
-
-def aplicar_mapeamento_automatico_preco(
-    mapping: dict,
+    for destino in df_modelo.columns:
+        for alias in aliases.get(destino, []):
+            alias_norm = _normalizar_nome(alias)
+            for origem_norm_nome, origem_real in origem_norm.items():
+                if alias_norm in origem_norm_nome:
+                    mapeamento[destino] = origem_real
+                    break
+            if destino in mapeamento:
+                break
+
+    coluna_preco_calc = safe_str(st.session_state.get("precificacao_coluna_resultado"))
+    if coluna_preco_calc and coluna_preco_calc in df_origem.columns:
+        nome_preco = nome_coluna_preco_saida()
+        if nome_preco in df_modelo.columns:
+            mapeamento[nome_preco] = coluna_preco_calc
+
+    return mapeamento
+
+
+def inicializar_mapeamento(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> dict[str, str]:
+    mapping = st.session_state.get("mapping_origem")
+    if isinstance(mapping, dict) and mapping:
+        return mapping
+
+    mapping_auto = _sugestoes_automaticas(df_origem, df_modelo)
+    st.session_state["mapping_origem"] = mapping_auto.copy()
+    st.session_state["mapping_origem_rascunho"] = mapping_auto.copy()
+    return mapping_auto
+
+
+def colunas_bloqueadas() -> set[str]:
+    bloqueadas = {"ID"}
+    deposito_nome = safe_str(st.session_state.get("deposito_nome"))
+    if deposito_nome:
+        bloqueadas.add("Deposito (OBRIGATÓRIO)")
+    return bloqueadas
+
+
+def construir_df_mapeado(
+    df_origem: pd.DataFrame,
     df_modelo: pd.DataFrame,
-    df_fonte: pd.DataFrame,
-) -> dict:
-    try:
-        mapping_out = dict(mapping or {})
-        coluna_preco = inferir_coluna_preco(df_fonte)
-
-        if not coluna_preco or coluna_preco not in df_fonte.columns:
-            return mapping_out
-
-        for col_modelo in df_modelo.columns:
-            if not is_coluna_preco_destino(str(col_modelo)):
-                continue
-
-            valor_atual = safe_str(mapping_out.get(col_modelo))
-            if valor_atual and valor_atual in df_fonte.columns:
-                continue
-
-            mapping_out[col_modelo] = coluna_preco
-
-        return mapping_out
-    except Exception:
-        return dict(mapping or {})
-
-
-def aplicar_mapeamento_automatico_quantidade(
-    mapping: dict,
-    df_modelo: pd.DataFrame,
-    df_fonte: pd.DataFrame,
-) -> dict:
-    try:
-        mapping_out = dict(mapping or {})
-        coluna_qtd = inferir_coluna_quantidade(df_fonte)
-
-        if not coluna_qtd or coluna_qtd not in df_fonte.columns:
-            return mapping_out
-
-        for col_modelo in df_modelo.columns:
-            nome_modelo = str(col_modelo)
-
-            if not (is_coluna_quantidade(nome_modelo) or is_coluna_balanco(nome_modelo)):
-                continue
-
-            valor_atual = safe_str(mapping_out.get(col_modelo))
-            if valor_atual and valor_atual in df_fonte.columns:
-                continue
-
-            mapping_out[col_modelo] = coluna_qtd
-
-        return mapping_out
-    except Exception:
-        return dict(mapping or {})
-
-
-def aplicar_mapeamento_automatico_identificacao(
-    mapping: dict,
-    df_modelo: pd.DataFrame,
-    df_fonte: pd.DataFrame,
-) -> dict:
-    try:
-        mapping_out = dict(mapping or {})
-        col_codigo = inferir_coluna_codigo(df_fonte)
-        col_gtin = inferir_coluna_gtin(df_fonte)
-        col_desc = inferir_coluna_descricao(df_fonte)
-        col_custo = inferir_coluna_custo(df_fonte)
-
-        for col_modelo in df_modelo.columns:
-            nome = str(col_modelo)
-            atual = safe_str(mapping_out.get(nome))
-            if atual and atual in df_fonte.columns:
-                continue
-
-            if is_coluna_codigo_produto(nome) and col_codigo:
-                mapping_out[nome] = col_codigo
-            elif is_coluna_gtin_destino(nome) and col_gtin:
-                mapping_out[nome] = col_gtin
-            elif is_coluna_descricao_destino(nome) and col_desc:
-                mapping_out[nome] = col_desc
-            elif is_coluna_preco_custo_destino(nome) and col_custo:
-                mapping_out[nome] = col_custo
-
-        return mapping_out
-    except Exception:
-        return dict(mapping or {})
-
-
-# =========================================================
-# MONTAGEM DE SAÍDA
-# =========================================================
-def _nova_base_saida(df_fonte: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
-    colunas_modelo = [str(col) for col in df_modelo.columns]
-    return pd.DataFrame("", index=range(len(df_fonte)), columns=colunas_modelo)
-
-
-def _reaproveitar_base_saida_se_compativel(
-    df_fonte: pd.DataFrame,
-    df_modelo: pd.DataFrame,
+    mapping: dict[str, str],
+    defaults: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    df_saida_base = st.session_state.get("df_saida")
-    if not isinstance(df_saida_base, pd.DataFrame):
-        return _nova_base_saida(df_fonte, df_modelo)
+    defaults = defaults or {}
+    df_final = pd.DataFrame(index=df_origem.index)
 
-    if len(df_saida_base) != len(df_fonte):
-        return _nova_base_saida(df_fonte, df_modelo)
+    for coluna_destino in df_modelo.columns:
+        origem = safe_str(mapping.get(coluna_destino))
+        valor_default = safe_str(defaults.get(coluna_destino))
 
-    try:
-        df_out = df_saida_base.copy()
-    except Exception:
-        return _nova_base_saida(df_fonte, df_modelo)
-
-    for col in df_modelo.columns:
-        if col not in df_out.columns:
-            df_out[col] = ""
-
-    df_out = df_out[[str(col) for col in df_modelo.columns]].copy()
-    return df_out.fillna("")
-
-
-def _serie_origem(df_fonte: pd.DataFrame, origem: str) -> pd.Series:
-    serie = df_fonte[origem].reset_index(drop=True)
-    return serie.apply(sanitizar_valor)
-
-
-def _aplicar_coluna_mapeada(
-    df_saida: pd.DataFrame,
-    df_fonte: pd.DataFrame,
-    col_modelo: str,
-    origem: str,
-) -> None:
-    if not origem or origem not in df_fonte.columns:
-        if col_modelo not in df_saida.columns:
-            df_saida[col_modelo] = ""
+        if origem and origem in df_origem.columns:
+            df_final[coluna_destino] = df_origem[origem]
         else:
-            df_saida[col_modelo] = df_saida[col_modelo].fillna("")
-        return
+            df_final[coluna_destino] = valor_default
 
-    serie = _serie_origem(df_fonte, origem)
-
-    if is_coluna_imagem(col_modelo):
-        serie = serie.apply(normalizar_urls_imagem)
-
-    df_saida[col_modelo] = serie
+    return aplicar_regras_finais(df_final)
 
 
-def _aplicar_defaults_sistema(df_saida: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
-    deposito = safe_str(st.session_state.get("deposito_nome"))
-
-    for col in df_modelo.columns:
-        col_nome = str(col)
-
-        if is_coluna_id(col_nome):
-            df_saida[col_nome] = ""
-            continue
-
-        if is_coluna_deposito(col_nome):
-            df_saida[col_nome] = deposito
-            continue
-
-        if "situ" in normalizar_coluna(col_nome):
-            df_saida[col_nome] = df_saida[col_nome].apply(normalizar_situacao)
-
-        if normalizar_coluna(col_nome) in {"observacao", "data"} and col_nome not in df_saida.columns:
-            df_saida[col_nome] = ""
-
-    return df_saida
-
-
-def montar_df_saida_mapeado(
-    df_fonte: pd.DataFrame,
-    df_modelo: pd.DataFrame,
-    mapping: dict,
-) -> pd.DataFrame:
-    if not safe_df_com_linhas(df_fonte) or not safe_df(df_modelo):
+def aplicar_regras_finais(df_final: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df_final, pd.DataFrame):
         return pd.DataFrame()
 
-    mapping_limpo = {str(k): safe_str(v) for k, v in dict(mapping or {}).items()}
-    mapping_limpo = aplicar_mapeamento_automatico_preco(mapping_limpo, df_modelo, df_fonte)
-    mapping_limpo = aplicar_mapeamento_automatico_quantidade(mapping_limpo, df_modelo, df_fonte)
-    mapping_limpo = aplicar_mapeamento_automatico_identificacao(mapping_limpo, df_modelo, df_fonte)
+    df_out = df_final.copy()
 
-    df_saida = _reaproveitar_base_saida_se_compativel(df_fonte, df_modelo)
+    if "Situação" in df_out.columns:
+        df_out["Situação"] = "Ativo"
 
-    for col in df_modelo.columns:
-        col_modelo = str(col)
+    if "Descrição Curta" in df_out.columns and "Descrição" in df_out.columns:
+        vazios = df_out["Descrição Curta"].astype(str).str.strip().eq("")
+        df_out.loc[vazios, "Descrição Curta"] = df_out.loc[vazios, "Descrição"]
 
-        if is_coluna_id(col_modelo):
-            df_saida[col_modelo] = ""
-            continue
+    if "Deposito (OBRIGATÓRIO)" in df_out.columns:
+        deposito_nome = safe_str(st.session_state.get("deposito_nome"))
+        if deposito_nome:
+            df_out["Deposito (OBRIGATÓRIO)"] = deposito_nome
 
-        if is_coluna_deposito(col_modelo):
-            continue
+    if "Balanço (OBRIGATÓRIO)" in df_out.columns:
+        serie = df_out["Balanço (OBRIGATÓRIO)"].astype(str).str.strip()
+        vazio = serie.eq("")
+        valor_padrao = safe_int(st.session_state.get("estoque_padrao_manual"), 0)
+        df_out.loc[vazio, "Balanço (OBRIGATÓRIO)"] = valor_padrao
 
-        origem = mapping_limpo.get(col_modelo, "")
-        _aplicar_coluna_mapeada(df_saida, df_fonte, col_modelo, origem)
+    if "Preço unitário (OBRIGATÓRIO)" in df_out.columns:
+        df_out["Preço unitário (OBRIGATÓRIO)"] = df_out["Preço unitário (OBRIGATÓRIO)"].apply(
+            lambda v: round(safe_float(v, 0.0), 2)
+        )
 
-    df_saida = _aplicar_defaults_sistema(df_saida, df_modelo)
+    if "Preço de venda" in df_out.columns:
+        df_out["Preço de venda"] = df_out["Preço de venda"].apply(
+            lambda v: round(safe_float(v, 0.0), 2)
+        )
 
-    for col in df_modelo.columns:
-        if col not in df_saida.columns:
-            df_saida[col] = ""
+    return df_out.replace({None: ""}).fillna("")
 
-    df_saida = df_saida[[str(col) for col in df_modelo.columns]].copy()
-    df_saida = df_saida.fillna("")
 
-    try:
-        st.session_state["df_preview_mapeamento"] = df_saida.copy()
-    except Exception:
-        st.session_state["df_preview_mapeamento"] = df_saida
-
-    return df_saida
+def salvar_resultado_mapeamento(df_final: pd.DataFrame) -> None:
+    st.session_state["df_preview_mapeamento"] = df_final.copy()
+    st.session_state["df_saida"] = df_final.copy()
+    st.session_state["df_final"] = df_final.copy()
+    st.session_state["mapeamento_validado"] = True
+    log_debug(f"[MAPEAMENTO] df_final atualizado com {len(df_final)} linha(s).", "INFO")
