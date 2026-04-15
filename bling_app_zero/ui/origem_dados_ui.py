@@ -4,112 +4,133 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_helpers import log_debug, safe_df_dados
-from bling_app_zero.ui.origem_dados_estado import (
-    reset_site_processado,
+from bling_app_zero.ui.app_helpers import log_debug, safe_df_dados, safe_df_estrutura
+from bling_app_zero.ui.origem_dados_handlers import (
+    autoavancar_se_origem_pronta,
+    consolidar_saida_da_origem,
+    obter_origem_atual,
     safe_int,
     safe_str,
-)
-from bling_app_zero.ui.origem_dados_handlers import (
-    ler_planilha,
-    nome_coluna_preco_saida,
+    sincronizar_estado_com_origem,
+    tratar_troca_origem,
 )
 
 try:
-    from bling_app_zero.core.site_crawler import executar_crawler
+    from bling_app_zero.core.fetch_router import executar_crawler
 except Exception:
     executar_crawler = None
 
+try:
+    from bling_app_zero.utils.excel import ler_planilha
+except Exception:
+    ler_planilha = None
+
+try:
+    from bling_app_zero.core.xml_nfe import ler_xml_nfe
+except Exception:
+    ler_xml_nfe = None
+
+try:
+    from bling_app_zero.core.pdf_parser import ler_pdf_para_dataframe
+except Exception:
+    ler_pdf_para_dataframe = None
+
+
+TIPOS_ORIGEM = [
+    "Planilha fornecedora",
+    "Buscar em site",
+    "XML da nota fiscal",
+    "PDF",
+]
+
+
+def _safe_copy_df(df):
+    try:
+        return df.copy()
+    except Exception:
+        return df
+
 
 def render_header_fluxo() -> None:
-    return
+    st.markdown("### Origem dos dados")
+    st.caption("Escolha a fonte dos dados e carregue a base antes de seguir para a precificação.")
 
 
-def render_modelo_bling(operacao: str) -> None:
-    st.caption(f"Modelo ativo: {operacao}")
+def _render_selector_origem() -> str:
+    origem_atual = safe_str(
+        st.session_state.get("origem_dados_radio") or TIPOS_ORIGEM[0]
+    )
+    if origem_atual not in TIPOS_ORIGEM:
+        origem_atual = TIPOS_ORIGEM[0]
 
-
-def render_preview_origem(df_origem: pd.DataFrame) -> None:
-    try:
-        st.dataframe(df_origem.head(20), use_container_width=True)
-    except Exception:
-        pass
-
-
-def _inject_origem_ui_css() -> None:
-    st.markdown(
-        """
-        <style>
-            .odu-choice-label {
-                font-size: 0.82rem;
-                color: #667085;
-                font-weight: 700;
-                margin-bottom: 0.4rem;
-            }
-
-            .odu-site-box {
-                background: #F8FAFC;
-                border: 1px solid #E4E7EC;
-                border-radius: 20px;
-                padding: 1rem;
-                margin-top: 0.75rem;
-                margin-bottom: 0.75rem;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    origem = st.radio(
+        "De onde virão os dados?",
+        options=TIPOS_ORIGEM,
+        horizontal=False,
+        key="origem_dados_radio",
     )
 
-
-def _limpar_estado_site_carregado() -> None:
-    for chave in [
-        "df_origem",
-        "df_saida",
-        "df_final",
-        "df_precificado",
-        "df_calc_precificado",
-        "origem_dados_fingerprint",
-    ]:
-        st.session_state.pop(chave, None)
-
-    st.session_state["site_processado"] = False
-    st.session_state["_origem_site_autoavancar"] = False
+    st.session_state["origem_dados_tipo"] = origem
+    tratar_troca_origem(origem)
+    return origem
 
 
-def _fingerprint_config_site() -> str:
-    partes = [
-        safe_str(st.session_state.get("site_url")),
-        safe_str(st.session_state.get("site_usuario")),
-        safe_str(st.session_state.get("site_senha")),
-        safe_str(st.session_state.get("site_modo_sincronizacao")),
-        str(bool(st.session_state.get("site_precisa_login"))),
-        str(safe_int(st.session_state.get("site_delay_segundos"), 300)),
-        str(safe_int(st.session_state.get("site_estoque_padrao_disponivel"), 1)),
-        safe_str(st.session_state.get("tipo_operacao_bling")),
-        safe_str(st.session_state.get("deposito_nome")),
-    ]
-    return "|".join(partes)
+def _ler_arquivo_upload(arquivo) -> pd.DataFrame | None:
+    if arquivo is None:
+        return None
+
+    nome = safe_str(getattr(arquivo, "name", "")).lower()
+
+    try:
+        if nome.endswith((".xlsx", ".xls", ".csv")):
+            if ler_planilha is None:
+                st.error("Leitura de planilha indisponível no ambiente atual.")
+                return None
+            df = ler_planilha(arquivo)
+            return df if isinstance(df, pd.DataFrame) else None
+
+        if nome.endswith(".xml"):
+            if ler_xml_nfe is None:
+                st.error("Leitura de XML indisponível no ambiente atual.")
+                return None
+            df = ler_xml_nfe(arquivo)
+            return df if isinstance(df, pd.DataFrame) else None
+
+        if nome.endswith(".pdf"):
+            if ler_pdf_para_dataframe is None:
+                st.error("Leitura de PDF indisponível no ambiente atual.")
+                return None
+            df = ler_pdf_para_dataframe(arquivo)
+            return df if isinstance(df, pd.DataFrame) else None
+
+        st.warning("Formato de arquivo não suportado.")
+        return None
+    except Exception as e:
+        log_debug(f"[ORIGEM_UPLOAD] erro ao ler arquivo: {e}", "ERROR")
+        st.error(f"Erro ao ler arquivo: {e}")
+        return None
 
 
-def _sincronizar_dirty_site() -> None:
-    fp_atual = _fingerprint_config_site()
-    fp_anterior = safe_str(st.session_state.get("_site_config_fingerprint"))
+def _render_upload_generico() -> pd.DataFrame | None:
+    arquivo = st.file_uploader(
+        "Anexe sua base",
+        type=["xlsx", "xls", "csv", "xml", "pdf"],
+        key="upload_origem_generico",
+        help="Aceita planilha, XML da nota fiscal ou PDF.",
+    )
 
-    if not fp_anterior:
-        st.session_state["_site_config_fingerprint"] = fp_atual
-        return
+    if arquivo is None:
+        return None
 
-    if fp_anterior == fp_atual:
-        return
+    df = _ler_arquivo_upload(arquivo)
+    if not safe_df_dados(df):
+        st.warning("O arquivo foi lido, mas não gerou uma base válida.")
+        return None
 
-    st.session_state["_site_config_fingerprint"] = fp_atual
-
-    if st.session_state.get("site_processado"):
-        log_debug(
-            "[ORIGEM_SITE] configuração alterada após carga. Limpando dados anteriores.",
-            "INFO",
-        )
-        _limpar_estado_site_carregado()
+    sincronizar_estado_com_origem(df, log_debug)
+    consolidar_saida_da_origem(df)
+    st.success(f"Base carregada com {len(df)} linha(s).")
+    return _safe_copy_df(df)
 
 
 def _executar_busca_site() -> pd.DataFrame | None:
@@ -147,6 +168,10 @@ def _executar_busca_site() -> pd.DataFrame | None:
         st.session_state["site_processado"] = True
         st.session_state["site_ultimo_url_processado"] = url
         st.session_state["_origem_site_autoavancar"] = True
+
+        sincronizar_estado_com_origem(df_site, log_debug)
+        consolidar_saida_da_origem(df_site)
+
         log_debug(
             f"[ORIGEM_SITE] busca concluída com {len(df_site)} linha(s) e "
             f"{len(df_site.columns)} coluna(s)",
@@ -164,251 +189,82 @@ def _executar_busca_site() -> pd.DataFrame | None:
 
 
 def render_config_site() -> pd.DataFrame | None:
-    st.markdown('<div class="odu-site-box">', unsafe_allow_html=True)
-
+    st.markdown("#### Buscar em site")
     st.text_input(
-        "URL do site ou da categoria",
+        "URL do site",
         key="site_url",
-        placeholder="https://exemplo.com/categoria/produtos",
-        help="Informe a URL base para busca dos produtos.",
+        placeholder="https://exemplo.com.br/categoria-ou-produtos",
+    )
+    st.number_input(
+        "Estoque padrão para itens disponíveis",
+        min_value=0,
+        step=1,
+        key="site_estoque_padrao_disponivel",
     )
 
-    st.checkbox(
-        "Este site precisa de login e senha",
-        key="site_precisa_login",
-        help="Ative quando o site exigir autenticação antes de exibir os produtos.",
-    )
-
-    if st.session_state.get("site_precisa_login"):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.text_input(
-                "Usuário / e-mail do site",
-                key="site_usuario",
-                placeholder="login@site.com",
-            )
-        with col2:
-            st.text_input(
-                "Senha do site",
-                key="site_senha",
-                type="password",
-                placeholder="••••••••",
-            )
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.selectbox(
-            "Modo de sincronização desejado",
-            ["manual", "instantaneo", "delay"],
-            key="site_modo_sincronizacao",
-        )
-    with col2:
-        st.number_input(
-            "Delay em segundos",
-            min_value=5,
-            value=safe_int(st.session_state.get("site_delay_segundos"), 300),
-            step=5,
-            key="site_delay_segundos",
-        )
-
-    if safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque":
-        st.number_input(
-            "Estoque padrão para item disponível",
-            min_value=0,
-            value=safe_int(st.session_state.get("site_estoque_padrao_disponivel"), 1),
-            step=1,
-            key="site_estoque_padrao_disponivel",
-        )
-
-    _sincronizar_dirty_site()
-
-    col_exec_1, col_exec_2 = st.columns(2)
-    with col_exec_1:
-        if st.button(
-            "Executar busca no site",
-            use_container_width=True,
-            type="primary",
-            key="site_btn_executar_busca",
-        ):
-            df_site = _executar_busca_site()
-            if safe_df_dados(df_site):
-                st.rerun()
-
-    with col_exec_2:
-        if st.button(
-            "Limpar busca do site",
-            use_container_width=True,
-            key="site_btn_limpar_busca",
-        ):
-            _limpar_estado_site_carregado()
-            log_debug("[ORIGEM_SITE] dados do site removidos manualmente.", "INFO")
-            st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.session_state.get("site_processado") and safe_df_dados(st.session_state.get("df_origem")):
-        url_ok = safe_str(st.session_state.get("site_ultimo_url_processado"))
-        if url_ok:
-            st.success(f"Dados do site já carregados para: {url_ok}")
-        else:
-            st.success("Dados do site já carregados nesta sessão.")
-        return st.session_state.get("df_origem")
-
-    st.info(
-        "Preencha a URL e clique em 'Executar busca no site'. "
-        "Quando o crawler retornar os produtos, o fluxo será liberado automaticamente."
-    )
-    return st.session_state.get("df_origem")
-
-
-def _render_origem_clickable() -> str:
-    atual = safe_str(st.session_state.get("origem_dados_tipo")).lower()
-    if atual not in {"site", "planilha"}:
-        atual = ""
-
-    st.markdown('<div class="odu-choice-label">Escolha a origem:</div>', unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2, gap="small")
-
-    with col1:
-        if st.button(
-            "📄 Planilha / CSV / XML",
-            use_container_width=True,
-            key="btn_origem_planilha",
-            type="primary" if atual == "planilha" else "secondary",
-        ):
-            atual = "planilha"
-
-    with col2:
-        if st.button(
-            "🌐 Buscar em site",
-            use_container_width=True,
-            key="btn_origem_site",
-            type="primary" if atual == "site" else "secondary",
-        ):
-            atual = "site"
-
-    origem_anterior = safe_str(st.session_state.get("_origem_dados_tipo_anterior")).lower()
-
-    if atual:
-        st.session_state["origem_dados_tipo"] = atual
-        st.session_state["origem_dados"] = atual
-        st.session_state["origem_dados_radio"] = (
-            "Buscar em site" if atual == "site" else "Planilha / CSV / XML"
-        )
-        st.session_state["_origem_dados_tipo_anterior"] = atual
-
-    if origem_anterior and atual and origem_anterior != atual:
-        reset_site_processado()
-        st.session_state["_origem_site_autoavancar"] = False
-
-    return atual
-
-
-def render_origem_entrada(on_change_callback=None):
-    _inject_origem_ui_css()
-
-    origem_valor = _render_origem_clickable()
-
-    if not origem_valor:
-        return None
-
-    if callable(on_change_callback):
-        try:
-            on_change_callback(origem_valor)
-        except Exception:
-            pass
+    if st.button("Buscar dados do site", key="btn_buscar_site", type="primary", use_container_width=True):
+        return _executar_busca_site()
 
     return None
 
 
-def render_entrada_origem_selecionada(origem_valor: str, on_change_callback=None):
-    _inject_origem_ui_css()
+def _render_preview_origem(df_origem: pd.DataFrame | None) -> None:
+    if not safe_df_estrutura(df_origem):
+        return
 
-    origem_normalizada = safe_str(origem_valor).lower()
-    if origem_normalizada not in {"site", "planilha"}:
-        return None
+    with st.expander("Preview da origem", expanded=False):
+        st.dataframe(df_origem.head(5), use_container_width=True, hide_index=True)
+        st.caption(f"{len(df_origem)} linha(s) | {len(df_origem.columns)} coluna(s)")
 
-    st.session_state["origem_dados_tipo"] = origem_normalizada
-    st.session_state["origem_dados"] = origem_normalizada
-    st.session_state["origem_dados_radio"] = (
-        "Buscar em site" if origem_normalizada == "site" else "Planilha / CSV / XML"
-    )
 
-    if callable(on_change_callback):
-        try:
-            on_change_callback(origem_normalizada)
-        except Exception:
-            pass
+def render_entrada_origem_selecionada(origem: str) -> pd.DataFrame | None:
+    origem_norm = safe_str(origem).lower()
 
-    if origem_normalizada == "site":
+    if "site" in origem_norm:
         return render_config_site()
 
-    arquivo = st.file_uploader(
-        "Anexe sua planilha ou XML",
-        type=["xlsx", "xls", "csv", "xml"],
-        key="upload_origem_dados",
-        help="Formatos aceitos: XLSX, XLS, CSV e XML.",
-    )
-    return ler_planilha(arquivo)
+    return _render_upload_generico()
 
 
-def render_precificacao(df_origem: pd.DataFrame) -> None:
-    st.caption("Precificação")
+def render_origem_entrada() -> pd.DataFrame | None:
+    render_header_fluxo()
+    origem = _render_selector_origem()
+    df_origem = render_entrada_origem_selecionada(origem)
 
-    colunas_validas = []
-    for coluna in df_origem.columns:
-        nome = safe_str(coluna)
-        if not nome:
-            continue
-        if nome.lower() in {"signature", "infnfe", "infprot", "versao"}:
-            continue
-        colunas_validas.append(nome)
+    if safe_df_dados(df_origem):
+        _render_preview_origem(df_origem)
 
-    opcoes = [""] + colunas_validas
+    if safe_df_dados(df_origem) and st.session_state.get("_origem_site_autoavancar"):
+        st.session_state["_origem_site_autoavancar"] = False
+        autoavancar_se_origem_pronta(df_origem)
 
-    coluna_custo = st.selectbox(
-        "Qual coluna de origem deve ser usada como base do preço?",
-        opcoes,
-        key="coluna_precificacao_resultado",
-        help="Escolha a coluna de custo/preço base para gerar o preço automático.",
-    )
+    return df_origem
 
+
+def render_bloco_acoes_origem(df_origem: pd.DataFrame | None) -> None:
     col1, col2 = st.columns(2)
+
     with col1:
-        st.number_input(
-            "Margem (%)",
-            min_value=0.0,
-            value=float(st.session_state.get("margem_bling", 0.0) or 0.0),
-            step=1.0,
-            key="margem_bling",
-        )
-        st.number_input(
-            "Impostos (%)",
-            min_value=0.0,
-            value=float(st.session_state.get("impostos_bling", 0.0) or 0.0),
-            step=1.0,
-            key="impostos_bling",
-        )
+        if st.button("Limpar origem", use_container_width=True, key="btn_limpar_origem"):
+            for chave in [
+                "df_origem",
+                "df_saida",
+                "df_final",
+                "df_precificado",
+                "df_calc_precificado",
+            ]:
+                st.session_state.pop(chave, None)
+            st.session_state["site_processado"] = False
+            st.rerun()
 
     with col2:
-        st.number_input(
-            "Custo fixo",
-            min_value=0.0,
-            value=float(st.session_state.get("custofixo_bling", 0.0) or 0.0),
-            step=1.0,
-            key="custofixo_bling",
-        )
-        st.number_input(
-            "Taxa extra",
-            min_value=0.0,
-            value=float(st.session_state.get("taxaextra_bling", 0.0) or 0.0),
-            step=1.0,
-            key="taxaextra_bling",
-        )
-
-    if coluna_custo and coluna_custo in df_origem.columns:
-        st.success(
-            f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}"
-  )
-      
+        habilitar = safe_df_dados(df_origem) or safe_df_dados(st.session_state.get("df_origem"))
+        if st.button(
+            "Continuar para precificação",
+            use_container_width=True,
+            key="btn_continuar_origem",
+            type="primary",
+            disabled=not habilitar,
+        ):
+            df_ok = df_origem if safe_df_dados(df_origem) else st.session_state.get("df_origem")
+            autoavancar_se_origem_pronta(df_ok)
