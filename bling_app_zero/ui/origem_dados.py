@@ -86,7 +86,9 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(
+    df_origem_render: pd.DataFrame | None,
+) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -325,6 +327,12 @@ def _render_botoes_finais_origem(
             _navegar("mapeamento", on_continue)
 
 
+def _origem_foi_escolhida() -> bool:
+    origem_atual = safe_str(obter_origem_atual()).lower()
+    origem_sessao = safe_str(st.session_state.get("origem_dados_tipo")).lower()
+    return bool(origem_atual or origem_sessao)
+
+
 # =========================================================
 # RENDER PRINCIPAL
 # =========================================================
@@ -369,12 +377,13 @@ def render_origem_dados(
             kicker="Pergunta 2",
         )
 
-        origem_escolhida = render_origem_entrada(
+        render_origem_entrada(
             lambda origem: controlar_troca_origem(origem, log_debug)
         )
 
-        if origem_escolhida:
+        if _origem_foi_escolhida():
             _definir_passo_origem(3)
+            st.rerun()
 
         if st.button(
             "⬅️ Voltar",
@@ -416,7 +425,9 @@ def render_origem_dados(
 
     if "site" in origem_atual and not safe_df_dados(df_origem):
         if _site_configurada_minimamente():
-            st.info("A URL já foi preenchida. Assim que os dados forem carregados, o sistema libera o próximo passo.")
+            st.info(
+                "A URL já foi preenchida. Assim que os dados forem carregados, o sistema libera o próximo passo."
+            )
         else:
             st.info("Informe a URL do site para continuar.")
 
