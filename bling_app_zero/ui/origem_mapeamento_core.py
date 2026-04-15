@@ -179,6 +179,8 @@ def inferir_coluna_quantidade(df_fonte: pd.DataFrame) -> str:
         "qCom",
         "qTrib",
         "quantidade_tributavel",
+        "estoque",
+        "saldo",
     ]
 
     existentes = [str(c) for c in df_fonte.columns]
@@ -191,7 +193,12 @@ def inferir_coluna_quantidade(df_fonte: pd.DataFrame) -> str:
 
     for col in existentes:
         nome = normalizar_coluna(col)
-        if "quantidade" in nome or nome in {"qcom", "qtrib"}:
+        if (
+            "quantidade" in nome
+            or nome in {"qcom", "qtrib"}
+            or "estoque" in nome
+            or "saldo" in nome
+        ):
             return col
 
     return ""
@@ -206,7 +213,6 @@ def aplicar_mapeamento_automatico_preco(
         mapping_out = dict(mapping or {})
         coluna_preco = ""
 
-        # Prioridade 1: se a base já vier precificada, usar a coluna final do fluxo.
         for candidata in [
             "Preço unitário (OBRIGATÓRIO)",
             "Preço de venda",
@@ -215,7 +221,6 @@ def aplicar_mapeamento_automatico_preco(
                 coluna_preco = candidata
                 break
 
-        # Prioridade 2: inferência por nome.
         if not coluna_preco:
             coluna_preco = inferir_coluna_preco(df_fonte)
 
@@ -250,7 +255,9 @@ def aplicar_mapeamento_automatico_quantidade(
             return mapping_out
 
         for col_modelo in df_modelo.columns:
-            if not is_coluna_quantidade(str(col_modelo)):
+            nome_modelo = str(col_modelo)
+
+            if not (is_coluna_quantidade(nome_modelo) or is_coluna_balanco(nome_modelo)):
                 continue
 
             valor_atual = safe_str(mapping_out.get(col_modelo))
@@ -336,11 +343,6 @@ def _aplicar_defaults_sistema(df_saida: pd.DataFrame, df_modelo: pd.DataFrame) -
             df_saida[col_nome] = deposito
             continue
 
-        if is_coluna_balanco(col_nome):
-            # Balanço é coluna de sistema, não deve herdar quantidade nem origem.
-            df_saida[col_nome] = "S"
-            continue
-
         if "situa" in str(col_nome).lower():
             df_saida[col_nome] = df_saida[col_nome].apply(normalizar_situacao)
 
@@ -368,7 +370,7 @@ def montar_df_saida_mapeado(
             df_saida[col_modelo] = ""
             continue
 
-        if is_coluna_deposito(col_modelo) or is_coluna_balanco(col_modelo):
+        if is_coluna_deposito(col_modelo):
             continue
 
         origem = mapping_limpo.get(col_modelo, "")
