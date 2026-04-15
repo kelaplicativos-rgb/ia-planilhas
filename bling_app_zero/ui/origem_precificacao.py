@@ -83,7 +83,6 @@ def _render_css() -> None:
                 font-weight: 700;
                 margin-bottom: 0.30rem;
             }
-
             .op-title {
                 font-size: 2rem;
                 line-height: 1.05;
@@ -92,13 +91,11 @@ def _render_css() -> None:
                 margin: 0 0 0.40rem 0;
                 letter-spacing: -0.02em;
             }
-
             .op-sub {
                 font-size: 1rem;
                 color: #667085;
                 margin: 0 0 1rem 0;
             }
-
             .op-card {
                 background: #FFFFFF;
                 border: 1px solid #EAECF0;
@@ -114,10 +111,7 @@ def _render_css() -> None:
 
 def _render_header() -> None:
     st.markdown('<div class="op-kicker">Etapa de precificação</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="op-title">Vai usar a calculadora de precificação?</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="op-title">Vai usar a calculadora de precificação?</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="op-sub">Você pode calcular automaticamente ou manter o preço que veio da planilha fornecedora.</div>',
         unsafe_allow_html=True,
@@ -152,8 +146,8 @@ def _render_escolha_principal() -> None:
 
 def _colunas_origem_validas(df_origem: pd.DataFrame) -> list[str]:
     invalidas = {"signature", "infnfe", "infprot", "versao"}
-
     colunas: list[str] = []
+
     for coluna in df_origem.columns:
         nome = _safe_str(coluna)
         if not nome:
@@ -217,7 +211,6 @@ def _aplicar_precificacao_fluxo(df_origem: pd.DataFrame) -> None:
     if _safe_df_dados(df_resultado):
         if _tipo_operacao_estoque():
             df_resultado = aplicar_bloco_estoque(df_resultado, _origem_atual())
-
         _persistir_resultado(df_resultado)
 
 
@@ -268,43 +261,13 @@ def render_origem_precificacao() -> None:
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
-        st.number_input(
-            "Margem desejada (%)",
-            min_value=0.0,
-            value=_float_state("margem_bling", 0.0),
-            step=1.0,
-            key="margem_bling",
-        )
-        st.number_input(
-            "Imposto NF-e (%)",
-            min_value=0.0,
-            value=_float_state("impostos_bling", 0.0),
-            step=1.0,
-            key="impostos_bling",
-        )
-        st.number_input(
-            "Comissão do canal (%)",
-            min_value=0.0,
-            value=_float_state("comissao_canal_percentual", 16.0),
-            step=1.0,
-            key="comissao_canal_percentual",
-        )
+        st.number_input("Margem desejada (%)", min_value=0.0, value=_float_state("margem_bling", 0.0), step=1.0, key="margem_bling")
+        st.number_input("Imposto NF-e (%)", min_value=0.0, value=_float_state("impostos_bling", 0.0), step=1.0, key="impostos_bling")
+        st.number_input("Comissão do canal (%)", min_value=0.0, value=_float_state("comissao_canal_percentual", 16.0), step=1.0, key="comissao_canal_percentual")
 
     with col2:
-        st.number_input(
-            "Frete estimado (R$)",
-            min_value=0.0,
-            value=_float_state("custofixo_bling", 0.0),
-            step=1.0,
-            key="custofixo_bling",
-        )
-        st.number_input(
-            "Custo extra fixo (R$)",
-            min_value=0.0,
-            value=_float_state("taxaextra_bling", 0.0),
-            step=1.0,
-            key="taxaextra_bling",
-        )
+        st.number_input("Frete estimado (R$)", min_value=0.0, value=_float_state("custofixo_bling", 0.0), step=1.0, key="custofixo_bling")
+        st.number_input("Custo extra fixo (R$)", min_value=0.0, value=_float_state("taxaextra_bling", 0.0), step=1.0, key="taxaextra_bling")
 
     _aplicar_precificacao_fluxo(df_origem)
 
