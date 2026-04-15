@@ -593,3 +593,9 @@ def gerar_nome_arquivo_download() -> str:
         return "bling_export_cadastro.csv"
 
     return "bling_export.csv"
+
+
+def render_preview_final(*args, **kwargs):
+    from bling_app_zero.ui.preview_final import render_preview_final as _render_preview_final
+
+    return _render_preview_final(*args, **kwargs)
