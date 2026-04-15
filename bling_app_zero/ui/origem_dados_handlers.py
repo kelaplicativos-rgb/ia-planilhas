@@ -1,386 +1,105 @@
 
 from __future__ import annotations
 
-import io
-import xml.etree.ElementTree as ET
+import hashlib
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
+    ir_para_etapa,
     log_debug,
     safe_df_dados,
     safe_df_estrutura,
 )
-from bling_app_zero.ui.origem_dados_estado import (
-    fingerprint_df,
-    limpar_mapeamento_widgets,
-    obter_origem_atual,
-    safe_int,
-    safe_str,
-)
 
 
-# ==========================================================
-# NORMALIZAÇÃO
-# ==========================================================
-def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
+def safe_str(valor) -> str:
     try:
-        if not isinstance(df, pd.DataFrame):
-            return pd.DataFrame()
-
-        df_out = df.copy()
-
-        for coluna in list(df_out.columns):
-            nome = safe_str(coluna).strip().lower()
-            if nome in {"unnamed: 0", "unnamed:0", "index"}:
-                df_out = df_out.drop(columns=[coluna], errors="ignore")
-
-        colunas_finais: list[str] = []
-        for col in df_out.columns:
-            nome = (
-                safe_str(col)
-                .replace("\ufeff", "")
-                .replace("\n", " ")
-                .replace("\r", " ")
-                .strip()
-            )
-            colunas_finais.append(nome or "Coluna")
-
-        df_out.columns = colunas_finais
-        return df_out.replace({None: ""}).fillna("")
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro na normalização básica: {e}", "ERROR")
-        return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
-
-
-# ==========================================================
-# LEITURA ROBUSTA
-# ==========================================================
-def _ler_csv_robusto(upload) -> pd.DataFrame | None:
-    try:
-        conteudo = upload.read()
-        if not conteudo:
-            return None
-
-        candidatos = [
-            ("utf-8-sig", None),
-            ("utf-8", None),
-            ("latin1", None),
-            ("cp1252", None),
-            ("utf-8-sig", ";"),
-            ("utf-8", ";"),
-            ("latin1", ";"),
-            ("cp1252", ";"),
-        ]
-
-        for encoding, sep in candidatos:
-            try:
-                buffer = io.BytesIO(conteudo)
-                if sep is None:
-                    df = pd.read_csv(
-                        buffer,
-                        sep=None,
-                        engine="python",
-                        encoding=encoding,
-                    )
-                else:
-                    df = pd.read_csv(buffer, sep=sep, encoding=encoding)
-                return aplicar_normalizacao_basica(df)
-            except Exception:
-                continue
-
-        return None
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro ao ler CSV: {e}", "ERROR")
-        return None
-
-
-def _ler_excel_robusto(upload) -> pd.DataFrame | None:
-    try:
-        conteudo = upload.read()
-        if not conteudo:
-            return None
-
-        for engine in [None, "openpyxl", "xlrd"]:
-            try:
-                buffer = io.BytesIO(conteudo)
-                if engine:
-                    df = pd.read_excel(buffer, engine=engine)
-                else:
-                    df = pd.read_excel(buffer)
-                return aplicar_normalizacao_basica(df)
-            except Exception:
-                continue
-
-        return None
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro ao ler Excel: {e}", "ERROR")
-        return None
-
-
-def _text_or_empty(node: ET.Element | None, tag_name: str) -> str:
-    if node is None:
-        return ""
-    for child in node.iter():
-        tag = child.tag.split("}")[-1]
-        if tag == tag_name:
-            return (child.text or "").strip()
-    return ""
-
-
-def _parse_nfe_xml_produtos(conteudo: bytes) -> pd.DataFrame | None:
-    try:
-        root = ET.fromstring(conteudo)
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.lower() in {"none", "nan", "nat"}:
+            return ""
+        return texto
     except Exception:
-        return None
-
-    ide = None
-    emit = None
-
-    for child in root.iter():
-        tag = child.tag.split("}")[-1]
-        if tag == "ide" and ide is None:
-            ide = child
-        elif tag == "emit" and emit is None:
-            emit = child
-
-    numero_nota = _text_or_empty(ide, "nNF")
-    serie = _text_or_empty(ide, "serie")
-    fornecedor = _text_or_empty(emit, "xNome")
-    cnpj_emit = _text_or_empty(emit, "CNPJ")
-
-    rows: list[dict] = []
-
-    for det in root.iter():
-        if det.tag.split("}")[-1] != "det":
-            continue
-
-        prod = None
-        imposto = None
-
-        for child in det:
-            tag = child.tag.split("}")[-1]
-            if tag == "prod":
-                prod = child
-            elif tag == "imposto":
-                imposto = child
-
-        if prod is None:
-            continue
-
-        row = {
-            "numero_nota": numero_nota,
-            "serie_nota": serie,
-            "fornecedor": fornecedor,
-            "cnpj_fornecedor": cnpj_emit,
-            "item": det.attrib.get("nItem", ""),
-            "codigo_produto": _text_or_empty(prod, "cProd"),
-            "descricao": _text_or_empty(prod, "xProd"),
-            "descricao_curta": _text_or_empty(prod, "xProd"),
-            "ean": _text_or_empty(prod, "cEAN"),
-            "ncm": _text_or_empty(prod, "NCM"),
-            "cfop": _text_or_empty(prod, "CFOP"),
-            "unidade": _text_or_empty(prod, "uCom"),
-            "quantidade": _text_or_empty(prod, "qCom"),
-            "preco_unitario": _text_or_empty(prod, "vUnCom"),
-            "valor_total": _text_or_empty(prod, "vProd"),
-            "codigo_barras_tributavel": _text_or_empty(prod, "cEANTrib"),
-            "unidade_tributavel": _text_or_empty(prod, "uTrib"),
-            "quantidade_tributavel": _text_or_empty(prod, "qTrib"),
-            "preco_unitario_tributavel": _text_or_empty(prod, "vUnTrib"),
-        }
-
-        if imposto is not None:
-            row["origem_icms"] = _text_or_empty(imposto, "orig")
-            row["cst_icms"] = _text_or_empty(imposto, "CST") or _text_or_empty(imposto, "CSOSN")
-            row["aliquota_icms"] = _text_or_empty(imposto, "pICMS")
-            row["valor_icms"] = _text_or_empty(imposto, "vICMS")
-            row["aliquota_ipi"] = _text_or_empty(imposto, "pIPI")
-            row["valor_ipi"] = _text_or_empty(imposto, "vIPI")
-            row["aliquota_pis"] = _text_or_empty(imposto, "pPIS")
-            row["valor_pis"] = _text_or_empty(imposto, "vPIS")
-            row["aliquota_cofins"] = _text_or_empty(imposto, "pCOFINS")
-            row["valor_cofins"] = _text_or_empty(imposto, "vCOFINS")
-
-        rows.append(row)
-
-    if not rows:
-        return None
-
-    return aplicar_normalizacao_basica(pd.DataFrame(rows))
+        return ""
 
 
-def _ler_xml_robusto(upload) -> pd.DataFrame | None:
+def safe_float(valor, default: float = 0.0) -> float:
     try:
-        conteudo = upload.read()
-        if not conteudo:
-            return None
-
-        df_nfe = _parse_nfe_xml_produtos(conteudo)
-        if safe_df_dados(df_nfe):
-            return df_nfe
-
-        for parser in [None, "lxml", "etree"]:
-            try:
-                buffer = io.BytesIO(conteudo)
-                if parser:
-                    df = pd.read_xml(buffer, parser=parser)
-                else:
-                    df = pd.read_xml(buffer)
-
-                if isinstance(df, pd.DataFrame) and not df.empty:
-                    return aplicar_normalizacao_basica(df)
-            except Exception:
-                continue
-
-        return None
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro ao ler XML: {e}", "ERROR")
-        return None
+        if valor is None or safe_str(valor) == "":
+            return default
+        texto = (
+            safe_str(valor)
+            .replace("R$", "")
+            .replace(".", "")
+            .replace(",", ".")
+        )
+        return float(texto)
+    except Exception:
+        return default
 
 
-def ler_planilha(upload) -> pd.DataFrame | None:
-    if upload is None:
-        return None
-
-    nome = safe_str(getattr(upload, "name", "")).lower()
-
+def safe_int(valor, default: int = 0) -> int:
     try:
-        if nome.endswith(".csv"):
-            return _ler_csv_robusto(upload)
-
-        if nome.endswith((".xlsx", ".xls")):
-            return _ler_excel_robusto(upload)
-
-        if nome.endswith(".xml"):
-            return _ler_xml_robusto(upload)
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro ao ler arquivo: {e}", "ERROR")
-
-    return None
+        return int(float(valor))
+    except Exception:
+        return default
 
 
-# ==========================================================
-# ESTADO / TROCAS
-# ==========================================================
-def _normalizar_tipo_origem(origem: str) -> str:
-    valor = safe_str(origem).strip().lower()
-    mapa = {
-        "site": "site",
-        "buscar em site": "site",
-        "busca em site": "site",
-        "planilha": "planilha",
-        "planilha / csv / xml": "planilha",
-        "planilha/csv/xml": "planilha",
-        "arquivo": "planilha",
-        "upload": "planilha",
-    }
-    return mapa.get(valor, valor or "planilha")
-
-
-def _limpar_estado_dependente_origem() -> None:
-    for chave in [
-        "df_origem",
-        "df_saida",
-        "df_final",
-        "df_precificado",
-        "df_calc_precificado",
-        "origem_dados_fingerprint",
-        "site_processado",
-        "site_autoavanco_realizado",
-    ]:
-        st.session_state.pop(chave, None)
-
-    limpar_mapeamento_widgets()
-
-
-def controlar_troca_origem(origem: str, log_fn=None) -> None:
-    origem_atual = _normalizar_tipo_origem(origem)
-    origem_anterior = _normalizar_tipo_origem(
-        st.session_state.get("_origem_anterior_origem_dados")
+def _normalizar_nome_coluna(coluna) -> str:
+    return (
+        safe_str(coluna)
+        .lower()
+        .replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+        .strip()
     )
 
-    st.session_state["origem_dados_tipo"] = origem_atual
-    st.session_state["origem_dados"] = origem_atual
 
-    if not safe_str(st.session_state.get("_origem_anterior_origem_dados")).strip():
-        st.session_state["_origem_anterior_origem_dados"] = origem_atual
-        st.session_state["site_processado"] = False
-        st.session_state["site_autoavanco_realizado"] = False
-        if callable(log_fn):
-            log_fn(f"[ORIGEM_DADOS] origem inicial definida: {origem_atual}", "INFO")
-        return
-
-    if origem_anterior == origem_atual:
-        return
-
-    if callable(log_fn):
-        log_fn(
-            f"[ORIGEM_DADOS] origem alterada: {origem_anterior} → {origem_atual}. "
-            "Limpando saída e mapeamento.",
-            "INFO",
-        )
-
-    _limpar_estado_dependente_origem()
-    st.session_state["site_processado"] = False
-    st.session_state["site_autoavanco_realizado"] = False
-    st.session_state["_origem_anterior_origem_dados"] = origem_atual
+def _normalizar_tipo_origem(valor: str) -> str:
+    texto = _normalizar_nome_coluna(valor)
+    if "site" in texto:
+        return "site"
+    if "xml" in texto:
+        return "xml"
+    if "pdf" in texto:
+        return "pdf"
+    if "planilha" in texto or "csv" in texto or "excel" in texto:
+        return "planilha"
+    return texto or "planilha"
 
 
-def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
-    try:
-        df_limpo = aplicar_normalizacao_basica(df_origem)
-        if not safe_df_dados(df_limpo):
-            return
-
-        fp_novo = fingerprint_df(df_limpo)
-        fp_atual = safe_str(st.session_state.get("origem_dados_fingerprint"))
-
-        if not fp_atual:
-            st.session_state["origem_dados_fingerprint"] = fp_novo
-            st.session_state["df_origem"] = df_limpo.copy()
-
-            if not safe_df_estrutura(st.session_state.get("df_saida")):
-                st.session_state["df_saida"] = df_limpo.copy()
-
-            if not safe_df_estrutura(st.session_state.get("df_final")):
-                st.session_state["df_final"] = df_limpo.copy()
-
-            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
-                st.session_state["site_processado"] = True
-
-            if callable(log_fn):
-                log_fn(
-                    f"[ORIGEM_DADOS] df_origem sincronizado com {len(df_limpo)} linha(s)",
-                    "INFO",
-                )
-            return
-
-        if fp_atual != fp_novo:
-            if callable(log_fn):
-                log_fn("[ORIGEM_DADOS] nova origem detectada. Limpando saída anterior.", "INFO")
-
-            st.session_state["origem_dados_fingerprint"] = fp_novo
-            st.session_state["df_origem"] = df_limpo.copy()
-
-            for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
-                st.session_state.pop(chave, None)
-
-            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
-                st.session_state["site_processado"] = True
-
-            st.session_state["site_autoavanco_realizado"] = False
-            limpar_mapeamento_widgets()
-
-    except Exception as e:
-        if callable(log_fn):
-            log_fn(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
+def obter_origem_atual() -> str:
+    return safe_str(
+        st.session_state.get("origem_dados_tipo")
+        or st.session_state.get("origem_dados_radio")
+        or "Planilha fornecedora"
+    )
 
 
-# ==========================================================
-# MODELO / BASE
-# ==========================================================
+def nome_coluna_preco_saida() -> str:
+    tipo = safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+    return "Preço unitário (OBRIGATÓRIO)" if tipo == "estoque" else "Preço de venda"
+
+
+def nome_coluna_descricao_saida() -> str:
+    tipo = safe_str(st.session_state.get("tipo_operacao_bling")).lower()
+    return "Descrição Produto" if tipo == "estoque" else "Descrição"
+
+
 def _colunas_modelo_cadastro_padrao() -> list[str]:
     return [
         "Código",
@@ -388,6 +107,11 @@ def _colunas_modelo_cadastro_padrao() -> list[str]:
         "Descrição Curta",
         "Preço de venda",
         "Situação",
+        "Marca",
+        "Categoria",
+        "Unidade",
+        "GTIN/EAN",
+        "Imagens",
     ]
 
 
@@ -406,399 +130,270 @@ def _colunas_modelo_estoque_padrao() -> list[str]:
     ]
 
 
-def _criar_modelo_fallback(tipo_operacao: str) -> pd.DataFrame:
-    tipo = safe_str(tipo_operacao).lower()
+def criar_modelo_vazio_para_operacao() -> pd.DataFrame:
+    tipo = safe_str(st.session_state.get("tipo_operacao_bling")).lower()
     if tipo == "estoque":
         return pd.DataFrame(columns=_colunas_modelo_estoque_padrao())
     return pd.DataFrame(columns=_colunas_modelo_cadastro_padrao())
 
 
-def _resolver_tipo_operacao_modelo() -> str:
+def obter_modelo_ativo() -> pd.DataFrame:
     tipo = safe_str(st.session_state.get("tipo_operacao_bling")).lower()
-    return "estoque" if tipo == "estoque" else "cadastro"
 
+    chaves = (
+        ["df_modelo_estoque", "df_modelo", "df_modelo_cadastro"]
+        if tipo == "estoque"
+        else ["df_modelo_cadastro", "df_modelo", "df_modelo_estoque"]
+    )
 
-def _resolver_candidatos_modelo(tipo_operacao: str) -> list[str]:
-    if tipo_operacao == "estoque":
-        return [
-            "df_modelo_estoque",
-            "df_modelo",
-            "df_modelo_cadastro",
-        ]
-    return [
-        "df_modelo_cadastro",
-        "df_modelo",
-        "df_modelo_estoque",
-    ]
+    for chave in chaves:
+        df_modelo = st.session_state.get(chave)
+        if safe_df_estrutura(df_modelo):
+            return df_modelo.copy()
 
-
-def _sincronizar_alias_modelo(tipo_operacao: str, df_modelo: pd.DataFrame) -> pd.DataFrame:
-    df_ok = df_modelo.copy()
-
-    if tipo_operacao == "estoque":
-        st.session_state["df_modelo_estoque"] = df_ok.copy()
+    df_fallback = criar_modelo_vazio_para_operacao()
+    if tipo == "estoque":
+        st.session_state["df_modelo_estoque"] = df_fallback.copy()
     else:
-        st.session_state["df_modelo_cadastro"] = df_ok.copy()
+        st.session_state["df_modelo_cadastro"] = df_fallback.copy()
 
-    if not safe_df_estrutura(st.session_state.get("df_modelo")):
-        st.session_state["df_modelo"] = df_ok.copy()
-
-    return df_ok
+    return df_fallback
 
 
-def _padronizar_modelo_estoque(df_modelo: pd.DataFrame) -> pd.DataFrame:
-    colunas_esperadas = _colunas_modelo_estoque_padrao()
+def aplicar_normalizacao_basica(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
 
-    if not safe_df_estrutura(df_modelo):
-        return pd.DataFrame(columns=colunas_esperadas)
+    df_out = df.copy()
+    df_out.columns = [safe_str(c) for c in df_out.columns]
+    df_out = df_out.replace({None: ""}).fillna("")
 
-    atuais = [safe_str(c) for c in df_modelo.columns]
-    atuais_norm = {safe_str(c).strip().lower(): c for c in atuais}
-
-    if set(colunas_esperadas).issubset(set(atuais)):
-        return df_modelo[colunas_esperadas].copy()
-
-    df_out = pd.DataFrame(columns=colunas_esperadas)
-
-    mapa_legado = {
-        "id produto": atuais_norm.get("id produto"),
-        "codigo produto *": atuais_norm.get("codigo produto *") or atuais_norm.get("código") or atuais_norm.get("codigo"),
-        "gtin **": atuais_norm.get("gtin **") or atuais_norm.get("ean") or atuais_norm.get("gtin"),
-        "descrição produto": atuais_norm.get("descrição produto") or atuais_norm.get("descricao produto") or atuais_norm.get("descricao") or atuais_norm.get("descrição"),
-        "deposito (obrigatório)": atuais_norm.get("deposito (obrigatório)") or atuais_norm.get("depósito (obrigatório)"),
-        "balanço (obrigatório)": atuais_norm.get("balanço (obrigatório)") or atuais_norm.get("balanco (obrigatório)") or atuais_norm.get("quantidade"),
-        "preço unitário (obrigatório)": atuais_norm.get("preço unitário (obrigatório)") or atuais_norm.get("preco unitario (obrigatório)") or atuais_norm.get("preço unitário (obrigatorio)"),
-        "preço de custo": atuais_norm.get("preço de custo") or atuais_norm.get("preco de custo") or atuais_norm.get("custo"),
-        "observação": atuais_norm.get("observação") or atuais_norm.get("observacao"),
-        "data": atuais_norm.get("data"),
-    }
-
-    for col_esperada in colunas_esperadas:
-        chave = col_esperada.strip().lower()
-        col_origem = mapa_legado.get(chave)
-        if col_origem and col_origem in df_modelo.columns:
-            df_out[col_esperada] = df_modelo[col_origem]
-        else:
-            df_out[col_esperada] = ""
+    for col in df_out.columns:
+        df_out[col] = df_out[col].apply(lambda v: "" if safe_str(v).lower() == "nan" else v)
 
     return df_out
 
 
-def obter_modelo_ativo():
-    tipo_operacao = _resolver_tipo_operacao_modelo()
-
-    for chave in _resolver_candidatos_modelo(tipo_operacao):
-        df_modelo = st.session_state.get(chave)
-        if safe_df_estrutura(df_modelo):
-            try:
-                log_debug(f"[ORIGEM_DADOS] modelo ativo encontrado em '{chave}'", "INFO")
-            except Exception:
-                pass
-
-            if tipo_operacao == "estoque":
-                df_modelo = _padronizar_modelo_estoque(df_modelo)
-
-            return _sincronizar_alias_modelo(tipo_operacao, df_modelo)
-
-    df_fallback = _criar_modelo_fallback(tipo_operacao)
+def fingerprint_df(df: pd.DataFrame) -> str:
     try:
+        if not isinstance(df, pd.DataFrame):
+            return ""
+        payload = (
+            "||".join([safe_str(c) for c in df.columns])
+            + f"##{len(df)}##"
+            + df.head(20).to_csv(index=False)
+        )
+        return hashlib.md5(payload.encode("utf-8", errors="ignore")).hexdigest()
+    except Exception:
+        return ""
+
+
+def limpar_mapeamento_widgets() -> None:
+    prefixos = (
+        "map_src_",
+        "map_default_",
+        "map_obrig_",
+        "map_preview_",
+        "campo_destino_",
+        "origem_destino_",
+    )
+    remover = []
+    for chave in list(st.session_state.keys()):
+        if any(str(chave).startswith(prefixo) for prefixo in prefixos):
+            remover.append(chave)
+
+    for chave in remover:
+        st.session_state.pop(chave, None)
+
+    st.session_state["mapping_origem"] = {}
+    st.session_state["mapping_origem_rascunho"] = {}
+    st.session_state["mapeamento_colunas_usadas"] = []
+    st.session_state["mapeamento_alertas"] = []
+    st.session_state["mapeamento_validado"] = False
+
+
+def _limpar_estado_dependente_origem() -> None:
+    for chave in [
+        "df_saida",
+        "df_final",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_preview_mapeamento",
+        "origem_dados_fingerprint",
+        "preview_final_valido",
+        "campos_obrigatorios_faltantes",
+        "campos_obrigatorios_alertas",
+    ]:
+        st.session_state.pop(chave, None)
+
+    limpar_mapeamento_widgets()
+
+
+def tratar_troca_origem(origem_atual: str) -> None:
+    origem_anterior = safe_str(st.session_state.get("_origem_anterior_origem_dados"))
+    origem_atual_norm = _normalizar_tipo_origem(origem_atual)
+    origem_anterior_norm = _normalizar_tipo_origem(origem_anterior)
+
+    if origem_anterior_norm and origem_anterior_norm != origem_atual_norm:
         log_debug(
-            f"[ORIGEM_DADOS] nenhum modelo carregado na sessão. "
-            f"Usando fallback interno para '{tipo_operacao}'.",
-            "WARNING",
+            f"[ORIGEM_DADOS] origem alterada de '{origem_anterior_norm}' para "
+            f"'{origem_atual_norm}'. Limpando saída e mapeamento.",
+            "INFO",
         )
-    except Exception:
-        pass
+        _limpar_estado_dependente_origem()
+        st.session_state["site_processado"] = False
+        st.session_state["site_autoavanco_realizado"] = False
 
-    return _sincronizar_alias_modelo(tipo_operacao, df_fallback)
+    st.session_state["_origem_anterior_origem_dados"] = origem_atual
 
 
-def modelo_tem_estrutura(df_modelo) -> bool:
-    if safe_df_estrutura(df_modelo):
-        return True
-
+def sincronizar_estado_com_origem(df_origem: pd.DataFrame, log_fn=None) -> None:
     try:
-        df_resolvido = obter_modelo_ativo()
-        return safe_df_estrutura(df_resolvido)
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro ao validar estrutura do modelo: {e}", "ERROR")
-        return False
+        df_limpo = aplicar_normalizacao_basica(df_origem)
+        if not safe_df_dados(df_limpo):
+            return
 
+        fp_novo = fingerprint_df(df_limpo)
+        fp_atual = safe_str(st.session_state.get("origem_dados_fingerprint"))
 
-def obter_df_base_prioritaria(df_origem: pd.DataFrame) -> pd.DataFrame:
-    df_prec = st.session_state.get("df_precificado")
-    df_calc = st.session_state.get("df_calc_precificado")
+        if not fp_atual:
+            st.session_state["origem_dados_fingerprint"] = fp_novo
+            st.session_state["df_origem"] = df_limpo.copy()
+            if not safe_df_estrutura(st.session_state.get("df_saida")):
+                st.session_state["df_saida"] = df_limpo.copy()
+            if not safe_df_estrutura(st.session_state.get("df_final")):
+                st.session_state["df_final"] = df_limpo.copy()
 
-    if safe_df_estrutura(df_prec):
-        return df_prec.copy()
+            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
+                st.session_state["site_processado"] = True
 
-    if safe_df_estrutura(df_calc):
-        return df_calc.copy()
-
-    return df_origem.copy()
-
-
-# ==========================================================
-# ESTOQUE
-# ==========================================================
-def aplicar_bloco_estoque(df_saida: pd.DataFrame, origem_atual: str) -> pd.DataFrame:
-    try:
-        df_out = df_saida.copy()
-
-        qtd_padrao = 0 if "site" in safe_str(origem_atual).lower() else 1
-        qtd_padrao = safe_int(
-            st.session_state.get("site_estoque_padrao_disponivel"),
-            qtd_padrao,
-        )
-
-        if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
-            df_out["Balanço (OBRIGATÓRIO)"] = qtd_padrao
-        else:
-            serie_balanco = pd.to_numeric(df_out["Balanço (OBRIGATÓRIO)"], errors="coerce")
-            df_out["Balanço (OBRIGATÓRIO)"] = serie_balanco.fillna(qtd_padrao)
-
-        deposito_nome = safe_str(st.session_state.get("deposito_nome"))
-        if deposito_nome:
-            if "Deposito (OBRIGATÓRIO)" not in df_out.columns:
-                df_out["Deposito (OBRIGATÓRIO)"] = deposito_nome
-            else:
-                coluna = (
-                    df_out["Deposito (OBRIGATÓRIO)"]
-                    .replace({None: ""})
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
+            if callable(log_fn):
+                log_fn(
+                    f"[ORIGEM_DADOS] df_origem sincronizado com {len(df_limpo)} linha(s)",
+                    "INFO",
                 )
-                df_out["Deposito (OBRIGATÓRIO)"] = coluna
-                df_out.loc[coluna.eq(""), "Deposito (OBRIGATÓRIO)"] = deposito_nome
+            return
 
-        if "ID Produto" not in df_out.columns:
-            df_out["ID Produto"] = ""
+        if fp_atual != fp_novo:
+            if callable(log_fn):
+                log_fn(
+                    "[ORIGEM_DADOS] nova origem detectada. Limpando saída anterior.",
+                    "INFO",
+                )
 
-        if "Observação" not in df_out.columns:
-            df_out["Observação"] = ""
+            st.session_state["origem_dados_fingerprint"] = fp_novo
+            st.session_state["df_origem"] = df_limpo.copy()
 
-        if "Data" not in df_out.columns:
-            df_out["Data"] = ""
+            for chave in ["df_saida", "df_final", "df_precificado", "df_calc_precificado"]:
+                st.session_state.pop(chave, None)
 
-        return df_out
+            if "site" in _normalizar_tipo_origem(obter_origem_atual()):
+                st.session_state["site_processado"] = True
+                st.session_state["site_autoavanco_realizado"] = False
+
+            limpar_mapeamento_widgets()
+
     except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro bloco estoque: {e}", "ERROR")
-        return df_saida.copy() if isinstance(df_saida, pd.DataFrame) else pd.DataFrame()
+        if callable(log_fn):
+            log_fn(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
+        else:
+            log_debug(f"[ORIGEM_DADOS] erro ao sincronizar origem: {e}", "ERROR")
 
 
-# ==========================================================
-# PRECIFICAÇÃO OLIST
-# ==========================================================
-def nome_coluna_preco_saida() -> str:
-    return (
-        "Preço unitário (OBRIGATÓRIO)"
-        if st.session_state.get("tipo_operacao_bling") == "estoque"
-        else "Preço de venda"
-    )
+def encontrar_coluna_por_alias(df: pd.DataFrame, aliases: list[str]) -> str | None:
+    if not isinstance(df, pd.DataFrame):
+        return None
 
+    normalizadas = {col: _normalizar_nome_coluna(col) for col in df.columns}
+    aliases_norm = [_normalizar_nome_coluna(a) for a in aliases]
 
-def to_numeric_series(serie: pd.Series) -> pd.Series:
-    try:
-        texto = (
-            serie.replace({None: ""})
-            .fillna("")
-            .astype(str)
-            .str.replace("R$", "", regex=False)
-            .str.replace(" ", "", regex=False)
-        )
+    for col, col_norm in normalizadas.items():
+        if any(alias == col_norm for alias in aliases_norm):
+            return col
 
-        possui_virgula = texto.str.contains(",", regex=False)
-        possui_ponto = texto.str.contains(".", regex=False)
+    for col, col_norm in normalizadas.items():
+        if any(alias in col_norm for alias in aliases_norm):
+            return col
 
-        texto = texto.where(
-            ~(possui_virgula & possui_ponto),
-            texto.str.replace(".", "", regex=False),
-        )
-        texto = texto.str.replace(",", ".", regex=False)
-
-        return pd.to_numeric(texto, errors="coerce")
-    except Exception:
-        return pd.to_numeric(serie, errors="coerce")
-
-
-def _float_state(key: str, default: float = 0.0) -> float:
-    try:
-        return float(st.session_state.get(key, default) or default)
-    except Exception:
-        return default
-
-
-def _resolve_coluna_preco_existente(df_origem: pd.DataFrame) -> str:
-    prioridades = [
-        "Preço unitário (OBRIGATÓRIO)",
-        "Preço de venda",
-        "preco_unitario",
-        "preco_unitario_tributavel",
-        "preço unitário",
-        "valor_unitario",
-        "valor total",
-        "valor_total",
-        "preco",
-        "preço",
-        "custo",
-    ]
-
-    mapa = {safe_str(c).strip().lower(): c for c in df_origem.columns}
-    for item in prioridades:
-        chave = safe_str(item).strip().lower()
-        if chave in mapa:
-            return mapa[chave]
-    return ""
-
-
-def _aplicar_fallback_preco_fornecedor(
-    df_resultado: pd.DataFrame,
-    df_origem: pd.DataFrame,
-) -> pd.DataFrame:
-    coluna_saida = nome_coluna_preco_saida()
-    if coluna_saida not in df_resultado.columns:
-        df_resultado[coluna_saida] = ""
-
-    coluna_fornecedor = _resolve_coluna_preco_existente(df_origem)
-    if not coluna_fornecedor or coluna_fornecedor not in df_origem.columns:
-        return df_resultado
-
-    serie = df_origem[coluna_fornecedor].reset_index(drop=True)
-    atual = df_resultado[coluna_saida].reset_index(drop=True)
-
-    serie_atual_num = to_numeric_series(atual)
-    serie_fornecedor_num = to_numeric_series(serie)
-
-    mascara_vazia = serie_atual_num.isna()
-    df_resultado.loc[mascara_vazia, coluna_saida] = serie.loc[mascara_vazia].values
-    return df_resultado
-
-
-def calcular_preco_olist(
-    custo_base: pd.Series,
-    imposto_nf_pct: float,
-    margem_desejada_pct: float,
-    frete_estimado_valor: float,
-    comissao_canal_pct: float,
-    custo_extra_fixo: float,
-) -> pd.Series:
-    custo_num = to_numeric_series(custo_base).fillna(0.0)
-
-    percentual_total = (
-        (imposto_nf_pct / 100.0)
-        + (margem_desejada_pct / 100.0)
-        + (comissao_canal_pct / 100.0)
-    )
-
-    denominador = 1.0 - percentual_total
-    if denominador <= 0:
-        denominador = 0.0001
-
-    numerador = custo_num + float(frete_estimado_valor) + float(custo_extra_fixo)
-    return (numerador / denominador).round(2)
+    return None
 
 
 def aplicar_precificacao(
     df_origem: pd.DataFrame,
     coluna_custo: str,
-    margem: float,
-    impostos: float,
-    custo_fixo: float,
-    taxa_extra: float,
-) -> pd.DataFrame | None:
-    """
-    Padrão Olist:
-    preço_venda = (custo + frete + custo_extra) / (1 - (comissão + imposto + margem))
+    margem_lucro: float = 0.0,
+    impostos: float = 0.0,
+    custo_fixo: float = 0.0,
+    taxa_extra: float = 0.0,
+) -> pd.DataFrame:
+    if not isinstance(df_origem, pd.DataFrame):
+        return pd.DataFrame()
 
-    Compatibilidade com a UI atual:
-    - margem     -> margem desejada %
-    - impostos   -> imposto NF-e %
-    - custo_fixo -> frete estimado (R$)
-    - taxa_extra -> custo extra fixo (R$)
-
-    Regras:
-    - Se o usuário não quiser usar a calculadora, mantém preço da planilha fornecedora.
-    - Se não existir coluna-base numérica válida, mantém preço da planilha fornecedora.
-    - A saída sempre preenche a coluna final correta:
-      * estoque  -> "Preço unitário (OBRIGATÓRIO)"
-      * cadastro -> "Preço de venda"
-    """
-    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
-        st.session_state["df_calc_precificado"] = None
-        return None
-
-    df_resultado = df_origem.copy()
+    df_out = df_origem.copy()
     coluna_saida = nome_coluna_preco_saida()
 
-    usar_calculadora = bool(st.session_state.get("usar_calculadora_precificacao", True))
-    comissao_canal_pct = _float_state("comissao_canal_percentual", 16.0)
+    if coluna_custo not in df_out.columns:
+        if coluna_saida not in df_out.columns:
+            df_out[coluna_saida] = ""
+        return df_out
 
-    if coluna_saida not in df_resultado.columns:
-        df_resultado[coluna_saida] = ""
+    def _calc(v):
+        custo = safe_float(v, 0.0)
+        preco = custo
+        preco += custo * (margem_lucro / 100.0)
+        preco += custo * (impostos / 100.0)
+        preco += float(custo_fixo or 0.0)
+        preco += float(taxa_extra or 0.0)
+        return round(preco, 2)
 
-    if not usar_calculadora:
-        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
-        st.session_state["df_calc_precificado"] = df_resultado.copy()
-        st.session_state["df_precificado"] = df_resultado.copy()
-        return df_resultado
-
-    if not coluna_custo or coluna_custo not in df_origem.columns:
-        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
-        st.session_state["df_calc_precificado"] = df_resultado.copy()
-        st.session_state["df_precificado"] = df_resultado.copy()
-        return df_resultado
-
-    serie_base = to_numeric_series(df_origem[coluna_custo])
-
-    if serie_base.isna().all():
-        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
-        st.session_state["df_calc_precificado"] = df_resultado.copy()
-        st.session_state["df_precificado"] = df_resultado.copy()
-        return df_resultado
-
-    try:
-        preco_olist = calcular_preco_olist(
-            custo_base=df_origem[coluna_custo],
-            imposto_nf_pct=impostos,
-            margem_desejada_pct=margem,
-            frete_estimado_valor=custo_fixo,
-            comissao_canal_pct=comissao_canal_pct,
-            custo_extra_fixo=taxa_extra,
-        )
-
-        df_resultado[coluna_saida] = preco_olist
-        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
-
-        st.session_state["df_calc_precificado"] = df_resultado.copy()
-        st.session_state["df_precificado"] = df_resultado.copy()
-        return df_resultado
-    except Exception as e:
-        log_debug(f"[ORIGEM_DADOS] erro na precificação: {e}", "ERROR")
-        df_resultado = _aplicar_fallback_preco_fornecedor(df_resultado, df_origem)
-        st.session_state["df_calc_precificado"] = df_resultado.copy()
-        st.session_state["df_precificado"] = df_resultado.copy()
-        return df_resultado
+    df_out[coluna_saida] = df_out[coluna_custo].apply(_calc)
+    st.session_state["precificacao_coluna_custo"] = coluna_custo
+    st.session_state["precificacao_coluna_resultado"] = coluna_saida
+    return df_out
 
 
-# ==========================================================
-# VALIDAÇÃO
-# ==========================================================
-def validar_antes_mapeamento() -> tuple[bool, list[str]]:
-    erros: list[str] = []
+def aplicar_bloco_estoque(df_origem: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df_origem, pd.DataFrame):
+        return pd.DataFrame()
 
-    df_origem = st.session_state.get("df_origem")
-    if not safe_df_dados(df_origem):
-        erros.append("Carregue os dados de origem antes de continuar.")
+    df_out = df_origem.copy()
+    tipo = safe_str(st.session_state.get("tipo_operacao_bling")).lower()
 
-    origem_atual = _normalizar_tipo_origem(obter_origem_atual())
+    if tipo != "estoque":
+        return df_out
 
-    if "site" in origem_atual:
-        url = safe_str(st.session_state.get("site_url"))
-        if not url:
-            erros.append("Informe a URL do site.")
+    deposito = safe_str(st.session_state.get("deposito_nome"))
+    estoque_padrao = safe_int(st.session_state.get("estoque_padrao_manual"), 0)
 
-        if not st.session_state.get("site_processado") and not safe_df_dados(df_origem):
-            erros.append("Execute a busca do site antes de continuar.")
+    if "Deposito (OBRIGATÓRIO)" not in df_out.columns:
+        df_out["Deposito (OBRIGATÓRIO)"] = deposito
 
-    return len(erros) == 0, erros
+    if "Balanço (OBRIGATÓRIO)" not in df_out.columns:
+        df_out["Balanço (OBRIGATÓRIO)"] = estoque_padrao
+
+    if "Data" not in df_out.columns:
+        df_out["Data"] = datetime.now().strftime("%d/%m/%Y")
+
+    return df_out
+
+
+def consolidar_saida_da_origem(df_origem: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df_origem, pd.DataFrame):
+        return pd.DataFrame()
+
+    df_base = aplicar_normalizacao_basica(df_origem)
+    df_base = aplicar_bloco_estoque(df_base)
+
+    st.session_state["df_origem"] = df_base.copy()
+    st.session_state["df_saida"] = df_base.copy()
+    st.session_state["df_final"] = df_base.copy()
+
+    return df_base
+
+
+def autoavancar_se_origem_pronta(df_origem: pd.DataFrame) -> bool:
+    if safe_df_dados(df_origem):
+        sincronizar_estado_com_origem(df_origem, log_debug)
+        ir_para_etapa("precificacao")
+        return True
+    return False
