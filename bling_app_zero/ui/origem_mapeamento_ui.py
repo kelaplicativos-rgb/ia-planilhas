@@ -1,9 +1,14 @@
+
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.origem_mapeamento_core import aplicar_mapeamento_automatico_preco
+from bling_app_zero.ui.origem_mapeamento_core import (
+    aplicar_mapeamento_automatico_preco,
+    aplicar_mapeamento_automatico_quantidade,
+    is_coluna_balanco,
+)
 from bling_app_zero.ui.origem_mapeamento_validacao import (
     is_coluna_deposito,
     is_coluna_id,
@@ -22,25 +27,51 @@ def render_cabecalho_mapeamento() -> None:
     )
 
 
+def _render_campo_bloqueado(rotulo: str, valor: str, chave: str) -> None:
+    st.text_input(
+        rotulo,
+        value=valor,
+        disabled=True,
+        key=chave,
+    )
+
+
 def render_formulario_mapeamento(
     df_fonte: pd.DataFrame,
     df_modelo: pd.DataFrame,
     mapping: dict,
 ) -> dict:
     mapping_local = aplicar_mapeamento_automatico_preco(mapping, df_modelo, df_fonte)
+    mapping_local = aplicar_mapeamento_automatico_quantidade(mapping_local, df_modelo, df_fonte)
 
     for col_modelo in df_modelo.columns:
+        col_modelo = str(col_modelo)
+
         if is_coluna_id(col_modelo):
-            st.text_input(
+            _render_campo_bloqueado(
                 col_modelo,
-                value="(Automático / Bloqueado)",
-                disabled=True,
-                key=f"id_lock_{col_modelo}",
+                "(Automático / Bloqueado)",
+                f"id_lock_{col_modelo}",
             )
             mapping_local[col_modelo] = ""
             continue
 
         if is_coluna_deposito(col_modelo):
+            _render_campo_bloqueado(
+                col_modelo,
+                safe_str(st.session_state.get("deposito_nome")) or "(Depósito padrão do sistema)",
+                f"deposito_lock_{col_modelo}",
+            )
+            mapping_local[col_modelo] = ""
+            continue
+
+        if is_coluna_balanco(col_modelo):
+            _render_campo_bloqueado(
+                col_modelo,
+                "S (Automático / Bloqueado)",
+                f"balanco_lock_{col_modelo}",
+            )
+            mapping_local[col_modelo] = ""
             continue
 
         opcoes = opcoes_select_mapeamento(df_fonte, mapping_local, col_modelo)
@@ -74,7 +105,6 @@ def render_preview_mapeamento(
 
 def render_acoes_mapeamento(erro: bool) -> tuple[bool, bool]:
     col1, col2 = st.columns(2)
-
     avancar = False
     voltar = False
 
@@ -85,3 +115,4 @@ def render_acoes_mapeamento(erro: bool) -> tuple[bool, bool]:
         voltar = st.button("⬅️ Voltar", use_container_width=True)
 
     return avancar, voltar
+    
