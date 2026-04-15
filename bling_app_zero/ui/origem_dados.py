@@ -37,6 +37,9 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def _navegar(destino: str, callback: NavCallback = None) -> None:
     if callable(callback):
         callback()
@@ -74,7 +77,9 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(
+    df_origem_render: pd.DataFrame | None,
+) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -104,6 +109,13 @@ def _reset_fluxo_origem() -> None:
         "fluxo_origem_passo",
         "_origem_dados_tipo_anterior",
         "upload_origem_dados",
+        "usar_calculadora_precificacao",
+        "coluna_precificacao_resultado",
+        "margem_bling",
+        "impostos_bling",
+        "custofixo_bling",
+        "taxaextra_bling",
+        "comissao_canal_percentual",
     ]:
         st.session_state.pop(chave, None)
 
@@ -275,6 +287,9 @@ def _persistir_df_saida(df_saida: pd.DataFrame) -> None:
         st.session_state["df_final"] = df_saida
 
 
+# =========================================================
+# RENDER PRINCIPAL
+# =========================================================
 def render_origem_dados(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
@@ -339,7 +354,7 @@ def render_origem_dados(
         return
 
     _render_question(
-        "Carregue uma base",
+        "Carregue a base",
         "Agora complete somente a origem escolhida.",
         kicker="Pergunta 3",
     )
@@ -368,7 +383,7 @@ def render_origem_dados(
             if st.button(
                 "⬅️ Voltar",
                 use_container_width=True,
-                key="origem_btn_voltar_final",
+                key="origem_btn_voltar_sem_base",
             ):
                 for chave in [
                     "df_origem",
@@ -387,7 +402,7 @@ def render_origem_dados(
                 "Continuar ➜",
                 use_container_width=True,
                 disabled=True,
-                key="origem_btn_continuar_final_disabled",
+                key="origem_btn_continuar_sem_base",
             )
         return
 
@@ -424,7 +439,7 @@ def render_origem_dados(
         if st.button(
             "⬅️ Voltar",
             use_container_width=True,
-            key="origem_btn_voltar_base_carregada",
+            key="origem_btn_voltar_com_base",
         ):
             for chave in [
                 "df_origem",
@@ -446,4 +461,3 @@ def render_origem_dados(
             key="origem_btn_continuar_para_precificacao",
         ):
             _navegar("precificacao", on_continue)
-            
