@@ -21,33 +21,20 @@ from bling_app_zero.ui.origem_dados_estado import (
 from bling_app_zero.ui.origem_dados_handlers import (
     aplicar_bloco_estoque,
     aplicar_normalizacao_basica,
-    aplicar_precificacao,
     controlar_troca_origem,
     modelo_tem_estrutura,
     obter_df_base_prioritaria,
     obter_modelo_ativo,
     sincronizar_estado_com_origem,
-    validar_antes_mapeamento,
 )
 from bling_app_zero.ui.origem_dados_ui import (
     render_modelo_bling,
     render_origem_entrada,
     render_entrada_origem_selecionada,
-    render_precificacao,
     render_preview_origem,
 )
 
 NavCallback = Callable[[], None] | None
-
-
-# =========================================================
-# HELPERS
-# =========================================================
-def _float_session(key: str, default: float = 0.0) -> float:
-    try:
-        return float(st.session_state.get(key, default) or default)
-    except Exception:
-        return default
 
 
 def _navegar(destino: str, callback: NavCallback = None) -> None:
@@ -87,9 +74,7 @@ def _resolver_df_origem_site() -> pd.DataFrame | None:
     return None
 
 
-def _obter_df_origem_renderizado(
-    df_origem_render: pd.DataFrame | None,
-) -> pd.DataFrame | None:
+def _obter_df_origem_renderizado(df_origem_render: pd.DataFrame | None) -> pd.DataFrame | None:
     origem_atual = safe_str(obter_origem_atual()).lower()
 
     if safe_df_dados(df_origem_render):
@@ -99,15 +84,6 @@ def _obter_df_origem_renderizado(
         return _resolver_df_origem_site()
 
     return df_origem_render
-
-
-def _site_configurada_minimamente() -> bool:
-    origem_atual = safe_str(obter_origem_atual()).lower()
-    if "site" not in origem_atual:
-        return False
-
-    url = safe_str(st.session_state.get("site_url")).strip()
-    return bool(url)
 
 
 def _reset_fluxo_origem() -> None:
@@ -141,14 +117,6 @@ def _obter_passo_origem() -> int:
         return int(st.session_state.get("fluxo_origem_passo", 1) or 1)
     except Exception:
         return 1
-
-
-def _deve_exibir_deposito() -> bool:
-    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
-
-
-def _deve_exibir_deposito_no_passo(passo: int) -> bool:
-    return _deve_exibir_deposito() and passo >= 3
 
 
 def _render_css_local() -> None:
@@ -266,79 +234,6 @@ def _render_resumo_curto(df_origem: pd.DataFrame | None = None) -> None:
     )
 
 
-def _render_botoes_finais_origem(
-    on_back: NavCallback = None,
-    on_continue: NavCallback = None,
-    *,
-    continuar_habilitado: bool,
-) -> None:
-    col1, col2 = st.columns(2, gap="small")
-
-    with col1:
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            key="origem_btn_voltar_final",
-        ):
-            passo_atual = _obter_passo_origem()
-
-            if passo_atual <= 1:
-                _reset_fluxo_origem()
-                st.rerun()
-
-            if passo_atual == 2:
-                for chave in [
-                    "origem_dados_tipo",
-                    "origem_dados_radio",
-                    "df_origem",
-                    "df_saida",
-                    "df_final",
-                    "df_precificado",
-                    "df_calc_precificado",
-                    "upload_origem_dados",
-                ]:
-                    st.session_state.pop(chave, None)
-                _definir_passo_origem(1)
-                st.rerun()
-
-            if passo_atual >= 3:
-                for chave in [
-                    "df_origem",
-                    "df_saida",
-                    "df_final",
-                    "df_precificado",
-                    "df_calc_precificado",
-                    "upload_origem_dados",
-                ]:
-                    st.session_state.pop(chave, None)
-                _definir_passo_origem(2)
-                st.rerun()
-
-            _navegar("origem", on_back)
-
-    with col2:
-        if st.button(
-            "Continuar ➜",
-            use_container_width=True,
-            type="primary",
-            disabled=not continuar_habilitado,
-            key="origem_btn_continuar_final",
-        ):
-            valido, erros = validar_antes_mapeamento()
-            if not valido:
-                for erro in erros:
-                    st.warning(erro)
-                return
-
-            if safe_df_estrutura(st.session_state.get("df_saida")):
-                try:
-                    st.session_state["df_final"] = st.session_state["df_saida"].copy()
-                except Exception:
-                    st.session_state["df_final"] = st.session_state["df_saida"]
-
-            _navegar("mapeamento", on_continue)
-
-
 def _origem_foi_escolhida() -> bool:
     origem_atual = safe_str(obter_origem_atual()).lower()
     origem_sessao = safe_str(st.session_state.get("origem_dados_tipo")).lower()
@@ -356,27 +251,16 @@ def _render_entrada_somente_da_origem_escolhida() -> pd.DataFrame | None:
     )
 
 
+def _deve_exibir_deposito() -> bool:
+    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
+
+
 def _resolve_operacao_label() -> str:
     return safe_str(
         st.session_state.get("tipo_operacao_radio")
         or st.session_state.get("tipo_operacao")
         or st.session_state.get("tipo_operacao_bling")
     )
-
-
-def _render_modelo_com_expander(operacao: str) -> None:
-    with st.expander("Ver modelo ativo", expanded=False):
-        render_modelo_bling(operacao)
-
-
-def _render_precificacao_com_expander(df_origem: pd.DataFrame) -> None:
-    with st.expander("Abrir precificação", expanded=False):
-        render_precificacao(df_origem)
-
-
-def _render_preview_com_expander(df_origem: pd.DataFrame) -> None:
-    with st.expander("Abrir preview da origem", expanded=False):
-        render_preview_origem(df_origem)
 
 
 def _persistir_df_saida(df_saida: pd.DataFrame) -> None:
@@ -391,28 +275,6 @@ def _persistir_df_saida(df_saida: pd.DataFrame) -> None:
         st.session_state["df_final"] = df_saida
 
 
-def _aplicar_precificacao_e_sincronizar(df_origem: pd.DataFrame, origem_atual: str) -> None:
-    df_prec = aplicar_precificacao(
-        df_origem=df_origem,
-        coluna_custo=safe_str(st.session_state.get("coluna_precificacao_resultado")),
-        margem=_float_session("margem_bling"),
-        impostos=_float_session("impostos_bling"),
-        custo_fixo=_float_session("custofixo_bling"),
-        taxa_extra=_float_session("taxaextra_bling"),
-    )
-
-    if safe_df_estrutura(df_prec):
-        df_saida_prec = df_prec.copy()
-
-        if _deve_exibir_deposito():
-            df_saida_prec = aplicar_bloco_estoque(df_saida_prec, origem_atual)
-
-        _persistir_df_saida(df_saida_prec)
-
-
-# =========================================================
-# RENDER PRINCIPAL
-# =========================================================
 def render_origem_dados(
     on_back: NavCallback = None,
     on_continue: NavCallback = None,
@@ -477,12 +339,12 @@ def render_origem_dados(
         return
 
     _render_question(
-        "Carregue a base",
+        "Carregue uma base",
         "Agora complete somente a origem escolhida.",
         kicker="Pergunta 3",
     )
 
-    if _deve_exibir_deposito_no_passo(passo):
+    if _deve_exibir_deposito():
         st.text_input(
             "Nome do depósito",
             key="deposito_nome",
@@ -499,20 +361,34 @@ def render_origem_dados(
 
     _render_resumo_curto(df_origem)
 
-    if "site" in origem_atual and not safe_df_dados(df_origem):
-        if _site_configurada_minimamente():
-            st.info(
-                "A URL já foi preenchida. Assim que os dados forem carregados, o sistema libera o próximo passo."
-            )
-        else:
-            st.info("Informe a URL do site para continuar.")
-
     if not safe_df_dados(df_origem):
-        _render_botoes_finais_origem(
-            on_back=on_back,
-            on_continue=on_continue,
-            continuar_habilitado=False,
-        )
+        col1, col2 = st.columns(2, gap="small")
+
+        with col1:
+            if st.button(
+                "⬅️ Voltar",
+                use_container_width=True,
+                key="origem_btn_voltar_final",
+            ):
+                for chave in [
+                    "df_origem",
+                    "df_saida",
+                    "df_final",
+                    "df_precificado",
+                    "df_calc_precificado",
+                    "upload_origem_dados",
+                ]:
+                    st.session_state.pop(chave, None)
+                _definir_passo_origem(2)
+                st.rerun()
+
+        with col2:
+            st.button(
+                "Continuar ➜",
+                use_container_width=True,
+                disabled=True,
+                key="origem_btn_continuar_final_disabled",
+            )
         return
 
     df_origem = aplicar_normalizacao_basica(df_origem)
@@ -527,14 +403,10 @@ def render_origem_dados(
     modelo_ativo = obter_modelo_ativo()
     if modelo_ativo is None or not modelo_tem_estrutura(modelo_ativo):
         st.warning("O modelo do sistema não foi encontrado.")
-        _render_botoes_finais_origem(
-            on_back=on_back,
-            on_continue=on_continue,
-            continuar_habilitado=False,
-        )
         return
 
-    _render_modelo_com_expander(operacao)
+    with st.expander("Ver modelo ativo", expanded=False):
+        render_modelo_bling(operacao)
 
     df_saida = obter_df_base_prioritaria(df_origem)
 
@@ -543,13 +415,35 @@ def render_origem_dados(
 
     _persistir_df_saida(df_saida)
 
-    _render_precificacao_com_expander(df_origem)
-    _aplicar_precificacao_e_sincronizar(df_origem, origem_atual)
-    _render_preview_com_expander(df_origem)
+    with st.expander("Abrir preview da origem", expanded=False):
+        render_preview_origem(df_origem)
 
-    _render_botoes_finais_origem(
-        on_back=on_back,
-        on_continue=on_continue,
-        continuar_habilitado=True,
-    )
-    
+    col1, col2 = st.columns(2, gap="small")
+
+    with col1:
+        if st.button(
+            "⬅️ Voltar",
+            use_container_width=True,
+            key="origem_btn_voltar_base_carregada",
+        ):
+            for chave in [
+                "df_origem",
+                "df_saida",
+                "df_final",
+                "df_precificado",
+                "df_calc_precificado",
+                "upload_origem_dados",
+            ]:
+                st.session_state.pop(chave, None)
+            _definir_passo_origem(2)
+            st.rerun()
+
+    with col2:
+        if st.button(
+            "Continuar ➜",
+            use_container_width=True,
+            type="primary",
+            key="origem_btn_continuar_para_precificacao",
+        ):
+            _navegar("precificacao", on_continue)
+            
