@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import csv
@@ -7,6 +8,10 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+
+
+ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
+ETAPA_INICIAL = "origem"
 
 
 def _agora() -> str:
@@ -22,7 +27,6 @@ def log_debug(mensagem: str, nivel: str = "INFO") -> None:
         logs = st.session_state.get("_debug_logs")
         if not isinstance(logs, list):
             logs = []
-
         logs.append(linha)
         st.session_state["_debug_logs"] = logs[-500:]
     except Exception:
@@ -80,15 +84,143 @@ def render_debug_panel() -> None:
                 ):
                     st.session_state["_debug_logs"] = []
                     st.rerun()
+    except Exception as e:
+        log_debug(f"Erro render_debug_panel: {e}", "ERROR")
+
+
+def _normalizar_etapa(valor: object) -> str:
+    try:
+        etapa = str(valor or ETAPA_INICIAL).strip().lower()
     except Exception:
-        pass
+        etapa = ETAPA_INICIAL
+
+    if etapa not in ETAPAS_VALIDAS:
+        return ETAPA_INICIAL
+    return etapa
+
+
+def sincronizar_etapa_global(etapa_destino: str) -> str:
+    etapa_ok = _normalizar_etapa(etapa_destino)
+    st.session_state["etapa_origem"] = etapa_ok
+    st.session_state["etapa"] = etapa_ok
+    st.session_state["etapa_fluxo"] = etapa_ok
+    return etapa_ok
+
+
+def obter_etapa_global() -> str:
+    for chave in ("etapa_origem", "etapa", "etapa_fluxo"):
+        valor = st.session_state.get(chave)
+        etapa = _normalizar_etapa(valor)
+        if etapa in ETAPAS_VALIDAS:
+            return etapa
+    return ETAPA_INICIAL
+
+
+def ir_para_etapa(etapa_destino: str, rerun: bool = True) -> str:
+    etapa_ok = sincronizar_etapa_global(etapa_destino)
+    if rerun:
+        st.rerun()
+    return etapa_ok
+
+
+def limpar_estados_fluxo(manter_origem: bool = True) -> None:
+    try:
+        df_origem_atual = st.session_state.get("df_origem")
+        mapping_atual = st.session_state.get("mapping_origem", {})
+        mapping_rascunho_atual = st.session_state.get("mapping_origem_rascunho", {})
+        deposito_atual = st.session_state.get("deposito_nome", "")
+        tipo_operacao_atual = st.session_state.get("tipo_operacao", "Cadastro de Produtos")
+        tipo_operacao_bling_atual = st.session_state.get("tipo_operacao_bling", "cadastro")
+        logs_atuais = st.session_state.get("_debug_logs", [])
+
+        chaves_limpar = [
+            "df_saida",
+            "df_final",
+            "df_precificado",
+            "df_calc_precificado",
+            "df_preview_mapeamento",
+            "preview_final_valido",
+            "campos_obrigatorios_faltantes",
+            "campos_obrigatorios_alertas",
+            "site_processado",
+            "site_autoavanco_realizado",
+            "mapeamento_retorno_preservado",
+            "origem_dados_radio",
+            "origem_upload_key",
+            "origem_site_url",
+            "origem_site_ultima_url",
+            "origem_site_df_hash",
+            "origem_planilha_df_hash",
+            "precificacao_coluna_custo",
+            "precificacao_coluna_resultado",
+            "precificacao_usa_calculadora",
+            "mapeamento_colunas_usadas",
+            "mapeamento_alertas",
+            "mapeamento_validado",
+        ]
+
+        if not manter_origem:
+            chaves_limpar.extend(
+                [
+                    "df_origem",
+                    "mapping_origem",
+                    "mapping_origem_rascunho",
+                    "deposito_nome",
+                    "tipo_operacao",
+                    "tipo_operacao_bling",
+                ]
+            )
+
+        for chave in chaves_limpar:
+            if chave in st.session_state:
+                del st.session_state[chave]
+
+        st.session_state["_debug_logs"] = logs_atuais if isinstance(logs_atuais, list) else []
+
+        if manter_origem:
+            st.session_state["df_origem"] = df_origem_atual
+            st.session_state["mapping_origem"] = (
+                mapping_atual if isinstance(mapping_atual, dict) else {}
+            )
+            st.session_state["mapping_origem_rascunho"] = (
+                mapping_rascunho_atual if isinstance(mapping_rascunho_atual, dict) else {}
+            )
+            st.session_state["deposito_nome"] = str(deposito_atual or "")
+            st.session_state["tipo_operacao"] = str(
+                tipo_operacao_atual or "Cadastro de Produtos"
+            )
+            st.session_state["tipo_operacao_bling"] = str(
+                tipo_operacao_bling_atual or "cadastro"
+            )
+        else:
+            st.session_state["df_origem"] = None
+            st.session_state["mapping_origem"] = {}
+            st.session_state["mapping_origem_rascunho"] = {}
+            st.session_state["deposito_nome"] = ""
+            st.session_state["tipo_operacao"] = "Cadastro de Produtos"
+            st.session_state["tipo_operacao_bling"] = "cadastro"
+
+        st.session_state["df_saida"] = None
+        st.session_state["df_final"] = None
+        st.session_state["df_precificado"] = None
+        st.session_state["df_calc_precificado"] = None
+        st.session_state["df_preview_mapeamento"] = None
+        st.session_state["preview_final_valido"] = False
+        st.session_state["campos_obrigatorios_faltantes"] = []
+        st.session_state["campos_obrigatorios_alertas"] = []
+        st.session_state["site_processado"] = False
+        st.session_state["site_autoavanco_realizado"] = False
+        st.session_state["mapeamento_retorno_preservado"] = False
+
+    except Exception as e:
+        log_debug(f"Erro limpar_estados_fluxo: {e}", "ERROR")
 
 
 def garantir_estado_base() -> None:
     defaults = {
-        "etapa_origem": "conexao",
-        "etapa": "conexao",
-        "etapa_fluxo": "conexao",
+        "etapa_origem": ETAPA_INICIAL,
+        "etapa": ETAPA_INICIAL,
+        "etapa_fluxo": ETAPA_INICIAL,
         "df_origem": None,
         "df_saida": None,
         "df_final": None,
@@ -114,6 +246,13 @@ def garantir_estado_base() -> None:
         if chave not in st.session_state:
             st.session_state[chave] = valor
 
+    sincronizar_etapa_global(
+        st.session_state.get("etapa_origem")
+        or st.session_state.get("etapa")
+        or st.session_state.get("etapa_fluxo")
+        or ETAPA_INICIAL
+    )
+
 
 def _safe_str(valor) -> str:
     try:
@@ -131,7 +270,6 @@ def _safe_str(valor) -> str:
 
     if texto.lower() in {"none", "nan", "nat"}:
         return ""
-
     return texto
 
 
@@ -185,9 +323,9 @@ def _checksum_gtin_ok(gtin: str) -> bool:
         numeros = [int(c) for c in gtin]
         corpo = numeros[:-1]
         verificador = numeros[-1]
-
         soma = 0
         peso3 = True
+
         for n in reversed(corpo):
             soma += n * (3 if peso3 else 1)
             peso3 = not peso3
@@ -200,7 +338,10 @@ def _checksum_gtin_ok(gtin: str) -> bool:
 
 def _is_coluna_gtin(nome_coluna: str) -> bool:
     nome = _normalizar_coluna(nome_coluna)
-    return any(token in nome for token in ["gtin", "ean", "codigo de barras", "codigo barras"])
+    return any(
+        token in nome
+        for token in ["gtin", "ean", "codigo de barras", "codigo barras"]
+    )
 
 
 def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
@@ -235,7 +376,6 @@ def _normalizar_urls_imagem(valor) -> str:
     )
 
     partes = [p.strip() for p in texto.split("|") if p.strip()]
-
     unicos: list[str] = []
     vistos: set[str] = set()
 
@@ -250,12 +390,10 @@ def _normalizar_urls_imagem(valor) -> str:
 def _aplicar_tratamento_imagens(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df_out = df.copy()
-
         for col in df_out.columns:
             nome = _normalizar_coluna(col)
             if "imagem" in nome or "url" in nome:
                 df_out[col] = df_out[col].apply(_normalizar_urls_imagem)
-
         return df_out
     except Exception:
         return df.copy()
@@ -279,12 +417,10 @@ def _normalizar_situacao(valor) -> str:
 def _aplicar_tratamento_situacao(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df_out = df.copy()
-
         for col in df_out.columns:
             nome = _normalizar_coluna(col)
             if "situacao" in nome or "situação" in str(col).lower():
                 df_out[col] = df_out[col].apply(_normalizar_situacao)
-
         return df_out
     except Exception:
         return df.copy()
@@ -312,10 +448,8 @@ def sanitizar_dados_reais(df: pd.DataFrame) -> pd.DataFrame:
 def _sanitizar_df_para_csv(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df_out = df.copy()
-
         for col in df_out.columns:
             df_out[col] = df_out[col].apply(_safe_str)
-
         return df_out
     except Exception as e:
         log_debug(f"Erro ao sanitizar DataFrame para CSV: {e}", "ERROR")
@@ -344,11 +478,9 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
 
 def _encontrar_primeira_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
     colunas_normalizadas = {str(col): _normalizar_coluna(col) for col in df.columns}
-
     for col_real, col_norm in colunas_normalizadas.items():
         if any(alias in col_norm for alias in aliases):
             return col_real
-
     return None
 
 
@@ -365,7 +497,9 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
         if not isinstance(df, pd.DataFrame) or df.empty:
             st.session_state["preview_final_valido"] = False
             st.session_state["campos_obrigatorios_faltantes"] = ["DataFrame vazio"]
-            st.session_state["campos_obrigatorios_alertas"] = ["Nenhum dado disponível para validar."]
+            st.session_state["campos_obrigatorios_alertas"] = [
+                "Nenhum dado disponível para validar."
+            ]
             return {
                 "ok": False,
                 "faltantes": ["DataFrame vazio"],
@@ -410,11 +544,14 @@ def validar_campos_obrigatorios(df: pd.DataFrame):
             "faltantes": faltantes,
             "alertas": alertas,
         }
+
     except Exception as e:
         log_debug(f"Erro validar_campos_obrigatorios: {e}", "ERROR")
         st.session_state["preview_final_valido"] = False
         st.session_state["campos_obrigatorios_faltantes"] = ["Falha na validação"]
-        st.session_state["campos_obrigatorios_alertas"] = ["Erro interno durante a validação dos campos obrigatórios."]
+        st.session_state["campos_obrigatorios_alertas"] = [
+            "Erro interno durante a validação dos campos obrigatórios."
+        ]
         return {
             "ok": False,
             "faltantes": ["Falha na validação"],
@@ -456,4 +593,3 @@ def gerar_nome_arquivo_download() -> str:
         return "bling_export_cadastro.csv"
 
     return "bling_export.csv"
-    
