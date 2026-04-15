@@ -7,7 +7,6 @@ import streamlit as st
 from bling_app_zero.ui.origem_mapeamento_core import (
     aplicar_mapeamento_automatico_preco,
     aplicar_mapeamento_automatico_quantidade,
-    is_coluna_balanco,
 )
 from bling_app_zero.ui.origem_mapeamento_validacao import (
     is_coluna_deposito,
@@ -65,15 +64,6 @@ def render_formulario_mapeamento(
             mapping_local[col_modelo] = ""
             continue
 
-        if is_coluna_balanco(col_modelo):
-            _render_campo_bloqueado(
-                col_modelo,
-                "S (Automático / Bloqueado)",
-                f"balanco_lock_{col_modelo}",
-            )
-            mapping_local[col_modelo] = ""
-            continue
-
         opcoes = opcoes_select_mapeamento(df_fonte, mapping_local, col_modelo)
         valor_atual = safe_str(mapping_local.get(col_modelo))
 
@@ -115,4 +105,3 @@ def render_acoes_mapeamento(erro: bool) -> tuple[bool, bool]:
         voltar = st.button("⬅️ Voltar", use_container_width=True)
 
     return avancar, voltar
-    
