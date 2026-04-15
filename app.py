@@ -1,4 +1,5 @@
 
+
 from __future__ import annotations
 
 import json
@@ -18,21 +19,22 @@ from bling_app_zero.ui.preview_final import render_preview_final
 from bling_app_zero.utils.init_app import inicializar_app
 
 
-# =========================================================
-# CONFIG
-# =========================================================
 st.set_page_config(
     page_title="IA Planilhas",
     layout="wide",
 )
 
-APP_VERSION = "1.0.35"
+APP_VERSION = "1.0.36"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
+ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
+ETAPAS_CONFIG = [
+    {"key": "origem", "ordem": 1, "titulo": "Origem"},
+    {"key": "mapeamento", "ordem": 2, "titulo": "Mapeamento"},
+    {"key": "final", "ordem": 3, "titulo": "Final"},
+]
 
-# =========================================================
-# VERSIONAMENTO
-# =========================================================
+
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -81,16 +83,16 @@ def _sincronizar_version_json_com_app() -> dict:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Versionamento sincronizado",
-            "last_description": "Version.json alinhado com APP_VERSION.",
+            "last_title": "Layout mobile guiado",
+            "last_description": "Fluxo simplificado em uma pergunta por vez.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Reestruturação do layout principal",
-        "description": "Fluxo linear com origem, mapeamento e preview final.",
+        "title": "Layout mobile guiado",
+        "description": "Fluxo simplificado em uma pergunta por vez.",
     }
 
     if not any(
@@ -103,8 +105,8 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Reestruturação do layout principal",
-        "last_description": "Fluxo principal reorganizado em layout linear e mais limpo.",
+        "last_title": "Layout mobile guiado",
+        "last_description": "Fluxo simplificado em uma pergunta por vez.",
         "history": history,
     }
 
@@ -191,6 +193,8 @@ def _chaves_preservadas_na_limpeza() -> set[str]:
         "fornecedor_nome",
         "coluna_preco_origem",
         "deposito_padrao",
+        "deposito_nome",
+        "site_url",
     }
 
 
@@ -201,7 +205,6 @@ def _limpar_lixos_de_sessao() -> None:
 
 def _limpar_sessao_por_versao() -> bool:
     versao_sessao = str(st.session_state.get("_app_loaded_version") or "").strip()
-
     _limpar_lixos_de_sessao()
 
     if not versao_sessao:
@@ -213,19 +216,11 @@ def _limpar_sessao_por_versao() -> bool:
         st.session_state["_app_last_seen_version"] = APP_VERSION
         return False
 
-    try:
-        log_debug(
-            f"[VERSION] mudança detectada: sessão {versao_sessao} -> código {APP_VERSION}. Limpando sessão antiga.",
-            "INFO",
-        )
-    except Exception:
-        pass
-
     preservadas = _chaves_preservadas_na_limpeza()
     snapshot = {
-        k: st.session_state.get(k)
-        for k in preservadas
-        if k in st.session_state
+        chave: st.session_state.get(chave)
+        for chave in preservadas
+        if chave in st.session_state
     }
 
     for chave in list(st.session_state.keys()):
@@ -268,49 +263,6 @@ def _executar_reload_app() -> None:
     st.session_state["_app_loaded_version"] = APP_VERSION
     st.session_state["_app_last_seen_version"] = APP_VERSION
     st.rerun()
-
-
-# =========================================================
-# INIT
-# =========================================================
-inicializar_app()
-garantir_estado_base()
-_garantir_estado_versionamento()
-
-VERSION_DATA = _sincronizar_version_json_com_app()
-houve_limpeza_versao = _limpar_sessao_por_versao()
-if houve_limpeza_versao:
-    st.rerun()
-
-
-# =========================================================
-# FLUXO
-# =========================================================
-ETAPAS_VALIDAS = {"origem", "mapeamento", "final"}
-
-ETAPAS_CONFIG = [
-    {
-        "key": "origem",
-        "ordem": 1,
-        "titulo": "Origem dos dados",
-        "descricao": "Entrada, operação e preparação",
-        "icone": "📥",
-    },
-    {
-        "key": "mapeamento",
-        "ordem": 2,
-        "titulo": "Mapeamento",
-        "descricao": "Relacionar colunas e revisar regras",
-        "icone": "🧩",
-    },
-    {
-        "key": "final",
-        "ordem": 3,
-        "titulo": "Preview final",
-        "descricao": "Validar e baixar arquivo final",
-        "icone": "✅",
-    },
-]
 
 
 def _safe_df(df) -> bool:
@@ -410,172 +362,133 @@ def _resolver_autoetapa() -> str:
     _sincronizar_df_fluxo()
 
     if etapa_atual == "mapeamento" and not _pode_ir_para_mapeamento():
-        try:
-            log_debug(
-                "[APP] mapeamento bloqueado por ausência de dados. Retornando para origem.",
-                "WARNING",
-            )
-        except Exception:
-            pass
         return "origem"
 
     if etapa_atual == "final" and not _pode_ir_para_final():
-        try:
-            log_debug(
-                "[APP] final bloqueado por ausência de dados. Retornando para origem.",
-                "WARNING",
-            )
-        except Exception:
-            pass
         return "origem"
 
     return etapa_atual
 
 
-def _indice_etapa(etapa: str) -> int:
-    for item in ETAPAS_CONFIG:
-        if item["key"] == etapa:
-            return int(item["ordem"])
-    return 1
-
-
-def _rotulo_status_etapa(etapa_item: dict, etapa_atual: str) -> str:
-    ordem_item = int(etapa_item["ordem"])
-    ordem_atual = _indice_etapa(etapa_atual)
-
-    if ordem_item < ordem_atual:
-        return "done"
-    if ordem_item == ordem_atual:
-        return "active"
-    return "todo"
-
-
-# =========================================================
-# LAYOUT
-# =========================================================
 def _inject_layout_css() -> None:
     st.markdown(
         """
         <style>
             .block-container {
-                padding-top: 0.90rem;
+                max-width: 760px;
+                padding-top: 0.75rem;
                 padding-bottom: 2rem;
             }
 
-            .app-topbar {
-                padding: 14px 16px;
-                border: 1px solid rgba(120, 120, 120, 0.18);
-                border-radius: 16px;
-                background: rgba(255, 255, 255, 0.02);
-                margin-bottom: 12px;
+            [data-testid="stHeader"] {
+                background: transparent;
             }
 
-            .app-topbar-title {
-                font-size: 1.18rem;
+            .ia-shell {
+                padding-top: 0.25rem;
+            }
+
+            .ia-top {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 0.75rem;
+            }
+
+            .ia-logo {
+                font-size: 0.90rem;
                 font-weight: 700;
-                line-height: 1.2;
-                margin: 0 0 4px 0;
+                color: #0A2259;
+                opacity: 0.9;
             }
 
-            .app-topbar-subtitle {
-                font-size: 0.92rem;
-                opacity: 0.85;
+            .ia-version {
+                font-size: 0.78rem;
+                opacity: 0.7;
+            }
+
+            .ia-progress {
+                display: flex;
+                gap: 8px;
+                margin: 0.5rem 0 1rem 0;
+            }
+
+            .ia-progress-pill {
+                flex: 1;
+                border-radius: 999px;
+                padding: 8px 10px;
+                text-align: center;
+                font-size: 0.82rem;
+                font-weight: 600;
+                background: #F1F4F9;
+                color: #667085;
+                border: 1px solid #E4E7EC;
+            }
+
+            .ia-progress-pill.active {
+                background: #0A2259;
+                color: white;
+                border-color: #0A2259;
+            }
+
+            .ia-question-wrap {
+                margin: 1rem 0 1.25rem 0;
+            }
+
+            .ia-kicker {
+                font-size: 0.85rem;
+                color: #667085;
+                margin-bottom: 0.25rem;
+                font-weight: 600;
+            }
+
+            .ia-question {
+                font-size: 2.05rem;
+                line-height: 1.08;
+                font-weight: 800;
+                color: #0A2259;
+                letter-spacing: -0.02em;
+                margin: 0 0 0.35rem 0;
+            }
+
+            .ia-sub {
+                font-size: 1rem;
+                color: #667085;
                 margin: 0;
             }
 
-            .step-card {
-                border: 1px solid rgba(120, 120, 120, 0.18);
-                border-radius: 16px;
-                padding: 12px;
-                min-height: 108px;
-                background: rgba(255, 255, 255, 0.02);
-                margin-bottom: 8px;
+            .ia-card {
+                background: #F5F7FA;
+                border: 1px solid #EAECF0;
+                border-radius: 28px;
+                padding: 1rem;
+                margin-bottom: 0.9rem;
             }
 
-            .step-card.active {
-                border-color: rgba(0, 122, 255, 0.55);
-                box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.18) inset;
-            }
-
-            .step-card.done {
-                border-color: rgba(0, 180, 90, 0.45);
-            }
-
-            .step-kicker {
-                font-size: 0.80rem;
-                opacity: 0.76;
-                margin-bottom: 4px;
-            }
-
-            .step-title {
-                font-size: 0.98rem;
-                font-weight: 700;
-                margin-bottom: 4px;
-            }
-
-            .step-desc {
+            .ia-mini {
                 font-size: 0.86rem;
-                opacity: 0.82;
+                color: #667085;
             }
 
-            .hero-box {
-                border: 1px solid rgba(120, 120, 120, 0.18);
+            .stButton > button,
+            .stDownloadButton > button {
+                min-height: 52px;
                 border-radius: 18px;
-                padding: 16px;
-                margin: 10px 0 14px 0;
-                background: rgba(255, 255, 255, 0.02);
-            }
-
-            .hero-kicker {
-                font-size: 0.82rem;
-                opacity: 0.75;
-                margin-bottom: 6px;
-            }
-
-            .hero-title {
-                font-size: 1.18rem;
                 font-weight: 700;
-                margin-bottom: 4px;
             }
 
-            .hero-desc {
-                font-size: 0.92rem;
-                opacity: 0.84;
-                margin-bottom: 0;
+            .ia-space-sm {
+                height: 8px;
             }
 
-            .metric-card {
-                border: 1px solid rgba(120, 120, 120, 0.16);
-                border-radius: 14px;
-                padding: 12px;
-                background: rgba(255, 255, 255, 0.02);
-                margin-bottom: 8px;
+            .ia-space-md {
+                height: 16px;
             }
 
-            .metric-label {
-                font-size: 0.78rem;
-                opacity: 0.72;
-                margin-bottom: 4px;
-            }
-
-            .metric-value {
-                font-size: 0.98rem;
-                font-weight: 700;
-                word-break: break-word;
-            }
-
-            .nav-box {
-                border: 1px solid rgba(120, 120, 120, 0.16);
-                border-radius: 14px;
-                padding: 12px;
-                margin: 2px 0 10px 0;
-                background: rgba(255, 255, 255, 0.02);
-                font-size: 0.90rem;
-                opacity: 0.88;
-            }
-
-            .section-divider {
-                margin: 6px 0 10px 0;
+            @media (max-width: 640px) {
+                .ia-question {
+                    font-size: 1.85rem;
+                }
             }
         </style>
         """,
@@ -583,171 +496,70 @@ def _inject_layout_css() -> None:
     )
 
 
-def _render_topbar(version_data: dict, etapa_atual: str) -> None:
+def _render_topbar(version_data: dict) -> None:
     versao_exibida = _resolver_app_version_exibida(version_data)
-    indice = _indice_etapa(etapa_atual)
-    total = len(ETAPAS_CONFIG)
-
-    col1, col2 = st.columns([5, 1.25])
-
-    with col1:
-        st.markdown(
-            f"""
-            <div class="app-topbar">
-                <div class="app-topbar-title">IA Planilhas</div>
-                <div class="app-topbar-subtitle">
-                    Fluxo principal reorganizado em etapas lineares e compactas. Etapa atual: {indice}/{total}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col2:
-        st.caption(f"Versão: {versao_exibida}")
-        updated_at = str((version_data or {}).get("updated_at") or "").strip()
-        if updated_at:
-            st.caption(f"Atualizado: {updated_at}")
-
-        if st.button(
-            "🔄 Recarregar app",
-            use_container_width=True,
-            key="btn_recarregar_app_topo",
-        ):
-            try:
-                log_debug("[VERSION] recarga manual acionada pelo usuário", "INFO")
-            except Exception:
-                pass
-            _executar_reload_app()
-
-
-def _render_stepper(etapa_atual: str) -> None:
-    cols = st.columns(len(ETAPAS_CONFIG), gap="small")
-
-    for idx, item in enumerate(ETAPAS_CONFIG):
-        status = _rotulo_status_etapa(item, etapa_atual)
-        with cols[idx]:
-            st.markdown(
-                f"""
-                <div class="step-card {status}">
-                    <div class="step-kicker">{item["icone"]} Etapa {item["ordem"]}</div>
-                    <div class="step-title">{item["titulo"]}</div>
-                    <div class="step-desc">{item["descricao"]}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def _resolver_meta_etapa(etapa_atual: str) -> dict:
-    mapa = {
-        "origem": {
-            "kicker": "Etapa 1",
-            "titulo": "Origem dos dados",
-            "descricao": "Escolha a operação, carregue os dados e prepare a base para o restante do fluxo.",
-        },
-        "mapeamento": {
-            "kicker": "Etapa 2",
-            "titulo": "Mapeamento",
-            "descricao": "Relacione as colunas da origem com o modelo de saída e revise os campos obrigatórios.",
-        },
-        "final": {
-            "kicker": "Etapa 3",
-            "titulo": "Preview final",
-            "descricao": "Valide a saída final, confira a estrutura e faça o download do arquivo pronto.",
-        },
-    }
-    return mapa.get(etapa_atual, mapa["origem"])
-
-
-def _render_resumo_superior(etapa_atual: str) -> None:
-    df_fluxo = _obter_df_fluxo()
-    total_linhas = 0
-    total_colunas = 0
-
-    if _safe_df(df_fluxo):
-        try:
-            total_linhas = int(len(df_fluxo))
-            total_colunas = int(len(df_fluxo.columns))
-        except Exception:
-            total_linhas = 0
-            total_colunas = 0
-
-    operacao = str(
-        st.session_state.get("tipo_operacao")
-        or st.session_state.get("operacao")
-        or st.session_state.get("operacao_selecionada")
-        or ""
-    ).strip()
-
-    origem = str(
-        st.session_state.get("origem_dados_tipo")
-        or st.session_state.get("origem_dados_radio")
-        or ""
-    ).strip()
-
-    meta = _resolver_meta_etapa(etapa_atual)
-
+    st.markdown('<div class="ia-shell">', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div class="hero-box">
-            <div class="hero-kicker">{meta["kicker"]}</div>
-            <div class="hero-title">{meta["titulo"]}</div>
-            <div class="hero-desc">{meta["descricao"]}</div>
+        <div class="ia-top">
+            <div class="ia-logo">IA Planilhas</div>
+            <div class="ia-version">v{versao_exibida}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3 = st.columns(3, gap="small")
 
-    with c1:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Operação</div>
-                <div class="metric-value">{operacao or "Não definida"}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+def _render_progress(etapa_atual: str) -> None:
+    partes = []
+    for item in ETAPAS_CONFIG:
+        classe = "ia-progress-pill active" if item["key"] == etapa_atual else "ia-progress-pill"
+        partes.append(f'<div class="{classe}">{item["ordem"]}. {item["titulo"]}</div>')
 
-    with c2:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Origem</div>
-                <div class="metric-value">{origem or "Não definida"}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c3:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Base atual</div>
-                <div class="metric-value">{total_linhas} linha(s) • {total_colunas} coluna(s)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f'<div class="ia-progress">{"".join(partes)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
-def _render_navegacao(etapa_atual: str) -> None:
-    pode_mapeamento = _pode_ir_para_mapeamento()
-    pode_final = _pode_ir_para_final()
+def _render_question_header(etapa_atual: str) -> None:
+    mapa = {
+        "origem": (
+            "Começo",
+            "O que você quer fazer?",
+            "Responda o mínimo necessário para seguir.",
+        ),
+        "mapeamento": (
+            "Próxima etapa",
+            "Revise o mapeamento",
+            "Ajuste só o que for necessário.",
+        ),
+        "final": (
+            "Última etapa",
+            "Seu arquivo está pronto?",
+            "Valide e baixe a planilha final.",
+        ),
+    }
+    kicker, titulo, subtitulo = mapa.get(etapa_atual, mapa["origem"])
 
-    col1, col2, col3 = st.columns([1, 1, 3], gap="small")
+    st.markdown(
+        f"""
+        <div class="ia-question-wrap">
+            <div class="ia-kicker">{kicker}</div>
+            <h1 class="ia-question">{titulo}</h1>
+            <p class="ia-sub">{subtitulo}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_nav(etapa_atual: str) -> None:
+    col1, col2 = st.columns(2, gap="small")
 
     with col1:
         if etapa_atual != "origem":
-            if st.button(
-                "⬅️ Voltar",
-                use_container_width=True,
-                key=f"btn_voltar_{etapa_atual}",
-            ):
+            if st.button("⬅️ Voltar", use_container_width=True, key=f"app_btn_voltar_{etapa_atual}"):
                 if etapa_atual == "mapeamento":
                     _ir_para("origem")
                 elif etapa_atual == "final":
@@ -756,74 +568,54 @@ def _render_navegacao(etapa_atual: str) -> None:
     with col2:
         if etapa_atual == "origem":
             if st.button(
-                "Próximo ➡️",
+                "Continuar ➜",
                 use_container_width=True,
-                key="btn_avancar_origem",
-                disabled=not pode_mapeamento,
+                key="app_btn_continuar_origem",
+                disabled=not _pode_ir_para_mapeamento(),
             ):
                 _ir_para("mapeamento")
-
         elif etapa_atual == "mapeamento":
             if st.button(
-                "Próximo ➡️",
+                "Continuar ➜",
                 use_container_width=True,
-                key="btn_avancar_mapeamento",
-                disabled=not pode_final,
+                key="app_btn_continuar_mapeamento",
+                disabled=not _pode_ir_para_final(),
             ):
                 _ir_para("final")
-
-    with col3:
-        st.markdown(
-            """
-            <div class="nav-box">
-                Use os botões de navegação sem perder os dados já carregados. O avanço só libera quando houver base suficiente para a próxima etapa.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
-# =========================================================
-# RENDER DAS ETAPAS
-# =========================================================
-def _render_origem() -> None:
-    render_origem_dados()
-
-
-def _render_mapeamento() -> None:
-    render_origem_mapeamento()
-
-
-def _render_final() -> None:
-    render_preview_final()
 
 
 def _render_etapa(etapa_atual: str) -> None:
     if etapa_atual == "origem":
-        _render_origem()
+        render_origem_dados()
         return
-
     if etapa_atual == "mapeamento":
-        _render_mapeamento()
+        render_origem_mapeamento()
         return
+    render_preview_final()
 
-    _render_final()
 
+inicializar_app()
+garantir_estado_base()
+_garantir_estado_versionamento()
 
-# =========================================================
-# EXECUÇÃO
-# =========================================================
+VERSION_DATA = _sincronizar_version_json_com_app()
+houve_limpeza_versao = _limpar_sessao_por_versao()
+if houve_limpeza_versao:
+    st.rerun()
+
 _inject_layout_css()
 
 etapa_atual = _resolver_autoetapa()
 _sincronizar_etapa_global(etapa_atual)
 
-_render_topbar(VERSION_DATA, etapa_atual)
-_render_stepper(etapa_atual)
-_render_resumo_superior(etapa_atual)
-_render_navegacao(etapa_atual)
+_render_topbar(VERSION_DATA)
+_render_progress(etapa_atual)
+_render_question_header(etapa_atual)
 _render_etapa(etapa_atual)
+_render_nav(etapa_atual)
 
-with st.expander("Registro de depuração", expanded=False):
+with st.expander("Debug", expanded=False):
     render_debug_panel()
+
+st.markdown("</div>", unsafe_allow_html=True)
 
