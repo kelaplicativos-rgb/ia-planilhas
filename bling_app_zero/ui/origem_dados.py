@@ -32,6 +32,7 @@ from bling_app_zero.ui.origem_dados_handlers import (
 from bling_app_zero.ui.origem_dados_ui import (
     render_modelo_bling,
     render_origem_entrada,
+    render_entrada_origem_selecionada,
     render_precificacao,
     render_preview_origem,
 )
@@ -39,9 +40,6 @@ from bling_app_zero.ui.origem_dados_ui import (
 NavCallback = Callable[[], None] | None
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 def _float_session(key: str, default: float = 0.0) -> float:
     try:
         return float(st.session_state.get(key, default) or default)
@@ -126,6 +124,7 @@ def _reset_fluxo_origem() -> None:
         "site_autoavanco_realizado",
         "fluxo_origem_passo",
         "_origem_dados_tipo_anterior",
+        "upload_origem_dados",
     ]:
         st.session_state.pop(chave, None)
 
@@ -285,6 +284,7 @@ def _render_botoes_finais_origem(
                     "df_final",
                     "df_precificado",
                     "df_calc_precificado",
+                    "upload_origem_dados",
                 ]:
                     st.session_state.pop(chave, None)
                 _definir_passo_origem(1)
@@ -297,6 +297,7 @@ def _render_botoes_finais_origem(
                     "df_final",
                     "df_precificado",
                     "df_calc_precificado",
+                    "upload_origem_dados",
                 ]:
                     st.session_state.pop(chave, None)
                 _definir_passo_origem(2)
@@ -333,6 +334,75 @@ def _origem_foi_escolhida() -> bool:
     return bool(origem_atual or origem_sessao)
 
 
+def _render_entrada_somente_da_origem_escolhida() -> pd.DataFrame | None:
+    origem_atual = safe_str(obter_origem_atual()).lower()
+    origem_sessao = safe_str(st.session_state.get("origem_dados_tipo")).lower()
+    origem_resolvida = origem_atual or origem_sessao
+
+    return render_entrada_origem_selecionada(
+        origem_resolvida,
+        lambda origem: controlar_troca_origem(origem, log_debug),
+    )
+
+
+def _deve_exibir_deposito() -> bool:
+    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
+
+
+def _resolve_operacao_label() -> str:
+    return safe_str(
+        st.session_state.get("tipo_operacao_radio")
+        or st.session_state.get("tipo_operacao")
+        or st.session_state.get("tipo_operacao_bling")
+    )
+
+
+def _render_modelo_com_expander(operacao: str) -> None:
+    with st.expander("Ver modelo ativo", expanded=False):
+        render_modelo_bling(operacao)
+
+
+def _render_precificacao_com_expander(df_origem: pd.DataFrame) -> None:
+    with st.expander("Abrir precificação", expanded=False):
+        render_precificacao(df_origem)
+
+
+def _render_preview_com_expander(df_origem: pd.DataFrame) -> None:
+    with st.expander("Abrir preview da origem", expanded=False):
+        render_preview_origem(df_origem)
+
+
+def _persistir_df_saida(df_saida: pd.DataFrame) -> None:
+    try:
+        st.session_state["df_saida"] = df_saida.copy()
+    except Exception:
+        st.session_state["df_saida"] = df_saida
+
+    try:
+        st.session_state["df_final"] = df_saida.copy()
+    except Exception:
+        st.session_state["df_final"] = df_saida
+
+
+def _aplicar_precificacao_e_sincronizar(df_origem: pd.DataFrame, origem_atual: str) -> None:
+    df_prec = aplicar_precificacao(
+        df_origem=df_origem,
+        coluna_custo=safe_str(st.session_state.get("coluna_precificacao_resultado")),
+        margem=_float_session("margem_bling"),
+        impostos=_float_session("impostos_bling"),
+        custo_fixo=_float_session("custofixo_bling"),
+        taxa_extra=_float_session("taxaextra_bling"),
+    )
+
+    if safe_df_estrutura(df_prec):
+        df_saida_prec = df_prec.copy()
+
+        if _deve_exibir_deposito():
+            df_saida_prec = aplicar_bloco_estoque(df_saida_prec, origem_atual)
+
+        _persistir_df_saida(df_saida_prec)
+
+
 # =========================================================
 # RENDER PRINCIPAL
 # =========================================================
@@ -357,13 +427,13 @@ def render_origem_dados(
         _render_operacao_clickable()
         return
 
-    operacao = safe_str(st.session_state.get("tipo_operacao_radio"))
+    operacao = _resolve_operacao_label()
     if not operacao:
         _definir_passo_origem(1)
         st.rerun()
         return
 
-    if st.session_state.get("tipo_operacao_bling") == "estoque":
+    if _deve_exibir_deposito():
         st.text_input(
             "Nome do depósito",
             key="deposito_nome",
@@ -398,6 +468,7 @@ def render_origem_dados(
                 "df_final",
                 "df_precificado",
                 "df_calc_precificado",
+                "upload_origem_dados",
             ]:
                 st.session_state.pop(chave, None)
             _definir_passo_origem(1)
@@ -411,9 +482,7 @@ def render_origem_dados(
         kicker="Pergunta 3",
     )
 
-    df_origem_render = render_origem_entrada(
-        lambda origem: controlar_troca_origem(origem, log_debug)
-    )
+    df_origem_render = _render_entrada_somente_da_origem_escolhida()
     df_origem = _obter_df_origem_renderizado(df_origem_render)
 
     origem_atual = safe_str(obter_origem_atual()).lower()
@@ -458,57 +527,22 @@ def render_origem_dados(
         )
         return
 
-    with st.expander("Ver modelo ativo", expanded=False):
-        render_modelo_bling(operacao)
+    _render_modelo_com_expander(operacao)
 
     df_saida = obter_df_base_prioritaria(df_origem)
 
-    if st.session_state.get("tipo_operacao_bling") == "estoque":
+    if _deve_exibir_deposito():
         df_saida = aplicar_bloco_estoque(df_saida, origem_atual)
 
-    try:
-        st.session_state["df_saida"] = df_saida.copy()
-    except Exception:
-        st.session_state["df_saida"] = df_saida
+    _persistir_df_saida(df_saida)
 
-    try:
-        st.session_state["df_final"] = df_saida.copy()
-    except Exception:
-        st.session_state["df_final"] = df_saida
-
-    with st.expander("Abrir precificação", expanded=False):
-        render_precificacao(df_origem)
-
-    df_prec = aplicar_precificacao(
-        df_origem=df_origem,
-        coluna_custo=safe_str(st.session_state.get("coluna_precificacao_resultado")),
-        margem=_float_session("margem_bling"),
-        impostos=_float_session("impostos_bling"),
-        custo_fixo=_float_session("custofixo_bling"),
-        taxa_extra=_float_session("taxaextra_bling"),
-    )
-
-    if safe_df_estrutura(df_prec):
-        df_saida_prec = df_prec.copy()
-
-        if st.session_state.get("tipo_operacao_bling") == "estoque":
-            df_saida_prec = aplicar_bloco_estoque(df_saida_prec, origem_atual)
-
-        try:
-            st.session_state["df_saida"] = df_saida_prec.copy()
-        except Exception:
-            st.session_state["df_saida"] = df_saida_prec
-
-        try:
-            st.session_state["df_final"] = df_saida_prec.copy()
-        except Exception:
-            st.session_state["df_final"] = df_saida_prec
-
-    with st.expander("Abrir preview da origem", expanded=False):
-        render_preview_origem(df_origem)
+    _render_precificacao_com_expander(df_origem)
+    _aplicar_precificacao_e_sincronizar(df_origem, origem_atual)
+    _render_preview_com_expander(df_origem)
 
     _render_botoes_finais_origem(
         on_back=on_back,
         on_continue=on_continue,
         continuar_habilitado=True,
-    )
+        )
+    
