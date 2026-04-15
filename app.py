@@ -35,6 +35,9 @@ ETAPAS_CONFIG = [
 ]
 
 
+# =========================================================
+# VERSIONAMENTO
+# =========================================================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -265,6 +268,9 @@ def _executar_reload_app() -> None:
     st.rerun()
 
 
+# =========================================================
+# HELPERS DE FLUXO
+# =========================================================
 def _safe_df(df) -> bool:
     try:
         return isinstance(df, pd.DataFrame) and len(df.columns) > 0
@@ -370,6 +376,9 @@ def _resolver_autoetapa() -> str:
     return etapa_atual
 
 
+# =========================================================
+# LAYOUT
+# =========================================================
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -411,10 +420,11 @@ def _inject_layout_css() -> None:
                 display: flex;
                 gap: 8px;
                 margin: 0.5rem 0 1rem 0;
+                flex-wrap: wrap;
             }
 
             .ia-progress-pill {
-                flex: 1;
+                flex: 1 1 120px;
                 border-radius: 999px;
                 padding: 8px 10px;
                 text-align: center;
@@ -457,32 +467,11 @@ def _inject_layout_css() -> None:
                 margin: 0;
             }
 
-            .ia-card {
-                background: #F5F7FA;
-                border: 1px solid #EAECF0;
-                border-radius: 28px;
-                padding: 1rem;
-                margin-bottom: 0.9rem;
-            }
-
-            .ia-mini {
-                font-size: 0.86rem;
-                color: #667085;
-            }
-
             .stButton > button,
             .stDownloadButton > button {
                 min-height: 52px;
                 border-radius: 18px;
                 font-weight: 700;
-            }
-
-            .ia-space-sm {
-                height: 8px;
-            }
-
-            .ia-space-md {
-                height: 16px;
             }
 
             @media (max-width: 640px) {
@@ -555,26 +544,25 @@ def _render_question_header(etapa_atual: str) -> None:
 
 
 def _render_nav(etapa_atual: str) -> None:
+    # A etapa "origem" já controla os próprios botões.
+    if etapa_atual == "origem":
+        return
+
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
-        if etapa_atual != "origem":
-            if st.button("⬅️ Voltar", use_container_width=True, key=f"app_btn_voltar_{etapa_atual}"):
-                if etapa_atual == "mapeamento":
-                    _ir_para("origem")
-                elif etapa_atual == "final":
-                    _ir_para("mapeamento")
+        if st.button(
+            "⬅️ Voltar",
+            use_container_width=True,
+            key=f"app_btn_voltar_{etapa_atual}",
+        ):
+            if etapa_atual == "mapeamento":
+                _ir_para("origem")
+            elif etapa_atual == "final":
+                _ir_para("mapeamento")
 
     with col2:
-        if etapa_atual == "origem":
-            if st.button(
-                "Continuar ➜",
-                use_container_width=True,
-                key="app_btn_continuar_origem",
-                disabled=not _pode_ir_para_mapeamento(),
-            ):
-                _ir_para("mapeamento")
-        elif etapa_atual == "mapeamento":
+        if etapa_atual == "mapeamento":
             if st.button(
                 "Continuar ➜",
                 use_container_width=True,
@@ -594,6 +582,9 @@ def _render_etapa(etapa_atual: str) -> None:
     render_preview_final()
 
 
+# =========================================================
+# EXECUÇÃO
+# =========================================================
 inicializar_app()
 garantir_estado_base()
 _garantir_estado_versionamento()
