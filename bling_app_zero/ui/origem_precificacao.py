@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import pandas as pd
@@ -10,19 +11,8 @@ from bling_app_zero.ui.app_helpers import (
 )
 
 
-# =========================
-# HELPERS
-# =========================
 def _get_df_base() -> pd.DataFrame | None:
-    """
-    Resolve o melhor DataFrame disponível vindo da origem.
-    Ordem de prioridade garante consistência com o resto do sistema.
-    """
-    for chave in [
-        "df_saida",
-        "df_final",
-        "df_origem",
-    ]:
+    for chave in ["df_saida", "df_final", "df_origem"]:
         df = st.session_state.get(chave)
         if safe_df_dados(df):
             return df.copy()
@@ -51,15 +41,10 @@ def _calcular_preco(
 ) -> pd.DataFrame:
     try:
         df_calc = df.copy()
-
         base = pd.to_numeric(df_calc[coluna_base], errors="coerce").fillna(0)
-
         fator = 1 + (margem / 100) + (impostos / 100)
-
         preco = (base * fator) + custo_fixo + taxa_extra
-
         df_calc["Preço calculado"] = preco.round(2)
-
         return df_calc
     except Exception as e:
         log_debug(f"Erro cálculo preço: {e}", "ERROR")
@@ -67,13 +52,10 @@ def _calcular_preco(
 
 
 def _aplicar_preco_no_modelo(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Joga o preço calculado na coluna correta do modelo Bling.
-    """
     try:
         df_out = df.copy()
-
         col_preco = None
+
         for col in df_out.columns:
             nome = str(col).lower()
             if "preço de venda" in nome or "preco de venda" in nome:
@@ -85,6 +67,8 @@ def _aplicar_preco_no_modelo(df: pd.DataFrame) -> pd.DataFrame:
 
         if col_preco:
             df_out[col_preco] = df_out["Preço calculado"]
+        else:
+            df_out["Preço de venda"] = df_out["Preço calculado"]
 
         return df_out
     except Exception as e:
@@ -92,9 +76,6 @@ def _aplicar_preco_no_modelo(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy()
 
 
-# =========================
-# RENDER
-# =========================
 def render_origem_precificacao() -> None:
     st.markdown("### 💰 Precificação")
 
@@ -111,11 +92,11 @@ def render_origem_precificacao() -> None:
 
     if not colunas_numericas:
         st.warning("Nenhuma coluna numérica encontrada para cálculo.")
+        if st.button("⬅️ Voltar para origem", use_container_width=True):
+            sincronizar_etapa_global("origem")
+            st.rerun()
         return
 
-    # =========================
-    # INPUTS
-    # =========================
     st.markdown("#### Base de cálculo")
 
     coluna_base = st.selectbox(
@@ -130,7 +111,7 @@ def render_origem_precificacao() -> None:
         margem = st.number_input(
             "Margem (%)",
             min_value=0.0,
-            value=st.session_state.get("precificacao_margem", 30.0),
+            value=float(st.session_state.get("precificacao_margem", 30.0)),
             step=1.0,
             key="precificacao_margem",
         )
@@ -138,7 +119,7 @@ def render_origem_precificacao() -> None:
         impostos = st.number_input(
             "Impostos (%)",
             min_value=0.0,
-            value=st.session_state.get("precificacao_impostos", 10.0),
+            value=float(st.session_state.get("precificacao_impostos", 10.0)),
             step=1.0,
             key="precificacao_impostos",
         )
@@ -147,7 +128,7 @@ def render_origem_precificacao() -> None:
         custo_fixo = st.number_input(
             "Custo fixo (R$)",
             min_value=0.0,
-            value=st.session_state.get("precificacao_custo_fixo", 0.0),
+            value=float(st.session_state.get("precificacao_custo_fixo", 0.0)),
             step=1.0,
             key="precificacao_custo_fixo",
         )
@@ -155,14 +136,11 @@ def render_origem_precificacao() -> None:
         taxa_extra = st.number_input(
             "Taxa extra (R$)",
             min_value=0.0,
-            value=st.session_state.get("precificacao_taxa_extra", 0.0),
+            value=float(st.session_state.get("precificacao_taxa_extra", 0.0)),
             step=1.0,
             key="precificacao_taxa_extra",
         )
 
-    # =========================
-    # CÁLCULO AUTOMÁTICO
-    # =========================
     df_calc = _calcular_preco(
         df_base,
         coluna_base,
@@ -174,19 +152,13 @@ def render_origem_precificacao() -> None:
 
     df_final = _aplicar_preco_no_modelo(df_calc)
 
-    # Persistência correta para fluxo
     st.session_state["df_calc_precificado"] = df_calc.copy()
     st.session_state["df_precificado"] = df_final.copy()
+    st.session_state["df_saida"] = df_final.copy()
 
-    # =========================
-    # PREVIEW
-    # =========================
     with st.expander("🔎 Preview da precificação", expanded=False):
         st.dataframe(df_final.head(20), use_container_width=True)
 
-    # =========================
-    # NAVEGAÇÃO (ÚNICA FONTE)
-    # =========================
     st.markdown("---")
 
     col1, col2 = st.columns(2)
@@ -198,12 +170,7 @@ def render_origem_precificacao() -> None:
 
     with col2:
         pode_avancar = safe_df_dados(df_final)
-
-        if st.button(
-            "Continuar ➜",
-            use_container_width=True,
-            disabled=not pode_avancar,
-        ):
+        if st.button("Continuar ➜", use_container_width=True, disabled=not pode_avancar):
             sincronizar_etapa_global("mapeamento")
             st.rerun()
 
