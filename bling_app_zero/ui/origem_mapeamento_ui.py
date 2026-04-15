@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.origem_mapeamento_core import (
+    aplicar_mapeamento_automatico_identificacao,
     aplicar_mapeamento_automatico_preco,
     aplicar_mapeamento_automatico_quantidade,
 )
@@ -42,6 +43,7 @@ def render_formulario_mapeamento(
 ) -> dict:
     mapping_local = aplicar_mapeamento_automatico_preco(mapping, df_modelo, df_fonte)
     mapping_local = aplicar_mapeamento_automatico_quantidade(mapping_local, df_modelo, df_fonte)
+    mapping_local = aplicar_mapeamento_automatico_identificacao(mapping_local, df_modelo, df_fonte)
 
     for col_modelo in df_modelo.columns:
         col_modelo = str(col_modelo)
