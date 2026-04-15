@@ -17,9 +17,6 @@ MAX_DEBUG_LOGS = 500
 MAX_DEBUG_LOGS_EXIBICAO = 200
 
 
-# =========================
-# LOG / DEBUG
-# =========================
 def _agora() -> str:
     try:
         return datetime.now().strftime("%H:%M:%S")
@@ -93,9 +90,6 @@ def render_debug_panel() -> None:
         log_debug(f"Erro render_debug_panel: {e}", "ERROR")
 
 
-# =========================
-# ESTADO GLOBAL
-# =========================
 def _normalizar_etapa(valor: object) -> str:
     try:
         etapa = str(valor or "origem").strip().lower()
@@ -166,9 +160,6 @@ def garantir_estado_base() -> None:
         st.session_state[chave] = _normalizar_etapa(st.session_state.get(chave))
 
 
-# =========================
-# SAFE HELPERS
-# =========================
 def _safe_str(valor: Any) -> str:
     try:
         if valor is None:
@@ -202,9 +193,6 @@ def safe_df_dados(df: Any) -> bool:
         return False
 
 
-# =========================
-# NORMALIZAÇÃO DE TEXTO
-# =========================
 def _normalizar_coluna(nome: Any) -> str:
     texto = _safe_str(nome).lower()
     if not texto:
@@ -220,9 +208,6 @@ def _so_digitos(valor: Any) -> str:
     return re.sub(r"\D+", "", _safe_str(valor))
 
 
-# =========================
-# GTIN / EAN
-# =========================
 def _checksum_gtin_ok(gtin: str) -> bool:
     if len(gtin) not in {8, 12, 13, 14}:
         return False
@@ -271,9 +256,6 @@ def limpar_gtin_invalido(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
-# =========================
-# IMAGENS
-# =========================
 def _normalizar_urls_imagem(valor: Any) -> str:
     texto = _safe_str(valor)
     if not texto:
@@ -311,9 +293,6 @@ def _aplicar_tratamento_imagens(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy()
 
 
-# =========================
-# SITUAÇÃO
-# =========================
 def _normalizar_situacao(valor: Any) -> str:
     texto = _safe_str(valor).lower()
 
@@ -342,9 +321,6 @@ def _aplicar_tratamento_situacao(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy()
 
 
-# =========================
-# SANITIZAÇÃO
-# =========================
 def sanitizar_dados_reais(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if not isinstance(df, pd.DataFrame):
@@ -393,9 +369,6 @@ def blindar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
-# =========================
-# VALIDAÇÃO
-# =========================
 def _encontrar_primeira_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
     colunas_normalizadas = {str(col): _normalizar_coluna(col) for col in df.columns}
 
@@ -479,9 +452,6 @@ def validar_campos_obrigatorios(df: pd.DataFrame) -> dict[str, Any]:
         }
 
 
-# =========================
-# EXPORTAÇÃO
-# =========================
 def exportar_csv_bytes(df: pd.DataFrame) -> bytes:
     try:
         df_download = blindar_df_para_download(df)
