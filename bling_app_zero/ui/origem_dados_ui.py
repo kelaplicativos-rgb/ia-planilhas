@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import pandas as pd
@@ -38,6 +40,31 @@ def render_preview_origem(df_origem: pd.DataFrame) -> None:
             st.dataframe(df_origem.head(20), use_container_width=True)
     except Exception:
         pass
+
+
+def _inject_origem_ui_css() -> None:
+    st.markdown(
+        """
+        <style>
+            .odu-choice-label {
+                font-size: 0.82rem;
+                color: #667085;
+                font-weight: 700;
+                margin-bottom: 0.4rem;
+            }
+
+            .odu-site-box {
+                background: #F8FAFC;
+                border: 1px solid #E4E7EC;
+                border-radius: 20px;
+                padding: 1rem;
+                margin-top: 0.75rem;
+                margin-bottom: 0.75rem;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _limpar_estado_site_carregado() -> None:
@@ -84,7 +111,10 @@ def _sincronizar_dirty_site() -> None:
     st.session_state["_site_config_fingerprint"] = fp_atual
 
     if st.session_state.get("site_processado"):
-        log_debug("[ORIGEM_SITE] configuração alterada após carga. Limpando dados anteriores.", "INFO")
+        log_debug(
+            "[ORIGEM_SITE] configuração alterada após carga. Limpando dados anteriores.",
+            "INFO",
+        )
         _limpar_estado_site_carregado()
 
 
@@ -123,7 +153,6 @@ def _executar_busca_site() -> pd.DataFrame | None:
         st.session_state["site_processado"] = True
         st.session_state["site_ultimo_url_processado"] = url
         st.session_state["_origem_site_autoavancar"] = True
-
         log_debug(
             f"[ORIGEM_SITE] busca concluída com {len(df_site)} linha(s) e "
             f"{len(df_site.columns)} coluna(s)",
@@ -141,7 +170,7 @@ def _executar_busca_site() -> pd.DataFrame | None:
 
 
 def render_config_site() -> pd.DataFrame | None:
-    st.markdown("### Busca em site")
+    st.markdown('<div class="odu-site-box">', unsafe_allow_html=True)
 
     st.text_input(
         "URL do site ou da categoria",
@@ -172,26 +201,13 @@ def render_config_site() -> pd.DataFrame | None:
                 placeholder="••••••••",
             )
 
-        st.info(
-            "Os campos de login já ficam preparados no estado da aplicação "
-            "para uso pelo crawler autenticado."
-        )
-
-    st.markdown("---")
-
     col1, col2 = st.columns(2)
     with col1:
         st.selectbox(
             "Modo de sincronização desejado",
             ["manual", "instantaneo", "delay"],
             key="site_modo_sincronizacao",
-            help=(
-                "Manual: processa quando você mandar.\n"
-                "Instantâneo: pronto para envio logo após a captura.\n"
-                "Delay: prepara a configuração de intervalo."
-            ),
         )
-
     with col2:
         st.number_input(
             "Delay em segundos",
@@ -199,7 +215,6 @@ def render_config_site() -> pd.DataFrame | None:
             value=safe_int(st.session_state.get("site_delay_segundos"), 300),
             step=5,
             key="site_delay_segundos",
-            help="Usado quando o modo de sincronização por delay estiver ativo.",
         )
 
     if st.session_state.get("tipo_operacao_bling") == "estoque":
@@ -209,13 +224,7 @@ def render_config_site() -> pd.DataFrame | None:
             value=safe_int(st.session_state.get("site_estoque_padrao_disponivel"), 1),
             step=1,
             key="site_estoque_padrao_disponivel",
-            help="Fallback para itens disponíveis quando o site não informar o estoque real.",
         )
-
-    st.warning(
-        "Nesta tela, a configuração do site já fica preparada. "
-        "A execução autenticada depende do módulo de captura/fetcher usar esses campos."
-    )
 
     _sincronizar_dirty_site()
 
@@ -241,6 +250,8 @@ def render_config_site() -> pd.DataFrame | None:
             log_debug("[ORIGEM_SITE] dados do site removidos manualmente.", "INFO")
             st.rerun()
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if st.session_state.get("site_processado") and safe_df_dados(st.session_state.get("df_origem")):
         url_ok = safe_str(st.session_state.get("site_ultimo_url_processado"))
         if url_ok:
@@ -256,30 +267,51 @@ def render_config_site() -> pd.DataFrame | None:
     return st.session_state.get("df_origem")
 
 
-def render_origem_entrada(on_change_callback=None):
-    opcoes = ["Planilha / CSV / XML", "Buscar em site"]
+def _render_origem_clickable() -> str:
+    atual = safe_str(st.session_state.get("origem_dados_tipo")).lower()
+    if atual not in {"site", "planilha"}:
+        atual = "planilha"
+        st.session_state["origem_dados_tipo"] = atual
 
-    origem_salva = safe_str(st.session_state.get("origem_dados_tipo")).lower()
-    index_inicial = 1 if origem_salva == "site" else 0
+    st.markdown('<div class="odu-choice-label">Escolha a origem:</div>', unsafe_allow_html=True)
 
-    origem = st.radio(
-        "Escolha a origem dos dados",
-        opcoes,
-        horizontal=True,
-        key="origem_dados_radio",
-        index=index_inicial,
-    )
+    col1, col2 = st.columns(2, gap="small")
 
-    origem_valor = "site" if "site" in origem.lower() else "planilha"
+    with col1:
+        if st.button(
+            "📄 Planilha / CSV / XML",
+            use_container_width=True,
+            key="btn_origem_planilha",
+            type="primary" if atual == "planilha" else "secondary",
+        ):
+            atual = "planilha"
+
+    with col2:
+        if st.button(
+            "🌐 Buscar em site",
+            use_container_width=True,
+            key="btn_origem_site",
+            type="primary" if atual == "site" else "secondary",
+        ):
+            atual = "site"
+
     origem_anterior = safe_str(st.session_state.get("_origem_dados_tipo_anterior")).lower()
+    st.session_state["origem_dados_tipo"] = atual
+    st.session_state["origem_dados"] = atual
+    st.session_state["origem_dados_radio"] = "Buscar em site" if atual == "site" else "Planilha / CSV / XML"
+    st.session_state["_origem_dados_tipo_anterior"] = atual
 
-    st.session_state["origem_dados_tipo"] = origem_valor
-    st.session_state["origem_dados"] = origem_valor
-    st.session_state["_origem_dados_tipo_anterior"] = origem_valor
-
-    if origem_anterior and origem_anterior != origem_valor:
+    if origem_anterior and origem_anterior != atual:
         reset_site_processado()
         st.session_state["_origem_site_autoavancar"] = False
+
+    return atual
+
+
+def render_origem_entrada(on_change_callback=None):
+    _inject_origem_ui_css()
+
+    origem_valor = _render_origem_clickable()
 
     if callable(on_change_callback):
         try:
@@ -292,9 +324,9 @@ def render_origem_entrada(on_change_callback=None):
 
     arquivo = st.file_uploader(
         "Anexe sua planilha ou XML",
-        type=["xlsx", "xls", "xlsb", "csv", "xml"],
+        type=["xlsx", "xls", "csv", "xml"],
         key="upload_origem_dados",
-        help="Formatos aceitos: XLSX, XLS, XLSB, CSV e XML.",
+        help="Formatos aceitos: XLSX, XLS, CSV e XML.",
     )
     return ler_planilha(arquivo)
 
@@ -311,7 +343,6 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
     )
 
     col1, col2 = st.columns(2)
-
     with col1:
         st.number_input(
             "Margem (%)",
@@ -348,3 +379,4 @@ def render_precificacao(df_origem: pd.DataFrame) -> None:
         st.success(
             f"Preço automático será gerado na coluna: {nome_coluna_preco_saida()}"
         )
+
