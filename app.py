@@ -11,8 +11,6 @@ from bling_app_zero.ui.app_helpers import (
     garantir_estado_base,
     obter_etapa_global,
     render_debug_panel,
-    safe_df_dados,
-    safe_df_estrutura,
     sincronizar_etapa_global,
 )
 from bling_app_zero.ui.origem_dados import render_origem_dados
@@ -22,15 +20,9 @@ from bling_app_zero.ui.preview_final import render_preview_final
 from bling_app_zero.utils.init_app import inicializar_app
 
 
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(
-    page_title="IA Planilhas",
-    layout="wide",
-)
+st.set_page_config(page_title="IA Planilhas", layout="wide")
 
-APP_VERSION = "1.0.46"
+APP_VERSION = "1.0.47"
 VERSION_JSON_PATH = Path(__file__).with_name("version.json")
 
 ETAPAS_VALIDAS = {"origem", "precificacao", "mapeamento", "final"}
@@ -42,9 +34,6 @@ ETAPAS_CONFIG = [
 ]
 
 
-# =========================
-# HELPERS BÁSICOS
-# =========================
 def _safe_now_str() -> str:
     try:
         return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -89,9 +78,6 @@ def _copiar_df(df: Any) -> Any:
         return df
 
 
-# =========================
-# VERSIONAMENTO
-# =========================
 def _ler_version_json() -> dict:
     try:
         if not VERSION_JSON_PATH.exists():
@@ -126,16 +112,16 @@ def _sincronizar_version_json_com_app() -> dict:
         return atual or {
             "version": APP_VERSION,
             "updated_at": _safe_now_str(),
-            "last_title": "Wizard mobile restaurado",
-            "last_description": "Fluxo guiado por perguntas com origem isolada.",
+            "last_title": "Wizard mobile alinhado",
+            "last_description": "Fluxo unificado em 4 etapas.",
             "history": history,
         }
 
     novo_registro = {
         "version": APP_VERSION,
         "date": _safe_now_str(),
-        "title": "Wizard mobile restaurado",
-        "description": "Fluxo guiado por perguntas com origem isolada.",
+        "title": "Wizard mobile alinhado",
+        "description": "Fluxo unificado em 4 etapas.",
     }
 
     if not any(
@@ -148,8 +134,8 @@ def _sincronizar_version_json_com_app() -> dict:
     novo = {
         "version": APP_VERSION,
         "updated_at": _safe_now_str(),
-        "last_title": "Wizard mobile restaurado",
-        "last_description": "Fluxo guiado por perguntas com origem isolada.",
+        "last_title": "Wizard mobile alinhado",
+        "last_description": "Fluxo unificado em 4 etapas.",
         "history": history,
     }
     _salvar_version_json(novo)
@@ -164,24 +150,6 @@ def _resolver_app_version_exibida(version_data: dict) -> str:
     except Exception:
         pass
     return APP_VERSION
-
-
-# =========================
-# FLUXO GLOBAL
-# =========================
-def _obter_df_fluxo() -> pd.DataFrame | None:
-    for chave in [
-        "df_final",
-        "df_preview_mapeamento",
-        "df_saida",
-        "df_precificado",
-        "df_calc_precificado",
-        "df_origem",
-    ]:
-        df = st.session_state.get(chave)
-        if _safe_df(df):
-            return df
-    return None
 
 
 def _tem_origem_valida() -> bool:
@@ -199,23 +167,14 @@ def _tem_origem_valida() -> bool:
 
 
 def _tem_dados_precificados_ou_preparados() -> bool:
-    for chave in [
-        "df_precificado",
-        "df_calc_precificado",
-        "df_saida",
-        "df_final",
-    ]:
+    for chave in ["df_precificado", "df_calc_precificado", "df_saida", "df_final"]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
     return False
 
 
 def _tem_dados_mapeados_ou_finais() -> bool:
-    for chave in [
-        "df_preview_mapeamento",
-        "df_final",
-        "df_saida",
-    ]:
+    for chave in ["df_preview_mapeamento", "df_final", "df_saida"]:
         if _safe_df_com_linhas(st.session_state.get(chave)):
             return True
     return False
@@ -262,9 +221,6 @@ def _resolver_autoetapa() -> str:
     return "origem"
 
 
-# =========================
-# UI BASE
-# =========================
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -273,7 +229,6 @@ def _inject_layout_css() -> None:
                 padding-top: 1rem;
                 padding-bottom: 2rem;
             }
-
             .ia-topbar {
                 display: flex;
                 align-items: center;
@@ -285,27 +240,23 @@ def _inject_layout_css() -> None:
                 border-radius: 16px;
                 background: rgba(255, 255, 255, 0.02);
             }
-
             .ia-topbar__title {
                 font-size: 1.05rem;
                 font-weight: 700;
                 line-height: 1.2;
                 margin: 0;
             }
-
             .ia-topbar__version {
                 font-size: .86rem;
                 opacity: .82;
                 white-space: nowrap;
             }
-
             .ia-progress {
                 display: flex;
                 flex-wrap: wrap;
                 gap: .5rem;
                 margin-bottom: 1rem;
             }
-
             .ia-pill {
                 border: 1px solid rgba(120, 120, 120, 0.18);
                 border-radius: 999px;
@@ -313,17 +264,14 @@ def _inject_layout_css() -> None:
                 font-size: .9rem;
                 opacity: .82;
             }
-
             .ia-pill--active {
                 border-color: rgba(255, 255, 255, 0.28);
                 font-weight: 700;
                 opacity: 1;
             }
-
             .ia-stage-shell {
                 margin-top: .25rem;
             }
-
             .ia-nav-wrap {
                 margin-top: 1rem;
             }
@@ -350,9 +298,7 @@ def _render_progress(etapa_atual: str) -> None:
     partes = []
     for item in ETAPAS_CONFIG:
         classe = "ia-pill ia-pill--active" if item["key"] == etapa_atual else "ia-pill"
-        partes.append(
-            f'<div class="{classe}">{item["ordem"]}. {item["titulo"]}</div>'
-        )
+        partes.append(f'<div class="{classe}">{item["ordem"]}. {item["titulo"]}</div>')
 
     st.markdown(
         f'<div class="ia-progress">{"".join(partes)}</div>',
@@ -361,10 +307,6 @@ def _render_progress(etapa_atual: str) -> None:
 
 
 def _etapa_tem_navegacao_interna(etapa_atual: str) -> bool:
-    """
-    Evita duplicar botões quando a própria tela já controla voltar/continuar.
-    A etapa de precificação já possui navegação interna confirmada.
-    """
     return etapa_atual in {"precificacao"}
 
 
@@ -379,11 +321,7 @@ def _render_nav(etapa_atual: str) -> None:
     col1, col2 = st.columns(2, gap="small")
 
     with col1:
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            key=f"app_btn_voltar_{etapa_atual}",
-        ):
+        if st.button("⬅️ Voltar", use_container_width=True, key=f"app_btn_voltar_{etapa_atual}"):
             if etapa_atual == "precificacao":
                 _ir_para("origem")
             elif etapa_atual == "mapeamento":
@@ -434,9 +372,6 @@ def _render_etapa(etapa_atual: str) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# =========================
-# INIT
-# =========================
 inicializar_app()
 garantir_estado_base()
 
