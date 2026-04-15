@@ -4,30 +4,14 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_helpers import ir_para_etapa, log_debug, safe_df_dados
 from bling_app_zero.ui.origem_dados_handlers import (
     aplicar_bloco_estoque,
     aplicar_precificacao,
     nome_coluna_preco_saida,
+    safe_float,
+    safe_str,
 )
-
-
-def _safe_str(valor) -> str:
-    try:
-        if valor is None:
-            return ""
-        texto = str(valor).strip()
-        if texto.lower() in {"none", "nan", "nat"}:
-            return ""
-        return texto
-    except Exception:
-        return ""
-
-
-def _safe_df_dados(df) -> bool:
-    try:
-        return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
-    except Exception:
-        return False
 
 
 def _safe_copy_df(df):
@@ -37,13 +21,6 @@ def _safe_copy_df(df):
         return df
 
 
-def _float_state(key: str, default: float = 0.0) -> float:
-    try:
-        return float(st.session_state.get(key, default) or default)
-    except Exception:
-        return default
-
-
 def _bool_state(key: str, default: bool = False) -> bool:
     try:
         return bool(st.session_state.get(key, default))
@@ -51,70 +28,45 @@ def _bool_state(key: str, default: bool = False) -> bool:
         return default
 
 
-def _set_etapa(destino: str) -> None:
-    st.session_state["etapa_origem"] = destino
-    st.session_state["etapa"] = destino
-    st.session_state["etapa_fluxo"] = destino
-
-
-def _navegar(destino: str) -> None:
-    _set_etapa(destino)
-    st.rerun()
-
-
 def _tipo_operacao_estoque() -> bool:
-    return _safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
-
-
-def _origem_atual() -> str:
-    return _safe_str(
-        st.session_state.get("origem_dados_tipo")
-        or st.session_state.get("origem_dados_radio")
-    ).lower()
-
-
-def _render_css() -> None:
-    st.markdown(
-        """
-        <style>
-            .op-kicker {
-                font-size: 0.84rem;
-                color: #667085;
-                font-weight: 700;
-                margin-bottom: 0.30rem;
-            }
-            .op-title {
-                font-size: 2rem;
-                line-height: 1.05;
-                color: #0A2259;
-                font-weight: 800;
-                margin: 0 0 0.40rem 0;
-                letter-spacing: -0.02em;
-            }
-            .op-sub {
-                font-size: 1rem;
-                color: #667085;
-                margin: 0 0 1rem 0;
-            }
-            .op-card {
-                background: #FFFFFF;
-                border: 1px solid #EAECF0;
-                border-radius: 20px;
-                padding: 0.95rem 1rem;
-                margin: 0.75rem 0 1rem 0;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    return safe_str(st.session_state.get("tipo_operacao_bling")).lower() == "estoque"
 
 
 def _render_header() -> None:
-    st.markdown('<div class="op-kicker">Etapa de precificação</div>', unsafe_allow_html=True)
-    st.markdown('<div class="op-title">Vai usar a calculadora de precificação?</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="op-sub">Você pode calcular automaticamente ou manter o preço que veio da planilha fornecedora.</div>',
-        unsafe_allow_html=True,
+    st.markdown("### Etapa de precificação")
+    st.caption(
+        "Escolha se vai usar a calculadora. Esta etapa não controla mais a navegação global "
+        "sozinha; ela apenas prepara a saída para o mapeamento."
+    )
+
+
+def _colunas_origem_validas(df_origem: pd.DataFrame) -> list[str]:
+    invalidas = {"signature", "infnfe", "infprot", "versao"}
+    colunas: list[str] = []
+
+    for coluna in df_origem.columns:
+        nome = safe_str(coluna)
+        if not nome:
+            continue
+        if nome.strip().lower() in invalidas:
+            continue
+        colunas.append(nome)
+
+    return colunas
+
+
+def _render_resumo(df_origem: pd.DataFrame) -> None:
+    coluna_saida = nome_coluna_preco_saida()
+    operacao = safe_str(
+        st.session_state.get("tipo_operacao")
+        or st.session_state.get("tipo_operacao_bling")
+        or st.session_state.get("tipo_operacao_radio")
+    )
+
+    st.info(
+        f"Operação: {operacao or 'Não definida'} | "
+        f"Linhas carregadas: {len(df_origem)} | "
+        f"Coluna final automática: {coluna_saida}"
     )
 
 
@@ -144,145 +96,96 @@ def _render_escolha_principal() -> None:
             st.rerun()
 
 
-def _colunas_origem_validas(df_origem: pd.DataFrame) -> list[str]:
-    invalidas = {"signature", "infnfe", "infprot", "versao"}
-    colunas: list[str] = []
+def _render_form_calculadora(df_origem: pd.DataFrame) -> pd.DataFrame:
+    colunas = _colunas_origem_validas(df_origem)
+    coluna_preco_padrao = colunas[0] if colunas else ""
 
-    for coluna in df_origem.columns:
-        nome = _safe_str(coluna)
-        if not nome:
-            continue
-        if nome.strip().lower() in invalidas:
-            continue
-        colunas.append(nome)
-
-    return colunas
-
-
-def _render_resumo(df_origem: pd.DataFrame) -> None:
-    coluna_saida = nome_coluna_preco_saida()
-    operacao = _safe_str(
-        st.session_state.get("tipo_operacao")
-        or st.session_state.get("tipo_operacao_bling")
-        or st.session_state.get("tipo_operacao_radio")
+    coluna_custo = st.selectbox(
+        "Qual coluna será usada como preço de custo/base?",
+        options=colunas,
+        index=colunas.index(st.session_state.get("precificacao_coluna_custo"))
+        if st.session_state.get("precificacao_coluna_custo") in colunas
+        else (0 if colunas else None),
+        key="precificacao_coluna_custo",
     )
 
-    st.markdown(
-        f"""
-        <div class="op-card">
-            <strong>Operação:</strong> {operacao or "Não definida"}<br/>
-            <strong>Linhas carregadas:</strong> {len(df_origem)}<br/>
-            <strong>Coluna final automática:</strong> {coluna_saida}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        margem = st.number_input("Margem lucro (%)", value=safe_float(st.session_state.get("margem_lucro"), 0.0), key="margem_lucro")
+    with c2:
+        impostos = st.number_input("Impostos (%)", value=safe_float(st.session_state.get("impostos"), 0.0), key="impostos")
+    with c3:
+        custo_fixo = st.number_input("Custo fixo", value=safe_float(st.session_state.get("custo_fixo"), 0.0), key="custo_fixo")
+    with c4:
+        taxa_extra = st.number_input("Taxa extra", value=safe_float(st.session_state.get("taxa_extra"), 0.0), key="taxa_extra")
 
-
-def _persistir_resultado(df_resultado: pd.DataFrame) -> None:
-    st.session_state["df_precificado"] = _safe_copy_df(df_resultado)
-    st.session_state["df_calc_precificado"] = _safe_copy_df(df_resultado)
-    st.session_state["df_saida"] = _safe_copy_df(df_resultado)
-    st.session_state["df_final"] = _safe_copy_df(df_resultado)
-
-
-def _aplicar_precificacao_fluxo(df_origem: pd.DataFrame) -> None:
-    usar = _bool_state("usar_calculadora_precificacao", False)
-
-    coluna_base = _safe_str(st.session_state.get("coluna_precificacao_resultado"))
-    margem = _float_state("margem_bling", 0.0)
-    impostos = _float_state("impostos_bling", 0.0)
-    frete_estimado = _float_state("custofixo_bling", 0.0)
-    custo_extra = _float_state("taxaextra_bling", 0.0)
-    comissao_canal = _float_state("comissao_canal_percentual", 16.0)
-
-    st.session_state["usar_calculadora_precificacao"] = usar
-    st.session_state["comissao_canal_percentual"] = comissao_canal
-
-    df_resultado = aplicar_precificacao(
+    df_precificado = aplicar_precificacao(
         df_origem=df_origem,
-        coluna_custo=coluna_base,
-        margem=margem,
-        impostos=impostos,
-        custo_fixo=frete_estimado,
-        taxa_extra=custo_extra,
+        coluna_custo=coluna_custo or coluna_preco_padrao,
+        margem_lucro=float(margem or 0.0),
+        impostos=float(impostos or 0.0),
+        custo_fixo=float(custo_fixo or 0.0),
+        taxa_extra=float(taxa_extra or 0.0),
     )
 
-    if _safe_df_dados(df_resultado):
-        if _tipo_operacao_estoque():
-            df_resultado = aplicar_bloco_estoque(df_resultado, _origem_atual())
-        _persistir_resultado(df_resultado)
+    return df_precificado
 
 
-def render_origem_precificacao() -> None:
-    _render_css()
+def _aplicar_sem_calculadora(df_origem: pd.DataFrame) -> pd.DataFrame:
+    df_out = _safe_copy_df(df_origem)
+    coluna_saida = nome_coluna_preco_saida()
 
-    df_origem = st.session_state.get("df_origem")
-    if not _safe_df_dados(df_origem):
-        st.warning("Carregue a base de origem antes de usar a etapa de precificação.")
+    if coluna_saida not in df_out.columns:
+        df_out[coluna_saida] = ""
 
-        col1, col2 = st.columns(2, gap="small")
-        with col1:
-            if st.button("⬅️ Voltar para origem", use_container_width=True, key="prec_sem_base_voltar"):
-                _navegar("origem")
-        with col2:
-            st.button("Continuar ➜", use_container_width=True, disabled=True, key="prec_sem_base_continuar")
-        return
+    return df_out
+
+
+def _render_preview(df_saida: pd.DataFrame) -> None:
+    with st.expander("Preview da precificação", expanded=False):
+        st.dataframe(df_saida.head(5), use_container_width=True, hide_index=True)
+
+
+def _persistir_saida(df_saida: pd.DataFrame) -> None:
+    df_saida = aplicar_bloco_estoque(df_saida)
+
+    st.session_state["df_precificado"] = df_saida.copy()
+    st.session_state["df_calc_precificado"] = df_saida.copy()
+    st.session_state["df_saida"] = df_saida.copy()
+    st.session_state["df_final"] = df_saida.copy()
+
+
+def render_origem_precificacao(df_origem: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    df_base = df_origem if safe_df_dados(df_origem) else st.session_state.get("df_origem")
+
+    if not safe_df_dados(df_base):
+        st.warning("Carregue uma origem válida antes de usar a precificação.")
+        return None
 
     _render_header()
+    _render_resumo(df_base)
     _render_escolha_principal()
-    _render_resumo(df_origem)
 
-    usar = _bool_state("usar_calculadora_precificacao", False)
+    usar_calculadora = _bool_state("usar_calculadora_precificacao", False)
+    df_saida = _render_form_calculadora(df_base) if usar_calculadora else _aplicar_sem_calculadora(df_base)
 
-    if not usar:
-        _aplicar_precificacao_fluxo(df_origem)
-        st.success(
-            f"O sistema vai manter o preço da planilha fornecedora e preencher a coluna final {nome_coluna_preco_saida()}."
-        )
+    _persistir_saida(df_saida)
+    _render_preview(df_saida)
 
-        col1, col2 = st.columns(2, gap="small")
-        with col1:
-            if st.button("⬅️ Voltar", use_container_width=True, key="prec_nao_voltar"):
-                _navegar("origem")
-        with col2:
-            if st.button("Continuar ➜", use_container_width=True, type="primary", key="prec_nao_continuar"):
-                _navegar("mapeamento")
-        return
-
-    opcoes = [""] + _colunas_origem_validas(df_origem)
-
-    st.selectbox(
-        "Qual coluna de origem deve ser usada como base do preço?",
-        opcoes,
-        key="coluna_precificacao_resultado",
-    )
-
-    col1, col2 = st.columns(2, gap="small")
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.number_input("Margem desejada (%)", min_value=0.0, value=_float_state("margem_bling", 0.0), step=1.0, key="margem_bling")
-        st.number_input("Imposto NF-e (%)", min_value=0.0, value=_float_state("impostos_bling", 0.0), step=1.0, key="impostos_bling")
-        st.number_input("Comissão do canal (%)", min_value=0.0, value=_float_state("comissao_canal_percentual", 16.0), step=1.0, key="comissao_canal_percentual")
+        if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_precificacao_voltar"):
+            ir_para_etapa("origem")
 
     with col2:
-        st.number_input("Frete estimado (R$)", min_value=0.0, value=_float_state("custofixo_bling", 0.0), step=1.0, key="custofixo_bling")
-        st.number_input("Custo extra fixo (R$)", min_value=0.0, value=_float_state("taxaextra_bling", 0.0), step=1.0, key="taxaextra_bling")
+        if st.button(
+            "Continuar para mapeamento ➡️",
+            use_container_width=True,
+            key="btn_precificacao_continuar",
+            type="primary",
+        ):
+            log_debug("[PRECIFICACAO] saída confirmada para mapeamento.", "INFO")
+            ir_para_etapa("mapeamento")
 
-    _aplicar_precificacao_fluxo(df_origem)
-
-    coluna_saida = nome_coluna_preco_saida()
-    st.success(f"O resultado da calculadora será gravado automaticamente em: {coluna_saida}")
-
-    with st.expander("Abrir preview após precificação", expanded=False):
-        df_preview = st.session_state.get("df_precificado")
-        if _safe_df_dados(df_preview):
-            st.dataframe(df_preview.head(20), use_container_width=True)
-
-    col1, col2 = st.columns(2, gap="small")
-    with col1:
-        if st.button("⬅️ Voltar", use_container_width=True, key="prec_sim_voltar"):
-            _navegar("origem")
-    with col2:
-        if st.button("Continuar ➜", use_container_width=True, type="primary", key="prec_sim_continuar"):
-            _navegar("mapeamento")
+    return df_saida
