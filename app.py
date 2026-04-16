@@ -15,7 +15,7 @@ from bling_app_zero.ui.app_helpers import (
 )
 from bling_app_zero.utils.init_app import init_app_state
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 
 # ============================================================
@@ -32,6 +32,9 @@ inicializar_debug()
 
 if "app_version" not in st.session_state:
     st.session_state["app_version"] = APP_VERSION
+
+if "modo_execucao" not in st.session_state:
+    st.session_state["modo_execucao"] = "fluxo_manual"
 
 
 # ============================================================
@@ -155,8 +158,19 @@ def _render_modo_ia() -> None:
             "A base foi preparada pela IA. Revise o mapeamento e conclua no fluxo principal."
         )
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
+
         with col1:
+            if st.button(
+                "Ir para origem",
+                use_container_width=True,
+                key="btn_ir_origem_pos_ia",
+            ):
+                st.session_state["etapa"] = "origem"
+                st.session_state["etapa_origem"] = "origem"
+                st.rerun()
+
+        with col2:
             if st.button(
                 "Ir para mapeamento",
                 use_container_width=True,
@@ -166,7 +180,7 @@ def _render_modo_ia() -> None:
                 st.session_state["etapa_origem"] = "mapeamento"
                 st.rerun()
 
-        with col2:
+        with col3:
             if st.button(
                 "Ir para preview final",
                 use_container_width=True,
@@ -192,3 +206,4 @@ else:
     _render_fluxo_manual()
 
 render_debug_panel("🧠 Debug do sistema")
+
