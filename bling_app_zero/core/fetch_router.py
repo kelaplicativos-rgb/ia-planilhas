@@ -7,7 +7,7 @@ import pandas as pd
 
 
 # ============================================================
-# IMPORTS OPCIONAIS DOS FORNECEDORES
+# IMPORTS OPCIONAIS DOS CONECTORES
 # ============================================================
 
 try:
@@ -24,6 +24,20 @@ try:
     from bling_app_zero.core.fornecedores.obaobamix_api import buscar_produtos_oba_oba_mix
 except Exception:
     buscar_produtos_oba_oba_mix = None
+
+try:
+    from bling_app_zero.core.site_crawler import executar_crawler_site
+except Exception:
+    executar_crawler_site = None
+
+try:
+    from bling_app_zero.utils.excel_logs import log_debug
+except Exception:
+    def log_debug(_msg: str, _nivel: str = "INFO") -> None:
+        return None
+
+
+ROUTER_VERSION = "V2_FORNECEDORES_DIRETOS"
 
 
 # ============================================================
@@ -75,18 +89,25 @@ def _garantir_df(df: Any) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _formatar_numero_bling(valor: Any) -> str:
-    texto = _safe_str(valor).replace("R$", "").replace(" ", "")
+def _to_float_brasil(valor: Any) -> float:
+    texto = _safe_str(valor)
     if not texto:
-        return ""
+        return 0.0
+
+    texto = texto.replace("R$", "").replace(" ", "")
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
     else:
         texto = texto.replace(",", ".")
+
     try:
-        return f"{float(texto):.2f}".replace(".", ",")
+        return float(texto)
     except Exception:
-        return _safe_str(valor)
+        return 0.0
+
+
+def _formatar_numero_bling(valor: Any) -> str:
+    return f"{_to_float_brasil(valor):.2f}".replace(".", ",")
 
 
 def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
@@ -94,18 +115,7 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
     if base.empty:
         return base
 
-    colunas_obrigatorias = [
-        "codigo_fornecedor",
-        "descricao_fornecedor",
-        "preco_base",
-        "quantidade_real",
-        "gtin",
-        "categoria",
-        "url_imagens",
-        "link_produto",
-    ]
-
-    mapa = {_normalizar_texto(col): col for col in base.columns}
+    base.columns = [_safe_str(col) for col in base.columns]
 
     aliases = {
         "codigo_fornecedor": [
@@ -116,6 +126,7 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
             "ref",
             "id_produto",
             "codigo produto",
+            "product_id",
         ],
         "descricao_fornecedor": [
             "descricao_fornecedor",
@@ -124,6 +135,7 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
             "nome",
             "titulo",
             "nome produto",
+            "product_name",
         ],
         "preco_base": [
             "preco_base",
@@ -155,6 +167,7 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
             "grupo",
             "family",
             "collection",
+            "breadcrumb",
         ],
         "url_imagens": [
             "url_imagens",
@@ -174,20 +187,25 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
         ],
     }
 
-    saida = pd.DataFrame(index=base.index)
+    mapa = {_normalizar_texto(col): col for col in base.columns}
 
-    for coluna_destino in colunas_obrigatorias:
-        coluna_origem = ""
-        for alias in aliases.get(coluna_destino, []):
-            chave = _normalizar_texto(alias)
+    saida = pd.DataFrame(index=base.index)
+    for destino, candidatos in aliases.items():
+        origem_encontrada = ""
+        for candidato in candidatos:
+            chave = _normalizar_texto(candidato)
             if chave in mapa:
-                coluna_origem = mapa[chave]
+                origem_encontrada = mapa[chave]
                 break
 
-        if coluna_origem:
-            saida[coluna_destino] = base[coluna_origem]
-        else:
-            saida[coluna_destino] = ""
+        if not origem_encontrada:
+            for col in base.columns:
+                ncol = _normalizar_texto(col)
+                if any(_normalizar_texto(c) in ncol for c in candidatos):
+                    origem_encontrada = col
+                    break
+
+        saida[destino] = base[origem_encontrada] if origem_encontrada else ""
 
     for col in base.columns:
         if col not in saida.columns:
@@ -197,9 +215,11 @@ def _normalizar_saida_padrao(df: pd.DataFrame) -> pd.DataFrame:
         saida["preco_base"] = saida["preco_base"].apply(_formatar_numero_bling)
 
     if "quantidade_real" in saida.columns:
-        saida["quantidade_real"] = pd.to_numeric(
-            saida["quantidade_real"], errors="coerce"
-        ).fillna(0).astype(int)
+        saida["quantidade_real"] = (
+            pd.to_numeric(saida["quantidade_real"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
 
     return saida.fillna("")
 
@@ -244,10 +264,80 @@ def _executar_funcao_fornecedor(
             resultado = tentativa()
             df = _garantir_df(resultado)
             if not df.empty:
+                log_debug(
+                    f"[FETCH_ROUTER] fornecedor={fornecedor} retornou {len(df)} linha(s) via conector oficial",
+                    "INFO",
+                )
                 return _normalizar_saida_padrao(df)
         except TypeError:
             continue
-        except Exception:
+        except Exception as e:
+            log_debug(
+                f"[FETCH_ROUTER] falha no conector '{fornecedor}': {e}",
+                "WARNING",
+            )
+            continue
+
+    return pd.DataFrame()
+
+
+def _executar_fallback_crawler(
+    fornecedor: str,
+    categoria: str = "",
+) -> pd.DataFrame:
+    if not callable(executar_crawler_site):
+        return pd.DataFrame()
+
+    urls_base = {
+        "atacadum": "https://www.atacadum.com.br/",
+        "mega_center": "https://megacentereletronicos.com.br/",
+        "oba_oba_mix": "https://obaobamix.com.br/",
+    }
+
+    url = urls_base.get(fornecedor, "")
+    if not url:
+        return pd.DataFrame()
+
+    categoria_txt = _safe_str(categoria)
+    if categoria_txt:
+        slug = (
+            categoria_txt.strip()
+            .lower()
+            .replace(" ", "-")
+            .replace("_", "-")
+        )
+        if fornecedor == "atacadum":
+            url = f"https://www.atacadum.com.br/{slug}/"
+        elif fornecedor == "mega_center":
+            url = f"https://megacentereletronicos.com.br/categoria/{slug}"
+        elif fornecedor == "oba_oba_mix":
+            url = f"https://obaobamix.com.br/{slug}/"
+
+    tentativas = [
+        lambda: executar_crawler_site(
+            url=url,
+            max_paginas=8,
+            max_threads=6,
+            padrao_disponivel=10,
+        ),
+        lambda: executar_crawler_site(url, 8, 6, 10),
+    ]
+
+    for tentativa in tentativas:
+        try:
+            resultado = tentativa()
+            df = _garantir_df(resultado)
+            if not df.empty:
+                log_debug(
+                    f"[FETCH_ROUTER] fornecedor={fornecedor} retornou {len(df)} linha(s) via fallback crawler",
+                    "INFO",
+                )
+                return _normalizar_saida_padrao(df)
+        except Exception as e:
+            log_debug(
+                f"[FETCH_ROUTER] falha no fallback crawler '{fornecedor}': {e}",
+                "WARNING",
+            )
             continue
 
     return pd.DataFrame()
@@ -264,15 +354,22 @@ def buscar_produtos_fornecedor(
     extra_config: Optional[dict] = None,
 ) -> pd.DataFrame:
     fornecedor_norm = _normalizar_texto(fornecedor)
+    log_debug(
+        f"[FETCH_ROUTER] início fornecedor={fornecedor_norm} categoria={categoria} operacao={operacao} version={ROUTER_VERSION}",
+        "INFO",
+    )
 
     if fornecedor_norm in {"atacadum"}:
-        return _executar_funcao_fornecedor(
+        df = _executar_funcao_fornecedor(
             func=buscar_produtos_atacadum,
             fornecedor="atacadum",
             categoria=categoria,
             operacao=operacao,
             extra_config=extra_config,
         )
+        if not df.empty:
+            return df
+        return _executar_fallback_crawler("atacadum", categoria)
 
     if fornecedor_norm in {
         "mega center",
@@ -281,40 +378,50 @@ def buscar_produtos_fornecedor(
         "megacenter",
         "mega_center",
     }:
-        return _executar_funcao_fornecedor(
+        df = _executar_funcao_fornecedor(
             func=buscar_produtos_mega_center,
             fornecedor="mega_center",
             categoria=categoria,
             operacao=operacao,
             extra_config=extra_config,
         )
+        if not df.empty:
+            return df
+        return _executar_fallback_crawler("mega_center", categoria)
 
     if fornecedor_norm in {
         "oba oba mix",
         "obaobamix",
         "oba_oba_mix",
     }:
-        return _executar_funcao_fornecedor(
+        df = _executar_funcao_fornecedor(
             func=buscar_produtos_oba_oba_mix,
             fornecedor="oba_oba_mix",
             categoria=categoria,
             operacao=operacao,
             extra_config=extra_config,
         )
+        if not df.empty:
+            return df
+        return _executar_fallback_crawler("oba_oba_mix", categoria)
 
+    log_debug(
+        f"[FETCH_ROUTER] fornecedor não reconhecido: {fornecedor}",
+        "WARNING",
+    )
     return pd.DataFrame()
 
 
 def listar_fornecedores_disponiveis() -> list[str]:
     fornecedores = []
 
-    if callable(buscar_produtos_atacadum):
+    if callable(buscar_produtos_atacadum) or callable(executar_crawler_site):
         fornecedores.append("Atacadum")
 
-    if callable(buscar_produtos_mega_center):
+    if callable(buscar_produtos_mega_center) or callable(executar_crawler_site):
         fornecedores.append("Mega Center Eletrônicos")
 
-    if callable(buscar_produtos_oba_oba_mix):
+    if callable(buscar_produtos_oba_oba_mix) or callable(executar_crawler_site):
         fornecedores.append("Oba Oba Mix")
 
     return fornecedores
