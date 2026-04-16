@@ -1,378 +1,278 @@
 
 from __future__ import annotations
 
+from typing import Dict, List
+
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
+    garantir_colunas_modelo,
     log_debug,
+    normalizar_coluna_busca,
     safe_df_dados,
-    safe_df_estrutura,
     sincronizar_etapa_global,
 )
 
-try:
-    from bling_app_zero.ui.origem_mapeamento_core import (
-        montar_df_saida_mapeado as _montar_df_saida_mapeado_core,
-        obter_df_fonte_mapeamento as _obter_df_fonte_mapeamento_core,
-        obter_df_modelo_mapeamento as _obter_df_modelo_mapeamento_core,
-    )
-except Exception:
-    _montar_df_saida_mapeado_core = None
-    _obter_df_fonte_mapeamento_core = None
-    _obter_df_modelo_mapeamento_core = None
 
+# ============================================================
+# HELPERS
+# ============================================================
 
-def _safe_str(valor) -> str:
-    try:
-        if valor is None:
-            return ""
-        texto = str(valor).strip()
-        if texto.lower() in {"none", "nan", "nat"}:
-            return ""
-        return texto
-    except Exception:
-        return ""
-
-
-def _safe_copy_df(df):
-    try:
-        return df.copy()
-    except Exception:
-        return df
-
-
-def _normalizar_texto(valor: str) -> str:
-    return (
-        _safe_str(valor)
-        .lower()
-        .replace("ç", "c")
-        .replace("ã", "a")
-        .replace("á", "a")
-        .replace("à", "a")
-        .replace("â", "a")
-        .replace("é", "e")
-        .replace("ê", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ô", "o")
-        .replace("õ", "o")
-        .replace("ú", "u")
-    )
-
-
-def _modelo_padrao_local() -> pd.DataFrame:
-    tipo = _safe_str(st.session_state.get("tipo_operacao_bling")).lower()
-    if tipo == "estoque":
-        colunas = [
-            "Código",
-            "Descrição",
-            "Depósito (OBRIGATÓRIO)",
-            "Balanço (OBRIGATÓRIO)",
-            "Preço unitário (OBRIGATÓRIO)",
-            "Situação",
-        ]
-    else:
-        colunas = [
-            "Código",
-            "Descrição",
-            "Descrição Curta",
-            "Preço de venda",
-            "GTIN/EAN",
-            "Situação",
-            "URL Imagens",
-        ]
-    return pd.DataFrame(columns=colunas)
-
-
-def _obter_df_fonte_mapeamento() -> pd.DataFrame | None:
-    if callable(_obter_df_fonte_mapeamento_core):
-        try:
-            df = _obter_df_fonte_mapeamento_core()
-            if safe_df_dados(df):
-                return df
-        except Exception as e:
-            log_debug(f"Fallback core fonte mapeamento: {e}", "WARNING")
-
-    for chave in ["df_precificado", "df_calc_precificado", "df_saida", "df_final", "df_origem"]:
+def _get_df_fonte() -> pd.DataFrame | None:
+    for chave in [
+        "df_saida",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_origem",
+    ]:
         df = st.session_state.get(chave)
         if safe_df_dados(df):
-            return _safe_copy_df(df)
+            return df.copy()
     return None
 
 
-def _obter_df_modelo_mapeamento() -> pd.DataFrame | None:
-    if callable(_obter_df_modelo_mapeamento_core):
-        try:
-            df = _obter_df_modelo_mapeamento_core()
-            if safe_df_estrutura(df):
-                return df
-        except Exception as e:
-            log_debug(f"Fallback core modelo mapeamento: {e}", "WARNING")
-
+def _get_df_modelo() -> pd.DataFrame:
+    tipo_operacao_bling = st.session_state.get("tipo_operacao_bling", "cadastro")
     df_modelo = st.session_state.get("df_modelo_operacao")
-    if safe_df_estrutura(df_modelo):
-        return _safe_copy_df(df_modelo)
 
-    return _modelo_padrao_local()
+    if safe_df_dados(df_modelo):
+        return garantir_colunas_modelo(df_modelo.copy(), tipo_operacao_bling)
+
+    return garantir_colunas_modelo(pd.DataFrame(), tipo_operacao_bling)
 
 
-def _is_coluna_bloqueada(nome_coluna: str) -> bool:
-    nome = _normalizar_texto(nome_coluna)
-    return (
-        nome == "id"
-        or nome.startswith("id ")
-        or " id " in f" {nome} "
-        or "deposito" in nome
+def _coluna_encontrada_por_aproximacao(colunas_fonte: List[str], candidatos: List[str]) -> str:
+    mapa = {normalizar_coluna_busca(col): col for col in colunas_fonte}
+
+    for candidato in candidatos:
+        chave = normalizar_coluna_busca(candidato)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in colunas_fonte:
+        ncol = normalizar_coluna_busca(col)
+        for candidato in candidatos:
+            if normalizar_coluna_busca(candidato) in ncol:
+                return col
+
+    return ""
+
+
+def _defaults_mapeamento(colunas_fonte: List[str], tipo_operacao_bling: str) -> Dict[str, str]:
+    defaults: Dict[str, str] = {}
+
+    defaults["Código"] = _coluna_encontrada_por_aproximacao(
+        colunas_fonte,
+        ["codigo", "codigo_fornecedor", "sku", "ref", "referencia", "gtin", "ean"],
+    )
+    defaults["Descrição"] = _coluna_encontrada_por_aproximacao(
+        colunas_fonte,
+        ["descricao", "descricao_fornecedor", "produto", "nome", "titulo"],
     )
 
-
-def _is_coluna_preco(nome_coluna: str) -> bool:
-    nome = _normalizar_texto(nome_coluna)
-    return "preco de venda" in nome or "preco unitario" in nome
-
-
-def _is_coluna_situacao(nome_coluna: str) -> bool:
-    return "situacao" in _normalizar_texto(nome_coluna)
-
-
-def _inferir_mapping_inicial(
-    df_fonte: pd.DataFrame,
-    df_modelo: pd.DataFrame,
-    mapping_salvo: dict,
-) -> dict[str, str]:
-    mapping = {}
-
-    if isinstance(mapping_salvo, dict):
-        for k, v in mapping_salvo.items():
-            k_txt = _safe_str(k)
-            v_txt = _safe_str(v)
-            if k_txt:
-                mapping[k_txt] = v_txt
-
-    colunas_fonte = [str(c) for c in df_fonte.columns]
-
-    for col_modelo in df_modelo.columns:
-        col_modelo = str(col_modelo)
-        if col_modelo in mapping and (not mapping[col_modelo] or mapping[col_modelo] in colunas_fonte):
-            continue
-
-        nome = _normalizar_texto(col_modelo)
-
-        if _is_coluna_bloqueada(col_modelo):
-            mapping[col_modelo] = ""
-            continue
-
-        if _is_coluna_situacao(col_modelo):
-            mapping[col_modelo] = "__DEFAULT_ATIVO__"
-            continue
-
-        if _is_coluna_preco(col_modelo) and col_modelo in colunas_fonte:
-            mapping[col_modelo] = col_modelo
-            continue
-
-        for col_fonte in colunas_fonte:
-            nome_fonte = _normalizar_texto(col_fonte)
-
-            if nome_fonte == nome:
-                mapping[col_modelo] = col_fonte
-                break
-
-            if "descricao curta" in nome and "descricao curta" in nome_fonte:
-                mapping[col_modelo] = col_fonte
-                break
-
-            if nome in {"descricao", "descricao produto"} and (
-                "descricao" in nome_fonte or "produto" in nome_fonte or "nome" in nome_fonte
-            ):
-                mapping[col_modelo] = col_fonte
-                break
-
-            if "gtin" in nome or "ean" in nome:
-                if "gtin" in nome_fonte or "ean" in nome_fonte or "barra" in nome_fonte:
-                    mapping[col_modelo] = col_fonte
-                    break
-
-            if "codigo" in nome:
-                if "codigo" in nome_fonte or "sku" in nome_fonte:
-                    mapping[col_modelo] = col_fonte
-                    break
-
-            if _is_coluna_preco(col_modelo):
-                if (
-                    "preco de venda" in nome_fonte
-                    or "preco unitario" in nome_fonte
-                    or "preco" in nome_fonte
-                    or "valor" in nome_fonte
-                    or "custo" in nome_fonte
-                ):
-                    mapping[col_modelo] = col_fonte
-                    break
-
-    return mapping
-
-
-def _montar_df_saida_mapeado(
-    df_base: pd.DataFrame,
-    df_modelo: pd.DataFrame,
-    mapping: dict[str, str],
-) -> pd.DataFrame:
-    if callable(_montar_df_saida_mapeado_core):
-        try:
-            return _montar_df_saida_mapeado_core(df_base, df_modelo, mapping)
-        except Exception as e:
-            log_debug(f"Fallback montar df mapeado: {e}", "WARNING")
-
-    df_saida = pd.DataFrame(index=df_base.index)
-
-    for col_modelo in df_modelo.columns:
-        col_modelo = str(col_modelo)
-        origem = _safe_str(mapping.get(col_modelo))
-
-        if origem and origem in df_base.columns:
-            df_saida[col_modelo] = df_base[origem]
-        else:
-            df_saida[col_modelo] = ""
-
-    return df_saida
-
-
-def _aplicar_defaults_no_df(df_preview: pd.DataFrame, defaults: dict[str, str]) -> pd.DataFrame:
-    try:
-        df_out = _safe_copy_df(df_preview)
-        if not isinstance(df_out, pd.DataFrame):
-            return pd.DataFrame()
-
-        for col_modelo, valor_default in (defaults or {}).items():
-            col_txt = _safe_str(col_modelo)
-            if not col_txt or col_txt not in df_out.columns:
-                continue
-            df_out[col_txt] = _safe_str(valor_default)
-
-        return df_out
-    except Exception as e:
-        log_debug(f"Erro ao aplicar defaults no preview: {e}", "ERROR")
-        return df_preview if isinstance(df_preview, pd.DataFrame) else pd.DataFrame()
-
-
-def _persistir_resultado(mapping: dict[str, str], defaults: dict[str, str], df_preview: pd.DataFrame) -> None:
-    st.session_state["mapping_origem"] = dict(mapping or {})
-    st.session_state["mapping_origem_rascunho"] = dict(mapping or {})
-    st.session_state["mapping_origem_defaults"] = dict(defaults or {})
-    st.session_state["df_preview_mapeamento"] = _safe_copy_df(df_preview)
-    st.session_state["df_saida"] = _safe_copy_df(df_preview)
-    st.session_state["df_final"] = _safe_copy_df(df_preview)
-
-
-def render_origem_mapeamento(
-    df_origem: pd.DataFrame | None = None,
-    df_modelo: pd.DataFrame | None = None,
-) -> pd.DataFrame | None:
-    st.markdown("### 🧩 Mapeamento")
-
-    df_base = df_origem if safe_df_dados(df_origem) else _obter_df_fonte_mapeamento()
-    df_destino = df_modelo if safe_df_estrutura(df_modelo) else _obter_df_modelo_mapeamento()
-
-    if not safe_df_dados(df_base):
-        st.warning("Carregue uma origem válida antes de abrir o mapeamento.")
-        return None
-
-    if not safe_df_estrutura(df_destino):
-        st.warning("Nenhum modelo de destino disponível para mapear.")
-        return None
-
-    mapping_salvo = st.session_state.get("mapping_origem", {})
-    mapping_inicial = _inferir_mapping_inicial(df_base, df_destino, mapping_salvo)
-
-    colunas_fonte = [str(c) for c in df_base.columns]
-    mapping_novo: dict[str, str] = {}
-    defaults_novos: dict[str, str] = {}
-    usados: set[str] = set()
-
-    st.caption(
-        f"Origem: {len(df_base)} linha(s) | Modelo: {len(df_destino.columns)} coluna(s)"
-    )
-    st.markdown("---")
-
-    for idx, col_modelo in enumerate(df_destino.columns):
-        col_modelo = str(col_modelo)
-        st.markdown(f"**{col_modelo}**")
-
-        if _is_coluna_bloqueada(col_modelo):
-            if "deposito" in _normalizar_texto(col_modelo):
-                defaults_novos[col_modelo] = _safe_str(st.session_state.get("deposito_nome"))
-                st.info(
-                    f"Preenchido automaticamente pelo depósito informado: **{defaults_novos[col_modelo] or 'vazio'}**"
-                )
-            else:
-                defaults_novos[col_modelo] = ""
-                st.info("Campo bloqueado automaticamente.")
-            continue
-
-        if _is_coluna_situacao(col_modelo):
-            defaults_novos[col_modelo] = "Ativo"
-            st.info("Preenchido automaticamente como **Ativo**.")
-            continue
-
-        valor_inicial = _safe_str(mapping_inicial.get(col_modelo))
-        opcoes = [""]
-
-        for col in colunas_fonte:
-            if col == valor_inicial or col not in usados:
-                opcoes.append(col)
-
-        index = opcoes.index(valor_inicial) if valor_inicial in opcoes else 0
-
-        selecionado = st.selectbox(
-            f"Selecionar coluna de origem para {col_modelo}",
-            options=opcoes,
-            index=index,
-            key=f"map_{idx}_{col_modelo}",
-            label_visibility="collapsed",
+    if tipo_operacao_bling == "estoque":
+        defaults["Balanço (OBRIGATÓRIO)"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            ["quantidade_real", "quantidade", "estoque", "saldo", "balanco"],
+        )
+        defaults["Preço unitário (OBRIGATÓRIO)"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            [
+                "preco unitario (obrigatorio)",
+                "preco calculado",
+                "preco_base",
+                "preco",
+                "valor",
+            ],
+        )
+    else:
+        defaults["Descrição Curta"] = defaults.get("Descrição", "")
+        defaults["Preço de venda"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            [
+                "preco de venda",
+                "preco calculado",
+                "preco_base",
+                "preco",
+                "valor",
+            ],
+        )
+        defaults["GTIN/EAN"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            ["gtin", "ean", "codigo de barras"],
+        )
+        defaults["URL Imagens"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            ["url_imagens", "imagem", "imagens", "url imagem", "url imagens"],
+        )
+        defaults["Categoria"] = _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            ["categoria", "departamento", "breadcrumb", "grupo"],
         )
 
-        selecionado = _safe_str(selecionado)
-        mapping_novo[col_modelo] = selecionado
+    return defaults
 
-        if selecionado:
-            usados.add(selecionado)
 
-    df_preview = _montar_df_saida_mapeado(df_base, df_destino, mapping_novo)
-    df_preview = _aplicar_defaults_no_df(df_preview, defaults_novos)
+def _obter_mapping_atual(colunas_modelo: List[str], colunas_fonte: List[str], tipo_operacao_bling: str) -> Dict[str, str]:
+    defaults = _defaults_mapeamento(colunas_fonte, tipo_operacao_bling)
+    mapping_salvo = st.session_state.get("mapping_origem", {}) or {}
 
-    with st.expander("🔎 Preview do mapeamento", expanded=False):
-        if isinstance(df_preview, pd.DataFrame) and not df_preview.empty:
-            st.dataframe(df_preview.head(20), use_container_width=True)
+    mapping_final: Dict[str, str] = {}
+    for coluna_modelo in colunas_modelo:
+        valor = mapping_salvo.get(coluna_modelo)
+        if valor in colunas_fonte:
+            mapping_final[coluna_modelo] = valor
         else:
-            st.caption("Sem preview disponível no momento.")
+            mapping_final[coluna_modelo] = defaults.get(coluna_modelo, "")
+
+    return mapping_final
+
+
+def _montar_df_saida(
+    df_fonte: pd.DataFrame,
+    colunas_modelo: List[str],
+    mapping: Dict[str, str],
+    tipo_operacao_bling: str,
+    deposito_nome: str,
+) -> pd.DataFrame:
+    df_saida = pd.DataFrame(index=df_fonte.index)
+
+    for coluna_modelo in colunas_modelo:
+        origem = mapping.get(coluna_modelo, "")
+        if origem and origem in df_fonte.columns:
+            df_saida[coluna_modelo] = df_fonte[origem]
+        else:
+            df_saida[coluna_modelo] = ""
+
+    if "Situação" in df_saida.columns:
+        df_saida["Situação"] = df_saida["Situação"].replace("", "Ativo").fillna("Ativo")
+
+    if tipo_operacao_bling == "estoque":
+        if "Depósito (OBRIGATÓRIO)" in df_saida.columns:
+            df_saida["Depósito (OBRIGATÓRIO)"] = str(deposito_nome or "").strip()
+
+    if tipo_operacao_bling != "estoque":
+        if "Descrição Curta" in df_saida.columns:
+            vazios = df_saida["Descrição Curta"].astype(str).str.strip().isin(["", "nan", "None"])
+            if "Descrição" in df_saida.columns:
+                df_saida.loc[vazios, "Descrição Curta"] = df_saida.loc[vazios, "Descrição"]
+
+    return df_saida.fillna("")
+
+
+# ============================================================
+# RENDER
+# ============================================================
+
+def render_origem_mapeamento() -> None:
+    st.markdown("### Mapeamento de colunas")
+    st.caption("Confirme a origem de cada campo do modelo final antes do download.")
+
+    df_fonte = _get_df_fonte()
+    if not safe_df_dados(df_fonte):
+        st.warning("Nenhum dado disponível para mapear.")
+        if st.button("⬅️ Voltar para precificação", use_container_width=True):
+            sincronizar_etapa_global("precificacao")
+            st.rerun()
+        return
+
+    tipo_operacao_bling = st.session_state.get("tipo_operacao_bling", "cadastro")
+    df_modelo = _get_df_modelo()
+    colunas_modelo = list(df_modelo.columns)
+    colunas_fonte = list(df_fonte.columns)
+    deposito_nome = st.session_state.get("deposito_nome", "")
+
+    mapping_atual = _obter_mapping_atual(colunas_modelo, colunas_fonte, tipo_operacao_bling)
+
+    st.markdown("#### Defina o mapeamento")
+    opcoes_select = [""] + colunas_fonte
+    mapping_novo: Dict[str, str] = {}
+
+    usados = set()
+
+    for coluna_modelo in colunas_modelo:
+        bloqueado = False
+        ajuda = ""
+
+        if tipo_operacao_bling == "estoque" and coluna_modelo == "Depósito (OBRIGATÓRIO)":
+            bloqueado = True
+            ajuda = "Preenchido automaticamente pelo campo Nome do depósito."
+        elif coluna_modelo == "Situação":
+            bloqueado = True
+            ajuda = "Preenchido automaticamente como Ativo."
+
+        if bloqueado:
+            valor_exibido = ""
+            if coluna_modelo == "Depósito (OBRIGATÓRIO)":
+                valor_exibido = str(deposito_nome or "")
+            elif coluna_modelo == "Situação":
+                valor_exibido = "Ativo"
+
+            st.text_input(
+                f"{coluna_modelo}",
+                value=valor_exibido,
+                disabled=True,
+                help=ajuda,
+                key=f"map_lock_{coluna_modelo}",
+            )
+            mapping_novo[coluna_modelo] = ""
+            continue
+
+        sugestao = mapping_atual.get(coluna_modelo, "")
+        if sugestao not in opcoes_select:
+            sugestao = ""
+
+        idx = opcoes_select.index(sugestao) if sugestao in opcoes_select else 0
+
+        escolha = st.selectbox(
+            coluna_modelo,
+            options=opcoes_select,
+            index=idx,
+            key=f"map_{coluna_modelo}",
+        )
+
+        if escolha and escolha in usados:
+            st.warning(f"A coluna '{escolha}' já foi usada em outro campo.")
+        elif escolha:
+            usados.add(escolha)
+
+        mapping_novo[coluna_modelo] = escolha
+
+    st.session_state["mapping_origem"] = mapping_novo.copy()
+
+    df_preview = _montar_df_saida(
+        df_fonte=df_fonte,
+        colunas_modelo=colunas_modelo,
+        mapping=mapping_novo,
+        tipo_operacao_bling=tipo_operacao_bling,
+        deposito_nome=deposito_nome,
+    )
+
+    st.session_state["df_preview_mapeamento"] = df_preview.copy()
+    st.session_state["df_mapeado"] = df_preview.copy()
+    st.session_state["df_saida"] = df_preview.copy()
+
+    with st.expander("Preview do mapeamento", expanded=False):
+        st.dataframe(df_preview.head(50), use_container_width=True)
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("⬅️ Voltar", use_container_width=True, key="btn_map_voltar"):
-            st.session_state["mapping_origem_rascunho"] = dict(mapping_novo)
+        if st.button("⬅️ Voltar", use_container_width=True):
             sincronizar_etapa_global("precificacao")
             st.rerun()
 
     with col2:
-        if st.button("Salvar mapeamento", use_container_width=True, key="btn_map_salvar"):
-            _persistir_resultado(mapping_novo, defaults_novos, df_preview)
-            st.success("Mapeamento salvo.")
-            log_debug("Mapeamento salvo com sucesso.", "INFO")
-
-    with col3:
-        pode_continuar = safe_df_dados(df_preview)
-        if st.button(
-            "Continuar para preview final ➡️",
-            use_container_width=True,
-            key="btn_map_continuar",
-            type="primary",
-            disabled=not pode_continuar,
-        ):
-            _persistir_resultado(mapping_novo, defaults_novos, df_preview)
-            log_debug("Mapeamento finalizado e enviado para preview final.", "INFO")
-            sincronizar_etapa_global("final")
+        if st.button("Zerar mapeamento", use_container_width=True):
+            st.session_state["mapping_origem"] = {}
             st.rerun()
 
-    return df_preview
+    with col3:
+        pode_avancar = safe_df_dados(df_preview)
+        if st.button("Continuar ➜", use_container_width=True, disabled=not pode_avancar):
+            log_debug("Mapeamento concluído com sucesso", "INFO")
+            st.session_state["df_final"] = df_preview.copy()
+            sincronizar_etapa_global("final")
+            st.rerun()
