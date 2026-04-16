@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import io
 from pathlib import Path
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -13,7 +16,7 @@ from bling_app_zero.ui.app_helpers import (
 )
 
 EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
-EXTENSOES_MODELO = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
+EXTENSOES_MODELO = {".csv", ".xlsx", ".xls"}
 
 
 def _extensao(upload) -> str:
@@ -28,9 +31,32 @@ def _eh_excel_familia(ext: str) -> bool:
 def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
+
     base = df.copy().fillna("")
     base.columns = [str(c).strip() for c in base.columns]
     return base
+
+
+def _limpar_estado_origem() -> None:
+    for chave in [
+        "df_origem",
+        "origem_upload_nome",
+        "origem_upload_bytes",
+        "origem_upload_tipo",
+        "origem_upload_ext",
+    ]:
+        st.session_state.pop(chave, None)
+
+
+def _limpar_estado_modelo() -> None:
+    for chave in [
+        "df_modelo",
+        "modelo_upload_nome",
+        "modelo_upload_bytes",
+        "modelo_upload_tipo",
+        "modelo_upload_ext",
+    ]:
+        st.session_state.pop(chave, None)
 
 
 def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
@@ -40,7 +66,7 @@ def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
     st.session_state[f"{chave_prefixo}_ext"] = _extensao(upload)
 
 
-def _ler_tabular(upload):
+def _ler_tabular(upload) -> pd.DataFrame:
     nome = str(upload.name).lower()
 
     if nome.endswith(".csv"):
@@ -88,7 +114,7 @@ def _parse_xml_nfe(upload) -> pd.DataFrame:
         if prod is None:
             continue
 
-        def get(tag):
+        def get(tag: str) -> str:
             el = prod.find(f"nfe:{tag}", ns)
             return el.text.strip() if el is not None and el.text else ""
 
@@ -125,7 +151,7 @@ def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
         return
 
     if df.empty:
-        st.success("Modelo carregado corretamente (sem linhas, apenas estrutura).")
+        st.success("Arquivo carregado corretamente, mas sem linhas de dados.")
         preview = pd.DataFrame(columns=df.columns)
         st.dataframe(preview, use_container_width=True)
         return
@@ -133,10 +159,11 @@ def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
     st.dataframe(df.head(10), use_container_width=True)
 
 
-def _processar_upload_origem(upload):
+def _processar_upload_origem(upload) -> None:
     if upload is None:
         return
 
+    _limpar_estado_origem()
     ext = _extensao(upload)
 
     if ext not in EXTENSOES_ORIGEM:
@@ -144,7 +171,12 @@ def _processar_upload_origem(upload):
         return
 
     if _eh_excel_familia(ext):
-        df = _normalizar_df(_ler_tabular(upload))
+        try:
+            df = _normalizar_df(_ler_tabular(upload))
+        except Exception as exc:
+            st.error(f"Não foi possível ler a planilha de origem: {exc}")
+            return
+
         if not safe_df(df):
             st.error("A planilha de origem precisa ter linhas com dados.")
             return
@@ -168,33 +200,34 @@ def _processar_upload_origem(upload):
         return
 
     _guardar_upload_bruto("origem_upload", upload, "documento")
-    st.warning("PDF ainda não processado.")
+    st.warning("PDF ainda não processado automaticamente.")
 
 
-def _processar_upload_modelo(upload):
+def _processar_upload_modelo(upload) -> None:
     if upload is None:
         return
 
+    _limpar_estado_modelo()
     ext = _extensao(upload)
 
     if ext not in EXTENSOES_MODELO:
-        st.error("Arquivo modelo inválido. Envie CSV, XLSX, XLS, XML ou PDF.")
+        st.error("Arquivo modelo inválido. Envie CSV, XLSX ou XLS.")
         return
 
-    if _eh_excel_familia(ext):
+    try:
         df = _normalizar_df(_ler_tabular(upload))
-        if not safe_df_estrutura(df):
-            st.error("O modelo precisa ter pelo menos os cabeçalhos/colunas.")
-            return
-
-        st.session_state["df_modelo"] = df
-        _guardar_upload_bruto("modelo_upload", upload, "tabular")
-        st.success(f"Modelo carregado: {upload.name}")
-        _preview_dataframe(df, "Preview do modelo")
+    except Exception as exc:
+        st.error(f"Não foi possível ler o modelo: {exc}")
         return
 
-    _guardar_upload_bruto("modelo_upload", upload, "documento")
-    st.warning("Esse tipo de modelo ainda não é processado automaticamente.")
+    if not safe_df_estrutura(df):
+        st.error("O modelo precisa ter pelo menos os cabeçalhos/colunas.")
+        return
+
+    st.session_state["df_modelo"] = df
+    _guardar_upload_bruto("modelo_upload", upload, "tabular")
+    st.success(f"Modelo carregado: {upload.name}")
+    _preview_dataframe(df, "Preview do modelo")
 
 
 def _origem_pronta() -> bool:
@@ -205,28 +238,125 @@ def _modelo_pronto() -> bool:
     return safe_df_estrutura(st.session_state.get("df_modelo"))
 
 
-def render_origem_dados():
+def _render_operacao() -> None:
+    tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
+    opcoes = {
+        "Cadastro de Produtos": "cadastro",
+        "Atualização de Estoque": "estoque",
+    }
+
+    label_inicial = "Cadastro de Produtos"
+    for label, valor in opcoes.items():
+        if valor == tipo_atual:
+            label_inicial = label
+            break
+
+    escolha = st.radio(
+        "Escolha a operação",
+        options=list(opcoes.keys()),
+        index=list(opcoes.keys()).index(label_inicial),
+        horizontal=True,
+        key="tipo_operacao_visual",
+    )
+
+    st.session_state["tipo_operacao"] = opcoes[escolha]
+    st.session_state["tipo_operacao_bling"] = opcoes[escolha]
+
+
+def _render_origem_arquivo() -> None:
+    st.markdown("### Arquivo do fornecedor")
+    st.caption("Aceita CSV, XLSX, XLS, XML e PDF.")
+
+    upload_origem = st.file_uploader(
+        "Toque para selecionar o arquivo do fornecedor",
+        type=["csv", "xlsx", "xls", "xml", "pdf"],
+        key="upload_origem",
+        help="Aceita CSV, XLSX, XLS, XML e PDF.",
+    )
+
+    if upload_origem is not None:
+        _processar_upload_origem(upload_origem)
+
+
+def _registrar_origem_site(df_site: pd.DataFrame, url_site: str) -> None:
+    st.session_state["df_origem"] = df_site
+    st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
+    st.session_state["origem_upload_tipo"] = "site_gpt"
+    st.session_state["origem_upload_ext"] = "site_gpt"
+
+
+def _render_origem_site() -> None:
+    st.markdown("### Busca no site do fornecedor")
+
+    url_site = st.text_input(
+        "URL base do fornecedor",
+        value=st.session_state.get("site_fornecedor_url", ""),
+        placeholder="https://fornecedor.com.br",
+    )
+
+    st.caption(
+        "A varredura tenta buscar produtos em todo o site, sem exigir termo e sem campo de limite na tela."
+    )
+
+    st.session_state["site_fornecedor_url"] = url_site
+
+    if st.button(
+        "✨ Varrer site inteiro com GPT",
+        use_container_width=True,
+        key="btn_buscar_site_gpt",
+    ):
+        _limpar_estado_origem()
+
+        if not str(url_site).strip():
+            st.error("Informe a URL base do fornecedor.")
+            return
+
+        with st.spinner("Varrendo o site inteiro, coletando páginas e extraindo produtos..."):
+            df_site = buscar_produtos_site_com_gpt(base_url=url_site)
+
+        if not safe_df(df_site):
+            st.error("Nenhum produto foi encontrado na varredura do site.")
+            return
+
+        _registrar_origem_site(df_site, url_site)
+        st.success(f"Varredura concluída com {len(df_site)} produto(s).")
+        _preview_dataframe(df_site, "Preview da varredura do site")
+
+
+def _render_modelo() -> None:
+    st.markdown("### Modelo")
+
+    upload_modelo = st.file_uploader(
+        "Enviar modelo",
+        type=["csv", "xlsx", "xls"],
+        key="upload_modelo",
+        help="Aceita CSV, XLSX e XLS.",
+    )
+
+    if upload_modelo is not None:
+        _processar_upload_modelo(upload_modelo)
+
+
+def _render_resumo() -> None:
+    st.markdown("### Resumo")
+    st.write(f"**Origem anexada:** {st.session_state.get('origem_upload_nome', 'não enviada')}")
+    st.write(f"**Modelo anexado:** {st.session_state.get('modelo_upload_nome', 'não enviado')}")
+
+    if safe_df(st.session_state.get("df_origem")):
+        st.write(f"**Linhas origem:** {len(st.session_state['df_origem'])}")
+        st.write(f"**Colunas origem:** {len(st.session_state['df_origem'].columns)}")
+
+    if safe_df_estrutura(st.session_state.get("df_modelo")):
+        st.write(f"**Linhas modelo:** {len(st.session_state['df_modelo'])}")
+        st.write(f"**Colunas modelo:** {len(st.session_state['df_modelo'].columns)}")
+
+
+def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
 
-    col1, col2 = st.columns(2)
+    _render_operacao()
 
-    with col1:
-        if st.button("Cadastro de Produtos", use_container_width=True):
-            st.session_state["tipo_operacao"] = "cadastro"
-            st.session_state["tipo_operacao_bling"] = "cadastro"
-
-    with col2:
-        if st.button("Atualização de Estoque", use_container_width=True):
-            st.session_state["tipo_operacao"] = "estoque"
-            st.session_state["tipo_operacao_bling"] = "estoque"
-
-    if not st.session_state.get("tipo_operacao"):
-        st.info("Escolha uma operação para continuar.")
-        return
-
-    st.success(f"Operação: {st.session_state['tipo_operacao']}")
-
-    if st.session_state["tipo_operacao"] == "estoque":
+    if st.session_state.get("tipo_operacao") == "estoque":
         deposito = st.text_input(
             "Nome do depósito",
             value=st.session_state.get("deposito_nome", ""),
@@ -243,77 +373,12 @@ def render_origem_dados():
     )
 
     if modo_origem == "Arquivo do fornecedor":
-        st.markdown("### Arquivo do fornecedor")
-        st.caption("Aceita XML, PDF e família Excel.")
-
-        upload_origem = st.file_uploader(
-            "Toque para selecionar o arquivo do fornecedor",
-            key="upload_origem",
-            help="Aceita CSV, XLSX, XLS, XML e PDF",
-        )
-
-        if upload_origem is not None:
-            _processar_upload_origem(upload_origem)
-
+        _render_origem_arquivo()
     else:
-        st.markdown("### Busca no site do fornecedor")
+        _render_origem_site()
 
-        url_site = st.text_input(
-            "URL base do fornecedor",
-            value=st.session_state.get("site_fornecedor_url", ""),
-            placeholder="https://fornecedor.com.br",
-        )
-
-        st.caption(
-            "A varredura agora tenta buscar produtos em todo o site, "
-            "sem exigir termo e sem campo de limite na tela."
-        )
-
-        st.session_state["site_fornecedor_url"] = url_site
-
-        if st.button(
-            "✨ Varrer site inteiro com GPT",
-            use_container_width=True,
-            key="btn_buscar_site_gpt",
-        ):
-            if not str(url_site).strip():
-                st.error("Informe a URL base do fornecedor.")
-            else:
-                with st.spinner("Varrendo o site inteiro, coletando páginas e extraindo produtos..."):
-                    df_site = buscar_produtos_site_com_gpt(base_url=url_site)
-
-                if not safe_df(df_site):
-                    st.error("Nenhum produto foi encontrado na varredura do site.")
-                else:
-                    st.session_state["df_origem"] = df_site
-                    st.session_state["origem_upload_nome"] = "varredura_site_inteiro"
-                    st.session_state["origem_upload_tipo"] = "site_gpt"
-                    st.session_state["origem_upload_ext"] = "site_gpt"
-                    st.success(f"Varredura concluída com {len(df_site)} produto(s).")
-                    _preview_dataframe(df_site, "Preview da varredura do site")
-
-    st.markdown("### Modelo")
-
-    upload_modelo = st.file_uploader(
-        "Enviar modelo",
-        key="upload_modelo",
-        help="Aceita CSV, XLSX, XLS",
-    )
-
-    if upload_modelo:
-        _processar_upload_modelo(upload_modelo)
-
-    st.markdown("### Resumo")
-    st.write(f"**Origem anexada:** {st.session_state.get('origem_upload_nome', 'não enviada')}")
-    st.write(f"**Modelo anexado:** {st.session_state.get('modelo_upload_nome', 'não enviado')}")
-
-    if safe_df(st.session_state.get("df_origem")):
-        st.write(f"**Linhas origem:** {len(st.session_state['df_origem'])}")
-        st.write(f"**Colunas origem:** {len(st.session_state['df_origem'].columns)}")
-
-    if safe_df_estrutura(st.session_state.get("df_modelo")):
-        st.write(f"**Linhas modelo:** {len(st.session_state['df_modelo'])}")
-        st.write(f"**Colunas modelo:** {len(st.session_state['df_modelo'].columns)}")
+    _render_modelo()
+    _render_resumo()
 
     if _origem_pronta() and _modelo_pronto():
         if st.button("Continuar ➜", use_container_width=True):
