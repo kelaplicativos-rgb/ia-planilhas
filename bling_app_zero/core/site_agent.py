@@ -6,7 +6,7 @@ import re
 import time
 from collections import deque
 from typing import Any
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
@@ -238,31 +238,36 @@ def _normalizar_link_crawl(base_url: str, href: str) -> str:
     url = urljoin(base_url, href)
     url = url.split("#")[0].strip()
 
-    if "?" in url:
-        base, query = url.split("?", 1)
-        params_filtrados = []
-        for param in query.split("&"):
-            p = param.strip()
-            if not p:
-                continue
-            p_l = p.lower()
-            if p_l.startswith(
-                (
-                    "utm_",
-                    "fbclid=",
-                    "gclid=",
-                    "sort=",
-                    "order=",
-                    "dir=",
-                    "variant=",
-                    "view=",
-                )
-            ):
-                continue
-            params_filtrados.append(p)
+    parsed = urlparse(url)
+    query_items = []
 
-        query = "&".join(params_filtrados).strip("&")
-        url = f"{base}?{query}" if query else base
+    if parsed.query:
+        for chave, valor in parse_qsl(parsed.query, keep_blank_values=True):
+            chave_l = _safe_str(chave).lower()
+            if chave_l.startswith("utm_"):
+                continue
+            if chave_l in {
+                "fbclid",
+                "gclid",
+                "sort",
+                "order",
+                "dir",
+                "variant",
+                "view",
+            }:
+                continue
+            query_items.append((chave, valor))
+
+    url = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip("/"),
+            parsed.params,
+            urlencode(query_items, doseq=True),
+            "",
+        )
+    )
 
     return url.rstrip("/")
 
@@ -406,7 +411,7 @@ def _classificar_link(base_url: str, url: str, texto_ancora: str = "", bloco: st
     if any(t in bloco_n for t in ["adicionar ao carrinho", "comprar agora"]):
         score_produto += 1
 
-    if "page=" in url_n or "/page/" in url_n:
+    if "page=" in url_n or "/page/" in url_n or "p=" in url_n:
         score_categoria += 2
 
     if score_produto >= max(3, score_categoria):
@@ -418,6 +423,99 @@ def _classificar_link(base_url: str, url: str, texto_ancora: str = "", bloco: st
     return "indefinido"
 
 
+def _eh_paginacao(url: str, texto: str = "") -> bool:
+    url_n = _normalizar_texto(url)
+    texto_n = _normalizar_texto(texto)
+
+    if any(x in url_n for x in ["page=", "/page/", "?p=", "&p="]):
+        return True
+
+    if re.search(r"/page/\d+", url_n):
+        return True
+
+    if texto_n in {"1", "2", "3", "4", "5", "próxima", "proxima", "next", ">", ">>"}:
+        return True
+
+    if any(x in texto_n for x in ["próxima", "proxima", "next", "avançar", "avancar"]):
+        return True
+
+    return False
+
+
+def _extrair_produtos_de_cards(
+    base_url: str,
+    soup: BeautifulSoup,
+) -> list[str]:
+    links_produto = []
+    vistos = set()
+
+    seletores_cards = [
+        "[class*='product']",
+        "[class*='produto']",
+        "[class*='item']",
+        "[class*='card']",
+        "li",
+        "article",
+        "div",
+    ]
+
+    for seletor in seletores_cards:
+        try:
+            cards = soup.select(seletor)
+        except Exception:
+            cards = []
+
+        for card in cards:
+            try:
+                bloco = card.get_text(" ", strip=True)[:1200]
+            except Exception:
+                bloco = ""
+
+            bloco_n = _normalizar_texto(bloco)
+            if not bloco_n:
+                continue
+
+            possui_sinal_produto = False
+
+            if _extrair_preco(bloco):
+                possui_sinal_produto = True
+
+            if any(
+                x in bloco_n
+                for x in [
+                    "comprar",
+                    "carrinho",
+                    "adicionar",
+                    "parcel",
+                    "sku",
+                    "código",
+                    "codigo",
+                    "produto",
+                ]
+            ):
+                possui_sinal_produto = True
+
+            if not possui_sinal_produto:
+                continue
+
+            anchors = card.select("a[href]")
+            for a in anchors:
+                href = _safe_str(a.get("href"))
+                url = _normalizar_link_crawl(base_url, href)
+                if not _url_valida_para_crawl(base_url, url):
+                    continue
+
+                texto = " ".join(a.stripped_strings).strip()
+                classe = _classificar_link(base_url, url, texto, bloco)
+
+                if classe == "produto" or possui_sinal_produto:
+                    if url not in vistos:
+                        vistos.add(url)
+                        links_produto.append(url)
+
+    return links_produto
+
+
 def _extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[list[str], list[str]]:
     soup = BeautifulSoup(html, "lxml")
 
@@ -425,6 +523,12 @@ def _extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[li
     links_produto = []
     vistos_categoria = set()
     vistos_produto = set()
+
+    produtos_card = _extrair_produtos_de_cards(base_url, soup)
+    for url in produtos_card:
+        if url not in vistos_produto:
+            vistos_produto.add(url)
+            links_produto.append(url)
 
     for a in soup.find_all("a", href=True):
         href = _safe_str(a.get("href"))
@@ -438,13 +542,27 @@ def _extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[li
         texto = " ".join(a.stripped_strings).strip()
         bloco = ""
         try:
-            bloco = a.parent.get_text(" ", strip=True)[:800]
+            bloco = a.parent.get_text(" ", strip=True)[:1000]
         except Exception:
             bloco = texto
 
+        if _eh_paginacao(url, texto):
+            if url not in vistos_categoria:
+                vistos_categoria.add(url)
+                links_categoria.append(url)
+            continue
+
         classe = _classificar_link(base_url, url, texto, bloco)
 
-        if classe == "produto":
+        possui_sinal_produto = (
+            bool(_extrair_preco(bloco))
+            or any(
+                x in _normalizar_texto(bloco)
+                for x in ["r$", "comprar", "carrinho", "parcel", "sku", "código", "codigo"]
+            )
+        )
+
+        if classe == "produto" or possui_sinal_produto:
             if url not in vistos_produto:
                 vistos_produto.add(url)
                 links_produto.append(url)
@@ -456,10 +574,9 @@ def _extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[li
                 links_categoria.append(url)
             continue
 
-        if _url_valida_para_crawl(base_url, url):
-            if url not in vistos_categoria:
-                vistos_categoria.add(url)
-                links_categoria.append(url)
+        if url not in vistos_categoria:
+            vistos_categoria.add(url)
+            links_categoria.append(url)
 
     if url_pagina not in vistos_categoria and _classificar_link(base_url, url_pagina) == "categoria":
         links_categoria.insert(0, url_pagina)
@@ -713,9 +830,9 @@ Regras:
 def _descobrir_produtos_no_dominio(
     base_url: str,
     termo: str = "",
-    max_paginas: int = 120,
-    max_produtos: int = 1200,
-    max_segundos: int = 180,
+    max_paginas: int = 300,
+    max_produtos: int = 5000,
+    max_segundos: int = 600,
 ) -> list[str]:
     inicio = time.time()
 
@@ -770,16 +887,16 @@ def buscar_produtos_site_com_gpt(
     if not base_url:
         return pd.DataFrame()
 
-    limite_tecnico = 1200
+    limite_tecnico = 5000
     if isinstance(limite_links, int) and limite_links > 0:
-        limite_tecnico = min(max(limite_links, 1), 1200)
+        limite_tecnico = min(max(limite_links, 1), 5000)
 
     produtos = _descobrir_produtos_no_dominio(
         base_url=base_url,
         termo=termo,
-        max_paginas=120,
+        max_paginas=300,
         max_produtos=limite_tecnico,
-        max_segundos=180,
+        max_segundos=600,
     )
 
     if not produtos:
