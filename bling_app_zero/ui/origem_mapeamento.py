@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import re
@@ -8,7 +9,7 @@ import streamlit as st
 from bling_app_zero.core.gpt_mapper import sugerir_mapping_gpt
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
-    safe_df,
+    safe_df_dados,
     safe_df_estrutura,
     voltar_etapa_anterior,
 )
@@ -42,11 +43,11 @@ def _normalizar_url_imagens(valor) -> str:
 
 def _obter_df_base() -> pd.DataFrame:
     df_precificado = st.session_state.get("df_precificado")
-    if safe_df(df_precificado):
+    if safe_df_dados(df_precificado):
         return df_precificado.copy()
 
     df_origem = st.session_state.get("df_origem")
-    if safe_df(df_origem):
+    if safe_df_dados(df_origem):
         return df_origem.copy()
 
     return pd.DataFrame()
@@ -219,7 +220,7 @@ def render_origem_mapeamento() -> None:
     df_modelo = _obter_df_modelo()
     operacao = _detectar_operacao()
 
-    if not safe_df(df_base):
+    if not safe_df_dados(df_base):
         st.warning("A origem precisa estar carregada antes do mapeamento.")
         if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_mapeamento_sem_base"):
             voltar_etapa_anterior()
