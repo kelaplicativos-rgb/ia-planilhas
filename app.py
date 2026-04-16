@@ -14,12 +14,14 @@ init_app()
 
 st.set_page_config(
     page_title="IA Planilhas → Bling",
-    layout="wide"
+    layout="wide",
 )
 
 sincronizar_etapa_da_url()
 
 st.title("🚀 IA Planilhas → Bling")
+
+# Renderiza o topo UMA única vez por execução
 render_topo_navegacao()
 
 etapa = get_etapa()
@@ -33,9 +35,7 @@ elif etapa == "precificacao":
 elif etapa == "mapeamento":
     st.subheader("3. Mapeamento")
     st.info("Próxima etapa do rebuild: GPT fazendo o mapeamento.")
-    render_topo_navegacao()
 
 elif etapa == "preview_final":
     st.subheader("4. Preview Final")
     st.info("Próxima etapa do rebuild: download idêntico ao modelo.")
-    render_topo_navegacao()
