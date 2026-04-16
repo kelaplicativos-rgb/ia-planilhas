@@ -291,5 +291,5 @@ def render_ia_panel() -> None:
 
     if safe_df_dados(df_origem) or safe_df_dados(st.session_state.get("df_final")):
         _render_ctas_pos_execucao()
-
+        
 
