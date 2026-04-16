@@ -5,6 +5,7 @@ import re
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.gpt_mapper import sugerir_mapping_gpt
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     safe_df,
@@ -65,66 +66,12 @@ def _detectar_operacao() -> str:
     return operacao
 
 
-def _sugerir_coluna(coluna_modelo: str, colunas_origem: list[str]) -> str:
-    regras = {
-        "Código": ["codigo", "código", "sku", "id"],
-        "Descrição": ["descricao", "descrição", "nome", "produto", "titulo"],
-        "Descrição Curta": ["descricao curta", "descrição curta", "descricao", "descrição", "nome"],
-        "Preço de venda": ["_preco_calculado", "preço calculado", "preco calculado"],
-        "Preço unitário (OBRIGATÓRIO)": ["_preco_calculado", "preço calculado", "preco calculado"],
-        "Preço": ["_preco_calculado", "preço calculado", "preco calculado", "preco", "preço"],
-        "Valor": ["_preco_calculado", "preço calculado", "preco calculado", "valor"],
-        "GTIN/EAN": ["gtin", "ean", "codigo de barras", "código de barras"],
-        "GTIN": ["gtin", "ean", "codigo de barras", "código de barras"],
-        "URL Imagens": ["url imagens", "url_imagens", "imagem", "imagens", "image", "images"],
-        "Categoria": ["categoria", "departamento", "grupo"],
-        "Depósito (OBRIGATÓRIO)": [],
-        "Preço calculado": ["_preco_calculado", "preço calculado", "preco calculado"],
-    }
-
-    candidatos = regras.get(coluna_modelo, [])
-    mapa_origem = {_normalizar_texto(c): c for c in colunas_origem}
-
-    for candidato in candidatos:
-        candidato_n = _normalizar_texto(candidato)
-        if candidato_n in mapa_origem:
-            return mapa_origem[candidato_n]
-
-    alvo = _normalizar_texto(coluna_modelo)
-
-    for col in colunas_origem:
-        col_n = _normalizar_texto(col)
-        if alvo and alvo in col_n:
-            return col
-
-    for col in colunas_origem:
-        col_n = _normalizar_texto(col)
-        if any(_normalizar_texto(token) in col_n for token in candidatos):
-            return col
-
-    return ""
-
-
-def _sugerir_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict[str, str]:
-    colunas_origem = [str(c) for c in df_base.columns.tolist()]
-    colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
-
-    mapping = {}
-    for coluna_modelo in colunas_modelo:
-        mapping[coluna_modelo] = _sugerir_coluna(coluna_modelo, colunas_origem)
-
-    return mapping
-
-
 def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict[str, str]:
     mapping_salvo = st.session_state.get("mapping_manual", {})
     colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
 
     if not isinstance(mapping_salvo, dict) or not mapping_salvo:
-        sugerido = _sugerir_mapping(df_base, df_modelo)
-        st.session_state["mapping_sugerido"] = sugerido
-        st.session_state["mapping_manual"] = sugerido.copy()
-        return sugerido
+        mapping_salvo = {coluna: "" for coluna in colunas_modelo}
 
     for coluna in colunas_modelo:
         mapping_salvo.setdefault(coluna, "")
@@ -233,19 +180,16 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
         else:
             saida[coluna_modelo] = ""
 
-    # ===== preço calculado vai para a coluna real do modelo =====
     if "_preco_calculado" in df_base.columns:
         coluna_preco_destino = _coluna_preco_prioritaria(df_modelo, operacao)
         if coluna_preco_destino:
             saida[coluna_preco_destino] = df_base["_preco_calculado"]
 
-    # ===== estoque: depósito =====
     if operacao == "estoque":
         coluna_deposito = _coluna_deposito_modelo(df_modelo)
         if coluna_deposito:
             saida[coluna_deposito] = str(st.session_state.get("deposito_nome", "") or "").strip()
 
-    # ===== cadastro: imagens com | =====
     coluna_imagens = _coluna_imagens_modelo(df_modelo)
     if coluna_imagens and coluna_imagens in saida.columns:
         saida[coluna_imagens] = saida[coluna_imagens].apply(_normalizar_url_imagens)
@@ -266,13 +210,14 @@ def _preview_mapping(df_final: pd.DataFrame) -> None:
 
 
 def render_origem_mapeamento() -> None:
-    st.subheader("3. Mapeamento")
+    st.subheader("3. Mapeamento com GPT")
     st.caption(
-        "Aqui o sistema cruza a planilha de origem com o modelo anexado e monta a saída final."
+        "Aqui o sistema usa GPT para sugerir o mapeamento entre a origem e o modelo anexado."
     )
 
     df_base = _obter_df_base()
     df_modelo = _obter_df_modelo()
+    operacao = _detectar_operacao()
 
     if not safe_df(df_base):
         st.warning("A origem precisa estar carregada antes do mapeamento.")
@@ -286,7 +231,29 @@ def render_origem_mapeamento() -> None:
             voltar_etapa_anterior()
         return
 
-    mapping = _inicializar_mapping(df_base, df_modelo)
+    _inicializar_mapping(df_base, df_modelo)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("✨ Sugerir com GPT", use_container_width=True, key="btn_sugerir_gpt"):
+            resultado = sugerir_mapping_gpt(
+                df_base=df_base,
+                df_modelo=df_modelo,
+                operacao=operacao,
+            )
+            st.session_state["mapping_manual"] = resultado["mapping"]
+            st.session_state["mapping_sugerido"] = resultado["mapping"]
+
+            if resultado["provider"] == "openai":
+                st.success(f"Mapeamento sugerido com GPT ({resultado['model']}).")
+            else:
+                st.warning(resultado["erro"] or "GPT não configurado. Usando fallback local.")
+
+    with col2:
+        if st.button("🧹 Zerar mapeamento", use_container_width=True, key="btn_zerar_mapeamento"):
+            st.session_state["mapping_manual"] = {str(c): "" for c in df_modelo.columns.tolist()}
+            st.rerun()
 
     st.markdown("### Revisão do mapeamento")
 
