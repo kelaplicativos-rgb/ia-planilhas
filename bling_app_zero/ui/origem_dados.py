@@ -1,4 +1,3 @@
-
 import io
 from pathlib import Path
 
@@ -7,6 +6,7 @@ import streamlit as st
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     safe_df,
+    safe_df_estrutura,
 )
 
 
@@ -31,9 +31,19 @@ def _ler_tabular(upload):
 
         for sep in [";", ",", "\t", "|"]:
             try:
-                df = pd.read_csv(io.BytesIO(bruto), sep=sep, dtype=str).fillna("")
-                if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
+                df = pd.read_csv(
+                    io.BytesIO(bruto),
+                    sep=sep,
+                    dtype=str,
+                    encoding="utf-8",
+                    engine="python",
+                ).fillna("")
+
+                df.columns = [str(c).strip() for c in df.columns if str(c).strip()]
+
+                if len(df.columns) > 0:
                     return df
+
             except Exception:
                 continue
 
@@ -41,7 +51,15 @@ def _ler_tabular(upload):
 
     if nome.endswith(".xlsx") or nome.endswith(".xls"):
         try:
-            return pd.read_excel(upload, dtype=str).fillna("")
+            df = pd.read_excel(upload, dtype=str).fillna("")
+
+            df.columns = [str(c).strip() for c in df.columns if str(c).strip()]
+            df = df.loc[:, df.columns.notna()]
+            df = df[[c for c in df.columns if str(c).strip() != ""]]
+
+            if len(df.columns) > 0:
+                return df
+
         except Exception as e:
             raise ValueError(f"Não foi possível ler o Excel: {e}")
 
@@ -50,9 +68,6 @@ def _ler_tabular(upload):
 
 def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
-        return pd.DataFrame()
-
-    if df.empty:
         return pd.DataFrame()
 
     base = df.copy().fillna("")
@@ -65,6 +80,26 @@ def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
     st.session_state[f"{chave_prefixo}_bytes"] = upload.getvalue()
     st.session_state[f"{chave_prefixo}_tipo"] = tipo
     st.session_state[f"{chave_prefixo}_ext"] = _extensao(upload)
+
+
+def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
+    st.markdown(f"**{titulo}**")
+
+    if not isinstance(df, pd.DataFrame):
+        st.info("Arquivo sem estrutura tabular.")
+        return
+
+    if len(df.columns) == 0:
+        st.error("Nenhuma coluna encontrada no arquivo.")
+        return
+
+    if df.empty:
+        st.success("Modelo carregado corretamente (sem linhas, apenas estrutura).")
+        preview = pd.DataFrame(columns=df.columns)
+        st.dataframe(preview, use_container_width=True)
+        return
+
+    st.dataframe(df.head(10), use_container_width=True)
 
 
 def _processar_upload_origem(upload):
@@ -85,14 +120,14 @@ def _processar_upload_origem(upload):
             return
 
         if not safe_df(df):
-            st.error("A planilha de origem foi lida, mas está vazia.")
+            st.error("A planilha de origem precisa ter linhas com dados.")
             return
 
         st.session_state["df_origem"] = df
         _guardar_upload_bruto("origem_upload", upload, "tabular")
 
         st.success(f"Arquivo de origem carregado: {upload.name}")
-        st.dataframe(df.head(10), use_container_width=True)
+        _preview_dataframe(df, "Preview da origem")
         return
 
     _guardar_upload_bruto("origem_upload", upload, "documento")
@@ -123,11 +158,15 @@ def _processar_upload_modelo(upload):
             st.error(str(e))
             return
 
+        if not safe_df_estrutura(df):
+            st.error("O modelo precisa ter pelo menos os cabeçalhos/colunas.")
+            return
+
         st.session_state["df_modelo"] = df
         _guardar_upload_bruto("modelo_upload", upload, "tabular")
 
         st.success(f"Modelo carregado: {upload.name}")
-        st.dataframe(df.head(10), use_container_width=True)
+        _preview_dataframe(df, "Preview do modelo")
         return
 
     _guardar_upload_bruto("modelo_upload", upload, "documento")
@@ -150,7 +189,7 @@ def _origem_pronta() -> bool:
 
 
 def _modelo_pronto() -> bool:
-    if safe_df(st.session_state.get("df_modelo")):
+    if safe_df_estrutura(st.session_state.get("df_modelo")):
         return True
 
     ext = st.session_state.get("modelo_upload_ext")
@@ -184,7 +223,7 @@ def render_origem_dados():
         deposito = st.text_input(
             "Nome do depósito",
             value=st.session_state.get("deposito_nome", ""),
-            placeholder="Digite o nome do depósito"
+            placeholder="Digite o nome do depósito",
         )
         st.session_state["deposito_nome"] = deposito
 
@@ -194,7 +233,7 @@ def render_origem_dados():
     upload_origem = st.file_uploader(
         "Toque para selecionar o arquivo do fornecedor",
         key="upload_origem",
-        help="Aceita CSV, XLSX, XLS, XML e PDF"
+        help="Aceita CSV, XLSX, XLS, XML e PDF",
     )
 
     if upload_origem is not None:
@@ -206,7 +245,7 @@ def render_origem_dados():
     upload_modelo = st.file_uploader(
         "Toque para selecionar o arquivo modelo",
         key="upload_modelo",
-        help="Aceita CSV, XLSX, XLS, XML e PDF"
+        help="Aceita CSV, XLSX, XLS, XML e PDF",
     )
 
     if upload_modelo is not None:
@@ -226,7 +265,7 @@ def render_origem_dados():
         st.write(f"**Linhas origem:** {len(st.session_state['df_origem'])}")
         st.write(f"**Colunas origem:** {len(st.session_state['df_origem'].columns)}")
 
-    if safe_df(st.session_state.get("df_modelo")):
+    if safe_df_estrutura(st.session_state.get("df_modelo")):
         st.write(f"**Linhas modelo:** {len(st.session_state['df_modelo'])}")
         st.write(f"**Colunas modelo:** {len(st.session_state['df_modelo'].columns)}")
 
@@ -237,4 +276,3 @@ def render_origem_dados():
             ir_para_etapa("precificacao")
     else:
         st.info("Envie o arquivo do fornecedor e o arquivo modelo para continuar.")
-
