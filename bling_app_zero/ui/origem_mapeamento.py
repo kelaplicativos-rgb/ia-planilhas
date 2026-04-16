@@ -25,7 +25,7 @@ def _normalizar_url_imagens(valor) -> str:
         return ""
 
     texto = texto.replace("\n", "|").replace("\r", "|")
-    texto = texto.replace(";", "|")
+    texto = texto.replace(";", "|").replace(",", "|")
 
     partes = [p.strip() for p in texto.split("|") if p.strip()]
     vistos = set()
@@ -66,14 +66,14 @@ def _detectar_operacao() -> str:
 
 
 def _sugerir_coluna(coluna_modelo: str, colunas_origem: list[str]) -> str:
-    alvo = _normalizar_texto(coluna_modelo)
-
     regras = {
         "Código": ["codigo", "código", "sku", "id"],
         "Descrição": ["descricao", "descrição", "nome", "produto", "titulo"],
         "Descrição Curta": ["descricao curta", "descrição curta", "descricao", "descrição", "nome"],
         "Preço de venda": ["_preco_calculado", "preço calculado", "preco calculado"],
         "Preço unitário (OBRIGATÓRIO)": ["_preco_calculado", "preço calculado", "preco calculado"],
+        "Preço": ["_preco_calculado", "preço calculado", "preco calculado", "preco", "preço"],
+        "Valor": ["_preco_calculado", "preço calculado", "preco calculado", "valor"],
         "GTIN/EAN": ["gtin", "ean", "codigo de barras", "código de barras"],
         "GTIN": ["gtin", "ean", "codigo de barras", "código de barras"],
         "URL Imagens": ["url imagens", "url_imagens", "imagem", "imagens", "image", "images"],
@@ -83,13 +83,14 @@ def _sugerir_coluna(coluna_modelo: str, colunas_origem: list[str]) -> str:
     }
 
     candidatos = regras.get(coluna_modelo, [])
-
     mapa_origem = {_normalizar_texto(c): c for c in colunas_origem}
 
     for candidato in candidatos:
         candidato_n = _normalizar_texto(candidato)
         if candidato_n in mapa_origem:
             return mapa_origem[candidato_n]
+
+    alvo = _normalizar_texto(coluna_modelo)
 
     for col in colunas_origem:
         col_n = _normalizar_texto(col)
@@ -98,7 +99,7 @@ def _sugerir_coluna(coluna_modelo: str, colunas_origem: list[str]) -> str:
 
     for col in colunas_origem:
         col_n = _normalizar_texto(col)
-        if any(token in col_n for token in candidatos):
+        if any(_normalizar_texto(token) in col_n for token in candidatos):
             return col
 
     return ""
@@ -132,6 +133,93 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
     return mapping_salvo
 
 
+def _colunas_preco_modelo(df_modelo: pd.DataFrame) -> list[str]:
+    candidatos = []
+    for col in df_modelo.columns:
+        nome = str(col)
+        n = _normalizar_texto(nome)
+
+        if n in {
+            "preco",
+            "preço",
+            "preco de venda",
+            "preço de venda",
+            "preco unitario obrigatorio",
+            "preço unitário obrigatório",
+            "preco unitario",
+            "preço unitário",
+            "valor",
+            "valor venda",
+            "valor unitario",
+            "valor unitário",
+        }:
+            candidatos.append(nome)
+            continue
+
+        if "preco" in n or "preço" in n or "valor" in n:
+            candidatos.append(nome)
+
+    vistos = set()
+    saida = []
+    for c in candidatos:
+        if c not in vistos:
+            vistos.add(c)
+            saida.append(c)
+    return saida
+
+
+def _coluna_preco_prioritaria(df_modelo: pd.DataFrame, operacao: str) -> str:
+    prioridades_estoque = [
+        "Preço",
+        "Preço unitário (OBRIGATÓRIO)",
+        "Preço unitário",
+        "Valor",
+    ]
+    prioridades_cadastro = [
+        "Preço de venda",
+        "Preço",
+        "Valor",
+    ]
+
+    colunas = [str(c) for c in df_modelo.columns.tolist()]
+    prioridades = prioridades_estoque if operacao == "estoque" else prioridades_cadastro
+
+    for prioridade in prioridades:
+        if prioridade in colunas:
+            return prioridade
+
+    candidatas = _colunas_preco_modelo(df_modelo)
+    return candidatas[0] if candidatas else ""
+
+
+def _coluna_imagens_modelo(df_modelo: pd.DataFrame) -> str:
+    colunas = [str(c) for c in df_modelo.columns.tolist()]
+    for prioridade in ["URL Imagens", "Url Imagens", "Imagens", "Imagem"]:
+        if prioridade in colunas:
+            return prioridade
+
+    for col in colunas:
+        n = _normalizar_texto(col)
+        if "imagem" in n or "image" in n:
+            return col
+
+    return ""
+
+
+def _coluna_deposito_modelo(df_modelo: pd.DataFrame) -> str:
+    colunas = [str(c) for c in df_modelo.columns.tolist()]
+    for prioridade in ["Depósito (OBRIGATÓRIO)", "Depósito", "Deposito (OBRIGATÓRIO)", "Deposito"]:
+        if prioridade in colunas:
+            return prioridade
+
+    for col in colunas:
+        n = _normalizar_texto(col)
+        if "deposito" in n or "depósito" in n:
+            return col
+
+    return ""
+
+
 def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
     operacao = _detectar_operacao()
     saida = pd.DataFrame(index=df_base.index)
@@ -145,21 +233,22 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
         else:
             saida[coluna_modelo] = ""
 
+    # ===== preço calculado vai para a coluna real do modelo =====
+    if "_preco_calculado" in df_base.columns:
+        coluna_preco_destino = _coluna_preco_prioritaria(df_modelo, operacao)
+        if coluna_preco_destino:
+            saida[coluna_preco_destino] = df_base["_preco_calculado"]
+
+    # ===== estoque: depósito =====
     if operacao == "estoque":
-        if "Preço unitário (OBRIGATÓRIO)" in saida.columns:
-            if "_preco_calculado" in df_base.columns:
-                saida["Preço unitário (OBRIGATÓRIO)"] = df_base["_preco_calculado"]
+        coluna_deposito = _coluna_deposito_modelo(df_modelo)
+        if coluna_deposito:
+            saida[coluna_deposito] = str(st.session_state.get("deposito_nome", "") or "").strip()
 
-        if "Depósito (OBRIGATÓRIO)" in saida.columns:
-            saida["Depósito (OBRIGATÓRIO)"] = str(st.session_state.get("deposito_nome", "") or "").strip()
-
-    if operacao == "cadastro":
-        if "Preço de venda" in saida.columns:
-            if "_preco_calculado" in df_base.columns:
-                saida["Preço de venda"] = df_base["_preco_calculado"]
-
-        if "URL Imagens" in saida.columns:
-            saida["URL Imagens"] = saida["URL Imagens"].apply(_normalizar_url_imagens)
+    # ===== cadastro: imagens com | =====
+    coluna_imagens = _coluna_imagens_modelo(df_modelo)
+    if coluna_imagens and coluna_imagens in saida.columns:
+        saida[coluna_imagens] = saida[coluna_imagens].apply(_normalizar_url_imagens)
 
     return saida.fillna("")
 
