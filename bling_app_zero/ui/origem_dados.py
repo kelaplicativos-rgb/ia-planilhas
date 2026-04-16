@@ -45,20 +45,23 @@ def _ler_tabular(upload):
 
     if nome.endswith(".csv"):
         bruto = upload.getvalue()
-        for sep in [";", ",", "\t", "|"]:
-            try:
-                df = pd.read_csv(
-                    io.BytesIO(bruto),
-                    sep=sep,
-                    dtype=str,
-                    encoding="utf-8",
-                    engine="python",
-                ).fillna("")
-                df.columns = [str(c).strip() for c in df.columns if str(c).strip()]
-                if len(df.columns) > 0:
-                    return df
-            except Exception:
-                continue
+
+        for encoding in ("utf-8", "utf-8-sig", "latin1"):
+            for sep in (";", ",", "\t", "|"):
+                try:
+                    df = pd.read_csv(
+                        io.BytesIO(bruto),
+                        sep=sep,
+                        dtype=str,
+                        encoding=encoding,
+                        engine="python",
+                    ).fillna("")
+                    df.columns = [str(c).strip() for c in df.columns if str(c).strip()]
+                    if len(df.columns) > 0:
+                        return df
+                except Exception:
+                    continue
+
         raise ValueError("Não foi possível ler o CSV.")
 
     if nome.endswith(".xlsx") or nome.endswith(".xls"):
@@ -190,6 +193,9 @@ def _processar_upload_modelo(upload):
         _preview_dataframe(df, "Preview do modelo")
         return
 
+    _guardar_upload_bruto("modelo_upload", upload, "documento")
+    st.warning("Esse tipo de modelo ainda não é processado automaticamente.")
+
 
 def _origem_pronta() -> bool:
     return safe_df(st.session_state.get("df_origem"))
@@ -258,46 +264,33 @@ def render_origem_dados():
             placeholder="https://fornecedor.com.br",
         )
 
-        termo_busca = st.text_input(
-            "Busca / categoria / termo",
-            value=st.session_state.get("site_fornecedor_termo", ""),
-            placeholder="Ex.: caixa de som, smartwatch, cabos",
-        )
-
-        limite_links = st.number_input(
-            "Limite inicial de produtos para varredura",
-            min_value=1,
-            max_value=100,
-            value=int(st.session_state.get("site_fornecedor_limite", 20) or 20),
-            step=1,
+        st.caption(
+            "A varredura agora tenta buscar produtos em todo o site, "
+            "sem exigir termo e sem campo de limite na tela."
         )
 
         st.session_state["site_fornecedor_url"] = url_site
-        st.session_state["site_fornecedor_termo"] = termo_busca
-        st.session_state["site_fornecedor_limite"] = int(limite_links)
 
-        if st.button("✨ Buscar produtos com GPT", use_container_width=True, key="btn_buscar_site_gpt"):
+        if st.button(
+            "✨ Varrer site inteiro com GPT",
+            use_container_width=True,
+            key="btn_buscar_site_gpt",
+        ):
             if not str(url_site).strip():
                 st.error("Informe a URL base do fornecedor.")
-            elif not str(termo_busca).strip():
-                st.error("Informe o termo/categoria da busca.")
             else:
-                with st.spinner("Buscando produtos, coletando HTML e extraindo com GPT..."):
-                    df_site = buscar_produtos_site_com_gpt(
-                        base_url=url_site,
-                        termo=termo_busca,
-                        limite_links=int(limite_links),
-                    )
+                with st.spinner("Varrendo o site inteiro, coletando páginas e extraindo produtos..."):
+                    df_site = buscar_produtos_site_com_gpt(base_url=url_site)
 
                 if not safe_df(df_site):
-                    st.error("Nenhum produto foi encontrado na busca por site.")
+                    st.error("Nenhum produto foi encontrado na varredura do site.")
                 else:
                     st.session_state["df_origem"] = df_site
-                    st.session_state["origem_upload_nome"] = f"busca_site_{termo_busca}"
+                    st.session_state["origem_upload_nome"] = "varredura_site_inteiro"
                     st.session_state["origem_upload_tipo"] = "site_gpt"
                     st.session_state["origem_upload_ext"] = "site_gpt"
-                    st.success(f"Busca concluída com {len(df_site)} produto(s).")
-                    _preview_dataframe(df_site, "Preview da busca por site")
+                    st.success(f"Varredura concluída com {len(df_site)} produto(s).")
+                    _preview_dataframe(df_site, "Preview da varredura do site")
 
     st.markdown("### Modelo")
 
