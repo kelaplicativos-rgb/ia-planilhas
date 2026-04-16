@@ -4,7 +4,8 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.agent.agent_memory import get_agent_snapshot, get_agent_state
-from bling_app_zero.ui.app_helpers import in0o.ui.ia_panel import render_ia_panel
+from bling_app_zero.ui.app_helpers import inicializar_debug, render_debug_panel
+from bling_app_zero.ui.ia_panel import render_ia_panel
 from bling_app_zero.utils.init_app import init_app_state
 
 APP_VERSION = "2.2.0"
@@ -46,8 +47,8 @@ def _contar_linhas_df(chave: str) -> int:
 
 def _limpar_estado_fluxo_manual_legado() -> None:
     """
-    Mantém o app travado no fluxo do agente, sem deixar chaves antigas
-    reativarem o pipeline manual por engano.
+    Mantém o app travado no fluxo do agente,
+    evitando que chaves antigas reativem o pipeline manual.
     """
     st.session_state["modo_execucao"] = "ia_orquestrador"
 
@@ -148,4 +149,3 @@ _limpar_estado_fluxo_manual_legado()
 _render_header()
 _render_fluxo_principal()
 render_debug_panel("🐞 Debug do sistema")
-
