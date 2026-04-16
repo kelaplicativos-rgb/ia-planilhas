@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.ui.origem_dados import render_origem_dados
-from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
+from bling_app_zero.ui.ia_panel import render_ia_panel
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.preview_final import render_preview_final
-from bling_app_zero.ui.ia_panel import render_ia_panel
 from bling_app_zero.ui.app_helpers import (
     inicializar_debug,
     log_debug,
     render_debug_panel,
+    safe_df_dados,
 )
 from bling_app_zero.utils.init_app import init_app_state
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "3.0.0"
+ETAPAS_VALIDAS = {"ia", "mapeamento", "final"}
 
 
 # ============================================================
@@ -33,8 +33,8 @@ inicializar_debug()
 if "app_version" not in st.session_state:
     st.session_state["app_version"] = APP_VERSION
 
-if "modo_execucao" not in st.session_state:
-    st.session_state["modo_execucao"] = "fluxo_manual"
+if "modo_execucao" in st.session_state:
+    st.session_state["modo_execucao"] = "ia_orquestrador"
 
 
 # ============================================================
@@ -53,11 +53,68 @@ def _safe_str(valor) -> str:
 def _contar_linhas_df(chave: str) -> int:
     df = st.session_state.get(chave)
     try:
-        if df is not None and hasattr(df, "__len__"):
+        if safe_df_dados(df):
             return len(df)
     except Exception:
         pass
     return 0
+
+
+def _normalizar_etapa(valor: str) -> str:
+    etapa = _safe_str(valor).lower() or "ia"
+
+    # compatibilidade com estados antigos do fluxo manual
+    if etapa == "origem":
+        return "ia"
+    if etapa == "precificacao":
+        return "ia"
+
+    if etapa not in ETAPAS_VALIDAS:
+        return "ia"
+    return etapa
+
+
+def _sincronizar_etapa(etapa: str) -> str:
+    etapa_ok = _normalizar_etapa(etapa)
+    st.session_state["etapa"] = etapa_ok
+    st.session_state["etapa_origem"] = etapa_ok
+    st.session_state["etapa_fluxo"] = etapa_ok
+    return etapa_ok
+
+
+def _obter_etapa() -> str:
+    for chave in ["etapa", "etapa_origem", "etapa_fluxo"]:
+        if chave in st.session_state:
+            return _normalizar_etapa(st.session_state.get(chave))
+    return "ia"
+
+
+def _tem_base_origem() -> bool:
+    return safe_df_dados(st.session_state.get("df_origem"))
+
+
+def _tem_base_mapeada() -> bool:
+    for chave in ["df_mapeado", "df_preview_mapeamento", "df_final", "df_saida"]:
+        if safe_df_dados(st.session_state.get(chave)):
+            return True
+    return False
+
+
+def _garantir_fluxo_valido() -> str:
+    etapa = _obter_etapa()
+
+    if etapa == "mapeamento" and not _tem_base_origem():
+        log_debug("Sem base para mapeamento. Retornando para IA.", "WARNING")
+        return _sincronizar_etapa("ia")
+
+    if etapa == "final" and not _tem_base_mapeada():
+        if _tem_base_origem():
+            log_debug("Sem base final, mas com origem válida. Indo para mapeamento.", "WARNING")
+            return _sincronizar_etapa("mapeamento")
+        log_debug("Sem base para etapa final. Retornando para IA.", "WARNING")
+        return _sincronizar_etapa("ia")
+
+    return etapa
 
 
 def _render_header() -> None:
@@ -75,135 +132,79 @@ def _render_header() -> None:
         st.metric("Final", _contar_linhas_df("df_final"))
 
 
-def _render_menu_superior() -> None:
-    modo_atual = _safe_str(st.session_state.get("modo_execucao") or "fluxo_manual")
+def _render_topbar_fluxo() -> None:
+    etapa_atual = _obter_etapa()
 
-    st.markdown("### Como deseja usar o sistema?")
-    col1, col2 = st.columns(2)
+    st.markdown("### Fluxo novo com IA")
 
-    with col1:
-        if st.button(
-            "Fluxo Manual",
-            use_container_width=True,
-            type="primary" if modo_atual == "fluxo_manual" else "secondary",
-            key="btn_modo_fluxo_manual",
-        ):
-            st.session_state["modo_execucao"] = "fluxo_manual"
-            log_debug("Modo alterado para fluxo manual", "INFO")
-            st.rerun()
+    col1, col2, col3 = st.columns(3)
 
-    with col2:
-        if st.button(
-            "Executar com IA",
-            use_container_width=True,
-            type="primary" if modo_atual == "ia_orquestrador" else "secondary",
-            key="btn_modo_ia_orquestrador",
-        ):
-            st.session_state["modo_execucao"] = "ia_orquestrador"
-            log_debug("Modo alterado para IA Orquestrador", "INFO")
-            st.rerun()
-
-
-def _render_etapas_fluxo() -> None:
-    etapa = _safe_str(st.session_state.get("etapa") or "origem")
-
-    st.markdown("### Etapas do fluxo")
-    col1, col2, col3, col4 = st.columns(4)
-
-    def _etapa_label(nome: str, titulo: str) -> str:
-        return f"**{titulo}**" if etapa == nome else titulo
+    def _titulo(nome: str, label: str) -> str:
+        return f"**{label}**" if etapa_atual == nome else label
 
     with col1:
-        st.markdown(_etapa_label("origem", "1. Origem"))
+        st.markdown(_titulo("ia", "1. IA Orquestrador"))
     with col2:
-        st.markdown(_etapa_label("precificacao", "2. Precificação"))
+        st.markdown(_titulo("mapeamento", "2. Mapeamento"))
     with col3:
-        st.markdown(_etapa_label("mapeamento", "3. Mapeamento"))
-    with col4:
-        st.markdown(_etapa_label("final", "4. Final"))
+        st.markdown(_titulo("final", "3. Final"))
 
 
-def _render_fluxo_manual() -> None:
-    _render_etapas_fluxo()
+def _render_navegacao() -> None:
+    etapa_atual = _obter_etapa()
 
-    etapa = _safe_str(st.session_state.get("etapa") or "origem")
-
-    if etapa == "origem":
-        render_origem_dados()
+    if etapa_atual == "ia":
         return
 
-    if etapa == "precificacao":
-        render_origem_precificacao()
+    if etapa_atual == "mapeamento":
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬅️ Voltar para IA", use_container_width=True, key="app_btn_voltar_ia"):
+                _sincronizar_etapa("ia")
+                st.rerun()
+        with col2:
+            if st.button("Ir para final ➜", use_container_width=True, key="app_btn_ir_final"):
+                _sincronizar_etapa("final")
+                st.rerun()
+        return
+
+    if etapa_atual == "final":
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="app_btn_voltar_mapeamento"):
+                _sincronizar_etapa("mapeamento")
+                st.rerun()
+        with col2:
+            if st.button("⬅️ Voltar para IA", use_container_width=True, key="app_btn_final_voltar_ia"):
+                _sincronizar_etapa("ia")
+                st.rerun()
+
+
+def _render_etapa() -> None:
+    etapa = _garantir_fluxo_valido()
+
+    if etapa == "ia":
+        render_ia_panel()
         return
 
     if etapa == "mapeamento":
         render_origem_mapeamento()
         return
 
-    if etapa == "final":
-        render_preview_final()
-        return
-
-    st.warning("Etapa inválida. O fluxo foi retornado para a origem.")
-    st.session_state["etapa"] = "origem"
-    st.session_state["etapa_origem"] = "origem"
-
-
-def _render_modo_ia() -> None:
-    render_ia_panel()
-
-    if _contar_linhas_df("df_origem") > 0:
-        st.markdown("---")
-        st.info(
-            "A base foi preparada pela IA. Revise o mapeamento e conclua no fluxo principal."
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button(
-                "Ir para origem",
-                use_container_width=True,
-                key="btn_ir_origem_pos_ia",
-            ):
-                st.session_state["etapa"] = "origem"
-                st.session_state["etapa_origem"] = "origem"
-                st.rerun()
-
-        with col2:
-            if st.button(
-                "Ir para mapeamento",
-                use_container_width=True,
-                key="btn_ir_mapeamento_pos_ia",
-            ):
-                st.session_state["etapa"] = "mapeamento"
-                st.session_state["etapa_origem"] = "mapeamento"
-                st.rerun()
-
-        with col3:
-            if st.button(
-                "Ir para preview final",
-                use_container_width=True,
-                key="btn_ir_preview_final_pos_ia",
-            ):
-                st.session_state["etapa"] = "final"
-                st.session_state["etapa_origem"] = "final"
-                st.rerun()
+    render_preview_final()
 
 
 # ============================================================
 # RENDER PRINCIPAL
 # ============================================================
 
+_sincronizar_etapa(_obter_etapa())
 _render_header()
-_render_menu_superior()
+_render_topbar_fluxo()
+_render_etapa()
 
-modo_execucao = _safe_str(st.session_state.get("modo_execucao") or "fluxo_manual")
-
-if modo_execucao == "ia_orquestrador":
-    _render_modo_ia()
-else:
-    _render_fluxo_manual()
-
+st.markdown("---")
+_render_navegacao()
 render_debug_panel("🧠 Debug do sistema")
+
 
