@@ -8,13 +8,19 @@ from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.preview_final import render_preview_final
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
+
+
+# ============================================================
+# ESTADO
+# ============================================================
 
 
 def _init_state() -> None:
     defaults = {
         "fluxo_etapa": "origem",
         "tipo_operacao": "",
+        "tipo_operacao_bling": "",
         "arquivo_origem_nome": "",
         "modelo_cadastro_nome": "",
         "modelo_estoque_nome": "",
@@ -31,6 +37,7 @@ def _init_state() -> None:
         "preco_custo_fixo": "",
         "preco_taxa_fixa": "",
     }
+
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
@@ -41,58 +48,129 @@ def _go(etapa: str) -> None:
     st.rerun()
 
 
-def _render_header() -> None:
+# ============================================================
+# VALIDADORES
+# ============================================================
+
+
+def _tem_df(valor: object) -> bool:
+    try:
+        return valor is not None and hasattr(valor, "empty") and not valor.empty
+    except Exception:
+        return False
+
+
+def _pode_ir_precificacao() -> bool:
+    return _tem_df(st.session_state.get("df_origem")) and _tem_df(st.session_state.get("df_modelo_base"))
+
+
+def _pode_ir_mapeamento() -> bool:
+    return _tem_df(st.session_state.get("df_origem_precificado"))
+
+
+def _pode_ir_preview() -> bool:
+    return _tem_df(st.session_state.get("df_final"))
+
+
+# ============================================================
+# UI BASE
+# ============================================================
+
+
+def _render_css() -> None:
     st.markdown(
         """
         <style>
-        .main .block-container {
-            padding-top: 1rem;
-            padding-bottom: 2rem;
-            max-width: 820px;
-        }
-        .bx-card {
-            border: 1px solid rgba(49,51,63,.12);
-            border-radius: 22px;
-            padding: 16px 16px 10px 16px;
-            margin-bottom: 14px;
-            background: #ffffff;
-        }
-        .bx-title {
-            font-size: 2rem;
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 6px;
-        }
-        .bx-sub {
-            color: #5f6470;
-            font-size: .95rem;
-            margin-bottom: 0;
-        }
-        .bx-stepbar {
-            display: flex;
-            gap: 8px;
-            margin: 12px 0 18px 0;
-            flex-wrap: wrap;
-        }
-        .bx-pill {
-            border-radius: 999px;
-            padding: 8px 12px;
-            font-size: .88rem;
-            font-weight: 700;
-            border: 1px solid rgba(49,51,63,.14);
-            background: #f4f6fb;
-        }
-        .bx-pill.active {
-            background: #0a2a66;
-            color: white;
-            border-color: #0a2a66;
-        }
+            .block-container {
+                padding-top: 1rem;
+                padding-bottom: 2rem;
+                max-width: 820px;
+            }
+
+            .bx-hero {
+                border: 1px solid rgba(20, 22, 28, 0.10);
+                border-radius: 22px;
+                padding: 20px 18px 18px 18px;
+                margin-bottom: 18px;
+                background: #ffffff;
+            }
+
+            .bx-title {
+                font-size: 2.10rem;
+                line-height: 1.05;
+                font-weight: 800;
+                letter-spacing: -0.02em;
+                color: #222531;
+                margin: 0 0 10px 0;
+            }
+
+            .bx-subtitle {
+                font-size: 1rem;
+                color: #5d6472;
+                margin: 0 0 18px 0;
+            }
+
+            .bx-pills {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-top: 6px;
+            }
+
+            .bx-pill {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 12px 22px;
+                border-radius: 999px;
+                border: 1px solid #d8dbe3;
+                background: #f2f3f7;
+                color: #2d3240;
+                font-size: 0.95rem;
+                font-weight: 700;
+            }
+
+            .bx-pill.active {
+                background: #0d2e6f;
+                color: #ffffff;
+                border-color: #0d2e6f;
+            }
+
+            .bx-section-title {
+                font-size: 1.05rem;
+                font-weight: 800;
+                color: #232633;
+                margin: 0 0 4px 0;
+            }
+
+            .bx-section-desc {
+                color: #707786;
+                font-size: 0.94rem;
+                margin: 0 0 12px 0;
+            }
+
+            .bx-home-hint {
+                border: 1px solid rgba(20, 22, 28, 0.10);
+                border-radius: 18px;
+                padding: 14px 14px 12px 14px;
+                margin: 8px 0 16px 0;
+                background: #fbfbfd;
+            }
+
+            div[data-testid="stButton"] > button {
+                border-radius: 14px;
+                min-height: 48px;
+                font-weight: 700;
+            }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+
+def _render_header() -> None:
     etapa = st.session_state["fluxo_etapa"]
+
     mapa = {
         "origem": "1. Origem",
         "precificacao": "2. Precificação",
@@ -103,14 +181,33 @@ def _render_header() -> None:
     pills = []
     for chave, label in mapa.items():
         css = "bx-pill active" if etapa == chave else "bx-pill"
-        pills.append(f"<div class='{css}'>{label}</div>")
+        pills.append(f'<div class="{css}">{label}</div>')
 
     st.markdown(
         f"""
-        <div class="bx-card">
+        <div class="bx-hero">
             <div class="bx-title">IA Planilhas → Bling</div>
-            <p class="bx-sub">Fluxo guiado para origem, precificação, mapeamento e preview final.</p>
-            <div class="bx-stepbar">{''.join(pills)}</div>
+            <div class="bx-subtitle">
+                Fluxo guiado para origem, precificação, mapeamento e preview final.
+            </div>
+            <div class="bx-pills">
+                {''.join(pills)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_home_hint() -> None:
+    st.markdown(
+        """
+        <div class="bx-home-hint">
+            <div class="bx-section-title">Origem dos dados</div>
+            <div class="bx-section-desc">
+                Aqui precisa aparecer o painel da IA para interpretar o pedido,
+                receber a planilha fornecedora, o modelo do Bling e preparar o mapeamento.
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -126,45 +223,83 @@ def _render_footer_nav() -> None:
         if etapa == "precificacao":
             if st.button("← Voltar para origem", use_container_width=True):
                 _go("origem")
+
         elif etapa == "mapeamento":
             if st.button("← Voltar para precificação", use_container_width=True):
                 _go("precificacao")
+
         elif etapa == "preview":
             if st.button("← Voltar para mapeamento", use_container_width=True):
                 _go("mapeamento")
 
     with col2:
         if etapa == "origem":
-            pode = st.session_state.get("df_origem") is not None and st.session_state.get("df_modelo_base") is not None
-            if st.button("Continuar para precificação →", use_container_width=True, disabled=not pode):
+            pode = _pode_ir_precificacao()
+            if st.button(
+                "Continuar para precificação →",
+                use_container_width=True,
+                disabled=not pode,
+            ):
                 _go("precificacao")
+
         elif etapa == "precificacao":
-            pode = st.session_state.get("df_origem_precificado") is not None
-            if st.button("Continuar para mapeamento →", use_container_width=True, disabled=not pode):
+            pode = _pode_ir_mapeamento()
+            if st.button(
+                "Continuar para mapeamento →",
+                use_container_width=True,
+                disabled=not pode,
+            ):
                 _go("mapeamento")
+
         elif etapa == "mapeamento":
-            pode = st.session_state.get("df_final") is not None
-            if st.button("Continuar para preview →", use_container_width=True, disabled=not pode):
+            pode = _pode_ir_preview()
+            if st.button(
+                "Continuar para preview →",
+                use_container_width=True,
+                disabled=not pode,
+            ):
                 _go("preview")
 
 
-_init_state()
-st.set_page_config(page_title="IA Planilhas → Bling", layout="centered")
-_render_header()
+# ============================================================
+# RENDER PRINCIPAL
+# ============================================================
 
-etapa = st.session_state["fluxo_etapa"]
 
-if etapa == "origem":
-    render_ia_panel()
-elif etapa == "precificacao":
-    render_origem_precificacao()
-elif etapa == "mapeamento":
-    render_origem_mapeamento()
-else:
+def _render_current_step() -> None:
+    etapa = st.session_state["fluxo_etapa"]
+
+    if etapa == "origem":
+        _render_home_hint()
+        render_ia_panel()
+        return
+
+    if etapa == "precificacao":
+        render_origem_precificacao()
+        return
+
+    if etapa == "mapeamento":
+        render_origem_mapeamento()
+        return
+
     render_preview_final()
 
-_render_footer_nav()
 
-st.caption(f"Versão: {APP_VERSION}")
+def main() -> None:
+    st.set_page_config(
+        page_title="IA Planilhas → Bling",
+        layout="centered",
+    )
+
+    _init_state()
+    _render_css()
+    _render_header()
+    _render_current_step()
+    _render_footer_nav()
+    st.caption(f"Versão: {APP_VERSION}")
+
+
+if __name__ == "__main__":
+    main()
 
 
