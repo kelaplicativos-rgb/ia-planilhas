@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-
 GTIN_LENGTHS_VALIDOS = {8, 12, 13, 14}
+
+
+# ============================================================
+# RESULTADO
+# ============================================================
 
 
 @dataclass
@@ -23,12 +28,17 @@ class ValidationResult:
     def to_dict(self) -> Dict[str, object]:
         return {
             "aprovado": self.aprovado,
-            "erros": self.erros,
-            "avisos": self.avisos,
-            "corrigido_automaticamente": self.corrigido_automaticamente,
+            "erros": list(self.erros),
+            "avisos": list(self.avisos),
+            "corrigido_automaticamente": list(self.corrigido_automaticamente),
             "linhas_validas": self.linhas_validas,
             "linhas_invalidas": self.linhas_invalidas,
         }
+
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 
 def _normalizar_coluna_nome(nome: object) -> str:
@@ -39,7 +49,7 @@ def _normalizar_texto(valor: object) -> str:
     if valor is None:
         return ""
     texto = str(valor).strip()
-    if texto.lower() in {"none", "nan", "nat"}:
+    if texto.lower() in {"none", "nan", "nat", "<na>"}:
         return ""
     return texto
 
@@ -50,10 +60,13 @@ def _to_numeric_safe(valor: object) -> Optional[float]:
         return None
 
     texto = texto.replace("R$", "").replace(" ", "")
+
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
     else:
         texto = texto.replace(",", ".")
+
+    texto = re.sub(r"[^0-9.\-]", "", texto)
 
     try:
         return float(texto)
@@ -68,7 +81,6 @@ def _somente_digitos(valor: object) -> str:
 def _gtin_checksum_valido(gtin: str) -> bool:
     if not gtin.isdigit():
         return False
-
     if len(gtin) not in GTIN_LENGTHS_VALIDOS:
         return False
 
@@ -92,14 +104,11 @@ def _limpar_gtin_invalido_serie(serie: pd.Series) -> Tuple[pd.Series, int]:
     def _corrigir(valor: object) -> str:
         nonlocal corrigidos
         digitos = _somente_digitos(valor)
-
         if not digitos:
             return ""
-
         if len(digitos) not in GTIN_LENGTHS_VALIDOS or not _gtin_checksum_valido(digitos):
             corrigidos += 1
             return ""
-
         return digitos
 
     return serie.apply(_corrigir), corrigidos
@@ -115,9 +124,10 @@ def _normalizar_imagens_pipe_serie(serie: pd.Series) -> Tuple[pd.Series, int]:
             return ""
 
         original = texto
-        for separador in [";", ",", "\n"]:
-            texto = texto.replace(separador, "|")
-
+        texto = texto.replace(";", "|").replace("\n", "|")
+        texto = re.sub(r",(?=https?://)", "|", texto)
+        texto = re.sub(r"\s*\|\s*", "|", texto)
+        texto = re.sub(r"\|+", "|", texto)
         partes = [parte.strip() for parte in texto.split("|") if parte.strip()]
         texto = "|".join(partes)
 
@@ -129,10 +139,67 @@ def _normalizar_imagens_pipe_serie(serie: pd.Series) -> Tuple[pd.Series, int]:
     return serie.apply(_corrigir), corrigidos
 
 
+# ============================================================
+# MODELOS ESPERADOS
+# ============================================================
+
+
+def _colunas_modelo_cadastro() -> List[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Descrição Curta",
+        "Preço de venda",
+        "GTIN/EAN",
+        "Situação",
+        "URL Imagens",
+        "Categoria",
+    ]
+
+
+def _colunas_modelo_estoque() -> List[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Depósito (OBRIGATÓRIO)",
+        "Balanço (OBRIGATÓRIO)",
+        "Preço unitário (OBRIGATÓRIO)",
+        "Situação",
+    ]
+
+
+def _campos_base_por_operacao(operacao: str) -> Tuple[List[str], List[str]]:
+    operacao_normalizada = _normalizar_texto(operacao).lower()
+
+    if operacao_normalizada == "estoque":
+        colunas = _colunas_modelo_estoque()
+        obrigatorios = [
+            "Código",
+            "Descrição",
+            "Depósito (OBRIGATÓRIO)",
+            "Balanço (OBRIGATÓRIO)",
+            "Preço unitário (OBRIGATÓRIO)",
+        ]
+        return colunas, obrigatorios
+
+    colunas = _colunas_modelo_cadastro()
+    obrigatorios = [
+        "Código",
+        "Descrição",
+        "Preço de venda",
+    ]
+    return colunas, obrigatorios
+
+
+# ============================================================
+# VALIDAÇÕES
+# ============================================================
+
+
 def _validar_colunas_esperadas(df: pd.DataFrame, colunas_esperadas: List[str]) -> List[str]:
     erros: List[str] = []
-    colunas_df = [_normalizar_coluna_nome(c) for c in df.columns]
 
+    colunas_df = [_normalizar_coluna_nome(c) for c in df.columns]
     faltantes = [c for c in colunas_esperadas if c not in colunas_df]
     extras = [c for c in colunas_df if c not in colunas_esperadas]
 
@@ -168,6 +235,7 @@ def _validar_campos_obrigatorios(
 
 def _validar_preco(df: pd.DataFrame, nome_coluna: str) -> List[str]:
     erros: List[str] = []
+
     if nome_coluna not in df.columns:
         return erros
 
@@ -185,6 +253,7 @@ def _validar_preco(df: pd.DataFrame, nome_coluna: str) -> List[str]:
 
 def _validar_estoque(df: pd.DataFrame, nome_coluna: str) -> List[str]:
     erros: List[str] = []
+
     if nome_coluna not in df.columns:
         return erros
 
@@ -206,36 +275,30 @@ def _validar_estoque(df: pd.DataFrame, nome_coluna: str) -> List[str]:
     return erros
 
 
-def _campos_base_por_operacao(operacao: str) -> Tuple[List[str], List[str]]:
-    operacao_normalizada = _normalizar_texto(operacao).lower()
+def _validar_gtin(df: pd.DataFrame, nome_coluna: str = "GTIN/EAN") -> List[str]:
+    erros: List[str] = []
 
-    if operacao_normalizada == "estoque":
-        colunas = [
-            "Código",
-            "Depósito (OBRIGATÓRIO)",
-            "Balanço (OBRIGATÓRIO)",
-            "Preço unitário (OBRIGATÓRIO)",
-        ]
-        obrigatorios = [
-            "Código",
-            "Depósito (OBRIGATÓRIO)",
-            "Balanço (OBRIGATÓRIO)",
-            "Preço unitário (OBRIGATÓRIO)",
-        ]
-        return colunas, obrigatorios
+    if nome_coluna not in df.columns:
+        return erros
 
-    colunas = [
-        "Código",
-        "Descrição",
-        "Descrição Curta",
-        "Preço de venda",
-    ]
-    obrigatorios = [
-        "Código",
-        "Descrição",
-        "Preço de venda",
-    ]
-    return colunas, obrigatorios
+    invalidos = 0
+    for valor in df[nome_coluna]:
+        texto = _normalizar_texto(valor)
+        if not texto:
+            continue
+        digitos = _somente_digitos(texto)
+        if not digitos or len(digitos) not in GTIN_LENGTHS_VALIDOS or not _gtin_checksum_valido(digitos):
+            invalidos += 1
+
+    if invalidos > 0:
+        erros.append(f"Campo '{nome_coluna}' ainda contém GTIN inválido em {invalidos} linha(s).")
+
+    return erros
+
+
+# ============================================================
+# PIPELINE DE VALIDAÇÃO
+# ============================================================
 
 
 def validar_dataframe_bling(
@@ -251,12 +314,13 @@ def validar_dataframe_bling(
         return resultado
 
     df_validado = df.copy()
+
     operacao_normalizada = _normalizar_texto(operacao).lower()
-
     colunas_base, obrigatorios_base = _campos_base_por_operacao(operacao_normalizada)
-    colunas_esperadas = colunas_modelo or colunas_base
-    campos_obrigatorios = list(obrigatorios_base)
 
+    colunas_esperadas = colunas_modelo or colunas_base
+
+    campos_obrigatorios = list(obrigatorios_base)
     if campos_obrigatorios_extras:
         for campo in campos_obrigatorios_extras:
             if campo not in campos_obrigatorios:
@@ -271,9 +335,7 @@ def validar_dataframe_bling(
 
     for coluna_imagem in ["Imagem", "Imagens", "URL Imagens", "Link Imagens"]:
         if coluna_imagem in df_validado.columns:
-            df_validado[coluna_imagem], qtd_corrigidos = _normalizar_imagens_pipe_serie(
-                df_validado[coluna_imagem]
-            )
+            df_validado[coluna_imagem], qtd_corrigidos = _normalizar_imagens_pipe_serie(df_validado[coluna_imagem])
             if qtd_corrigidos > 0:
                 resultado.corrigido_automaticamente.append(
                     f"Separador de imagens normalizado com pipe na coluna '{coluna_imagem}' em {qtd_corrigidos} linha(s)."
@@ -287,6 +349,7 @@ def validar_dataframe_bling(
         resultado.erros.extend(_validar_estoque(df_validado, "Balanço (OBRIGATÓRIO)"))
     else:
         resultado.erros.extend(_validar_preco(df_validado, "Preço de venda"))
+        resultado.erros.extend(_validar_gtin(df_validado, "GTIN/EAN"))
 
     total_linhas = len(df_validado)
 
