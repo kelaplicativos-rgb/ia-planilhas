@@ -9,6 +9,7 @@ import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
     log_debug,
+    normalizar_coluna_busca,
     safe_df_dados,
     sincronizar_etapa_global,
 )
@@ -22,6 +23,17 @@ try:
     from bling_app_zero.core.xml_nfe import converter_upload_xml_para_dataframe
 except Exception:
     converter_upload_xml_para_dataframe = None
+
+try:
+    from bling_app_zero.core.fetch_router import (
+        buscar_produtos_fornecedor,
+        listar_fornecedores_disponiveis,
+    )
+except Exception:
+    buscar_produtos_fornecedor = None
+
+    def listar_fornecedores_disponiveis() -> list[str]:
+        return []
 
 
 # ============================================================
@@ -40,42 +52,17 @@ def _safe_str(valor) -> str:
         return ""
 
 
-def _normalizar_texto_coluna(valor: str) -> str:
-    texto = _safe_str(valor).lower()
-    trocas = {
-        "ã": "a",
-        "á": "a",
-        "à": "a",
-        "â": "a",
-        "é": "e",
-        "ê": "e",
-        "í": "i",
-        "ó": "o",
-        "ô": "o",
-        "õ": "o",
-        "ú": "u",
-        "ç": "c",
-        "/": " ",
-        "-": " ",
-        "_": " ",
-        "(": " ",
-        ")": " ",
-        ".": " ",
-    }
-    for origem, destino in trocas.items():
-        texto = texto.replace(origem, destino)
-    return " ".join(texto.split())
-
-
 def _to_float_brasil(valor) -> float:
     texto = _safe_str(valor)
     if not texto:
         return 0.0
+
     texto = texto.replace("R$", "").replace(" ", "")
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
     else:
         texto = texto.replace(",", ".")
+
     try:
         return float(texto)
     except Exception:
@@ -83,8 +70,7 @@ def _to_float_brasil(valor) -> float:
 
 
 def _formatar_numero_bling(valor) -> str:
-    numero = _to_float_brasil(valor)
-    return f"{numero:.2f}".replace(".", ",")
+    return f"{_to_float_brasil(valor):.2f}".replace(".", ",")
 
 
 def _limpar_fluxo_abaixo_da_origem() -> None:
@@ -93,17 +79,21 @@ def _limpar_fluxo_abaixo_da_origem() -> None:
         "df_final",
         "df_precificado",
         "df_calc_precificado",
+        "df_mapeado",
         "df_preview_mapeamento",
+    ]:
+        st.session_state[chave] = None
+
+    for chave in [
         "mapping_origem",
         "mapping_origem_rascunho",
         "mapping_origem_defaults",
     ]:
-        if chave in st.session_state:
-            st.session_state[chave] = {} if "mapping" in chave else None
+        st.session_state[chave] = {}
 
 
 def _modelo_padrao_por_operacao(tipo_operacao_bling: str) -> pd.DataFrame:
-    if tipo_operacao_bling == "estoque":
+    if str(tipo_operacao_bling).strip().lower() == "estoque":
         colunas = [
             "Código",
             "Descrição",
@@ -178,57 +168,15 @@ def _ler_excel_upload(upload) -> Optional[pd.DataFrame]:
         return None
 
 
-def _parse_xml_basico(upload) -> pd.DataFrame:
+def _parse_xml(upload) -> pd.DataFrame:
     if converter_upload_xml_para_dataframe is not None:
         try:
             df_xml = converter_upload_xml_para_dataframe(upload)
             if isinstance(df_xml, pd.DataFrame):
                 return df_xml.fillna("")
         except Exception as e:
-            log_debug(f"Falha no parser XML do projeto: {e}", "WARNING")
-
-    try:
-        import xml.etree.ElementTree as ET
-
-        bruto = upload.getvalue()
-        root = ET.fromstring(bruto)
-
-        produtos = []
-        for elem in root.iter():
-            tag = elem.tag.lower()
-            if tag.endswith("det"):
-                atual = {
-                    "codigo_fornecedor": "",
-                    "descricao_fornecedor": "",
-                    "preco_base": "",
-                    "quantidade_real": "",
-                    "gtin": "",
-                }
-                for sub in elem.iter():
-                    stag = sub.tag.lower()
-                    texto = _safe_str(sub.text)
-
-                    if not texto:
-                        continue
-
-                    if stag.endswith("cprod") and not atual["codigo_fornecedor"]:
-                        atual["codigo_fornecedor"] = texto
-                    elif stag.endswith("xprod") and not atual["descricao_fornecedor"]:
-                        atual["descricao_fornecedor"] = texto
-                    elif stag.endswith("vuncom") and not atual["preco_base"]:
-                        atual["preco_base"] = texto
-                    elif stag.endswith("qcom") and not atual["quantidade_real"]:
-                        atual["quantidade_real"] = texto
-                    elif stag.endswith("cean") and not atual["gtin"]:
-                        atual["gtin"] = texto
-
-                if atual["descricao_fornecedor"] or atual["codigo_fornecedor"]:
-                    produtos.append(atual)
-
-        return pd.DataFrame(produtos).fillna("")
-    except Exception as e:
-        log_debug(f"Erro lendo XML básico: {e}", "ERROR")
-        return pd.DataFrame()
+            log_debug(f"Falha no parser XML: {e}", "WARNING")
+    return pd.DataFrame()
 
 
 def _ler_upload_arquivo(upload) -> Optional[pd.DataFrame]:
@@ -240,12 +188,10 @@ def _ler_upload_arquivo(upload) -> Optional[pd.DataFrame]:
     try:
         if nome.endswith(".csv"):
             return _ler_csv_upload(upload)
-
         if nome.endswith(".xlsx") or nome.endswith(".xls"):
             return _ler_excel_upload(upload)
-
         if nome.endswith(".xml"):
-            return _parse_xml_basico(upload)
+            return _parse_xml(upload)
     except Exception as e:
         log_debug(f"Erro lendo upload: {e}", "ERROR")
 
@@ -257,16 +203,17 @@ def _ler_upload_arquivo(upload) -> Optional[pd.DataFrame]:
 # ============================================================
 
 def _primeira_coluna_existente(df: pd.DataFrame, candidatos: list[str]) -> str:
-    mapa = {_normalizar_texto_coluna(col): col for col in df.columns}
+    mapa = {normalizar_coluna_busca(col): col for col in df.columns}
+
     for candidato in candidatos:
-        chave = _normalizar_texto_coluna(candidato)
+        chave = normalizar_coluna_busca(candidato)
         if chave in mapa:
             return mapa[chave]
 
     for col in df.columns:
-        ncol = _normalizar_texto_coluna(col)
+        ncol = normalizar_coluna_busca(col)
         for candidato in candidatos:
-            if _normalizar_texto_coluna(candidato) in ncol:
+            if normalizar_coluna_busca(candidato) in ncol:
                 return col
 
     return ""
@@ -281,116 +228,101 @@ def _normalizar_df_origem(df: pd.DataFrame) -> pd.DataFrame:
 
     col_codigo = _primeira_coluna_existente(
         base,
-        [
-            "codigo",
-            "codigo fornecedor",
-            "codigo_fornecedor",
-            "sku",
-            "referencia",
-            "ref",
-            "cod",
-            "cprod",
-        ],
+        ["codigo", "codigo_fornecedor", "sku", "referencia", "ref", "cprod"],
     )
     col_descricao = _primeira_coluna_existente(
         base,
-        [
-            "descricao",
-            "descricao fornecedor",
-            "descricao_fornecedor",
-            "produto",
-            "nome",
-            "xprod",
-            "titulo",
-        ],
+        ["descricao", "descricao_fornecedor", "produto", "nome", "xprod", "titulo"],
     )
     col_preco = _primeira_coluna_existente(
         base,
-        [
-            "preco",
-            "preco base",
-            "preco_base",
-            "valor",
-            "valor unitario",
-            "preco site",
-            "vuncom",
-        ],
+        ["preco", "preco_base", "valor", "valor unitario", "vUnCom", "vuncom"],
     )
     col_quantidade = _primeira_coluna_existente(
         base,
-        [
-            "quantidade",
-            "quantidade_real",
-            "estoque",
-            "saldo",
-            "qcom",
-            "balanco",
-        ],
+        ["quantidade", "quantidade_real", "estoque", "saldo", "qcom", "balanco"],
     )
     col_gtin = _primeira_coluna_existente(
         base,
-        ["gtin", "ean", "gtin/ean", "codigo de barras", "cean"]
+        ["gtin", "ean", "gtin/ean", "codigo de barras", "cean"],
     )
     col_imagem = _primeira_coluna_existente(
         base,
-        ["imagem", "imagens", "url imagem", "url imagens", "image", "images"]
+        ["url_imagens", "imagem", "imagens", "url imagem", "url imagens"],
     )
     col_categoria = _primeira_coluna_existente(
         base,
-        ["categoria", "departamento", "breadcrumb", "grupo"]
+        ["categoria", "departamento", "breadcrumb", "grupo"],
     )
 
-    df_saida = pd.DataFrame()
-    df_saida["codigo_fornecedor"] = base[col_codigo] if col_codigo else ""
-    df_saida["descricao_fornecedor"] = base[col_descricao] if col_descricao else ""
-    df_saida["preco_base"] = (
-        base[col_preco].map(_formatar_numero_bling) if col_preco else ""
-    )
-    df_saida["quantidade_real"] = base[col_quantidade] if col_quantidade else ""
-    df_saida["gtin"] = base[col_gtin] if col_gtin else ""
-    df_saida["categoria"] = base[col_categoria] if col_categoria else ""
-    df_saida["url_imagens"] = base[col_imagem] if col_imagem else ""
+    saida = pd.DataFrame(index=base.index)
+    saida["codigo_fornecedor"] = base[col_codigo] if col_codigo else ""
+    saida["descricao_fornecedor"] = base[col_descricao] if col_descricao else ""
+    saida["preco_base"] = base[col_preco].apply(_formatar_numero_bling) if col_preco else ""
+    saida["quantidade_real"] = base[col_quantidade] if col_quantidade else ""
+    saida["gtin"] = base[col_gtin] if col_gtin else ""
+    saida["categoria"] = base[col_categoria] if col_categoria else ""
+    saida["url_imagens"] = base[col_imagem] if col_imagem else ""
 
     for col in base.columns:
-        if col not in df_saida.columns:
-            df_saida[col] = base[col]
+        if col not in saida.columns:
+            saida[col] = base[col]
 
-    df_saida = df_saida.fillna("").astype(str)
-    return df_saida
+    return saida.fillna("")
 
 
 # ============================================================
-# ORIGEM POR SITE
+# FONTES EXTERNAS
 # ============================================================
 
 def _executar_busca_site(url: str, padrao_disponivel: int) -> pd.DataFrame:
     if executar_crawler_site is None:
-        log_debug(
-            "Crawler do projeto não disponível. Origem por site está em modo inativo.",
-            "WARNING",
-        )
+        log_debug("Crawler do projeto não disponível.", "WARNING")
         return pd.DataFrame()
 
-    try:
-        df = executar_crawler_site(
+    tentativas = [
+        lambda: executar_crawler_site(
             url=url,
             max_paginas=5,
             max_threads=5,
             padrao_disponivel=padrao_disponivel,
-        )
-        if isinstance(df, pd.DataFrame):
-            return df.fillna("")
-    except TypeError:
+        ),
+        lambda: executar_crawler_site(url, 5, 5, padrao_disponivel),
+    ]
+
+    for tentativa in tentativas:
         try:
-            df = executar_crawler_site(url, 5, 5, padrao_disponivel)
+            df = tentativa()
             if isinstance(df, pd.DataFrame):
                 return df.fillna("")
-        except Exception as e:
-            log_debug(f"Erro no crawler por assinatura alternativa: {e}", "ERROR")
-            return pd.DataFrame()
-    except Exception as e:
-        log_debug(f"Erro executando crawler do site: {e}", "ERROR")
+        except Exception:
+            continue
+
+    return pd.DataFrame()
+
+
+def _executar_api_fornecedor(fornecedor: str, categoria: str = "") -> pd.DataFrame:
+    if buscar_produtos_fornecedor is None:
+        log_debug("Fetch router do projeto não disponível.", "WARNING")
         return pd.DataFrame()
+
+    tentativas = [
+        lambda: buscar_produtos_fornecedor(
+            fornecedor=fornecedor,
+            categoria=categoria,
+            operacao=st.session_state.get("tipo_operacao_bling", "cadastro"),
+        ),
+        lambda: buscar_produtos_fornecedor(fornecedor, categoria),
+        lambda: buscar_produtos_fornecedor(fornecedor),
+    ]
+
+    for tentativa in tentativas:
+        try:
+            df = tentativa()
+            if isinstance(df, pd.DataFrame):
+                return df.fillna("")
+        except Exception:
+            continue
 
     return pd.DataFrame()
 
@@ -402,7 +334,7 @@ def _executar_busca_site(url: str, padrao_disponivel: int) -> pd.DataFrame:
 def render_origem_dados() -> Optional[pd.DataFrame]:
     st.markdown("### Origem dos dados")
     st.caption(
-        "Escolha a operação, carregue a base por planilha/XML/site e siga para a precificação."
+        "Escolha a operação, informe a origem e prepare a base para precificação e mapeamento."
     )
 
     operacao_atual = _safe_str(
@@ -413,18 +345,20 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
 
     if "tipo_operacao_bling" not in st.session_state:
         _set_operacao(operacao_atual)
-    if "df_modelo_operacao" not in st.session_state:
+    if "df_modelo_operacao" not in st.session_state or st.session_state.get("df_modelo_operacao") is None:
         st.session_state["df_modelo_operacao"] = _modelo_padrao_por_operacao(
             st.session_state.get("tipo_operacao_bling", "cadastro")
         )
 
     st.markdown("#### O que você quer fazer?")
     col1, col2 = st.columns(2)
+
     with col1:
         if st.button(
             "Cadastro de Produtos",
             use_container_width=True,
             type="primary" if operacao_atual == "Cadastro de Produtos" else "secondary",
+            key="origem_btn_cadastro",
         ):
             _set_operacao("Cadastro de Produtos")
             st.rerun()
@@ -434,6 +368,7 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
             "Atualização de Estoque",
             use_container_width=True,
             type="primary" if operacao_atual == "Atualização de Estoque" else "secondary",
+            key="origem_btn_estoque",
         ):
             _set_operacao("Atualização de Estoque")
             st.rerun()
@@ -443,14 +378,14 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
         deposito_digitado = st.text_input(
             "Nome do depósito",
             value=deposito_atual,
-            key="deposito_nome_input",
+            key="origem_deposito_nome",
         )
         st.session_state["deposito_nome"] = deposito_digitado
 
     st.markdown("#### Como deseja informar a origem?")
     origem_tipo = st.radio(
         "Selecione a origem",
-        ["Planilha fornecedora", "XML da nota fiscal", "Buscar pelo site"],
+        ["Planilha fornecedora", "XML da nota fiscal", "Buscar pelo site", "Fornecedor via API"],
         horizontal=False,
         key="origem_tipo_radio",
     )
@@ -481,7 +416,7 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
             if df_novo is None or not safe_df_dados(df_novo):
                 st.error("Não foi possível ler o XML enviado.")
 
-    else:
+    elif origem_tipo == "Buscar pelo site":
         url_site = st.text_input(
             "URL do site ou categoria do fornecedor",
             value=_safe_str(st.session_state.get("origem_site_url")),
@@ -495,11 +430,11 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
             min_value=0,
             value=int(st.session_state.get("padrao_disponivel_site", 10) or 10),
             step=1,
-            key="padrao_disponivel_site_input",
+            key="origem_padrao_disponivel_site",
         )
         st.session_state["padrao_disponivel_site"] = int(padrao_disponivel)
 
-        if st.button("Buscar produtos no site", use_container_width=True):
+        if st.button("Buscar produtos no site", use_container_width=True, key="origem_btn_buscar_site"):
             if not _safe_str(url_site):
                 st.warning("Informe a URL do site para iniciar a busca.")
             else:
@@ -510,11 +445,48 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
                 if df_novo is None or not safe_df_dados(df_novo):
                     st.error("Nenhum produto válido foi encontrado no site.")
 
+    else:
+        fornecedores = listar_fornecedores_disponiveis()
+        fornecedor_escolhido = st.selectbox(
+            "Selecione o fornecedor",
+            options=fornecedores if fornecedores else ["Atacadum", "Mega Center Eletrônicos", "Oba Oba Mix"],
+            key="origem_fornecedor_api",
+        )
+
+        categoria_api = st.text_input(
+            "Categoria opcional",
+            value=_safe_str(st.session_state.get("origem_categoria_api")),
+            key="origem_categoria_api_input",
+            placeholder="Ex.: smartwatch, caixas de som, cabos",
+        )
+        st.session_state["origem_categoria_api"] = categoria_api
+
+        if st.button("Buscar produtos do fornecedor", use_container_width=True, key="origem_btn_buscar_api"):
+            fornecedor_normalizado = fornecedor_escolhido
+            if "mega center" in normalizar_coluna_busca(fornecedor_escolhido):
+                fornecedor_normalizado = "mega_center"
+            elif "oba oba" in normalizar_coluna_busca(fornecedor_escolhido):
+                fornecedor_normalizado = "oba_oba_mix"
+            elif "atacadum" in normalizar_coluna_busca(fornecedor_escolhido):
+                fornecedor_normalizado = "atacadum"
+
+            with st.spinner("Buscando produtos do fornecedor..."):
+                df_api = _executar_api_fornecedor(
+                    fornecedor=fornecedor_normalizado,
+                    categoria=categoria_api,
+                )
+                df_novo = _normalizar_df_origem(df_api) if safe_df_dados(df_api) else None
+
+            if df_novo is None or not safe_df_dados(df_novo):
+                st.error("Nenhum produto válido foi encontrado no fornecedor selecionado.")
+
     if safe_df_dados(df_novo):
         st.session_state["df_origem"] = df_novo.copy()
         st.session_state["origem_tipo"] = origem_tipo
+        st.session_state["df_modelo_operacao"] = _modelo_padrao_por_operacao(
+            st.session_state.get("tipo_operacao_bling", "cadastro")
+        )
         _limpar_fluxo_abaixo_da_origem()
-        st.session_state["df_origem"] = df_novo.copy()
         log_debug(f"Origem carregada com sucesso: {origem_tipo}", "INFO")
 
     df_origem = _resolver_df_origem_atual()
@@ -531,7 +503,12 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
     st.markdown("---")
     pode_continuar = safe_df_dados(df_origem)
 
-    if st.button("Continuar ➜", use_container_width=True, disabled=not pode_continuar):
+    if st.button(
+        "Continuar ➜",
+        use_container_width=True,
+        disabled=not pode_continuar,
+        key="origem_btn_continuar",
+    ):
         st.session_state["df_saida"] = df_origem.copy()
         sincronizar_etapa_global("precificacao")
         st.rerun()
