@@ -8,6 +8,7 @@ from bling_app_zero.ui.app_helpers import (
     sincronizar_etapa_da_url,
 )
 from bling_app_zero.ui.origem_dados import render_origem_dados
+from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 
 init_app()
 
@@ -27,9 +28,7 @@ if etapa == "origem":
     render_origem_dados()
 
 elif etapa == "precificacao":
-    st.subheader("2. Precificação")
-    st.info("Próxima etapa do rebuild: calculadora estilo Olist.")
-    render_topo_navegacao()
+    render_origem_precificacao()
 
 elif etapa == "mapeamento":
     st.subheader("3. Mapeamento")
@@ -40,4 +39,3 @@ elif etapa == "preview_final":
     st.subheader("4. Preview Final")
     st.info("Próxima etapa do rebuild: download idêntico ao modelo.")
     render_topo_navegacao()
-
