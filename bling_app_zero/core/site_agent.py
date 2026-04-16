@@ -34,9 +34,11 @@ FORNECEDORES_DEDICADOS = {
             "/p/",
             "/item/",
             "/sku/",
+            "/loja/produto/",
         ],
         "categoria_hints": [
             "/categoria",
+            "/categorias",
             "/collections/",
             "/colecao/",
             "/departamento/",
@@ -50,6 +52,7 @@ FORNECEDORES_DEDICADOS = {
             ".entry-title",
             "[class*='product-title']",
             "[itemprop='name']",
+            "meta[property='og:title']",
         ],
         "price_selectors": [
             ".price",
@@ -57,11 +60,13 @@ FORNECEDORES_DEDICADOS = {
             "[class*='price']",
             "[itemprop='price']",
             "[data-price]",
+            "meta[property='product:price:amount']",
         ],
         "image_selectors": [
             "meta[property='og:image']",
             "img[src]",
             "img[data-src]",
+            "img[data-lazy-src]",
             ".product-gallery img[src]",
             ".woocommerce-product-gallery img[src]",
         ],
@@ -73,14 +78,20 @@ FORNECEDORES_DEDICADOS = {
             "/p/",
             "/item/",
             "/sku/",
+            "/celulares-smartphone/",
+            "/iphone",
+            "/xiaomi",
+            "/realme",
         ],
         "categoria_hints": [
             "/categoria",
+            "/categorias",
             "/collections/",
             "/colecao/",
             "/departamento/",
             "/busca",
             "/search",
+            "/celulares-smartphone",
         ],
         "title_selectors": [
             "h1",
@@ -89,6 +100,7 @@ FORNECEDORES_DEDICADOS = {
             ".entry-title",
             "[class*='product-title']",
             "[itemprop='name']",
+            "meta[property='og:title']",
         ],
         "price_selectors": [
             ".price",
@@ -96,11 +108,13 @@ FORNECEDORES_DEDICADOS = {
             "[class*='price']",
             "[itemprop='price']",
             "[data-price]",
+            "meta[property='product:price:amount']",
         ],
         "image_selectors": [
             "meta[property='og:image']",
             "img[src]",
             "img[data-src]",
+            "img[data-lazy-src]",
             ".product-gallery img[src]",
             ".woocommerce-product-gallery img[src]",
         ],
@@ -143,6 +157,8 @@ ROTAS_INICIAIS_PADRAO = (
     "/loja",
     "/busca",
     "/search",
+    "/catalogo",
+    "/catalog",
 )
 
 
@@ -254,6 +270,8 @@ def _normalizar_link_crawl(base_url: str, href: str) -> str:
                 "dir",
                 "variant",
                 "view",
+                "sessionid",
+                "sid",
             }:
                 continue
             query_items.append((chave, valor))
@@ -311,7 +329,7 @@ def _normalizar_imagens(valor: Any) -> str:
     if not texto:
         return ""
 
-    texto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|")
+    texto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|").replace(",", "|")
     partes = [p.strip() for p in texto.split("|") if p.strip()]
 
     vistos = set()
@@ -352,6 +370,7 @@ def _imagens_por_selectors(url_produto: str, soup: BeautifulSoup, selectors: lis
                     el.get("content")
                     or el.get("src")
                     or el.get("data-src")
+                    or el.get("data-lazy-src")
                     or el.get("data-zoom-image")
                 )
                 if not src:
@@ -367,6 +386,109 @@ def _imagens_por_selectors(url_produto: str, soup: BeautifulSoup, selectors: lis
             continue
 
     return imagens
+
+
+def _extrair_json_ld(soup: BeautifulSoup) -> list[dict]:
+    itens = []
+
+    for script in soup.select("script[type='application/ld+json']"):
+        bruto = _safe_str(script.string or script.get_text(" ", strip=True))
+        if not bruto:
+            continue
+
+        try:
+            data = json.loads(bruto)
+        except Exception:
+            continue
+
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    itens.append(item)
+        elif isinstance(data, dict):
+            itens.append(data)
+
+    return itens
+
+
+def _achatar_json_ld_produtos(itens: list[dict]) -> list[dict]:
+    produtos = []
+
+    def visitar(node: Any) -> None:
+        if isinstance(node, dict):
+            tipo = _normalizar_texto(node.get("@type"))
+            if "product" in tipo:
+                produtos.append(node)
+
+            for valor in node.values():
+                visitar(valor)
+
+        elif isinstance(node, list):
+            for item in node:
+                visitar(item)
+
+    for item in itens:
+        visitar(item)
+
+    return produtos
+
+
+def _extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
+    itens = _extrair_json_ld(soup)
+    produtos = _achatar_json_ld_produtos(itens)
+
+    if not produtos:
+        return {}
+
+    prod = produtos[0]
+
+    nome = _safe_str(prod.get("name"))
+    sku = _safe_str(prod.get("sku"))
+    gtin = (
+        _safe_str(prod.get("gtin13"))
+        or _safe_str(prod.get("gtin14"))
+        or _safe_str(prod.get("gtin12"))
+        or _safe_str(prod.get("gtin8"))
+        or _safe_str(prod.get("gtin"))
+    )
+    ncm = _safe_str(prod.get("ncm"))
+
+    categoria = _safe_str(prod.get("category"))
+    descricao = _safe_str(prod.get("description"))
+
+    imagens = prod.get("image", [])
+    if isinstance(imagens, str):
+        imagens = [imagens]
+    if not isinstance(imagens, list):
+        imagens = []
+
+    imagens = [urljoin(url_produto, _safe_str(img)) for img in imagens if _safe_str(img)]
+
+    preco = ""
+    quantidade = ""
+
+    offers = prod.get("offers")
+    if isinstance(offers, list) and offers:
+        offers = offers[0]
+
+    if isinstance(offers, dict):
+        preco = _safe_str(offers.get("price"))
+        disponibilidade = _normalizar_texto(offers.get("availability"))
+        if "outofstock" in disponibilidade:
+            quantidade = "0"
+
+    return {
+        "codigo": sku,
+        "descricao": nome,
+        "descricao_detalhada": descricao,
+        "categoria": categoria,
+        "gtin": gtin,
+        "ncm": ncm,
+        "preco": _normalizar_preco_para_planilha(preco),
+        "quantidade": quantidade,
+        "url_imagens": _normalizar_imagens("|".join(imagens[:12])),
+        "fonte_extracao": "json_ld",
+    }
 
 
 def _classificar_link(base_url: str, url: str, texto_ancora: str = "", bloco: str = "") -> str:
@@ -399,16 +521,16 @@ def _classificar_link(base_url: str, url: str, texto_ancora: str = "", bloco: st
     if re.search(r"/categoria/|/categorias/|/collections?/|/departamentos?/", url_n):
         score_categoria += 3
 
-    if any(t in texto_n for t in ["comprar", "ver produto", "detalhes", "sku", "código"]):
+    if any(t in texto_n for t in ["comprar", "ver produto", "detalhes", "sku", "código", "codigo"]):
         score_produto += 2
 
-    if any(t in texto_n for t in ["categoria", "departamento", "coleção", "produtos"]):
+    if any(t in texto_n for t in ["categoria", "departamento", "coleção", "colecao", "produtos"]):
         score_categoria += 2
 
     if _extrair_preco(bloco_n):
         score_produto += 1
 
-    if any(t in bloco_n for t in ["adicionar ao carrinho", "comprar agora"]):
+    if any(t in bloco_n for t in ["adicionar ao carrinho", "comprar agora", "parcel", "r$"]):
         score_produto += 1
 
     if "page=" in url_n or "/page/" in url_n or "p=" in url_n:
@@ -442,10 +564,7 @@ def _eh_paginacao(url: str, texto: str = "") -> bool:
     return False
 
 
-def _extrair_produtos_de_cards(
-    base_url: str,
-    soup: BeautifulSoup,
-) -> list[str]:
+def _extrair_produtos_de_cards(base_url: str, soup: BeautifulSoup) -> list[str]:
     links_produto = []
     vistos = set()
 
@@ -467,7 +586,7 @@ def _extrair_produtos_de_cards(
 
         for card in cards:
             try:
-                bloco = card.get_text(" ", strip=True)[:1200]
+                bloco = card.get_text(" ", strip=True)[:1500]
             except Exception:
                 bloco = ""
 
@@ -542,7 +661,7 @@ def _extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[li
         texto = " ".join(a.stripped_strings).strip()
         bloco = ""
         try:
-            bloco = a.parent.get_text(" ", strip=True)[:1000]
+            bloco = a.parent.get_text(" ", strip=True)[:1200]
         except Exception:
             bloco = texto
 
@@ -614,9 +733,31 @@ def _rotas_iniciais(base_url: str, termo: str = "") -> list[str]:
     return saida
 
 
+def _extrair_breadcrumb(soup: BeautifulSoup) -> str:
+    breadcrumb = []
+
+    for el in soup.select(
+        "nav a, .breadcrumb a, [class*=breadcrumb] a, ol.breadcrumb li, ul.breadcrumb li"
+    ):
+        txt = _safe_str(el.get_text(" ", strip=True))
+        if txt and txt.lower() not in {"home", "início", "inicio"}:
+            breadcrumb.append(txt)
+
+    breadcrumb_limpo = []
+    vistos = set()
+    for item in breadcrumb:
+        if item not in vistos:
+            vistos.add(item)
+            breadcrumb_limpo.append(item)
+
+    return " > ".join(breadcrumb_limpo)
+
+
 def _extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     cfg = _fornecedor_cfg(url_produto)
+
+    json_ld_data = _extrair_produto_json_ld(soup, url_produto)
 
     title_selectors = cfg.get(
         "title_selectors",
@@ -650,33 +791,38 @@ def _extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
             "meta[property='og:image']",
             "img[src]",
             "img[data-src]",
+            "img[data-lazy-src]",
             ".product-gallery img[src]",
             ".woocommerce-product-gallery img[src]",
         ],
     )
 
-    titulo = _texto_por_selectors(soup, title_selectors)
+    titulo = _texto_por_selectors(soup, title_selectors) or json_ld_data.get("descricao", "")
     texto_total = soup.get_text(" ", strip=True)
 
     preco = _texto_por_selectors(soup, price_selectors)
     if not preco:
         preco = _extrair_preco(texto_total)
+    preco = _normalizar_preco_para_planilha(preco) or json_ld_data.get("preco", "")
 
     imagens = _imagens_por_selectors(url_produto, soup, image_selectors)
+    if not imagens and json_ld_data.get("url_imagens"):
+        imagens = json_ld_data.get("url_imagens", "").split("|")
+
     if not imagens:
         for img in soup.find_all("img"):
-            src = _safe_str(img.get("src") or img.get("data-src"))
+            src = _safe_str(img.get("src") or img.get("data-src") or img.get("data-lazy-src"))
             if not src:
                 continue
             url_img = urljoin(url_produto, src)
             if _mesmo_dominio(url_produto, url_img):
                 imagens.append(url_img)
-            if len(imagens) >= 8:
+            if len(imagens) >= 12:
                 break
 
-    codigo = ""
-    gtin = ""
-    ncm = ""
+    codigo = json_ld_data.get("codigo", "")
+    gtin = json_ld_data.get("gtin", "")
+    ncm = json_ld_data.get("ncm", "")
 
     padroes_codigo = [
         r"(?:sku|c[oó]d(?:igo)?|refer[eê]ncia)[\s:\-#]*([A-Za-z0-9\-_\.\/]+)",
@@ -688,50 +834,62 @@ def _extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
         r"(?:ncm)[\s:\-#]*([0-9\.]{6,10})",
     ]
 
-    for padrao in padroes_codigo:
-        m = re.search(padrao, texto_total, flags=re.I)
-        if m:
-            codigo = _safe_str(m.group(1))
-            break
+    if not codigo:
+        for padrao in padroes_codigo:
+            m = re.search(padrao, texto_total, flags=re.I)
+            if m:
+                codigo = _safe_str(m.group(1))
+                break
 
-    for padrao in padroes_gtin:
-        m = re.search(padrao, texto_total, flags=re.I)
-        if m:
-            gtin = _safe_str(m.group(1))
-            break
+    if not gtin:
+        for padrao in padroes_gtin:
+            m = re.search(padrao, texto_total, flags=re.I)
+            if m:
+                gtin = _safe_str(m.group(1))
+                break
 
-    for padrao in padroes_ncm:
-        m = re.search(padrao, texto_total, flags=re.I)
-        if m:
-            ncm = _safe_str(m.group(1))
-            break
+    if not ncm:
+        for padrao in padroes_ncm:
+            m = re.search(padrao, texto_total, flags=re.I)
+            if m:
+                ncm = _safe_str(m.group(1))
+                break
 
-    categoria = ""
-    breadcrumb = []
-    for el in soup.select("nav a, .breadcrumb a, [class*=breadcrumb] a"):
-        txt = _safe_str(el.get_text(" ", strip=True))
-        if txt:
-            breadcrumb.append(txt)
+    categoria = _extrair_breadcrumb(soup) or json_ld_data.get("categoria", "")
 
-    if breadcrumb:
-        categoria = " > ".join(breadcrumb)
-
-    estoque = ""
+    estoque = json_ld_data.get("quantidade", "")
     texto_total_n = texto_total.lower()
-    if any(x in texto_total_n for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado"]):
+    if any(
+        x in texto_total_n
+        for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado"]
+    ):
         estoque = "0"
+
+    descricao_detalhada = (
+        json_ld_data.get("descricao_detalhada", "")
+        or _texto_por_selectors(
+            soup,
+            [
+                ".product-description",
+                ".woocommerce-product-details__short-description",
+                "[class*='description']",
+                "meta[name='description']",
+            ],
+        )
+    )
 
     return {
         "url_produto": url_produto,
         "codigo": codigo,
         "descricao": titulo,
+        "descricao_detalhada": descricao_detalhada,
         "categoria": categoria,
         "gtin": gtin,
         "ncm": ncm,
-        "preco": _normalizar_preco_para_planilha(preco),
+        "preco": preco,
         "quantidade": estoque,
-        "url_imagens": _normalizar_imagens("|".join(imagens[:8])),
-        "fonte_extracao": "heuristica",
+        "url_imagens": _normalizar_imagens("|".join(imagens[:12])),
+        "fonte_extracao": json_ld_data.get("fonte_extracao", "heuristica"),
     }
 
 
@@ -765,7 +923,7 @@ def _gpt_extrair_produto(url_produto: str, html: str, heuristica: dict) -> dict:
         return heuristica
 
     soup = BeautifulSoup(html, "lxml")
-    texto_limpo = soup.get_text(" ", strip=True)[:18000]
+    texto_limpo = soup.get_text(" ", strip=True)[:20000]
 
     prompt = f"""
 Extraia dados de produto a partir da página de fornecedor.
@@ -778,6 +936,7 @@ Responda SOMENTE em JSON válido:
 {{
   "codigo": "",
   "descricao": "",
+  "descricao_detalhada": "",
   "categoria": "",
   "gtin": "",
   "ncm": "",
@@ -789,6 +948,7 @@ Responda SOMENTE em JSON válido:
 
 Regras:
 - não invente
+- se não tiver dado, deixe vazio
 - se encontrar sem estoque, quantidade = "0"
 - url_imagens com separador |
 - preco no formato 19,90
@@ -810,6 +970,8 @@ Regras:
             "url_produto": url_produto,
             "codigo": _safe_str(data.get("codigo")) or heuristica.get("codigo", ""),
             "descricao": _safe_str(data.get("descricao")) or heuristica.get("descricao", ""),
+            "descricao_detalhada": _safe_str(data.get("descricao_detalhada"))
+            or heuristica.get("descricao_detalhada", ""),
             "categoria": _safe_str(data.get("categoria")) or heuristica.get("categoria", ""),
             "gtin": _safe_str(data.get("gtin")) or heuristica.get("gtin", ""),
             "ncm": _safe_str(data.get("ncm")) or heuristica.get("ncm", ""),
@@ -830,9 +992,9 @@ Regras:
 def _descobrir_produtos_no_dominio(
     base_url: str,
     termo: str = "",
-    max_paginas: int = 300,
-    max_produtos: int = 5000,
-    max_segundos: int = 600,
+    max_paginas: int = 400,
+    max_produtos: int = 8000,
+    max_segundos: int = 900,
 ) -> list[str]:
     inicio = time.time()
 
@@ -887,16 +1049,16 @@ def buscar_produtos_site_com_gpt(
     if not base_url:
         return pd.DataFrame()
 
-    limite_tecnico = 5000
+    limite_tecnico = 8000
     if isinstance(limite_links, int) and limite_links > 0:
-        limite_tecnico = min(max(limite_links, 1), 5000)
+        limite_tecnico = min(max(limite_links, 1), 8000)
 
     produtos = _descobrir_produtos_no_dominio(
         base_url=base_url,
         termo=termo,
-        max_paginas=300,
+        max_paginas=400,
         max_produtos=limite_tecnico,
-        max_segundos=600,
+        max_segundos=900,
     )
 
     if not produtos:
@@ -934,6 +1096,7 @@ def buscar_produtos_site_com_gpt(
         columns={
             "codigo": "Código",
             "descricao": "Descrição",
+            "descricao_detalhada": "Descrição detalhada",
             "categoria": "Categoria",
             "gtin": "GTIN",
             "ncm": "NCM",
@@ -947,6 +1110,7 @@ def buscar_produtos_site_com_gpt(
     colunas_ordenadas = [
         "Código",
         "Descrição",
+        "Descrição detalhada",
         "Categoria",
         "GTIN",
         "NCM",
