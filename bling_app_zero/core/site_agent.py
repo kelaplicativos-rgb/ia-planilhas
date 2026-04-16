@@ -1,9 +1,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
-import streamlit as st
-import time
 
 from bling_app_zero.core.site_crawler_cleaners import normalizar_url, safe_str
 from bling_app_zero.core.site_crawler_extractors import extrair_detalhes_heuristicos
@@ -13,8 +13,25 @@ from bling_app_zero.core.site_crawler_links import descobrir_produtos_no_dominio
 from bling_app_zero.core.site_crawler_validators import produto_final_valido
 
 
+def _streamlit_ctx():
+    try:
+        import streamlit as st
+
+        return st
+    except Exception:
+        return None
+
+
 def _limite_tecnico(limite_links: int | None) -> int:
-    return min(max(limite_links or 8000, 1), 8000)
+    limite_padrao = 8000
+
+    if not isinstance(limite_links, int):
+        return limite_padrao
+
+    if limite_links <= 0:
+        return limite_padrao
+
+    return min(max(limite_links, 1), limite_padrao)
 
 
 def _montar_linha_saida(final: dict) -> dict:
@@ -40,7 +57,7 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
     if "URL Produto" in df.columns:
         df = df.drop_duplicates(subset=["URL Produto"], keep="first")
 
-    colunas = [
+    colunas_ordenadas = [
         "Código",
         "Descrição",
         "Categoria",
@@ -52,18 +69,146 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
         "URL Produto",
     ]
 
-    for col in colunas:
+    for col in colunas_ordenadas:
         if col not in df.columns:
             df[col] = ""
 
-    return df[colunas].reset_index(drop=True)
+    return df[colunas_ordenadas].reset_index(drop=True)
+
+
+def _limpar_dict_debug(data: dict[str, Any]) -> dict[str, str]:
+    saida: dict[str, str] = {}
+    for chave, valor in data.items():
+        if isinstance(valor, (dict, list, tuple, set)):
+            saida[chave] = safe_str(valor)
+        else:
+            saida[chave] = safe_str(valor)
+    return saida
+
+
+def _motivo_rejeicao(final: dict) -> str:
+    descricao = safe_str(final.get("descricao"))
+    preco = safe_str(final.get("preco"))
+    codigo = safe_str(final.get("codigo"))
+    gtin = safe_str(final.get("gtin"))
+    imagens = safe_str(final.get("url_imagens"))
+    categoria = safe_str(final.get("categoria"))
+
+    if not descricao:
+        return "sem_descricao"
+
+    sinais = 0
+    if preco:
+        sinais += 1
+    if codigo:
+        sinais += 1
+    if gtin:
+        sinais += 1
+    if imagens:
+        sinais += 1
+    if categoria:
+        sinais += 1
+
+    if sinais == 0:
+        return "pagina_sem_sinais_de_produto"
+
+    return "produto_invalido_na_validacao_final"
+
+
+def _registrar_diag(
+    diagnosticos: list[dict],
+    url_produto: str,
+    heuristica: dict | None = None,
+    gpt: dict | None = None,
+    final: dict | None = None,
+    status: str = "",
+    motivo: str = "",
+    erro: str = "",
+) -> None:
+    item = {
+        "url_produto": safe_str(url_produto),
+        "status": safe_str(status),
+        "motivo": safe_str(motivo),
+        "erro": safe_str(erro),
+    }
+
+    if heuristica is not None:
+        heuristica_limpa = _limpar_dict_debug(heuristica)
+        for chave, valor in heuristica_limpa.items():
+            item[f"heuristica_{chave}"] = valor
+
+    if gpt is not None:
+        gpt_limpo = _limpar_dict_debug(gpt)
+        for chave, valor in gpt_limpo.items():
+            item[f"gpt_{chave}"] = valor
+
+    if final is not None:
+        final_limpo = _limpar_dict_debug(final)
+        for chave, valor in final_limpo.items():
+            item[f"final_{chave}"] = valor
+
+    diagnosticos.append(item)
+
+
+def _salvar_diagnostico_em_sessao(
+    diagnosticos: list[dict],
+    produtos_descobertos: list[str],
+    rows_validos: list[dict],
+) -> None:
+    st = _streamlit_ctx()
+    if st is None:
+        return
+
+    try:
+        df_diag = pd.DataFrame(diagnosticos).fillna("")
+    except Exception:
+        df_diag = pd.DataFrame()
+
+    st.session_state["site_busca_diagnostico_df"] = df_diag
+    st.session_state["site_busca_diagnostico_total_descobertos"] = len(produtos_descobertos)
+    st.session_state["site_busca_diagnostico_total_validos"] = len(rows_validos)
+    st.session_state["site_busca_diagnostico_total_rejeitados"] = max(
+        len(diagnosticos) - len(rows_validos),
+        0,
+    )
+
+
+def _atualizar_progresso(
+    i: int,
+    total: int,
+    url_produto: str,
+    fase: str,
+    progress_bar,
+    status_box,
+    contador_box,
+) -> None:
+    st = _streamlit_ctx()
+    if st is None:
+        return
+
+    if total <= 0:
+        total = 1
+
+    percentual = int((i / total) * 100)
+    percentual = max(0, min(percentual, 100))
+
+    if progress_bar is not None:
+        progress_bar.progress(percentual)
+
+    if contador_box is not None:
+        contador_box.write(f"Processando {i} de {total}")
+
+    if status_box is not None:
+        status_box.info(f"{fase}\n\n{safe_str(url_produto)}")
 
 
 def buscar_produtos_site_com_gpt(
     base_url: str,
     termo: str = "",
     limite_links: int | None = None,
+    diagnostico: bool = False,
 ) -> pd.DataFrame:
+    st = _streamlit_ctx()
 
     base_url = normalizar_url(base_url)
     termo = safe_str(termo)
@@ -73,14 +218,15 @@ def buscar_produtos_site_com_gpt(
 
     limite = _limite_tecnico(limite_links)
 
-    # -------------------------
-    # UI DE PROGRESSO
-    # -------------------------
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    contador_text = st.empty()
+    progress_bar = None
+    status_box = None
+    contador_box = None
 
-    status_text.info("🔍 Descobrindo produtos no site...")
+    if st is not None:
+        progress_bar = st.progress(0)
+        status_box = st.empty()
+        contador_box = st.empty()
+        status_box.info("🔍 Descobrindo produtos no site...")
 
     produtos = descobrir_produtos_no_dominio(
         base_url=base_url,
@@ -90,51 +236,153 @@ def buscar_produtos_site_com_gpt(
         max_segundos=900,
     )
 
-    total = len(produtos)
-
     if not produtos:
-        status_text.warning("Nenhum produto encontrado.")
+        if status_box is not None:
+            status_box.warning("Nenhum produto encontrado.")
         return pd.DataFrame()
 
     rows: list[dict] = []
     vistos: set[str] = set()
+    diagnosticos: list[dict] = []
+
+    total = len(produtos)
 
     for i, url_produto in enumerate(produtos, start=1):
-
-        percentual = int((i / total) * 100)
-        progress_bar.progress(percentual)
-
-        contador_text.write(f"Processando {i} de {total} produtos")
-
         url_produto = safe_str(url_produto)
-        if not url_produto or url_produto in vistos:
+
+        _atualizar_progresso(
+            i=i,
+            total=total,
+            url_produto=url_produto,
+            fase="🌐 Acessando página do produto...",
+            progress_bar=progress_bar,
+            status_box=status_box,
+            contador_box=contador_box,
+        )
+
+        if not url_produto:
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    status="rejeitado",
+                    motivo="url_vazia",
+                )
+            continue
+
+        if url_produto in vistos:
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    status="rejeitado",
+                    motivo="url_duplicada",
+                )
             continue
 
         try:
-            status_text.info(f"🌐 Acessando: {url_produto}")
-
             html_produto = fetch_html_retry(url_produto, tentativas=2)
-
-            status_text.info("🔎 Extraindo dados (heurística)...")
-            heuristica = extrair_detalhes_heuristicos(url_produto, html_produto)
-
-            status_text.info("🧠 Refinando com GPT...")
-            final = gpt_extrair_produto(url_produto, html_produto, heuristica)
-
-            if not produto_final_valido(final):
-                status_text.warning("⚠️ Produto ignorado (dados inválidos)")
-                continue
-
-            rows.append(_montar_linha_saida(final))
-            vistos.add(url_produto)
-
-            status_text.success("✅ Produto capturado")
-
-        except Exception as e:
-            status_text.error(f"Erro ao processar: {url_produto}")
+        except Exception as exc:
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    status="erro",
+                    motivo="erro_fetch_html",
+                    erro=str(exc),
+                )
             continue
 
-    progress_bar.progress(100)
-    status_text.success("🎉 Finalizado!")
+        _atualizar_progresso(
+            i=i,
+            total=total,
+            url_produto=url_produto,
+            fase="🔎 Extraindo dados heurísticos...",
+            progress_bar=progress_bar,
+            status_box=status_box,
+            contador_box=contador_box,
+        )
+
+        try:
+            heuristica = extrair_detalhes_heuristicos(url_produto, html_produto)
+        except Exception as exc:
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    status="erro",
+                    motivo="erro_extracao_heuristica",
+                    erro=str(exc),
+                )
+            continue
+
+        _atualizar_progresso(
+            i=i,
+            total=total,
+            url_produto=url_produto,
+            fase="🧠 Refinando com GPT...",
+            progress_bar=progress_bar,
+            status_box=status_box,
+            contador_box=contador_box,
+        )
+
+        try:
+            final = gpt_extrair_produto(url_produto, html_produto, heuristica)
+        except Exception as exc:
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    heuristica=heuristica,
+                    status="erro",
+                    motivo="erro_gpt",
+                    erro=str(exc),
+                )
+            continue
+
+        gpt_resultado = final
+
+        if not produto_final_valido(final):
+            if diagnostico:
+                _registrar_diag(
+                    diagnosticos,
+                    url_produto=url_produto,
+                    heuristica=heuristica,
+                    gpt=gpt_resultado,
+                    final=final,
+                    status="rejeitado",
+                    motivo=_motivo_rejeicao(final),
+                )
+            continue
+
+        rows.append(_montar_linha_saida(final))
+        vistos.add(url_produto)
+
+        if diagnostico:
+            _registrar_diag(
+                diagnosticos,
+                url_produto=url_produto,
+                heuristica=heuristica,
+                gpt=gpt_resultado,
+                final=final,
+                status="aprovado",
+                motivo="produto_valido",
+            )
+
+        if status_box is not None:
+            status_box.success(f"✅ Produto validado\n\n{url_produto}")
+
+    if progress_bar is not None:
+        progress_bar.progress(100)
+
+    if status_box is not None:
+        status_box.success("🎉 Busca finalizada.")
+
+    if diagnostico:
+        _salvar_diagnostico_em_sessao(
+            diagnosticos=diagnosticos,
+            produtos_descobertos=produtos,
+            rows_validos=rows,
+        )
 
     return _df_saida(rows)
