@@ -1,21 +1,193 @@
 
 from __future__ import annotations
 
-import streamlit as st
+from datetime import datetime
+import re
+import unicodedata
+from typing import Any
 
-from bling_app_zero.ui.app_dataframe import *
-from bling_app_zero.ui.app_debug import *
-from bling_app_zero.ui.app_exports import *
-from bling_app_zero.ui.app_formatters import *
-from bling_app_zero.ui.app_models import *
-from bling_app_zero.ui.app_state import *
-from bling_app_zero.ui.app_summary import *
-from bling_app_zero.ui.app_text import *
-from bling_app_zero.ui.app_validators import *
+import pandas as pd
+import streamlit as st
 
 
 # ============================================================
-# COMPATIBILIDADE DE NAVEGAÇÃO / TOPO
+# LOG / DEBUG
+# ============================================================
+
+def _agora_str() -> str:
+    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+
+def inicializar_debug() -> None:
+    if "debug_logs" not in st.session_state:
+        st.session_state["debug_logs"] = []
+
+
+def log_debug(mensagem: str, nivel: str = "INFO") -> None:
+    inicializar_debug()
+    linha = f"[{_agora_str()}] [{str(nivel).upper()}] {mensagem}"
+    st.session_state["debug_logs"].append(linha)
+
+
+def obter_logs_texto() -> str:
+    inicializar_debug()
+    return "\n".join(st.session_state.get("debug_logs", []))
+
+
+def limpar_logs() -> None:
+    st.session_state["debug_logs"] = []
+
+
+def render_debug_panel(titulo: str = "Debug do sistema") -> None:
+    inicializar_debug()
+
+    with st.expander(titulo, expanded=False):
+        logs = st.session_state.get("debug_logs", [])
+
+        if logs:
+            st.text_area(
+                "Logs",
+                value="\n".join(logs[-500:]),
+                height=250,
+                key="debug_logs_area",
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.download_button(
+                    "⬇️ Baixar log TXT",
+                    data=obter_logs_texto().encode("utf-8"),
+                    file_name="debug_ia_planilhas.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+
+            with col2:
+                if st.button("Limpar log", use_container_width=True):
+                    limpar_logs()
+                    st.rerun()
+        else:
+            st.caption("Nenhum log registrado até agora.")
+
+
+# ============================================================
+# HELPERS DE TEXTO
+# ============================================================
+
+def _valor_vazio(valor: Any) -> bool:
+    if valor is None:
+        return True
+
+    texto = str(valor).strip()
+    return texto == "" or texto.lower() in {"nan", "none", "nat", ""}
+
+
+def normalizar_texto(valor: Any) -> str:
+    if _valor_vazio(valor):
+        return ""
+    return str(valor).strip()
+
+
+def _remover_acentos(texto: str) -> str:
+    texto_nfkd = unicodedata.normalize("NFKD", texto)
+    return "".join(ch for ch in texto_nfkd if not unicodedata.combining(ch))
+
+
+def normalizar_coluna_busca(valor: Any) -> str:
+    texto = normalizar_texto(valor).lower()
+    texto = _remover_acentos(texto)
+    texto = re.sub(r"[_\-/().]+", " ", texto)
+    texto = re.sub(r"\s+", " ", texto)
+    return texto.strip()
+
+
+def safe_lower(valor: Any) -> str:
+    return normalizar_texto(valor).lower()
+
+
+# ============================================================
+# DATAFRAME / ESTADO
+# ============================================================
+
+def safe_df(df: Any) -> pd.DataFrame:
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    return pd.DataFrame()
+
+
+def safe_df_dados(df: Any) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+
+
+def safe_df_estrutura(df: Any) -> bool:
+    return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
+def garantir_dataframe(df: Any) -> pd.DataFrame:
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    return pd.DataFrame()
+
+
+# ============================================================
+# AGENT MEMORY SAFE
+# ============================================================
+
+def _agent_state_disponivel() -> bool:
+    try:
+        import bling_app_zero.agent.agent_memory  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def get_agent_state_safe():
+    if not _agent_state_disponivel():
+        return None
+
+    try:
+        from bling_app_zero.agent.agent_memory import get_agent_state
+        return get_agent_state()
+    except Exception:
+        return None
+
+
+def _safe_save_agent_state(state) -> None:
+    if state is None:
+        return
+
+    try:
+        from bling_app_zero.agent.agent_memory import save_agent_state
+        save_agent_state(state)
+    except Exception:
+        pass
+
+
+def _safe_set_agent_stage(etapa: str) -> None:
+    state = get_agent_state_safe()
+    if state is None:
+        return
+
+    etapa_limpa = normalizar_texto(etapa) or "origem"
+    state.etapa_atual = etapa_limpa
+
+    if etapa_limpa == "preview_final":
+        state.status_execucao = "final_pronto"
+    elif etapa_limpa == "mapeamento":
+        state.status_execucao = "mapeamento_pronto"
+    elif etapa_limpa == "precificacao":
+        if normalizar_texto(getattr(state, "status_execucao", "")) == "":
+            state.status_execucao = "base_pronta"
+    elif etapa_limpa == "origem":
+        if normalizar_texto(getattr(state, "status_execucao", "")) == "":
+            state.status_execucao = "idle"
+
+    _safe_save_agent_state(state)
+
+
+# ============================================================
+# NAVEGAÇÃO / ETAPAS
 # ============================================================
 
 ETAPAS_VALIDAS = [
@@ -106,6 +278,16 @@ def _registrar_historico_etapa(etapa_anterior: str, etapa_nova: str) -> None:
     st.session_state["etapa_historico"] = historico[-20:]
 
 
+def sincronizar_etapa_global(etapa: str) -> None:
+    etapa_limpa = _normalizar_etapa_fluxo(etapa)
+
+    st.session_state["etapa"] = etapa_limpa
+    st.session_state["etapa_origem"] = etapa_limpa
+    st.session_state["etapa_fluxo"] = etapa_limpa
+
+    _safe_set_agent_stage(etapa_limpa)
+
+
 def get_etapa() -> str:
     etapa = st.session_state.get("etapa", "")
     return _normalizar_etapa_fluxo(str(etapa))
@@ -181,84 +363,6 @@ def render_topo_navegacao() -> None:
                 ir_para_etapa(etapa)
 
 
-# ============================================================
-# COMPATIBILIDADE EXTRA DE ESTADO
-# ============================================================
-
-def limpar_estado_fluxo() -> None:
-    """
-    Sobrescreve a função base para também limpar o histórico de navegação
-    e manter a URL coerente com o fluxo atual.
-    """
-    _limpar_chaves_estado(
-        [
-            "df_origem",
-            "df_normalizado",
-            "df_precificado",
-            "df_mapeado",
-            "df_saida",
-            "df_final",
-            "df_calc_precificado",
-            "df_preview_mapeamento",
-            "df_modelo",
-            "origem_upload_nome",
-            "origem_upload_bytes",
-            "origem_upload_tipo",
-            "origem_upload_ext",
-            "modelo_upload_nome",
-            "modelo_upload_bytes",
-            "modelo_upload_tipo",
-            "modelo_upload_ext",
-            "site_fornecedor_url",
-            "site_fornecedor_diagnostico",
-            "site_busca_diagnostico_df",
-            "site_busca_diagnostico_total_descobertos",
-            "site_busca_diagnostico_total_validos",
-            "site_busca_diagnostico_total_rejeitados",
-            "pricing_df_preview",
-            "mapping_manual",
-            "mapping_sugerido",
-            "etapa_historico",
-        ]
-    )
-
-    for chave in [
-        "mapping_origem",
-        "mapping_origem_rascunho",
-        "mapping_origem_defaults",
-    ]:
-        st.session_state[chave] = {}
-
-    for chave in [
-        "ia_plano_preview",
-        "ia_erro_execucao",
-    ]:
-        st.session_state[chave] = ""
-
-    try:
-        from bling_app_zero.ui.app_state import _agent_state_disponivel  # type: ignore
-        if _agent_state_disponivel():
-            try:
-                from bling_app_zero.agent.agent_memory import reset_agent_state
-
-                reset_agent_state(
-                    preserve_dataframe_keys=False,
-                    preserve_operacao=False,
-                    preserve_deposito=False,
-                )
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    sincronizar_etapa_global("origem")
-    _set_query_param_etapa("origem")
-
-
-# ============================================================
-# RESUMO VISUAL EXTRA
-# ============================================================
-
 def render_topo_status_fluxo() -> None:
     etapa = get_etapa()
     operacao = normalizar_texto(st.session_state.get("tipo_operacao", "")) or "-"
@@ -277,3 +381,12 @@ def render_topo_status_fluxo() -> None:
             ]
         )
     )
+
+
+# ============================================================
+# LIMPEZA DE FLUXO
+# ============================================================
+
+def _limpar_chaves_estado(chaves: list[str]) -> None:
+    for chave
+
