@@ -23,8 +23,9 @@ from bling_app_zero.ui.app_helpers import (
     validar_df_para_download,
 )
 
+
 # ============================================================
-# HELPERS GERAIS
+# HELPERS BÁSICOS
 # ============================================================
 
 
@@ -32,22 +33,13 @@ def _safe_str(valor: Any) -> str:
     if valor is None:
         return ""
     texto = str(valor).strip()
-    if texto.lower() in {"none", "nan", "nat"}:
+    if texto.lower() in {"none", "nan", "nat", "<na>"}:
         return ""
     return texto
 
 
 def _safe_lower(valor: Any) -> str:
     return _safe_str(valor).lower()
-
-
-def _normalizar_nome_coluna(texto: str) -> str:
-    base = unicodedata.normalize("NFKD", _safe_str(texto))
-    base = "".join(ch for ch in base if not unicodedata.combining(ch))
-    base = base.lower()
-    base = re.sub(r"[^a-z0-9]+", "_", base)
-    base = re.sub(r"_+", "_", base).strip("_")
-    return base
 
 
 def _is_df_valido(df: Any) -> bool:
@@ -66,22 +58,34 @@ def _log(
             pass
 
 
+def _normalizar_nome_coluna(texto: Any) -> str:
+    base = unicodedata.normalize("NFKD", _safe_str(texto))
+    base = "".join(ch for ch in base if not unicodedata.combining(ch))
+    base = base.lower()
+    base = re.sub(r"[^a-z0-9]+", "_", base)
+    base = re.sub(r"_+", "_", base).strip("_")
+    return base
+
+
 def _deduplicar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    if not _is_df_valido(df):
+        return pd.DataFrame()
+
     base = df.copy()
-    novas = []
+    novas_colunas = []
     usados: Dict[str, int] = {}
 
     for coluna in base.columns:
         nome = _safe_str(coluna) or "coluna"
         if nome not in usados:
             usados[nome] = 0
-            novas.append(nome)
+            novas_colunas.append(nome)
             continue
 
         usados[nome] += 1
-        novas.append(f"{nome}_{usados[nome]}")
+        novas_colunas.append(f"{nome}_{usados[nome]}")
 
-    base.columns = novas
+    base.columns = novas_colunas
     return base
 
 
@@ -93,7 +97,7 @@ def _limpar_strings_df(df: pd.DataFrame) -> pd.DataFrame:
             if base[coluna].dtype == object:
                 base[coluna] = base[coluna].apply(
                     lambda v: ""
-                    if str(v).strip().lower() in {"nan", "nat", "none"}
+                    if str(v).strip().lower() in {"nan", "nat", "none", "<na>"}
                     else _safe_str(v)
                 )
         except Exception:
@@ -135,28 +139,33 @@ def detectar_origem_por_entrada(comando: str, arquivo_upload: Any = None) -> str
         nome = _safe_lower(getattr(arquivo_upload, "name", ""))
         if nome.endswith(".xml"):
             return "xml"
-        return "planilha"
+        if nome.endswith(".csv") or nome.endswith(".xlsx") or nome.endswith(".xls"):
+            return "planilha"
 
-    if "xml" in texto or "nota fiscal" in texto or "nfe" in texto:
+    if "xml" in texto or "nfe" in texto or "nota fiscal" in texto:
         return "xml"
-    if "http://" in texto or "https://" in texto or "site" in texto or "url" in texto:
+    if "site" in texto or "url" in texto or "http://" in texto or "https://" in texto:
         return "site"
-    if "fornecedor" in texto or "mega center" in texto or "atacadum" in texto or "oba oba" in texto:
+    if (
+        "fornecedor" in texto
+        or "mega center" in texto
+        or "atacadum" in texto
+        or "oba oba" in texto
+    ):
         return "fornecedor"
     return "planilha"
 
 
 def detectar_operacao(comando: str) -> str:
     texto = _safe_lower(comando)
-
     chaves_estoque = [
         "estoque",
         "atualiza estoque",
         "atualizar estoque",
         "balanco",
         "balanço",
-        "deposito",
         "depósito",
+        "deposito",
     ]
     for chave in chaves_estoque:
         if chave in texto:
@@ -167,60 +176,71 @@ def detectar_operacao(comando: str) -> str:
 def detectar_fornecedor(comando: str) -> str:
     texto = _safe_lower(comando)
 
-    mapa = {
-        "mega center": "Mega Center",
-        "megacenter": "Mega Center",
-        "atacadum": "Atacadum",
-        "oba oba": "Oba Oba Mix",
-        "obabamix": "Oba Oba Mix",
-        "mega center eletronicos": "Mega Center",
+    mapas = {
+        "Mega Center": [
+            "mega center eletrônicos",
+            "mega center eletronicos",
+            "mega center",
+            "megacenter",
+        ],
+        "Atacadum": ["atacadum"],
+        "Oba Oba Mix": ["oba oba mix", "obaoba mix", "oba oba"],
     }
-    for chave, valor in mapa.items():
-        if chave in texto:
-            return valor
+
+    for nome, apelidos in mapas.items():
+        if any(apelido in texto for apelido in apelidos):
+            return nome
+
     return ""
 
 
 def detectar_deposito(comando: str) -> str:
-    texto = _safe_str(comando)
-    match = re.search(
-        r"(?:dep[oó]sito|deposito)\s+([A-Za-z0-9\-_./ ]+)",
-        texto,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return ""
-    return _safe_str(match.group(1)).strip(" .,-")
+    texto_original = _safe_str(comando)
+    padroes = [
+        r"dep[oó]sito\s+([A-Za-z0-9_\-./ ]+)",
+        r"no\s+dep[oó]sito\s+([A-Za-z0-9_\-./ ]+)",
+        r"para\s+o\s+dep[oó]sito\s+([A-Za-z0-9_\-./ ]+)",
+    ]
+    for padrao in padroes:
+        match = re.search(padrao, texto_original, flags=re.IGNORECASE)
+        if match:
+            return _safe_str(match.group(1)).strip(" .,-")
+
+    for candidato in ["iFood", "principal", "geral"]:
+        if candidato.lower() in texto_original.lower():
+            return candidato
+
+    return ""
 
 
 # ============================================================
-# LEITORES DE ORIGEM
+# LEITURA DE ORIGENS
 # ============================================================
 
 
 def _ler_csv_seguro(arquivo_upload: Any) -> pd.DataFrame:
-    bruto = arquivo_upload.read()
-    if hasattr(arquivo_upload, "seek"):
+    try:
+        bruto = arquivo_upload.getvalue()
+    except Exception:
         try:
-            arquivo_upload.seek(0)
+            bruto = arquivo_upload.read()
         except Exception:
-            pass
+            bruto = None
 
-    if isinstance(bruto, str):
-        bruto = bruto.encode("utf-8", errors="ignore")
+    if bruto is None:
+        return pd.DataFrame()
 
-    for encoding in ("utf-8", "utf-8-sig", "latin-1"):
-        try:
-            texto = bruto.decode(encoding, errors="ignore")
-            for sep in (None, ";", ",", "\t", "|"):
-                try:
-                    if sep is None:
-                        return pd.read_csv(io.StringIO(texto), sep=None, engine="python")
-                    return pd.read_csv(io.StringIO(texto), sep=sep)
-                except Exception:
-                    continue
-        except Exception:
-            continue
+    for encoding in ("utf-8", "utf-8-sig", "latin1"):
+        for sep in (None, ";", ",", "\t", "|"):
+            try:
+                return pd.read_csv(
+                    io.BytesIO(bruto),
+                    sep=sep,
+                    engine="python",
+                    encoding=encoding,
+                )
+            except Exception:
+                continue
 
     return pd.DataFrame()
 
@@ -230,7 +250,7 @@ def ler_planilha_origem(
     log_func: Optional[Callable[[str, str], None]] = None,
 ) -> pd.DataFrame:
     if arquivo_upload is None:
-        _log(log_func, "[AGENT_TOOLS] nenhuma planilha enviada.", "WARNING")
+        _log(log_func, "[AGENT_TOOLS] nenhum arquivo de planilha enviado.", "WARNING")
         return pd.DataFrame()
 
     nome = _safe_lower(getattr(arquivo_upload, "name", ""))
@@ -238,24 +258,37 @@ def ler_planilha_origem(
     try:
         if nome.endswith(".csv"):
             df = _ler_csv_seguro(arquivo_upload)
-        elif nome.endswith(".xlsx") or nome.endswith(".xls"):
+            if _is_df_valido(df):
+                _log(log_func, f"[AGENT_TOOLS] CSV lido com sucesso: {nome}", "INFO")
+                return df
+
+        if nome.endswith(".xlsx") or nome.endswith(".xls"):
             try:
-                df = pd.read_excel(arquivo_upload, engine="openpyxl")
+                bruto = arquivo_upload.getvalue()
             except Exception:
-                if hasattr(arquivo_upload, "seek"):
-                    arquivo_upload.seek(0)
-                df = pd.read_excel(arquivo_upload)
-        else:
-            df = pd.DataFrame()
+                bruto = None
+
+            if bruto is None:
+                _log(log_func, f"[AGENT_TOOLS] arquivo Excel sem conteúdo: {nome}", "ERROR")
+                return pd.DataFrame()
+
+            for engine in (None, "openpyxl", "xlrd"):
+                try:
+                    kwargs = {}
+                    if engine:
+                        kwargs["engine"] = engine
+                    df = pd.read_excel(io.BytesIO(bruto), **kwargs)
+                    if _is_df_valido(df):
+                        _log(log_func, f"[AGENT_TOOLS] Excel lido com sucesso: {nome}", "INFO")
+                        return df
+                except Exception:
+                    continue
+
     except Exception as exc:
-        _log(log_func, f"[AGENT_TOOLS] erro lendo planilha: {exc}", "ERROR")
+        _log(log_func, f"[AGENT_TOOLS] falha lendo planilha: {exc}", "ERROR")
         return pd.DataFrame()
 
-    if _is_df_valido(df):
-        _log(log_func, f"[AGENT_TOOLS] planilha lida com {len(df)} linhas.", "INFO")
-        return df
-
-    _log(log_func, "[AGENT_TOOLS] planilha sem dados úteis.", "WARNING")
+    _log(log_func, f"[AGENT_TOOLS] formato de planilha não suportado ou vazio: {nome}", "ERROR")
     return pd.DataFrame()
 
 
@@ -265,24 +298,24 @@ def ler_xml_nfe(
     log_func: Optional[Callable[[str, str], None]] = None,
 ) -> pd.DataFrame:
     if arquivo_upload is None:
-        _log(log_func, "[AGENT_TOOLS] nenhum XML enviado.", "WARNING")
+        _log(log_func, "[AGENT_TOOLS] XML não enviado.", "WARNING")
         return pd.DataFrame()
 
     if not callable(xml_reader_func):
-        _log(log_func, "[AGENT_TOOLS] xml_reader_func indisponível.", "WARNING")
+        _log(log_func, "[AGENT_TOOLS] xml_reader_func indisponível.", "ERROR")
         return pd.DataFrame()
 
     try:
         df = xml_reader_func(arquivo_upload)
     except Exception as exc:
-        _log(log_func, f"[AGENT_TOOLS] erro lendo XML: {exc}", "ERROR")
+        _log(log_func, f"[AGENT_TOOLS] erro ao converter XML: {exc}", "ERROR")
         return pd.DataFrame()
 
     if _is_df_valido(df):
         _log(log_func, f"[AGENT_TOOLS] XML convertido com {len(df)} linhas.", "INFO")
         return df
 
-    _log(log_func, "[AGENT_TOOLS] XML sem retorno útil.", "WARNING")
+    _log(log_func, "[AGENT_TOOLS] XML convertido sem dados.", "WARNING")
     return pd.DataFrame()
 
 
@@ -292,27 +325,41 @@ def buscar_dados_fornecedor(
     fetch_router_func: Optional[Callable[..., pd.DataFrame]] = None,
     log_func: Optional[Callable[[str, str], None]] = None,
 ) -> pd.DataFrame:
+    fornecedor_limpo = _safe_str(fornecedor)
+    if not fornecedor_limpo:
+        _log(log_func, "[AGENT_TOOLS] fornecedor ausente.", "WARNING")
+        return pd.DataFrame()
+
     if not callable(fetch_router_func):
-        _log(log_func, "[AGENT_TOOLS] fetch_router indisponível.", "WARNING")
+        _log(log_func, "[AGENT_TOOLS] fetch_router_func indisponível.", "ERROR")
         return pd.DataFrame()
 
     try:
-        df = fetch_router_func(fornecedor=fornecedor, operacao=operacao)
+        df = fetch_router_func(
+            fornecedor=fornecedor_limpo,
+            categoria="",
+            operacao=operacao,
+            extra_config={},
+        )
     except TypeError:
         try:
-            df = fetch_router_func(fornecedor, operacao)
+            df = fetch_router_func(fornecedor_limpo, operacao)
         except Exception as exc:
-            _log(log_func, f"[AGENT_TOOLS] erro no fetch_router: {exc}", "ERROR")
+            _log(log_func, f"[AGENT_TOOLS] erro buscando fornecedor: {exc}", "ERROR")
             return pd.DataFrame()
     except Exception as exc:
-        _log(log_func, f"[AGENT_TOOLS] erro no fetch_router: {exc}", "ERROR")
+        _log(log_func, f"[AGENT_TOOLS] erro buscando fornecedor: {exc}", "ERROR")
         return pd.DataFrame()
 
     if _is_df_valido(df):
-        _log(log_func, f"[AGENT_TOOLS] fetch_router retornou {len(df)} linhas.", "INFO")
+        _log(
+            log_func,
+            f"[AGENT_TOOLS] fornecedor '{fornecedor_limpo}' retornou {len(df)} linhas.",
+            "INFO",
+        )
         return df
 
-    _log(log_func, "[AGENT_TOOLS] fetch_router sem retorno útil.", "WARNING")
+    _log(log_func, f"[AGENT_TOOLS] fornecedor '{fornecedor_limpo}' sem dados.", "WARNING")
     return pd.DataFrame()
 
 
@@ -322,17 +369,25 @@ def buscar_dados_site(
     log_func: Optional[Callable[[str, str], None]] = None,
 ) -> pd.DataFrame:
     if not callable(crawler_func):
-        _log(log_func, "[AGENT_TOOLS] crawler indisponível.", "WARNING")
+        _log(log_func, "[AGENT_TOOLS] crawler_func indisponível.", "ERROR")
         return pd.DataFrame()
 
+    url = ""
+    match = re.search(r"(https?://\S+)", _safe_str(comando), flags=re.IGNORECASE)
+    if match:
+        url = match.group(1)
+
     try:
-        df = crawler_func(comando)
-    except TypeError:
-        try:
-            df = crawler_func(url=comando)
-        except Exception as exc:
-            _log(log_func, f"[AGENT_TOOLS] erro no crawler: {exc}", "ERROR")
-            return pd.DataFrame()
+        if url:
+            try:
+                df = crawler_func(url=url)
+            except TypeError:
+                df = crawler_func(url)
+        else:
+            try:
+                df = crawler_func(comando=_safe_str(comando))
+            except TypeError:
+                df = crawler_func(_safe_str(comando))
     except Exception as exc:
         _log(log_func, f"[AGENT_TOOLS] erro no crawler: {exc}", "ERROR")
         return pd.DataFrame()
@@ -399,30 +454,48 @@ def _limpar_gtin(valor: Any) -> str:
     return ""
 
 
-def _numero_seguro(valor: Any, inteiro: bool = False) -> str:
+def _numero_float(valor: Any, default: float = 0.0) -> float:
     texto = _safe_str(valor)
     if not texto:
-        return ""
+        return default
 
-    texto = texto.replace("R$", "").replace(".", "").replace(",", ".")
+    texto = texto.replace("R$", "").replace(" ", "")
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    else:
+        texto = texto.replace(",", ".")
     texto = re.sub(r"[^0-9.\-]", "", texto)
 
     try:
-        numero = float(texto)
-        if inteiro:
-            return str(int(round(numero)))
-        return f"{numero:.2f}".replace(".", ",")
+        return float(texto)
     except Exception:
-        return ""
+        return default
+
+
+def _numero_bling(valor: Any) -> str:
+    return f"{_numero_float(valor, 0.0):.2f}".replace(".", ",")
+
+
+def _inteiro_seguro(valor: Any, default: int = 0) -> str:
+    try:
+        return str(int(round(_numero_float(valor, float(default)))))
+    except Exception:
+        return str(default)
 
 
 def _limpar_imagens(valor: Any) -> str:
     texto = _safe_str(valor)
     if not texto:
         return ""
-    texto = texto.replace("\n", "|").replace(";", "|").replace(",", "|")
+    texto = texto.replace("\n", "|").replace(";", "|")
+    texto = re.sub(r",(?=https?://)", "|", texto)
+    texto = re.sub(r"\s*\|\s*", "|", texto)
     texto = re.sub(r"\|+", "|", texto)
     return texto.strip("| ")
+
+
+def _descricao_base(row: pd.Series, colunas: list[str]) -> str:
+    return _primeiro_valido(row, colunas)
 
 
 def _gerar_df_final_cadastro(df: pd.DataFrame) -> pd.DataFrame:
@@ -430,26 +503,26 @@ def _gerar_df_final_cadastro(df: pd.DataFrame) -> pd.DataFrame:
 
     col_codigo = _achar_coluna(base, ["Código", "codigo", "SKU", "sku", "referencia", "ref", "id", "cod"])
     col_titulo = _achar_coluna(base, ["titulo", "nome", "produto", "descricao", "descrição", "title"])
-    col_desc_curta = _achar_coluna(base, ["descricao_curta", "descricaocurta", "resumo", "descricao", "descrição"])
+    col_desc_curta = _achar_coluna(base, ["descricao_curta", "descrição curta", "resumo", "short_description"])
     col_preco = _achar_coluna(base, ["preco_venda", "preço de venda", "preco", "valor", "price", "preco_unitario"])
     col_gtin = _achar_coluna(base, ["gtin", "ean", "gtin_ean", "codigo_barras", "codbarras"])
-    col_situacao = _achar_coluna(base, ["situacao", "status", "condicao", "condição"])
-    col_imagens = _achar_coluna(base, ["url_imagens", "imagens", "imagem", "image", "fotos", "foto"])
+    col_situacao = _achar_coluna(base, ["situacao", "situação", "status", "condicao", "condição"])
+    col_imagens = _achar_coluna(base, ["url_imagens", "url imagens", "imagens", "imagem", "image", "fotos", "foto"])
     col_categoria = _achar_coluna(base, ["categoria", "departamento", "grupo", "family", "breadcrumb"])
 
     saida = garantir_colunas_modelo(pd.DataFrame(index=base.index), "cadastro")
 
     for idx, row in base.iterrows():
-        descricao = _primeiro_valido(row, [col_titulo, col_desc_curta, col_codigo])
-        descricao_curta = _primeiro_valido(row, [col_desc_curta, col_titulo, col_codigo])
+        descricao = _descricao_base(row, [col_titulo, col_desc_curta, col_codigo])
+        descricao_curta = _descricao_base(row, [col_desc_curta, col_titulo, col_codigo])
         codigo = _primeiro_valido(row, [col_codigo])
         if not codigo:
-            codigo = descricao[:60]
+            codigo = descricao[:60] if descricao else f"ITEM-{idx+1}"
 
         saida.at[idx, "Código"] = codigo
         saida.at[idx, "Descrição"] = descricao
-        saida.at[idx, "Descrição Curta"] = descricao_curta
-        saida.at[idx, "Preço de venda"] = _numero_seguro(row.get(col_preco, ""))
+        saida.at[idx, "Descrição Curta"] = descricao_curta or descricao
+        saida.at[idx, "Preço de venda"] = _numero_bling(row.get(col_preco, ""))
         saida.at[idx, "GTIN/EAN"] = _limpar_gtin(row.get(col_gtin, ""))
         saida.at[idx, "Situação"] = _safe_str(row.get(col_situacao, "")) or "Ativo"
         saida.at[idx, "URL Imagens"] = _limpar_imagens(row.get(col_imagens, ""))
@@ -466,21 +539,21 @@ def _gerar_df_final_estoque(df: pd.DataFrame, deposito_nome: str = "") -> pd.Dat
     col_estoque = _achar_coluna(base, ["estoque", "saldo", "quantidade", "qtd", "balanco", "balanço"])
     col_preco = _achar_coluna(base, ["preco_unitario", "preço unitário", "preco", "valor", "price"])
     col_dep = _achar_coluna(base, ["deposito", "depósito"])
-    col_situacao = _achar_coluna(base, ["situacao", "status"])
+    col_situacao = _achar_coluna(base, ["situacao", "situação", "status"])
 
     saida = garantir_colunas_modelo(pd.DataFrame(index=base.index), "estoque")
 
     for idx, row in base.iterrows():
         codigo = _primeiro_valido(row, [col_codigo])
-        descricao = _primeiro_valido(row, [col_desc, col_codigo])
+        descricao = _descricao_base(row, [col_desc, col_codigo])
         deposito = _safe_str(deposito_nome) or _primeiro_valido(row, [col_dep])
-        balanco = _numero_seguro(row.get(col_estoque, ""), inteiro=True)
-        preco = _numero_seguro(row.get(col_preco, ""))
+        balanco = _inteiro_seguro(row.get(col_estoque, ""), default=0)
+        preco = _numero_bling(row.get(col_preco, ""))
 
-        saida.at[idx, "Código"] = codigo or descricao[:60]
+        saida.at[idx, "Código"] = codigo or (descricao[:60] if descricao else f"ITEM-{idx+1}")
         saida.at[idx, "Descrição"] = descricao
         saida.at[idx, "Depósito (OBRIGATÓRIO)"] = deposito
-        saida.at[idx, "Balanço (OBRIGATÓRIO)"] = balanco or "0"
+        saida.at[idx, "Balanço (OBRIGATÓRIO)"] = balanco
         saida.at[idx, "Preço unitário (OBRIGATÓRIO)"] = preco
         saida.at[idx, "Situação"] = _safe_str(row.get(col_situacao, "")) or "Ativo"
 
@@ -542,33 +615,34 @@ def registrar_base_no_estado(
 
 
 # ============================================================
-# VALIDAÇÃO FINAL
+# VALIDAÇÃO / PREVIEW FINAL
 # ============================================================
 
 
-def validar_dataframe_bling(df: pd.DataFrame, operacao: str):
-    class ResultadoValidacao:
-        def __init__(self, aprovado: bool, df_resultado: pd.DataFrame, erros: list[str], avisos: list[str]):
-            self.aprovado = aprovado
-            self.df_resultado = df_resultado
-            self.erros = erros
-            self.avisos = avisos
+class ResultadoValidacao:
+    def __init__(self, aprovado: bool, df_resultado: pd.DataFrame, erros: list[str], avisos: list[str]):
+        self.aprovado = aprovado
+        self.df_resultado = df_resultado
+        self.erros = erros
+        self.avisos = avisos
 
-        def to_dict(self) -> Dict[str, Any]:
-            return {
-                "aprovado": self.aprovado,
-                "erros": list(self.erros),
-                "avisos": list(self.avisos),
-                "linhas_validas": len(self.df_resultado) if _is_df_valido(self.df_resultado) else 0,
-                "linhas_invalidas": 0 if self.aprovado else len(self.df_resultado) if _is_df_valido(self.df_resultado) else 0,
-                "corrigido_automaticamente": [
-                    "colunas do modelo garantidas",
-                    "GTIN inválido removido",
-                    "imagens padronizadas com pipe",
-                    "campos numéricos blindados",
-                ],
-            }
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "aprovado": self.aprovado,
+            "erros": list(self.erros),
+            "avisos": list(self.avisos),
+            "linhas_validas": len(self.df_resultado) if _is_df_valido(self.df_resultado) else 0,
+            "linhas_invalidas": 0 if self.aprovado else len(self.df_resultado) if _is_df_valido(self.df_resultado) else 0,
+            "corrigido_automaticamente": [
+                "colunas do modelo garantidas",
+                "GTIN inválido removido",
+                "imagens padronizadas com pipe",
+                "campos numéricos blindados",
+            ],
+        }
 
+
+def validar_dataframe_bling(df: pd.DataFrame, operacao: str) -> ResultadoValidacao:
     tipo = _safe_lower(operacao) or "cadastro"
     deposito_nome = _safe_str(st.session_state.get("deposito_nome"))
 
@@ -601,6 +675,7 @@ def gerar_preview_final(
         if isinstance(validacao.df_resultado, pd.DataFrame)
         else pd.DataFrame()
     )
+    st.session_state["df_saida"] = st.session_state["df_final"].copy()
 
     update_agent_state(
         df_final_key="df_final",
@@ -646,3 +721,5 @@ class FerramentasAgente:
     crawler_func: Optional[Callable[..., pd.DataFrame]] = None
     xml_reader_func: Optional[Callable[[Any], pd.DataFrame]] = None
     log_func: Optional[Callable[[str, str], None]] = None
+
+
