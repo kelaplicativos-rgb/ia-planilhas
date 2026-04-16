@@ -2,71 +2,112 @@
 from __future__ import annotations
 
 import streamlit as st
+import pandas as pd
 
-APP_VERSION = "2.0.0"
 
+# ============================================================
+# HELPERS
+# ============================================================
+
+def _ensure(key: str, default):
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+def _ensure_df(key: str):
+    if key not in st.session_state or st.session_state.get(key) is None:
+        st.session_state[key] = pd.DataFrame()
+
+
+# ============================================================
+# INIT PRINCIPAL
+# ============================================================
 
 def init_app_state() -> None:
-    defaults = {
-        "app_version": APP_VERSION,
-        "etapa": "origem",
-        "etapa_origem": "origem",
-        "tipo_operacao": "Cadastro de Produtos",
-        "tipo_operacao_bling": "cadastro",
-        "df_origem": None,
-        "df_saida": None,
-        "df_precificado": None,
-        "df_calc_precificado": None,
-        "df_mapeado": None,
-        "df_final": None,
-        "df_preview_mapeamento": None,
-        "df_modelo_operacao": None,
-        "deposito_nome": "",
-        "origem_tipo": "",
-        "origem_site_url": "",
-        "padrao_disponivel_site": 10,
-        "usar_calculadora_precificacao": True,
-        "precificacao_margem": 30.0,
-        "precificacao_impostos": 10.0,
-        "precificacao_custo_fixo": 0.0,
-        "precificacao_taxa_extra": 0.0,
-        "mapping_origem": {},
-        "mapping_origem_rascunho": {},
-        "mapping_origem_defaults": {},
-        "debug_logs": [],
-    }
+    # -----------------------------
+    # CONTROLE GERAL
+    # -----------------------------
+    _ensure("app_version", "")
+    _ensure("modo_execucao", "fluxo_manual")  # fluxo_manual | ia_orquestrador
 
-    for chave, valor in defaults.items():
-        if chave not in st.session_state:
-            st.session_state[chave] = valor
+    # -----------------------------
+    # ETAPAS DO FLUXO
+    # -----------------------------
+    _ensure("etapa", "origem")
+    _ensure("etapa_origem", "origem")
 
+    # -----------------------------
+    # TIPO DE OPERAÇÃO
+    # -----------------------------
+    _ensure("tipo_operacao", "Cadastro de Produtos")
+    _ensure("tipo_operacao_radio", "Cadastro de Produtos")
+    _ensure("tipo_operacao_bling", "cadastro")  # cadastro | estoque
 
-def reset_fluxo_principal() -> None:
-    for chave in [
-        "df_origem",
-        "df_saida",
-        "df_precificado",
-        "df_calc_precificado",
-        "df_mapeado",
-        "df_final",
-        "df_preview_mapeamento",
-        "df_modelo_operacao",
-    ]:
-        st.session_state[chave] = None
+    # -----------------------------
+    # DATAFRAMES PRINCIPAIS
+    # -----------------------------
+    _ensure_df("df_origem")
+    _ensure_df("df_saida")
+    _ensure_df("df_precificado")
+    _ensure_df("df_calc_precificado")
+    _ensure_df("df_mapeado")
+    _ensure_df("df_preview_mapeamento")
+    _ensure_df("df_final")
 
-    for chave in [
-        "mapping_origem",
-        "mapping_origem_rascunho",
-        "mapping_origem_defaults",
-    ]:
-        st.session_state[chave] = {}
+    # modelo base da operação (cadastro / estoque)
+    _ensure_df("df_modelo_operacao")
 
-    st.session_state["etapa"] = "origem"
-    st.session_state["etapa_origem"] = "origem"
+    # -----------------------------
+    # ORIGEM
+    # -----------------------------
+    _ensure("origem_tipo", "")
+    _ensure("origem_tipo_radio", "")
+    _ensure("origem_site_url", "")
+    _ensure("origem_categoria_api", "")
+    _ensure("padrao_disponivel_site", 10)
 
+    # upload controle
+    _ensure("origem_upload_fornecedor", None)
+    _ensure("origem_upload_xml", None)
 
-def reset_app_completo() -> None:
-    chaves = list(st.session_state.keys())
-    for chave in chaves:
-        del st.session_state[chave]
-    init_app_state()
+    # -----------------------------
+    # FORNECEDOR (API)
+    # -----------------------------
+    _ensure("origem_fornecedor_api", "")
+    _ensure("fornecedor_ia", "")
+
+    # -----------------------------
+    # DEPÓSITO (ESTOQUE)
+    # -----------------------------
+    _ensure("deposito_nome", "")
+
+    # -----------------------------
+    # PRECIFICAÇÃO
+    # -----------------------------
+    _ensure("usar_calculadora_precificacao", False)
+    _ensure("precificacao_margem", 0.0)
+    _ensure("precificacao_impostos", 0.0)
+    _ensure("precificacao_custo_fixo", 0.0)
+    _ensure("precificacao_taxa_extra", 0.0)
+
+    # -----------------------------
+    # MAPEAMENTO
+    # -----------------------------
+    _ensure("mapping_origem", {})
+    _ensure("mapping_origem_rascunho", {})
+    _ensure("mapping_origem_defaults", {})
+
+    # -----------------------------
+    # IA ORQUESTRADOR
+    # -----------------------------
+    _ensure("ia_comando_usuario", "")
+    _ensure("ia_plano_execucao", {})
+    _ensure("ia_plano_preview", {})
+    _ensure("ia_erro_execucao", "")
+    _ensure("origem_tipo_ia", "")
+    _ensure("categoria_ia", "")
+
+    # -----------------------------
+    # FLAGS DE CONTROLE
+    # -----------------------------
+    _ensure("app_pronto", True)
