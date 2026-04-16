@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
 
 
 # ============================================================
-# MODELOS
+# MODELO DO PLANO
 # ============================================================
 
 @dataclass
@@ -38,7 +38,7 @@ class IAPlanoExecucao:
 
 
 # ============================================================
-# NORMALIZAÇÃO
+# HELPERS GERAIS
 # ============================================================
 
 def _safe_str(valor: Any) -> str:
@@ -97,9 +97,71 @@ def _to_float_seguro(valor: Any, default: float = 0.0) -> float:
         return default
 
 
+def _formatar_numero_bling(valor: Any) -> str:
+    return f"{_to_float_seguro(valor, 0.0):.2f}".replace(".", ",")
+
+
+def _garantir_df(df: Any) -> pd.DataFrame:
+    if isinstance(df, pd.DataFrame):
+        return df.copy().fillna("")
+    return pd.DataFrame()
+
+
 def _extrair_url(texto: str) -> str:
     match = re.search(r"https?://[^\s]+", texto, re.IGNORECASE)
     return match.group(0).strip() if match else ""
+
+
+def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    base = _garantir_df(df)
+    if base.empty:
+        return base
+    base.columns = [_safe_str(col) for col in base.columns]
+    return base
+
+
+def _primeira_coluna_existente(df: pd.DataFrame, candidatos: list[str]) -> str:
+    mapa = {_normalizar_texto(col): col for col in df.columns}
+
+    for candidato in candidatos:
+        chave = _normalizar_texto(candidato)
+        if chave in mapa:
+            return mapa[chave]
+
+    for col in df.columns:
+        ncol = _normalizar_texto(col)
+        for candidato in candidatos:
+            if _normalizar_texto(candidato) in ncol:
+                return col
+
+    return ""
+
+
+def _modelo_padrao_por_operacao(tipo_operacao_bling: str) -> pd.DataFrame:
+    if str(tipo_operacao_bling).strip().lower() == "estoque":
+        return pd.DataFrame(
+            columns=[
+                "Código",
+                "Descrição",
+                "Depósito (OBRIGATÓRIO)",
+                "Balanço (OBRIGATÓRIO)",
+                "Preço unitário (OBRIGATÓRIO)",
+                "Situação",
+            ]
+        )
+
+    return pd.DataFrame(
+        columns=[
+            "Código",
+            "Descrição",
+            "Descrição Curta",
+            "Preço de venda",
+            "GTIN/EAN",
+            "Situação",
+            "URL Imagens",
+            "Categoria",
+        ]
+    )
 
 
 # ============================================================
@@ -171,7 +233,6 @@ def _detectar_deposito(texto: str) -> str:
         if m:
             return _safe_str(m.group(1))
 
-    # caso comum do seu fluxo
     if "ifood" in _normalizar_texto(texto):
         return "iFood"
 
@@ -237,7 +298,7 @@ def _detectar_categoria(texto: str) -> str:
 
 
 # ============================================================
-# PLANEJAMENTO
+# INTERPRETAÇÃO DO COMANDO
 # ============================================================
 
 def interpretar_comando_usuario(comando: str) -> IAPlanoExecucao:
@@ -271,9 +332,6 @@ def interpretar_comando_usuario(comando: str) -> IAPlanoExecucao:
         plano.origem = "site"
         plano.usar_site = True
 
-    if plano.operacao == "estoque" and not plano.deposito:
-        plano.deposito = ""
-
     plano.observacoes = _montar_resumo_execucao(plano)
     return plano
 
@@ -303,7 +361,230 @@ def _montar_resumo_execucao(plano: IAPlanoExecucao) -> str:
 
 
 # ============================================================
-# APLICAÇÃO DO PLANO AO SESSION STATE
+# NORMALIZAÇÃO DA BASE
+# ============================================================
+
+def normalizar_df_para_fluxo(df: pd.DataFrame) -> pd.DataFrame:
+    base = _normalizar_colunas(df)
+    if base.empty:
+        return base
+
+    col_codigo = _primeira_coluna_existente(
+        base,
+        ["codigo_fornecedor", "codigo", "sku", "referencia", "ref", "cprod"],
+    )
+    col_descricao = _primeira_coluna_existente(
+        base,
+        ["descricao_fornecedor", "descricao", "produto", "nome", "xprod", "titulo"],
+    )
+    col_preco = _primeira_coluna_existente(
+        base,
+        ["preco_base", "preco", "valor", "vUnCom", "vuncom", "preco site"],
+    )
+    col_quantidade = _primeira_coluna_existente(
+        base,
+        ["quantidade_real", "quantidade", "estoque", "saldo", "qcom", "balanco"],
+    )
+    col_gtin = _primeira_coluna_existente(
+        base,
+        ["gtin", "ean", "gtin/ean", "codigo de barras", "cean"],
+    )
+    col_categoria = _primeira_coluna_existente(
+        base,
+        ["categoria", "departamento", "breadcrumb", "grupo"],
+    )
+    col_imagens = _primeira_coluna_existente(
+        base,
+        ["url_imagens", "imagem", "imagens", "url imagem", "url imagens"],
+    )
+
+    saida = pd.DataFrame(index=base.index)
+    saida["codigo_fornecedor"] = base[col_codigo] if col_codigo else ""
+    saida["descricao_fornecedor"] = base[col_descricao] if col_descricao else ""
+    saida["preco_base"] = base[col_preco].apply(_formatar_numero_bling) if col_preco else ""
+    saida["quantidade_real"] = base[col_quantidade] if col_quantidade else ""
+    saida["gtin"] = base[col_gtin] if col_gtin else ""
+    saida["categoria"] = base[col_categoria] if col_categoria else ""
+    saida["url_imagens"] = base[col_imagens] if col_imagens else ""
+
+    for col in base.columns:
+        if col not in saida.columns:
+            saida[col] = base[col]
+
+    return saida.fillna("")
+
+
+def aplicar_precificacao_inicial(df: pd.DataFrame, plano: IAPlanoExecucao) -> pd.DataFrame:
+    base = _garantir_df(df)
+    if base.empty:
+        return base
+
+    tipo = str(plano.operacao).strip().lower()
+
+    if plano.manter_preco_original or not plano.usar_precificacao:
+        base["Preço calculado"] = base["preco_base"].apply(_to_float_seguro)
+    else:
+        fator = 1 + (float(plano.margem) / 100.0) + (float(plano.impostos) / 100.0)
+        preco_base = base["preco_base"].apply(_to_float_seguro)
+        base["Preço calculado"] = (
+            (preco_base * fator)
+            + float(plano.custo_fixo)
+            + float(plano.taxa_extra)
+        ).round(2)
+
+    if tipo == "estoque":
+        base["Preço unitário (OBRIGATÓRIO)"] = base["Preço calculado"].apply(_formatar_numero_bling)
+    else:
+        base["Preço de venda"] = base["Preço calculado"].apply(_formatar_numero_bling)
+
+    return base.fillna("")
+
+
+# ============================================================
+# EXECUÇÃO DA FONTE
+# ============================================================
+
+def executar_fonte_por_plano(
+    plano: IAPlanoExecucao,
+    arquivo_upload: Any = None,
+    fetch_router_func: Optional[Callable] = None,
+    crawler_func: Optional[Callable] = None,
+    xml_reader_func: Optional[Callable] = None,
+) -> pd.DataFrame:
+    if plano.origem == "xml" and arquivo_upload is not None and callable(xml_reader_func):
+        try:
+            df = xml_reader_func(arquivo_upload)
+            return _garantir_df(df)
+        except Exception:
+            return pd.DataFrame()
+
+    if plano.origem == "site" and callable(crawler_func):
+        if not plano.url:
+            return pd.DataFrame()
+
+        tentativas = [
+            lambda: crawler_func(
+                url=plano.url,
+                max_paginas=5,
+                max_threads=5,
+                padrao_disponivel=10,
+            ),
+            lambda: crawler_func(plano.url, 5, 5, 10),
+        ]
+
+        for tentativa in tentativas:
+            try:
+                df = tentativa()
+                df = _garantir_df(df)
+                if not df.empty:
+                    return df
+            except Exception:
+                continue
+
+        return pd.DataFrame()
+
+    if plano.origem == "api_fornecedor" and callable(fetch_router_func):
+        tentativas = [
+            lambda: fetch_router_func(
+                fornecedor=plano.fornecedor,
+                categoria=plano.categoria,
+                operacao=plano.operacao,
+            ),
+            lambda: fetch_router_func(plano.fornecedor, plano.categoria, plano.operacao),
+            lambda: fetch_router_func(plano.fornecedor),
+        ]
+
+        for tentativa in tentativas:
+            try:
+                df = tentativa()
+                df = _garantir_df(df)
+                if not df.empty:
+                    return df
+            except Exception:
+                continue
+
+    return pd.DataFrame()
+
+
+# ============================================================
+# EXECUÇÃO REAL DO FLUXO
+# ============================================================
+
+def executar_fluxo_real_com_ia(
+    st_session_state: Any,
+    comando: str,
+    arquivo_upload: Any = None,
+    fetch_router_func: Optional[Callable] = None,
+    crawler_func: Optional[Callable] = None,
+    xml_reader_func: Optional[Callable] = None,
+    log_func: Optional[Callable[[str, str], None]] = None,
+) -> Dict[str, Any]:
+    plano = interpretar_comando_usuario(comando)
+
+    if callable(log_func):
+        log_func(f"Plano IA interpretado: {plano.observacoes}", "INFO")
+
+    df_origem = executar_fonte_por_plano(
+        plano=plano,
+        arquivo_upload=arquivo_upload,
+        fetch_router_func=fetch_router_func,
+        crawler_func=crawler_func,
+        xml_reader_func=xml_reader_func,
+    )
+
+    if df_origem.empty:
+        mensagem = "Nenhum dado foi retornado pela origem selecionada."
+        if callable(log_func):
+            log_func(mensagem, "ERROR")
+        return {
+            "ok": False,
+            "mensagem": mensagem,
+            "plano": plano,
+            "df_origem": pd.DataFrame(),
+        }
+
+    df_normalizado = normalizar_df_para_fluxo(df_origem)
+    if df_normalizado.empty:
+        mensagem = "A origem retornou dados, mas a normalização gerou base vazia."
+        if callable(log_func):
+            log_func(mensagem, "ERROR")
+        return {
+            "ok": False,
+            "mensagem": mensagem,
+            "plano": plano,
+            "df_origem": pd.DataFrame(),
+        }
+
+    df_processado = aplicar_precificacao_inicial(df_normalizado, plano)
+
+    aplicar_plano_no_session_state(st_session_state, plano)
+
+    st_session_state["df_origem"] = df_processado.copy()
+    st_session_state["df_saida"] = df_processado.copy()
+    st_session_state["df_precificado"] = df_processado.copy()
+    st_session_state["df_calc_precificado"] = df_processado.copy()
+    st_session_state["df_modelo_operacao"] = _modelo_padrao_por_operacao(plano.operacao)
+    st_session_state["origem_tipo"] = plano.origem
+    st_session_state["ia_plano_execucao"] = plano.to_dict()
+    st_session_state["etapa"] = "mapeamento"
+    st_session_state["etapa_origem"] = "mapeamento"
+
+    if callable(log_func):
+        log_func(
+            f"Fluxo IA executado com sucesso: {len(df_processado)} linha(s) prontas para mapeamento.",
+            "INFO",
+        )
+
+    return {
+        "ok": True,
+        "mensagem": "Fluxo executado com sucesso.",
+        "plano": plano,
+        "df_origem": df_processado.copy(),
+    }
+
+
+# ============================================================
+# SESSION STATE
 # ============================================================
 
 def aplicar_plano_no_session_state(st_session_state: Any, plano: IAPlanoExecucao) -> None:
@@ -326,68 +607,7 @@ def aplicar_plano_no_session_state(st_session_state: Any, plano: IAPlanoExecucao
 
 
 # ============================================================
-# EXECUÇÃO DE FONTES
-# ============================================================
-
-def executar_fonte_por_plano(
-    plano: IAPlanoExecucao,
-    arquivo_upload: Any = None,
-    fetch_router_func: Optional[Any] = None,
-    crawler_func: Optional[Any] = None,
-    xml_reader_func: Optional[Any] = None,
-) -> pd.DataFrame:
-    if plano.origem == "xml" and arquivo_upload is not None and callable(xml_reader_func):
-        df = xml_reader_func(arquivo_upload)
-        return _garantir_df(df)
-
-    if plano.origem == "site" and callable(crawler_func):
-        if not plano.url:
-            return pd.DataFrame()
-        try:
-            df = crawler_func(
-                url=plano.url,
-                max_paginas=5,
-                max_threads=5,
-                padrao_disponivel=10,
-            )
-            return _garantir_df(df)
-        except TypeError:
-            try:
-                df = crawler_func(plano.url, 5, 5, 10)
-                return _garantir_df(df)
-            except Exception:
-                return pd.DataFrame()
-        except Exception:
-            return pd.DataFrame()
-
-    if plano.origem == "api_fornecedor" and callable(fetch_router_func):
-        try:
-            df = fetch_router_func(
-                fornecedor=plano.fornecedor,
-                categoria=plano.categoria,
-                operacao=plano.operacao,
-            )
-            return _garantir_df(df)
-        except TypeError:
-            try:
-                df = fetch_router_func(plano.fornecedor)
-                return _garantir_df(df)
-            except Exception:
-                return pd.DataFrame()
-        except Exception:
-            return pd.DataFrame()
-
-    return pd.DataFrame()
-
-
-def _garantir_df(df: Any) -> pd.DataFrame:
-    if isinstance(df, pd.DataFrame):
-        return df.copy().fillna("")
-    return pd.DataFrame()
-
-
-# ============================================================
-# SERIALIZAÇÃO / DEBUG
+# SERIALIZAÇÃO
 # ============================================================
 
 def plano_para_json(plano: IAPlanoExecucao) -> str:
@@ -423,4 +643,5 @@ def json_para_plano(payload: str | dict) -> IAPlanoExecucao:
         usar_api_fornecedor=bool(data.get("usar_api_fornecedor", False)),
         categoria=_safe_str(data.get("categoria")),
         observacoes=_safe_str(data.get("observacoes")),
-      )
+    )
+    
