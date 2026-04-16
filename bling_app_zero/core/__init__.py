@@ -1,15 +1,16 @@
-from .bling_auth import BlingAuthManager
-from .bling_api import BlingAPIClient
-from .bling_token_store import BlingTokenStore
 
-try:
-    from .bling_sync import BlingSyncService
-except Exception:
-    BlingSyncService = None
+"""
+Pacote core do projeto IA Planilhas → Bling.
 
-__all__ = [
-    "BlingAuthManager",
-    "BlingAPIClient",
-    "BlingSyncService",
-    "BlingTokenStore",
-]
+Este __init__ foi simplificado para evitar imports legados automáticos
+que quebram o carregamento do app principal.
+
+Importe os módulos diretamente, por exemplo:
+- from bling_app_zero.core.ia_orchestrator import executar_fluxo_real_com_ia
+- from bling_app_zero.core.fetch_router import buscar_produtos_fornecedor
+- from bling_app_zero.core.site_crawler import executar_crawler_site
+- from bling_app_zero.core.xml_nfe import converter_upload_xml_para_dataframe
+"""
+
+__all__ = []
+
