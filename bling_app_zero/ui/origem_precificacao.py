@@ -42,6 +42,13 @@ def _fmt_brl(valor: float) -> str:
         return "R$ 0,00"
 
 
+def _fmt_numero_planilha(valor: float) -> str:
+    try:
+        return f"{float(valor):.2f}".replace(".", ",")
+    except Exception:
+        return "0,00"
+
+
 def _calcular_preco_olist(
     custo: float,
     custo_fixo: float,
@@ -91,6 +98,8 @@ def _detectar_coluna_custo(df: pd.DataFrame) -> str:
         "preco",
         "preço",
         "valor",
+        "preço de custo",
+        "preco de custo",
     ]
 
     mapa = {_normalizar_texto(c): str(c) for c in df.columns}
@@ -106,6 +115,13 @@ def _detectar_coluna_custo(df: pd.DataFrame) -> str:
             return str(col)
 
     return ""
+
+
+def _coluna_preco_destino() -> str:
+    operacao = str(st.session_state.get("tipo_operacao") or "").strip().lower()
+    if operacao == "estoque":
+        return "Preço unitário (OBRIGATÓRIO)"
+    return "Preço de venda"
 
 
 def _aplicar_precificacao_dataframe(
@@ -126,7 +142,7 @@ def _aplicar_precificacao_dataframe(
 
     base = df.copy()
 
-    base["_preco_calculado"] = base[coluna_custo].apply(
+    base["_preco_calculado_num"] = base[coluna_custo].apply(
         lambda x: _calcular_preco_olist(
             custo=x,
             custo_fixo=custo_fixo,
@@ -138,14 +154,66 @@ def _aplicar_precificacao_dataframe(
         )
     )
 
+    base["_preco_calculado"] = base["_preco_calculado_num"].apply(_fmt_numero_planilha)
+
+    destino = _coluna_preco_destino()
+    base[destino] = base["_preco_calculado"]
+
+    # coluna auxiliar visual para o preview ficar claro
+    base["Preço calculado"] = base["_preco_calculado"]
+
+    # tenta trazer as colunas importantes para o começo do preview
+    colunas_inicio = []
+    for nome in [
+        "Código",
+        "codigo",
+        "Código do produto",
+        "Descrição",
+        "descricao",
+        "Descrição do produto",
+        coluna_custo,
+        "Preço calculado",
+        destino,
+    ]:
+        if nome in base.columns and nome not in colunas_inicio:
+            colunas_inicio.append(nome)
+
+    restantes = [c for c in base.columns if c not in colunas_inicio]
+    base = base[colunas_inicio + restantes]
+
     return base
 
 
-def _render_preview(df: pd.DataFrame) -> None:
+def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     if not safe_df(df):
         return
 
-    with st.expander("Preview da planilha precificada", expanded=True):
+    destino = _coluna_preco_destino()
+
+    st.markdown("### Preview da planilha precificada")
+
+    colunas_preview = []
+    for nome in [
+        "Código",
+        "codigo",
+        "Código do produto",
+        "Descrição",
+        "descricao",
+        "Descrição do produto",
+        coluna_custo,
+        "Preço calculado",
+        destino,
+    ]:
+        if nome in df.columns and nome not in colunas_preview:
+            colunas_preview.append(nome)
+
+    if not colunas_preview:
+        colunas_preview = list(df.columns[:8])
+
+    preview = df[colunas_preview].head(50).copy()
+    st.dataframe(preview, use_container_width=True)
+
+    with st.expander("Ver preview completo", expanded=False):
         st.dataframe(df.head(50), use_container_width=True)
 
 
@@ -173,6 +241,9 @@ def render_origem_precificacao() -> None:
 
     if st.session_state.get("pricing_coluna_custo", "") not in colunas:
         st.session_state["pricing_coluna_custo"] = sugestao_custo
+
+    destino = _coluna_preco_destino()
+    st.info(f"O preço calculado será refletido no preview e gravado em: **{destino}**")
 
     st.markdown("### Base de cálculo")
 
@@ -284,13 +355,13 @@ def render_origem_precificacao() -> None:
             )
 
             st.session_state["df_precificado"] = df_precificado
-            st.session_state["pricing_df_preview"] = df_precificado.head(50).copy()
+            st.session_state["pricing_df_preview"] = df_precificado.copy()
 
             st.success("Precificação aplicada com sucesso.")
 
     df_preview = st.session_state.get("pricing_df_preview")
     if safe_df(df_preview):
-        _render_preview(df_preview)
+        _render_preview(df_preview, coluna_custo)
 
     st.markdown("---")
 
