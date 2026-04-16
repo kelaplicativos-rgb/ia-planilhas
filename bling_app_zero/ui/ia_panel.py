@@ -1,5 +1,4 @@
 
-
 from __future__ import annotations
 
 import pandas as pd
@@ -59,6 +58,16 @@ def _sincronizar_etapa(etapa: str) -> None:
     st.session_state["etapa_fluxo"] = etapa
 
 
+def _render_header_modo_ia() -> None:
+    st.markdown("### IA Orquestrador")
+    st.success("Modo ativo: ETL completo + Bling output")
+    st.caption(
+        "Descreva o objetivo em linguagem natural. "
+        "A IA interpreta, lê a origem, normaliza, aplica o modelo interno do Bling, "
+        "valida e entrega a planilha final pronta para download."
+    )
+
+
 def _render_fornecedores_disponiveis() -> None:
     fornecedores = listar_fornecedores_disponiveis()
     if fornecedores:
@@ -78,6 +87,15 @@ def _render_exemplos() -> None:
     with st.expander("Exemplos de comandos", expanded=False):
         for ex in exemplos:
             st.caption(f"• {ex}")
+
+
+def _render_objetivo_fluxo() -> None:
+    with st.expander("Como a IA executa este fluxo", expanded=False):
+        st.markdown("1. Lê a origem completa")
+        st.markdown("2. Normaliza sem perder linhas")
+        st.markdown("3. Monta o modelo interno do Bling")
+        st.markdown("4. Valida a saída final")
+        st.markdown("5. Libera preview e download")
 
 
 def _render_plano_preview() -> None:
@@ -131,6 +149,8 @@ def _render_resumo_base(df: pd.DataFrame) -> None:
         return
 
     resumo = resumo_execucao_atual()
+
+    st.markdown("#### Base preparada pela IA")
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Linhas preparadas", len(df))
@@ -139,8 +159,22 @@ def _render_resumo_base(df: pd.DataFrame) -> None:
     with col3:
         st.metric("Operação detectada", _safe_str(resumo.get("operacao")) or "-")
 
-    with st.expander("Preview da base preparada pela IA", expanded=False):
+    with st.expander("Ver base preparada", expanded=False):
         st.dataframe(df.head(100), use_container_width=True)
+
+
+def _render_validacao_final(df_final: pd.DataFrame, operacao: str) -> tuple[bool, list[str]]:
+    valido, erros = validar_df_para_download(df_final, operacao)
+
+    st.markdown("#### Validação final")
+    if valido:
+        st.success("A planilha final já está no formato do Bling.")
+    else:
+        st.warning("A IA montou a planilha final, mas ainda existem pendências de validação.")
+        for erro in erros:
+            st.caption(f"• {erro}")
+
+    return valido, erros
 
 
 def _render_preview_final() -> None:
@@ -155,15 +189,8 @@ def _render_preview_final() -> None:
         or "cadastro"
     ).lower()
 
-    valido, erros = validar_df_para_download(df_final, operacao)
-
     st.markdown("#### Preview final pronto para Bling")
-    if valido:
-        st.success("A planilha final já está no formato do Bling.")
-    else:
-        st.warning("A IA montou a planilha final, mas ainda existem pendências de validação.")
-        for erro in erros:
-            st.caption(f"• {erro}")
+    _render_validacao_final(df_final, operacao)
 
     with st.expander("Ver preview final", expanded=False):
         st.dataframe(df_final.head(100), use_container_width=True)
@@ -273,14 +300,10 @@ def _executar_fluxo(comando: str, upload_arquivo=None) -> None:
 
 
 def render_ia_panel() -> None:
-    st.markdown("### IA Orquestrador")
-    st.caption(
-        "Descreva em linguagem natural o que deseja fazer. "
-        "A IA interpreta, busca os dados, monta o modelo interno do Bling e entrega a saída final."
-    )
-
+    _render_header_modo_ia()
     _render_fornecedores_disponiveis()
     _render_exemplos()
+    _render_objetivo_fluxo()
 
     comando_inicial = _safe_str(
         st.session_state.get(
@@ -317,7 +340,7 @@ def render_ia_panel() -> None:
             st.rerun()
 
     with col2:
-        if st.button("Executar fluxo com IA", use_container_width=True):
+        if st.button("Executar ETL + saída Bling", use_container_width=True):
             _executar_fluxo(comando=comando, upload_arquivo=upload_arquivo)
             if _safe_str(st.session_state.get("ia_erro_execucao")):
                 st.rerun()
@@ -339,4 +362,5 @@ def render_ia_panel() -> None:
 
     if safe_df_dados(df_origem) or safe_df_dados(st.session_state.get("df_final")):
         _render_ctas_pos_execucao()
-        
+
+
