@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from typing import Any
 from urllib.parse import quote_plus, urljoin, urlparse
 
@@ -23,73 +22,6 @@ HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     )
-}
-
-FORNECEDORES_DEDICADOS = {
-    "megacentereletronicos.com.br": {
-        "buscas": [
-            "/search?q={q}",
-            "/busca?q={q}",
-            "/?s={q}",
-            "/categoria/{slug}",
-        ],
-        "produto_hints": ["/produto", "/p/", "sku", "/product"],
-        "card_selectors": [
-            "a[href*='/produto']",
-            "a[href*='/p/']",
-            ".product a",
-            ".product-item a",
-        ],
-        "title_selectors": [
-            "h1",
-            ".product_title",
-            ".product-name",
-            ".entry-title",
-        ],
-        "price_selectors": [
-            ".price",
-            ".product-price",
-            "[class*='price']",
-            "[itemprop='price']",
-        ],
-        "image_selectors": [
-            "img[src]",
-            ".product-gallery img[src]",
-            ".woocommerce-product-gallery img[src]",
-        ],
-    },
-    "atacadum.com.br": {
-        "buscas": [
-            "/search?q={q}",
-            "/busca?q={q}",
-            "/?s={q}",
-            "/categoria/{slug}",
-        ],
-        "produto_hints": ["/produto", "/p/", "sku", "/product"],
-        "card_selectors": [
-            "a[href*='/produto']",
-            "a[href*='/p/']",
-            ".product a",
-            ".product-item a",
-        ],
-        "title_selectors": [
-            "h1",
-            ".product_title",
-            ".product-name",
-            ".entry-title",
-        ],
-        "price_selectors": [
-            ".price",
-            ".product-price",
-            "[class*='price']",
-            "[itemprop='price']",
-        ],
-        "image_selectors": [
-            "img[src]",
-            ".product-gallery img[src]",
-            ".woocommerce-product-gallery img[src]",
-        ],
-    },
 }
 
 
@@ -115,12 +47,6 @@ def _normalizar_url(url: str) -> str:
     return url.rstrip("/")
 
 
-def _slug(texto: str) -> str:
-    texto = _normalizar_texto(texto)
-    texto = re.sub(r"[^a-z0-9]+", "-", texto)
-    return texto.strip("-")
-
-
 def _dominio(url: str) -> str:
     try:
         return urlparse(url).netloc.lower().replace("www.", "")
@@ -130,10 +56,6 @@ def _dominio(url: str) -> str:
 
 def _mesmo_dominio(base_url: str, url: str) -> bool:
     return _dominio(base_url) == _dominio(url)
-
-
-def _fornecedor_cfg(base_url: str) -> dict:
-    return FORNECEDORES_DEDICADOS.get(_dominio(base_url), {})
 
 
 def _extrair_preco(texto: str) -> str:
@@ -175,33 +97,9 @@ def _normalizar_imagens(valor: Any) -> str:
     return "|".join(urls)
 
 
-def _get_session() -> requests.Session:
-    sess = requests.Session()
-    sess.headers.update(HEADERS)
-    return sess
-
-
-def _fetch_html_retry(url: str, timeout: int = 20, tentativas: int = 3, backoff: float = 1.2) -> str:
-    sess = _get_session()
-    ultimo_erro = None
-
-    for tentativa in range(1, tentativas + 1):
-        try:
-            resp = sess.get(url, timeout=timeout, allow_redirects=True)
-            resp.raise_for_status()
-            return resp.text
-        except Exception as exc:
-            ultimo_erro = exc
-            if tentativa < tentativas:
-                time.sleep(backoff * tentativa)
-
-    raise ultimo_erro if ultimo_erro else RuntimeError("Falha ao buscar HTML")
-
-
-def _montar_urls_busca_genericas(base_url: str, termo: str) -> list[str]:
+def _montar_urls_busca(base_url: str, termo: str) -> list[str]:
     base = _normalizar_url(base_url)
     q = quote_plus(_safe_str(termo))
-    slug = _slug(termo)
 
     urls = [
         f"{base}/search?q={q}",
@@ -209,8 +107,6 @@ def _montar_urls_busca_genericas(base_url: str, termo: str) -> list[str]:
         f"{base}/busca?search={q}",
         f"{base}/busca?descricao={q}",
         f"{base}/catalogsearch/result/?q={q}",
-        f"{base}/categoria/{slug}",
-        f"{base}/categoria/{q}",
         f"{base}/?s={q}",
         f"{base}/?q={q}",
     ]
@@ -224,80 +120,18 @@ def _montar_urls_busca_genericas(base_url: str, termo: str) -> list[str]:
     return saida
 
 
-def _montar_urls_busca_dedicadas(base_url: str, termo: str) -> list[str]:
-    cfg = _fornecedor_cfg(base_url)
-    if not cfg:
-        return []
-
-    base = _normalizar_url(base_url)
-    q = quote_plus(_safe_str(termo))
-    slug = _slug(termo)
-
-    urls = []
-    for rota in cfg.get("buscas", []):
-        rota = rota.replace("{q}", q).replace("{slug}", slug)
-        urls.append(f"{base}{rota}")
-
-    saida = []
-    vistos = set()
-    for url in urls:
-        if url not in vistos:
-            vistos.add(url)
-            saida.append(url)
-    return saida
+def _fetch_html(url: str, timeout: int = 20) -> str:
+    resp = requests.get(url, headers=HEADERS, timeout=timeout)
+    resp.raise_for_status()
+    return resp.text
 
 
-def _links_por_selectors(base_url: str, soup: BeautifulSoup, selectors: list[str]) -> list[dict]:
-    resultados = []
-    vistos = set()
-
-    for selector in selectors:
-        for el in soup.select(selector):
-            href = _safe_str(el.get("href"))
-            if not href:
-                continue
-            url = urljoin(base_url, href)
-            if not _mesmo_dominio(base_url, url):
-                continue
-            if url in vistos:
-                continue
-
-            texto = " ".join(el.stripped_strings).strip()
-            bloco = ""
-            try:
-                bloco = el.parent.get_text(" ", strip=True)[:600]
-            except Exception:
-                bloco = texto
-
-            resultados.append(
-                {
-                    "url_produto": url,
-                    "titulo_bloco": texto,
-                    "preco_bloco": _extrair_preco(bloco),
-                    "texto_bloco": bloco,
-                }
-            )
-            vistos.add(url)
-
-    return resultados
-
-
-def _extrair_links_produto_heuristico(base_url: str, html: str, termo: str, limite: int = 60) -> list[dict]:
+def _extrair_links_produto(base_url: str, html: str, termo: str, limite: int = 40) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     resultados = []
     vistos = set()
-    termo_n = _normalizar_texto(termo)
-
-    cfg = _fornecedor_cfg(base_url)
-    hints = cfg.get("produto_hints", ["/produto", "/product", "/p/", "sku"])
-
-    if cfg.get("card_selectors"):
-        resultados.extend(_links_por_selectors(base_url, soup, cfg["card_selectors"]))
 
     for a in soup.find_all("a", href=True):
-        if len(resultados) >= limite:
-            break
-
         href = _safe_str(a.get("href"))
         if not href:
             continue
@@ -309,18 +143,23 @@ def _extrair_links_produto_heuristico(base_url: str, html: str, termo: str, limi
             continue
 
         texto = " ".join(a.stripped_strings).strip()
-        bloco = ""
+        bloco_texto = ""
         try:
-            bloco = a.parent.get_text(" ", strip=True)[:600]
+            bloco_texto = a.parent.get_text(" ", strip=True)[:600]
         except Exception:
-            bloco = texto
+            bloco_texto = texto
 
         url_n = _normalizar_texto(url)
         texto_n = _normalizar_texto(texto)
+        termo_n = _normalizar_texto(termo)
 
-        parece_produto = any(hint in url_n for hint in hints)
-        if not parece_produto and termo_n:
-            parece_produto = termo_n in texto_n or any(p in texto_n for p in termo_n.split() if p)
+        parece_produto = (
+            "/produto" in url_n
+            or "/product" in url_n
+            or "/p/" in url_n
+            or "sku" in url_n
+            or (termo_n and termo_n in texto_n)
+        )
 
         if not parece_produto:
             continue
@@ -329,89 +168,54 @@ def _extrair_links_produto_heuristico(base_url: str, html: str, termo: str, limi
             {
                 "url_produto": url,
                 "titulo_bloco": texto,
-                "preco_bloco": _extrair_preco(bloco),
-                "texto_bloco": bloco,
+                "preco_bloco": _extrair_preco(bloco_texto),
+                "texto_bloco": bloco_texto,
             }
         )
         vistos.add(url)
 
-    final = []
-    urls_vistas = set()
-    for item in resultados:
-        url = item["url_produto"]
-        if url not in urls_vistas:
-            urls_vistas.add(url)
-            final.append(item)
-        if len(final) >= limite:
+        if len(resultados) >= limite:
             break
 
-    return final
-
-
-def _texto_por_selectors(soup: BeautifulSoup, selectors: list[str]) -> str:
-    for selector in selectors:
-        el = soup.select_one(selector)
-        if el:
-            txt = _safe_str(el.get_text(" ", strip=True))
-            if txt:
-                return txt
-    return ""
-
-
-def _imagens_por_selectors(url_produto: str, soup: BeautifulSoup, selectors: list[str]) -> list[str]:
-    imagens = []
-    vistos = set()
-
-    for selector in selectors:
-        for el in soup.select(selector):
-            src = _safe_str(el.get("src") or el.get("data-src"))
-            if not src:
-                continue
-            url_img = urljoin(url_produto, src)
-            if url_img in vistos:
-                continue
-            vistos.add(url_img)
-            imagens.append(url_img)
-
-    return imagens
+    return resultados
 
 
 def _extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
-    cfg = _fornecedor_cfg(url_produto)
 
     titulo = ""
-    title_selectors = cfg.get("title_selectors", ["h1", ".product_title", ".product-name", ".entry-title"])
-    titulo = _texto_por_selectors(soup, title_selectors)
+    for sel in ["h1", '[class*="product"] h1', '[class*="title"]']:
+        el = soup.select_one(sel)
+        if el:
+            titulo = _safe_str(el.get_text(" ", strip=True))
+            if titulo:
+                break
 
     texto_total = soup.get_text(" ", strip=True)
+    preco = _extrair_preco(texto_total)
 
-    preco = ""
-    price_selectors = cfg.get("price_selectors", [".price", ".product-price", "[class*='price']", "[itemprop='price']"])
-    preco = _texto_por_selectors(soup, price_selectors)
-    if not preco:
-        preco = _extrair_preco(texto_total)
-
-    image_selectors = cfg.get("image_selectors", ["img[src]", ".product-gallery img[src]"])
-    imagens = _imagens_por_selectors(url_produto, soup, image_selectors)
-    if not imagens:
-        for img in soup.find_all("img", src=True):
-            src = _safe_str(img.get("src"))
-            if not src:
-                continue
-            url_img = urljoin(url_produto, src)
-            if _mesmo_dominio(url_produto, url_img):
-                imagens.append(url_img)
-            if len(imagens) >= 8:
-                break
+    imagens = []
+    for img in soup.find_all("img", src=True):
+        src = _safe_str(img.get("src"))
+        if not src:
+            continue
+        url_img = urljoin(url_produto, src)
+        if _mesmo_dominio(url_produto, url_img):
+            imagens.append(url_img)
 
     codigo = ""
     gtin = ""
     ncm = ""
 
-    padroes_codigo = [r"(?:sku|c[oó]d(?:igo)?|refer[eê]ncia)[\s:\-#]*([A-Za-z0-9\-_\.\/]+)"]
-    padroes_gtin = [r"(?:gtin|ean|c[oó]digo de barras)[\s:\-#]*([0-9]{8,14})"]
-    padroes_ncm = [r"(?:ncm)[\s:\-#]*([0-9\.]{6,10})"]
+    padroes_codigo = [
+        r"(?:sku|c[oó]d(?:igo)?)[\s:\-#]*([A-Za-z0-9\-_\.\/]+)",
+    ]
+    padroes_gtin = [
+        r"(?:gtin|ean|c[oó]digo de barras)[\s:\-#]*([0-9]{8,14})",
+    ]
+    padroes_ncm = [
+        r"(?:ncm)[\s:\-#]*([0-9\.]{6,10})",
+    ]
 
     for padrao in padroes_codigo:
         m = re.search(padrao, texto_total, flags=re.I)
@@ -490,10 +294,11 @@ def _gpt_extrair_produto(url_produto: str, html: str, heuristica: dict) -> dict:
         return heuristica
 
     soup = BeautifulSoup(html, "lxml")
-    texto_limpo = soup.get_text(" ", strip=True)[:18000]
+    texto_limpo = soup.get_text(" ", strip=True)
+    texto_limpo = texto_limpo[:18000]
 
     prompt = f"""
-Extraia dados de produto a partir da página de fornecedor.
+Extraia dados de produto a partir do HTML/texto de uma página de fornecedor.
 
 URL:
 {url_produto}
@@ -504,7 +309,7 @@ Heurística inicial:
 Texto da página:
 {texto_limpo}
 
-Responda SOMENTE em JSON válido:
+Responda SOMENTE em JSON válido neste formato:
 {{
   "codigo": "",
   "descricao": "",
@@ -518,10 +323,12 @@ Responda SOMENTE em JSON válido:
 }}
 
 Regras:
-- não invente
-- se encontrar sem estoque, quantidade = "0"
-- url_imagens com separador |
-- preco no formato 19,90
+- não invente valores
+- se encontrar indicação clara de sem estoque, quantidade = "0"
+- url_imagens deve usar separador |
+- preco deve vir em formato brasileiro com vírgula, ex: 19,90
+- priorize descrição comercial do produto
+- código pode ser SKU, código, referência ou similar
 """
 
     try:
@@ -537,7 +344,7 @@ Regras:
         content = response.choices[0].message.content or "{}"
         data = json.loads(content)
 
-        return {
+        saida = {
             "url_produto": url_produto,
             "codigo": _safe_str(data.get("codigo")) or heuristica.get("codigo", ""),
             "descricao": _safe_str(data.get("descricao")) or heuristica.get("descricao", ""),
@@ -550,47 +357,10 @@ Regras:
             "fonte_extracao": "gpt",
             "observacoes": _safe_str(data.get("observacoes")),
         }
+        return saida
 
     except Exception:
         return heuristica
-
-
-def _buscar_links_multiplas_rotas(base_url: str, termo: str, limite_links: int) -> list[dict]:
-    urls_busca = _montar_urls_busca_dedicadas(base_url, termo) + _montar_urls_busca_genericas(base_url, termo)
-
-    vistos_rotas = set()
-    links = []
-
-    for url_busca in urls_busca:
-        if url_busca in vistos_rotas:
-            continue
-        vistos_rotas.add(url_busca)
-
-        try:
-            html_busca = _fetch_html_retry(url_busca, tentativas=3)
-            candidatos = _extrair_links_produto_heuristico(base_url, html_busca, termo, limite=limite_links)
-
-            if candidatos:
-                links.extend(candidatos)
-
-            if len(links) >= limite_links:
-                break
-
-        except Exception:
-            continue
-
-    final = []
-    vistos = set()
-    for item in links:
-        url = item.get("url_produto", "")
-        if not url or url in vistos:
-            continue
-        vistos.add(url)
-        final.append(item)
-        if len(final) >= limite_links:
-            break
-
-    return final
 
 
 def buscar_produtos_site_com_gpt(base_url: str, termo: str, limite_links: int = 20) -> pd.DataFrame:
@@ -600,7 +370,16 @@ def buscar_produtos_site_com_gpt(base_url: str, termo: str, limite_links: int = 
     if not base_url or not termo:
         return pd.DataFrame()
 
-    links = _buscar_links_multiplas_rotas(base_url, termo, limite_links=limite_links)
+    links = []
+    for url_busca in _montar_urls_busca(base_url, termo):
+        try:
+            html_busca = _fetch_html(url_busca)
+            links = _extrair_links_produto(base_url, html_busca, termo, limite=limite_links)
+            if links:
+                break
+        except Exception:
+            continue
+
     if not links:
         return pd.DataFrame()
 
@@ -613,7 +392,7 @@ def buscar_produtos_site_com_gpt(base_url: str, termo: str, limite_links: int = 
             continue
 
         try:
-            html_produto = _fetch_html_retry(url_produto, tentativas=3)
+            html_produto = _fetch_html(url_produto)
             heuristica = _extrair_detalhes_heuristicos(url_produto, html_produto)
 
             if not heuristica.get("descricao"):
