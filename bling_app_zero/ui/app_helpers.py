@@ -19,8 +19,6 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
             st.session_state["logs"] = []
 
         st.session_state["logs"].append(linha)
-
-        # mantém só últimos 200 logs
         st.session_state["logs"] = st.session_state["logs"][-200:]
 
     except Exception:
@@ -32,9 +30,6 @@ def log_debug(msg: str, nivel: str = "INFO") -> None:
 # ============================================================
 
 def sincronizar_etapa_global(etapa: str) -> None:
-    """
-    Controla qual etapa do fluxo está ativa.
-    """
     try:
         st.session_state["etapa_fluxo"] = etapa
         log_debug(f"[ETAPA] Mudando para: {etapa}")
@@ -45,15 +40,12 @@ def sincronizar_etapa_global(etapa: str) -> None:
 
 def ir_para_etapa(etapa: str) -> None:
     """
-    Alias moderno usado pelo ia_panel
+    FIX PRINCIPAL: função exigida pelo ia_panel
     """
     sincronizar_etapa_global(etapa)
 
 
 def voltar_para_etapa(etapa: str) -> None:
-    """
-    Compatibilidade com fluxo antigo
-    """
     sincronizar_etapa_global(etapa)
 
 
@@ -62,26 +54,19 @@ def voltar_para_etapa(etapa: str) -> None:
 # ============================================================
 
 def safe_df_dados(df) -> bool:
-    """
-    Valida se é um DataFrame utilizável
-    """
     try:
         return isinstance(df, pd.DataFrame) and not df.empty
     except Exception:
         return False
 
 
-def limpar_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
+def limpar_df(df: pd.DataFrame | None):
     try:
         if not safe_df_dados(df):
             return None
 
         df = df.copy()
-
-        # remove colunas totalmente vazias
         df = df.dropna(axis=1, how="all")
-
-        # remove linhas totalmente vazias
         df = df.dropna(axis=0, how="all")
 
         return df
@@ -91,7 +76,7 @@ def limpar_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
         return df
 
 
-def garantir_df_session(chave: str, df: pd.DataFrame | None) -> None:
+def garantir_df_session(chave: str, df):
     try:
         if safe_df_dados(df):
             st.session_state[chave] = df.copy()
@@ -100,7 +85,7 @@ def garantir_df_session(chave: str, df: pd.DataFrame | None) -> None:
 
 
 # ============================================================
-# RESUMO DE FLUXO (UI)
+# RESUMO DE FLUXO
 # ============================================================
 
 def render_resumo_fluxo() -> None:
@@ -131,7 +116,7 @@ def render_resumo_fluxo() -> None:
 
 
 # ============================================================
-# RESET GLOBAL (IMPORTANTE)
+# RESET
 # ============================================================
 
 def resetar_fluxo_completo() -> None:
