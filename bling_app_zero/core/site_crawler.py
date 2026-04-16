@@ -662,4 +662,19 @@ def executar_crawler(
             df[coluna] = ""
 
     _log_debug(f"[CRAWLER] finalizado com {len(df)} produto(s)", "SUCCESS")
-    return df[
+    return df[colunas_finais].reset_index(drop=True)
+
+
+def executar_crawler_site(
+    url: str,
+    max_paginas: int = MAX_PAGINAS_PADRAO,
+    max_threads: int = MAX_THREADS_PADRAO,
+    padrao_disponivel: int = 10,
+) -> pd.DataFrame:
+    return executar_crawler(
+        url=url,
+        max_paginas=max_paginas,
+        max_threads=max_threads,
+        padrao_disponivel=padrao_disponivel,
+    )
+    
