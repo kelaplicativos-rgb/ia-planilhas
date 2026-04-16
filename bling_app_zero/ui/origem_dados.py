@@ -1,9 +1,9 @@
+
 from __future__ import annotations
 
 import io
 from pathlib import Path
 import xml.etree.ElementTree as ET
-from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -44,6 +44,10 @@ def _limpar_estado_origem() -> None:
         "origem_upload_bytes",
         "origem_upload_tipo",
         "origem_upload_ext",
+        "site_busca_diagnostico_df",
+        "site_busca_diagnostico_total_descobertos",
+        "site_busca_diagnostico_total_validos",
+        "site_busca_diagnostico_total_rejeitados",
     ]:
         st.session_state.pop(chave, None)
 
@@ -285,6 +289,37 @@ def _registrar_origem_site(df_site: pd.DataFrame, url_site: str) -> None:
     st.session_state["origem_upload_ext"] = "site_gpt"
 
 
+def _render_diagnostico_site() -> None:
+    df_diag = st.session_state.get("site_busca_diagnostico_df")
+
+    if not isinstance(df_diag, pd.DataFrame) or df_diag.empty:
+        return
+
+    total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
+    total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
+    total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
+
+    st.markdown("### Diagnóstico da busca por site")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Descobertos", total_descobertos)
+    with c2:
+        st.metric("Válidos", total_validos)
+    with c3:
+        st.metric("Rejeitados/erros", total_rejeitados)
+
+    st.dataframe(df_diag, use_container_width=True)
+
+    csv_diag = df_diag.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "Baixar diagnóstico CSV",
+        data=csv_diag,
+        file_name="diagnostico_busca_site.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
 def _render_origem_site() -> None:
     st.markdown("### Busca no site do fornecedor")
 
@@ -294,11 +329,19 @@ def _render_origem_site() -> None:
         placeholder="https://fornecedor.com.br",
     )
 
+    modo_diagnostico = st.checkbox(
+        "Ativar modo diagnóstico da busca",
+        value=bool(st.session_state.get("site_fornecedor_diagnostico", False)),
+        key="site_fornecedor_diagnostico",
+        help="Salva detalhes da heurística, do GPT e do resultado final para auditoria.",
+    )
+
     st.caption(
         "A varredura tenta buscar produtos em todo o site, sem exigir termo e sem campo de limite na tela."
     )
 
     st.session_state["site_fornecedor_url"] = url_site
+    st.session_state["site_fornecedor_diagnostico"] = modo_diagnostico
 
     if st.button(
         "✨ Varrer site inteiro com GPT",
@@ -311,16 +354,23 @@ def _render_origem_site() -> None:
             st.error("Informe a URL base do fornecedor.")
             return
 
-        with st.spinner("Varrendo o site inteiro, coletando páginas e extraindo produtos..."):
-            df_site = buscar_produtos_site_com_gpt(base_url=url_site)
+        df_site = buscar_produtos_site_com_gpt(
+            base_url=url_site,
+            diagnostico=modo_diagnostico,
+        )
 
         if not safe_df(df_site):
             st.error("Nenhum produto foi encontrado na varredura do site.")
+            _render_diagnostico_site()
             return
 
         _registrar_origem_site(df_site, url_site)
         st.success(f"Varredura concluída com {len(df_site)} produto(s).")
         _preview_dataframe(df_site, "Preview da varredura do site")
+        _render_diagnostico_site()
+
+    else:
+        _render_diagnostico_site()
 
 
 def _render_modelo() -> None:
