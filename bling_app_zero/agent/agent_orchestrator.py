@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import streamlit as st
 
 from bling_app_zero.agent.agent_memory import (
     get_agent_state,
@@ -25,62 +26,30 @@ from bling_app_zero.agent.agent_tools import (
     gerar_preview_final,
     ler_planilha_origem,
     ler_xml_nfe,
+    montar_df_final_por_mapeamento,
     normalizar_dataframe,
     registrar_base_no_estado,
+    sugerir_mapeamento_para_modelo,
 )
 
 PROMPT_MESTRE_DEFINITIVO = """
 Você é o orquestrador oficial do projeto IA Planilhas → Bling.
 
-Sua função principal não é explicar genericamente.
-Sua função principal é executar um ETL completo e devolver saída final pronta para o Bling.
+Seu papel é executar ETL completo + Bling output.
+Você deve preparar o fluxo para wizard visual com:
+- leitura da origem
+- normalização
+- sugestão de mapeamento
+- identificação de campos pendentes
+- montagem final no modelo enviado
+- preview final pronto para validação e download
 
-OBJETIVO CENTRAL:
-Receber dados de origem, transformar, mapear, validar e devolver o resultado final pronto para importação no Bling.
-
-FONTES DE ENTRADA ACEITAS:
-- planilha
-- XML
-- site
-- fornecedor/API
-- outras origens estruturadas que virem DataFrame
-
-SAÍDA OBRIGATÓRIA:
-- df_origem lido corretamente
-- df_normalizado consistente
-- df_fluxo transformado
-- df_final validado
-- preview final pronto para exportação no padrão do Bling
-
-REGRAS OBRIGATÓRIAS:
-1. Nunca parar em dados crus quando o objetivo for saída Bling.
-2. Nunca perder linhas sem registrar aviso.
-3. Sempre considerar todos os produtos/registros retornados pela origem.
-4. Sempre aplicar o fluxo:
-   origem → normalização → mapeamento → modelo interno Bling → validação → saída final
-5. Sempre priorizar o modelo interno do Bling.
-6. GTIN inválido deve ficar vazio.
-7. Imagens devem ser separadas por pipe |.
-8. Campos obrigatórios devem ser garantidos no modelo final.
-9. Operação deve respeitar cadastro ou estoque.
-10. No estoque, respeitar depósito e balanço.
-11. No cadastro, respeitar descrição, descrição curta, código, preço de venda, GTIN/EAN e categoria.
-12. Quando houver falha, devolver erro claro e status coerente.
-13. Não responder como consultor; responder como executor do fluxo.
-14. O sucesso real só existe quando houver saída final utilizável no Bling.
-
-PRIORIDADES DE DECISÃO:
-- primeiro: manter todos os registros
-- segundo: estruturar no modelo interno do Bling
-- terceiro: validar antes de liberar
-- quarto: deixar o preview final pronto para exportação
-
-COMPORTAMENTO ESPERADO:
-- direto
-- operacional
-- fiel ao projeto
-- orientado a resultado final
-- sem respostas genéricas
+Regras:
+1. Nunca perder linhas sem registrar aviso.
+2. Sempre priorizar o modelo enviado pelo usuário para cadastro ou estoque.
+3. Sempre sugerir mapeamento automático antes de perguntar ao usuário.
+4. Tudo que não puder ser mapeado com segurança deve virar campo pendente.
+5. O sucesso real só existe quando houver df_final utilizável para Bling.
 """.strip()
 
 
@@ -121,9 +90,9 @@ class IAPlanoExecucao:
         default_factory=lambda: [
             "Ler a origem completa",
             "Normalizar sem perder linhas",
-            "Aplicar modelo interno do Bling",
-            "Validar saída final",
-            "Liberar preview/exportação final",
+            "Gerar sugestões automáticas de mapeamento",
+            "Usar o modelo do usuário como base do Bling",
+            "Validar e preparar preview final",
         ]
     )
     observacoes: str = ""
@@ -159,8 +128,7 @@ def montar_contexto_execucao(plano: IAPlanoExecucao) -> Dict[str, Any]:
 
 
 def prompt_contexto_para_texto(plano: IAPlanoExecucao) -> str:
-    contexto = montar_contexto_execucao(plano)
-    return json.dumps(contexto, ensure_ascii=False, indent=2)
+    return json.dumps(montar_contexto_execucao(plano), ensure_ascii=False, indent=2)
 
 
 def _extrair_url(texto: str) -> str:
@@ -194,18 +162,18 @@ def interpretar_comando_usuario(comando: str) -> IAPlanoExecucao:
         f"operação: {operacao}; "
         f"fornecedor: {fornecedor or '-'}; "
         f"depósito: {deposito or '-'}; "
-        "modo: ETL completo + Bling output"
+        "modo: wizard visual + ETL completo"
     )
 
     proximas_acoes = [
         "Ler a origem",
         "Normalizar a base",
-        "Aplicar modelo interno do Bling",
-        "Validar base final do Bling",
-        "Preparar preview e exportação final",
+        "Sugerir mapeamento para o modelo",
+        "Perguntar campos pendentes",
+        "Montar preview final do Bling",
     ]
 
-    plano = IAPlanoExecucao(
+    return IAPlanoExecucao(
         origem=origem,
         operacao=operacao,
         fornecedor=fornecedor,
@@ -219,7 +187,6 @@ def interpretar_comando_usuario(comando: str) -> IAPlanoExecucao:
         observacoes=observacoes,
         proximas_acoes=proximas_acoes,
     )
-    return plano
 
 
 def plano_para_json(plano: IAPlanoExecucao) -> str:
@@ -259,6 +226,64 @@ def _executar_fonte(
     )
 
 
+def _obter_modelo_base_da_sessao(plano: IAPlanoExecucao) -> pd.DataFrame:
+    df_modelo = st.session_state.get("df_modelo_base")
+    if _tem_df(df_modelo):
+        return df_modelo.copy()
+
+    if plano.operacao == "cadastro":
+        df_modelo = st.session_state.get("df_modelo_cadastro")
+        if _tem_df(df_modelo):
+            return df_modelo.head(0).copy()
+
+    if plano.operacao == "estoque":
+        df_modelo = st.session_state.get("df_modelo_estoque")
+        if _tem_df(df_modelo):
+            return df_modelo.head(0).copy()
+
+    return pd.DataFrame()
+
+
+def _registrar_contexto_wizard(
+    plano: IAPlanoExecucao,
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_sugerido: Dict[str, str],
+    pendentes: List[str],
+    log_func: Optional[Any] = None,
+) -> None:
+    st.session_state["df_base_mapeamento"] = df_base.copy()
+    st.session_state["mapeamento_colunas"] = dict(mapping_sugerido)
+    st.session_state["campos_pendentes"] = list(pendentes)
+    st.session_state["tipo_operacao"] = plano.operacao
+    st.session_state["operacao"] = plano.operacao
+
+    if plano.deposito:
+        st.session_state["deposito_nome"] = plano.deposito
+
+    if _tem_df(df_modelo):
+        st.session_state["df_modelo_base"] = df_modelo.head(0).copy()
+
+    state = get_agent_state()
+    state.operacao = plano.operacao
+    state.fornecedor = plano.fornecedor
+    state.deposito_nome = plano.deposito
+    state.etapa_atual = "mapeamento" if pendentes else "validacao"
+    state.status_execucao = "mapeamento_pronto" if pendentes else "base_pronta"
+    state.clear_pendencias()
+
+    for campo in pendentes:
+        state.add_pendencia(f"Confirmar destino da coluna do modelo: {campo}")
+
+    save_agent_state(state)
+
+    if callable(log_func):
+        log_func(
+            f"[AGENT] wizard preparado com {len(mapping_sugerido)} sugestões e {len(pendentes)} pendências.",
+            "INFO",
+        )
+
+
 def executar_fluxo_real_com_ia(
     st_session_state: Any,
     comando: str,
@@ -281,12 +306,8 @@ def executar_fluxo_real_com_ia(
 
     if callable(log_func):
         log_func("[AGENT] PROMPT MESTRE DEFINITIVO carregado no orquestrador.", "INFO")
-        log_func(f"[AGENT] objetivo final: {plano.objetivo_final}", "INFO")
         log_func(f"[AGENT] plano interpretado: {plano.observacoes}", "INFO")
-        log_func(
-            f"[AGENT] contexto do prompt:\n{prompt_contexto_para_texto(plano)}",
-            "INFO",
-        )
+        log_func(f"[AGENT] contexto:\n{prompt_contexto_para_texto(plano)}", "INFO")
 
     df_origem = _executar_fonte(
         plano=plano,
@@ -301,7 +322,7 @@ def executar_fluxo_real_com_ia(
         state.status_execucao = "erro"
         state.etapa_atual = "origem"
         state.add_erro(mensagem)
-        state.add_pendencia("Garantir retorno de dados antes do modelo interno do Bling.")
+        state.add_pendencia("Garantir retorno da planilha ou origem antes do wizard.")
         save_agent_state(state)
 
         if callable(log_func):
@@ -313,7 +334,10 @@ def executar_fluxo_real_com_ia(
             "plano": plano,
             "prompt_mestre": PROMPT_MESTRE_DEFINITIVO,
             "contexto_execucao": montar_contexto_execucao(plano),
+            "mapping_sugerido": {},
+            "campos_pendentes_mapeamento": [],
             "df_origem": pd.DataFrame(),
+            "df_base_mapeamento": pd.DataFrame(),
             "df_final": pd.DataFrame(),
             "validacao": {
                 "aprovado": False,
@@ -335,7 +359,6 @@ def executar_fluxo_real_com_ia(
         operacao=plano.operacao,
         deposito_nome=plano.deposito,
     )
-
     total_linhas_fluxo = len(df_fluxo) if _tem_df(df_fluxo) else 0
 
     registrar_base_no_estado(
@@ -347,17 +370,69 @@ def executar_fluxo_real_com_ia(
         log_func=log_func,
     )
 
-    resultado_final = gerar_preview_final(
-        df=df_fluxo,
-        operacao=plano.operacao,
-        log_func=log_func,
-    )
+    df_modelo = _obter_modelo_base_da_sessao(plano)
+
+    mapping_sugerido: Dict[str, str] = {}
+    pendentes: List[str] = []
+    df_final = pd.DataFrame()
+    validacao = {
+        "aprovado": False,
+        "erros": [],
+        "avisos": [],
+        "linhas_validas": 0,
+        "linhas_invalidas": 0,
+        "corrigido_automaticamente": [],
+    }
+
+    if _tem_df(df_modelo):
+        mapping_sugerido, pendentes = sugerir_mapeamento_para_modelo(
+            df_origem=df_fluxo,
+            df_modelo=df_modelo,
+            operacao=plano.operacao,
+            deposito_nome=plano.deposito,
+        )
+
+        _registrar_contexto_wizard(
+            plano=plano,
+            df_base=df_fluxo,
+            df_modelo=df_modelo,
+            mapping_sugerido=mapping_sugerido,
+            pendentes=pendentes,
+            log_func=log_func,
+        )
+
+        if not pendentes:
+            df_final = montar_df_final_por_mapeamento(
+                df_origem=df_fluxo,
+                df_modelo=df_modelo,
+                mapping=mapping_sugerido,
+                operacao=plano.operacao,
+                deposito_nome=plano.deposito,
+            )
+
+            if _tem_df(df_final):
+                resultado_final = gerar_preview_final(
+                    df=df_final,
+                    operacao=plano.operacao,
+                    log_func=log_func,
+                )
+                validacao = resultado_final["validacao"]
+                df_final = (
+                    resultado_final["df_final"].copy()
+                    if _tem_df(resultado_final["df_final"])
+                    else pd.DataFrame()
+                )
+    else:
+        if callable(log_func):
+            log_func("[AGENT] nenhum modelo base encontrado na sessão para gerar sugestões de mapeamento.", "WARNING")
+
+        st.session_state["df_base_mapeamento"] = df_fluxo.copy()
+        st.session_state["mapeamento_colunas"] = {}
+        st.session_state["campos_pendentes"] = []
 
     state = get_agent_state()
-    state.status_execucao = "sucesso" if resultado_final["validacao"]["aprovado"] else "revisao"
-    state.etapa_atual = "final" if resultado_final["validacao"]["aprovado"] else "validacao"
     state.clear_erros()
-    state.clear_pendencias()
+    state.clear_avisos()
 
     if total_linhas_origem != total_linhas_normalizado:
         state.add_aviso(
@@ -370,19 +445,26 @@ def executar_fluxo_real_com_ia(
         )
 
     if total_linhas_origem == total_linhas_fluxo:
-        state.add_log(
-            f"Integridade de linhas preservada no ETL: {total_linhas_fluxo} registros."
-        )
+        state.add_log(f"Integridade de linhas preservada no ETL: {total_linhas_fluxo} registros.")
     else:
         state.add_aviso(
             f"ETL concluiu com alteração de volume: origem={total_linhas_origem} final_fluxo={total_linhas_fluxo}"
         )
 
-    for aviso in resultado_final["validacao"].get("avisos", []):
+    for aviso in validacao.get("avisos", []):
         state.add_aviso(aviso)
-
-    for erro in resultado_final["validacao"].get("erros", []):
+    for erro in validacao.get("erros", []):
         state.add_erro(erro)
+
+    if _tem_df(df_final):
+        state.status_execucao = "sucesso" if validacao.get("aprovado") else "revisao"
+        state.etapa_atual = "final" if validacao.get("aprovado") else "validacao"
+    elif pendentes:
+        state.status_execucao = "mapeamento_pronto"
+        state.etapa_atual = "mapeamento"
+    else:
+        state.status_execucao = "base_pronta"
+        state.etapa_atual = "validacao"
 
     state.add_log(
         f"Fluxo IA executado para operação={plano.operacao} origem={plano.origem} fornecedor={plano.fornecedor or '-'}"
@@ -395,13 +477,12 @@ def executar_fluxo_real_com_ia(
         "plano": plano,
         "prompt_mestre": PROMPT_MESTRE_DEFINITIVO,
         "contexto_execucao": montar_contexto_execucao(plano),
+        "mapping_sugerido": dict(mapping_sugerido),
+        "campos_pendentes_mapeamento": list(pendentes),
         "df_origem": df_fluxo.copy(),
-        "df_final": (
-            resultado_final["df_final"].copy()
-            if _tem_df(resultado_final["df_final"])
-            else pd.DataFrame()
-        ),
-        "validacao": resultado_final["validacao"],
+        "df_base_mapeamento": df_fluxo.copy(),
+        "df_final": df_final.copy() if _tem_df(df_final) else pd.DataFrame(),
+        "validacao": validacao,
         "metricas_etl": {
             "linhas_origem": total_linhas_origem,
             "linhas_normalizado": total_linhas_normalizado,
@@ -432,7 +513,7 @@ def marcar_etapa_manual(etapa: str) -> None:
 
 def pode_ir_para_mapeamento() -> bool:
     state = get_agent_state()
-    return state.status_execucao in {"sucesso", "revisao", "base_pronta"}
+    return state.status_execucao in {"sucesso", "revisao", "base_pronta", "mapeamento_pronto"}
 
 
 def pode_ir_para_final() -> bool:
