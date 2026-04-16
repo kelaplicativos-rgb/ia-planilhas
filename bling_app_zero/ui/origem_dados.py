@@ -11,7 +11,7 @@ import streamlit as st
 from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
-    safe_df,
+    safe_df_dados,
     safe_df_estrutura,
 )
 
@@ -181,7 +181,7 @@ def _processar_upload_origem(upload) -> None:
             st.error(f"Não foi possível ler a planilha de origem: {exc}")
             return
 
-        if not safe_df(df):
+        if not safe_df_dados(df):
             st.error("A planilha de origem precisa ter linhas com dados.")
             return
 
@@ -193,7 +193,7 @@ def _processar_upload_origem(upload) -> None:
 
     if ext == ".xml":
         df = _parse_xml_nfe(upload)
-        if not safe_df(df):
+        if not safe_df_dados(df):
             st.error("Não foi possível extrair dados do XML.")
             return
 
@@ -235,7 +235,7 @@ def _processar_upload_modelo(upload) -> None:
 
 
 def _origem_pronta() -> bool:
-    return safe_df(st.session_state.get("df_origem"))
+    return safe_df_dados(st.session_state.get("df_origem"))
 
 
 def _modelo_pronto() -> bool:
@@ -359,7 +359,7 @@ def _render_origem_site() -> None:
             diagnostico=modo_diagnostico,
         )
 
-        if not safe_df(df_site):
+        if not safe_df_dados(df_site):
             st.error("Nenhum produto foi encontrado na varredura do site.")
             _render_diagnostico_site()
             return
@@ -392,7 +392,7 @@ def _render_resumo() -> None:
     st.write(f"**Origem anexada:** {st.session_state.get('origem_upload_nome', 'não enviada')}")
     st.write(f"**Modelo anexado:** {st.session_state.get('modelo_upload_nome', 'não enviado')}")
 
-    if safe_df(st.session_state.get("df_origem")):
+    if safe_df_dados(st.session_state.get("df_origem")):
         st.write(f"**Linhas origem:** {len(st.session_state['df_origem'])}")
         st.write(f"**Colunas origem:** {len(st.session_state['df_origem'].columns)}")
 
@@ -435,3 +435,4 @@ def render_origem_dados() -> None:
             ir_para_etapa("precificacao")
     else:
         st.info("Envie/gere a origem e envie o modelo para continuar.")
+
