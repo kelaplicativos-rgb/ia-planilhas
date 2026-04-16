@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import io
@@ -17,10 +16,10 @@ def safe_df(df):
 
 def nome_etapa_amigavel(etapa: str) -> str:
     mapa = {
-        "origem": "Origem",
+        "origem": "Origem dos dados",
         "precificacao": "Precificação",
         "mapeamento": "Mapeamento",
-        "preview_final": "Preview Final",
+        "preview_final": "Preview final",
     }
     return mapa.get(str(etapa), str(etapa).capitalize())
 
@@ -74,7 +73,7 @@ def ir_para_etapa(etapa: str) -> None:
         return
 
     etapa_atual = st.session_state.get("etapa", "origem")
-    historico = st.session_state.get("historico_etapas", ["origem"])
+    historico = st.session_state.get("historico_etapas", ["origem"]).copy()
 
     if etapa_atual != etapa:
         if not historico or historico[-1] != etapa_atual:
@@ -90,20 +89,20 @@ def ir_para_etapa(etapa: str) -> None:
 
 
 def pode_voltar() -> bool:
-    historico = st.session_state.get("historico_etapas", ["origem"])
     etapa = st.session_state.get("etapa", "origem")
+    historico = st.session_state.get("historico_etapas", ["origem"])
 
-    if etapa != "origem":
-        return True
+    if etapa == "origem":
+        return False
 
-    return len(historico) > 1
+    return bool(historico)
 
 
 def voltar_etapa_anterior() -> None:
-    historico = st.session_state.get("historico_etapas", ["origem"])
+    historico = st.session_state.get("historico_etapas", ["origem"]).copy()
     etapa_atual = st.session_state.get("etapa", "origem")
 
-    if not historico:
+    if etapa_atual == "origem":
         st.session_state["historico_etapas"] = ["origem"]
         st.session_state["etapa"] = "origem"
         _set_query_param_etapa("origem")
@@ -115,7 +114,11 @@ def voltar_etapa_anterior() -> None:
 
     etapa_destino = historico[-1] if historico else "origem"
 
-    st.session_state["historico_etapas"] = historico if historico else ["origem"]
+    if historico:
+        st.session_state["historico_etapas"] = historico
+    else:
+        st.session_state["historico_etapas"] = ["origem"]
+
     st.session_state["etapa"] = etapa_destino
     _set_query_param_etapa(etapa_destino)
     st.rerun()
@@ -127,13 +130,13 @@ def render_topo_navegacao() -> None:
     col1, col2 = st.columns([1, 3])
 
     with col1:
-        if st.button(
-            "⬅️ Voltar",
-            use_container_width=True,
-            disabled=not pode_voltar(),
-            key=f"btn_voltar_topo_{etapa}",
-        ):
-            voltar_etapa_anterior()
+        if etapa != "origem":
+            if st.button(
+                "⬅️ Voltar",
+                use_container_width=True,
+                key="btn_voltar_topo",
+            ):
+                voltar_etapa_anterior()
 
     with col2:
         st.markdown(f"**Etapa atual:** {nome_etapa_amigavel(etapa)}")
