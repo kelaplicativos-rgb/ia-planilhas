@@ -383,9 +383,23 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
         st.session_state["deposito_nome"] = deposito_digitado
 
     st.markdown("#### Como deseja informar a origem?")
+
+    opcoes_origem = [
+        "Planilha fornecedora",
+        "XML da nota fiscal",
+        "Buscar pelo site",
+        "Fornecedor via API",
+    ]
+
+    valor_atual_origem = _safe_str(st.session_state.get("origem_tipo_radio"))
+    if valor_atual_origem not in opcoes_origem:
+        valor_atual_origem = "Planilha fornecedora"
+        st.session_state["origem_tipo_radio"] = valor_atual_origem
+
     origem_tipo = st.radio(
         "Selecione a origem",
-        ["Planilha fornecedora", "XML da nota fiscal", "Buscar pelo site", "Fornecedor via API"],
+        options=opcoes_origem,
+        index=opcoes_origem.index(valor_atual_origem),
         horizontal=False,
         key="origem_tipo_radio",
     )
@@ -447,9 +461,18 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
 
     else:
         fornecedores = listar_fornecedores_disponiveis()
+        opcoes_fornecedor = (
+            fornecedores if fornecedores else ["Atacadum", "Mega Center Eletrônicos", "Oba Oba Mix"]
+        )
+
+        valor_fornecedor = _safe_str(st.session_state.get("origem_fornecedor_api"))
+        if valor_fornecedor not in opcoes_fornecedor:
+            valor_fornecedor = opcoes_fornecedor[0]
+
         fornecedor_escolhido = st.selectbox(
             "Selecione o fornecedor",
-            options=fornecedores if fornecedores else ["Atacadum", "Mega Center Eletrônicos", "Oba Oba Mix"],
+            options=opcoes_fornecedor,
+            index=opcoes_fornecedor.index(valor_fornecedor),
             key="origem_fornecedor_api",
         )
 
@@ -463,11 +486,13 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
 
         if st.button("Buscar produtos do fornecedor", use_container_width=True, key="origem_btn_buscar_api"):
             fornecedor_normalizado = fornecedor_escolhido
-            if "mega center" in normalizar_coluna_busca(fornecedor_escolhido):
+            fornecedor_norm = normalizar_coluna_busca(fornecedor_escolhido)
+
+            if "mega center" in fornecedor_norm:
                 fornecedor_normalizado = "mega_center"
-            elif "oba oba" in normalizar_coluna_busca(fornecedor_escolhido):
+            elif "oba oba" in fornecedor_norm:
                 fornecedor_normalizado = "oba_oba_mix"
-            elif "atacadum" in normalizar_coluna_busca(fornecedor_escolhido):
+            elif "atacadum" in fornecedor_norm:
                 fornecedor_normalizado = "atacadum"
 
             with st.spinner("Buscando produtos do fornecedor..."):
