@@ -117,16 +117,29 @@ def _set_operacao(label: str) -> None:
         st.session_state["tipo_operacao"] = "Atualização de Estoque"
         st.session_state["tipo_operacao_radio"] = "Atualização de Estoque"
         st.session_state["tipo_operacao_bling"] = "estoque"
-        st.session_state["operacao"] = "estoque"
     else:
         st.session_state["tipo_operacao"] = "Cadastro de Produtos"
         st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
         st.session_state["tipo_operacao_bling"] = "cadastro"
-        st.session_state["operacao"] = "cadastro"
 
     st.session_state["df_modelo_operacao"] = _modelo_padrao_por_operacao(
         st.session_state["tipo_operacao_bling"]
     )
+
+
+def _resolver_operacao_atual() -> str:
+    operacao_widget = _safe_str(st.session_state.get("operacao")).lower()
+    tipo_operacao = _safe_str(st.session_state.get("tipo_operacao"))
+
+    if operacao_widget == "estoque":
+        return "Atualização de Estoque"
+    if operacao_widget == "cadastro":
+        return "Cadastro de Produtos"
+
+    if tipo_operacao in {"Cadastro de Produtos", "Atualização de Estoque"}:
+        return tipo_operacao
+
+    return "Cadastro de Produtos"
 
 
 def _resolver_df_origem_atual() -> Optional[pd.DataFrame]:
@@ -239,7 +252,7 @@ def _normalizar_df_origem(df: pd.DataFrame) -> pd.DataFrame:
     )
     col_preco = _primeira_coluna_existente(
         base,
-        ["preco", "preco_base", "valor", "valor unitario", "vuncom", "vuncom"],
+        ["preco", "preco_base", "valor", "valor unitario", "vuncom"],
     )
     col_quantidade = _primeira_coluna_existente(
         base,
@@ -514,11 +527,7 @@ def render_origem_dados() -> Optional[pd.DataFrame]:
         "Escolha a operação, informe a origem e prepare a base para precificação e mapeamento."
     )
 
-    operacao_atual = _safe_str(
-        st.session_state.get("tipo_operacao") or "Cadastro de Produtos"
-    )
-    if operacao_atual not in {"Cadastro de Produtos", "Atualização de Estoque"}:
-        operacao_atual = "Cadastro de Produtos"
+    operacao_atual = _resolver_operacao_atual()
 
     if "tipo_operacao_bling" not in st.session_state:
         _set_operacao(operacao_atual)
