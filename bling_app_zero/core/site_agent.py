@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import pandas as pd
+import streamlit as st
+import time
 
 from bling_app_zero.core.site_crawler_cleaners import normalizar_url, safe_str
 from bling_app_zero.core.site_crawler_extractors import extrair_detalhes_heuristicos
@@ -12,15 +14,7 @@ from bling_app_zero.core.site_crawler_validators import produto_final_valido
 
 
 def _limite_tecnico(limite_links: int | None) -> int:
-    limite_padrao = 8000
-
-    if not isinstance(limite_links, int):
-        return limite_padrao
-
-    if limite_links <= 0:
-        return limite_padrao
-
-    return min(max(limite_links, 1), limite_padrao)
+    return min(max(limite_links or 8000, 1), 8000)
 
 
 def _montar_linha_saida(final: dict) -> dict:
@@ -46,7 +40,7 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
     if "URL Produto" in df.columns:
         df = df.drop_duplicates(subset=["URL Produto"], keep="first")
 
-    colunas_ordenadas = [
+    colunas = [
         "Código",
         "Descrição",
         "Categoria",
@@ -58,11 +52,11 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
         "URL Produto",
     ]
 
-    for col in colunas_ordenadas:
+    for col in colunas:
         if col not in df.columns:
             df[col] = ""
 
-    return df[colunas_ordenadas].reset_index(drop=True)
+    return df[colunas].reset_index(drop=True)
 
 
 def buscar_produtos_site_com_gpt(
@@ -70,6 +64,7 @@ def buscar_produtos_site_com_gpt(
     termo: str = "",
     limite_links: int | None = None,
 ) -> pd.DataFrame:
+
     base_url = normalizar_url(base_url)
     termo = safe_str(termo)
 
@@ -77,6 +72,15 @@ def buscar_produtos_site_com_gpt(
         return pd.DataFrame()
 
     limite = _limite_tecnico(limite_links)
+
+    # -------------------------
+    # UI DE PROGRESSO
+    # -------------------------
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    contador_text = st.empty()
+
+    status_text.info("🔍 Descobrindo produtos no site...")
 
     produtos = descobrir_produtos_no_dominio(
         base_url=base_url,
@@ -86,29 +90,51 @@ def buscar_produtos_site_com_gpt(
         max_segundos=900,
     )
 
+    total = len(produtos)
+
     if not produtos:
+        status_text.warning("Nenhum produto encontrado.")
         return pd.DataFrame()
 
     rows: list[dict] = []
     vistos: set[str] = set()
 
-    for url_produto in produtos:
+    for i, url_produto in enumerate(produtos, start=1):
+
+        percentual = int((i / total) * 100)
+        progress_bar.progress(percentual)
+
+        contador_text.write(f"Processando {i} de {total} produtos")
+
         url_produto = safe_str(url_produto)
         if not url_produto or url_produto in vistos:
             continue
 
         try:
+            status_text.info(f"🌐 Acessando: {url_produto}")
+
             html_produto = fetch_html_retry(url_produto, tentativas=2)
+
+            status_text.info("🔎 Extraindo dados (heurística)...")
             heuristica = extrair_detalhes_heuristicos(url_produto, html_produto)
+
+            status_text.info("🧠 Refinando com GPT...")
             final = gpt_extrair_produto(url_produto, html_produto, heuristica)
 
             if not produto_final_valido(final):
+                status_text.warning("⚠️ Produto ignorado (dados inválidos)")
                 continue
 
             rows.append(_montar_linha_saida(final))
             vistos.add(url_produto)
 
-        except Exception:
+            status_text.success("✅ Produto capturado")
+
+        except Exception as e:
+            status_text.error(f"Erro ao processar: {url_produto}")
             continue
+
+    progress_bar.progress(100)
+    status_text.success("🎉 Finalizado!")
 
     return _df_saida(rows)
