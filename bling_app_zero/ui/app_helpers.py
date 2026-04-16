@@ -388,5 +388,422 @@ def render_topo_status_fluxo() -> None:
 # ============================================================
 
 def _limpar_chaves_estado(chaves: list[str]) -> None:
-    for chave
+    for chave in chaves:
+        st.session_state.pop(chave, None)
+
+
+def limpar_estado_fluxo() -> None:
+    _limpar_chaves_estado(
+        [
+            "df_origem",
+            "df_normalizado",
+            "df_precificado",
+            "df_mapeado",
+            "df_saida",
+            "df_final",
+            "df_calc_precificado",
+            "df_preview_mapeamento",
+            "df_modelo",
+            "origem_upload_nome",
+            "origem_upload_bytes",
+            "origem_upload_tipo",
+            "origem_upload_ext",
+            "modelo_upload_nome",
+            "modelo_upload_bytes",
+            "modelo_upload_tipo",
+            "modelo_upload_ext",
+            "site_fornecedor_url",
+            "site_fornecedor_diagnostico",
+            "site_busca_diagnostico_df",
+            "site_busca_diagnostico_total_descobertos",
+            "site_busca_diagnostico_total_validos",
+            "site_busca_diagnostico_total_rejeitados",
+            "pricing_df_preview",
+            "mapping_manual",
+            "mapping_sugerido",
+            "etapa_historico",
+        ]
+    )
+
+    for chave in [
+        "mapping_origem",
+        "mapping_origem_rascunho",
+        "mapping_origem_defaults",
+    ]:
+        st.session_state[chave] = {}
+
+    for chave in [
+        "ia_plano_preview",
+        "ia_erro_execucao",
+    ]:
+        st.session_state[chave] = ""
+
+    if _agent_state_disponivel():
+        try:
+            from bling_app_zero.agent.agent_memory import reset_agent_state
+
+            reset_agent_state(
+                preserve_dataframe_keys=False,
+                preserve_operacao=False,
+                preserve_deposito=False,
+            )
+        except Exception:
+            pass
+
+    sincronizar_etapa_global("origem")
+    _set_query_param_etapa("origem")
+
+
+def obter_df_fluxo_preferencial() -> pd.DataFrame:
+    state = get_agent_state_safe()
+
+    if state is not None:
+        for chave in [
+            getattr(state, "df_final_key", ""),
+            getattr(state, "df_mapeado_key", ""),
+            getattr(state, "df_normalizado_key", ""),
+            getattr(state, "df_origem_key", ""),
+        ]:
+            chave_limpa = normalizar_texto(chave)
+            if not chave_limpa:
+                continue
+
+            df = st.session_state.get(chave_limpa)
+            if safe_df_dados(df):
+                return garantir_dataframe(df)
+
+    for chave in [
+        "df_final",
+        "df_saida",
+        "df_mapeado",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_normalizado",
+        "df_origem",
+    ]:
+        df = st.session_state.get(chave)
+        if safe_df_dados(df):
+            return garantir_dataframe(df)
+
+    return pd.DataFrame()
+
+
+# ============================================================
+# FORMATAÇÃO NUMÉRICA
+# ============================================================
+
+def to_float_brasil(valor: Any, default: float = 0.0) -> float:
+    if valor is None:
+        return default
+
+    texto = str(valor).strip()
+    if not texto:
+        return default
+
+    texto = texto.replace("R$", "").replace(" ", "")
+
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    else:
+        texto = texto.replace(",", ".")
+
+    texto = re.sub(r"[^0-9.\-]", "", texto)
+
+    try:
+        return float(texto)
+    except Exception:
+        return default
+
+
+def formatar_numero_bling(valor: Any) -> str:
+    numero = to_float_brasil(valor, 0.0)
+    return f"{numero:.2f}".replace(".", ",")
+
+
+def formatar_inteiro_seguro(valor: Any, default: int = 0) -> int:
+    try:
+        numero = to_float_brasil(valor, float(default))
+        return int(round(numero))
+    except Exception:
+        return default
+
+
+# ============================================================
+# GTIN / IMAGENS / LIMPEZAS FINAIS
+# ============================================================
+
+def _somente_digitos(valor: Any) -> str:
+    return re.sub(r"\D+", "", normalizar_texto(valor))
+
+
+def _gtin_checksum_valido(gtin: str) -> bool:
+    if not gtin.isdigit() or len(gtin) not in {8, 12, 13, 14}:
+        return False
+
+    digitos = [int(d) for d in gtin]
+    digito_verificador = digitos[-1]
+    corpo = digitos[:-1][::-1]
+
+    total = 0
+    for indice, digito in enumerate(corpo, start=1):
+        peso = 3 if indice % 2 == 1 else 1
+        total += digito * peso
+
+    calculado = (10 - (total % 10)) % 10
+    return calculado == digito_verificador
+
+
+def limpar_gtin_invalido(valor: Any) -> str:
+    gtin = _somente_digitos(valor)
+    if _gtin_checksum_valido(gtin):
+        return gtin
+    return ""
+
+
+def normalizar_imagens_pipe(valor: Any) -> str:
+    texto = normalizar_texto(valor)
+    if not texto:
+        return ""
+
+    texto = texto.replace("\n", "|").replace(";", "|")
+    texto = re.sub(r"\s*\|\s*", "|", texto)
+    texto = re.sub(r",(?=https?://)", "|", texto)
+    texto = re.sub(r"\|+", "|", texto)
+
+    partes = [p.strip() for p in texto.strip("| ").split("|") if p.strip()]
+    vistos = set()
+    saida = []
+
+    for parte in partes:
+        if parte not in vistos:
+            vistos.add(parte)
+            saida.append(parte)
+
+    return "|".join(saida)
+
+
+def normalizar_situacao(valor: Any, default: str = "Ativo") -> str:
+    texto = normalizar_texto(valor)
+    return texto if texto else default
+
+
+# ============================================================
+# MODELO / COLUNAS
+# ============================================================
+
+def colunas_modelo_estoque() -> list[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Depósito (OBRIGATÓRIO)",
+        "Balanço (OBRIGATÓRIO)",
+        "Preço unitário (OBRIGATÓRIO)",
+        "Situação",
+    ]
+
+
+def colunas_modelo_cadastro() -> list[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Descrição Curta",
+        "Preço de venda",
+        "GTIN/EAN",
+        "Situação",
+        "URL Imagens",
+        "Categoria",
+    ]
+
+
+def obter_colunas_modelo_por_tipo(tipo_operacao_bling: str) -> list[str]:
+    if safe_lower(tipo_operacao_bling) == "estoque":
+        return colunas_modelo_estoque()
+    return colunas_modelo_cadastro()
+
+
+def garantir_colunas_modelo(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+) -> pd.DataFrame:
+    base = garantir_dataframe(df)
+    colunas = obter_colunas_modelo_por_tipo(tipo_operacao_bling)
+
+    for coluna in colunas:
+        if coluna not in base.columns:
+            base[coluna] = ""
+
+    base = base[colunas].copy()
+    return base.fillna("")
+
+
+def blindar_df_para_bling(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+    deposito_nome: str = "",
+) -> pd.DataFrame:
+    base = garantir_dataframe(df)
+    tipo = safe_lower(tipo_operacao_bling)
+
+    if tipo == "estoque":
+        base = garantir_colunas_modelo(base, "estoque")
+
+        if deposito_nome:
+            base["Depósito (OBRIGATÓRIO)"] = normalizar_texto(deposito_nome)
+
+        base["Código"] = base["Código"].apply(normalizar_texto)
+        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
+        base["Depósito (OBRIGATÓRIO)"] = base["Depósito (OBRIGATÓRIO)"].apply(normalizar_texto)
+        base["Balanço (OBRIGATÓRIO)"] = base["Balanço (OBRIGATÓRIO)"].apply(formatar_inteiro_seguro)
+        base["Preço unitário (OBRIGATÓRIO)"] = base["Preço unitário (OBRIGATÓRIO)"].apply(formatar_numero_bling)
+        base["Situação"] = base["Situação"].apply(normalizar_situacao)
+    else:
+        base = garantir_colunas_modelo(base, "cadastro")
+
+        base["Código"] = base["Código"].apply(normalizar_texto)
+        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
+        base["Descrição Curta"] = base["Descrição Curta"].apply(normalizar_texto)
+        base["Preço de venda"] = base["Preço de venda"].apply(formatar_numero_bling)
+        base["GTIN/EAN"] = base["GTIN/EAN"].apply(limpar_gtin_invalido)
+        base["Situação"] = base["Situação"].apply(normalizar_situacao)
+        base["URL Imagens"] = base["URL Imagens"].apply(normalizar_imagens_pipe)
+        base["Categoria"] = base["Categoria"].apply(normalizar_texto)
+
+    return base.fillna("")
+
+
+# ============================================================
+# VALIDAÇÃO FINAL
+# ============================================================
+
+def _coluna_vazia_ou_invalida(series: pd.Series) -> int:
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(["", "nan", "none", "nat", ""])
+        .sum()
+    )
+
+
+def validar_df_para_download(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+) -> tuple[bool, list[str]]:
+    base = garantir_dataframe(df)
+    erros: list[str] = []
+
+    if not safe_df_dados(base):
+        erros.append("A planilha final está vazia.")
+        return False, erros
+
+    tipo = safe_lower(tipo_operacao_bling)
+
+    if tipo == "estoque":
+        obrigatorias = [
+            "Código",
+            "Descrição",
+            "Depósito (OBRIGATÓRIO)",
+            "Balanço (OBRIGATÓRIO)",
+            "Preço unitário (OBRIGATÓRIO)",
+        ]
+    else:
+        obrigatorias = [
+            "Código",
+            "Descrição",
+            "Preço de venda",
+        ]
+
+    for coluna in obrigatorias:
+        if coluna not in base.columns:
+            erros.append(f"Coluna obrigatória ausente: {coluna}")
+            continue
+
+        vazios = _coluna_vazia_ou_invalida(base[coluna])
+        if vazios > 0:
+            erros.append(f"Coluna obrigatória com valores vazios: {coluna} ({vazios})")
+
+    if tipo == "estoque":
+        if "Balanço (OBRIGATÓRIO)" in base.columns:
+            invalidos = (
+                pd.to_numeric(
+                    base["Balanço (OBRIGATÓRIO)"].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                )
+                .isna()
+                .sum()
+            )
+            if invalidos > 0:
+                erros.append(f"Balanço (OBRIGATÓRIO) contém valores inválidos ({invalidos})")
+    else:
+        if "Preço de venda" in base.columns:
+            invalidos = (
+                pd.to_numeric(
+                    base["Preço de venda"]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)
+                    .str.replace(",", ".", regex=False),
+                    errors="coerce",
+                )
+                .isna()
+                .sum()
+            )
+            if invalidos > 0:
+                erros.append(f"Preço de venda contém valores inválidos ({invalidos})")
+
+    return len(erros) == 0, erros
+
+
+# ============================================================
+# EXPORTAÇÃO
+# ============================================================
+
+def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
+    base = garantir_dataframe(df).fillna("")
+    csv_texto = base.to_csv(index=False, sep=";")
+    return csv_texto.encode("utf-8-sig")
+
+
+# ============================================================
+# RESUMO VISUAL
+# ============================================================
+
+def _label_etapa(etapa: str) -> str:
+    return MAPA_LABEL_ETAPA.get(_normalizar_etapa_fluxo(etapa), normalizar_texto(etapa) or "-")
+
+
+def _status_legivel(status: str) -> str:
+    mapa = {
+        "idle": "Aguardando",
+        "base_pronta": "Base pronta",
+        "mapeamento_pronto": "Mapeamento pronto",
+        "final_pronto": "Final pronto",
+        "revisao": "Em revisão",
+        "revisao_final": "Revisão final",
+        "sucesso": "Concluído",
+        "erro": "Erro",
+        "validacao_pendente": "Validação pendente",
+    }
+    return mapa.get(normalizar_texto(status).lower(), normalizar_texto(status) or "-")
+
+
+def render_resumo_fluxo() -> None:
+    state = get_agent_state_safe()
+
+    if state is not None:
+        etapa = _label_etapa(getattr(state, "etapa_atual", "origem"))
+        operacao = normalizar_texto(getattr(state, "operacao", "")) or "-"
+        status = _status_legivel(getattr(state, "status_execucao", "idle"))
+        simulacao = "Aprovada" if bool(getattr(state, "simulacao_aprovada", False)) else "Pendente"
+
+        st.caption(
+            f"Etapa atual: {etapa} | Operação: {operacao} | Status: {status} | Simulação: {simulacao}"
+        )
+        return
+
+    etapa = get_etapa()
+    tipo_operacao = st.session_state.get("tipo_operacao", "")
+
+    st.caption(
+        f"Etapa atual: {_label_etapa(str(etapa))} | Operação: {tipo_operacao if tipo_operacao else '-'}"
+    )
 
