@@ -36,10 +36,6 @@ except Exception:
         return []
 
 
-# ============================================================
-# HELPERS BÁSICOS
-# ============================================================
-
 def _safe_str(valor) -> str:
     try:
         if valor is None:
@@ -121,10 +117,12 @@ def _set_operacao(label: str) -> None:
         st.session_state["tipo_operacao"] = "Atualização de Estoque"
         st.session_state["tipo_operacao_radio"] = "Atualização de Estoque"
         st.session_state["tipo_operacao_bling"] = "estoque"
+        st.session_state["operacao"] = "estoque"
     else:
         st.session_state["tipo_operacao"] = "Cadastro de Produtos"
         st.session_state["tipo_operacao_radio"] = "Cadastro de Produtos"
         st.session_state["tipo_operacao_bling"] = "cadastro"
+        st.session_state["operacao"] = "cadastro"
 
     st.session_state["df_modelo_operacao"] = _modelo_padrao_por_operacao(
         st.session_state["tipo_operacao_bling"]
@@ -144,10 +142,6 @@ def _resolver_df_origem_atual() -> Optional[pd.DataFrame]:
             return df.copy()
     return None
 
-
-# ============================================================
-# LEITURA DE ARQUIVOS
-# ============================================================
 
 def _nome_upload(upload) -> str:
     return _safe_str(getattr(upload, "name", "")).lower()
@@ -211,10 +205,6 @@ def _ler_upload_arquivo(upload) -> Optional[pd.DataFrame]:
     return None
 
 
-# ============================================================
-# NORMALIZAÇÃO DA ORIGEM
-# ============================================================
-
 def _primeira_coluna_existente(df: pd.DataFrame, candidatos: list[str]) -> str:
     mapa = {normalizar_coluna_busca(col): col for col in df.columns}
 
@@ -249,7 +239,7 @@ def _normalizar_df_origem(df: pd.DataFrame) -> pd.DataFrame:
     )
     col_preco = _primeira_coluna_existente(
         base,
-        ["preco", "preco_base", "valor", "valor unitario", "vUnCom", "vuncom"],
+        ["preco", "preco_base", "valor", "valor unitario", "vuncom", "vuncom"],
     )
     col_quantidade = _primeira_coluna_existente(
         base,
@@ -284,10 +274,6 @@ def _normalizar_df_origem(df: pd.DataFrame) -> pd.DataFrame:
     return saida.fillna("")
 
 
-# ============================================================
-# FONTES EXTERNAS
-# ============================================================
-
 def _executar_busca_site(url: str, padrao_disponivel: int) -> pd.DataFrame:
     if executar_crawler_site is None:
         log_debug("Crawler do projeto não disponível.", "WARNING")
@@ -296,11 +282,27 @@ def _executar_busca_site(url: str, padrao_disponivel: int) -> pd.DataFrame:
     tentativas = [
         lambda: executar_crawler_site(
             url=url,
-            max_paginas=5,
-            max_threads=5,
+            max_paginas=None,
+            max_threads=10,
+            max_produtos=None,
             padrao_disponivel=padrao_disponivel,
         ),
-        lambda: executar_crawler_site(url, 5, 5, padrao_disponivel),
+        lambda: executar_crawler_site(
+            url=url,
+            max_paginas=0,
+            max_threads=10,
+            max_produtos=0,
+            padrao_disponivel=padrao_disponivel,
+        ),
+        lambda: executar_crawler_site(
+            url=url,
+            max_paginas=999999,
+            max_threads=10,
+            max_produtos=999999999,
+            padrao_disponivel=padrao_disponivel,
+        ),
+        lambda: executar_crawler_site(url=url, padrao_disponivel=padrao_disponivel),
+        lambda: executar_crawler_site(url, padrao_disponivel),
     ]
 
     for tentativa in tentativas:
@@ -339,10 +341,6 @@ def _executar_api_fornecedor(fornecedor: str, categoria: str = "") -> pd.DataFra
 
     return pd.DataFrame()
 
-
-# ============================================================
-# BLOCO PLANILHA
-# ============================================================
 
 def _render_upload_planilha_fornecedora() -> Optional[pd.DataFrame]:
     st.markdown("#### Anexar planilha do fornecedor")
@@ -424,6 +422,8 @@ def _render_busca_site() -> Optional[pd.DataFrame]:
     )
     st.session_state["padrao_disponivel_site"] = int(padrao_disponivel)
 
+    st.info("A busca no site está configurada para tentar varredura sem limite fixo de produtos.")
+
     if not st.button(
         "Buscar produtos no site",
         use_container_width=True,
@@ -435,7 +435,7 @@ def _render_busca_site() -> Optional[pd.DataFrame]:
         st.warning("Informe a URL do site para iniciar a busca.")
         return None
 
-    with st.spinner("Buscando produtos no site..."):
+    with st.spinner("Buscando produtos no site sem limite fixo..."):
         df_site = _executar_busca_site(url_site, int(padrao_disponivel))
 
     df_novo = _normalizar_df_origem(df_site) if safe_df_dados(df_site) else None
@@ -444,7 +444,7 @@ def _render_busca_site() -> Optional[pd.DataFrame]:
         st.error("Nenhum produto válido foi encontrado no site.")
         return None
 
-    st.success("Busca no site concluída com sucesso.")
+    st.success(f"Busca no site concluída com {len(df_novo)} produto(s).")
     return df_novo
 
 
@@ -507,10 +507,6 @@ def _render_fornecedor_api() -> Optional[pd.DataFrame]:
     st.success("Busca por fornecedor concluída com sucesso.")
     return df_novo
 
-
-# ============================================================
-# RENDER PRINCIPAL
-# ============================================================
 
 def render_origem_dados() -> Optional[pd.DataFrame]:
     st.markdown("### Origem dos dados")
