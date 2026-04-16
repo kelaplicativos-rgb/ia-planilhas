@@ -10,13 +10,16 @@ from bling_app_zero.core.site_crawler_extractors import extrair_detalhes_heurist
 from bling_app_zero.core.site_crawler_gpt import gpt_extrair_produto
 from bling_app_zero.core.site_crawler_http import fetch_html_retry
 from bling_app_zero.core.site_crawler_links import descobrir_produtos_no_dominio
-from bling_app_zero.core.site_crawler_validators import produto_final_valido
+from bling_app_zero.core.site_crawler_validators import (
+    pontuar_produto,
+    produto_final_valido,
+    titulo_valido,
+)
 
 
 def _streamlit_ctx():
     try:
         import streamlit as st
-
         return st
     except Exception:
         return None
@@ -79,11 +82,20 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
 def _limpar_dict_debug(data: dict[str, Any]) -> dict[str, str]:
     saida: dict[str, str] = {}
     for chave, valor in data.items():
-        if isinstance(valor, (dict, list, tuple, set)):
-            saida[chave] = safe_str(valor)
-        else:
-            saida[chave] = safe_str(valor)
+        saida[chave] = safe_str(valor)
     return saida
+
+
+def _score_produto(item: dict) -> int:
+    return pontuar_produto(
+        titulo=safe_str(item.get("descricao")),
+        preco=safe_str(item.get("preco")),
+        codigo=safe_str(item.get("codigo")),
+        gtin=safe_str(item.get("gtin")),
+        imagens=safe_str(item.get("url_imagens")),
+        categoria=safe_str(item.get("categoria")),
+        url_produto=safe_str(item.get("url_produto")),
+    )
 
 
 def _motivo_rejeicao(final: dict) -> str:
@@ -93,9 +105,25 @@ def _motivo_rejeicao(final: dict) -> str:
     gtin = safe_str(final.get("gtin"))
     imagens = safe_str(final.get("url_imagens"))
     categoria = safe_str(final.get("categoria"))
+    url_produto = safe_str(final.get("url_produto"))
+
+    url_n = url_produto.lower()
+    categoria_n = categoria.lower()
 
     if not descricao:
         return "sem_descricao"
+
+    if not titulo_valido(descricao, url_produto):
+        return "titulo_invalido_ou_pagina_institucional"
+
+    if url_n in {"", "/"} or url_n.endswith("/conta") or url_n.endswith("/login"):
+        return "url_institucional"
+
+    if any(x in url_n for x in ["/categoria", "/categorias", "/departamento", "/search", "/busca"]):
+        return "url_de_categoria"
+
+    if categoria_n and all(ch in " 0123456789>-" for ch in categoria_n):
+        return "categoria_invalida"
 
     sinais = 0
     if preco:
@@ -106,13 +134,12 @@ def _motivo_rejeicao(final: dict) -> str:
         sinais += 1
     if imagens:
         sinais += 1
-    if categoria:
-        sinais += 1
 
     if sinais == 0:
-        return "pagina_sem_sinais_de_produto"
+        return "sem_sinais_minimos_de_produto"
 
-    return "produto_invalido_na_validacao_final"
+    score = _score_produto(final)
+    return f"reprovado_na_validacao_final_score_{score}"
 
 
 def _registrar_diag(
@@ -146,6 +173,7 @@ def _registrar_diag(
         final_limpo = _limpar_dict_debug(final)
         for chave, valor in final_limpo.items():
             item[f"final_{chave}"] = valor
+        item["final_score"] = str(_score_produto(final))
 
     diagnosticos.append(item)
 
@@ -386,3 +414,4 @@ def buscar_produtos_site_com_gpt(
         )
 
     return _df_saida(rows)
+
