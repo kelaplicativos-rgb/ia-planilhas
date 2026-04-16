@@ -5,6 +5,7 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
@@ -65,6 +66,10 @@ def _normalizar_nome_coluna(texto: Any) -> str:
     base = re.sub(r"[^a-z0-9]+", "_", base)
     base = re.sub(r"_+", "_", base).strip("_")
     return base
+
+
+def _similaridade(a: str, b: str) -> float:
+    return SequenceMatcher(None, _normalizar_nome_coluna(a), _normalizar_nome_coluna(b)).ratio()
 
 
 def _deduplicar_colunas(df: pd.DataFrame) -> pd.DataFrame:
@@ -401,7 +406,7 @@ def buscar_dados_site(
 
 
 # ============================================================
-# MAPEAMENTO PARA MODELO BLING
+# MAPEAMENTO / MODELO BLING
 # ============================================================
 
 
@@ -504,7 +509,7 @@ def _gerar_df_final_cadastro(df: pd.DataFrame) -> pd.DataFrame:
     col_codigo = _achar_coluna(base, ["Código", "codigo", "SKU", "sku", "referencia", "ref", "id", "cod"])
     col_titulo = _achar_coluna(base, ["titulo", "nome", "produto", "descricao", "descrição", "title"])
     col_desc_curta = _achar_coluna(base, ["descricao_curta", "descrição curta", "resumo", "short_description"])
-    col_preco = _achar_coluna(base, ["preco_venda", "preço de venda", "preco", "valor", "price", "preco_unitario"])
+    col_preco = _achar_coluna(base, ["preco_venda", "preço de venda", "preco", "valor", "price", "__preco_calculado_bling__", "preco_unitario"])
     col_gtin = _achar_coluna(base, ["gtin", "ean", "gtin_ean", "codigo_barras", "codbarras"])
     col_situacao = _achar_coluna(base, ["situacao", "situação", "status", "condicao", "condição"])
     col_imagens = _achar_coluna(base, ["url_imagens", "url imagens", "imagens", "imagem", "image", "fotos", "foto"])
@@ -517,7 +522,7 @@ def _gerar_df_final_cadastro(df: pd.DataFrame) -> pd.DataFrame:
         descricao_curta = _descricao_base(row, [col_desc_curta, col_titulo, col_codigo])
         codigo = _primeiro_valido(row, [col_codigo])
         if not codigo:
-            codigo = descricao[:60] if descricao else f"ITEM-{idx+1}"
+            codigo = descricao[:60] if descricao else f"ITEM-{idx + 1}"
 
         saida.at[idx, "Código"] = codigo
         saida.at[idx, "Descrição"] = descricao
@@ -537,7 +542,7 @@ def _gerar_df_final_estoque(df: pd.DataFrame, deposito_nome: str = "") -> pd.Dat
     col_codigo = _achar_coluna(base, ["Código", "codigo", "SKU", "sku", "referencia", "ref", "id", "cod"])
     col_desc = _achar_coluna(base, ["descricao", "descrição", "nome", "produto", "titulo"])
     col_estoque = _achar_coluna(base, ["estoque", "saldo", "quantidade", "qtd", "balanco", "balanço"])
-    col_preco = _achar_coluna(base, ["preco_unitario", "preço unitário", "preco", "valor", "price"])
+    col_preco = _achar_coluna(base, ["preco_unitario", "preço unitário", "preco", "valor", "price", "__preco_calculado_bling__"])
     col_dep = _achar_coluna(base, ["deposito", "depósito"])
     col_situacao = _achar_coluna(base, ["situacao", "situação", "status"])
 
@@ -550,7 +555,7 @@ def _gerar_df_final_estoque(df: pd.DataFrame, deposito_nome: str = "") -> pd.Dat
         balanco = _inteiro_seguro(row.get(col_estoque, ""), default=0)
         preco = _numero_bling(row.get(col_preco, ""))
 
-        saida.at[idx, "Código"] = codigo or (descricao[:60] if descricao else f"ITEM-{idx+1}")
+        saida.at[idx, "Código"] = codigo or (descricao[:60] if descricao else f"ITEM-{idx + 1}")
         saida.at[idx, "Descrição"] = descricao
         saida.at[idx, "Depósito (OBRIGATÓRIO)"] = deposito
         saida.at[idx, "Balanço (OBRIGATÓRIO)"] = balanco
@@ -572,6 +577,121 @@ def aplicar_defaults_fluxo(df: pd.DataFrame, operacao: str, deposito_nome: str =
 
 
 # ============================================================
+# SUGESTÃO DE MAPEAMENTO PARA WIZARD
+# ============================================================
+
+
+def _aliases_campo_modelo(coluna_modelo: str, operacao: str) -> list[str]:
+    base = {
+        "Código": ["codigo", "sku", "referencia", "ref", "id", "cod"],
+        "Descrição": ["descricao", "descrição", "nome", "produto", "titulo", "title"],
+        "Descrição Curta": ["descricao curta", "descrição curta", "resumo", "short_description"],
+        "Preço de venda": ["__preco_calculado_bling__", "preco", "preço", "valor", "price", "preco venda"],
+        "GTIN/EAN": ["gtin", "ean", "codigo barras", "codigo de barras"],
+        "Situação": ["situacao", "situação", "status", "condicao", "condição"],
+        "URL Imagens": ["imagem", "imagens", "url imagens", "fotos", "foto", "image"],
+        "Categoria": ["categoria", "grupo", "departamento", "family", "breadcrumb"],
+        "Depósito (OBRIGATÓRIO)": ["deposito", "depósito"],
+        "Balanço (OBRIGATÓRIO)": ["estoque", "saldo", "quantidade", "qtd", "balanco", "balanço"],
+        "Preço unitário (OBRIGATÓRIO)": ["__preco_calculado_bling__", "preco", "preço", "valor", "price", "preco unitario"],
+    }
+    return base.get(coluna_modelo, [])
+
+
+def _melhor_coluna_para_modelo(coluna_modelo: str, colunas_origem: list[str], operacao: str) -> str:
+    aliases = _aliases_campo_modelo(coluna_modelo, operacao)
+    melhor = ""
+    melhor_score = 0.0
+
+    for col_origem in colunas_origem:
+        nome_norm = _normalizar_nome_coluna(col_origem)
+
+        for alias in aliases:
+            alias_norm = _normalizar_nome_coluna(alias)
+            if nome_norm == alias_norm:
+                return col_origem
+
+            score = _similaridade(alias_norm, nome_norm)
+            if score > melhor_score:
+                melhor_score = score
+                melhor = col_origem
+
+        score_modelo = _similaridade(coluna_modelo, col_origem)
+        if score_modelo > melhor_score:
+            melhor_score = score_modelo
+            melhor = col_origem
+
+    return melhor if melhor_score >= 0.72 else ""
+
+
+def sugerir_mapeamento_para_modelo(
+    df_origem: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    operacao: str,
+    deposito_nome: str = "",
+) -> tuple[Dict[str, str], list[str]]:
+    if not _is_df_valido(df_origem) or df_modelo is None:
+        return {}, []
+
+    colunas_origem = list(df_origem.columns)
+    colunas_modelo = list(df_modelo.columns)
+
+    mapping: Dict[str, str] = {}
+    pendentes: list[str] = []
+
+    obrigatorias = (
+        ["Código", "Descrição", "Depósito (OBRIGATÓRIO)", "Balanço (OBRIGATÓRIO)", "Preço unitário (OBRIGATÓRIO)"]
+        if _safe_lower(operacao) == "estoque"
+        else ["Código", "Descrição", "Preço de venda"]
+    )
+
+    for coluna_modelo in colunas_modelo:
+        if coluna_modelo == "Depósito (OBRIGATÓRIO)" and deposito_nome:
+            mapping[coluna_modelo] = "__FIXO_DEPOSITO__"
+            continue
+
+        melhor = _melhor_coluna_para_modelo(coluna_modelo, colunas_origem, operacao)
+        mapping[coluna_modelo] = melhor
+
+        if coluna_modelo in obrigatorias and not melhor and not (
+            coluna_modelo == "Depósito (OBRIGATÓRIO)" and deposito_nome
+        ):
+            pendentes.append(coluna_modelo)
+
+    return mapping, pendentes
+
+
+def montar_df_final_por_mapeamento(
+    df_origem: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping: Dict[str, str],
+    operacao: str,
+    deposito_nome: str = "",
+) -> pd.DataFrame:
+    if not _is_df_valido(df_origem) or df_modelo is None:
+        return pd.DataFrame()
+
+    resultado = pd.DataFrame(index=df_origem.index)
+
+    for coluna_modelo in list(df_modelo.columns):
+        origem_escolhida = _safe_str(mapping.get(coluna_modelo))
+
+        if origem_escolhida == "__FIXO_DEPOSITO__":
+            resultado[coluna_modelo] = deposito_nome
+            continue
+
+        if origem_escolhida and origem_escolhida in df_origem.columns:
+            resultado[coluna_modelo] = df_origem[origem_escolhida]
+        else:
+            resultado[coluna_modelo] = ""
+
+    if _safe_lower(operacao) == "estoque" and deposito_nome and "Depósito (OBRIGATÓRIO)" in resultado.columns:
+        resultado["Depósito (OBRIGATÓRIO)"] = deposito_nome
+
+    return resultado.fillna("")
+
+
+# ============================================================
 # ESTADO
 # ============================================================
 
@@ -590,6 +710,7 @@ def registrar_base_no_estado(
     st.session_state["df_normalizado"] = df.copy()
     st.session_state["df_mapeado"] = df.copy()
     st.session_state["df_precificado"] = df.copy()
+    st.session_state["df_base_mapeamento"] = df.copy()
 
     state.origem_tipo = origem_tipo
     state.operacao = operacao
@@ -721,5 +842,3 @@ class FerramentasAgente:
     crawler_func: Optional[Callable[..., pd.DataFrame]] = None
     xml_reader_func: Optional[Callable[[Any], pd.DataFrame]] = None
     log_func: Optional[Callable[[str, str], None]] = None
-
-
