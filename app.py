@@ -9,6 +9,7 @@ from bling_app_zero.ui.app_helpers import (
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
+from bling_app_zero.ui.preview_final import render_preview_final
 
 init_app()
 
@@ -34,5 +35,4 @@ elif etapa == "mapeamento":
     render_origem_mapeamento()
 
 elif etapa == "preview_final":
-    st.subheader("4. Preview Final")
-    st.info("Próxima etapa: download idêntico ao modelo.")
+    render_preview_final()
