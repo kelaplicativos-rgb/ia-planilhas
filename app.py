@@ -14,7 +14,7 @@ from bling_app_zero.ui.app_helpers import (
 )
 from bling_app_zero.utils.init_app import init_app_state
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 ETAPAS_VALIDAS = {"ia", "mapeamento", "final"}
 
 
@@ -30,11 +30,8 @@ st.set_page_config(
 init_app_state()
 inicializar_debug()
 
-if "app_version" not in st.session_state:
-    st.session_state["app_version"] = APP_VERSION
-
-if "modo_execucao" in st.session_state:
-    st.session_state["modo_execucao"] = "ia_orquestrador"
+st.session_state["app_version"] = APP_VERSION
+st.session_state["modo_execucao"] = "ia_orquestrador"
 
 
 # ============================================================
@@ -63,14 +60,13 @@ def _contar_linhas_df(chave: str) -> int:
 def _normalizar_etapa(valor: str) -> str:
     etapa = _safe_str(valor).lower() or "ia"
 
-    # compatibilidade com estados antigos do fluxo manual
-    if etapa == "origem":
-        return "ia"
-    if etapa == "precificacao":
+    # compatibilidade com estados antigos
+    if etapa in {"origem", "precificacao"}:
         return "ia"
 
     if etapa not in ETAPAS_VALIDAS:
         return "ia"
+
     return etapa
 
 
