@@ -6,36 +6,68 @@ from typing import Dict, List
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.agent.agent_memory import get_agent_state, save_agent_state
 from bling_app_zero.ui.app_helpers import (
+    blindar_df_para_bling,
     garantir_colunas_modelo,
     log_debug,
     normalizar_coluna_busca,
     safe_df_dados,
     sincronizar_etapa_global,
+    validar_df_para_download,
 )
 
 
 # ============================================================
-# HELPERS
+# HELPERS DE LEITURA DO NOVO AGENTE
 # ============================================================
+def _safe_str(valor) -> str:
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    if texto.lower() in {"none", "nan", "nat"}:
+        return ""
+    return texto
+
+
+def _get_df_by_key(chave: str) -> pd.DataFrame | None:
+    if not chave:
+        return None
+    df = st.session_state.get(chave)
+    if safe_df_dados(df):
+        return df.copy()
+    return None
+
 
 def _get_df_fonte() -> pd.DataFrame | None:
+    """
+    Fonte principal do mapeamento agora vem primeiro do estado do agente.
+    Só usa session_state nas chaves do próprio fluxo novo.
+    """
+    state = get_agent_state()
+
     for chave in [
-        "df_saida",
-        "df_precificado",
-        "df_calc_precificado",
+        state.df_final_key,
+        state.df_mapeado_key,
+        state.df_normalizado_key,
+        state.df_origem_key,
+        "df_final",
+        "df_mapeado",
+        "df_normalizado",
         "df_origem",
     ]:
-        df = st.session_state.get(chave)
+        df = _get_df_by_key(_safe_str(chave))
         if safe_df_dados(df):
-            return df.copy()
+            return df
+
     return None
 
 
 def _get_df_modelo() -> pd.DataFrame:
-    tipo_operacao_bling = st.session_state.get("tipo_operacao_bling", "cadastro")
-    df_modelo = st.session_state.get("df_modelo_operacao")
+    state = get_agent_state()
+    tipo_operacao_bling = _safe_str(state.operacao or st.session_state.get("tipo_operacao_bling") or "cadastro").lower()
 
+    df_modelo = st.session_state.get("df_modelo_operacao")
     if safe_df_dados(df_modelo):
         return garantir_colunas_modelo(df_modelo.copy(), tipo_operacao_bling)
 
@@ -66,6 +98,7 @@ def _defaults_mapeamento(colunas_fonte: List[str], tipo_operacao_bling: str) -> 
         colunas_fonte,
         ["codigo", "codigo_fornecedor", "sku", "ref", "referencia", "gtin", "ean"],
     )
+
     defaults["Descrição"] = _coluna_encontrada_por_aproximacao(
         colunas_fonte,
         ["descricao", "descricao_fornecedor", "produto", "nome", "titulo"],
@@ -78,25 +111,17 @@ def _defaults_mapeamento(colunas_fonte: List[str], tipo_operacao_bling: str) -> 
         )
         defaults["Preço unitário (OBRIGATÓRIO)"] = _coluna_encontrada_por_aproximacao(
             colunas_fonte,
-            [
-                "preco unitario (obrigatorio)",
-                "preco calculado",
-                "preco_base",
-                "preco",
-                "valor",
-            ],
+            ["preco unitario", "preco calculado", "preco_base", "preco", "valor"],
+        )
+        defaults["Descrição"] = defaults["Descrição"] or _coluna_encontrada_por_aproximacao(
+            colunas_fonte,
+            ["descricao curta", "descricao_curta", "nome", "titulo"],
         )
     else:
         defaults["Descrição Curta"] = defaults.get("Descrição", "")
         defaults["Preço de venda"] = _coluna_encontrada_por_aproximacao(
             colunas_fonte,
-            [
-                "preco de venda",
-                "preco calculado",
-                "preco_base",
-                "preco",
-                "valor",
-            ],
+            ["preco de venda", "preco calculado", "preco_base", "preco", "valor"],
         )
         defaults["GTIN/EAN"] = _coluna_encontrada_por_aproximacao(
             colunas_fonte,
@@ -116,7 +141,9 @@ def _defaults_mapeamento(colunas_fonte: List[str], tipo_operacao_bling: str) -> 
 
 def _obter_mapping_atual(colunas_modelo: List[str], colunas_fonte: List[str], tipo_operacao_bling: str) -> Dict[str, str]:
     defaults = _defaults_mapeamento(colunas_fonte, tipo_operacao_bling)
-    mapping_salvo = st.session_state.get("mapping_origem", {}) or {}
+
+    state = get_agent_state()
+    mapping_salvo = state.mapping_salvo or st.session_state.get("mapping_origem", {}) or {}
 
     mapping_final: Dict[str, str] = {}
     for coluna_modelo in colunas_modelo:
@@ -127,6 +154,10 @@ def _obter_mapping_atual(colunas_modelo: List[str], colunas_fonte: List[str], ti
             mapping_final[coluna_modelo] = defaults.get(coluna_modelo, "")
 
     return mapping_final
+
+
+def _serie_vazia(df_fonte: pd.DataFrame) -> pd.Series:
+    return pd.Series([""] * len(df_fonte), index=df_fonte.index, dtype="object")
 
 
 def _montar_df_saida(
@@ -143,52 +174,86 @@ def _montar_df_saida(
         if origem and origem in df_fonte.columns:
             df_saida[coluna_modelo] = df_fonte[origem]
         else:
-            df_saida[coluna_modelo] = ""
+            df_saida[coluna_modelo] = _serie_vazia(df_fonte)
 
     if "Situação" in df_saida.columns:
         df_saida["Situação"] = df_saida["Situação"].replace("", "Ativo").fillna("Ativo")
 
     if tipo_operacao_bling == "estoque":
         if "Depósito (OBRIGATÓRIO)" in df_saida.columns:
-            df_saida["Depósito (OBRIGATÓRIO)"] = str(deposito_nome or "").strip()
+            df_saida["Depósito (OBRIGATÓRIO)"] = _safe_str(deposito_nome)
 
-    if tipo_operacao_bling != "estoque":
-        if "Descrição Curta" in df_saida.columns:
+    else:
+        if "Descrição Curta" in df_saida.columns and "Descrição" in df_saida.columns:
             vazios = df_saida["Descrição Curta"].astype(str).str.strip().isin(["", "nan", "None"])
-            if "Descrição" in df_saida.columns:
-                df_saida.loc[vazios, "Descrição Curta"] = df_saida.loc[vazios, "Descrição"]
+            df_saida.loc[vazios, "Descrição Curta"] = df_saida.loc[vazios, "Descrição"]
+
+    df_saida = blindar_df_para_bling(
+        df=df_saida,
+        tipo_operacao_bling=tipo_operacao_bling,
+        deposito_nome=deposito_nome,
+    )
 
     return df_saida.fillna("")
+
+
+def _salvar_estado_mapeamento(df_preview: pd.DataFrame, mapping: Dict[str, str], tipo_operacao_bling: str) -> None:
+    st.session_state["mapping_origem"] = mapping.copy()
+    st.session_state["df_preview_mapeamento"] = df_preview.copy()
+    st.session_state["df_mapeado"] = df_preview.copy()
+    st.session_state["df_final"] = df_preview.copy()
+
+    state = get_agent_state()
+    state.mapping_salvo = mapping.copy()
+    state.df_mapeado_key = "df_mapeado"
+    state.df_final_key = "df_final"
+    state.operacao = _safe_str(tipo_operacao_bling or state.operacao or "cadastro").lower()
+    state.etapa_atual = "mapeamento"
+    state.status_execucao = "mapeamento_pronto"
+    save_agent_state(state)
+
+
+def _render_modo_ajuste_ia(df_fonte: pd.DataFrame) -> None:
+    st.info(
+        "A IA já preparou uma base para o Bling. "
+        "Você pode revisar o mapeamento manualmente abaixo antes de confirmar."
+    )
+
+    with st.expander("Preview da base trazida pelo agente", expanded=False):
+        st.dataframe(df_fonte.head(50), use_container_width=True)
 
 
 # ============================================================
 # RENDER
 # ============================================================
-
 def render_origem_mapeamento() -> None:
     st.markdown("### Mapeamento de colunas")
     st.caption("Confirme a origem de cada campo do modelo final antes do download.")
 
+    state = get_agent_state()
     df_fonte = _get_df_fonte()
+
     if not safe_df_dados(df_fonte):
         st.warning("Nenhum dado disponível para mapear.")
-        if st.button("⬅️ Voltar para precificação", use_container_width=True):
-            sincronizar_etapa_global("precificacao")
+        if st.button("⬅️ Voltar para IA", use_container_width=True):
+            sincronizar_etapa_global("ia_orquestrador")
             st.rerun()
         return
 
-    tipo_operacao_bling = st.session_state.get("tipo_operacao_bling", "cadastro")
+    tipo_operacao_bling = _safe_str(state.operacao or st.session_state.get("tipo_operacao_bling") or "cadastro").lower()
+    deposito_nome = _safe_str(state.deposito_nome or st.session_state.get("deposito_nome"))
     df_modelo = _get_df_modelo()
+
     colunas_modelo = list(df_modelo.columns)
     colunas_fonte = list(df_fonte.columns)
-    deposito_nome = st.session_state.get("deposito_nome", "")
 
-    mapping_atual = _obter_mapping_atual(colunas_modelo, colunas_fonte, tipo_operacao_bling)
+    _render_modo_ajuste_ia(df_fonte)
 
     st.markdown("#### Defina o mapeamento")
+
+    mapping_atual = _obter_mapping_atual(colunas_modelo, colunas_fonte, tipo_operacao_bling)
     opcoes_select = [""] + colunas_fonte
     mapping_novo: Dict[str, str] = {}
-
     usados = set()
 
     for coluna_modelo in colunas_modelo:
@@ -198,6 +263,7 @@ def render_origem_mapeamento() -> None:
         if tipo_operacao_bling == "estoque" and coluna_modelo == "Depósito (OBRIGATÓRIO)":
             bloqueado = True
             ajuda = "Preenchido automaticamente pelo campo Nome do depósito."
+
         elif coluna_modelo == "Situação":
             bloqueado = True
             ajuda = "Preenchido automaticamente como Ativo."
@@ -205,7 +271,7 @@ def render_origem_mapeamento() -> None:
         if bloqueado:
             valor_exibido = ""
             if coluna_modelo == "Depósito (OBRIGATÓRIO)":
-                valor_exibido = str(deposito_nome or "")
+                valor_exibido = deposito_nome
             elif coluna_modelo == "Situação":
                 valor_exibido = "Ativo"
 
@@ -239,8 +305,6 @@ def render_origem_mapeamento() -> None:
 
         mapping_novo[coluna_modelo] = escolha
 
-    st.session_state["mapping_origem"] = mapping_novo.copy()
-
     df_preview = _montar_df_saida(
         df_fonte=df_fonte,
         colunas_modelo=colunas_modelo,
@@ -249,30 +313,51 @@ def render_origem_mapeamento() -> None:
         deposito_nome=deposito_nome,
     )
 
-    st.session_state["df_preview_mapeamento"] = df_preview.copy()
-    st.session_state["df_mapeado"] = df_preview.copy()
-    st.session_state["df_saida"] = df_preview.copy()
+    _salvar_estado_mapeamento(
+        df_preview=df_preview,
+        mapping=mapping_novo,
+        tipo_operacao_bling=tipo_operacao_bling,
+    )
 
     with st.expander("Preview do mapeamento", expanded=False):
         st.dataframe(df_preview.head(50), use_container_width=True)
+
+    ok_download, erros_download = validar_df_para_download(
+        df=df_preview,
+        tipo_operacao_bling=tipo_operacao_bling,
+    )
+
+    if erros_download:
+        with st.expander("Validação do mapeamento", expanded=False):
+            for erro in erros_download:
+                st.error(erro)
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("⬅️ Voltar", use_container_width=True):
-            sincronizar_etapa_global("precificacao")
+            sincronizar_etapa_global("ia_orquestrador")
             st.rerun()
 
     with col2:
         if st.button("Zerar mapeamento", use_container_width=True):
             st.session_state["mapping_origem"] = {}
+            state = get_agent_state()
+            state.mapping_salvo = {}
+            save_agent_state(state)
             st.rerun()
 
     with col3:
-        pode_avancar = safe_df_dados(df_preview)
+        pode_avancar = safe_df_dados(df_preview) and ok_download
         if st.button("Continuar ➜", use_container_width=True, disabled=not pode_avancar):
-            log_debug("Mapeamento concluído com sucesso", "INFO")
-            st.session_state["df_final"] = df_preview.copy()
+            log_debug("Mapeamento concluído com sucesso pelo fluxo do agente", "INFO")
+            state = get_agent_state()
+            state.df_final_key = "df_final"
+            state.etapa_atual = "final"
+            state.status_execucao = "final_pronto"
+            save_agent_state(state)
             sincronizar_etapa_global("final")
             st.rerun()
+
+
