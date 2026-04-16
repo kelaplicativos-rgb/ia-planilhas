@@ -1,61 +1,72 @@
+
 from __future__ import annotations
 
 import streamlit as st
 
-
-# ⚠️ MANTER IGUAL AO app.py
-APP_VERSION = "1.0.22"
+APP_VERSION = "2.0.0"
 
 
-def limpar_cache_se_necessario() -> None:
-    """
-    Limpa cache automaticamente de forma segura:
-    - 1x por sessão
-    - somente quando a versão muda
-    - sem forçar comportamento agressivo a cada rerun
-    """
-    try:
-        cache_ja_limpo = bool(st.session_state.get("_cache_limpo_auto", False))
-        versao_cache = str(st.session_state.get("_cache_version", "") or "").strip()
+def init_app_state() -> None:
+    defaults = {
+        "app_version": APP_VERSION,
+        "etapa": "origem",
+        "etapa_origem": "origem",
+        "tipo_operacao": "Cadastro de Produtos",
+        "tipo_operacao_bling": "cadastro",
+        "df_origem": None,
+        "df_saida": None,
+        "df_precificado": None,
+        "df_calc_precificado": None,
+        "df_mapeado": None,
+        "df_final": None,
+        "df_preview_mapeamento": None,
+        "df_modelo_operacao": None,
+        "deposito_nome": "",
+        "origem_tipo": "",
+        "origem_site_url": "",
+        "padrao_disponivel_site": 10,
+        "usar_calculadora_precificacao": True,
+        "precificacao_margem": 30.0,
+        "precificacao_impostos": 10.0,
+        "precificacao_custo_fixo": 0.0,
+        "precificacao_taxa_extra": 0.0,
+        "mapping_origem": {},
+        "mapping_origem_rascunho": {},
+        "mapping_origem_defaults": {},
+        "debug_logs": [],
+    }
 
-        precisa_limpar = (not cache_ja_limpo) or (versao_cache != APP_VERSION)
-
-        if not precisa_limpar:
-            return
-
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
-
-        try:
-            st.cache_resource.clear()
-        except Exception:
-            pass
-
-        st.session_state["_cache_limpo_auto"] = True
-        st.session_state["_cache_version"] = APP_VERSION
-        st.session_state["_cache_log"] = (
-            f"Cache limpo automaticamente (versão {APP_VERSION})"
-        )
-
-    except Exception:
-        # não derrubar o app por causa de cache
-        try:
-            st.session_state["_cache_limpo_auto"] = True
-            st.session_state["_cache_version"] = APP_VERSION
-        except Exception:
-            pass
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
 
 
-def inicializar_app() -> None:
-    """
-    Inicialização central do app.
-    """
-    try:
-        if "logs" not in st.session_state:
-            st.session_state["logs"] = []
-    except Exception:
-        pass
+def reset_fluxo_principal() -> None:
+    for chave in [
+        "df_origem",
+        "df_saida",
+        "df_precificado",
+        "df_calc_precificado",
+        "df_mapeado",
+        "df_final",
+        "df_preview_mapeamento",
+        "df_modelo_operacao",
+    ]:
+        st.session_state[chave] = None
 
-    limpar_cache_se_necessario()
+    for chave in [
+        "mapping_origem",
+        "mapping_origem_rascunho",
+        "mapping_origem_defaults",
+    ]:
+        st.session_state[chave] = {}
+
+    st.session_state["etapa"] = "origem"
+    st.session_state["etapa_origem"] = "origem"
+
+
+def reset_app_completo() -> None:
+    chaves = list(st.session_state.keys())
+    for chave in chaves:
+        del st.session_state[chave]
+    init_app_state()
