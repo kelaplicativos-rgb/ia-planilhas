@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from bling_app_zero.ui.app_helpers import safe_df
+from bling_app_zero.ui.app_helpers import (
+    ir_para_etapa,
+    safe_df,
+)
 
 
 EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
@@ -92,16 +95,15 @@ def _processar_upload_origem(upload):
         st.dataframe(df.head(10), use_container_width=True)
         return
 
-    # XML ou PDF
     _guardar_upload_bruto("origem_upload", upload, "documento")
     st.session_state["df_origem"] = None
 
     if ext == ".xml":
         st.success(f"XML de origem anexado: {upload.name}")
-        st.info("XML aceito no fluxo. O parser/transformação entra na próxima etapa do rebuild.")
+        st.info("XML aceito no fluxo.")
     elif ext == ".pdf":
         st.success(f"PDF de origem anexado: {upload.name}")
-        st.info("PDF aceito no fluxo. A extração estruturada entra na próxima etapa do rebuild.")
+        st.info("PDF aceito no fluxo.")
 
 
 def _processar_upload_modelo(upload):
@@ -121,10 +123,6 @@ def _processar_upload_modelo(upload):
             st.error(str(e))
             return
 
-        if not isinstance(df, pd.DataFrame):
-            st.error("Não foi possível ler o modelo.")
-            return
-
         st.session_state["df_modelo"] = df
         _guardar_upload_bruto("modelo_upload", upload, "tabular")
 
@@ -132,7 +130,6 @@ def _processar_upload_modelo(upload):
         st.dataframe(df.head(10), use_container_width=True)
         return
 
-    # XML ou PDF
     _guardar_upload_bruto("modelo_upload", upload, "documento")
     st.session_state["df_modelo"] = None
 
@@ -163,7 +160,6 @@ def _modelo_pronto() -> bool:
 def render_origem_dados():
     st.subheader("1. Origem dos dados")
 
-    # OPERAÇÃO
     st.markdown("### O que você quer fazer?")
 
     col1, col2 = st.columns(2)
@@ -184,7 +180,6 @@ def render_origem_dados():
 
     st.success(f"Operação: {st.session_state['tipo_operacao']}")
 
-    # DEPÓSITO
     if st.session_state["tipo_operacao"] == "estoque":
         deposito = st.text_input(
             "Nome do depósito",
@@ -193,7 +188,6 @@ def render_origem_dados():
         )
         st.session_state["deposito_nome"] = deposito
 
-    # ORIGEM
     st.markdown("### Arquivo do fornecedor")
     st.caption("No celular, o seletor foi deixado sem filtro rígido para ficar clicável. Aceita XML, PDF e família Excel.")
 
@@ -206,7 +200,6 @@ def render_origem_dados():
     if upload_origem is not None:
         _processar_upload_origem(upload_origem)
 
-    # MODELO
     st.markdown("### Arquivo modelo")
     st.caption("Envie o modelo que deve voltar idêntico no download final.")
 
@@ -219,7 +212,6 @@ def render_origem_dados():
     if upload_modelo is not None:
         _processar_upload_modelo(upload_modelo)
 
-    # RESUMO
     st.markdown("### Resumo")
 
     origem_ext = st.session_state.get("origem_upload_ext", "")
@@ -242,7 +234,7 @@ def render_origem_dados():
 
     if pode_continuar:
         if st.button("Continuar ➜", use_container_width=True):
-            st.session_state["etapa"] = "precificacao"
-            st.rerun()
+            ir_para_etapa("precificacao")
     else:
         st.info("Envie o arquivo do fornecedor e o arquivo modelo para continuar.")
+
