@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import re
@@ -7,7 +8,7 @@ import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
-    safe_df,
+    safe_df_dados,
     voltar_etapa_anterior,
 )
 
@@ -81,7 +82,7 @@ def _normalizar_texto(valor) -> str:
 
 
 def _detectar_coluna_custo(df: pd.DataFrame) -> str:
-    if not safe_df(df):
+    if not safe_df_dados(df):
         return ""
 
     candidatos = [
@@ -134,7 +135,7 @@ def _aplicar_precificacao_dataframe(
     margem_percent: float,
     outros_percent: float,
 ) -> pd.DataFrame:
-    if not safe_df(df):
+    if not safe_df_dados(df):
         return pd.DataFrame()
 
     if not coluna_custo or coluna_custo not in df.columns:
@@ -159,10 +160,8 @@ def _aplicar_precificacao_dataframe(
     destino = _coluna_preco_destino()
     base[destino] = base["_preco_calculado"]
 
-    # coluna auxiliar visual para o preview ficar claro
     base["Preço calculado"] = base["_preco_calculado"]
 
-    # tenta trazer as colunas importantes para o começo do preview
     colunas_inicio = []
     for nome in [
         "Código",
@@ -185,7 +184,7 @@ def _aplicar_precificacao_dataframe(
 
 
 def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
-    if not safe_df(df):
+    if not safe_df_dados(df):
         return
 
     destino = _coluna_preco_destino()
@@ -226,7 +225,7 @@ def render_origem_precificacao() -> None:
 
     df_origem = st.session_state.get("df_origem")
 
-    if not safe_df(df_origem):
+    if not safe_df_dados(df_origem):
         st.warning("A planilha de origem precisa estar carregada antes da precificação.")
         col1, col2 = st.columns(2)
         with col1:
@@ -360,7 +359,7 @@ def render_origem_precificacao() -> None:
             st.success("Precificação aplicada com sucesso.")
 
     df_preview = st.session_state.get("pricing_df_preview")
-    if safe_df(df_preview):
+    if safe_df_dados(df_preview):
         _render_preview(df_preview, coluna_custo)
 
     st.markdown("---")
@@ -373,7 +372,7 @@ def render_origem_precificacao() -> None:
 
     with col2:
         if st.button("Continuar ➜", use_container_width=True, key="btn_continuar_precificacao"):
-            if not safe_df(st.session_state.get("df_precificado")):
+            if not safe_df_dados(st.session_state.get("df_precificado")):
                 st.error("Aplique a precificação antes de continuar.")
                 return
 
