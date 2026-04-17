@@ -1,3 +1,4 @@
+
 import streamlit as st
 
 from bling_app_zero.utils.init_app import init_app
@@ -11,13 +12,13 @@ from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.preview_final import render_preview_final
 
-init_app()
 
 st.set_page_config(
     page_title="IA Planilhas → Bling",
     layout="wide",
 )
 
+init_app()
 sincronizar_etapa_da_url()
 
 st.title("🚀 IA Planilhas → Bling")
@@ -36,3 +37,6 @@ elif etapa == "mapeamento":
 
 elif etapa == "preview_final":
     render_preview_final()
+
+else:
+    render_origem_dados()
