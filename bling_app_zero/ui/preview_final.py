@@ -140,6 +140,57 @@ def _montar_resumo(df: pd.DataFrame) -> dict[str, Any]:
 
 
 # ============================================================
+# HELPERS DE FLUXO
+# ============================================================
+
+def _origem_site_ativa() -> bool:
+    modo_origem = safe_lower(st.session_state.get("modo_origem", ""))
+    origem_tipo = safe_lower(st.session_state.get("origem_upload_tipo", ""))
+    origem_nome = safe_lower(st.session_state.get("origem_upload_nome", ""))
+
+    return (
+        "site" in modo_origem
+        or "site_gpt" in origem_tipo
+        or "varredura_site_" in origem_nome
+    )
+
+
+def _url_site_atual() -> str:
+    return str(st.session_state.get("site_fornecedor_url", "") or "").strip()
+
+
+def _varredura_site_concluida() -> bool:
+    if not _origem_site_ativa():
+        return False
+
+    df_origem = st.session_state.get("df_origem")
+    return isinstance(df_origem, pd.DataFrame) and not df_origem.empty
+
+
+def _oauth_liberado(validacao_ok: bool) -> bool:
+    return bool(
+        validacao_ok
+        and st.session_state.get("preview_download_realizado", False)
+        and (
+            not _origem_site_ativa() or _varredura_site_concluida()
+        )
+    )
+
+
+def _resumo_rotina_site() -> dict[str, Any]:
+    return {
+        "origem_site_ativa": _origem_site_ativa(),
+        "url_site": _url_site_atual(),
+        "auto_mode": st.session_state.get("bling_sync_auto_mode", "manual"),
+        "interval_value": st.session_state.get("bling_sync_interval_value", 15),
+        "interval_unit": st.session_state.get("bling_sync_interval_unit", "minutos"),
+        "loop_ativo": bool(st.session_state.get("site_auto_loop_ativo", False)),
+        "loop_status": str(st.session_state.get("site_auto_status", "inativo") or "inativo"),
+        "ultima_execucao": str(st.session_state.get("site_auto_ultima_execucao", "") or ""),
+    }
+
+
+# ============================================================
 # ESTADO DA TELA
 # ============================================================
 
@@ -187,7 +238,14 @@ def _obter_status_conexao_bling() -> tuple[bool, str]:
     return conectado, status
 
 
-def _render_conexao_bling() -> None:
+def _render_conexao_bling(liberado: bool) -> None:
+    if not liberado:
+        st.warning(
+            "A conexão com o Bling só é liberada depois que a varredura/conversão estiver pronta, "
+            "a validação estiver OK e o download final for confirmado."
+        )
+        return
+
     bling_auth = _safe_import_bling_auth()
 
     if bling_auth is not None and hasattr(bling_auth, "render_conectar_bling"):
@@ -209,28 +267,6 @@ def _render_conexao_bling() -> None:
 # ============================================================
 # ENVIO AO BLING
 # ============================================================
-
-def _origem_site_ativa() -> bool:
-    modo_origem = safe_lower(st.session_state.get("modo_origem", ""))
-    origem_tipo = safe_lower(st.session_state.get("origem_upload_tipo", ""))
-    origem_nome = safe_lower(st.session_state.get("origem_upload_nome", ""))
-
-    return (
-        "site" in modo_origem
-        or "site_gpt" in origem_tipo
-        or "varredura_site_" in origem_nome
-    )
-
-
-def _resumo_rotina_site() -> dict[str, Any]:
-    return {
-        "origem_site_ativa": _origem_site_ativa(),
-        "url_site": str(st.session_state.get("site_fornecedor_url", "") or "").strip(),
-        "auto_mode": st.session_state.get("bling_sync_auto_mode", "manual"),
-        "interval_value": st.session_state.get("bling_sync_interval_value", 15),
-        "interval_unit": st.session_state.get("bling_sync_interval_unit", "minutos"),
-    }
-
 
 def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str) -> None:
     estrategia = st.session_state.get("bling_sync_strategy", "inteligente")
@@ -394,40 +430,60 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
 
 def _render_bloco_fluxo_site() -> None:
-    st.markdown("### 4. Origem automática por site")
+    st.markdown("### 4. Varredura do site e conversão GPT")
 
     if not _origem_site_ativa():
-        st.caption("A origem atual não veio da busca por site. Esta automação fica disponível quando a captura vem do site do fornecedor.")
+        st.caption(
+            "A origem atual não veio da busca por site. Quando a captura vier do site do fornecedor, "
+            "o fluxo final passa a exigir a varredura/conversão antes da conexão com o Bling."
+        )
         return
 
-    url_site = str(st.session_state.get("site_fornecedor_url", "") or "").strip()
+    url_site = _url_site_atual()
     modo_auto = st.session_state.get("bling_sync_auto_mode", "manual")
     interval_value = st.session_state.get("bling_sync_interval_value", 15)
     interval_unit = st.session_state.get("bling_sync_interval_unit", "minutos")
+    loop_ativo = bool(st.session_state.get("site_auto_loop_ativo", False))
+    loop_status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
+    ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "")
 
-    st.success("Origem por site detectada. O fluxo final pode reutilizar essa origem para novas capturas.")
+    if _varredura_site_concluida():
+        st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
+    else:
+        st.warning("A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos.")
+
     if url_site:
         st.write(f"**URL monitorada:** {url_site}")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Loop", "Ativo" if loop_ativo else "Inativo")
+    with c2:
+        st.metric("Status", loop_status.title())
+    with c3:
+        st.metric("Última busca", ultima_execucao if ultima_execucao else "-")
 
     if modo_auto == "manual":
         st.info("Modo manual: a captura por site será usada no envio desta execução.")
     elif modo_auto == "instantaneo":
-        st.info("Modo instantâneo: ao reutilizar a origem por site, o sistema deve buscar novamente e enviar após a conversão.")
+        st.info("Modo instantâneo: antes do envio, o sistema pode refazer a busca por site e reconverter com GPT.")
     else:
         st.info(
-            f"Modo periódico configurado: a rotina deverá buscar produtos no site a cada "
+            f"Modo periódico configurado: a rotina poderá buscar produtos no site a cada "
             f"**{interval_value} {interval_unit}** e então enviar ao Bling após conversão."
         )
 
     st.caption(
-        "Observação: nesta etapa a UI já prepara o fluxo. A execução recorrente contínua depende do serviço de sincronização/back-end."
+        "Ordem correta do fluxo: varrer site → converter com GPT → validar/download → conectar no Bling → enviar por API."
     )
 
 
 def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str, validacao_ok: bool) -> None:
     st.markdown("### 5. Conectar e enviar ao Bling")
 
+    oauth_liberado = _oauth_liberado(validacao_ok)
     conectado, status = _obter_status_conexao_bling()
+
     st.session_state["bling_conectado"] = conectado
     st.session_state["bling_status_texto"] = status
 
@@ -436,16 +492,20 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
         st.info(f"Status da conexão: **{status}**")
     with c2:
         if not conectado:
-            _render_conexao_bling()
+            _render_conexao_bling(oauth_liberado)
         else:
             st.success("Conta Bling pronta para envio.")
 
     if not st.session_state.get("preview_download_realizado", False):
-        st.warning("Confirme primeiro o download da planilha final para liberar o envio nesta última etapa.")
+        st.warning("Confirme primeiro o download da planilha final para liberar a conexão e o envio.")
         return
 
     if not validacao_ok:
         st.warning("A validação final precisa estar OK para liberar o envio ao Bling.")
+        return
+
+    if _origem_site_ativa() and not _varredura_site_concluida():
+        st.warning("Finalize a varredura do site do fornecedor antes de conectar e enviar ao Bling.")
         return
 
     st.markdown("#### Estratégia de sincronização")
@@ -499,11 +559,11 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
     if _origem_site_ativa():
         st.markdown("#### Conversão GPT + fallback de busca por site")
         st.caption(
-            "Quando a origem veio do site do fornecedor, o fluxo final pode reaproveitar a captura do site, "
-            "passar pela conversão GPT e então enviar ao Bling."
+            "Como a origem veio do site do fornecedor, o envio usa a sequência correta: "
+            "captura do site → conversão GPT → validação → conexão Bling → envio por API."
         )
 
-    liberar_envio = bool(conectado and validacao_ok and st.session_state.get("preview_download_realizado", False))
+    liberar_envio = bool(conectado and oauth_liberado)
 
     if st.button(
         "🚀 Enviar produtos ao Bling",
@@ -518,7 +578,9 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
         )
 
     if not conectado:
-        st.caption("Conecte ao Bling para liberar o envio dos produtos.")
+        st.caption("Depois da varredura e do download confirmados, faça a conexão OAuth do Bling para liberar o envio.")
+    elif not liberar_envio:
+        st.caption("Ainda existem pré-requisitos pendentes antes do envio.")
 
     resultado = st.session_state.get("bling_envio_resultado")
     if resultado:
@@ -537,7 +599,7 @@ def render_preview_final() -> None:
     st.subheader("4. Preview Final")
     st.caption(
         "Fluxo final profissional: validar resultado, baixar a planilha padrão Bling, "
-        "conectar com o Bling e então enviar agora ou preparar atualização automática."
+        "conectar com o Bling somente depois da preparação e então enviar por API."
     )
 
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
@@ -580,4 +642,3 @@ def render_preview_final() -> None:
             st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             ir_para_etapa("origem")
             
-
