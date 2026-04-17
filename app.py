@@ -4,6 +4,7 @@ import streamlit as st
 from bling_app_zero.utils.init_app import init_app
 from bling_app_zero.ui.app_helpers import (
     get_etapa,
+    render_log_debug,
     render_topo_navegacao,
     sincronizar_etapa_da_url,
 )
@@ -46,6 +47,21 @@ def _processar_callback_bling() -> None:
         st.error(f"Falha ao processar callback do Bling: {exc}")
 
 
+def _render_etapa_atual() -> None:
+    etapa = get_etapa()
+
+    if etapa == "origem":
+        render_origem_dados()
+    elif etapa == "precificacao":
+        render_origem_precificacao()
+    elif etapa == "mapeamento":
+        render_origem_mapeamento()
+    elif etapa == "preview_final":
+        render_preview_final()
+    else:
+        render_origem_dados()
+
+
 st.set_page_config(
     page_title="IA Planilhas → Bling",
     layout="wide",
@@ -57,20 +73,8 @@ sincronizar_etapa_da_url()
 
 st.title("🚀 IA Planilhas → Bling")
 render_topo_navegacao()
+_render_etapa_atual()
 
-etapa = get_etapa()
+# Painel visual de log sempre no final da tela quando houver conteúdo
+render_log_debug()
 
-if etapa == "origem":
-    render_origem_dados()
-
-elif etapa == "precificacao":
-    render_origem_precificacao()
-
-elif etapa == "mapeamento":
-    render_origem_mapeamento()
-
-elif etapa == "preview_final":
-    render_preview_final()
-
-else:
-    render_origem_dados()
