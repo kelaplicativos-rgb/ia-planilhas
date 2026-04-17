@@ -37,6 +37,10 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     return base
 
 
+def _resetar_flag_avanco_origem() -> None:
+    st.session_state["origem_pronta_para_avancar"] = False
+
+
 def _limpar_estado_origem() -> None:
     for chave in [
         "df_origem",
@@ -51,6 +55,8 @@ def _limpar_estado_origem() -> None:
     ]:
         st.session_state.pop(chave, None)
 
+    _resetar_flag_avanco_origem()
+
 
 def _limpar_estado_modelo() -> None:
     for chave in [
@@ -62,12 +68,15 @@ def _limpar_estado_modelo() -> None:
     ]:
         st.session_state.pop(chave, None)
 
+    _resetar_flag_avanco_origem()
+
 
 def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
     st.session_state[f"{chave_prefixo}_nome"] = str(upload.name)
     st.session_state[f"{chave_prefixo}_bytes"] = upload.getvalue()
     st.session_state[f"{chave_prefixo}_tipo"] = tipo
     st.session_state[f"{chave_prefixo}_ext"] = _extensao(upload)
+    _resetar_flag_avanco_origem()
 
 
 def _ler_tabular(upload) -> pd.DataFrame:
@@ -263,8 +272,14 @@ def _render_operacao() -> None:
         key="tipo_operacao_visual",
     )
 
-    st.session_state["tipo_operacao"] = opcoes[escolha]
-    st.session_state["tipo_operacao_bling"] = opcoes[escolha]
+    novo_tipo = opcoes[escolha]
+    tipo_anterior = st.session_state.get("tipo_operacao")
+
+    if tipo_anterior != novo_tipo:
+        _resetar_flag_avanco_origem()
+
+    st.session_state["tipo_operacao"] = novo_tipo
+    st.session_state["tipo_operacao_bling"] = novo_tipo
 
 
 def _render_origem_arquivo() -> None:
@@ -288,6 +303,7 @@ def _registrar_origem_site(df_site: pd.DataFrame, url_site: str) -> None:
     st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
     st.session_state["origem_upload_tipo"] = "site_gpt"
     st.session_state["origem_upload_ext"] = "site_gpt"
+    _resetar_flag_avanco_origem()
 
 
 def _render_diagnostico_site() -> None:
@@ -340,6 +356,10 @@ def _render_origem_site() -> None:
     st.caption(
         "A varredura tenta buscar produtos em todo o site, sem exigir termo e sem campo de limite na tela."
     )
+
+    url_antiga = st.session_state.get("site_fornecedor_url", "")
+    if str(url_antiga).strip() != str(url_site).strip():
+        _resetar_flag_avanco_origem()
 
     st.session_state["site_fornecedor_url"] = url_site
 
@@ -400,26 +420,59 @@ def _render_resumo() -> None:
         st.write(f"**Colunas modelo:** {len(st.session_state['df_modelo'].columns)}")
 
 
+def _render_continuar() -> None:
+    pronto = _origem_pronta() and _modelo_pronto()
+
+    if not pronto:
+        st.info("Envie/gere a origem e envie o modelo para continuar.")
+        return
+
+    st.success("Origem e modelo carregados. Agora toque em **Continuar ➜** para ir à precificação.")
+
+    clicou_continuar = st.button(
+        "Continuar ➜",
+        use_container_width=True,
+        key="btn_continuar_origem",
+    )
+
+    if clicou_continuar:
+        st.session_state["origem_pronta_para_avancar"] = True
+
+    if st.session_state.get("origem_pronta_para_avancar", False):
+        st.session_state["origem_pronta_para_avancar"] = False
+        ir_para_etapa("precificacao")
+
+
 def render_origem_dados() -> None:
+    if "origem_pronta_para_avancar" not in st.session_state:
+        st.session_state["origem_pronta_para_avancar"] = False
+
     st.subheader("1. Origem dos dados")
 
     _render_operacao()
 
     if st.session_state.get("tipo_operacao") == "estoque":
+        deposito_atual = st.session_state.get("deposito_nome", "")
         deposito = st.text_input(
             "Nome do depósito",
-            value=st.session_state.get("deposito_nome", ""),
+            value=deposito_atual,
             placeholder="Digite o nome do depósito",
         )
+        if str(deposito).strip() != str(deposito_atual).strip():
+            _resetar_flag_avanco_origem()
         st.session_state["deposito_nome"] = deposito
 
     st.markdown("### Como deseja trazer a origem?")
+    modo_origem_atual = st.session_state.get("modo_origem", "Arquivo do fornecedor")
     modo_origem = st.radio(
         "Selecione a origem",
         options=["Arquivo do fornecedor", "Buscar no site do fornecedor"],
         horizontal=True,
         key="modo_origem",
     )
+
+    if modo_origem != modo_origem_atual:
+        _resetar_flag_avanco_origem()
 
     if modo_origem == "Arquivo do fornecedor":
         _render_origem_arquivo()
@@ -428,9 +481,4 @@ def render_origem_dados() -> None:
 
     _render_modelo()
     _render_resumo()
-
-    if _origem_pronta() and _modelo_pronto():
-        if st.button("Continuar ➜", use_container_width=True):
-            ir_para_etapa("precificacao")
-    else:
-        st.info("Envie/gere a origem e envie o modelo para continuar.")
+    _render_continuar()
