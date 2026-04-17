@@ -269,13 +269,14 @@ def _render_operacao() -> None:
 
 def _render_origem_arquivo() -> None:
     st.markdown("### Arquivo do fornecedor")
-    st.caption("Aceita CSV, XLSX, XLS, XML e PDF.")
+    st.caption(
+        "No celular, selecione o arquivo normalmente. A validação do formato será feita após o envio."
+    )
 
     upload_origem = st.file_uploader(
         "Toque para selecionar o arquivo do fornecedor",
-        type=["csv", "xlsx", "xls", "xml", "pdf"],
         key="upload_origem",
-        help="Aceita CSV, XLSX, XLS, XML e PDF.",
+        help="No celular, selecione qualquer arquivo. O sistema valida depois se é CSV, XLSX, XLS, XML ou PDF.",
     )
 
     if upload_origem is not None:
@@ -377,9 +378,8 @@ def _render_modelo() -> None:
 
     upload_modelo = st.file_uploader(
         "Enviar modelo",
-        type=["csv", "xlsx", "xls"],
         key="upload_modelo",
-        help="Aceita CSV, XLSX e XLS.",
+        help="No celular, selecione qualquer arquivo. O sistema valida depois se é CSV, XLSX ou XLS.",
     )
 
     if upload_modelo is not None:
