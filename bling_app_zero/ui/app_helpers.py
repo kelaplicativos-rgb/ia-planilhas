@@ -302,18 +302,59 @@ def set_etapa(etapa: str, registrar_historico: bool = True) -> None:
 
     sincronizar_etapa_global(etapa_nova)
     _set_query_param_etapa(etapa_nova)
+    st.session_state["_etapa_url_inicializada"] = True
+    st.session_state["_ultima_etapa_sincronizada_url"] = etapa_nova
 
 
 def sincronizar_etapa_da_url() -> None:
-    etapa_url = _get_query_param_etapa()
+    """
+    Regra importante:
+    - na primeira carga, se vier ?etapa=... pela URL, respeita
+    - depois disso, em reruns normais do Streamlit (number_input, selectbox etc),
+      nunca deixar a URL antiga derrubar a etapa atual do session_state
+    - se não houver etapa definida ainda, inicializa com a URL ou com 'origem'
+    """
     etapa_state = get_etapa()
+    etapa_url = _get_query_param_etapa()
 
-    if not etapa_state or etapa_state not in ETAPAS_VALIDAS:
-        sincronizar_etapa_global(etapa_url)
+    if "_etapa_url_inicializada" not in st.session_state:
+        st.session_state["_etapa_url_inicializada"] = False
+
+    if "_ultima_etapa_sincronizada_url" not in st.session_state:
+        st.session_state["_ultima_etapa_sincronizada_url"] = etapa_state or "origem"
+
+    primeira_carga = not bool(st.session_state.get("_etapa_url_inicializada", False))
+
+    if primeira_carga:
+        etapa_inicial = etapa_url if etapa_url in ETAPAS_VALIDAS else etapa_state
+        etapa_inicial = _normalizar_etapa_fluxo(etapa_inicial or "origem")
+
+        sincronizar_etapa_global(etapa_inicial)
+        _set_query_param_etapa(etapa_inicial)
+
+        st.session_state["_etapa_url_inicializada"] = True
+        st.session_state["_ultima_etapa_sincronizada_url"] = etapa_inicial
         return
 
+    if etapa_state not in ETAPAS_VALIDAS:
+        etapa_state = "origem"
+        sincronizar_etapa_global(etapa_state)
+
+    ultima_url_sync = _normalizar_etapa_fluxo(
+        st.session_state.get("_ultima_etapa_sincronizada_url", etapa_state)
+    )
+
     if etapa_url != etapa_state:
-        sincronizar_etapa_global(etapa_url)
+        if etapa_url != ultima_url_sync:
+            sincronizar_etapa_global(etapa_url)
+            st.session_state["_ultima_etapa_sincronizada_url"] = etapa_url
+            return
+
+        _set_query_param_etapa(etapa_state)
+        st.session_state["_ultima_etapa_sincronizada_url"] = etapa_state
+        return
+
+    st.session_state["_ultima_etapa_sincronizada_url"] = etapa_state
 
 
 def ir_para_etapa(etapa: str) -> None:
@@ -422,6 +463,8 @@ def limpar_estado_fluxo() -> None:
             "mapping_manual",
             "mapping_sugerido",
             "etapa_historico",
+            "_etapa_url_inicializada",
+            "_ultima_etapa_sincronizada_url",
         ]
     )
 
@@ -591,182 +634,6 @@ def normalizar_situacao(valor: Any, default: str = "Ativo") -> str:
 # MODELO / COLUNAS
 # ============================================================
 
-def colunas_modelo_estoque() -> list[str]:
-    return [
-        "Código",
-        "Descrição",
-        "Depósito (OBRIGATÓRIO)",
-        "Balanço (OBRIGATÓRIO)",
-        "Preço unitário (OBRIGATÓRIO)",
-        "Situação",
-    ]
-
-
-def colunas_modelo_cadastro() -> list[str]:
-    return [
-        "Código",
-        "Descrição",
-        "Descrição Curta",
-        "Preço de venda",
-        "GTIN/EAN",
-        "Situação",
-        "URL Imagens",
-        "Categoria",
-    ]
-
-
-def obter_colunas_modelo_por_tipo(tipo_operacao_bling: str) -> list[str]:
-    if safe_lower(tipo_operacao_bling) == "estoque":
-        return colunas_modelo_estoque()
-    return colunas_modelo_cadastro()
-
-
-def garantir_colunas_modelo(
-    df: pd.DataFrame,
-    tipo_operacao_bling: str,
-) -> pd.DataFrame:
-    base = garantir_dataframe(df)
-    colunas = obter_colunas_modelo_por_tipo(tipo_operacao_bling)
-
-    for coluna in colunas:
-        if coluna not in base.columns:
-            base[coluna] = ""
-
-    base = base[colunas].copy()
-    return base.fillna("")
-
-
-def blindar_df_para_bling(
-    df: pd.DataFrame,
-    tipo_operacao_bling: str,
-    deposito_nome: str = "",
-) -> pd.DataFrame:
-    base = garantir_dataframe(df)
-    tipo = safe_lower(tipo_operacao_bling)
-
-    if tipo == "estoque":
-        base = garantir_colunas_modelo(base, "estoque")
-
-        if deposito_nome:
-            base["Depósito (OBRIGATÓRIO)"] = normalizar_texto(deposito_nome)
-
-        base["Código"] = base["Código"].apply(normalizar_texto)
-        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
-        base["Depósito (OBRIGATÓRIO)"] = base["Depósito (OBRIGATÓRIO)"].apply(normalizar_texto)
-        base["Balanço (OBRIGATÓRIO)"] = base["Balanço (OBRIGATÓRIO)"].apply(formatar_inteiro_seguro)
-        base["Preço unitário (OBRIGATÓRIO)"] = base["Preço unitário (OBRIGATÓRIO)"].apply(formatar_numero_bling)
-        base["Situação"] = base["Situação"].apply(normalizar_situacao)
-    else:
-        base = garantir_colunas_modelo(base, "cadastro")
-
-        base["Código"] = base["Código"].apply(normalizar_texto)
-        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
-        base["Descrição Curta"] = base["Descrição Curta"].apply(normalizar_texto)
-        base["Preço de venda"] = base["Preço de venda"].apply(formatar_numero_bling)
-        base["GTIN/EAN"] = base["GTIN/EAN"].apply(limpar_gtin_invalido)
-        base["Situação"] = base["Situação"].apply(normalizar_situacao)
-        base["URL Imagens"] = base["URL Imagens"].apply(normalizar_imagens_pipe)
-        base["Categoria"] = base["Categoria"].apply(normalizar_texto)
-
-    return base.fillna("")
-
-
-# ============================================================
-# VALIDAÇÃO FINAL
-# ============================================================
-
-def _coluna_vazia_ou_invalida(series: pd.Series) -> int:
-    return (
-        series.astype(str)
-        .str.strip()
-        .str.lower()
-        .isin(["", "nan", "none", "nat", ""])
-        .sum()
-    )
-
-
-def validar_df_para_download(
-    df: pd.DataFrame,
-    tipo_operacao_bling: str,
-) -> tuple[bool, list[str]]:
-    base = garantir_dataframe(df)
-    erros: list[str] = []
-
-    if not safe_df_dados(base):
-        erros.append("A planilha final está vazia.")
-        return False, erros
-
-    tipo = safe_lower(tipo_operacao_bling)
-
-    if tipo == "estoque":
-        obrigatorias = [
-            "Código",
-            "Descrição",
-            "Depósito (OBRIGATÓRIO)",
-            "Balanço (OBRIGATÓRIO)",
-            "Preço unitário (OBRIGATÓRIO)",
-        ]
-    else:
-        obrigatorias = [
-            "Código",
-            "Descrição",
-            "Preço de venda",
-        ]
-
-    for coluna in obrigatorias:
-        if coluna not in base.columns:
-            erros.append(f"Coluna obrigatória ausente: {coluna}")
-            continue
-
-        vazios = _coluna_vazia_ou_invalida(base[coluna])
-        if vazios > 0:
-            erros.append(f"Coluna obrigatória com valores vazios: {coluna} ({vazios})")
-
-    if tipo == "estoque":
-        if "Balanço (OBRIGATÓRIO)" in base.columns:
-            invalidos = (
-                pd.to_numeric(
-                    base["Balanço (OBRIGATÓRIO)"].astype(str).str.replace(",", ".", regex=False),
-                    errors="coerce",
-                )
-                .isna()
-                .sum()
-            )
-            if invalidos > 0:
-                erros.append(f"Balanço (OBRIGATÓRIO) contém valores inválidos ({invalidos})")
-    else:
-        if "Preço de venda" in base.columns:
-            invalidos = (
-                pd.to_numeric(
-                    base["Preço de venda"]
-                    .astype(str)
-                    .str.replace(".", "", regex=False)
-                    .str.replace(",", ".", regex=False),
-                    errors="coerce",
-                )
-                .isna()
-                .sum()
-            )
-            if invalidos > 0:
-                erros.append(f"Preço de venda contém valores inválidos ({invalidos})")
-
-    return len(erros) == 0, erros
-
-
-# ============================================================
-# EXPORTAÇÃO
-# ============================================================
-
-def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
-    base = garantir_dataframe(df).fillna("")
-    csv_texto = base.to_csv(index=False, sep=";")
-    return csv_texto.encode("utf-8-sig")
-
-
-# ============================================================
-# RESUMO VISUAL
-# ============================================================
-
 def _label_etapa(etapa: str) -> str:
     return MAPA_LABEL_ETAPA.get(_normalizar_etapa_fluxo(etapa), normalizar_texto(etapa) or "-")
 
@@ -806,4 +673,4 @@ def render_resumo_fluxo() -> None:
     st.caption(
         f"Etapa atual: {_label_etapa(str(etapa))} | Operação: {tipo_operacao if tipo_operacao else '-'}"
     )
-
+    
