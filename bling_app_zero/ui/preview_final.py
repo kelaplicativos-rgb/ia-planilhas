@@ -12,6 +12,7 @@ from bling_app_zero.ui.app_helpers import (
     dataframe_para_csv_bytes,
     get_etapa,
     ir_para_etapa,
+    log_debug,
     normalizar_imagens_pipe,
     normalizar_texto,
     safe_df_estrutura,
@@ -151,6 +152,8 @@ def _inicializar_estado_preview() -> None:
         "bling_conectado": False,
         "bling_status_texto": "Desconectado",
         "bling_envio_resultado": None,
+        "preview_download_realizado": False,
+        "preview_validacao_ok": False,
     }
 
     for chave, valor in defaults.items():
@@ -176,11 +179,11 @@ def _obter_status_conexao_bling() -> tuple[bool, str]:
             if hasattr(bling_auth, "usuario_conectado_bling") and hasattr(bling_auth, "tem_token_valido"):
                 conectado = bool(bling_auth.usuario_conectado_bling()) and bool(bling_auth.tem_token_valido())
                 return conectado, "Conectado" if conectado else "Desconectado"
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"Falha ao obter status da conexão Bling: {exc}", nivel="ERRO")
 
     conectado = bool(st.session_state.get("bling_conectado", False))
-    status = "Conectado" if conectado else "Desconectado"
+    status = str(st.session_state.get("bling_status_texto", "Desconectado") or "Desconectado")
     return conectado, status
 
 
@@ -193,17 +196,41 @@ def _render_conexao_bling() -> None:
             return
         except Exception as exc:
             st.error(f"Falha ao renderizar conexão com o Bling: {exc}")
+            log_debug(f"Falha ao renderizar conexão com o Bling: {exc}", nivel="ERRO")
             return
 
     if st.button("🔗 Conectar com Bling", use_container_width=True, key="btn_conectar_bling_preview"):
         st.session_state["bling_conectado"] = True
         st.session_state["bling_status_texto"] = "Conectado em modo local"
         st.warning("Conexão simulada. O backend do OAuth ainda não está plugado nesta execução.")
+        log_debug("Conexão com Bling acionada em modo local/simulado.", nivel="INFO")
 
 
 # ============================================================
 # ENVIO AO BLING
 # ============================================================
+
+def _origem_site_ativa() -> bool:
+    modo_origem = safe_lower(st.session_state.get("modo_origem", ""))
+    origem_tipo = safe_lower(st.session_state.get("origem_upload_tipo", ""))
+    origem_nome = safe_lower(st.session_state.get("origem_upload_nome", ""))
+
+    return (
+        "site" in modo_origem
+        or "site_gpt" in origem_tipo
+        or "varredura_site_" in origem_nome
+    )
+
+
+def _resumo_rotina_site() -> dict[str, Any]:
+    return {
+        "origem_site_ativa": _origem_site_ativa(),
+        "url_site": str(st.session_state.get("site_fornecedor_url", "") or "").strip(),
+        "auto_mode": st.session_state.get("bling_sync_auto_mode", "manual"),
+        "interval_value": st.session_state.get("bling_sync_interval_value", 15),
+        "interval_unit": st.session_state.get("bling_sync_interval_unit", "minutos"),
+    }
+
 
 def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str) -> None:
     estrategia = st.session_state.get("bling_sync_strategy", "inteligente")
@@ -212,6 +239,12 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
     interval_unit = st.session_state.get("bling_sync_interval_unit", "minutos")
 
     bling_sync = _safe_import_bling_sync()
+
+    log_debug(
+        f"Disparando envio ao Bling | strategy={estrategia} | auto_mode={auto_mode} | "
+        f"interval={interval_value} {interval_unit} | linhas={len(df_final)}",
+        nivel="INFO",
+    )
 
     if bling_sync is not None:
         try:
@@ -230,8 +263,13 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
 
                 if bool(resultado.get("ok", False)):
                     st.success("Envio ao Bling executado com sucesso.")
+                    log_debug("Envio ao Bling executado com sucesso.", nivel="INFO")
                 else:
                     st.warning("O envio foi executado, mas retornou alertas ou erros.")
+                    log_debug(
+                        f"Envio ao Bling retornou alertas/erros: {json.dumps(resultado, ensure_ascii=False)}",
+                        nivel="ERRO",
+                    )
 
                 return
 
@@ -244,9 +282,11 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
                 )
                 st.session_state["bling_envio_resultado"] = resultado
                 st.success("Envio ao Bling executado com sucesso.")
+                log_debug("Envio ao Bling executado com sucesso via enviar_produtos.", nivel="INFO")
                 return
         except Exception as exc:
             st.error(f"Falha no envio ao Bling: {exc}")
+            log_debug(f"Falha no envio ao Bling: {exc}", nivel="ERRO")
             return
 
     resumo_local = {
@@ -260,20 +300,26 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
         "interval_value": interval_value,
         "interval_unit": interval_unit,
         "total_itens": int(len(df_final)),
+        "site_fallback": _resumo_rotina_site(),
     }
     st.session_state["bling_envio_resultado"] = resumo_local
     st.warning("O envio foi registrado apenas em simulação local.")
+    log_debug(
+        f"Envio caiu em simulação local: {json.dumps(resumo_local, ensure_ascii=False)}",
+        nivel="INFO",
+    )
 
 
 # ============================================================
 # RENDERIZAÇÃO DOS BLOCOS
 # ============================================================
 
-def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> None:
+def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
     resumo = _montar_resumo(df_final)
     valido, erros = validar_df_para_download(df_final, tipo_operacao)
+    st.session_state["preview_validacao_ok"] = bool(valido)
 
-    st.markdown("### Resumo do resultado final")
+    st.markdown("### 1. Validação do resultado final")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -295,12 +341,19 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> None
         st.warning("Existem pontos para revisão antes do download ou envio.")
         for erro in erros:
             st.write(f"- {erro}")
+        log_debug(
+            f"Validação final com pendências: {' | '.join(erros)}",
+            nivel="ERRO",
+        )
     else:
         st.success("A planilha final passou na validação principal.")
+        log_debug("Validação final aprovada.", nivel="INFO")
+
+    return valido, erros
 
 
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
-    st.markdown("### Preview final")
+    st.markdown("### 2. Preview final")
 
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
@@ -312,8 +365,8 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
         st.dataframe(df_final.head(300), use_container_width=True)
 
 
-def _render_download(df_final: pd.DataFrame) -> None:
-    st.markdown("### Download")
+def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
+    st.markdown("### 3. Download da planilha padrão Bling")
 
     csv_bytes = dataframe_para_csv_bytes(df_final)
 
@@ -323,11 +376,56 @@ def _render_download(df_final: pd.DataFrame) -> None:
         file_name="bling_saida_final.csv",
         mime="text/csv",
         use_container_width=True,
+        disabled=not validacao_ok,
+        key="btn_download_csv_final_preview",
+    )
+
+    if validacao_ok:
+        if st.button(
+            "✅ Já baixei / quero seguir para conexão e envio",
+            use_container_width=True,
+            key="btn_confirmar_download_preview",
+        ):
+            st.session_state["preview_download_realizado"] = True
+            log_debug("Usuário confirmou a etapa de download e avançou para conexão/envio.", nivel="INFO")
+            st.rerun()
+    else:
+        st.info("Ajuste a validação antes de liberar o download e o envio.")
+
+
+def _render_bloco_fluxo_site() -> None:
+    st.markdown("### 4. Origem automática por site")
+
+    if not _origem_site_ativa():
+        st.caption("A origem atual não veio da busca por site. Esta automação fica disponível quando a captura vem do site do fornecedor.")
+        return
+
+    url_site = str(st.session_state.get("site_fornecedor_url", "") or "").strip()
+    modo_auto = st.session_state.get("bling_sync_auto_mode", "manual")
+    interval_value = st.session_state.get("bling_sync_interval_value", 15)
+    interval_unit = st.session_state.get("bling_sync_interval_unit", "minutos")
+
+    st.success("Origem por site detectada. O fluxo final pode reutilizar essa origem para novas capturas.")
+    if url_site:
+        st.write(f"**URL monitorada:** {url_site}")
+
+    if modo_auto == "manual":
+        st.info("Modo manual: a captura por site será usada no envio desta execução.")
+    elif modo_auto == "instantaneo":
+        st.info("Modo instantâneo: ao reutilizar a origem por site, o sistema deve buscar novamente e enviar após a conversão.")
+    else:
+        st.info(
+            f"Modo periódico configurado: a rotina deverá buscar produtos no site a cada "
+            f"**{interval_value} {interval_unit}** e então enviar ao Bling após conversão."
+        )
+
+    st.caption(
+        "Observação: nesta etapa a UI já prepara o fluxo. A execução recorrente contínua depende do serviço de sincronização/back-end."
     )
 
 
-def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str) -> None:
-    st.markdown("### Bling")
+def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str, validacao_ok: bool) -> None:
+    st.markdown("### 5. Conectar e enviar ao Bling")
 
     conectado, status = _obter_status_conexao_bling()
     st.session_state["bling_conectado"] = conectado
@@ -341,6 +439,14 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
             _render_conexao_bling()
         else:
             st.success("Conta Bling pronta para envio.")
+
+    if not st.session_state.get("preview_download_realizado", False):
+        st.warning("Confirme primeiro o download da planilha final para liberar o envio nesta última etapa.")
+        return
+
+    if not validacao_ok:
+        st.warning("A validação final precisa estar OK para liberar o envio ao Bling.")
+        return
 
     st.markdown("#### Estratégia de sincronização")
 
@@ -390,11 +496,20 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
                 key="bling_sync_interval_unit",
             )
 
+    if _origem_site_ativa():
+        st.markdown("#### Conversão GPT + fallback de busca por site")
+        st.caption(
+            "Quando a origem veio do site do fornecedor, o fluxo final pode reaproveitar a captura do site, "
+            "passar pela conversão GPT e então enviar ao Bling."
+        )
+
+    liberar_envio = bool(conectado and validacao_ok and st.session_state.get("preview_download_realizado", False))
+
     if st.button(
         "🚀 Enviar produtos ao Bling",
         use_container_width=True,
         key="btn_enviar_produtos_bling",
-        disabled=not conectado,
+        disabled=not liberar_envio,
     ):
         _enviar_para_bling(
             df_final=df_final,
@@ -420,7 +535,10 @@ def render_preview_final() -> None:
     _inicializar_estado_preview()
 
     st.subheader("4. Preview Final")
-    st.caption("Confira o resultado final, baixe o arquivo e envie ao Bling a partir desta etapa.")
+    st.caption(
+        "Fluxo final profissional: validar resultado, baixar a planilha padrão Bling, "
+        "conectar com o Bling e então enviar agora ou preparar atualização automática."
+    )
 
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
     deposito_nome = normalizar_texto(st.session_state.get("deposito_nome", ""))
@@ -443,10 +561,11 @@ def render_preview_final() -> None:
 
     st.session_state["df_final"] = df_final
 
-    _render_resumo_validacao(df_final, tipo_operacao)
+    validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
     _render_preview_dataframe(df_final)
-    _render_download(df_final)
-    _render_painel_bling(df_final, tipo_operacao, deposito_nome)
+    _render_download(df_final, validacao_ok)
+    _render_bloco_fluxo_site()
+    _render_painel_bling(df_final, tipo_operacao, deposito_nome, validacao_ok)
 
     st.markdown("---")
     col1, col2 = st.columns(2)
@@ -461,3 +580,4 @@ def render_preview_final() -> None:
             st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             ir_para_etapa("origem")
             
+
