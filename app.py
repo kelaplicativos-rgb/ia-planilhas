@@ -1,4 +1,7 @@
 
+import inspect
+from datetime import datetime
+
 import streamlit as st
 
 from bling_app_zero.utils.init_app import init_app
@@ -23,6 +26,8 @@ def _inicializar_estado_global() -> None:
         "site_auto_status": "inativo",
         "site_auto_ultima_execucao": "",
         "site_auto_modo": "manual",
+        "site_auto_ultima_url": "",
+        "site_auto_ultimo_total_produtos": 0,
     }
 
     for chave, valor in defaults.items():
@@ -111,6 +116,46 @@ def _origem_site_disponivel() -> bool:
     )
 
 
+def _carimbar_execucao_site(total_produtos: int, url_site: str) -> None:
+    st.session_state["site_auto_ultima_execucao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["site_auto_ultima_url"] = url_site
+    st.session_state["site_auto_ultimo_total_produtos"] = int(total_produtos)
+    st.session_state["site_auto_status"] = (
+        "ativo" if st.session_state.get("site_auto_loop_ativo", False) else "inativo"
+    )
+
+
+def _chamar_busca_site_compativel(url_site: str, intervalo: int):
+    """
+    Chama buscar_produtos_site_com_gpt de forma compatível com versões diferentes
+    do site_agent.py, evitando quebra por parâmetros inexistentes.
+    """
+    from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt  # type: ignore
+
+    kwargs = {
+        "base_url": url_site,
+        "diagnostico": True,
+    }
+
+    try:
+        assinatura = inspect.signature(buscar_produtos_site_com_gpt)
+        parametros = assinatura.parameters
+
+        if "termo" in parametros:
+            kwargs["termo"] = ""
+        if "limite_links" in parametros:
+            kwargs["limite_links"] = None
+        if "modo_loop" in parametros:
+            kwargs["modo_loop"] = False
+        if "intervalo_segundos" in parametros:
+            kwargs["intervalo_segundos"] = intervalo
+    except Exception:
+        # Se não conseguir inspecionar, cai no mínimo seguro
+        pass
+
+    return buscar_produtos_site_com_gpt(**kwargs)
+
+
 def _executar_monitoramento_site_agora() -> None:
     url_site = str(st.session_state.get("site_fornecedor_url", "") or "").strip()
     if not url_site:
@@ -119,7 +164,7 @@ def _executar_monitoramento_site_agora() -> None:
         return
 
     try:
-        from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt  # type: ignore
+        from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt  # noqa: F401
     except Exception as exc:
         st.error(f"Falha ao importar monitor do site: {exc}")
         log_debug(f"Falha ao importar monitor do site: {exc}", nivel="ERRO")
@@ -128,33 +173,36 @@ def _executar_monitoramento_site_agora() -> None:
     intervalo = int(st.session_state.get("site_auto_intervalo_segundos", 60) or 60)
     st.session_state["site_auto_status"] = "executando"
     st.session_state["site_auto_modo"] = "manual_disparo"
+
     log_debug(
         f"Disparo manual do monitoramento do site | url={url_site} | intervalo={intervalo}s",
         nivel="INFO",
     )
 
     try:
-        df_site = buscar_produtos_site_com_gpt(
-            base_url=url_site,
-            diagnostico=True,
-            modo_loop=False,
-            intervalo_segundos=intervalo,
-        )
+        df_site = _chamar_busca_site_compativel(url_site, intervalo)
 
-        if isinstance(df_site, type(None)) or getattr(df_site, "empty", True):
+        if not isinstance(df_site, st.session_state.get("df_origem").__class__) and not hasattr(df_site, "empty"):
+            # blindagem extra caso retorne algo inesperado
+            df_site = None
+
+        if df_site is None or getattr(df_site, "empty", True):
             st.warning("A busca por site foi executada, mas não encontrou produtos válidos.")
             log_debug("Monitoramento manual executado sem produtos válidos.", nivel="ERRO")
-        else:
-            st.session_state["df_origem"] = df_site
-            st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
-            st.session_state["origem_upload_tipo"] = "site_gpt"
-            st.session_state["origem_upload_ext"] = "site_gpt"
-            st.success(f"Monitoramento executado com sucesso. {len(df_site)} produto(s) encontrados.")
-            log_debug(f"Monitoramento manual executado com {len(df_site)} produto(s).", nivel="INFO")
+            _carimbar_execucao_site(0, url_site)
+            return
 
-        from datetime import datetime
-        st.session_state["site_auto_ultima_execucao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.session_state["site_auto_status"] = "ativo" if st.session_state.get("site_auto_loop_ativo", False) else "inativo"
+        st.session_state["df_origem"] = df_site
+        st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
+        st.session_state["origem_upload_tipo"] = "site_gpt"
+        st.session_state["origem_upload_ext"] = "site_gpt"
+
+        total = int(len(df_site))
+        _carimbar_execucao_site(total, url_site)
+
+        st.success(f"Monitoramento executado com sucesso. {total} produto(s) encontrados.")
+        log_debug(f"Monitoramento manual executado com {total} produto(s).", nivel="INFO")
+
     except Exception as exc:
         st.session_state["site_auto_status"] = "erro"
         st.error(f"Falha ao executar monitoramento do site: {exc}")
@@ -167,18 +215,24 @@ def _render_painel_automacao_site() -> None:
         url_site = str(st.session_state.get("site_fornecedor_url", "") or "").strip()
         status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
         ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "").strip()
+        ultimo_total = int(st.session_state.get("site_auto_ultimo_total_produtos", 0) or 0)
 
         st.caption(
             "Painel de controle do monitoramento da busca por site para uso junto do fluxo final de conexão e envio ao Bling."
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Origem por site", "OK" if site_disponivel else "Indisponível")
         with col2:
-            st.metric("Loop automático", "Ativo" if st.session_state.get("site_auto_loop_ativo", False) else "Inativo")
+            st.metric(
+                "Loop automático",
+                "Ativo" if st.session_state.get("site_auto_loop_ativo", False) else "Inativo",
+            )
         with col3:
             st.metric("Status", status.title())
+        with col4:
+            st.metric("Último total", ultimo_total)
 
         st.number_input(
             "Intervalo do monitoramento (segundos)",
@@ -209,10 +263,12 @@ def _render_painel_automacao_site() -> None:
                 st.session_state["site_auto_status"] = "ativo"
                 st.session_state["site_auto_modo"] = "loop"
                 log_debug(
-                    f"Loop automático do site ativado | url={url_site} | intervalo={st.session_state.get('site_auto_intervalo_segundos', 60)}s",
+                    f"Loop automático do site ativado | url={url_site} | "
+                    f"intervalo={st.session_state.get('site_auto_intervalo_segundos', 60)}s",
                     nivel="INFO",
                 )
                 st.success("Loop automático ativado.")
+                st.info("O loop ficou armado no sistema. A execução recorrente real depende da infraestrutura ativa.")
 
         with c2:
             if st.button(
@@ -263,4 +319,3 @@ _render_etapa_atual()
 
 # Painel visual de log sempre no final da tela
 render_log_debug()
-
