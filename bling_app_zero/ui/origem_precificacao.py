@@ -15,10 +15,14 @@ from bling_app_zero.ui.app_helpers import (
 )
 
 
+# ============================================================
+# BLINDAGEM DE ETAPA
+# ============================================================
+
 def _garantir_etapa_precificacao_ativa() -> None:
     """
-    Blinda a etapa atual durante os reruns normais do Streamlit.
-    Evita cair para a home/origem ao alterar selectbox/number_input.
+    Mantém a tela travada em precificacao durante os reruns normais
+    do Streamlit (selectbox, number_input, etc).
     """
     if get_etapa() != "precificacao":
         sincronizar_etapa_global("precificacao")
@@ -26,6 +30,10 @@ def _garantir_etapa_precificacao_ativa() -> None:
     st.session_state["_etapa_url_inicializada"] = True
     st.session_state["_ultima_etapa_sincronizada_url"] = "precificacao"
 
+
+# ============================================================
+# HELPERS DE CÁLCULO
+# ============================================================
 
 def _to_float(valor) -> float:
     if valor is None:
@@ -95,6 +103,10 @@ def _normalizar_texto(valor) -> str:
     return str(valor or "").strip().lower()
 
 
+# ============================================================
+# DETECÇÃO DE COLUNAS
+# ============================================================
+
 def _detectar_coluna_custo(df: pd.DataFrame) -> str:
     if not safe_df_dados(df):
         return ""
@@ -138,6 +150,45 @@ def _coluna_preco_destino() -> str:
         return "Preço unitário (OBRIGATÓRIO)"
     return "Preço de venda"
 
+
+# ============================================================
+# ESTADO DA PRECIFICAÇÃO
+# ============================================================
+
+def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
+    colunas = [str(c) for c in df_origem.columns.tolist()]
+    sugestao_custo = _detectar_coluna_custo(df_origem)
+
+    if st.session_state.get("pricing_coluna_custo", "") not in colunas:
+        st.session_state["pricing_coluna_custo"] = sugestao_custo
+
+    defaults = {
+        "pricing_custo_fixo": 0.0,
+        "pricing_frete_fixo": 0.0,
+        "pricing_taxa_extra": 0.0,
+        "pricing_impostos_percent": 0.0,
+        "pricing_margem_percent": 0.0,
+        "pricing_outros_percent": 0.0,
+        "pricing_valor_teste": 0.0,
+        "pricing_df_preview": st.session_state.get("pricing_df_preview"),
+        "pricing_aplicada_ok": bool(st.session_state.get("pricing_aplicada_ok", False)),
+    }
+
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
+
+
+def _limpar_preview_se_base_sumiu(df_origem: pd.DataFrame) -> None:
+    if not safe_df_dados(df_origem):
+        st.session_state["pricing_df_preview"] = None
+        st.session_state["df_precificado"] = None
+        st.session_state["pricing_aplicada_ok"] = False
+
+
+# ============================================================
+# PROCESSAMENTO
+# ============================================================
 
 def _aplicar_precificacao_dataframe(
     df: pd.DataFrame,
@@ -196,6 +247,10 @@ def _aplicar_precificacao_dataframe(
     return base
 
 
+# ============================================================
+# UI
+# ============================================================
+
 def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     if not safe_df_dados(df):
         return
@@ -226,38 +281,7 @@ def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     st.dataframe(preview, use_container_width=True)
 
     with st.expander("Ver preview completo", expanded=False):
-        st.dataframe(df.head(50), use_container_width=True)
-
-
-def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
-    colunas = [str(c) for c in df_origem.columns.tolist()]
-    sugestao_custo = _detectar_coluna_custo(df_origem)
-
-    if st.session_state.get("pricing_coluna_custo", "") not in colunas:
-        st.session_state["pricing_coluna_custo"] = sugestao_custo
-
-    defaults = {
-        "pricing_custo_fixo": 0.0,
-        "pricing_frete_fixo": 0.0,
-        "pricing_taxa_extra": 0.0,
-        "pricing_impostos_percent": 0.0,
-        "pricing_margem_percent": 0.0,
-        "pricing_outros_percent": 0.0,
-        "pricing_valor_teste": 0.0,
-        "pricing_df_preview": st.session_state.get("pricing_df_preview"),
-        "pricing_aplicada_ok": False,
-    }
-
-    for chave, valor in defaults.items():
-        if chave not in st.session_state:
-            st.session_state[chave] = valor
-
-
-def _limpar_preview_se_base_sumiu(df_origem: pd.DataFrame) -> None:
-    if not safe_df_dados(df_origem):
-        st.session_state["pricing_df_preview"] = None
-        st.session_state["df_precificado"] = None
-        st.session_state["pricing_aplicada_ok"] = False
+        st.dataframe(df.head(200), use_container_width=True)
 
 
 def render_origem_precificacao() -> None:
@@ -274,12 +298,24 @@ def render_origem_precificacao() -> None:
 
     if not safe_df_dados(df_origem):
         st.warning("A planilha de origem precisa estar carregada antes da precificação.")
+
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_voltar_prec_sem_dados"):
+            if st.button(
+                "⬅️ Voltar para origem",
+                use_container_width=True,
+                key="btn_voltar_prec_sem_dados",
+            ):
+                st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
                 voltar_etapa_anterior()
+
         with col2:
-            st.button("Continuar ➜", use_container_width=True, disabled=True, key="btn_continuar_prec_sem_dados")
+            st.button(
+                "Continuar ➜",
+                use_container_width=True,
+                disabled=True,
+                key="btn_continuar_prec_sem_dados",
+            )
         return
 
     _inicializar_estado_precificacao(df_origem)
@@ -382,7 +418,11 @@ def render_origem_precificacao() -> None:
 
     st.markdown("### Aplicar na planilha")
 
-    if st.button("Aplicar precificação na origem", use_container_width=True, key="btn_aplicar_precificacao"):
+    if st.button(
+        "Aplicar precificação na origem",
+        use_container_width=True,
+        key="btn_aplicar_precificacao",
+    ):
         if not coluna_custo:
             st.error("Selecione a coluna base de custo/preço para calcular.")
         else:
@@ -412,12 +452,20 @@ def render_origem_precificacao() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_voltar_precificacao"):
+        if st.button(
+            "⬅️ Voltar para origem",
+            use_container_width=True,
+            key="btn_voltar_precificacao",
+        ):
             st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             voltar_etapa_anterior()
 
     with col2:
-        if st.button("Continuar ➜", use_container_width=True, key="btn_continuar_precificacao"):
+        if st.button(
+            "Continuar ➜",
+            use_container_width=True,
+            key="btn_continuar_precificacao",
+        ):
             if not safe_df_dados(st.session_state.get("df_precificado")):
                 st.error("Aplique a precificação antes de continuar.")
                 return
