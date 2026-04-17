@@ -124,47 +124,48 @@ def limpar_logs() -> None:
 
 
 def render_botao_download_logs() -> None:
-    """Renderiza apenas o botão de download do log quando houver conteúdo."""
+    """Renderiza apenas o botão de download do log."""
     logs_txt = obter_logs()
-    if not logs_txt.strip():
-        return
 
     st.download_button(
         label="📥 Baixar log debug",
-        data=logs_txt,
+        data=logs_txt.encode("utf-8") if isinstance(logs_txt, str) else b"",
         file_name="debug_log.txt",
         mime="text/plain",
         use_container_width=True,
         key="btn_download_log_debug",
+        disabled=not bool(str(logs_txt).strip()),
     )
 
 
 def render_log_debug() -> None:
     """
-    Painel visual de log debug.
-    Mostra expander com o conteúdo e botões de baixar/limpar.
+    Painel visual de log debug sempre visível.
+    Mostra o botão mesmo sem conteúdo, evitando sumiço na UI.
     """
     logs_txt = obter_logs()
-
-    if not logs_txt.strip():
-        return
+    tem_logs = bool(str(logs_txt).strip())
 
     st.markdown("---")
     st.markdown("### 🧠 LOG DEBUG")
 
-    with st.expander("Ver log completo", expanded=False):
-        st.code(logs_txt, language="text")
+    if tem_logs:
+        with st.expander("Ver log completo", expanded=False):
+            st.code(logs_txt, language="text")
+    else:
+        st.info("Nenhum log disponível ainda. O painel já está ativo e aparecerá preenchido após a primeira execução registrada.")
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.download_button(
             label="📥 Baixar log",
-            data=logs_txt,
+            data=logs_txt.encode("utf-8") if isinstance(logs_txt, str) else b"",
             file_name="debug_log.txt",
             mime="text/plain",
             use_container_width=True,
             key="btn_download_log_debug_final",
+            disabled=not tem_logs,
         )
 
     with col2:
@@ -172,6 +173,7 @@ def render_log_debug() -> None:
             "🗑️ Limpar log",
             use_container_width=True,
             key="btn_clear_log_debug",
+            disabled=not tem_logs,
         ):
             limpar_logs()
             st.rerun()
