@@ -341,7 +341,6 @@ def _render_origem_site() -> None:
     )
 
     st.session_state["site_fornecedor_url"] = url_site
-    st.session_state["site_fornecedor_diagnostico"] = modo_diagnostico
 
     if st.button(
         "✨ Varrer site inteiro com GPT",
@@ -356,7 +355,7 @@ def _render_origem_site() -> None:
 
         df_site = buscar_produtos_site_com_gpt(
             base_url=url_site,
-            diagnostico=modo_diagnostico,
+            diagnostico=bool(modo_diagnostico),
         )
 
         if not safe_df_dados(df_site):
@@ -435,4 +434,3 @@ def render_origem_dados() -> None:
             ir_para_etapa("precificacao")
     else:
         st.info("Envie/gere a origem e envie o modelo para continuar.")
-
