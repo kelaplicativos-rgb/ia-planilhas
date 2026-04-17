@@ -12,6 +12,10 @@ import requests
 BLING_API_BASE = "https://www.bling.com.br/Api/v3"
 
 
+# ============================================================
+# HELPERS BÁSICOS
+# ============================================================
+
 def _agora_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -70,6 +74,26 @@ def _safe_df(df: Any) -> pd.DataFrame:
 def _safe_df_dados(df: Any) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
 
+
+def _streamlit_ctx():
+    try:
+        import streamlit as st
+        return st
+    except Exception:
+        return None
+
+
+def _log_debug(msg: str, nivel: str = "INFO") -> None:
+    try:
+        from bling_app_zero.ui.app_helpers import log_debug  # type: ignore
+        log_debug(msg, nivel=nivel)
+    except Exception:
+        pass
+
+
+# ============================================================
+# DETECÇÃO DE COLUNAS
+# ============================================================
 
 def _coluna_existente(df: pd.DataFrame, nomes: list[str]) -> str:
     mapa = {_safe_lower(c): str(c) for c in df.columns}
@@ -140,20 +164,35 @@ def _coluna_deposito(df: pd.DataFrame) -> str:
     return _coluna_existente(df, ["Depósito (OBRIGATÓRIO)", "depósito (obrigatório)", "Deposito"])
 
 
+def _coluna_url_produto(df: pd.DataFrame) -> str:
+    return _coluna_existente(df, ["URL Produto", "url produto", "url_produto", "Link Produto"])
+
+
+def _coluna_ncm(df: pd.DataFrame) -> str:
+    return _coluna_existente(df, ["NCM", "ncm"])
+
+
 def _split_imagens(valor: Any) -> list[str]:
     texto = _normalizar_texto(valor)
     if not texto:
         return []
+
     bruto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|").replace(",", "|")
     itens = []
     vistos: set[str] = set()
+
     for parte in bruto.split("|"):
         parte_limpa = _normalizar_texto(parte)
         if parte_limpa and parte_limpa not in vistos:
             vistos.add(parte_limpa)
             itens.append(parte_limpa)
+
     return itens
 
+
+# ============================================================
+# CONFIG
+# ============================================================
 
 @dataclass
 class SyncConfig:
@@ -165,6 +204,10 @@ class SyncConfig:
     interval_unit: str
     dry_run: bool = False
 
+
+# ============================================================
+# IMPORTS SEGUROS
+# ============================================================
 
 def _safe_import_bling_auth():
     try:
@@ -181,6 +224,18 @@ def _safe_import_bling_user_session():
     except Exception:
         return None
 
+
+def _safe_import_site_agent():
+    try:
+        from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt  # type: ignore
+        return buscar_produtos_site_com_gpt
+    except Exception:
+        return None
+
+
+# ============================================================
+# TOKEN / CLIENT
+# ============================================================
 
 def _obter_access_token() -> str:
     bling_auth = _safe_import_bling_auth()
@@ -291,6 +346,10 @@ class BlingApiClient:
         return self._request("PUT", f"/produtos/{produto_id}", json_payload=payload)
 
 
+# ============================================================
+# PAYLOAD
+# ============================================================
+
 def _montar_payload_produto(
     row: pd.Series,
     df: pd.DataFrame,
@@ -307,6 +366,7 @@ def _montar_payload_produto(
     situacao_col = _coluna_situacao(df)
     estoque_col = _coluna_estoque(df)
     deposito_col = _coluna_deposito(df)
+    ncm_col = _coluna_ncm(df)
 
     codigo = _normalizar_texto(row.get(codigo_col))
     descricao = _normalizar_texto(row.get(descricao_col))
@@ -314,15 +374,14 @@ def _montar_payload_produto(
     gtin = _somente_digitos(row.get(gtin_col))
     categoria = _normalizar_texto(row.get(categoria_col))
     situacao = _normalizar_texto(row.get(situacao_col)) or "Ativo"
+    ncm = _somente_digitos(row.get(ncm_col))
 
-    preco = 0.0
     if config.tipo_operacao == "estoque":
         preco = _to_float(row.get(preco_estoque_col), 0.0)
     else:
         preco = _to_float(row.get(preco_venda_col), 0.0)
 
     saldo = _to_int(row.get(estoque_col), 0)
-
     deposito = _normalizar_texto(config.deposito_nome) or _normalizar_texto(row.get(deposito_col))
     imagens = _split_imagens(row.get(imagens_col))
 
@@ -339,6 +398,9 @@ def _montar_payload_produto(
 
     if gtin:
         payload["gtin"] = gtin
+
+    if ncm:
+        payload["ncm"] = ncm
 
     if categoria:
         payload["categoria"] = {"descricao": categoria}
@@ -370,6 +432,10 @@ def _determinar_acao(strategy: str, produto_existente: dict[str, Any] | None) ->
     return "criar" if produto_existente is None else "atualizar"
 
 
+# ============================================================
+# AGENDAMENTO / FALLBACK SITE
+# ============================================================
+
 def _proxima_execucao(auto_mode: str, interval_value: int, interval_unit: str) -> str:
     auto_mode = _safe_lower(auto_mode)
     if auto_mode != "periodico":
@@ -388,6 +454,142 @@ def _proxima_execucao(auto_mode: str, interval_value: int, interval_unit: str) -
 
     return proxima.replace(microsecond=0).isoformat() + "Z"
 
+
+def _obter_metadata_site() -> dict[str, Any]:
+    st = _streamlit_ctx()
+    if st is None:
+        return {
+            "origem_site_ativa": False,
+            "url_site": "",
+            "modo_origem": "",
+            "origem_upload_tipo": "",
+            "origem_upload_nome": "",
+        }
+
+    modo_origem = _safe_lower(st.session_state.get("modo_origem", ""))
+    origem_upload_tipo = _safe_lower(st.session_state.get("origem_upload_tipo", ""))
+    origem_upload_nome = _safe_lower(st.session_state.get("origem_upload_nome", ""))
+    url_site = _normalizar_texto(st.session_state.get("site_fornecedor_url", ""))
+
+    origem_site_ativa = (
+        "site" in modo_origem
+        or "site_gpt" in origem_upload_tipo
+        or "varredura_site_" in origem_upload_nome
+    )
+
+    return {
+        "origem_site_ativa": origem_site_ativa,
+        "url_site": url_site,
+        "modo_origem": modo_origem,
+        "origem_upload_tipo": origem_upload_tipo,
+        "origem_upload_nome": origem_upload_nome,
+    }
+
+
+def _registrar_agendamento_local(config: SyncConfig, total_itens: int) -> dict[str, Any]:
+    proxima_execucao = _proxima_execucao(
+        config.auto_mode,
+        config.interval_value,
+        config.interval_unit,
+    )
+
+    info = {
+        "ativo": config.auto_mode == "periodico",
+        "modo": config.auto_mode,
+        "interval_value": config.interval_value,
+        "interval_unit": config.interval_unit,
+        "proxima_execucao": proxima_execucao,
+        "observacao": (
+            "Configuração registrada na aplicação. Execução recorrente contínua depende do motor "
+            "de agendamento/back-end da infraestrutura."
+        ),
+        "total_itens_referencia": int(total_itens),
+    }
+
+    st = _streamlit_ctx()
+    if st is not None:
+        st.session_state["bling_sync_periodico_config"] = info
+
+    return info
+
+
+def _executar_fallback_site_se_necessario(
+    config: SyncConfig,
+) -> dict[str, Any]:
+    metadata_site = _obter_metadata_site()
+
+    resultado = {
+        "executado": False,
+        "origem_site_ativa": bool(metadata_site.get("origem_site_ativa", False)),
+        "url_site": _normalizar_texto(metadata_site.get("url_site")),
+        "resultado_busca": None,
+        "observacao": "",
+    }
+
+    if not resultado["origem_site_ativa"]:
+        resultado["observacao"] = "Origem atual não veio da busca por site."
+        return resultado
+
+    resultado["observacao"] = (
+        "Origem por site detectada. O fallback periódico/instantâneo está preparado para "
+        "reutilizar a busca por site com GPT antes do envio ao Bling."
+    )
+
+    # Execução imediata só em modo instantâneo.
+    if config.auto_mode != "instantaneo":
+        return resultado
+
+    url_site = resultado["url_site"]
+    buscar_produtos_site_com_gpt = _safe_import_site_agent()
+
+    if not url_site or buscar_produtos_site_com_gpt is None:
+        resultado["observacao"] = (
+            "Modo instantâneo solicitado, mas a URL do site ou o serviço de busca GPT não está disponível."
+        )
+        return resultado
+
+    try:
+        _log_debug(
+            f"Fallback do site acionado antes do envio | url={url_site} | modo={config.auto_mode}",
+            nivel="INFO",
+        )
+        df_site = buscar_produtos_site_com_gpt(
+            base_url=url_site,
+            diagnostico=True,
+        )
+        resultado["executado"] = True
+        resultado["resultado_busca"] = {
+            "linhas_encontradas": int(len(df_site)) if isinstance(df_site, pd.DataFrame) else 0,
+            "colunas_encontradas": int(len(df_site.columns)) if isinstance(df_site, pd.DataFrame) else 0,
+        }
+        resultado["observacao"] = (
+            "Busca por site executada no modo instantâneo. A conversão GPT do crawler foi reutilizada antes do envio."
+        )
+    except Exception as exc:
+        resultado["executado"] = False
+        resultado["observacao"] = f"Falha ao executar fallback do site: {exc}"
+        _log_debug(resultado["observacao"], nivel="ERRO")
+
+    return resultado
+
+
+# ============================================================
+# RESULTADO E PERSISTÊNCIA
+# ============================================================
+
+def _persistir_resultado_sync(resumo: dict[str, Any]) -> None:
+    st = _streamlit_ctx()
+    if st is None:
+        return
+
+    st.session_state["bling_sync_last_result"] = resumo
+    st.session_state["bling_sync_last_run_at"] = resumo.get("processado_em", "")
+    st.session_state["bling_sync_next_run_at"] = resumo.get("proxima_execucao", "")
+
+
+# ============================================================
+# CORE SYNC
+# ============================================================
 
 def sincronizar_produtos_bling(
     df_final: pd.DataFrame,
@@ -411,41 +613,62 @@ def sincronizar_produtos_bling(
         dry_run=bool(dry_run),
     )
 
+    _log_debug(
+        "Iniciando sincronização Bling | "
+        f"tipo={config.tipo_operacao} | strategy={config.strategy} | auto_mode={config.auto_mode} | "
+        f"interval={config.interval_value} {config.interval_unit} | dry_run={config.dry_run}",
+        nivel="INFO",
+    )
+
     if not _safe_df_dados(df):
-        return {
+        resumo = {
             "ok": False,
             "modo": "validacao",
             "mensagem": "DataFrame final vazio ou inválido.",
             "processado_em": _agora_iso(),
             "total_itens": 0,
             "resultados": [],
+            "fallback_site": _executar_fallback_site_se_necessario(config),
+            "agendamento": _registrar_agendamento_local(config, 0),
         }
+        _persistir_resultado_sync(resumo)
+        return resumo
 
     codigo_col = _coluna_codigo(df)
     descricao_col = _coluna_descricao(df)
 
     if not codigo_col:
-        return {
+        resumo = {
             "ok": False,
             "modo": "validacao",
             "mensagem": "Coluna de código não encontrada na planilha final.",
             "processado_em": _agora_iso(),
             "total_itens": int(len(df)),
             "resultados": [],
+            "fallback_site": _executar_fallback_site_se_necessario(config),
+            "agendamento": _registrar_agendamento_local(config, int(len(df))),
         }
+        _persistir_resultado_sync(resumo)
+        return resumo
 
     if not descricao_col:
-        return {
+        resumo = {
             "ok": False,
             "modo": "validacao",
             "mensagem": "Coluna de descrição não encontrada na planilha final.",
             "processado_em": _agora_iso(),
             "total_itens": int(len(df)),
             "resultados": [],
+            "fallback_site": _executar_fallback_site_se_necessario(config),
+            "agendamento": _registrar_agendamento_local(config, int(len(df))),
         }
+        _persistir_resultado_sync(resumo)
+        return resumo
 
     access_token = _obter_access_token()
     client = BlingApiClient(access_token=access_token)
+
+    fallback_site = _executar_fallback_site_se_necessario(config)
 
     resultados: list[dict[str, Any]] = []
     total_criados = 0
@@ -532,8 +755,9 @@ def sincronizar_produtos_bling(
             total_erros += 1
 
     ok = total_erros == 0
+    agendamento = _registrar_agendamento_local(config, int(len(df)))
 
-    return {
+    resumo = {
         "ok": ok,
         "modo": "real" if client.disponivel and not config.dry_run else "simulacao",
         "processado_em": _agora_iso(),
@@ -554,7 +778,26 @@ def sincronizar_produtos_bling(
         "total_ignorados": total_ignorados,
         "total_erros": total_erros,
         "resultados": resultados,
+        "fallback_site": fallback_site,
+        "agendamento": agendamento,
+        "mensagem": (
+            "Sincronização concluída com sucesso."
+            if ok
+            else "Sincronização concluída com pendências/erros."
+        ),
     }
+
+    _persistir_resultado_sync(resumo)
+
+    _log_debug(
+        "Sincronização finalizada | "
+        f"modo={resumo['modo']} | total={resumo['total_itens']} | "
+        f"criados={resumo['total_criados']} | atualizados={resumo['total_atualizados']} | "
+        f"ignorados={resumo['total_ignorados']} | erros={resumo['total_erros']}",
+        nivel="INFO" if ok else "ERRO",
+    )
+
+    return resumo
 
 
 def enviar_produtos(
