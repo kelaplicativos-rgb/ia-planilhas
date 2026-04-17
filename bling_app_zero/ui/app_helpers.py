@@ -278,8 +278,48 @@ def _registrar_historico_etapa(etapa_anterior: str, etapa_nova: str) -> None:
     st.session_state["etapa_historico"] = historico[-20:]
 
 
+def _etapa_permitida_pelo_estado(etapa: str) -> str:
+    """
+    Regra de blindagem:
+    - origem sempre pode abrir
+    - precificacao só pode abrir com df_origem carregado
+    - mapeamento só pode abrir com df_origem carregado
+    - preview_final só pode abrir com alguma base de fluxo existente
+    """
+    etapa = _normalizar_etapa_fluxo(etapa)
+
+    if etapa == "origem":
+        return "origem"
+
+    df_origem = st.session_state.get("df_origem")
+    df_precificado = st.session_state.get("df_precificado")
+    df_mapeado = st.session_state.get("df_mapeado")
+    df_saida = st.session_state.get("df_saida")
+    df_final = st.session_state.get("df_final")
+
+    if etapa == "precificacao":
+        return "precificacao" if safe_df_dados(df_origem) else "origem"
+
+    if etapa == "mapeamento":
+        return "mapeamento" if safe_df_dados(df_origem) else "origem"
+
+    if etapa == "preview_final":
+        existe_fluxo = any(
+            [
+                safe_df_dados(df_final),
+                safe_df_dados(df_saida),
+                safe_df_dados(df_mapeado),
+                safe_df_dados(df_precificado),
+                safe_df_dados(df_origem),
+            ]
+        )
+        return "preview_final" if existe_fluxo else "origem"
+
+    return "origem"
+
+
 def sincronizar_etapa_global(etapa: str) -> None:
-    etapa_limpa = _normalizar_etapa_fluxo(etapa)
+    etapa_limpa = _etapa_permitida_pelo_estado(etapa)
 
     st.session_state["etapa"] = etapa_limpa
     st.session_state["etapa_origem"] = etapa_limpa
@@ -290,11 +330,11 @@ def sincronizar_etapa_global(etapa: str) -> None:
 
 def get_etapa() -> str:
     etapa = st.session_state.get("etapa", "")
-    return _normalizar_etapa_fluxo(str(etapa))
+    return _etapa_permitida_pelo_estado(str(etapa))
 
 
 def set_etapa(etapa: str, registrar_historico: bool = True) -> None:
-    etapa_nova = _normalizar_etapa_fluxo(etapa)
+    etapa_nova = _etapa_permitida_pelo_estado(etapa)
     etapa_atual = get_etapa()
 
     if registrar_historico:
@@ -308,14 +348,13 @@ def set_etapa(etapa: str, registrar_historico: bool = True) -> None:
 
 def sincronizar_etapa_da_url() -> None:
     """
-    Regra importante:
-    - na primeira carga, se vier ?etapa=... pela URL, respeita
-    - depois disso, em reruns normais do Streamlit (number_input, selectbox etc),
-      nunca deixar a URL antiga derrubar a etapa atual do session_state
-    - se não houver etapa definida ainda, inicializa com a URL ou com 'origem'
+    Regra:
+    - na primeira carga, só respeita a URL se a etapa for permitida pelo estado atual
+    - sem dados mínimos, força origem
+    - em reruns normais do Streamlit, nunca deixa a URL antiga derrubar a etapa atual
     """
-    etapa_state = get_etapa()
-    etapa_url = _get_query_param_etapa()
+    etapa_state = _etapa_permitida_pelo_estado(get_etapa())
+    etapa_url = _etapa_permitida_pelo_estado(_get_query_param_etapa())
 
     if "_etapa_url_inicializada" not in st.session_state:
         st.session_state["_etapa_url_inicializada"] = False
@@ -327,7 +366,7 @@ def sincronizar_etapa_da_url() -> None:
 
     if primeira_carga:
         etapa_inicial = etapa_url if etapa_url in ETAPAS_VALIDAS else etapa_state
-        etapa_inicial = _normalizar_etapa_fluxo(etapa_inicial or "origem")
+        etapa_inicial = _etapa_permitida_pelo_estado(etapa_inicial or "origem")
 
         sincronizar_etapa_global(etapa_inicial)
         _set_query_param_etapa(etapa_inicial)
@@ -340,16 +379,19 @@ def sincronizar_etapa_da_url() -> None:
         etapa_state = "origem"
         sincronizar_etapa_global(etapa_state)
 
-    ultima_url_sync = _normalizar_etapa_fluxo(
+    ultima_url_sync = _etapa_permitida_pelo_estado(
         st.session_state.get("_ultima_etapa_sincronizada_url", etapa_state)
     )
 
     if etapa_url != etapa_state:
         if etapa_url != ultima_url_sync:
-            sincronizar_etapa_global(etapa_url)
-            st.session_state["_ultima_etapa_sincronizada_url"] = etapa_url
+            etapa_destino = _etapa_permitida_pelo_estado(etapa_url)
+            sincronizar_etapa_global(etapa_destino)
+            st.session_state["_ultima_etapa_sincronizada_url"] = etapa_destino
+            _set_query_param_etapa(etapa_destino)
             return
 
+        etapa_state = _etapa_permitida_pelo_estado(etapa_state)
         _set_query_param_etapa(etapa_state)
         st.session_state["_ultima_etapa_sincronizada_url"] = etapa_state
         return
@@ -358,13 +400,13 @@ def sincronizar_etapa_da_url() -> None:
 
 
 def ir_para_etapa(etapa: str) -> None:
-    etapa_nova = _normalizar_etapa_fluxo(etapa)
+    etapa_nova = _etapa_permitida_pelo_estado(etapa)
     set_etapa(etapa_nova, registrar_historico=True)
     st.rerun()
 
 
 def voltar_para_etapa(etapa: str) -> None:
-    etapa_nova = _normalizar_etapa_fluxo(etapa)
+    etapa_nova = _etapa_permitida_pelo_estado(etapa)
     set_etapa(etapa_nova, registrar_historico=False)
     st.rerun()
 
@@ -376,7 +418,7 @@ def voltar_etapa_anterior() -> None:
     etapa_atual = get_etapa()
 
     if historico:
-        etapa_destino = _normalizar_etapa_fluxo(historico.pop())
+        etapa_destino = _etapa_permitida_pelo_estado(historico.pop())
         st.session_state["etapa_historico"] = historico
     else:
         etapa_destino = MAPA_ETAPA_ANTERIOR.get(etapa_atual, "origem")
@@ -632,6 +674,182 @@ def normalizar_situacao(valor: Any, default: str = "Ativo") -> str:
 
 # ============================================================
 # MODELO / COLUNAS
+# ============================================================
+
+def colunas_modelo_estoque() -> list[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Depósito (OBRIGATÓRIO)",
+        "Balanço (OBRIGATÓRIO)",
+        "Preço unitário (OBRIGATÓRIO)",
+        "Situação",
+    ]
+
+
+def colunas_modelo_cadastro() -> list[str]:
+    return [
+        "Código",
+        "Descrição",
+        "Descrição Curta",
+        "Preço de venda",
+        "GTIN/EAN",
+        "Situação",
+        "URL Imagens",
+        "Categoria",
+    ]
+
+
+def obter_colunas_modelo_por_tipo(tipo_operacao_bling: str) -> list[str]:
+    if safe_lower(tipo_operacao_bling) == "estoque":
+        return colunas_modelo_estoque()
+    return colunas_modelo_cadastro()
+
+
+def garantir_colunas_modelo(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+) -> pd.DataFrame:
+    base = garantir_dataframe(df)
+    colunas = obter_colunas_modelo_por_tipo(tipo_operacao_bling)
+
+    for coluna in colunas:
+        if coluna not in base.columns:
+            base[coluna] = ""
+
+    base = base[colunas].copy()
+    return base.fillna("")
+
+
+def blindar_df_para_bling(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+    deposito_nome: str = "",
+) -> pd.DataFrame:
+    base = garantir_dataframe(df)
+    tipo = safe_lower(tipo_operacao_bling)
+
+    if tipo == "estoque":
+        base = garantir_colunas_modelo(base, "estoque")
+
+        if deposito_nome:
+            base["Depósito (OBRIGATÓRIO)"] = normalizar_texto(deposito_nome)
+
+        base["Código"] = base["Código"].apply(normalizar_texto)
+        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
+        base["Depósito (OBRIGATÓRIO)"] = base["Depósito (OBRIGATÓRIO)"].apply(normalizar_texto)
+        base["Balanço (OBRIGATÓRIO)"] = base["Balanço (OBRIGATÓRIO)"].apply(formatar_inteiro_seguro)
+        base["Preço unitário (OBRIGATÓRIO)"] = base["Preço unitário (OBRIGATÓRIO)"].apply(formatar_numero_bling)
+        base["Situação"] = base["Situação"].apply(normalizar_situacao)
+    else:
+        base = garantir_colunas_modelo(base, "cadastro")
+
+        base["Código"] = base["Código"].apply(normalizar_texto)
+        base["Descrição"] = base["Descrição"].apply(normalizar_texto)
+        base["Descrição Curta"] = base["Descrição Curta"].apply(normalizar_texto)
+        base["Preço de venda"] = base["Preço de venda"].apply(formatar_numero_bling)
+        base["GTIN/EAN"] = base["GTIN/EAN"].apply(limpar_gtin_invalido)
+        base["Situação"] = base["Situação"].apply(normalizar_situacao)
+        base["URL Imagens"] = base["URL Imagens"].apply(normalizar_imagens_pipe)
+        base["Categoria"] = base["Categoria"].apply(normalizar_texto)
+
+    return base.fillna("")
+
+
+# ============================================================
+# VALIDAÇÃO FINAL
+# ============================================================
+
+def _coluna_vazia_ou_invalida(series: pd.Series) -> int:
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(["", "nan", "none", "nat", ""])
+        .sum()
+    )
+
+
+def validar_df_para_download(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str,
+) -> tuple[bool, list[str]]:
+    base = garantir_dataframe(df)
+    erros: list[str] = []
+
+    if not safe_df_dados(base):
+        erros.append("A planilha final está vazia.")
+        return False, erros
+
+    tipo = safe_lower(tipo_operacao_bling)
+
+    if tipo == "estoque":
+        obrigatorias = [
+            "Código",
+            "Descrição",
+            "Depósito (OBRIGATÓRIO)",
+            "Balanço (OBRIGATÓRIO)",
+            "Preço unitário (OBRIGATÓRIO)",
+        ]
+    else:
+        obrigatorias = [
+            "Código",
+            "Descrição",
+            "Preço de venda",
+        ]
+
+    for coluna in obrigatorias:
+        if coluna not in base.columns:
+            erros.append(f"Coluna obrigatória ausente: {coluna}")
+            continue
+
+        vazios = _coluna_vazia_ou_invalida(base[coluna])
+        if vazios > 0:
+            erros.append(f"Coluna obrigatória com valores vazios: {coluna} ({vazios})")
+
+    if tipo == "estoque":
+        if "Balanço (OBRIGATÓRIO)" in base.columns:
+            invalidos = (
+                pd.to_numeric(
+                    base["Balanço (OBRIGATÓRIO)"].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                )
+                .isna()
+                .sum()
+            )
+            if invalidos > 0:
+                erros.append(f"Balanço (OBRIGATÓRIO) contém valores inválidos ({invalidos})")
+    else:
+        if "Preço de venda" in base.columns:
+            invalidos = (
+                pd.to_numeric(
+                    base["Preço de venda"]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)
+                    .str.replace(",", ".", regex=False),
+                    errors="coerce",
+                )
+                .isna()
+                .sum()
+            )
+            if invalidos > 0:
+                erros.append(f"Preço de venda contém valores inválidos ({invalidos})")
+
+    return len(erros) == 0, erros
+
+
+# ============================================================
+# EXPORTAÇÃO
+# ============================================================
+
+def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
+    base = garantir_dataframe(df).fillna("")
+    csv_texto = base.to_csv(index=False, sep=";")
+    return csv_texto.encode("utf-8-sig")
+
+
+# ============================================================
+# RESUMO VISUAL
 # ============================================================
 
 def _label_etapa(etapa: str) -> str:
