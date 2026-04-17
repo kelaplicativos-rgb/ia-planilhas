@@ -12,10 +12,6 @@ import requests
 BLING_API_BASE = "https://www.bling.com.br/Api/v3"
 
 
-# ============================================================
-# HELPERS BÁSICOS
-# ============================================================
-
 def _agora_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -148,12 +144,7 @@ def _split_imagens(valor: Any) -> list[str]:
     texto = _normalizar_texto(valor)
     if not texto:
         return []
-    bruto = (
-        texto.replace("\n", "|")
-        .replace("\r", "|")
-        .replace(";", "|")
-        .replace(",", "|")
-    )
+    bruto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|").replace(",", "|")
     itens = []
     vistos: set[str] = set()
     for parte in bruto.split("|"):
@@ -163,10 +154,6 @@ def _split_imagens(valor: Any) -> list[str]:
             itens.append(parte_limpa)
     return itens
 
-
-# ============================================================
-# DATACLASSES
-# ============================================================
 
 @dataclass
 class SyncConfig:
@@ -178,10 +165,6 @@ class SyncConfig:
     interval_unit: str
     dry_run: bool = False
 
-
-# ============================================================
-# TOKEN / AUTH SAFE
-# ============================================================
 
 def _safe_import_bling_auth():
     try:
@@ -200,9 +183,6 @@ def _safe_import_bling_user_session():
 
 
 def _obter_access_token() -> str:
-    """
-    Tenta obter token de múltiplos lugares sem quebrar o sistema.
-    """
     bling_auth = _safe_import_bling_auth()
     if bling_auth is not None:
         for nome_func in [
@@ -236,10 +216,6 @@ def _obter_access_token() -> str:
 
     return ""
 
-
-# ============================================================
-# API CLIENT BLING
-# ============================================================
 
 class BlingApiClient:
     def __init__(self, access_token: str, timeout: int = 30) -> None:
@@ -279,7 +255,6 @@ class BlingApiClient:
             timeout=self.timeout,
         )
 
-        conteudo: dict[str, Any]
         try:
             conteudo = response.json()
         except Exception:
@@ -316,10 +291,6 @@ class BlingApiClient:
         return self._request("PUT", f"/produtos/{produto_id}", json_payload=payload)
 
 
-# ============================================================
-# MAPEAMENTO DF -> PAYLOAD BLING
-# ============================================================
-
 def _montar_payload_produto(
     row: pd.Series,
     df: pd.DataFrame,
@@ -352,11 +323,7 @@ def _montar_payload_produto(
 
     saldo = _to_int(row.get(estoque_col), 0)
 
-    deposito = (
-        _normalizar_texto(config.deposito_nome)
-        or _normalizar_texto(row.get(deposito_col))
-    )
-
+    deposito = _normalizar_texto(config.deposito_nome) or _normalizar_texto(row.get(deposito_col))
     imagens = _split_imagens(row.get(imagens_col))
 
     payload: dict[str, Any] = {
@@ -391,10 +358,6 @@ def _montar_payload_produto(
     return payload
 
 
-# ============================================================
-# ESTRATÉGIA
-# ============================================================
-
 def _determinar_acao(strategy: str, produto_existente: dict[str, Any] | None) -> str:
     strategy = _safe_lower(strategy)
 
@@ -426,10 +389,6 @@ def _proxima_execucao(auto_mode: str, interval_value: int, interval_unit: str) -
     return proxima.replace(microsecond=0).isoformat() + "Z"
 
 
-# ============================================================
-# FUNÇÃO PRINCIPAL
-# ============================================================
-
 def sincronizar_produtos_bling(
     df_final: pd.DataFrame,
     tipo_operacao: str = "cadastro",
@@ -440,14 +399,6 @@ def sincronizar_produtos_bling(
     interval_unit: str = "minutos",
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """
-    Serviço central do fluxo final:
-
-    - se não existir no Bling: cadastra
-    - se já existir: atualiza
-    - pode operar em modo simulado (dry_run)
-    - retorna relatório completo por linha
-    """
     df = _safe_df(df_final)
 
     config = SyncConfig(
@@ -612,9 +563,6 @@ def enviar_produtos(
     deposito_nome: str = "",
     strategy: str = "inteligente",
 ) -> dict[str, Any]:
-    """
-    Alias simples para compatibilidade com telas antigas.
-    """
     return sincronizar_produtos_bling(
         df_final=df_final,
         tipo_operacao=tipo_operacao,
@@ -624,4 +572,5 @@ def enviar_produtos(
         interval_value=15,
         interval_unit="minutos",
         dry_run=False,
-      )
+    )
+    
