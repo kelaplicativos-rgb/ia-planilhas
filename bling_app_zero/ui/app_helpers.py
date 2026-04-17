@@ -1,4 +1,5 @@
 
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -280,11 +281,11 @@ def _registrar_historico_etapa(etapa_anterior: str, etapa_nova: str) -> None:
 
 def _etapa_permitida_pelo_estado(etapa: str) -> str:
     """
-    Regra de blindagem:
+    Blindagem do fluxo:
     - origem sempre pode abrir
-    - precificacao só pode abrir com df_origem carregado
-    - mapeamento só pode abrir com df_origem carregado
-    - preview_final só pode abrir com alguma base de fluxo existente
+    - precificacao só com df_origem
+    - mapeamento só com df_precificado ou ao menos df_origem
+    - preview_final só com algum dataframe de saída do fluxo
     """
     etapa = _normalizar_etapa_fluxo(etapa)
 
@@ -301,7 +302,9 @@ def _etapa_permitida_pelo_estado(etapa: str) -> str:
         return "precificacao" if safe_df_dados(df_origem) else "origem"
 
     if etapa == "mapeamento":
-        return "mapeamento" if safe_df_dados(df_origem) else "origem"
+        if safe_df_dados(df_precificado) or safe_df_dados(df_origem):
+            return "mapeamento"
+        return "origem"
 
     if etapa == "preview_final":
         existe_fluxo = any(
@@ -310,7 +313,6 @@ def _etapa_permitida_pelo_estado(etapa: str) -> str:
                 safe_df_dados(df_saida),
                 safe_df_dados(df_mapeado),
                 safe_df_dados(df_precificado),
-                safe_df_dados(df_origem),
             ]
         )
         return "preview_final" if existe_fluxo else "origem"
@@ -353,7 +355,7 @@ def sincronizar_etapa_da_url() -> None:
     - sem dados mínimos, força origem
     - em reruns normais do Streamlit, nunca deixa a URL antiga derrubar a etapa atual
     """
-    etapa_state = _etapa_permitida_pelo_estado(get_etapa())
+    etapa_state = _etapa_permitida_pelo_estado(st.session_state.get("etapa", "origem"))
     etapa_url = _etapa_permitida_pelo_estado(_get_query_param_etapa())
 
     if "_etapa_url_inicializada" not in st.session_state:
