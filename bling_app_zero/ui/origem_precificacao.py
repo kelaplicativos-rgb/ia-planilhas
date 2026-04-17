@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
+    get_etapa,
     ir_para_etapa,
     safe_df_dados,
     sincronizar_etapa_global,
@@ -17,9 +18,11 @@ from bling_app_zero.ui.app_helpers import (
 def _garantir_etapa_precificacao_ativa() -> None:
     """
     Blinda a etapa atual durante os reruns normais do Streamlit.
-    Isso evita cair para a home/origem ao alterar selectbox/number_input.
+    Evita cair para a home/origem ao alterar selectbox/number_input.
     """
-    sincronizar_etapa_global("precificacao")
+    if get_etapa() != "precificacao":
+        sincronizar_etapa_global("precificacao")
+
     st.session_state["_etapa_url_inicializada"] = True
     st.session_state["_ultima_etapa_sincronizada_url"] = "precificacao"
 
@@ -241,11 +244,20 @@ def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
         "pricing_margem_percent": 0.0,
         "pricing_outros_percent": 0.0,
         "pricing_valor_teste": 0.0,
+        "pricing_df_preview": st.session_state.get("pricing_df_preview"),
+        "pricing_aplicada_ok": False,
     }
 
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
+
+
+def _limpar_preview_se_base_sumiu(df_origem: pd.DataFrame) -> None:
+    if not safe_df_dados(df_origem):
+        st.session_state["pricing_df_preview"] = None
+        st.session_state["df_precificado"] = None
+        st.session_state["pricing_aplicada_ok"] = False
 
 
 def render_origem_precificacao() -> None:
@@ -258,6 +270,7 @@ def render_origem_precificacao() -> None:
     )
 
     df_origem = st.session_state.get("df_origem")
+    _limpar_preview_se_base_sumiu(df_origem)
 
     if not safe_df_dados(df_origem):
         st.warning("A planilha de origem precisa estar carregada antes da precificação.")
@@ -386,6 +399,8 @@ def render_origem_precificacao() -> None:
 
             st.session_state["df_precificado"] = df_precificado
             st.session_state["pricing_df_preview"] = df_precificado.copy()
+            st.session_state["pricing_aplicada_ok"] = True
+
             st.success("Precificação aplicada com sucesso.")
 
     df_preview = st.session_state.get("pricing_df_preview")
@@ -398,6 +413,7 @@ def render_origem_precificacao() -> None:
 
     with col1:
         if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_voltar_precificacao"):
+            st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             voltar_etapa_anterior()
 
     with col2:
@@ -406,5 +422,6 @@ def render_origem_precificacao() -> None:
                 st.error("Aplique a precificação antes de continuar.")
                 return
 
+            st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             ir_para_etapa("mapeamento")
             
