@@ -15,10 +15,6 @@ import requests
 import streamlit as st
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 BLING_AUTHORIZE_URL = "https://www.bling.com.br/Api/v3/oauth/authorize"
 BLING_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token"
 BLING_REVOKE_URL = "https://www.bling.com.br/Api/v3/oauth/revoke"
@@ -33,10 +29,6 @@ DEFAULT_SCOPES = [
     "contatos",
 ]
 
-
-# ============================================================
-# DATACLASSES
-# ============================================================
 
 @dataclass
 class TokenBundle:
@@ -56,10 +48,6 @@ class TokenBundle:
         except Exception:
             return True
 
-
-# ============================================================
-# HELPERS GERAIS
-# ============================================================
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -93,9 +81,7 @@ def _safe_json_save(path: Path, data: dict[str, Any]) -> None:
 
 
 def _hash_user_key(valor: str) -> str:
-    texto = _normalizar_texto(valor)
-    if not texto:
-        texto = "default"
+    texto = _normalizar_texto(valor) or "default"
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:32]
 
 
@@ -109,10 +95,6 @@ def _headers_json(extra: dict[str, str] | None = None) -> dict[str, str]:
         headers.update(extra)
     return headers
 
-
-# ============================================================
-# SECRETS / PARAMS
-# ============================================================
 
 def _get_secret(nome: str, default: str = "") -> str:
     try:
@@ -158,27 +140,14 @@ def get_redirect_uri() -> str:
         valor = _get_secret(chave)
         if valor:
             return valor
-
-    try:
-        qp = st.query_params
-        origin = _normalizar_texto(qp.get("app_base_url", ""))
-        if origin:
-            return origin
-    except Exception:
-        pass
-
     return ""
 
 
 def get_scope() -> str:
-    for chave in [
-        "BLING_SCOPE",
-        "bling_scope",
-    ]:
+    for chave in ["BLING_SCOPE", "bling_scope"]:
         valor = _get_secret(chave)
         if valor:
             return valor
-
     return " ".join(DEFAULT_SCOPES)
 
 
@@ -186,18 +155,7 @@ def credenciais_configuradas() -> bool:
     return bool(get_client_id() and get_client_secret() and get_redirect_uri())
 
 
-# ============================================================
-# USER KEY / STORAGE
-# ============================================================
-
 def get_user_key() -> str:
-    """
-    Chave por usuário/sessão.
-    Prioridade:
-    1) query param bi
-    2) session_state
-    3) gera uma nova
-    """
     try:
         bi = _normalizar_texto(st.query_params.get("bi", ""))
         if bi:
@@ -206,9 +164,9 @@ def get_user_key() -> str:
     except Exception:
         pass
 
-    user_key = _normalizar_texto(st.session_state.get("bling_user_key", ""))
-    if user_key:
-        return user_key
+    atual = _normalizar_texto(st.session_state.get("bling_user_key", ""))
+    if atual:
+        return atual
 
     novo = _hash_user_key(secrets.token_urlsafe(24))
     st.session_state["bling_user_key"] = novo
@@ -260,10 +218,6 @@ def _pop_oauth_state(state: str) -> dict[str, Any]:
     _save_all_states(all_states)
     return payload or {}
 
-
-# ============================================================
-# TOKEN MODEL
-# ============================================================
 
 def _bundle_from_token_response(data: dict[str, Any]) -> TokenBundle:
     expires_in = int(data.get("expires_in", 0) or 0)
@@ -321,10 +275,6 @@ def save_token_bundle(bundle: TokenBundle) -> None:
     st.session_state["bling_status_texto"] = "Conectado"
 
 
-# ============================================================
-# AUTH HEADER / REQUESTS
-# ============================================================
-
 def _basic_auth_header() -> str:
     client_id = get_client_id()
     client_secret = get_client_secret()
@@ -353,10 +303,6 @@ def _post_token(data: dict[str, Any]) -> dict[str, Any]:
 
     return payload
 
-
-# ============================================================
-# OAUTH FLOW
-# ============================================================
 
 def gerar_state() -> str:
     state = secrets.token_urlsafe(32)
@@ -390,9 +336,6 @@ def gerar_link_autorizacao() -> str:
 
 
 def iniciar_oauth_bling() -> str:
-    """
-    Retorna a URL de autorização e salva no session_state.
-    """
     link = gerar_link_autorizacao()
     st.session_state["bling_auth_url"] = link
     return link
@@ -473,15 +416,7 @@ def revoke_token(token: str | None = None) -> dict[str, Any]:
     return payload
 
 
-# ============================================================
-# CALLBACK / SESSÃO
-# ============================================================
-
 def processar_callback_se_existir() -> dict[str, Any]:
-    """
-    Lê query params do retorno OAuth e conclui a autenticação.
-    Pode ser chamada no app.py a cada carregamento.
-    """
     try:
         qp = st.query_params
     except Exception:
@@ -514,7 +449,6 @@ def processar_callback_se_existir() -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "executado": True, "mensagem": str(exc)}
 
-    # limpa code/state da URL, mas preserva etapa/bi se existirem
     try:
         etapa = _normalizar_texto(qp.get("etapa", "origem"))
         bi = _normalizar_texto(qp.get("bi", ""))
@@ -581,14 +515,7 @@ def access_token_valido() -> str:
     return obter_access_token()
 
 
-# ============================================================
-# HELPERS DE UI
-# ============================================================
-
 def render_conectar_bling() -> None:
-    """
-    Render simples para usar em painéis como preview_final.py.
-    """
     if not credenciais_configuradas():
         st.error("Credenciais do Bling não configuradas em st.secrets.")
         return
@@ -628,4 +555,5 @@ def obter_resumo_conexao() -> dict[str, Any]:
         "status": "Conectado" if tem_token_valido() else "Token expirado",
         "expires_at": bundle.expires_at,
         "scope": bundle.scope,
-  }
+    }
+    
