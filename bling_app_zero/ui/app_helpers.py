@@ -139,6 +139,44 @@ def render_botao_download_logs() -> None:
     )
 
 
+def render_log_debug() -> None:
+    """
+    Painel visual de log debug.
+    Mostra expander com o conteúdo e botões de baixar/limpar.
+    """
+    logs_txt = obter_logs()
+
+    if not logs_txt.strip():
+        return
+
+    st.markdown("---")
+    st.markdown("### 🧠 LOG DEBUG")
+
+    with st.expander("Ver log completo", expanded=False):
+        st.code(logs_txt, language="text")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            label="📥 Baixar log",
+            data=logs_txt,
+            file_name="debug_log.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key="btn_download_log_debug_final",
+        )
+
+    with col2:
+        if st.button(
+            "🗑️ Limpar log",
+            use_container_width=True,
+            key="btn_clear_log_debug",
+        ):
+            limpar_logs()
+            st.rerun()
+
+
 # ============================================================
 # NAVEGAÇÃO / ETAPAS
 # ============================================================
