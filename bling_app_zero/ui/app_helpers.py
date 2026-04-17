@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import re
 import unicodedata
 
 import pandas as pd
@@ -24,7 +25,12 @@ ETAPAS_VALIDAS = ("origem", "precificacao", "mapeamento", "preview_final")
 # ============================================================
 
 def normalizar_texto(valor: object) -> str:
-    """Normaliza texto para comparações internas."""
+    """
+    Normaliza texto para comparações internas:
+    - trim
+    - remove acentos
+    - lower
+    """
     texto = str(valor or "").strip()
     if not texto:
         return ""
@@ -34,13 +40,23 @@ def normalizar_texto(valor: object) -> str:
     return texto.strip().lower()
 
 
+def safe_lower(valor: object) -> str:
+    """Alias semântico usado por módulos antigos/atuais."""
+    return normalizar_texto(valor)
+
+
 def safe_df(df: object) -> bool:
     """Retorna True quando existe DataFrame com colunas e pelo menos 1 linha."""
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
 
 
+def safe_df_dados(df: object) -> bool:
+    """Compatibilidade: DataFrame com estrutura e linhas."""
+    return safe_df(df)
+
+
 def safe_df_estrutura(df: object) -> bool:
-    """Retorna True quando existe DataFrame com estrutura mínima de colunas."""
+    """Retorna True quando existe DataFrame com pelo menos colunas."""
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
 
 
@@ -54,7 +70,7 @@ def obter_df_sessao(*chaves: str) -> pd.DataFrame:
 
 
 def limpar_chaves_sessao(*chaves: str) -> None:
-    """Remove chaves do session_state sem gerar erro."""
+    """Remove chaves do session_state sem erro."""
     for chave in chaves:
         st.session_state.pop(chave, None)
 
@@ -168,7 +184,7 @@ def set_etapa(etapa: str) -> str:
 
 
 def ir_para_etapa(etapa: str) -> None:
-    """Navega para uma etapa válida."""
+    """Navega diretamente para uma etapa válida."""
     set_etapa(etapa)
 
 
@@ -194,8 +210,16 @@ def sincronizar_etapa_da_url() -> None:
     _definir_query_param("etapa", "origem")
 
 
-def sincronizar_etapa_global() -> None:
-    """Compatibilidade com chamadas antigas."""
+def sincronizar_etapa_global(etapa: str | None = None) -> None:
+    """
+    Compatibilidade com chamadas antigas e novas.
+    - sem argumento: sincroniza pela URL
+    - com argumento: força etapa específica
+    """
+    if etapa:
+        set_etapa(etapa)
+        return
+
     sincronizar_etapa_da_url()
 
 
@@ -229,6 +253,11 @@ def voltar_etapa() -> str:
     return anterior
 
 
+def voltar_etapa_anterior() -> str:
+    """Alias usado pelos módulos de precificação, mapeamento e preview."""
+    return voltar_etapa()
+
+
 def _label_etapa(etapa: str) -> str:
     mapa = {
         "origem": "➡️ Origem",
@@ -258,13 +287,195 @@ def render_topo_navegacao() -> None:
 
 
 # ============================================================
+# NORMALIZAÇÕES ESPECÍFICAS BLING
+# ============================================================
+
+def normalizar_imagens_pipe(valor: object) -> str:
+    """
+    Garante separação por pipe nas URLs de imagem.
+    Aceita entradas separadas por vírgula, ponto e vírgula, quebra de linha ou pipe.
+    """
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+
+    partes = re.split(r"[|\n\r;,]+", texto)
+    urls = []
+    vistos = set()
+
+    for parte in partes:
+        item = str(parte or "").strip()
+        if not item:
+            continue
+        if item not in vistos:
+            vistos.add(item)
+            urls.append(item)
+
+    return "|".join(urls)
+
+
+def _coluna_encontrada(df: pd.DataFrame, candidatos: list[str]) -> str:
+    if not safe_df_estrutura(df):
+        return ""
+
+    colunas = [str(c) for c in df.columns.tolist()]
+    mapa = {normalizar_texto(c): c for c in colunas}
+
+    for candidato in candidatos:
+        achado = mapa.get(normalizar_texto(candidato))
+        if achado:
+            return achado
+
+    return ""
+
+
+def _limpar_gtin(valor: object) -> str:
+    """
+    Mantém apenas GTINs possíveis.
+    Se inválido por tamanho, devolve vazio.
+    """
+    texto = re.sub(r"\D+", "", str(valor or "").strip())
+    if not texto:
+        return ""
+
+    if len(texto) not in {8, 12, 13, 14}:
+        return ""
+
+    return texto
+
+
+def blindar_df_para_bling(
+    df: pd.DataFrame,
+    tipo_operacao_bling: str = "cadastro",
+    deposito_nome: str = "",
+) -> pd.DataFrame:
+    """
+    Blindagem final do DataFrame para exportação/preview:
+    - fillna
+    - normaliza imagens com pipe
+    - limpa GTIN inválido por tamanho
+    - injeta depósito quando operação for estoque
+    """
+    if not safe_df_estrutura(df):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    operacao = normalizar_texto(tipo_operacao_bling) or "cadastro"
+    deposito_nome = str(deposito_nome or "").strip()
+
+    for col in base.columns:
+        nome = normalizar_texto(col)
+
+        if "imagem" in nome or nome in {
+            "url imagens",
+            "url imagem",
+            "imagens",
+            "imagem",
+        }:
+            base[col] = base[col].apply(normalizar_imagens_pipe)
+
+    coluna_gtin = _coluna_encontrada(base, ["GTIN/EAN", "GTIN", "EAN"])
+    if coluna_gtin:
+        base[coluna_gtin] = base[coluna_gtin].apply(_limpar_gtin)
+
+    if operacao == "estoque" and deposito_nome:
+        coluna_deposito = _coluna_encontrada(
+            base,
+            [
+                "Depósito (OBRIGATÓRIO)",
+                "Depósito",
+                "Deposito (OBRIGATÓRIO)",
+                "Deposito",
+            ],
+        )
+        if coluna_deposito:
+            base[coluna_deposito] = deposito_nome
+
+    return base.fillna("")
+
+
+def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
+    """Exporta DataFrame como CSV UTF-8 BOM para melhor compatibilidade com Excel/Bling."""
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+
+    return df.fillna("").to_csv(index=False).encode("utf-8-sig")
+
+
+def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
+    """
+    Validação básica antes do download/envio.
+    Não bloqueia por excesso; apenas sinaliza principais ausências.
+    """
+    erros: list[str] = []
+
+    if not safe_df_estrutura(df):
+        return False, ["O DataFrame final não foi gerado."]
+
+    if len(df.columns) == 0:
+        erros.append("A planilha final não possui colunas.")
+
+    operacao = normalizar_texto(tipo_operacao) or "cadastro"
+
+    coluna_codigo = _coluna_encontrada(df, ["Código", "codigo", "Código do produto", "SKU"])
+    if coluna_codigo:
+        preenchidos = (
+            df[coluna_codigo]
+            .astype(str)
+            .str.strip()
+            .replace({"nan": "", "None": "", "none": ""})
+            .ne("")
+            .sum()
+        )
+        if int(preenchidos) == 0:
+            erros.append("Nenhum código foi preenchido na planilha final.")
+
+    if operacao == "cadastro":
+        coluna_descricao = _coluna_encontrada(df, ["Descrição", "Descricao"])
+        if coluna_descricao:
+            preenchidos = (
+                df[coluna_descricao]
+                .astype(str)
+                .str.strip()
+                .replace({"nan": "", "None": "", "none": ""})
+                .ne("")
+                .sum()
+            )
+            if int(preenchidos) == 0:
+                erros.append("Nenhuma descrição foi preenchida na planilha final.")
+
+    coluna_preco = _coluna_encontrada(
+        df,
+        [
+            "Preço de venda",
+            "Preço unitário (OBRIGATÓRIO)",
+            "Preço",
+            "Valor",
+        ],
+    )
+    if coluna_preco:
+        preenchidos = (
+            df[coluna_preco]
+            .astype(str)
+            .str.strip()
+            .replace({"nan": "", "None": "", "none": ""})
+            .ne("")
+            .sum()
+        )
+        if int(preenchidos) == 0:
+            erros.append("Nenhum preço foi preenchido na planilha final.")
+
+    return len(erros) == 0, erros
+
+
+# ============================================================
 # RESUMO DE FLUXO
 # ============================================================
 
 def montar_resumo_fluxo() -> dict:
     """Monta um resumo simples do andamento do fluxo."""
     df_origem = st.session_state.get("df_origem")
-    df_precificado = st.session_state.get("df_origem_precificado")
+    df_precificado = st.session_state.get("df_precificado")
     df_mapeado = st.session_state.get("df_mapeado")
     df_final = st.session_state.get("df_final")
 
