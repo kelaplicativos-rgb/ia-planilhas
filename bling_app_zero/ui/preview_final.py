@@ -14,7 +14,6 @@ from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     normalizar_imagens_pipe,
     normalizar_texto,
-    safe_df_dados,
     safe_df_estrutura,
     safe_lower,
     sincronizar_etapa_global,
