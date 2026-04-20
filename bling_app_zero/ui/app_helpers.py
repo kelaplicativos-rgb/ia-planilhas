@@ -153,7 +153,9 @@ def render_log_debug() -> None:
         with st.expander("Ver log completo", expanded=False):
             st.code(logs_txt, language="text")
     else:
-        st.info("Nenhum log disponível ainda. O painel já está ativo e aparecerá preenchido após a primeira execução registrada.")
+        st.info(
+            "Nenhum log disponível ainda. O painel já está ativo e aparecerá preenchido após a primeira execução registrada."
+        )
 
     col1, col2 = st.columns(2)
 
@@ -384,6 +386,30 @@ def _limpar_gtin(valor: object) -> str:
     return texto
 
 
+def _serie_texto_limpa(df: pd.DataFrame, coluna: str) -> pd.Series:
+    return (
+        df[coluna]
+        .astype(str)
+        .str.strip()
+        .replace({"nan": "", "None": "", "none": ""})
+    )
+
+
+def _contar_preenchidos(df: pd.DataFrame, coluna: str) -> int:
+    if not safe_df_estrutura(df) or not coluna or coluna not in df.columns:
+        return 0
+    return int(_serie_texto_limpa(df, coluna).ne("").sum())
+
+
+def _serie_numerica_valida(df: pd.DataFrame, coluna: str) -> pd.Series:
+    serie = _serie_texto_limpa(df, coluna)
+    serie = (
+        serie.str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
+    return pd.to_numeric(serie, errors="coerce")
+
+
 def blindar_df_para_bling(
     df: pd.DataFrame,
     tipo_operacao_bling: str = "cadastro",
@@ -444,8 +470,14 @@ def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
 
 def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
     """
-    Validação básica antes do download/envio.
-    Não bloqueia por excesso; apenas sinaliza principais ausências.
+    Validação BLOQUEANTE antes do download/envio.
+    Regras principais:
+    - df final precisa existir
+    - precisa ter colunas
+    - precisa ter código preenchido
+    - cadastro precisa ter descrição
+    - precisa ter preço válido
+    - estoque precisa ter depósito
     """
     erros: list[str] = []
 
@@ -457,88 +489,77 @@ def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool
 
     operacao = normalizar_texto(tipo_operacao) or "cadastro"
 
-    coluna_codigo = _coluna_encontrada(df, ["Código", "codigo", "Código do produto", "SKU"])
-    if coluna_codigo:
-        preenchidos = (
-            df[coluna_codigo]
-            .astype(str)
-            .str.strip()
-            .replace({"nan": "", "None": "", "none": ""})
-            .ne("")
-            .sum()
-        )
-        if int(preenchidos) == 0:
+    coluna_codigo = _coluna_encontrada(
+        df,
+        ["Código", "codigo", "Código do produto", "SKU", "Sku", "sku"],
+    )
+    if not coluna_codigo:
+        erros.append("A planilha final não possui coluna de código reconhecida.")
+    else:
+        if _contar_preenchidos(df, coluna_codigo) == 0:
             erros.append("Nenhum código foi preenchido na planilha final.")
 
     if operacao == "cadastro":
         coluna_descricao = _coluna_encontrada(df, ["Descrição", "Descricao"])
-        if coluna_descricao:
-            preenchidos = (
-                df[coluna_descricao]
-                .astype(str)
-                .str.strip()
-                .replace({"nan": "", "None": "", "none": ""})
-                .ne("")
-                .sum()
-            )
-            if int(preenchidos) == 0:
+        if not coluna_descricao:
+            erros.append("A planilha final não possui coluna de descrição reconhecida.")
+        else:
+            if _contar_preenchidos(df, coluna_descricao) == 0:
                 erros.append("Nenhuma descrição foi preenchida na planilha final.")
+
+        coluna_descricao_curta = _coluna_encontrada(df, ["Descrição Curta", "Descricao Curta"])
+        if coluna_descricao_curta and _contar_preenchidos(df, coluna_descricao_curta) == 0:
+            erros.append("Nenhuma descrição curta foi preenchida na planilha final.")
 
     coluna_preco = _coluna_encontrada(
         df,
         [
             "Preço de venda",
             "Preço unitário (OBRIGATÓRIO)",
+            "Preço unitário",
             "Preço",
             "Valor",
         ],
     )
-    if coluna_preco:
-        preenchidos = (
-            df[coluna_preco]
-            .astype(str)
-            .str.strip()
-            .replace({"nan": "", "None": "", "none": ""})
-            .ne("")
-            .sum()
-        )
-        if int(preenchidos) == 0:
+    if not coluna_preco:
+        erros.append("A planilha final não possui coluna de preço reconhecida.")
+    else:
+        preenchidos_preco = _contar_preenchidos(df, coluna_preco)
+        if preenchidos_preco == 0:
             erros.append("Nenhum preço foi preenchido na planilha final.")
+        else:
+            numeros = _serie_numerica_valida(df, coluna_preco)
+            validos = int(numeros.notna().sum())
+            positivos = int((numeros.fillna(0) > 0).sum())
+
+            if validos == 0:
+                erros.append("Os preços da planilha final não estão em formato numérico válido.")
+            elif positivos == 0:
+                erros.append("Nenhum preço positivo foi encontrado na planilha final.")
+
+    if operacao == "estoque":
+        coluna_deposito = _coluna_encontrada(
+            df,
+            [
+                "Depósito (OBRIGATÓRIO)",
+                "Depósito",
+                "Deposito (OBRIGATÓRIO)",
+                "Deposito",
+            ],
+        )
+        if not coluna_deposito:
+            erros.append("A planilha final não possui coluna de depósito reconhecida.")
+        else:
+            if _contar_preenchidos(df, coluna_deposito) == 0:
+                erros.append("Nenhum depósito foi preenchido na planilha final.")
+
+    coluna_gtin = _coluna_encontrada(df, ["GTIN/EAN", "GTIN", "EAN"])
+    if coluna_gtin:
+        serie_gtin = _serie_texto_limpa(df, coluna_gtin)
+        gtins_preenchidos = serie_gtin[serie_gtin.ne("")]
+        if not gtins_preenchidos.empty:
+            tamanhos_invalidos = gtins_preenchidos.apply(lambda x: len(re.sub(r"\D+", "", x)) not in {8, 12, 13, 14})
+            if bool(tamanhos_invalidos.any()):
+                erros.append("Existem GTINs preenchidos com tamanho inválido na planilha final.")
 
     return len(erros) == 0, erros
-
-
-# ============================================================
-# RESUMO DE FLUXO
-# ============================================================
-
-def montar_resumo_fluxo() -> dict:
-    """Monta um resumo simples do andamento do fluxo."""
-    df_origem = st.session_state.get("df_origem")
-    df_precificado = st.session_state.get("df_precificado")
-    df_mapeado = st.session_state.get("df_mapeado")
-    df_final = st.session_state.get("df_final")
-
-    return {
-        "etapa": get_etapa(),
-        "origem_linhas": len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0,
-        "precificado_linhas": len(df_precificado) if isinstance(df_precificado, pd.DataFrame) else 0,
-        "mapeado_linhas": len(df_mapeado) if isinstance(df_mapeado, pd.DataFrame) else 0,
-        "final_linhas": len(df_final) if isinstance(df_final, pd.DataFrame) else 0,
-    }
-
-
-def render_resumo_fluxo() -> None:
-    """Renderiza um resumo compacto do fluxo."""
-    resumo = montar_resumo_fluxo()
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Origem", resumo["origem_linhas"])
-    with c2:
-        st.metric("Precisificado", resumo["precificado_linhas"])
-    with c3:
-        st.metric("Mapeado", resumo["mapeado_linhas"])
-    with c4:
-        st.metric("Final", resumo["final_linhas"])
-        
