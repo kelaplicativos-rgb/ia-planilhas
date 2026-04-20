@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from typing import Any
 
 from bs4 import BeautifulSoup
 
@@ -20,9 +21,9 @@ except Exception:
     OpenAI = None
 
 
-# =========================
-# 🔧 CONFIG OPENAI
-# =========================
+# ============================================================
+# CONFIG OPENAI
+# ============================================================
 
 def get_openai_client_and_model():
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -48,9 +49,9 @@ def get_openai_client_and_model():
         return None, model
 
 
-# =========================
-# 🔥 LIMPEZA DE MARCA
-# =========================
+# ============================================================
+# HELPERS DE LIMPEZA
+# ============================================================
 
 def limpar_marca(marca: str, titulo: str = "") -> str:
     marca = safe_str(marca).strip()
@@ -72,6 +73,12 @@ def limpar_marca(marca: str, titulo: str = "") -> str:
         "distribuidora",
         "atacado",
         "varejo",
+        "ecommerce",
+        "e-commerce",
+        "site oficial",
+        "loja oficial",
+        "minha loja",
+        "nossa loja",
     ]
 
     for b in bloqueadas:
@@ -79,11 +86,28 @@ def limpar_marca(marca: str, titulo: str = "") -> str:
             return ""
 
     genericas = {
-        "fone", "cabo", "carregador",
-        "caixa", "som", "produto",
-        "acessorio", "acessório",
-        "eletronico", "eletrônico",
-        "usb", "bluetooth"
+        "fone",
+        "fones",
+        "cabo",
+        "cabos",
+        "carregador",
+        "carregadores",
+        "caixa",
+        "som",
+        "produto",
+        "produtos",
+        "acessorio",
+        "acessório",
+        "acessorios",
+        "acessórios",
+        "eletronico",
+        "eletrônico",
+        "usb",
+        "bluetooth",
+        "wireless",
+        "tipo-c",
+        "celular",
+        "smartphone",
     }
 
     if marca_lower in genericas:
@@ -104,10 +128,6 @@ def limpar_marca(marca: str, titulo: str = "") -> str:
     return marca
 
 
-# =========================
-# 🔥 INFERÊNCIA VIA TÍTULO
-# =========================
-
 def inferir_marca_do_titulo(titulo: str) -> str:
     titulo = safe_str(titulo)
 
@@ -115,17 +135,35 @@ def inferir_marca_do_titulo(titulo: str) -> str:
         return ""
 
     palavras_invalidas = {
-        "fone", "cabo", "carregador",
-        "caixa", "som", "produto",
-        "kit", "para", "com",
-        "sem", "de", "da", "do",
-        "usb", "bluetooth",
-        "celular", "smartphone"
+        "fone",
+        "fones",
+        "cabo",
+        "cabos",
+        "carregador",
+        "carregadores",
+        "caixa",
+        "som",
+        "produto",
+        "produtos",
+        "kit",
+        "para",
+        "com",
+        "sem",
+        "de",
+        "da",
+        "do",
+        "usb",
+        "bluetooth",
+        "wireless",
+        "tipo",
+        "tipo-c",
+        "celular",
+        "smartphone",
     }
 
     tokens = re.split(r"\s+", titulo)
 
-    for token in tokens[:5]:
+    for token in tokens[:6]:
         candidato = re.sub(r"[^A-Za-z0-9\-]", "", token)
 
         if not candidato:
@@ -145,27 +183,112 @@ def inferir_marca_do_titulo(titulo: str) -> str:
     return ""
 
 
-# =========================
-# 🔥 GPT EXTRAÇÃO PRINCIPAL
-# =========================
+def limpar_codigo(valor: str) -> str:
+    texto = safe_str(valor)
+    if not texto:
+        return ""
+    texto = re.sub(r"[\n\r\t]+", " ", texto).strip()
+    texto = re.sub(r"\s{2,}", " ", texto)
+    return texto[:120]
 
-def gpt_extrair_produto(url_produto: str, html: str, heuristica: dict) -> dict:
-    client, model = get_openai_client_and_model()
 
-    if client is None:
-        return heuristica
+def limpar_gtin(valor: str) -> str:
+    texto = re.sub(r"\D+", "", safe_str(valor))
+    if len(texto) in {8, 12, 13, 14}:
+        return texto
+    return ""
 
-    soup = BeautifulSoup(html, "lxml")
-    texto_limpo = soup.get_text(" ", strip=True)[:20000]
 
-    prompt = f"""
-Extraia dados de produto a partir da página.
+def limpar_ncm(valor: str) -> str:
+    texto = re.sub(r"\D+", "", safe_str(valor))
+    if len(texto) >= 6:
+        return texto[:8]
+    return ""
+
+
+def normalizar_quantidade(valor: str, texto_pagina: str = "") -> str:
+    qtd = safe_str(valor)
+    if qtd:
+        return qtd
+
+    texto_n = safe_str(texto_pagina).lower()
+
+    if any(x in texto_n for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado", "outofstock"]):
+        return "0"
+
+    match = re.search(r"(?:estoque|quantidade|qtd)[^\d]{0,12}(\d{1,5})", texto_n, flags=re.I)
+    if match:
+        return safe_str(match.group(1))
+
+    if any(x in texto_n for x in ["em estoque", "disponível", "disponivel", "in stock"]):
+        return "1"
+
+    return ""
+
+
+def _json_only(content: str) -> str:
+    bruto = safe_str(content)
+    if not bruto:
+        return "{}"
+
+    bruto = bruto.strip()
+
+    if bruto.startswith("```"):
+        bruto = re.sub(r"^```(?:json)?", "", bruto, flags=re.I).strip()
+        bruto = re.sub(r"```$", "", bruto).strip()
+
+    match = re.search(r"\{.*\}", bruto, flags=re.S)
+    if match:
+        return match.group(0).strip()
+
+    return "{}"
+
+
+def _safe_json_loads(content: str) -> dict[str, Any]:
+    try:
+        data = json.loads(_json_only(content))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _pagina_parece_login(texto_limpo: str, url_produto: str) -> bool:
+    texto_n = safe_str(texto_limpo).lower()
+    url_n = safe_str(url_produto).lower()
+
+    sinais = [
+        "/login",
+        "fazer login",
+        "acesse sua conta",
+        "insira seus dados",
+        "senha",
+        "password",
+        "g-recaptcha",
+        "recaptcha",
+        "não sou um robô",
+        "nao sou um robo",
+    ]
+
+    if any(s in url_n for s in ["/login", "/auth", "/signin"]):
+        return True
+
+    if any(s in texto_n for s in sinais):
+        return True
+
+    return False
+
+
+def _construir_prompt(url_produto: str, heuristica: dict[str, Any], texto_limpo: str) -> str:
+    heuristica_json = json.dumps(heuristica, ensure_ascii=False)
+
+    return f"""
+Você vai completar dados de produto a partir de uma página web.
 
 URL: {url_produto}
-Dados heurísticos: {json.dumps(heuristica, ensure_ascii=False)}
+Heurística atual: {heuristica_json}
 Texto da página: {texto_limpo}
 
-Retorne JSON válido:
+Retorne JSON válido exatamente neste formato:
 {{
   "codigo": "",
   "descricao": "",
@@ -176,77 +299,178 @@ Retorne JSON válido:
   "ncm": "",
   "preco": "",
   "quantidade": "",
-  "url_imagens": ""
+  "url_imagens": "",
+  "eh_produto": true,
+  "confianca": 0
 }}
 
-Regras:
-- não inventar dados
-- se não tiver, deixar vazio
-- detectar se é produto real
-- detectar "sem estoque" → quantidade = "0"
-- url_imagens separadas por |
-- preco formato 19,90
+Regras obrigatórias:
+- responda apenas JSON válido
+- não invente dados
+- se não tiver certeza, deixe vazio
+- preserve dados bons da heurística
+- só substitua a heurística quando o texto da página indicar claramente valor melhor
+- se a página parecer login, dashboard, listagem administrativa ou página sem produto único, marque "eh_produto": false
+- se detectar "sem estoque", "indisponível", "esgotado" ou equivalente, quantidade = "0"
+- url_imagens deve ficar em string única separada por "|"
+- preco deve vir no padrão "19,90"
+- não use nome da loja como marca
+- se a marca não estiver explícita, tente inferir do título do produto sem inventar
+- gtin deve ser apenas número
+- ncm deve ser apenas número
+- confianca deve ser inteiro de 0 a 100
 
-🔥 IMPORTANTE:
-- identificar MARCA corretamente
-- se não existir campo de marca, inferir pelo título
-- NUNCA usar nome da loja como marca
-"""
+Prioridade dos campos:
+1. descricao
+2. codigo
+3. marca
+4. gtin
+5. preco
+6. quantidade
+7. categoria
+8. ncm
+9. url_imagens
+10. descricao_detalhada
+""".strip()
+
+
+def _fundir_campos(heuristica: dict[str, Any], data: dict[str, Any], texto_limpo: str, url_produto: str) -> dict[str, Any]:
+    descricao_heur = safe_str(heuristica.get("descricao"))
+    descricao_gpt = safe_str(data.get("descricao"))
+    descricao = descricao_gpt or descricao_heur
+
+    codigo = limpar_codigo(safe_str(data.get("codigo")) or safe_str(heuristica.get("codigo")))
+    gtin = limpar_gtin(safe_str(data.get("gtin")) or safe_str(heuristica.get("gtin")))
+    ncm = limpar_ncm(safe_str(data.get("ncm")) or safe_str(heuristica.get("ncm")))
+
+    marca = safe_str(data.get("marca")) or safe_str(heuristica.get("marca"))
+    marca = limpar_marca(marca, descricao)
+
+    if not marca:
+        marca = inferir_marca_do_titulo(descricao)
+    marca = limpar_marca(marca, descricao)
+
+    preco = normalizar_preco_para_planilha(
+        safe_str(data.get("preco")) or safe_str(heuristica.get("preco"))
+    )
+
+    quantidade = normalizar_quantidade(
+        safe_str(data.get("quantidade")) or safe_str(heuristica.get("quantidade")),
+        texto_pagina=texto_limpo,
+    ) or safe_str(heuristica.get("quantidade")) or "1"
+
+    url_imagens = normalizar_imagens(
+        safe_str(data.get("url_imagens")) or safe_str(heuristica.get("url_imagens"))
+    )
+
+    descricao_detalhada = descricao_detalhada_valida(
+        safe_str(data.get("descricao_detalhada")) or safe_str(heuristica.get("descricao_detalhada")),
+        descricao,
+    )
+
+    categoria = safe_str(data.get("categoria")) or safe_str(heuristica.get("categoria"))
+
+    return {
+        "url_produto": url_produto,
+        "codigo": codigo,
+        "descricao": descricao,
+        "descricao_detalhada": descricao_detalhada,
+        "categoria": categoria,
+        "marca": marca,
+        "gtin": gtin,
+        "ncm": ncm,
+        "preco": preco,
+        "quantidade": quantidade,
+        "url_imagens": url_imagens,
+        "fonte_extracao": "gpt",
+    }
+
+
+# ============================================================
+# GPT EXTRAÇÃO PRINCIPAL
+# ============================================================
+
+def gpt_extrair_produto(url_produto: str, html: str, heuristica: dict) -> dict:
+    client, model = get_openai_client_and_model()
+
+    if client is None:
+        return heuristica if isinstance(heuristica, dict) else {}
+
+    if not isinstance(heuristica, dict):
+        heuristica = {}
+
+    soup = BeautifulSoup(html or "", "lxml")
+    texto_limpo = soup.get_text(" ", strip=True)
+    texto_limpo = safe_str(texto_limpo)[:22000]
+
+    if not texto_limpo:
+        return heuristica
+
+    if _pagina_parece_login(texto_limpo, url_produto):
+        return heuristica
+
+    prompt = _construir_prompt(
+        url_produto=url_produto,
+        heuristica=heuristica,
+        texto_limpo=texto_limpo,
+    )
 
     try:
         response = client.chat.completions.create(
             model=model,
             temperature=0,
+            response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "Responda apenas JSON válido."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Você extrai dados estruturados de produtos. "
+                        "Nunca invente campos ausentes. "
+                        "Responda somente JSON."
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
         )
 
         content = response.choices[0].message.content or "{}"
-        data = json.loads(content)
+        data = _safe_json_loads(content)
 
-        descricao = safe_str(data.get("descricao")) or safe_str(heuristica.get("descricao"))
+        if not data:
+            return heuristica
 
-        # =========================
-        # 🔥 TRATAMENTO DE MARCA
-        # =========================
+        eh_produto = data.get("eh_produto", True)
+        try:
+            confianca = int(data.get("confianca", 0) or 0)
+        except Exception:
+            confianca = 0
 
-        marca = safe_str(data.get("marca")) or safe_str(heuristica.get("marca"))
+        if eh_produto is False:
+            return heuristica
 
-        marca = limpar_marca(marca, descricao)
+        resultado = _fundir_campos(
+            heuristica=heuristica,
+            data=data,
+            texto_limpo=texto_limpo,
+            url_produto=url_produto,
+        )
 
-        if not marca:
-            marca = inferir_marca_do_titulo(descricao)
+        # blindagem final: se GPT vier muito fraco, preserva heurística
+        campos_relevantes = [
+            safe_str(resultado.get("descricao")),
+            safe_str(resultado.get("codigo")),
+            safe_str(resultado.get("preco")),
+            safe_str(resultado.get("url_imagens")),
+        ]
+        total_preenchidos = sum(1 for x in campos_relevantes if x)
 
-        marca = limpar_marca(marca, descricao)
+        if confianca < 20 and total_preenchidos <= 1:
+            return heuristica
 
-        # =========================
-        # 🔥 RETORNO FINAL
-        # =========================
+        if not safe_str(resultado.get("descricao")):
+            return heuristica
 
-        return {
-            "url_produto": url_produto,
-            "codigo": safe_str(data.get("codigo")) or heuristica.get("codigo", ""),
-            "descricao": descricao,
-            "descricao_detalhada": descricao_detalhada_valida(
-                safe_str(data.get("descricao_detalhada")) or heuristica.get("descricao_detalhada", ""),
-                descricao,
-            ),
-            "categoria": safe_str(data.get("categoria")) or heuristica.get("categoria", ""),
-            "marca": marca,
-            "gtin": safe_str(data.get("gtin")) or heuristica.get("gtin", ""),
-            "ncm": safe_str(data.get("ncm")) or heuristica.get("ncm", ""),
-            "preco": normalizar_preco_para_planilha(
-                safe_str(data.get("preco")) or heuristica.get("preco", "")
-            ),
-            "quantidade": safe_str(data.get("quantidade")) or heuristica.get("quantidade", ""),
-            "url_imagens": normalizar_imagens(
-                safe_str(data.get("url_imagens")) or heuristica.get("url_imagens", "")
-            ),
-            "fonte_extracao": "gpt",
-        }
+        return resultado
 
     except Exception:
         return heuristica
-        
