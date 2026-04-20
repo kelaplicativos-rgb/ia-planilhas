@@ -103,35 +103,92 @@ def _coluna_existente(df: pd.DataFrame, nomes: list[str]) -> str:
     return ""
 
 
+def _coluna_por_parcial(df: pd.DataFrame, termos: list[str]) -> str:
+    if df is None or len(df.columns) == 0:
+        return ""
+
+    for col in df.columns:
+        nome = _safe_lower(col)
+        if any(termo in nome for termo in termos):
+            return str(col)
+    return ""
+
+
 def _coluna_codigo(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Código", "codigo", "Código do produto", "SKU", "sku"])
+    col = _coluna_existente(df, ["Código", "codigo", "Código do produto", "SKU", "sku"])
+    if col:
+        return col
+
+    col = _coluna_por_parcial(df, ["codigo", "código", "cod", "sku", "referencia", "referência", "id produto"])
+    if col:
+        _log_debug(f"Coluna de código detectada por aproximação: {col}", nivel="INFO")
+        return col
+
+    if len(df.columns) > 0:
+        fallback = str(df.columns[0])
+        _log_debug(
+            f"Coluna de código não encontrada por nome exato; usando fallback da primeira coluna: {fallback}",
+            nivel="ERRO",
+        )
+        return fallback
+
+    return ""
 
 
 def _coluna_descricao(df: pd.DataFrame) -> str:
-    return _coluna_existente(
+    col = _coluna_existente(
         df,
         ["Descrição", "descricao", "Descrição do produto", "Nome", "nome", "Título", "titulo"],
     )
+    if col:
+        return col
+
+    col = _coluna_por_parcial(df, ["descricao", "descrição", "nome", "titulo", "título", "produto"])
+    if col:
+        _log_debug(f"Coluna de descrição detectada por aproximação: {col}", nivel="INFO")
+        return col
+
+    return ""
 
 
 def _coluna_descricao_curta(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Descrição Curta", "descricao curta", "Descrição curta"])
+    col = _coluna_existente(df, ["Descrição Curta", "descricao curta", "Descrição curta"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["descricao curta", "descrição curta", "resumo"])
 
 
 def _coluna_preco_venda(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Preço de venda", "preço de venda", "Preço calculado"])
+    col = _coluna_existente(df, ["Preço de venda", "preço de venda", "Preço calculado"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["preco", "preço", "valor", "venda"])
 
 
 def _coluna_preco_estoque(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Preço unitário (OBRIGATÓRIO)", "preço unitário (obrigatório)"])
+    col = _coluna_existente(df, ["Preço unitário (OBRIGATÓRIO)", "preço unitário (obrigatório)"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["preco unitario", "preço unitário", "preco", "preço", "valor unitario", "valor unitário"])
 
 
 def _coluna_gtin(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["GTIN/EAN", "GTIN", "EAN", "gtin", "ean"])
+    col = _coluna_existente(df, ["GTIN/EAN", "GTIN", "EAN", "gtin", "ean"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["gtin", "ean", "codigo de barras", "código de barras"])
 
 
 def _coluna_categoria(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Categoria", "categoria"])
+    col = _coluna_existente(df, ["Categoria", "categoria"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["categoria", "departamento", "secao", "seção"])
 
 
 def _coluna_imagens(df: pd.DataFrame) -> str:
@@ -143,11 +200,15 @@ def _coluna_imagens(df: pd.DataFrame) -> str:
 
 
 def _coluna_situacao(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Situação", "situacao"])
+    col = _coluna_existente(df, ["Situação", "situacao"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["situacao", "situação", "status"])
 
 
 def _coluna_estoque(df: pd.DataFrame) -> str:
-    return _coluna_existente(
+    col = _coluna_existente(
         df,
         [
             "Balanço (OBRIGATÓRIO)",
@@ -158,18 +219,34 @@ def _coluna_estoque(df: pd.DataFrame) -> str:
             "estoque",
         ],
     )
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["balanco", "balanço", "quantidade", "estoque", "saldo", "qtd"])
 
 
 def _coluna_deposito(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["Depósito (OBRIGATÓRIO)", "depósito (obrigatório)", "Deposito"])
+    col = _coluna_existente(df, ["Depósito (OBRIGATÓRIO)", "depósito (obrigatório)", "Deposito"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["deposito", "depósito", "almoxarifado"])
 
 
 def _coluna_url_produto(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["URL Produto", "url produto", "url_produto", "Link Produto"])
+    col = _coluna_existente(df, ["URL Produto", "url produto", "url_produto", "Link Produto"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["url produto", "url_produto", "link produto", "produto url", "link"])
 
 
 def _coluna_ncm(df: pd.DataFrame) -> str:
-    return _coluna_existente(df, ["NCM", "ncm"])
+    col = _coluna_existente(df, ["NCM", "ncm"])
+    if col:
+        return col
+
+    return _coluna_por_parcial(df, ["ncm"])
 
 
 def _split_imagens(valor: Any) -> list[str]:
@@ -211,16 +288,16 @@ class SyncConfig:
 
 def _safe_import_bling_auth():
     try:
-        from bling_app_zero.core import bling_auth  # type: ignore
-        return bling_auth
+        from bling_app_zero.core.bling_auth import BlingAuthManager  # type: ignore
+        return {"BlingAuthManager": BlingAuthManager}
     except Exception:
         return None
 
 
 def _safe_import_bling_user_session():
     try:
-        from bling_app_zero.core import bling_user_session  # type: ignore
-        return bling_user_session
+        from bling_app_zero.core.bling_user_session import get_current_user_key  # type: ignore
+        return {"get_current_user_key": get_current_user_key}
     except Exception:
         return None
 
@@ -240,34 +317,24 @@ def _safe_import_site_agent():
 def _obter_access_token() -> str:
     bling_auth = _safe_import_bling_auth()
     if bling_auth is not None:
-        for nome_func in [
-            "obter_access_token",
-            "get_access_token",
-            "get_valid_access_token",
-            "access_token_valido",
-        ]:
-            func = getattr(bling_auth, nome_func, None)
-            if callable(func):
-                try:
-                    token = func()
-                    token = _normalizar_texto(token)
-                    if token:
-                        return token
-                except Exception:
-                    pass
+        manager_cls = bling_auth.get("BlingAuthManager")
+        if manager_cls is not None:
+            try:
+                user_key = "default"
+                bling_user_session = _safe_import_bling_user_session()
+                if bling_user_session is not None:
+                    get_current_user_key = bling_user_session.get("get_current_user_key")
+                    if callable(get_current_user_key):
+                        user_key = _normalizar_texto(get_current_user_key()) or "default"
 
-    bling_user_session = _safe_import_bling_user_session()
-    if bling_user_session is not None:
-        for nome_func in ["obter_access_token", "get_access_token", "get_user_access_token"]:
-            func = getattr(bling_user_session, nome_func, None)
-            if callable(func):
-                try:
-                    token = func()
-                    token = _normalizar_texto(token)
+                auth = manager_cls(user_key=user_key)
+                ok, token_or_msg = auth.get_valid_access_token()
+                if ok:
+                    token = _normalizar_texto(token_or_msg)
                     if token:
                         return token
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     return ""
 
@@ -535,7 +602,6 @@ def _executar_fallback_site_se_necessario(
         "reutilizar a busca por site com GPT antes do envio ao Bling."
     )
 
-    # Execução imediata só em modo instantâneo.
     if config.auto_mode != "instantaneo":
         return resultado
 
@@ -636,6 +702,11 @@ def sincronizar_produtos_bling(
 
     codigo_col = _coluna_codigo(df)
     descricao_col = _coluna_descricao(df)
+
+    _log_debug(
+        f"Colunas detectadas para sincronização | codigo={codigo_col or '-'} | descricao={descricao_col or '-'}",
+        nivel="INFO",
+    )
 
     if not codigo_col:
         resumo = {
@@ -816,4 +887,4 @@ def enviar_produtos(
         interval_unit="minutos",
         dry_run=False,
     )
-    
+
