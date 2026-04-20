@@ -4,10 +4,10 @@ from __future__ import annotations
 import concurrent.futures
 import re
 import threading
-import time
 from typing import Any
 
 import pandas as pd
+import requests
 
 
 # ============================================================
@@ -509,10 +509,125 @@ def _atualizar_progresso(
 
 
 # ============================================================
+# AUTENTICAÇÃO / CONTEXTO
+# ============================================================
+
+def _auth_context_valido(auth_context: dict[str, Any] | None) -> bool:
+    if not isinstance(auth_context, dict):
+        return False
+    return bool(auth_context.get("session_ready", False))
+
+
+def _normalizar_headers_auth(headers: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(headers, dict):
+        return {}
+
+    saida: dict[str, str] = {}
+    for chave, valor in headers.items():
+        k = safe_str(chave)
+        v = safe_str(valor)
+        if k and v:
+            saida[k] = v
+    return saida
+
+
+def _criar_sessao_autenticada(auth_context: dict[str, Any] | None) -> requests.Session:
+    session = requests.Session()
+
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        }
+    )
+
+    if not _auth_context_valido(auth_context):
+        return session
+
+    headers = _normalizar_headers_auth(auth_context.get("headers"))
+    if headers:
+        session.headers.update(headers)
+
+    cookies = auth_context.get("cookies", [])
+    if isinstance(cookies, list):
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                continue
+
+            nome = safe_str(cookie.get("name"))
+            valor = safe_str(cookie.get("value"))
+            dominio = safe_str(cookie.get("domain"))
+            path = safe_str(cookie.get("path")) or "/"
+
+            if not nome:
+                continue
+
+            try:
+                session.cookies.set(
+                    nome,
+                    valor,
+                    domain=dominio or None,
+                    path=path,
+                )
+            except Exception:
+                continue
+
+    return session
+
+
+def _url_produtos_contexto(base_url: str, auth_context: dict[str, Any] | None) -> str:
+    if isinstance(auth_context, dict):
+        products_url = safe_str(auth_context.get("products_url"))
+        if products_url:
+            return normalizar_url(products_url)
+    return normalizar_url(base_url)
+
+
+def _fetch_html_autenticado(url_produto: str, auth_context: dict[str, Any] | None) -> str:
+    if not _auth_context_valido(auth_context):
+        return ""
+
+    session = _criar_sessao_autenticada(auth_context)
+
+    ultima_exc: Exception | None = None
+    for _ in range(2):
+        try:
+            response = session.get(url_produto, timeout=45, allow_redirects=True)
+            if response.ok and safe_str(response.text):
+                html = safe_str(response.text)
+                if "<html" in html.lower() or "</body>" in html.lower() or len(html) > 500:
+                    return html
+            ultima_exc = RuntimeError(f"HTTP {response.status_code}")
+        except Exception as exc:
+            ultima_exc = exc
+
+    if ultima_exc is not None:
+        raise ultima_exc
+
+    return ""
+
+
+# ============================================================
 # FALLBACKS PRO
 # ============================================================
 
-def _executar_fetch_html(url_produto: str) -> str:
+def _executar_fetch_html(url_produto: str, auth_context: dict[str, Any] | None = None) -> str:
+    if _auth_context_valido(auth_context):
+        try:
+            html_auth = _fetch_html_autenticado(url_produto, auth_context=auth_context)
+            if html_auth:
+                return html_auth
+        except Exception as exc:
+            _log_debug(
+                f"Falha no fetch autenticado, usando fallback comum | url={url_produto} | erro={exc}",
+                nivel="ERRO",
+            )
+
     if fetch_html_retry is None:
         return ""
 
@@ -588,6 +703,7 @@ def _resolver_final(url_produto: str, heuristica: dict[str, Any], gpt: dict[str,
 def _processar_um_produto(
     url_produto: str,
     diagnostico: bool = False,
+    auth_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     url_produto = safe_str(url_produto)
 
@@ -598,7 +714,7 @@ def _processar_um_produto(
         }
 
     try:
-        html_produto = _executar_fetch_html(url_produto)
+        html_produto = _executar_fetch_html(url_produto, auth_context=auth_context)
     except Exception as exc:
         return "erro", {
             "url_produto": url_produto,
@@ -644,6 +760,41 @@ def _processar_um_produto(
     }
 
 
+def _descobrir_produtos_com_contexto(
+    base_url: str,
+    termo: str,
+    limite: int,
+    auth_context: dict[str, Any] | None = None,
+) -> list[str]:
+    alvo_descoberta = _url_produtos_contexto(base_url, auth_context)
+
+    if descobrir_produtos_no_dominio is None:
+        if alvo_descoberta:
+            return [alvo_descoberta]
+        return []
+
+    try:
+        produtos = descobrir_produtos_no_dominio(
+            base_url=alvo_descoberta,
+            termo=termo,
+            max_paginas=400,
+            max_produtos=limite,
+            max_segundos=900,
+        )
+        if isinstance(produtos, list) and produtos:
+            return produtos
+    except Exception as exc:
+        _log_debug(
+            f"Falha ao descobrir produtos com crawler tradicional | url={alvo_descoberta} | erro={exc}",
+            nivel="ERRO",
+        )
+
+    if alvo_descoberta:
+        return [alvo_descoberta]
+
+    return []
+
+
 # ============================================================
 # FUNÇÃO PRINCIPAL
 # ============================================================
@@ -653,6 +804,7 @@ def buscar_produtos_site_com_gpt(
     termo: str = "",
     limite_links: int | None = None,
     diagnostico: bool = False,
+    auth_context: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     st = _streamlit_ctx()
 
@@ -661,10 +813,6 @@ def buscar_produtos_site_com_gpt(
 
     if not base_url:
         _log_debug("Busca por site cancelada: base_url vazia.", nivel="ERRO")
-        return pd.DataFrame()
-
-    if descobrir_produtos_no_dominio is None:
-        _log_debug("Busca por site indisponível: descobrir_produtos_no_dominio não carregado.", nivel="ERRO")
         return pd.DataFrame()
 
     limite = _limite_tecnico(limite_links)
@@ -679,24 +827,18 @@ def buscar_produtos_site_com_gpt(
         contador_box = st.empty()
         status_box.info("🔍 Descobrindo produtos no site...")
 
+    auth_mode = "autenticado" if _auth_context_valido(auth_context) else "publico"
     _log_debug(
-        f"Iniciando busca por site | url={base_url} | termo={termo or '-'} | limite={limite}",
+        f"Iniciando busca por site | url={base_url} | termo={termo or '-'} | limite={limite} | modo={auth_mode}",
         nivel="INFO",
     )
 
-    try:
-        produtos = descobrir_produtos_no_dominio(
-            base_url=base_url,
-            termo=termo,
-            max_paginas=400,
-            max_produtos=limite,
-            max_segundos=900,
-        )
-    except Exception as exc:
-        if status_box is not None:
-            status_box.error(f"Falha ao descobrir produtos no domínio: {exc}")
-        _log_debug(f"Falha na descoberta inicial do domínio: {exc}", nivel="ERRO")
-        return pd.DataFrame()
+    produtos = _descobrir_produtos_com_contexto(
+        base_url=base_url,
+        termo=termo,
+        limite=limite,
+        auth_context=auth_context,
+    )
 
     if not produtos:
         if status_box is not None:
@@ -744,7 +886,11 @@ def buscar_produtos_site_com_gpt(
             contador_box=contador_box,
         )
 
-        status, payload = _processar_um_produto(url_produto=url_produto, diagnostico=diagnostico)
+        status, payload = _processar_um_produto(
+            url_produto=url_produto,
+            diagnostico=diagnostico,
+            auth_context=auth_context,
+        )
 
         if status == "aprovado":
             row = payload.get("row", {})
@@ -822,4 +968,3 @@ def buscar_produtos_site_com_gpt(
     )
 
     return _df_saida(rows)
-
