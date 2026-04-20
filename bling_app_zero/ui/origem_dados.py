@@ -14,6 +14,15 @@ try:
 except Exception:
     buscar_produtos_site_com_gpt = None
 
+from bling_app_zero.core.site_auth import (
+    apply_inspection_to_state,
+    auth_state_to_session,
+    clear_auth_state_session,
+    get_auth_headers_and_cookies,
+    get_profile_for_url,
+    inspect_site_auth,
+    try_requests_login,
+)
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     log_debug,
@@ -315,6 +324,9 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
     if buscar_produtos_site_com_gpt is None:
         raise RuntimeError("Módulo de busca por site indisponível.")
 
+    auth_context = get_auth_headers_and_cookies()
+    st.session_state["site_auth_context"] = auth_context
+
     kwargs = {
         "base_url": url_site,
         "diagnostico": True,
@@ -332,6 +344,8 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
             kwargs["modo_loop"] = False
         if "intervalo_segundos" in parametros:
             kwargs["intervalo_segundos"] = intervalo
+        if "auth_context" in parametros:
+            kwargs["auth_context"] = auth_context
     except Exception:
         pass
 
@@ -347,9 +361,17 @@ def _executar_busca_site(url_site: str) -> None:
         st.error("Módulo de busca por site indisponível.")
         return
 
+    auth_state = st.session_state.get("site_auth_state", {})
+    if bool(auth_state.get("requires_login", False)) and not bool(auth_state.get("session_ready", False)):
+        st.error("Este fornecedor exige login. Valide a sessão antes de iniciar a leitura do catálogo.")
+        return
+
     intervalo = int(st.session_state.get("site_auto_intervalo_segundos", 60) or 60)
     st.session_state["site_auto_status"] = "executando"
-    log_debug(f"Disparo manual do monitoramento do site | url={url_site} | intervalo={intervalo}s", nivel="INFO")
+    log_debug(
+        f"Disparo manual do monitoramento do site | url={url_site} | intervalo={intervalo}s",
+        nivel="INFO",
+    )
 
     try:
         df_site = _chamar_busca_site_compativel(url_site, intervalo)
@@ -378,8 +400,172 @@ def _executar_busca_site(url_site: str) -> None:
         log_debug(f"Falha ao executar monitoramento do site: {exc}", nivel="ERRO")
 
 
+def _render_status_auth_cards(auth_state: dict) -> None:
+    provider_name = str(auth_state.get("provider_name", "") or "").strip() or "Não identificado"
+    status = str(auth_state.get("status", "inativo") or "inativo").strip()
+    auth_mode = str(auth_state.get("auth_mode", "public") or "public").strip()
+    requires_login = bool(auth_state.get("requires_login", False))
+    session_ready = bool(auth_state.get("session_ready", False))
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Fornecedor", provider_name)
+    with c2:
+        st.metric("Modo", "Login" if auth_mode == "login" else "Público")
+    with c3:
+        st.metric("Exige login", "Sim" if requires_login else "Não")
+    with c4:
+        st.metric("Sessão pronta", "Sim" if session_ready else "Não")
+
+    st.caption(f"Status atual: {status}")
+
+
+def _render_bloco_inspecao_site(url_site: str) -> None:
+    auth_state_to_session(st)
+    auth_state = st.session_state.get("site_auth_state", {})
+
+    st.markdown("#### Diagnóstico de acesso do fornecedor")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔎 Inspecionar acesso do site", use_container_width=True, key="btn_inspecionar_auth_site"):
+            resultado = inspect_site_auth(url_site)
+            apply_inspection_to_state(resultado)
+            st.session_state["site_auth_state"] = auth_state_to_session(st)
+            log_debug(
+                f"Inspeção de autenticação executada | provider={resultado.provider_slug} | status={resultado.status}",
+                nivel="INFO",
+            )
+            st.rerun()
+
+    with col2:
+        if st.button("🧹 Limpar sessão do fornecedor", use_container_width=True, key="btn_limpar_auth_site"):
+            clear_auth_state_session(st)
+            log_debug("Sessão autenticada do fornecedor foi limpa.", nivel="INFO")
+            st.rerun()
+
+    _render_status_auth_cards(auth_state)
+
+    if auth_state.get("last_message"):
+        st.info(str(auth_state.get("last_message")))
+
+    if auth_state.get("captcha_detected"):
+        st.warning(
+            "Este fornecedor apresenta indício de captcha. "
+            "O fluxo ideal é autenticação assistida com sessão persistente no próximo pacote do crawler autenticado."
+        )
+
+
+def _render_bloco_login_fornecedor(url_site: str) -> None:
+    auth_state = st.session_state.get("site_auth_state", {})
+    profile = get_profile_for_url(url_site)
+
+    login_url_default = str(auth_state.get("login_url", "") or "").strip() or profile.login_url
+    products_url_default = str(auth_state.get("products_url", "") or "").strip() or profile.products_url or url_site
+
+    st.markdown("#### Acesso autenticado do fornecedor")
+
+    auth_strategy = st.radio(
+        "Como deseja tratar o acesso?",
+        options=[
+            "Somente detectar se o site exige login",
+            "Informar credenciais e tentar validar sessão",
+        ],
+        horizontal=False,
+        key="site_auth_strategy",
+    )
+
+    login_url = st.text_input(
+        "URL de login",
+        value=login_url_default,
+        key="site_login_url",
+    ).strip()
+
+    products_url = st.text_input(
+        "URL da área de produtos",
+        value=products_url_default,
+        key="site_products_url",
+    ).strip()
+
+    if auth_strategy == "Informar credenciais e tentar validar sessão":
+        username = st.text_input(
+            "Usuário / e-mail do fornecedor",
+            key="site_login_username",
+        ).strip()
+
+        password = st.text_input(
+            "Senha do fornecedor",
+            type="password",
+            key="site_login_password",
+        ).strip()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔐 Validar sessão agora", use_container_width=True, key="btn_validar_sessao_fornecedor"):
+                if not login_url:
+                    st.error("Informe a URL de login.")
+                    return
+
+                if not products_url:
+                    st.error("Informe a URL da área de produtos.")
+                    return
+
+                if not username:
+                    st.error("Informe o usuário.")
+                    return
+
+                if not password:
+                    st.error("Informe a senha.")
+                    return
+
+                resultado = try_requests_login(
+                    login_url=login_url,
+                    products_url=products_url,
+                    username=username,
+                    password=password,
+                    profile=profile,
+                )
+
+                st.session_state["site_auth_state"] = auth_state_to_session(st)
+
+                if resultado.ok:
+                    st.success(resultado.message)
+                    log_debug(
+                        f"Sessão autenticada com sucesso | provider={resultado.provider_slug}",
+                        nivel="INFO",
+                    )
+                else:
+                    if resultado.status == "captcha_pendente":
+                        st.warning(resultado.message)
+                    else:
+                        st.error(resultado.message)
+                    log_debug(
+                        f"Falha ao validar sessão | provider={resultado.provider_slug} | status={resultado.status}",
+                        nivel="ERRO",
+                    )
+
+                st.rerun()
+
+        with col2:
+            if st.button("♻️ Recarregar status da sessão", use_container_width=True, key="btn_recarregar_status_sessao"):
+                st.session_state["site_auth_state"] = auth_state_to_session(st)
+                st.rerun()
+
+    auth_state = st.session_state.get("site_auth_state", {})
+    session_ready = bool(auth_state.get("session_ready", False))
+    requires_login = bool(auth_state.get("requires_login", False))
+
+    if requires_login and not session_ready:
+        st.warning("Fornecedor exige autenticação e a sessão ainda não está pronta.")
+
+    if session_ready:
+        st.success("Sessão autenticada pronta para leitura do catálogo.")
+
+
 def _render_origem_site() -> None:
     st.markdown("### Busca no site do fornecedor")
+
+    auth_state_to_session(st)
 
     url_site = st.text_input(
         "URL base do fornecedor",
@@ -387,23 +573,54 @@ def _render_origem_site() -> None:
     ).strip()
 
     if not url_site:
-        st.info("Informe a URL para habilitar a busca e a automação do site.")
+        st.info("Informe a URL para habilitar a busca, o diagnóstico e a autenticação do fornecedor.")
         return
+
+    profile = get_profile_for_url(url_site)
+    if profile.slug != "generic_public":
+        st.caption(f"Perfil reconhecido: {profile.nome}")
+
+    _render_bloco_inspecao_site(url_site)
+
+    auth_state = st.session_state.get("site_auth_state", {})
+    requires_login = bool(auth_state.get("requires_login", False) or profile.login_required)
+
+    if requires_login:
+        st.markdown("---")
+        _render_bloco_login_fornecedor(url_site)
+
+    st.markdown("---")
+    st.markdown("#### Leitura do catálogo")
+
+    auth_state = st.session_state.get("site_auth_state", {})
+    session_ready = bool(auth_state.get("session_ready", False))
+    effective_products_url = str(auth_state.get("products_url", "") or "").strip() or url_site
+    effective_url = effective_products_url if session_ready else url_site
+
+    if requires_login and not session_ready:
+        st.info(
+            "Este fornecedor precisa de sessão autenticada. "
+            "Depois que a sessão estiver pronta, a leitura será feita pela URL da área de produtos."
+        )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✨ Varrer site inteiro com GPT", use_container_width=True, key="btn_varrer_site_gpt"):
-            _executar_busca_site(url_site)
+        label = "✨ Ler catálogo autenticado com GPT" if requires_login else "✨ Varrer site inteiro com GPT"
+        if st.button(label, use_container_width=True, key="btn_varrer_site_gpt"):
+            _executar_busca_site(effective_url)
             st.rerun()
 
     with col2:
         if st.button("🟢 Ativar monitoramento", use_container_width=True, key="btn_ativar_monitoramento_site"):
-            st.session_state["site_auto_loop_ativo"] = True
-            st.session_state["site_auto_status"] = "ativo"
-            st.success("Monitoramento automático ativado.")
-            log_debug("Loop automático do site ativado.", nivel="INFO")
-            st.rerun()
+            if requires_login and not session_ready:
+                st.error("Antes de ativar o monitoramento, valide a sessão autenticada.")
+            else:
+                st.session_state["site_auto_loop_ativo"] = True
+                st.session_state["site_auto_status"] = "ativo"
+                st.success("Monitoramento automático ativado.")
+                log_debug("Loop automático do site ativado.", nivel="INFO")
+                st.rerun()
 
     origem_tipo = str(st.session_state.get("origem_upload_tipo", "") or "").strip().lower()
     origem_nome = str(st.session_state.get("origem_upload_nome", "") or "").strip().lower()
@@ -432,7 +649,7 @@ def _render_origem_site() -> None:
                 help="Define o intervalo base do monitoramento do site.",
             )
 
-            st.write(f"**URL monitorada:** {url_site}")
+            st.write(f"**URL monitorada:** {effective_url}")
             if ultima_execucao:
                 st.write(f"**Última execução:** {ultima_execucao}")
 
@@ -440,16 +657,19 @@ def _render_origem_site() -> None:
 
             with b1:
                 if st.button("▶️ Executar agora", use_container_width=True, key="btn_site_auto_executar_agora_origem"):
-                    _executar_busca_site(url_site)
+                    _executar_busca_site(effective_url)
                     st.rerun()
 
             with b2:
                 if st.button("🟢 Ativar loop", use_container_width=True, key="btn_site_auto_ativar_origem"):
-                    st.session_state["site_auto_loop_ativo"] = True
-                    st.session_state["site_auto_status"] = "ativo"
-                    st.success("Loop automático marcado como ativo.")
-                    log_debug("Loop automático do site ativado.", nivel="INFO")
-                    st.rerun()
+                    if requires_login and not session_ready:
+                        st.error("Valide a sessão autenticada antes de ativar o loop.")
+                    else:
+                        st.session_state["site_auto_loop_ativo"] = True
+                        st.session_state["site_auto_status"] = "ativo"
+                        st.success("Loop automático marcado como ativo.")
+                        log_debug("Loop automático do site ativado.", nivel="INFO")
+                        st.rerun()
 
             with b3:
                 if st.button("⏹️ Parar loop", use_container_width=True, key="btn_site_auto_parar_origem"):
@@ -492,4 +712,3 @@ def render_origem_dados() -> None:
 
     _render_modelo()
     _render_continuar()
-
