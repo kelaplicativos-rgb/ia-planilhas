@@ -9,143 +9,99 @@ from pathlib import Path
 import streamlit as st
 
 
+# ============================================================
+# PLAYWRIGHT CONTROLE
+# ============================================================
+
 PLAYWRIGHT_MARKER_DIR = Path("bling_app_zero/output")
 PLAYWRIGHT_MARKER_DIR.mkdir(parents=True, exist_ok=True)
 
 PLAYWRIGHT_OK_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_ok.marker"
-PLAYWRIGHT_FAIL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_fail.marker"
 
 
-def _safe_log_debug(msg: str, nivel: str = "INFO") -> None:
+def _log(msg: str) -> None:
     try:
         from bling_app_zero.ui.app_helpers import log_debug  # type: ignore
-
-        log_debug(msg, nivel=nivel)
+        log_debug(msg)
     except Exception:
-        try:
-            print(f"[INIT_APP][{nivel}] {msg}")
-        except Exception:
-            pass
+        print(f"[INIT_APP] {msg}")
 
 
-def _playwright_python_instalado() -> bool:
+def _playwright_instalado() -> bool:
     try:
-        import playwright  # noqa: F401
-
+        import playwright  # noqa
         return True
     except Exception:
         return False
 
 
-def _playwright_browser_disponivel() -> tuple[bool, str]:
+def _browser_ok() -> bool:
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             browser.close()
-        return True, ""
-    except Exception as exc:
-        return False, str(exc)
-
-
-def _deve_tentar_instalar_browser() -> bool:
-    if not _playwright_python_instalado():
+        return True
+    except Exception:
         return False
+
+
+def _instalar_browser():
+    """
+    Resolve erro clássico do Streamlit Cloud:
+    Playwright instalado, mas Chromium não.
+    """
+
+    if not _playwright_instalado():
+        return
 
     if PLAYWRIGHT_OK_MARKER.exists():
-        return False
-
-    return True
-
-
-def _marcar_browser_ok() -> None:
-    try:
-        PLAYWRIGHT_OK_MARKER.write_text("ok", encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _marcar_browser_fail(motivo: str) -> None:
-    try:
-        PLAYWRIGHT_FAIL_MARKER.write_text(str(motivo or "falha"), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _instalar_playwright_chromium() -> None:
-    """
-    Tenta preparar o browser do Playwright uma única vez por ambiente.
-    Isso ajuda no Streamlit Cloud quando a lib Python já está instalada,
-    mas o Chromium ainda não foi baixado.
-    """
-    if not _deve_tentar_instalar_browser():
         return
 
-    ok, detalhe = _playwright_browser_disponivel()
-    if ok:
-        _safe_log_debug("Browser do Playwright já disponível no ambiente.", nivel="INFO")
-        _marcar_browser_ok()
+    if _browser_ok():
+        PLAYWRIGHT_OK_MARKER.write_text("ok")
         return
 
-    _safe_log_debug(
-        f"Browser do Playwright ausente. Tentando instalar Chromium automaticamente. Detalhe inicial: {detalhe}",
-        nivel="INFO",
-    )
+    _log("Instalando Chromium do Playwright...")
 
-    comandos = [
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-    ]
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=600,
+        )
 
-    ultimo_erro = ""
-    for comando in comandos:
-        try:
-            processo = subprocess.run(
-                comando,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=900,
-                env=os.environ.copy(),
-            )
+        if _browser_ok():
+            PLAYWRIGHT_OK_MARKER.write_text("ok")
+            _log("Playwright Chromium OK")
+        else:
+            _log("Falha ao validar Chromium após instalação")
 
-            if processo.returncode == 0:
-                ok_final, detalhe_final = _playwright_browser_disponivel()
-                if ok_final:
-                    _safe_log_debug("Chromium do Playwright instalado com sucesso.", nivel="INFO")
-                    _marcar_browser_ok()
-                    return
+    except Exception as e:
+        _log(f"Erro ao instalar Chromium: {e}")
 
-                ultimo_erro = detalhe_final or "Browser ainda indisponível após instalação."
-            else:
-                ultimo_erro = (
-                    (processo.stderr or "").strip()
-                    or (processo.stdout or "").strip()
-                    or f"Falha no comando com código {processo.returncode}"
-                )
-        except Exception as exc:
-            ultimo_erro = str(exc)
 
-    _safe_log_debug(
-        f"Não foi possível preparar o Chromium do Playwright automaticamente. Motivo: {ultimo_erro}",
-        nivel="ERRO",
-    )
-    _marcar_browser_fail(ultimo_erro)
-
+# ============================================================
+# INIT APP
+# ============================================================
 
 def init_app() -> None:
     """
-    Inicialização global do estado do app.
-
-    PRIORIDADE 1:
-    - garantir etapa inicial correta
-    - alinhar nomes de estado
-    - evitar quebra de fluxo no primeiro render
-    - preparar ambiente do Playwright quando disponível
+    Inicialização global do estado do app
     """
 
     # ============================================================
-    # ETAPA PRINCIPAL (WIZARD)
+    # BOOTSTRAP PLAYWRIGHT (CRÍTICO)
+    # ============================================================
+
+    if "_playwright_bootstrap" not in st.session_state:
+        st.session_state["_playwright_bootstrap"] = True
+        _instalar_browser()
+
+    # ============================================================
+    # ETAPA PRINCIPAL
     # ============================================================
 
     if "etapa" not in st.session_state:
@@ -161,7 +117,7 @@ def init_app() -> None:
         st.session_state["etapa_historico"] = []
 
     # ============================================================
-    # CONTROLE DE URL / RERUN (CRÍTICO)
+    # CONTROLE URL
     # ============================================================
 
     if "_etapa_url_inicializada" not in st.session_state:
@@ -171,7 +127,7 @@ def init_app() -> None:
         st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
 
     # ============================================================
-    # DADOS PRINCIPAIS DO FLUXO
+    # DATAFRAMES
     # ============================================================
 
     defaults_df = [
@@ -191,35 +147,24 @@ def init_app() -> None:
             st.session_state[chave] = None
 
     # ============================================================
-    # ORIGEM / UPLOAD
+    # UPLOAD
     # ============================================================
 
-    if "origem_upload_nome" not in st.session_state:
-        st.session_state["origem_upload_nome"] = ""
-
-    if "origem_upload_bytes" not in st.session_state:
-        st.session_state["origem_upload_bytes"] = None
-
-    if "origem_upload_tipo" not in st.session_state:
-        st.session_state["origem_upload_tipo"] = ""
-
-    if "origem_upload_ext" not in st.session_state:
-        st.session_state["origem_upload_ext"] = ""
-
-    if "modelo_upload_nome" not in st.session_state:
-        st.session_state["modelo_upload_nome"] = ""
-
-    if "modelo_upload_bytes" not in st.session_state:
-        st.session_state["modelo_upload_bytes"] = None
-
-    if "modelo_upload_tipo" not in st.session_state:
-        st.session_state["modelo_upload_tipo"] = ""
-
-    if "modelo_upload_ext" not in st.session_state:
-        st.session_state["modelo_upload_ext"] = ""
+    for key in [
+        "origem_upload_nome",
+        "origem_upload_bytes",
+        "origem_upload_tipo",
+        "origem_upload_ext",
+        "modelo_upload_nome",
+        "modelo_upload_bytes",
+        "modelo_upload_tipo",
+        "modelo_upload_ext",
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = ""
 
     # ============================================================
-    # CONFIGURAÇÃO GERAL
+    # CONFIG
     # ============================================================
 
     if "tipo_operacao" not in st.session_state:
@@ -269,7 +214,7 @@ def init_app() -> None:
         st.session_state["mapping_hash_modelo"] = ""
 
     # ============================================================
-    # BLING (CONEXÃO / ENVIO)
+    # BLING
     # ============================================================
 
     if "bling_conectado" not in st.session_state:
@@ -282,16 +227,8 @@ def init_app() -> None:
         st.session_state["bling_envio_resultado"] = None
 
     # ============================================================
-    # FLAGS DE CONTROLE DE FLUXO
+    # FLAGS
     # ============================================================
 
     if "_fluxo_inicializado" not in st.session_state:
         st.session_state["_fluxo_inicializado"] = True
-
-    # ============================================================
-    # PLAYWRIGHT / AMBIENTE
-    # ============================================================
-
-    if "_playwright_bootstrap_tentado" not in st.session_state:
-        st.session_state["_playwright_bootstrap_tentado"] = True
-        _instalar_playwright_chromium()
