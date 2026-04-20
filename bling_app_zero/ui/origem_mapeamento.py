@@ -12,6 +12,7 @@ from bling_app_zero.ui.app_helpers import (
     blindar_df_para_bling,
     get_etapa,
     ir_para_etapa,
+    log_debug,
     normalizar_imagens_pipe,
     normalizar_texto,
     safe_df_dados,
@@ -236,6 +237,7 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
         st.session_state["mapping_sugerido"] = {}
         st.session_state["agent_ui_package"] = {}
         st.session_state["df_final"] = None
+        st.session_state["_ia_auto_mapping_executado"] = False
 
     mapping_salvo = st.session_state.get("mapping_manual", {})
     colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
@@ -350,47 +352,44 @@ def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
         st.metric("Colunas modelo", len(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else 0)
 
 
+def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
+    if st.session_state.get("_ia_auto_mapping_executado", False):
+        return
+
+    pacote = construir_pacote_agente_para_ui(
+        df_base=df_base,
+        df_modelo=df_modelo,
+        operacao=operacao,
+    )
+
+    mapping_recebido = pacote.get("mapping", {}) if isinstance(pacote, dict) else {}
+    if not isinstance(mapping_recebido, dict):
+        mapping_recebido = {}
+
+    mapping_final = _resetar_mapping_para_modelo(df_modelo)
+
+    for coluna_modelo in df_modelo.columns:
+        coluna_modelo = str(coluna_modelo)
+        valor = str(mapping_recebido.get(coluna_modelo, "") or "").strip()
+        if valor in df_base.columns:
+            mapping_final[coluna_modelo] = valor
+
+    st.session_state["mapping_manual"] = mapping_final
+    st.session_state["mapping_sugerido"] = mapping_recebido
+    st.session_state["agent_ui_package"] = pacote
+    st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_final)
+    st.session_state["_ia_auto_mapping_executado"] = True
+
+    log_debug("IA aplicou mapeamento automático completo.", nivel="INFO")
+
+
 def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✨ Sugerir com IA", use_container_width=True, key="btn_sugerir_agente_mapping"):
-            pacote = construir_pacote_agente_para_ui(
-                df_base=df_base,
-                df_modelo=df_modelo,
-                operacao=operacao,
-            )
-
-            mapping_recebido = pacote.get("mapping", {}) if isinstance(pacote, dict) else {}
-            if not isinstance(mapping_recebido, dict):
-                mapping_recebido = {}
-
-            mapping_atual = st.session_state.get("mapping_manual", {}).copy()
-
-            for coluna_modelo in df_modelo.columns:
-                coluna_modelo = str(coluna_modelo)
-                valor = str(mapping_recebido.get(coluna_modelo, "") or "").strip()
-                if valor in df_base.columns:
-                    mapping_atual[coluna_modelo] = valor
-
-            st.session_state["mapping_manual"] = mapping_atual
-            st.session_state["mapping_sugerido"] = mapping_recebido
-            st.session_state["agent_ui_package"] = pacote
+        if st.button("🔄 Reprocessar IA", use_container_width=True, key="btn_reprocessar_agente_mapping"):
+            st.session_state["_ia_auto_mapping_executado"] = False
             st.session_state["df_final"] = None
-
-            provider = str(pacote.get("provider", "") or "").strip().lower() if isinstance(pacote, dict) else ""
-            model = str(pacote.get("model", "") or "").strip() if isinstance(pacote, dict) else ""
-            erro = str(pacote.get("erro", "") or "").strip() if isinstance(pacote, dict) else ""
-
-            if provider in {"openai", "fallback_local"} and not erro:
-                origem_msg = "GPT" if provider == "openai" else "fallback local"
-                sufixo_model = f" ({model})" if model else ""
-                st.success(f"Sugestão aplicada com {origem_msg}{sufixo_model}.")
-            elif erro:
-                st.warning(erro)
-            else:
-                st.info("Sugestão aplicada com heurística local.")
-
             st.rerun()
 
     with col2:
@@ -399,6 +398,7 @@ def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, oper
             st.session_state["mapping_sugerido"] = {}
             st.session_state["agent_ui_package"] = {}
             st.session_state["df_final"] = None
+            st.session_state["_ia_auto_mapping_executado"] = False
             st.rerun()
 
 
@@ -429,10 +429,12 @@ def _render_resumo_agente() -> None:
             "Campos obrigatórios ainda sem sugestão: "
             + ", ".join([str(x) for x in faltando_obrigatorios])
         )
+    else:
+        st.success("IA fechou os obrigatórios automaticamente.")
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.markdown("### Revisão do mapeamento")
+    st.markdown("### Revisão opcional do mapeamento")
 
     opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist()]
     bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
@@ -486,6 +488,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         mapping_atual[coluna_modelo] = novo_valor
 
     st.session_state["mapping_manual"] = mapping_atual
+    st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
 
 
 def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) -> tuple[bool, list[str]]:
@@ -525,7 +528,7 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✅ Gerar resultado final", use_container_width=True, key="btn_gerar_resultado_final_mapping"):
+        if st.button("✅ Regenerar resultado final", use_container_width=True, key="btn_gerar_resultado_final_mapping"):
             if not valido:
                 for erro in erros:
                     st.error(erro)
@@ -557,8 +560,7 @@ def render_origem_mapeamento() -> None:
 
     st.subheader("3. Mapeamento com IA")
     st.caption(
-        "Aqui o sistema usa IA para sugerir o mapeamento entre a base já precificada e o modelo padrão, "
-        "mas a revisão manual continua sendo a etapa final de decisão."
+        "Modo FULL AUTO: a IA roda sozinha, preenche o mapping, gera o df_final e deixa a revisão apenas como opcional."
     )
 
     df_base = _obter_df_base()
@@ -578,14 +580,17 @@ def render_origem_mapeamento() -> None:
         return
 
     _inicializar_mapping(df_base, df_modelo)
+    _executar_ia_autonoma(df_base, df_modelo, operacao)
+
     _render_status_base(df_base, df_modelo)
     _render_sugestao_agente(df_base, df_modelo, operacao)
     _render_resumo_agente()
-    _render_revisao_manual(df_base, df_modelo, operacao)
 
-    mapping = st.session_state.get("mapping_manual", {}).copy()
-    if isinstance(mapping, dict):
-        df_preview = _aplicar_mapping(df_base, df_modelo, mapping)
+    with st.expander("🔍 Revisão manual opcional", expanded=False):
+        _render_revisao_manual(df_base, df_modelo, operacao)
+
+    df_preview = st.session_state.get("df_final")
+    if safe_df_estrutura(df_preview):
         _preview_mapping(df_preview)
 
     _render_botoes_fluxo(df_base, df_modelo)
@@ -593,3 +598,4 @@ def render_origem_mapeamento() -> None:
     st.markdown("---")
     if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_precificacao_no_rodape_mapping"):
         voltar_etapa_anterior()
+
