@@ -182,7 +182,6 @@ def detectar_login_captcha(html: str, url_atual: str = "") -> dict[str, Any]:
             "/account",
             "/auth",
             "/autenticacao",
-            "/autenticacao",
             "customer/account/login",
         ]
     )
@@ -305,14 +304,15 @@ def salvar_storage_state(
     observacao: str = "",
 ) -> dict[str, Any]:
     base_url = normalizar_url(base_url)
-    paths = _session_paths(base_url=base_url, fornecedor=fornecedor)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    paths = _session_paths(base_url=base_url, fornecedor=fornecedor_slug)
 
     cookies = extrair_cookies_do_storage_state(storage_state)
     agora = int(time.time())
 
     metadata = {
         "base_url": base_url,
-        "fornecedor_slug": inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor),
+        "fornecedor_slug": fornecedor_slug,
         "products_url": normalizar_url(products_url) or base_url,
         "login_url": normalizar_url(login_url),
         "status": safe_str(status) or STATUS_SESSAO_PRONTA,
@@ -348,7 +348,8 @@ def salvar_storage_state(
 
 def carregar_storage_state(base_url: str, fornecedor: str = "") -> dict[str, Any]:
     base_url = normalizar_url(base_url)
-    paths = _session_paths(base_url=base_url, fornecedor=fornecedor)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    paths = _session_paths(base_url=base_url, fornecedor=fornecedor_slug)
     return _read_json(paths["storage_state"], {})
 
 
@@ -358,7 +359,8 @@ def carregar_session_snapshot(
     fornecedor: str = "",
 ) -> SessionSnapshot:
     base_url = normalizar_url(base_url)
-    paths = _session_paths(base_url=base_url, fornecedor=fornecedor)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    paths = _session_paths(base_url=base_url, fornecedor=fornecedor_slug)
 
     storage_state = _read_json(paths["storage_state"], {})
     metadata = _read_json(paths["metadata"], {})
@@ -375,7 +377,7 @@ def carregar_session_snapshot(
         status = STATUS_SESSAO_PRONTA
 
     return SessionSnapshot(
-        fornecedor_slug=inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor),
+        fornecedor_slug=fornecedor_slug,
         base_url=base_url,
         storage_state_path=str(paths["storage_state"]),
         metadata_path=str(paths["metadata"]),
@@ -402,7 +404,8 @@ def sessao_esta_pronta(base_url: str, fornecedor: str = "") -> bool:
 
 def limpar_sessao(base_url: str, fornecedor: str = "") -> dict[str, Any]:
     base_url = normalizar_url(base_url)
-    paths = _session_paths(base_url=base_url, fornecedor=fornecedor)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    paths = _session_paths(base_url=base_url, fornecedor=fornecedor_slug)
 
     removidos: list[str] = []
     for chave in ("storage_state", "metadata", "cookies"):
@@ -417,7 +420,7 @@ def limpar_sessao(base_url: str, fornecedor: str = "") -> dict[str, Any]:
     return {
         "ok": True,
         "removidos": removidos,
-        "fornecedor_slug": inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor),
+        "fornecedor_slug": fornecedor_slug,
     }
 
 
@@ -434,6 +437,32 @@ def playwright_disponivel() -> bool:
         return False
 
 
+def _playwright_browsers_disponiveis() -> tuple[bool, str]:
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _ambiente_suporta_login_assistido_local() -> tuple[bool, str]:
+    if not playwright_disponivel():
+        return False, "Playwright não está instalado no ambiente."
+
+    ok_browser, erro_browser = _playwright_browsers_disponiveis()
+    if not ok_browser:
+        return False, (
+            "Os browsers do Playwright não estão disponíveis ou o ambiente bloqueou a abertura do Chromium. "
+            f"Detalhe: {erro_browser}"
+        )
+
+    return True, ""
+
+
 def iniciar_login_assistido(
     *,
     base_url: str,
@@ -444,25 +473,117 @@ def iniciar_login_assistido(
     headless: bool = False,
 ) -> dict[str, Any]:
     """
-    Abre um navegador visível para o usuário fazer login manualmente e salvar a sessão.
-    Uso ideal:
-    - detectar login/captcha
-    - chamar esta função
-    - usuário autentica manualmente
-    - sistema salva storage_state para reutilizar depois
+    Fluxo adaptativo:
+    - em ambiente local com suporte a Playwright: tenta abrir navegador e salvar sessão
+    - em ambiente cloud/Streamlit sem suporte de navegador visível: guia login manual
     """
     base_url = normalizar_url(base_url)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
     login_url = normalizar_url(login_url) or base_url
     products_url = normalizar_url(products_url) or base_url
 
-    if not playwright_disponivel():
+    st = _streamlit()
+
+    # ========================================================
+    # MODO CLOUD / STREAMLIT GUIADO
+    # ========================================================
+    # Em ambientes como Streamlit Cloud, abrir navegador visível no servidor
+    # geralmente falha. Então guiamos o usuário sem quebrar o fluxo.
+    # ========================================================
+    if st is not None:
+        st.session_state["site_login_assistido_contexto"] = {
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
+            "timeout_ms": timeout_ms,
+        }
+
+        suporte_local, motivo_suporte = _ambiente_suporta_login_assistido_local()
+
+        if not suporte_local:
+            _log_debug(
+                f"Login assistido em modo guiado | fornecedor={fornecedor_slug} | motivo={motivo_suporte}",
+                nivel="INFO",
+            )
+
+            st.warning("⚠️ Este ambiente não consegue abrir navegador visível automaticamente.")
+
+            st.markdown(
+                f"""
+### 🔐 Faça o login manualmente
+
+1. Abra a página de login do fornecedor  
+2. Faça login normalmente  
+3. Resolva o captcha  
+4. Volte para o app e clique em **"Já fiz login no fornecedor"**
+"""
+            )
+
+            st.markdown(f"[👉 Abrir login do fornecedor]({login_url})")
+
+            confirmou = st.button(
+                "✅ Já fiz login no fornecedor",
+                key="btn_confirmar_login_manual_assistido",
+                use_container_width=True,
+            )
+
+            if not confirmou:
+                return {
+                    "ok": False,
+                    "status": STATUS_LOGIN_CAPTCHA_DETECTADO,
+                    "mensagem": (
+                        "Aguardando confirmação do login manual. "
+                        f"Ambiente sem suporte a navegador visível. {motivo_suporte}"
+                    ),
+                    "manual_mode": True,
+                    "base_url": base_url,
+                    "fornecedor_slug": fornecedor_slug,
+                    "login_url": login_url,
+                    "products_url": products_url,
+                }
+
+            _log_debug(
+                f"Login manual confirmado | fornecedor={fornecedor_slug}",
+                nivel="INFO",
+            )
+
+            # Aqui não marcamos storage_state como pronto de forma falsa.
+            # Apenas liberamos o fluxo para a UI decidir como seguir.
+            return {
+                "ok": True,
+                "status": STATUS_SESSAO_PRONTA,
+                "mensagem": (
+                    "Login manual confirmado pelo usuário. "
+                    "Se o fornecedor ainda bloquear a leitura, será necessário usar sessão persistida real."
+                ),
+                "manual_mode": True,
+                "base_url": base_url,
+                "fornecedor_slug": fornecedor_slug,
+                "login_url": login_url,
+                "products_url": products_url,
+                "storage": None,
+                "cookies_count": 0,
+            }
+
+    # ========================================================
+    # MODO LOCAL COM PLAYWRIGHT
+    # ========================================================
+    suporte_local, motivo_suporte = _ambiente_suporta_login_assistido_local()
+    if not suporte_local:
+        _log_debug(
+            f"Falha no login assistido | fornecedor={fornecedor_slug} | motivo={motivo_suporte}",
+            nivel="ERRO",
+        )
         return {
             "ok": False,
             "status": STATUS_ERRO,
-            "mensagem": (
-                "Playwright não está disponível no ambiente. "
-                "Instale playwright e os browsers necessários antes de usar login assistido."
-            ),
+            "mensagem": motivo_suporte,
+            "manual_mode": False,
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
         }
 
     try:
@@ -473,9 +594,13 @@ def iniciar_login_assistido(
             "ok": False,
             "status": STATUS_ERRO,
             "mensagem": f"Falha ao importar Playwright: {exc}",
+            "manual_mode": False,
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
         }
 
-    st = _streamlit()
     info_box = None
     if st is not None:
         info_box = st.empty()
@@ -497,16 +622,13 @@ def iniciar_login_assistido(
                     "volte ao app e aguarde a persistência da sessão."
                 )
 
-            # Espera curta inicial para dar tempo de renderizar a página.
             time.sleep(3)
 
-            # Tenta ir para a área de produtos, caso já esteja logado.
             try:
                 page.goto(products_url, wait_until="domcontentloaded", timeout=timeout_ms)
             except Exception:
                 pass
 
-            # Janela de observação para o usuário concluir login/captcha.
             inicio = time.time()
             ultimo_status = ""
             while (time.time() - inicio) * 1000 < timeout_ms:
@@ -518,8 +640,6 @@ def iniciar_login_assistido(
                     url_atual = ""
 
                 analise = detectar_login_captcha(html=html, url_atual=url_atual)
-
-                # Sessão pronta quando deixou a tela de login/captcha e já tem cookies.
                 cookies = context.cookies()
                 tem_cookies = bool(cookies)
 
@@ -527,7 +647,7 @@ def iniciar_login_assistido(
                     storage_state = context.storage_state()
                     salvo = salvar_storage_state(
                         base_url=base_url,
-                        fornecedor=fornecedor,
+                        fornecedor=fornecedor_slug,
                         products_url=products_url,
                         login_url=login_url,
                         storage_state=storage_state,
@@ -543,7 +663,12 @@ def iniciar_login_assistido(
                         "ok": True,
                         "status": STATUS_SESSAO_PRONTA,
                         "mensagem": "Sessão autenticada salva com sucesso.",
+                        "manual_mode": False,
                         "storage": salvo,
+                        "base_url": base_url,
+                        "fornecedor_slug": fornecedor_slug,
+                        "login_url": login_url,
+                        "products_url": products_url,
                         "url_final": url_atual,
                         "cookies_count": len(cookies),
                     }
@@ -551,7 +676,7 @@ def iniciar_login_assistido(
                 status_atual = analise["status"]
                 if status_atual != ultimo_status:
                     _log_debug(
-                        f"Login assistido em andamento | fornecedor={inferir_fornecedor_slug(base_url, fornecedor)} "
+                        f"Login assistido em andamento | fornecedor={fornecedor_slug} "
                         f"| status={status_atual} | url={url_atual}",
                         nivel="INFO",
                     )
@@ -559,14 +684,13 @@ def iniciar_login_assistido(
 
                 time.sleep(2)
 
-            # Timeout
             try:
                 storage_state = context.storage_state()
                 cookies = context.cookies()
                 if cookies:
                     salvo = salvar_storage_state(
                         base_url=base_url,
-                        fornecedor=fornecedor,
+                        fornecedor=fornecedor_slug,
                         products_url=products_url,
                         login_url=login_url,
                         storage_state=storage_state,
@@ -578,7 +702,12 @@ def iniciar_login_assistido(
                         "ok": True,
                         "status": STATUS_SESSAO_PRONTA,
                         "mensagem": "Sessão salva ao final da espera do login assistido.",
+                        "manual_mode": False,
                         "storage": salvo,
+                        "base_url": base_url,
+                        "fornecedor_slug": fornecedor_slug,
+                        "login_url": login_url,
+                        "products_url": products_url,
                         "cookies_count": len(cookies),
                     }
             except Exception:
@@ -592,6 +721,11 @@ def iniciar_login_assistido(
                     "O navegador foi encerrado sem captura válida de sessão. "
                     "Faça login completo e resolva o captcha antes de encerrar."
                 ),
+                "manual_mode": False,
+                "base_url": base_url,
+                "fornecedor_slug": fornecedor_slug,
+                "login_url": login_url,
+                "products_url": products_url,
             }
 
     except PlaywrightTimeoutError:
@@ -599,6 +733,11 @@ def iniciar_login_assistido(
             "ok": False,
             "status": STATUS_ERRO,
             "mensagem": "Tempo excedido durante o login assistido.",
+            "manual_mode": False,
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
         }
     except Exception as exc:
         _log_debug(f"Falha no login assistido | erro={exc}", nivel="ERRO")
@@ -606,6 +745,11 @@ def iniciar_login_assistido(
             "ok": False,
             "status": STATUS_ERRO,
             "mensagem": f"Falha no login assistido: {exc}",
+            "manual_mode": False,
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
         }
 
 
@@ -626,17 +770,18 @@ def salvar_status_login_em_sessao(
     if st is None:
         return
 
-    slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    base_url = normalizar_url(base_url)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
 
     st.session_state["site_login_status"] = {
-        "fornecedor_slug": slug,
-        "base_url": normalizar_url(base_url),
+        "fornecedor_slug": fornecedor_slug,
+        "base_url": base_url,
         "status": safe_str(status),
         "mensagem": safe_str(mensagem),
         "exige_login": bool(exige_login),
         "captcha_detectado": bool(captcha_detectado),
-        "session_ready": sessao_esta_pronta(base_url=base_url, fornecedor=fornecedor),
-        "auth_context": montar_auth_context(base_url=base_url, fornecedor=fornecedor),
+        "session_ready": sessao_esta_pronta(base_url=base_url, fornecedor=fornecedor_slug),
+        "auth_context": montar_auth_context(base_url=base_url, fornecedor=fornecedor_slug),
     }
 
 
@@ -648,6 +793,8 @@ def detectar_e_salvar_status_login(
     mensagem_extra: str = "",
     fornecedor: str = "",
 ) -> dict[str, Any]:
+    base_url = normalizar_url(base_url)
+    fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
     analise = detectar_login_captcha(html=html, url_atual=url_atual)
 
     mensagem = ""
@@ -663,7 +810,7 @@ def detectar_e_salvar_status_login(
 
     salvar_status_login_em_sessao(
         base_url=base_url,
-        fornecedor=fornecedor,
+        fornecedor=fornecedor_slug,
         status=analise["status"],
         mensagem=mensagem,
         exige_login=bool(analise["exige_login"]),
@@ -673,7 +820,7 @@ def detectar_e_salvar_status_login(
     return {
         **analise,
         "mensagem": mensagem,
-        "auth_context": montar_auth_context(base_url=base_url, fornecedor=fornecedor),
+        "auth_context": montar_auth_context(base_url=base_url, fornecedor=fornecedor_slug),
     }
 
 
