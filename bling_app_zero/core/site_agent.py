@@ -237,7 +237,10 @@ def _quantidade_padrao(final: dict[str, Any]) -> str:
         return quantidade
 
     descricao = safe_str(final.get("descricao_detalhada")).lower()
-    if any(x in descricao for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado"]):
+    if any(
+        x in descricao
+        for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado"]
+    ):
         return "0"
 
     return "1"
@@ -495,7 +498,10 @@ def _motivo_rejeicao(final: dict) -> str:
     if url_n in {"", "/"} or url_n.endswith("/conta") or url_n.endswith("/login"):
         return "url_institucional"
 
-    if any(x in url_n for x in ["/categoria", "/categorias", "/departamento", "/search", "/busca", "/pagina/"]):
+    if any(
+        x in url_n
+        for x in ["/categoria", "/categorias", "/departamento", "/search", "/busca", "/pagina/"]
+    ):
         return "url_de_categoria"
 
     if categoria_n and all(ch in " 0123456789>-" for ch in categoria_n):
@@ -629,18 +635,92 @@ def _fornecedor_slug_do_contexto(base_url: str, auth_context: dict[str, Any] | N
     return base or "fornecedor"
 
 
+def _texto_tem_sinais_de_produto(texto: str) -> bool:
+    texto_n = safe_str(texto).lower()
+    if not texto_n:
+        return False
+
+    sinais = [
+        '"@type":"product"',
+        '"@type": "product"',
+        "application/ld+json",
+        "add to cart",
+        "adicionar ao carrinho",
+        "comprar agora",
+        "sku",
+        "código",
+        "codigo",
+        "gtin",
+        "ean",
+        "parcel",
+        "r$",
+        "price",
+        "product",
+    ]
+    return any(s in texto_n for s in sinais)
+
+
+def _score_html_produto(texto: str) -> int:
+    texto_n = safe_str(texto).lower()
+    if not texto_n:
+        return 0
+
+    score = 0
+    if '"@type":"product"' in texto_n or '"@type": "product"' in texto_n:
+        score += 4
+    if "adicionar ao carrinho" in texto_n or "add to cart" in texto_n or "comprar agora" in texto_n:
+        score += 2
+    if "sku" in texto_n or "gtin" in texto_n or "ean" in texto_n or "código" in texto_n or "codigo" in texto_n:
+        score += 1
+    if "r$" in texto_n or "price" in texto_n or "parcel" in texto_n:
+        score += 1
+    return score
+
+
+def _parece_html_login_puro(html: str, url_atual: str = "") -> bool:
+    try:
+        analise = detectar_login_captcha(html=html, url_atual=url_atual)
+    except Exception:
+        return False
+
+    status = safe_str(analise.get("status"))
+    if status not in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+        return False
+
+    if _texto_tem_sinais_de_produto(html):
+        return False
+
+    return _score_html_produto(html) <= 0
+
+
 # ============================================================
 # AUTENTICAÇÃO / CONTEXTO
 # ============================================================
+
+def _auth_context_tem_dados_http(auth_context: dict[str, Any] | None) -> bool:
+    if not isinstance(auth_context, dict):
+        return False
+
+    cookies = auth_context.get("cookies")
+    headers = auth_context.get("headers")
+
+    tem_cookies = isinstance(cookies, list) and len(cookies) > 0
+    tem_headers = isinstance(headers, dict) and len(headers) > 0
+
+    return tem_cookies or tem_headers
+
 
 def _auth_context_valido(auth_context: dict[str, Any] | None) -> bool:
     if not isinstance(auth_context, dict):
         return False
 
-    if bool(auth_context.get("manual_mode", False)):
+    if bool(auth_context.get("session_ready", False)) and _auth_context_tem_dados_http(auth_context):
         return True
 
-    return bool(auth_context.get("session_ready", False))
+    if bool(auth_context.get("manual_mode", False)) and _auth_context_tem_dados_http(auth_context):
+        return True
+
+    return False
 
 
 def _normalizar_headers_auth(headers: dict[str, Any] | None) -> dict[str, str]:
@@ -713,6 +793,25 @@ def _url_produtos_contexto(base_url: str, auth_context: dict[str, Any] | None) -
     return normalizar_url(base_url)
 
 
+def _fetch_html_publico(url_produto: str) -> str:
+    if fetch_html_retry is None:
+        return ""
+
+    ultima_exc: Exception | None = None
+    for tentativas in (2, 3):
+        try:
+            html = safe_str(fetch_html_retry(url_produto, tentativas=tentativas))
+            if html:
+                return html
+        except Exception as exc:
+            ultima_exc = exc
+
+    if ultima_exc is not None:
+        raise ultima_exc
+
+    return ""
+
+
 def _fetch_html_autenticado(url_produto: str, auth_context: dict[str, Any] | None) -> str:
     if not _auth_context_valido(auth_context):
         return ""
@@ -737,7 +836,10 @@ def _fetch_html_autenticado(url_produto: str, auth_context: dict[str, Any] | Non
     return ""
 
 
-def _primeiro_fetch_para_deteccao(base_url: str, auth_context: dict[str, Any] | None = None) -> tuple[str, str]:
+def _primeiro_fetch_para_deteccao(
+    base_url: str,
+    auth_context: dict[str, Any] | None = None,
+) -> tuple[str, str]:
     alvo = _url_produtos_contexto(base_url, auth_context)
 
     if _auth_context_valido(auth_context):
@@ -751,16 +853,15 @@ def _primeiro_fetch_para_deteccao(base_url: str, auth_context: dict[str, Any] | 
                 nivel="ERRO",
             )
 
-    if fetch_html_retry is not None:
-        try:
-            html = safe_str(fetch_html_retry(alvo, tentativas=2))
-            if html:
-                return html, alvo
-        except Exception as exc:
-            _log_debug(
-                f"Falha no fetch público para detecção inicial | url={alvo} | erro={exc}",
-                nivel="ERRO",
-            )
+    try:
+        html = _fetch_html_publico(alvo)
+        if html:
+            return html, alvo
+    except Exception as exc:
+        _log_debug(
+            f"Falha no fetch público para detecção inicial | url={alvo} | erro={exc}",
+            nivel="ERRO",
+        )
 
     return "", alvo
 
@@ -792,8 +893,8 @@ def _detectar_bloqueio_login(
     status = safe_str(analise.get("status"))
     if status in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
         _log_debug(
-            f"Bloqueio de login detectado | url={base_url} | status={status}",
-            nivel="ERRO",
+            f"Possível bloqueio de login detectado | url={base_url} | status={status}",
+            nivel="INFO",
         )
 
     return analise
@@ -808,7 +909,7 @@ def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = 
         contexto_salvo = montar_auth_context(base_url=base_url, fornecedor=fornecedor)
         if _auth_context_valido(contexto_salvo):
             _log_debug(
-                f"Sessão autenticada reutilizada com sucesso | url={base_url} | fornecedor={fornecedor}",
+                f"Sessão HTTP autenticada reutilizada com sucesso | url={base_url} | fornecedor={fornecedor}",
                 nivel="INFO",
             )
             return contexto_salvo
@@ -826,31 +927,30 @@ def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = 
 # ============================================================
 
 def _executar_fetch_html(url_produto: str, auth_context: dict[str, Any] | None = None) -> str:
+    """
+    Estratégia blindada:
+    1) tenta sessão HTTP autenticada somente se houver cookies/headers reais
+    2) cai para fetch público
+    3) não depende de navegador visível / playwright
+    """
     if _auth_context_valido(auth_context):
         try:
             html_auth = _fetch_html_autenticado(url_produto, auth_context=auth_context)
-            if html_auth:
+            if html_auth and not _parece_html_login_puro(html_auth, url_atual=url_produto):
                 return html_auth
+
+            if html_auth and _parece_html_login_puro(html_auth, url_atual=url_produto):
+                _log_debug(
+                    f"Resposta autenticada parece página de login; tentando modo público | url={url_produto}",
+                    nivel="INFO",
+                )
         except Exception as exc:
             _log_debug(
                 f"Falha no fetch autenticado, usando fallback comum | url={url_produto} | erro={exc}",
                 nivel="ERRO",
             )
 
-    if fetch_html_retry is None:
-        return ""
-
-    ultima_exc: Exception | None = None
-    for tentativas in (2, 3):
-        try:
-            return safe_str(fetch_html_retry(url_produto, tentativas=tentativas))
-        except Exception as exc:
-            ultima_exc = exc
-
-    if ultima_exc is not None:
-        raise ultima_exc
-
-    return ""
+    return _fetch_html_publico(url_produto)
 
 
 def _executar_heuristica(url_produto: str, html_produto: str) -> dict[str, Any]:
@@ -885,7 +985,7 @@ def _executar_gpt(url_produto: str, html_produto: str, heuristica: dict[str, Any
 
 
 def _resolver_final(url_produto: str, heuristica: dict[str, Any], gpt: dict[str, Any]) -> dict[str, Any]:
-    final = {}
+    final: dict[str, Any] = {}
 
     for campo in [
         "descricao",
@@ -902,13 +1002,59 @@ def _resolver_final(url_produto: str, heuristica: dict[str, Any], gpt: dict[str,
     ]:
         final[campo] = safe_str(gpt.get(campo)) or safe_str(heuristica.get(campo))
 
-    final["url_produto"] = safe_str(gpt.get("url_produto")) or safe_str(heuristica.get("url_produto")) or url_produto
-    final["descricao"] = safe_str(final.get("descricao")) or safe_str(heuristica.get("titulo")) or safe_str(heuristica.get("nome"))
+    final["url_produto"] = (
+        safe_str(gpt.get("url_produto"))
+        or safe_str(heuristica.get("url_produto"))
+        or url_produto
+    )
+    final["descricao"] = (
+        safe_str(final.get("descricao"))
+        or safe_str(heuristica.get("titulo"))
+        or safe_str(heuristica.get("nome"))
+    )
     final["descricao_curta"] = _descricao_curta_padrao(final)
     final["quantidade"] = _quantidade_padrao(final)
     final["marca"] = _resolver_marca(final, heuristica)
 
     return final
+
+
+def _deve_bloquear_produto_por_login(
+    html_produto: str,
+    url_produto: str,
+    heuristica: dict[str, Any],
+    auth_context: dict[str, Any] | None = None,
+) -> bool:
+    manual_mode = isinstance(auth_context, dict) and bool(auth_context.get("manual_mode", False))
+    if manual_mode:
+        return False
+
+    if _auth_context_valido(auth_context):
+        return False
+
+    try:
+        analise_bloqueio = detectar_login_captcha(html_produto, url_atual=url_produto)
+    except Exception:
+        return False
+
+    status = safe_str(analise_bloqueio.get("status"))
+    if status not in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+        return False
+
+    if heuristica:
+        score_heuristica = pontuar_produto(
+            titulo=safe_str(heuristica.get("descricao")) or safe_str(heuristica.get("titulo")),
+            preco=safe_str(heuristica.get("preco")),
+            codigo=safe_str(heuristica.get("codigo")),
+            gtin=safe_str(heuristica.get("gtin")),
+            imagens=safe_str(heuristica.get("url_imagens")),
+            categoria=safe_str(heuristica.get("categoria")),
+            url_produto=safe_str(heuristica.get("url_produto")) or url_produto,
+        )
+        if score_heuristica > 0:
+            return False
+
+    return _parece_html_login_puro(html_produto, url_atual=url_produto)
 
 
 def _processar_um_produto(
@@ -933,23 +1079,23 @@ def _processar_um_produto(
             "erro": str(exc),
         }
 
-    manual_mode = isinstance(auth_context, dict) and bool(auth_context.get("manual_mode", False))
-
-    try:
-        analise_bloqueio = detectar_login_captcha(html_produto, url_atual=url_produto)
-        if analise_bloqueio.get("status") in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO} and not manual_mode:
-            return "bloqueado_login", {
-                "url_produto": url_produto,
-                "motivo": safe_str(analise_bloqueio.get("status")),
-                "erro": "",
-                "heuristica": {},
-                "gpt": {},
-                "final": {},
-            }
-    except Exception:
-        pass
-
     heuristica = _executar_heuristica(url_produto, html_produto)
+
+    if _deve_bloquear_produto_por_login(
+        html_produto=html_produto,
+        url_produto=url_produto,
+        heuristica=heuristica,
+        auth_context=auth_context,
+    ):
+        return "bloqueado_login", {
+            "url_produto": url_produto,
+            "motivo": "login_ou_captcha_sem_sessao_http_utilizavel",
+            "erro": "",
+            "heuristica": heuristica,
+            "gpt": {},
+            "final": {},
+        }
+
     gpt = _executar_gpt(url_produto, html_produto, heuristica)
     final = _resolver_final(url_produto, heuristica, gpt)
 
@@ -995,27 +1141,49 @@ def _descobrir_produtos_com_contexto(
 ) -> list[str]:
     alvo_descoberta = _url_produtos_contexto(base_url, auth_context)
 
-    if descobrir_produtos_no_dominio is None:
-        if alvo_descoberta:
-            return [alvo_descoberta]
-        return []
+    candidatos_tentativa: list[tuple[str, dict[str, Any] | None]] = []
 
-    try:
-        produtos = descobrir_produtos_no_dominio(
-            base_url=alvo_descoberta,
-            termo=termo,
-            max_paginas=400,
-            max_produtos=limite,
-            max_segundos=900,
-            auth_context=auth_context,
-        )
-        if isinstance(produtos, list) and produtos:
-            return produtos
-    except Exception as exc:
-        _log_debug(
-            f"Falha ao descobrir produtos com crawler tradicional | url={alvo_descoberta} | erro={exc}",
-            nivel="ERRO",
-        )
+    if _auth_context_valido(auth_context):
+        candidatos_tentativa.append((alvo_descoberta, auth_context))
+
+    candidatos_tentativa.append((alvo_descoberta, None))
+
+    vistos_urls: set[str] = set()
+    saida: list[str] = []
+
+    for alvo, ctx in candidatos_tentativa:
+        chave = f"{alvo}|{'auth' if ctx else 'publico'}"
+        if chave in vistos_urls:
+            continue
+        vistos_urls.add(chave)
+
+        if descobrir_produtos_no_dominio is None:
+            if alvo:
+                return [alvo]
+            continue
+
+        try:
+            produtos = descobrir_produtos_no_dominio(
+                base_url=alvo,
+                termo=termo,
+                max_paginas=400,
+                max_produtos=limite,
+                max_segundos=900,
+                auth_context=ctx,
+            )
+            if isinstance(produtos, list) and produtos:
+                for url in produtos:
+                    url_n = safe_str(url)
+                    if url_n and url_n not in saida:
+                        saida.append(url_n)
+                if saida:
+                    return saida
+        except Exception as exc:
+            modo = "autenticado_http" if ctx else "publico"
+            _log_debug(
+                f"Falha ao descobrir produtos | modo={modo} | url={alvo} | erro={exc}",
+                nivel="ERRO",
+            )
 
     if alvo_descoberta:
         return [alvo_descoberta]
@@ -1058,72 +1226,60 @@ def buscar_produtos_site_com_gpt(
     auth_context = _resolver_auth_context(base_url=base_url, auth_context=auth_context)
     fornecedor = _fornecedor_slug_do_contexto(base_url, auth_context)
     manual_mode = isinstance(auth_context, dict) and bool(auth_context.get("manual_mode", False))
+    auth_http_ok = _auth_context_valido(auth_context)
 
-    auth_mode = "manual" if manual_mode else ("autenticado" if _auth_context_valido(auth_context) else "publico")
+    auth_mode = "manual_http" if manual_mode and auth_http_ok else ("autenticado_http" if auth_http_ok else "publico")
     _log_debug(
         f"Iniciando busca por site | url={base_url} | termo={termo or '-'} | limite={limite} | modo={auth_mode}",
         nivel="INFO",
     )
     _log_debug(
-        f"Auth context | manual_mode={manual_mode} | session_ready={safe_str(auth_context.get('session_ready'))}",
+        (
+            "Auth context | "
+            f"manual_mode={manual_mode} | "
+            f"session_ready={safe_str(auth_context.get('session_ready'))} | "
+            f"auth_http_ok={auth_http_ok}"
+        ),
         nivel="INFO",
     )
 
     login_status = _detectar_bloqueio_login(base_url=base_url, auth_context=auth_context)
     login_status_normalizado = safe_str(login_status.get("status"))
 
-    if (
-        login_status_normalizado in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}
-        and not _auth_context_valido(auth_context)
-        and not manual_mode
-    ):
-        mensagem = safe_str(login_status.get("mensagem"))
-        if not mensagem:
+    # Não interrompe cedo mais.
+    # Primeiro tenta descobrir e processar os produtos em modo HTTP público/autenticado.
+    if login_status_normalizado in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+        mensagem_info = safe_str(login_status.get("mensagem"))
+        if not mensagem_info:
             if login_status_normalizado == STATUS_LOGIN_CAPTCHA_DETECTADO:
-                mensagem = "Fornecedor com login detectado e indício de captcha. Fluxo autenticado necessário."
+                mensagem_info = (
+                    "Possível captcha/login detectado. Tentando captura por HTTP público/autenticado "
+                    "sem depender de navegador visível."
+                )
             else:
-                mensagem = "Fornecedor exige autenticação antes da captura dos produtos."
-
-        salvar_status_login_em_sessao(
-            base_url=base_url,
-            fornecedor=fornecedor,
-            status=login_status_normalizado,
-            mensagem=mensagem,
-            exige_login=bool(login_status.get("exige_login")),
-            captcha_detectado=bool(login_status.get("captcha_detectado")),
-        )
+                mensagem_info = (
+                    "Possível página com login detectada. Tentando captura por HTTP público/autenticado "
+                    "sem depender de navegador visível."
+                )
 
         if status_box is not None:
-            status_box.warning(mensagem)
+            status_box.warning(mensagem_info)
 
         _log_debug(
-            f"Busca interrompida por bloqueio de login | url={base_url} | status={login_status_normalizado}",
-            nivel="ERRO",
+            f"Detecção inicial de login/captcha não interrompeu o crawler | url={base_url} | status={login_status_normalizado}",
+            nivel="INFO",
         )
 
-        if diagnostico:
-            _salvar_diagnostico_em_sessao(
-                diagnosticos=[
-                    {
-                        "url_produto": base_url,
-                        "status": login_status_normalizado,
-                        "motivo": "bloqueio_inicial_login",
-                        "erro": "",
-                    }
-                ],
-                produtos_descobertos=[],
-                rows_validos=[],
-                login_status=login_status,
-            )
-
-        return pd.DataFrame()
-
-    if _auth_context_valido(auth_context):
+    if auth_http_ok:
         salvar_status_login_em_sessao(
             base_url=base_url,
             fornecedor=fornecedor,
             status=STATUS_SESSAO_PRONTA,
-            mensagem="Sessão autenticada pronta para uso." if not manual_mode else "Login manual confirmado. Tentando leitura do catálogo.",
+            mensagem=(
+                "Sessão HTTP autenticada pronta para uso."
+                if not manual_mode
+                else "Contexto manual convertido em sessão HTTP utilizável."
+            ),
             exige_login=False,
             captcha_detectado=False,
         )
@@ -1136,9 +1292,25 @@ def buscar_produtos_site_com_gpt(
     )
 
     if not produtos:
-        if status_box is not None:
-            status_box.warning("Nenhum produto encontrado.")
-        _log_debug("Nenhum produto encontrado na descoberta inicial do domínio.", nivel="ERRO")
+        if login_status_normalizado in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO} and not auth_http_ok:
+            mensagem = (
+                "Fornecedor aparenta exigir login/captcha e não há sessão HTTP utilizável. "
+                "Busca pública não encontrou catálogo."
+            )
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=fornecedor,
+                status=login_status_normalizado or STATUS_LOGIN_REQUERIDO,
+                mensagem=mensagem,
+                exige_login=bool(login_status.get("exige_login")),
+                captcha_detectado=bool(login_status.get("captcha_detectado")),
+            )
+            if status_box is not None:
+                status_box.warning(mensagem)
+        else:
+            if status_box is not None:
+                status_box.warning("Nenhum produto encontrado.")
+            _log_debug("Nenhum produto encontrado na descoberta inicial do domínio.", nivel="ERRO")
 
         if diagnostico:
             _salvar_diagnostico_em_sessao(
@@ -1149,7 +1321,7 @@ def buscar_produtos_site_com_gpt(
             )
         return pd.DataFrame()
 
-    produtos_limpos = []
+    produtos_limpos: list[str] = []
     vistos_descoberta: set[str] = set()
     for url in produtos:
         url_n = safe_str(url)
@@ -1257,7 +1429,6 @@ def buscar_produtos_site_com_gpt(
                                 status="aprovado",
                                 motivo="produto_valido",
                             )
-
                     continue
 
                 if status == "bloqueado_login":
@@ -1280,10 +1451,10 @@ def buscar_produtos_site_com_gpt(
         _log_debug(f"Falha geral no processamento paralelo: {repr(exc)}", nivel="ERRO")
         raise RuntimeError(f"Falha no processamento paralelo dos produtos: {repr(exc)}") from exc
 
-    if login_bloqueios > 0 and len(rows) == 0 and not manual_mode:
+    if login_bloqueios > 0 and len(rows) == 0 and not auth_http_ok:
         mensagem_bloqueio = (
-            "Fornecedor com login detectado e indício de captcha. "
-            "Fluxo autenticado necessário."
+            "Os links processados aparentam exigir login/captcha e não existe sessão HTTP utilizável "
+            "para continuar a captura no deploy atual."
         )
         salvar_status_login_em_sessao(
             base_url=base_url,
@@ -1306,8 +1477,8 @@ def buscar_produtos_site_com_gpt(
     if status_box is not None:
         if len(rows) > 0:
             status_box.success(f"🎉 Busca finalizada. Produtos válidos: {len(rows)}")
-        elif login_bloqueios > 0 and not manual_mode:
-            status_box.warning("Busca finalizada sem produtos válidos por bloqueio de login/captcha.")
+        elif login_bloqueios > 0 and not auth_http_ok:
+            status_box.warning("Busca finalizada sem produtos válidos por login/captcha sem sessão HTTP utilizável.")
         else:
             status_box.warning("Busca finalizada sem produtos válidos.")
 
@@ -1320,7 +1491,15 @@ def buscar_produtos_site_com_gpt(
         )
 
     _log_debug(
-        f"Busca por site finalizada | descobertos={len(produtos)} | validos={len(rows)} | rejeitados={max(len(produtos) - len(rows), 0)} | login_bloqueios={login_bloqueios} | manual_mode={manual_mode}",
+        (
+            "Busca por site finalizada | "
+            f"descobertos={len(produtos)} | "
+            f"validos={len(rows)} | "
+            f"rejeitados={max(len(produtos) - len(rows), 0)} | "
+            f"login_bloqueios={login_bloqueios} | "
+            f"manual_mode={manual_mode} | "
+            f"auth_http_ok={auth_http_ok}"
+        ),
         nivel="INFO",
     )
 
