@@ -169,12 +169,32 @@ def _streamlit_ctx():
         return None
 
 
+def _em_thread_secundaria() -> bool:
+    return threading.current_thread() is not threading.main_thread()
+
+
 def _log_debug(msg: str, nivel: str = "INFO") -> None:
+    """
+    Importante:
+    - no main thread: usa o log do app normalmente
+    - em threads paralelas: NÃO toca em Streamlit/session_state para evitar
+      'missing ScriptRunContext'
+    """
+    if _em_thread_secundaria():
+        try:
+            print(f"[SITE_AGENT][{nivel}] {msg}")
+        except Exception:
+            pass
+        return
+
     try:
         from bling_app_zero.ui.app_helpers import log_debug  # type: ignore
         log_debug(msg, nivel=nivel)
     except Exception:
-        pass
+        try:
+            print(f"[SITE_AGENT][{nivel}] {msg}")
+        except Exception:
+            pass
 
 
 def _limite_tecnico(limite_links: int | None) -> int:
