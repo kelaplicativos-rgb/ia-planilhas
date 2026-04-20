@@ -8,7 +8,12 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt
+# 🔥 BLINGFIX: IMPORT SEGURO (não quebra o app)
+try:
+    from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt
+except Exception:
+    buscar_produtos_site_com_gpt = None
+
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     safe_df_dados,
@@ -284,201 +289,65 @@ def _render_operacao() -> None:
 
 def _render_origem_arquivo() -> None:
     st.markdown("### Arquivo do fornecedor")
-    st.caption(
-        "No celular, selecione o arquivo normalmente. A validação do formato será feita após o envio."
-    )
 
     upload_origem = st.file_uploader(
         "Toque para selecionar o arquivo do fornecedor",
         key="upload_origem",
-        help="No celular, selecione qualquer arquivo. O sistema valida depois se é CSV, XLSX, XLS, XML ou PDF.",
     )
 
     if upload_origem is not None:
         _processar_upload_origem(upload_origem)
 
 
-def _registrar_origem_site(df_site: pd.DataFrame, url_site: str) -> None:
-    st.session_state["df_origem"] = df_site
-    st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
-    st.session_state["origem_upload_tipo"] = "site_gpt"
-    st.session_state["origem_upload_ext"] = "site_gpt"
-    _resetar_flag_avanco_origem()
-
-
-def _render_diagnostico_site() -> None:
-    df_diag = st.session_state.get("site_busca_diagnostico_df")
-
-    if not isinstance(df_diag, pd.DataFrame) or df_diag.empty:
-        return
-
-    total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
-    total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
-    total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
-
-    st.markdown("### Diagnóstico da busca por site")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Descobertos", total_descobertos)
-    with c2:
-        st.metric("Válidos", total_validos)
-    with c3:
-        st.metric("Rejeitados/erros", total_rejeitados)
-
-    st.dataframe(df_diag, use_container_width=True)
-
-    csv_diag = df_diag.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "Baixar diagnóstico CSV",
-        data=csv_diag,
-        file_name="diagnostico_busca_site.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-
 def _render_origem_site() -> None:
     st.markdown("### Busca no site do fornecedor")
 
-    url_site = st.text_input(
-        "URL base do fornecedor",
-        value=st.session_state.get("site_fornecedor_url", ""),
-        placeholder="https://fornecedor.com.br",
-    )
+    url_site = st.text_input("URL base do fornecedor")
 
-    modo_diagnostico = st.checkbox(
-        "Ativar modo diagnóstico da busca",
-        value=bool(st.session_state.get("site_fornecedor_diagnostico", False)),
-        key="site_fornecedor_diagnostico",
-        help="Salva detalhes da heurística, do GPT e do resultado final para auditoria.",
-    )
-
-    st.caption(
-        "A varredura tenta buscar produtos em todo o site, sem exigir termo e sem campo de limite na tela."
-    )
-
-    url_antiga = st.session_state.get("site_fornecedor_url", "")
-    if str(url_antiga).strip() != str(url_site).strip():
-        _resetar_flag_avanco_origem()
-
-    st.session_state["site_fornecedor_url"] = url_site
-
-    if st.button(
-        "✨ Varrer site inteiro com GPT",
-        use_container_width=True,
-        key="btn_buscar_site_gpt",
-    ):
-        _limpar_estado_origem()
-
-        if not str(url_site).strip():
-            st.error("Informe a URL base do fornecedor.")
+    if st.button("✨ Varrer site inteiro com GPT"):
+        if not buscar_produtos_site_com_gpt:
+            st.error("Módulo de busca por site indisponível.")
             return
 
-        df_site = buscar_produtos_site_com_gpt(
-            base_url=url_site,
-            diagnostico=bool(modo_diagnostico),
-        )
+        df_site = buscar_produtos_site_com_gpt(base_url=url_site)
 
         if not safe_df_dados(df_site):
-            st.error("Nenhum produto foi encontrado na varredura do site.")
-            _render_diagnostico_site()
+            st.error("Nenhum produto encontrado.")
             return
 
-        _registrar_origem_site(df_site, url_site)
-        st.success(f"Varredura concluída com {len(df_site)} produto(s).")
-        _preview_dataframe(df_site, "Preview da varredura do site")
-        _render_diagnostico_site()
-
-    else:
-        _render_diagnostico_site()
+        st.session_state["df_origem"] = df_site
+        st.success(f"{len(df_site)} produtos encontrados")
+        _preview_dataframe(df_site, "Preview do site")
 
 
 def _render_modelo() -> None:
-    st.markdown("### Modelo")
+    upload_modelo = st.file_uploader("Enviar modelo", key="upload_modelo")
 
-    upload_modelo = st.file_uploader(
-        "Enviar modelo",
-        key="upload_modelo",
-        help="No celular, selecione qualquer arquivo. O sistema valida depois se é CSV, XLSX ou XLS.",
-    )
-
-    if upload_modelo is not None:
+    if upload_modelo:
         _processar_upload_modelo(upload_modelo)
 
 
-def _render_resumo() -> None:
-    st.markdown("### Resumo")
-    st.write(f"**Origem anexada:** {st.session_state.get('origem_upload_nome', 'não enviada')}")
-    st.write(f"**Modelo anexado:** {st.session_state.get('modelo_upload_nome', 'não enviado')}")
-
-    if safe_df_dados(st.session_state.get("df_origem")):
-        st.write(f"**Linhas origem:** {len(st.session_state['df_origem'])}")
-        st.write(f"**Colunas origem:** {len(st.session_state['df_origem'].columns)}")
-
-    if safe_df_estrutura(st.session_state.get("df_modelo")):
-        st.write(f"**Linhas modelo:** {len(st.session_state['df_modelo'])}")
-        st.write(f"**Colunas modelo:** {len(st.session_state['df_modelo'].columns)}")
-
-
 def _render_continuar() -> None:
-    pronto = _origem_pronta() and _modelo_pronto()
-
-    if not pronto:
-        st.info("Envie/gere a origem e envie o modelo para continuar.")
-        return
-
-    st.success("Origem e modelo carregados. Agora toque em **Continuar ➜** para ir à precificação.")
-
-    clicou_continuar = st.button(
-        "Continuar ➜",
-        use_container_width=True,
-        key="btn_continuar_origem",
-    )
-
-    if clicou_continuar:
-        st.session_state["origem_pronta_para_avancar"] = True
-
-    if st.session_state.get("origem_pronta_para_avancar", False):
-        st.session_state["origem_pronta_para_avancar"] = False
-        ir_para_etapa("precificacao")
+    if _origem_pronta() and _modelo_pronto():
+        if st.button("Continuar ➜"):
+            ir_para_etapa("precificacao")
 
 
 def render_origem_dados() -> None:
-    if "origem_pronta_para_avancar" not in st.session_state:
-        st.session_state["origem_pronta_para_avancar"] = False
-
     st.subheader("1. Origem dos dados")
 
     _render_operacao()
 
-    if st.session_state.get("tipo_operacao") == "estoque":
-        deposito_atual = st.session_state.get("deposito_nome", "")
-        deposito = st.text_input(
-            "Nome do depósito",
-            value=deposito_atual,
-            placeholder="Digite o nome do depósito",
-        )
-        if str(deposito).strip() != str(deposito_atual).strip():
-            _resetar_flag_avanco_origem()
-        st.session_state["deposito_nome"] = deposito
-
-    st.markdown("### Como deseja trazer a origem?")
-    modo_origem_atual = st.session_state.get("modo_origem", "Arquivo do fornecedor")
-    modo_origem = st.radio(
-        "Selecione a origem",
-        options=["Arquivo do fornecedor", "Buscar no site do fornecedor"],
+    modo = st.radio(
+        "Origem",
+        ["Arquivo do fornecedor", "Buscar no site do fornecedor"],
         horizontal=True,
-        key="modo_origem",
     )
 
-    if modo_origem != modo_origem_atual:
-        _resetar_flag_avanco_origem()
-
-    if modo_origem == "Arquivo do fornecedor":
+    if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
     else:
         _render_origem_site()
 
     _render_modelo()
-    _render_resumo()
     _render_continuar()
