@@ -5,6 +5,7 @@ import concurrent.futures
 import re
 import threading
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
 import requests
@@ -160,6 +161,17 @@ except Exception:
 # ============================================================
 # HELPERS GERAIS
 # ============================================================
+
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
+
 
 def _streamlit_ctx():
     try:
@@ -693,6 +705,180 @@ def _parece_html_login_puro(html: str, url_atual: str = "") -> bool:
     return _score_html_produto(html) <= 0
 
 
+def _normalizar_url_candidata(base_url: str, href: str) -> str:
+    href = safe_str(href)
+    if not href:
+        return ""
+
+    try:
+        return normalizar_url(urljoin(base_url, href))
+    except Exception:
+        return ""
+
+
+def _url_mesmo_dominio(base_url: str, candidata: str) -> bool:
+    try:
+        host_base = safe_str(urlparse(normalizar_url(base_url)).netloc).replace("www.", "")
+        host_cand = safe_str(urlparse(normalizar_url(candidata)).netloc).replace("www.", "")
+        return bool(host_base and host_cand and host_base == host_cand)
+    except Exception:
+        return False
+
+
+def _url_parece_produto(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    if not url_n:
+        return False
+
+    bloqueios = [
+        "/login",
+        "/conta",
+        "/account",
+        "/carrinho",
+        "/cart",
+        "/checkout",
+        "/busca",
+        "/search",
+        "/categoria",
+        "/categorias",
+        "/departamento",
+        "/tag/",
+        "/marca/",
+        "/institucional",
+        "/blog/",
+        "/pages/",
+        "/pagina/",
+        "?page=",
+        "&page=",
+        "#",
+        "javascript:",
+        "mailto:",
+        "tel:",
+    ]
+    if any(b in url_n for b in bloqueios):
+        return False
+
+    sinais = [
+        "/produto/",
+        "/produtos/",
+        "/product/",
+        "/p/",
+        "-p-",
+        "/item/",
+        "/sku/",
+    ]
+    if any(s in url_n for s in sinais):
+        return True
+
+    # fallback mais solto para e-commerces com slug de produto
+    if url_n.count("/") >= 3 and not url_n.endswith("/"):
+        return True
+
+    return False
+
+
+def _extrair_links_produto_html(base_url: str, html: str, limite: int) -> list[str]:
+    hrefs = re.findall(r"""href=["']([^"'#]+)["']""", safe_str(html), flags=re.IGNORECASE)
+    saida: list[str] = []
+    vistos: set[str] = set()
+
+    for href in hrefs:
+        url = _normalizar_url_candidata(base_url, href)
+        if not url:
+            continue
+        if not _url_mesmo_dominio(base_url, url):
+            continue
+        if not _url_parece_produto(url):
+            continue
+        if url in vistos:
+            continue
+        vistos.add(url)
+        saida.append(url)
+        if len(saida) >= limite:
+            break
+
+    return saida
+
+
+def _html_base_parece_listagem(html: str, base_url: str = "") -> bool:
+    html_n = safe_str(html).lower()
+    url_n = safe_str(base_url).lower()
+
+    if not html_n:
+        return False
+
+    sinais_listagem = [
+        "resultado",
+        "produtos",
+        "vitrine",
+        "category",
+        "categoria",
+        "departamento",
+        "prateleira",
+        "grid",
+        "shelf",
+        "listing",
+    ]
+
+    if any(s in url_n for s in ["/categoria", "/categorias", "/departamento", "/search", "/busca"]):
+        return True
+
+    qtd_links = len(_extrair_links_produto_html(base_url or "https://example.com", html, 200))
+    if qtd_links >= 3:
+        return True
+
+    return any(s in html_n for s in sinais_listagem)
+
+
+def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heuristica: dict[str, Any]) -> dict[str, Any]:
+    base = dict(heuristica or {})
+    html_n = safe_str(html_produto)
+
+    if not base.get("url_produto"):
+        base["url_produto"] = url_produto
+
+    if not safe_str(base.get("descricao")) and not safe_str(base.get("titulo")):
+        m_title = re.search(r"<title[^>]*>(.*?)</title>", html_n, flags=re.IGNORECASE | re.DOTALL)
+        if m_title:
+            titulo = re.sub(r"\s+", " ", safe_str(m_title.group(1))).strip()
+            if titulo:
+                base["titulo"] = titulo
+
+    if not safe_str(base.get("preco")):
+        m_preco = re.search(r"R\$\s*[\d\.\,]+", html_n, flags=re.IGNORECASE)
+        if m_preco:
+            base["preco"] = safe_str(m_preco.group(0))
+
+    if not safe_str(base.get("gtin")):
+        m_gtin = re.search(r"\b(\d{8}|\d{12,14})\b", html_n)
+        if m_gtin:
+            base["gtin"] = safe_str(m_gtin.group(1))
+
+    if not safe_str(base.get("url_imagens")):
+        imgs = re.findall(r"""<img[^>]+src=["']([^"']+)["']""", html_n, flags=re.IGNORECASE)
+        imgs_ok: list[str] = []
+        vistos: set[str] = set()
+
+        for img in imgs:
+            img_url = _normalizar_url_candidata(url_produto, img)
+            img_l = img_url.lower()
+            if not img_url:
+                continue
+            if any(x in img_l for x in ["sprite", "icon", "logo", "banner", "placeholder"]):
+                continue
+            if img_url in vistos:
+                continue
+            vistos.add(img_url)
+            imgs_ok.append(img_url)
+            if len(imgs_ok) >= 8:
+                break
+
+        if imgs_ok:
+            base["url_imagens"] = "|".join(imgs_ok)
+
+    return base
+
+
 # ============================================================
 # AUTENTICAÇÃO / CONTEXTO
 # ============================================================
@@ -701,23 +887,23 @@ def _auth_context_tem_dados_http(auth_context: dict[str, Any] | None) -> bool:
     if not isinstance(auth_context, dict):
         return False
 
+    auth_http_ok = bool(auth_context.get("auth_http_ok", False))
     cookies = auth_context.get("cookies")
-    headers = auth_context.get("headers")
+    cookies_count = int(auth_context.get("cookies_count", 0) or 0)
 
     tem_cookies = isinstance(cookies, list) and len(cookies) > 0
-    tem_headers = isinstance(headers, dict) and len(headers) > 0
 
-    return tem_cookies or tem_headers
+    return bool(auth_http_ok and (tem_cookies or cookies_count > 0))
 
 
 def _auth_context_valido(auth_context: dict[str, Any] | None) -> bool:
     if not isinstance(auth_context, dict):
         return False
 
-    if bool(auth_context.get("session_ready", False)) and _auth_context_tem_dados_http(auth_context):
-        return True
+    if not _auth_context_tem_dados_http(auth_context):
+        return False
 
-    if bool(auth_context.get("manual_mode", False)) and _auth_context_tem_dados_http(auth_context):
+    if bool(auth_context.get("session_ready", False)):
         return True
 
     return False
@@ -738,18 +924,7 @@ def _normalizar_headers_auth(headers: dict[str, Any] | None) -> dict[str, str]:
 
 def _criar_sessao_autenticada(auth_context: dict[str, Any] | None) -> requests.Session:
     session = requests.Session()
-
-    session.headers.update(
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-        }
-    )
+    session.headers.update(DEFAULT_HEADERS)
 
     if not _auth_context_valido(auth_context):
         return session
@@ -794,20 +969,25 @@ def _url_produtos_contexto(base_url: str, auth_context: dict[str, Any] | None) -
 
 
 def _fetch_html_publico(url_produto: str) -> str:
-    if fetch_html_retry is None:
-        return ""
+    if fetch_html_retry is not None:
+        ultima_exc: Exception | None = None
+        for tentativas in (2, 3):
+            try:
+                html = safe_str(fetch_html_retry(url_produto, tentativas=tentativas))
+                if html:
+                    return html
+            except Exception as exc:
+                ultima_exc = exc
 
-    ultima_exc: Exception | None = None
-    for tentativas in (2, 3):
-        try:
-            html = safe_str(fetch_html_retry(url_produto, tentativas=tentativas))
-            if html:
-                return html
-        except Exception as exc:
-            ultima_exc = exc
+        if ultima_exc is not None:
+            _log_debug(f"fetch_html_retry falhou | url={url_produto} | erro={ultima_exc}", nivel="ERRO")
 
-    if ultima_exc is not None:
-        raise ultima_exc
+    try:
+        resp = requests.get(url_produto, headers=DEFAULT_HEADERS, timeout=30, allow_redirects=True)
+        if resp.ok:
+            return safe_str(resp.text)
+    except Exception as exc:
+        _log_debug(f"requests público falhou | url={url_produto} | erro={exc}", nivel="ERRO")
 
     return ""
 
@@ -882,6 +1062,16 @@ def _detectar_bloqueio_login(
             "auth_context": auth_context or {},
         }
 
+    # blindagem: se a página base parece listagem pública com links de produto, não marcar como login_required
+    if _html_base_parece_listagem(html, base_url=base_url):
+        return {
+            "status": "publico",
+            "exige_login": False,
+            "captcha_detectado": False,
+            "mensagem": "Listagem pública detectada. Busca seguirá por HTTP.",
+            "auth_context": auth_context or {},
+        }
+
     analise = detectar_e_salvar_status_login(
         base_url=base_url,
         html=html,
@@ -929,7 +1119,7 @@ def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = 
 def _executar_fetch_html(url_produto: str, auth_context: dict[str, Any] | None = None) -> str:
     """
     Estratégia blindada:
-    1) tenta sessão HTTP autenticada somente se houver cookies/headers reais
+    1) tenta sessão HTTP autenticada somente se houver cookies reais
     2) cai para fetch público
     3) não depende de navegador visível / playwright
     """
@@ -955,14 +1145,15 @@ def _executar_fetch_html(url_produto: str, auth_context: dict[str, Any] | None =
 
 def _executar_heuristica(url_produto: str, html_produto: str) -> dict[str, Any]:
     if extrair_detalhes_heuristicos is None:
-        return {}
+        return _enriquecer_heuristica_com_html(url_produto, html_produto, {})
 
     try:
         dados = extrair_detalhes_heuristicos(url_produto, html_produto)
-        return dados if isinstance(dados, dict) else {}
+        dados = dados if isinstance(dados, dict) else {}
+        return _enriquecer_heuristica_com_html(url_produto, html_produto, dados)
     except Exception as exc:
         _log_debug(f"Heurística falhou | url={url_produto} | erro={exc}", nivel="ERRO")
-        return {}
+        return _enriquecer_heuristica_com_html(url_produto, html_produto, {})
 
 
 def _executar_gpt(url_produto: str, html_produto: str, heuristica: dict[str, Any]) -> dict[str, Any]:
@@ -1025,20 +1216,12 @@ def _deve_bloquear_produto_por_login(
     heuristica: dict[str, Any],
     auth_context: dict[str, Any] | None = None,
 ) -> bool:
-    manual_mode = isinstance(auth_context, dict) and bool(auth_context.get("manual_mode", False))
-    if manual_mode:
-        return False
-
+    # se existe auth HTTP de verdade, não bloquear
     if _auth_context_valido(auth_context):
         return False
 
-    try:
-        analise_bloqueio = detectar_login_captcha(html_produto, url_atual=url_produto)
-    except Exception:
-        return False
-
-    status = safe_str(analise_bloqueio.get("status"))
-    if status not in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+    # se a página tem sinais de produto ou heurística mínima, não bloquear
+    if _texto_tem_sinais_de_produto(html_produto):
         return False
 
     if heuristica:
@@ -1053,6 +1236,15 @@ def _deve_bloquear_produto_por_login(
         )
         if score_heuristica > 0:
             return False
+
+    try:
+        analise_bloqueio = detectar_login_captcha(html_produto, url_atual=url_produto)
+    except Exception:
+        return False
+
+    status = safe_str(analise_bloqueio.get("status"))
+    if status not in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+        return False
 
     return _parece_html_login_puro(html_produto, url_atual=url_produto)
 
@@ -1133,6 +1325,24 @@ def _processar_um_produto(
     }
 
 
+def _descoberta_http_direta(
+    base_url: str,
+    limite: int,
+    auth_context: dict[str, Any] | None = None,
+) -> list[str]:
+    html_base = _executar_fetch_html(base_url, auth_context=auth_context)
+    if not html_base:
+        return []
+
+    links = _extrair_links_produto_html(base_url, html_base, limite=min(max(limite, 20), 1500))
+    if links:
+        _log_debug(
+            f"Descoberta HTTP direta encontrou {len(links)} links de produto | url={base_url}",
+            nivel="INFO",
+        )
+    return links
+
+
 def _descobrir_produtos_com_contexto(
     base_url: str,
     termo: str,
@@ -1157,37 +1367,49 @@ def _descobrir_produtos_com_contexto(
             continue
         vistos_urls.add(chave)
 
-        if descobrir_produtos_no_dominio is None:
-            if alvo:
-                return [alvo]
-            continue
+        if descobrir_produtos_no_dominio is not None:
+            try:
+                produtos = descobrir_produtos_no_dominio(
+                    base_url=alvo,
+                    termo=termo,
+                    max_paginas=400,
+                    max_produtos=limite,
+                    max_segundos=900,
+                    auth_context=ctx,
+                )
+                if isinstance(produtos, list) and produtos:
+                    for url in produtos:
+                        url_n = safe_str(url)
+                        if not url_n:
+                            continue
+                        if not _url_parece_produto(url_n):
+                            continue
+                        if url_n not in saida:
+                            saida.append(url_n)
+                    if saida:
+                        return saida
+            except Exception as exc:
+                modo = "autenticado_http" if ctx else "publico"
+                _log_debug(
+                    f"Falha ao descobrir produtos | modo={modo} | url={alvo} | erro={exc}",
+                    nivel="ERRO",
+                )
 
+        # fallback direto no HTML da listagem/categoria
         try:
-            produtos = descobrir_produtos_no_dominio(
-                base_url=alvo,
-                termo=termo,
-                max_paginas=400,
-                max_produtos=limite,
-                max_segundos=900,
-                auth_context=ctx,
-            )
-            if isinstance(produtos, list) and produtos:
-                for url in produtos:
-                    url_n = safe_str(url)
-                    if url_n and url_n not in saida:
-                        saida.append(url_n)
-                if saida:
-                    return saida
+            links_http = _descoberta_http_direta(alvo, limite=limite, auth_context=ctx)
+            for url in links_http:
+                if url not in saida:
+                    saida.append(url)
+            if saida:
+                return saida
         except Exception as exc:
-            modo = "autenticado_http" if ctx else "publico"
             _log_debug(
-                f"Falha ao descobrir produtos | modo={modo} | url={alvo} | erro={exc}",
+                f"Falha na descoberta HTTP direta | url={alvo} | erro={exc}",
                 nivel="ERRO",
             )
 
-    if alvo_descoberta:
-        return [alvo_descoberta]
-
+    # nunca retornar a categoria/base_url como se fosse produto
     return []
 
 
@@ -1228,7 +1450,7 @@ def buscar_produtos_site_com_gpt(
     manual_mode = isinstance(auth_context, dict) and bool(auth_context.get("manual_mode", False))
     auth_http_ok = _auth_context_valido(auth_context)
 
-    auth_mode = "manual_http" if manual_mode and auth_http_ok else ("autenticado_http" if auth_http_ok else "publico")
+    auth_mode = "autenticado_http" if auth_http_ok else "publico"
     _log_debug(
         f"Iniciando busca por site | url={base_url} | termo={termo or '-'} | limite={limite} | modo={auth_mode}",
         nivel="INFO",
@@ -1246,8 +1468,6 @@ def buscar_produtos_site_com_gpt(
     login_status = _detectar_bloqueio_login(base_url=base_url, auth_context=auth_context)
     login_status_normalizado = safe_str(login_status.get("status"))
 
-    # Não interrompe cedo mais.
-    # Primeiro tenta descobrir e processar os produtos em modo HTTP público/autenticado.
     if login_status_normalizado in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
         mensagem_info = safe_str(login_status.get("mensagem"))
         if not mensagem_info:
@@ -1275,11 +1495,7 @@ def buscar_produtos_site_com_gpt(
             base_url=base_url,
             fornecedor=fornecedor,
             status=STATUS_SESSAO_PRONTA,
-            mensagem=(
-                "Sessão HTTP autenticada pronta para uso."
-                if not manual_mode
-                else "Contexto manual convertido em sessão HTTP utilizável."
-            ),
+            mensagem="Sessão HTTP autenticada pronta para uso.",
             exige_login=False,
             captcha_detectado=False,
         )
@@ -1309,7 +1525,7 @@ def buscar_produtos_site_com_gpt(
                 status_box.warning(mensagem)
         else:
             if status_box is not None:
-                status_box.warning("Nenhum produto encontrado.")
+                status_box.warning("Nenhum produto encontrado na descoberta inicial do domínio.")
             _log_debug("Nenhum produto encontrado na descoberta inicial do domínio.", nivel="ERRO")
 
         if diagnostico:
@@ -1326,6 +1542,8 @@ def buscar_produtos_site_com_gpt(
     for url in produtos:
         url_n = safe_str(url)
         if not url_n:
+            continue
+        if not _url_parece_produto(url_n):
             continue
         if url_n in vistos_descoberta:
             continue
