@@ -73,11 +73,14 @@ def _normalizar_df_visual(df: pd.DataFrame) -> pd.DataFrame:
     return base
 
 
-def _obter_df_final_preferencial() -> pd.DataFrame:
-    for chave in ["df_final", "df_saida", "df_mapeado", "df_precificado"]:
-        df = st.session_state.get(chave)
-        if safe_df_estrutura(df):
-            return df.copy()
+def _obter_df_final_exclusivo() -> pd.DataFrame:
+    """
+    Preview final deve trabalhar APENAS com df_final.
+    Nada de fallback para df_saida / df_mapeado / df_precificado.
+    """
+    df = st.session_state.get("df_final")
+    if safe_df_estrutura(df):
+        return df.copy()
     return pd.DataFrame()
 
 
@@ -93,6 +96,7 @@ def _coluna_preco(df: pd.DataFrame) -> str:
         "Preço de venda",
         "Preço unitário (OBRIGATÓRIO)",
         "Preço calculado",
+        "Preço",
         "preco",
         "preço",
     ]:
@@ -171,9 +175,7 @@ def _oauth_liberado(validacao_ok: bool) -> bool:
     return bool(
         validacao_ok
         and st.session_state.get("preview_download_realizado", False)
-        and (
-            not _origem_site_ativa() or _varredura_site_concluida()
-        )
+        and (not _origem_site_ativa() or _varredura_site_concluida())
     )
 
 
@@ -205,11 +207,37 @@ def _inicializar_estado_preview() -> None:
         "bling_envio_resultado": None,
         "preview_download_realizado": False,
         "preview_validacao_ok": False,
+        "preview_hash_df_final": "",
     }
 
     for chave, valor in defaults.items():
         if chave not in st.session_state:
             st.session_state[chave] = valor
+
+
+def _hash_df_visual(df: pd.DataFrame) -> str:
+    try:
+        if not isinstance(df, pd.DataFrame):
+            return ""
+
+        partes = ["|".join([str(c) for c in df.columns.tolist()])]
+        amostra = df.head(30).fillna("").astype(str)
+        for _, row in amostra.iterrows():
+            partes.append("|".join(row.tolist()))
+        return str(hash("\n".join(partes)))
+    except Exception:
+        return ""
+
+
+def _sincronizar_estado_quando_df_mudar(df_final: pd.DataFrame) -> None:
+    hash_atual = _hash_df_visual(df_final)
+    hash_anterior = str(st.session_state.get("preview_hash_df_final", "") or "")
+
+    if hash_atual != hash_anterior:
+        st.session_state["preview_download_realizado"] = False
+        st.session_state["bling_envio_resultado"] = None
+        st.session_state["preview_hash_df_final"] = hash_atual
+        log_debug("df_final alterado no preview; confirmação de download e resultado de envio foram resetados.", nivel="INFO")
 
 
 # ============================================================
@@ -241,8 +269,8 @@ def _obter_status_conexao_bling() -> tuple[bool, str]:
 def _render_conexao_bling(liberado: bool) -> None:
     if not liberado:
         st.warning(
-            "A conexão com o Bling só é liberada depois que a varredura/conversão estiver pronta, "
-            "a validação estiver OK e o download final for confirmado."
+            "A conexão com o Bling só é liberada depois que o resultado final estiver validado, "
+            "o download for confirmado e, quando for origem por site, a varredura estiver concluída."
         )
         return
 
@@ -257,7 +285,7 @@ def _render_conexao_bling(liberado: bool) -> None:
             log_debug(f"Falha ao renderizar conexão com o Bling: {exc}", nivel="ERRO")
             return
 
-    if st.button("🔗 Conectar com Bling", use_container_width=True, key="btn_conectar_bling_preview"):
+    if st.button("🔗 Conectar com Bling", width="stretch", key="btn_conectar_bling_preview"):
         st.session_state["bling_conectado"] = True
         st.session_state["bling_status_texto"] = "Conectado em modo local"
         st.warning("Conexão simulada. O backend do OAuth ainda não está plugado nesta execução.")
@@ -286,7 +314,7 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
         try:
             if hasattr(bling_sync, "sincronizar_produtos_bling"):
                 resultado = bling_sync.sincronizar_produtos_bling(
-                    df_final=df_final,
+                    df_final=df_final.copy(),
                     tipo_operacao=tipo_operacao,
                     deposito_nome=deposito_nome,
                     strategy=estrategia,
@@ -306,12 +334,11 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
                         f"Envio ao Bling retornou alertas/erros: {json.dumps(resultado, ensure_ascii=False)}",
                         nivel="ERRO",
                     )
-
                 return
 
             if hasattr(bling_sync, "enviar_produtos"):
                 resultado = bling_sync.enviar_produtos(
-                    df_final=df_final,
+                    df_final=df_final.copy(),
                     tipo_operacao=tipo_operacao,
                     deposito_nome=deposito_nome,
                     strategy=estrategia,
@@ -374,7 +401,7 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
         st.metric("Validação", "OK" if valido else "Ajustes pendentes")
 
     if erros:
-        st.warning("Existem pontos para revisão antes do download ou envio.")
+        st.error("Existem pendências obrigatórias antes do download e do envio.")
         for erro in erros:
             st.write(f"- {erro}")
         log_debug(
@@ -392,13 +419,13 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
     st.markdown("### 2. Preview final")
 
     if df_final.empty:
-        st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
+        st.dataframe(pd.DataFrame(columns=df_final.columns), width="stretch")
         return
 
-    st.dataframe(df_final.head(100), use_container_width=True)
+    st.dataframe(df_final.head(100), width="stretch")
 
     with st.expander("Ver preview ampliado", expanded=False):
-        st.dataframe(df_final.head(300), use_container_width=True)
+        st.dataframe(df_final.head(300), width="stretch")
 
 
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
@@ -411,7 +438,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
         data=csv_bytes,
         file_name="bling_saida_final.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
         disabled=not validacao_ok,
         key="btn_download_csv_final_preview",
     )
@@ -419,7 +446,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     if validacao_ok:
         if st.button(
             "✅ Já baixei / quero seguir para conexão e envio",
-            use_container_width=True,
+            width="stretch",
             key="btn_confirmar_download_preview",
         ):
             st.session_state["preview_download_realizado"] = True
@@ -567,18 +594,18 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
 
     if st.button(
         "🚀 Enviar produtos ao Bling",
-        use_container_width=True,
+        width="stretch",
         key="btn_enviar_produtos_bling",
         disabled=not liberar_envio,
     ):
         _enviar_para_bling(
-            df_final=df_final,
+            df_final=df_final.copy(),
             tipo_operacao=tipo_operacao,
             deposito_nome=deposito_nome,
         )
 
     if not conectado:
-        st.caption("Depois da varredura e do download confirmados, faça a conexão OAuth do Bling para liberar o envio.")
+        st.caption("Depois da validação e da confirmação do download, faça a conexão OAuth do Bling para liberar o envio.")
     elif not liberar_envio:
         st.caption("Ainda existem pré-requisitos pendentes antes do envio.")
 
@@ -605,11 +632,11 @@ def render_preview_final() -> None:
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
     deposito_nome = normalizar_texto(st.session_state.get("deposito_nome", ""))
 
-    df_final = _obter_df_final_preferencial()
+    df_final = _obter_df_final_exclusivo()
 
     if not safe_df_estrutura(df_final):
         st.warning("O resultado final ainda não foi gerado.")
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_preview_sem_df"):
+        if st.button("⬅️ Voltar para mapeamento", width="stretch", key="btn_voltar_preview_sem_df"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             voltar_etapa_anterior()
         return
@@ -622,6 +649,7 @@ def render_preview_final() -> None:
     )
 
     st.session_state["df_final"] = df_final
+    _sincronizar_estado_quando_df_mudar(df_final)
 
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
     _render_preview_dataframe(df_final)
@@ -633,12 +661,11 @@ def render_preview_final() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_preview"):
+        if st.button("⬅️ Voltar para mapeamento", width="stretch", key="btn_voltar_preview"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             voltar_etapa_anterior()
 
     with col2:
-        if st.button("↺ Reabrir origem", use_container_width=True, key="btn_ir_origem_preview"):
+        if st.button("↺ Reabrir origem", width="stretch", key="btn_ir_origem_preview"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             ir_para_etapa("origem")
-            
