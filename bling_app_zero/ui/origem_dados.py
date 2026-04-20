@@ -404,6 +404,9 @@ def _sync_auth_state_com_session_manager(url_site: str) -> dict:
         estado_final["session_ready"] = bool(
             status_login.get("session_ready", estado_final.get("session_ready", False))
         )
+        estado_final["manual_mode"] = bool(
+            status_login.get("manual_mode", estado_final.get("manual_mode", False))
+        )
 
     if isinstance(contexto_salvo, dict) and contexto_salvo:
         estado_final["auth_context"] = contexto_salvo
@@ -413,6 +416,9 @@ def _sync_auth_state_com_session_manager(url_site: str) -> dict:
         estado_final["storage_state_path"] = str(contexto_salvo.get("storage_state_path", "") or "").strip()
         estado_final["session_ready"] = bool(
             contexto_salvo.get("session_ready", estado_final.get("session_ready", False))
+        )
+        estado_final["manual_mode"] = bool(
+            contexto_salvo.get("manual_mode", estado_final.get("manual_mode", False))
         )
         estado_final["status"] = str(
             contexto_salvo.get("status", estado_final.get("status", "inativo"))
@@ -489,7 +495,7 @@ def _contexto_login_manual_confirmado(url_site: str) -> dict:
     estado = _sync_auth_state_com_session_manager(url_site)
 
     contexto_salvo = estado.get("auth_context", {}) if isinstance(estado, dict) else {}
-    if isinstance(contexto_salvo, dict) and contexto_salvo.get("session_ready"):
+    if isinstance(contexto_salvo, dict) and (contexto_salvo.get("session_ready") or contexto_salvo.get("manual_mode")):
         return contexto_salvo
 
     products_url = str(estado.get("products_url", "") or "").strip() or url_site
@@ -512,7 +518,7 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
     estado_auth = _sync_auth_state_com_session_manager(url_site)
     auth_context = {}
 
-    if bool(estado_auth.get("session_ready", False)):
+    if bool(estado_auth.get("session_ready", False)) or bool(estado_auth.get("manual_mode", False)):
         auth_context = estado_auth.get("auth_context", {}) or {}
     else:
         auth_context = get_auth_headers_and_cookies() or {}
@@ -559,9 +565,10 @@ def _executar_busca_site(url_site: str) -> None:
     estado_auth = _sync_auth_state_com_session_manager(url_site)
     requires_login = bool(estado_auth.get("requires_login", False))
     session_ready = bool(estado_auth.get("session_ready", False))
+    manual_mode = bool(estado_auth.get("manual_mode", False))
     login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
 
-    if requires_login and not session_ready and not login_manual_confirmado:
+    if requires_login and not session_ready and not manual_mode and not login_manual_confirmado:
         st.error("Este fornecedor exige login. Faça o login assistido antes de iniciar a leitura do catálogo.")
         return
 
@@ -616,6 +623,7 @@ def _render_status_auth_cards(auth_state: dict) -> None:
     auth_mode = str(auth_state.get("auth_mode", "public") or "public").strip()
     requires_login = bool(auth_state.get("requires_login", False))
     session_ready = bool(auth_state.get("session_ready", False))
+    manual_mode = bool(auth_state.get("manual_mode", False))
     login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -626,10 +634,8 @@ def _render_status_auth_cards(auth_state: dict) -> None:
     with c3:
         st.metric("Exige login", "Sim" if requires_login else "Não")
     with c4:
-        st.metric(
-            "Sessão pronta",
-            "Sim" if session_ready else ("Manual" if login_manual_confirmado else "Não"),
-        )
+        status_sessao = "Sim" if session_ready else ("Manual" if (manual_mode or login_manual_confirmado) else "Não")
+        st.metric("Sessão pronta", status_sessao)
 
     st.caption(f"Status atual: {status}")
 
@@ -702,42 +708,23 @@ def _render_bloco_login_assistido(url_site: str, login_url: str, products_url: s
             )
 
             if bool(resultado.get("ok", False)):
-                if bool(resultado.get("manual_mode", False)):
-                    st.session_state["site_login_manual_confirmado"] = True
-                    mensagem = str(
-                        resultado.get(
-                            "mensagem",
-                            "Login manual confirmado. Agora tente ler o catálogo.",
-                        )
-                    )
-                    salvar_status_login_em_sessao(
-                        base_url=url_site,
-                        fornecedor=_fornecedor_slug(url_site),
-                        status=STATUS_SESSAO_PRONTA,
-                        mensagem=mensagem,
-                        exige_login=False,
-                        captcha_detectado=False,
-                    )
-                    st.success(mensagem)
-                    log_debug(
-                        f"Login assistido confirmado em modo manual | fornecedor={_fornecedor_slug(url_site)}",
-                        nivel="INFO",
-                    )
-                else:
-                    st.session_state["site_login_manual_confirmado"] = False
-                    salvar_status_login_em_sessao(
-                        base_url=url_site,
-                        fornecedor=_fornecedor_slug(url_site),
-                        status=STATUS_SESSAO_PRONTA,
-                        mensagem=str(resultado.get("mensagem", "Sessão autenticada salva com sucesso.")),
-                        exige_login=False,
-                        captcha_detectado=False,
-                    )
-                    st.success(str(resultado.get("mensagem", "Sessão autenticada salva com sucesso.")))
-                    log_debug(
-                        f"Login assistido concluído com sucesso | fornecedor={_fornecedor_slug(url_site)}",
-                        nivel="INFO",
-                    )
+                st.session_state["site_login_manual_confirmado"] = bool(resultado.get("manual_mode", False))
+
+                mensagem = str(resultado.get("mensagem", "Sessão autenticada salva com sucesso."))
+                salvar_status_login_em_sessao(
+                    base_url=url_site,
+                    fornecedor=_fornecedor_slug(url_site),
+                    status=STATUS_SESSAO_PRONTA,
+                    mensagem=mensagem,
+                    exige_login=False,
+                    captcha_detectado=False,
+                )
+                st.success(mensagem)
+
+                log_debug(
+                    f"Login assistido concluído | fornecedor={_fornecedor_slug(url_site)} | manual_mode={bool(resultado.get('manual_mode', False))}",
+                    nivel="INFO",
+                )
             else:
                 status = str(resultado.get("status", "erro") or "erro").strip()
                 mensagem = str(resultado.get("mensagem", "Falha ao executar login assistido.") or "").strip()
@@ -763,7 +750,8 @@ def _render_bloco_login_assistido(url_site: str, login_url: str, products_url: s
             _sync_auth_state_com_session_manager(url_site)
             st.rerun()
 
-    if bool(st.session_state.get("site_login_manual_confirmado", False)):
+    estado = _sync_auth_state_com_session_manager(url_site)
+    if bool(estado.get("manual_mode", False)) or bool(st.session_state.get("site_login_manual_confirmado", False)):
         st.success("Login manual já confirmado. Você já pode tentar ler o catálogo do fornecedor.")
 
 
@@ -873,16 +861,16 @@ def _render_bloco_login_fornecedor(url_site: str) -> None:
 
     auth_state = _sync_auth_state_com_session_manager(url_site)
     session_ready = bool(auth_state.get("session_ready", False))
+    manual_mode = bool(auth_state.get("manual_mode", False))
     requires_login = bool(auth_state.get("requires_login", False))
-    login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
 
-    if requires_login and not session_ready and not login_manual_confirmado:
+    if requires_login and not session_ready and not manual_mode:
         st.warning("Fornecedor exige autenticação e a sessão ainda não está pronta.")
 
     if session_ready:
         st.success("Sessão autenticada pronta para leitura do catálogo.")
 
-    if login_manual_confirmado and not session_ready:
+    if manual_mode:
         st.info("Login manual confirmado. Agora tente a leitura do catálogo.")
 
 
@@ -890,13 +878,14 @@ def _render_banner_status_login_site(url_site: str) -> None:
     auth_state = _sync_auth_state_com_session_manager(url_site)
     status = str(auth_state.get("status", "") or "").strip()
     session_ready = bool(auth_state.get("session_ready", False))
+    manual_mode = bool(auth_state.get("manual_mode", False))
     login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
 
     if session_ready:
         st.success("Sessão autenticada detectada e pronta para uso no crawler.")
         return
 
-    if login_manual_confirmado:
+    if manual_mode or login_manual_confirmado:
         st.success("Login manual confirmado. Você já pode tentar a leitura do catálogo.")
         return
 
@@ -937,7 +926,7 @@ def _render_origem_site() -> None:
     auth_state = _sync_auth_state_com_session_manager(url_site)
     requires_login = bool(auth_state.get("requires_login", False) or profile.login_required)
     session_ready = bool(auth_state.get("session_ready", False))
-    login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
+    manual_mode = bool(auth_state.get("manual_mode", False))
     status_auth = str(auth_state.get("status", "") or "").strip()
 
     if requires_login or status_auth in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
@@ -949,31 +938,32 @@ def _render_origem_site() -> None:
 
     auth_state = _sync_auth_state_com_session_manager(url_site)
     session_ready = bool(auth_state.get("session_ready", False))
+    manual_mode = bool(auth_state.get("manual_mode", False))
     effective_products_url = str(auth_state.get("products_url", "") or "").strip() or url_site
-    effective_url = effective_products_url if session_ready else url_site
+    effective_url = effective_products_url if (session_ready or manual_mode) else url_site
 
-    if requires_login and not session_ready and not login_manual_confirmado:
+    if requires_login and not session_ready and not manual_mode:
         st.info(
             "Este fornecedor precisa de sessão autenticada. "
             "Depois que a sessão estiver pronta, a leitura será feita pela URL da área de produtos."
         )
 
-    if login_manual_confirmado and not session_ready:
+    if manual_mode:
         st.info(
-            "Você já confirmou o login manual. Agora toque em ler catálogo para tentar a varredura."
+            "Login manual confirmado. Agora toque em ler catálogo para tentar a varredura."
         )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        label = "✨ Ler catálogo autenticado com GPT" if (requires_login or session_ready or login_manual_confirmado) else "✨ Varrer catálogo com GPT"
+        label = "✨ Ler catálogo autenticado com GPT" if (requires_login or session_ready or manual_mode) else "✨ Varrer catálogo com GPT"
         if st.button(label, use_container_width=True, key="btn_varrer_site_gpt"):
             _executar_busca_site(effective_url)
             st.rerun()
 
     with col2:
         if st.button("🟢 Ativar monitoramento", use_container_width=True, key="btn_ativar_monitoramento_site"):
-            if requires_login and not session_ready and not login_manual_confirmado:
+            if requires_login and not session_ready and not manual_mode:
                 st.error("Antes de ativar o monitoramento, finalize o login assistido.")
             else:
                 st.session_state["site_auto_loop_ativo"] = True
@@ -1022,7 +1012,7 @@ def _render_origem_site() -> None:
 
             with b2:
                 if st.button("🟢 Ativar loop", use_container_width=True, key="btn_site_auto_ativar_origem"):
-                    if requires_login and not session_ready and not login_manual_confirmado:
+                    if requires_login and not session_ready and not manual_mode:
                         st.error("Valide a sessão autenticada antes de ativar o loop.")
                     else:
                         st.session_state["site_auto_loop_ativo"] = True
