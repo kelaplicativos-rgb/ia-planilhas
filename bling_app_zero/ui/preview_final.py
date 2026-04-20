@@ -41,8 +41,18 @@ def _garantir_etapa_preview_ativa() -> None:
 
 def _safe_import_bling_auth():
     try:
-        from bling_app_zero.core import bling_auth  # type: ignore
-        return bling_auth
+        from bling_app_zero.core.bling_auth import (
+            obter_resumo_conexao,
+            render_conectar_bling,
+            tem_token_valido,
+            usuario_conectado_bling,
+        )
+        return {
+            "obter_resumo_conexao": obter_resumo_conexao,
+            "render_conectar_bling": render_conectar_bling,
+            "tem_token_valido": tem_token_valido,
+            "usuario_conectado_bling": usuario_conectado_bling,
+        }
     except Exception:
         return None
 
@@ -74,42 +84,68 @@ def _normalizar_df_visual(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _obter_df_final_exclusivo() -> pd.DataFrame:
-    """
-    Preview final deve trabalhar APENAS com df_final.
-    Nada de fallback para df_saida / df_mapeado / df_precificado.
-    """
     df = st.session_state.get("df_final")
     if safe_df_estrutura(df):
         return df.copy()
     return pd.DataFrame()
 
 
-def _coluna_codigo(df: pd.DataFrame) -> str:
-    for nome in ["Código", "codigo", "Código do produto", "SKU", "Sku", "sku"]:
-        if nome in df.columns:
-            return nome
+def _coluna_por_match_ou_parcial(df: pd.DataFrame, exatos: list[str], parciais: list[str]) -> str:
+    if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
+        return ""
+
+    mapa = {normalizar_texto(c): str(c) for c in df.columns}
+
+    for nome in exatos:
+        achado = mapa.get(normalizar_texto(nome))
+        if achado:
+            return achado
+
+    for col in df.columns:
+        nome_col = normalizar_texto(col)
+        if any(parcial in nome_col for parcial in parciais):
+            return str(col)
+
     return ""
+
+
+def _coluna_codigo(df: pd.DataFrame) -> str:
+    return _coluna_por_match_ou_parcial(
+        df,
+        ["Código", "codigo", "Código do produto", "SKU", "Sku", "sku"],
+        ["codigo", "código", "cod", "sku", "referencia", "referência", "id produto"],
+    )
+
+
+def _coluna_descricao(df: pd.DataFrame) -> str:
+    return _coluna_por_match_ou_parcial(
+        df,
+        ["Descrição", "descricao", "Descrição do produto", "Nome", "nome", "Título", "titulo"],
+        ["descricao", "descrição", "nome", "titulo", "título", "produto"],
+    )
 
 
 def _coluna_preco(df: pd.DataFrame) -> str:
-    for nome in [
-        "Preço de venda",
-        "Preço unitário (OBRIGATÓRIO)",
-        "Preço calculado",
-        "Preço",
-        "preco",
-        "preço",
-    ]:
-        if nome in df.columns:
-            return nome
-    return ""
+    return _coluna_por_match_ou_parcial(
+        df,
+        [
+            "Preço de venda",
+            "Preço unitário (OBRIGATÓRIO)",
+            "Preço calculado",
+            "Preço",
+            "preco",
+            "preço",
+        ],
+        ["preco", "preço", "valor", "unitario", "unitário", "venda"],
+    )
 
 
 def _coluna_gtin(df: pd.DataFrame) -> str:
-    for nome in ["GTIN/EAN", "GTIN", "EAN", "gtin", "ean"]:
-        if nome in df.columns:
-            return nome
-    return ""
+    return _coluna_por_match_ou_parcial(
+        df,
+        ["GTIN/EAN", "GTIN", "EAN", "gtin", "ean"],
+        ["gtin", "ean", "codigo de barras", "código de barras"],
+    )
 
 
 def _contar_preenchidos(df: pd.DataFrame, coluna: str) -> int:
@@ -128,6 +164,7 @@ def _contar_preenchidos(df: pd.DataFrame, coluna: str) -> int:
 
 def _montar_resumo(df: pd.DataFrame) -> dict[str, Any]:
     codigo_col = _coluna_codigo(df)
+    descricao_col = _coluna_descricao(df)
     preco_col = _coluna_preco(df)
     gtin_col = _coluna_gtin(df)
 
@@ -135,9 +172,11 @@ def _montar_resumo(df: pd.DataFrame) -> dict[str, Any]:
         "linhas": int(len(df.index)) if isinstance(df, pd.DataFrame) else 0,
         "colunas": int(len(df.columns)) if isinstance(df, pd.DataFrame) else 0,
         "codigo_col": codigo_col,
+        "descricao_col": descricao_col,
         "preco_col": preco_col,
         "gtin_col": gtin_col,
         "codigo_ok": _contar_preenchidos(df, codigo_col),
+        "descricao_ok": _contar_preenchidos(df, descricao_col),
         "preco_ok": _contar_preenchidos(df, preco_col),
         "gtin_ok": _contar_preenchidos(df, gtin_col),
     }
@@ -249,14 +288,17 @@ def _obter_status_conexao_bling() -> tuple[bool, str]:
 
     if bling_auth is not None:
         try:
-            if hasattr(bling_auth, "obter_resumo_conexao"):
-                resumo = bling_auth.obter_resumo_conexao()
+            obter_resumo_conexao = bling_auth.get("obter_resumo_conexao")
+            if callable(obter_resumo_conexao):
+                resumo = obter_resumo_conexao()
                 conectado = bool(resumo.get("conectado", False))
                 status = str(resumo.get("status", "Desconectado") or "Desconectado")
                 return conectado, status
 
-            if hasattr(bling_auth, "usuario_conectado_bling") and hasattr(bling_auth, "tem_token_valido"):
-                conectado = bool(bling_auth.usuario_conectado_bling()) and bool(bling_auth.tem_token_valido())
+            usuario_conectado_bling = bling_auth.get("usuario_conectado_bling")
+            tem_token_valido = bling_auth.get("tem_token_valido")
+            if callable(usuario_conectado_bling) and callable(tem_token_valido):
+                conectado = bool(usuario_conectado_bling()) and bool(tem_token_valido())
                 return conectado, "Conectado" if conectado else "Desconectado"
         except Exception as exc:
             log_debug(f"Falha ao obter status da conexão Bling: {exc}", nivel="ERRO")
@@ -276,16 +318,18 @@ def _render_conexao_bling(liberado: bool) -> None:
 
     bling_auth = _safe_import_bling_auth()
 
-    if bling_auth is not None and hasattr(bling_auth, "render_conectar_bling"):
-        try:
-            bling_auth.render_conectar_bling()
-            return
-        except Exception as exc:
-            st.error(f"Falha ao renderizar conexão com o Bling: {exc}")
-            log_debug(f"Falha ao renderizar conexão com o Bling: {exc}", nivel="ERRO")
-            return
+    if bling_auth is not None:
+        render_conectar_bling = bling_auth.get("render_conectar_bling")
+        if callable(render_conectar_bling):
+            try:
+                render_conectar_bling()
+                return
+            except Exception as exc:
+                st.error(f"Falha ao renderizar conexão com o Bling: {exc}")
+                log_debug(f"Falha ao renderizar conexão com o Bling: {exc}", nivel="ERRO")
+                return
 
-    if st.button("🔗 Conectar com Bling", width="stretch", key="btn_conectar_bling_preview"):
+    if st.button("🔗 Conectar com Bling", use_container_width=True, key="btn_conectar_bling_preview"):
         st.session_state["bling_conectado"] = True
         st.session_state["bling_status_texto"] = "Conectado em modo local"
         st.warning("Conexão simulada. O backend do OAuth ainda não está plugado nesta execução.")
@@ -392,12 +436,14 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
     with c3:
         st.metric("Com código", resumo["codigo_ok"])
     with c4:
-        st.metric("Com preço", resumo["preco_ok"])
+        st.metric("Com descrição", resumo["descricao_ok"])
 
-    c5, c6 = st.columns(2)
+    c5, c6, c7 = st.columns(3)
     with c5:
-        st.metric("Com GTIN", resumo["gtin_ok"])
+        st.metric("Com preço", resumo["preco_ok"])
     with c6:
+        st.metric("Com GTIN", resumo["gtin_ok"])
+    with c7:
         st.metric("Validação", "OK" if valido else "Ajustes pendentes")
 
     if erros:
@@ -415,21 +461,41 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
     return valido, erros
 
 
+def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
+    resumo = _montar_resumo(df_final)
+
+    st.markdown("### 2. Colunas que o envio vai usar")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.write(f"**Código detectado:** {resumo['codigo_col'] or 'não encontrado'}")
+        st.write(f"**Descrição detectada:** {resumo['descricao_col'] or 'não encontrada'}")
+
+    with c2:
+        st.write(f"**Preço detectado:** {resumo['preco_col'] or 'não encontrado'}")
+        st.write(f"**GTIN detectado:** {resumo['gtin_col'] or 'não encontrado'}")
+
+    if not resumo["codigo_col"] or not resumo["descricao_col"]:
+        st.warning(
+            "O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente."
+        )
+
+
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
-    st.markdown("### 2. Preview final")
+    st.markdown("### 3. Preview final")
 
     if df_final.empty:
-        st.dataframe(pd.DataFrame(columns=df_final.columns), width="stretch")
+        st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
         return
 
-    st.dataframe(df_final.head(100), width="stretch")
+    st.dataframe(df_final.head(100), use_container_width=True)
 
     with st.expander("Ver preview ampliado", expanded=False):
-        st.dataframe(df_final.head(300), width="stretch")
+        st.dataframe(df_final.head(300), use_container_width=True)
 
 
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
-    st.markdown("### 3. Download da planilha padrão Bling")
+    st.markdown("### 4. Download da planilha padrão Bling")
 
     csv_bytes = dataframe_para_csv_bytes(df_final)
 
@@ -438,7 +504,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
         data=csv_bytes,
         file_name="bling_saida_final.csv",
         mime="text/csv",
-        width="stretch",
+        use_container_width=True,
         disabled=not validacao_ok,
         key="btn_download_csv_final_preview",
     )
@@ -446,7 +512,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     if validacao_ok:
         if st.button(
             "✅ Já baixei / quero seguir para conexão e envio",
-            width="stretch",
+            use_container_width=True,
             key="btn_confirmar_download_preview",
         ):
             st.session_state["preview_download_realizado"] = True
@@ -457,7 +523,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
 
 def _render_bloco_fluxo_site() -> None:
-    st.markdown("### 4. Varredura do site e conversão GPT")
+    st.markdown("### 5. Varredura do site e conversão GPT")
 
     if not _origem_site_ativa():
         st.caption(
@@ -506,7 +572,7 @@ def _render_bloco_fluxo_site() -> None:
 
 
 def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str, validacao_ok: bool) -> None:
-    st.markdown("### 5. Conectar e enviar ao Bling")
+    st.markdown("### 6. Conectar e enviar ao Bling")
 
     oauth_liberado = _oauth_liberado(validacao_ok)
     conectado, status = _obter_status_conexao_bling()
@@ -594,7 +660,7 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
 
     if st.button(
         "🚀 Enviar produtos ao Bling",
-        width="stretch",
+        use_container_width=True,
         key="btn_enviar_produtos_bling",
         disabled=not liberar_envio,
     ):
@@ -636,7 +702,7 @@ def render_preview_final() -> None:
 
     if not safe_df_estrutura(df_final):
         st.warning("O resultado final ainda não foi gerado.")
-        if st.button("⬅️ Voltar para mapeamento", width="stretch", key="btn_voltar_preview_sem_df"):
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_preview_sem_df"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             voltar_etapa_anterior()
         return
@@ -652,6 +718,7 @@ def render_preview_final() -> None:
     _sincronizar_estado_quando_df_mudar(df_final)
 
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
+    _render_colunas_detectadas_sync(df_final)
     _render_preview_dataframe(df_final)
     _render_download(df_final, validacao_ok)
     _render_bloco_fluxo_site()
@@ -661,11 +728,11 @@ def render_preview_final() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("⬅️ Voltar para mapeamento", width="stretch", key="btn_voltar_preview"):
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_preview"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             voltar_etapa_anterior()
 
     with col2:
-        if st.button("↺ Reabrir origem", width="stretch", key="btn_ir_origem_preview"):
+        if st.button("↺ Reabrir origem", use_container_width=True, key="btn_ir_origem_preview"):
             st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
             ir_para_etapa("origem")
