@@ -38,16 +38,17 @@ def safe_str(value: Any) -> str:
 def _log_debug(msg: str, nivel: str = "INFO") -> None:
     try:
         from bling_app_zero.ui.app_helpers import log_debug  # type: ignore
-
         log_debug(msg, nivel=nivel)
     except Exception:
-        pass
+        try:
+            print(f"[SESSION_MANAGER][{nivel}] {msg}")
+        except Exception:
+            pass
 
 
 def _streamlit():
     try:
         import streamlit as st
-
         return st
     except Exception:
         return None
@@ -232,6 +233,7 @@ class SessionSnapshot:
     headers: dict[str, str]
     cookies: list[dict[str, Any]]
     metadata: dict[str, Any]
+    manual_mode: bool
 
     def to_auth_context(self) -> dict[str, Any]:
         return {
@@ -245,6 +247,7 @@ class SessionSnapshot:
             "cookies": self.cookies,
             "fornecedor_slug": self.fornecedor_slug,
             "metadata": self.metadata,
+            "manual_mode": self.manual_mode,
         }
 
 
@@ -302,6 +305,7 @@ def salvar_storage_state(
     login_url: str = "",
     status: str = STATUS_SESSAO_PRONTA,
     observacao: str = "",
+    manual_mode: bool = False,
 ) -> dict[str, Any]:
     base_url = normalizar_url(base_url)
     fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
@@ -320,6 +324,7 @@ def salvar_storage_state(
         "updated_at": agora,
         "cookies_count": len(cookies),
         "session_ready": bool(cookies),
+        "manual_mode": bool(manual_mode),
     }
 
     ok_state = _write_json(paths["storage_state"], storage_state)
@@ -366,15 +371,16 @@ def carregar_session_snapshot(
     metadata = _read_json(paths["metadata"], {})
     cookies = extrair_cookies_do_storage_state(storage_state)
 
+    manual_mode = bool(metadata.get("manual_mode", False))
     session_ready = bool(paths["storage_state"].exists() and cookies)
     status = safe_str(metadata.get("status"))
 
     if not paths["storage_state"].exists():
         status = STATUS_SESSAO_AUSENTE
-    elif not cookies:
+    elif not cookies and not manual_mode:
         status = STATUS_SESSAO_INVALIDA
     elif not status:
-        status = STATUS_SESSAO_PRONTA
+        status = STATUS_SESSAO_PRONTA if (cookies or manual_mode) else STATUS_SESSAO_INVALIDA
 
     return SessionSnapshot(
         fornecedor_slug=fornecedor_slug,
@@ -389,6 +395,7 @@ def carregar_session_snapshot(
         headers=headers_padrao_sessao(),
         cookies=cookies,
         metadata=metadata if isinstance(metadata, dict) else {},
+        manual_mode=manual_mode,
     )
 
 
@@ -399,7 +406,7 @@ def montar_auth_context(base_url: str, fornecedor: str = "") -> dict[str, Any]:
 
 def sessao_esta_pronta(base_url: str, fornecedor: str = "") -> bool:
     snapshot = carregar_session_snapshot(base_url=base_url, fornecedor=fornecedor)
-    return bool(snapshot.session_ready)
+    return bool(snapshot.session_ready or snapshot.manual_mode)
 
 
 def limpar_sessao(base_url: str, fornecedor: str = "") -> dict[str, Any]:
@@ -431,7 +438,6 @@ def limpar_sessao(base_url: str, fornecedor: str = "") -> dict[str, Any]:
 def playwright_disponivel() -> bool:
     try:
         import playwright  # noqa: F401
-
         return True
     except Exception:
         return False
@@ -474,8 +480,8 @@ def iniciar_login_assistido(
 ) -> dict[str, Any]:
     """
     Fluxo adaptativo:
-    - em ambiente local com suporte a Playwright: tenta abrir navegador e salvar sessão
-    - em ambiente cloud/Streamlit sem suporte de navegador visível: guia login manual
+    - ambiente com Playwright: abre navegador real e persiste sessão
+    - ambiente sem browser: libera confirmação manual guiada
     """
     base_url = normalizar_url(base_url)
     fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
@@ -483,14 +489,12 @@ def iniciar_login_assistido(
     products_url = normalizar_url(products_url) or base_url
 
     st = _streamlit()
+    suporte_local, motivo_suporte = _ambiente_suporta_login_assistido_local()
 
     # ========================================================
-    # MODO CLOUD / STREAMLIT GUIADO
+    # MODO GUIADO / MANUAL
     # ========================================================
-    # Em ambientes como Streamlit Cloud, abrir navegador visível no servidor
-    # geralmente falha. Então guiamos o usuário sem quebrar o fluxo.
-    # ========================================================
-    if st is not None:
+    if st is not None and not suporte_local:
         st.session_state["site_login_assistido_contexto"] = {
             "base_url": base_url,
             "fornecedor_slug": fornecedor_slug,
@@ -499,18 +503,15 @@ def iniciar_login_assistido(
             "timeout_ms": timeout_ms,
         }
 
-        suporte_local, motivo_suporte = _ambiente_suporta_login_assistido_local()
+        _log_debug(
+            f"Login assistido em modo guiado | fornecedor={fornecedor_slug} | motivo={motivo_suporte}",
+            nivel="INFO",
+        )
 
-        if not suporte_local:
-            _log_debug(
-                f"Login assistido em modo guiado | fornecedor={fornecedor_slug} | motivo={motivo_suporte}",
-                nivel="INFO",
-            )
+        st.warning("⚠️ Este ambiente não consegue abrir navegador visível automaticamente.")
 
-            st.warning("⚠️ Este ambiente não consegue abrir navegador visível automaticamente.")
-
-            st.markdown(
-                f"""
+        st.markdown(
+            f"""
 ### 🔐 Faça o login manualmente
 
 1. Abra a página de login do fornecedor  
@@ -518,58 +519,76 @@ def iniciar_login_assistido(
 3. Resolva o captcha  
 4. Volte para o app e clique em **"Já fiz login no fornecedor"**
 """
-            )
+        )
 
-            st.markdown(f"[👉 Abrir login do fornecedor]({login_url})")
+        st.markdown(f"[👉 Abrir login do fornecedor]({login_url})")
 
-            confirmou = st.button(
-                "✅ Já fiz login no fornecedor",
-                key="btn_confirmar_login_manual_assistido",
-                use_container_width=True,
-            )
+        confirmou = st.button(
+            "✅ Já fiz login no fornecedor",
+            key="btn_confirmar_login_manual_assistido",
+            use_container_width=True,
+        )
 
-            if not confirmou:
-                return {
-                    "ok": False,
-                    "status": STATUS_LOGIN_CAPTCHA_DETECTADO,
-                    "mensagem": (
-                        "Aguardando confirmação do login manual. "
-                        f"Ambiente sem suporte a navegador visível. {motivo_suporte}"
-                    ),
-                    "manual_mode": True,
-                    "base_url": base_url,
-                    "fornecedor_slug": fornecedor_slug,
-                    "login_url": login_url,
-                    "products_url": products_url,
-                }
-
-            _log_debug(
-                f"Login manual confirmado | fornecedor={fornecedor_slug}",
-                nivel="INFO",
-            )
-
-            # Aqui não marcamos storage_state como pronto de forma falsa.
-            # Apenas liberamos o fluxo para a UI decidir como seguir.
+        if not confirmou:
             return {
-                "ok": True,
-                "status": STATUS_SESSAO_PRONTA,
+                "ok": False,
+                "status": STATUS_LOGIN_CAPTCHA_DETECTADO,
                 "mensagem": (
-                    "Login manual confirmado pelo usuário. "
-                    "Se o fornecedor ainda bloquear a leitura, será necessário usar sessão persistida real."
+                    "Aguardando confirmação do login manual. "
+                    f"Ambiente sem suporte a navegador visível. {motivo_suporte}"
                 ),
                 "manual_mode": True,
                 "base_url": base_url,
                 "fornecedor_slug": fornecedor_slug,
                 "login_url": login_url,
                 "products_url": products_url,
-                "storage": None,
-                "cookies_count": 0,
             }
+
+        metadata_manual = {
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "products_url": products_url,
+            "login_url": login_url,
+            "status": STATUS_SESSAO_PRONTA,
+            "observacao": "Login manual confirmado pelo usuário.",
+            "updated_at": int(time.time()),
+            "cookies_count": 0,
+            "session_ready": False,
+            "manual_mode": True,
+        }
+
+        paths = _session_paths(base_url=base_url, fornecedor=fornecedor_slug)
+        _write_json(paths["storage_state"], {"cookies": [], "origins": []})
+        _write_json(paths["cookies"], [])
+        _write_json(paths["metadata"], metadata_manual)
+
+        _log_debug(
+            f"Login manual confirmado | fornecedor={fornecedor_slug}",
+            nivel="INFO",
+        )
+
+        return {
+            "ok": True,
+            "status": STATUS_SESSAO_PRONTA,
+            "mensagem": (
+                "Login manual confirmado pelo usuário. "
+                "Fluxo liberado em modo manual."
+            ),
+            "manual_mode": True,
+            "base_url": base_url,
+            "fornecedor_slug": fornecedor_slug,
+            "login_url": login_url,
+            "products_url": products_url,
+            "storage": {
+                "storage_state_path": str(paths["storage_state"]),
+                "metadata_path": str(paths["metadata"]),
+            },
+            "cookies_count": 0,
+        }
 
     # ========================================================
     # MODO LOCAL COM PLAYWRIGHT
     # ========================================================
-    suporte_local, motivo_suporte = _ambiente_suporta_login_assistido_local()
     if not suporte_local:
         _log_debug(
             f"Falha no login assistido | fornecedor={fornecedor_slug} | motivo={motivo_suporte}",
@@ -653,6 +672,7 @@ def iniciar_login_assistido(
                         storage_state=storage_state,
                         status=STATUS_SESSAO_PRONTA,
                         observacao="Sessão capturada por login assistido com Playwright.",
+                        manual_mode=False,
                     )
                     browser.close()
 
@@ -696,6 +716,7 @@ def iniciar_login_assistido(
                         storage_state=storage_state,
                         status=STATUS_SESSAO_PRONTA,
                         observacao="Sessão salva ao final do timeout do login assistido.",
+                        manual_mode=False,
                     )
                     browser.close()
                     return {
@@ -772,6 +793,7 @@ def salvar_status_login_em_sessao(
 
     base_url = normalizar_url(base_url)
     fornecedor_slug = inferir_fornecedor_slug(base_url=base_url, fornecedor=fornecedor)
+    auth_context = montar_auth_context(base_url=base_url, fornecedor=fornecedor_slug)
 
     st.session_state["site_login_status"] = {
         "fornecedor_slug": fornecedor_slug,
@@ -780,8 +802,9 @@ def salvar_status_login_em_sessao(
         "mensagem": safe_str(mensagem),
         "exige_login": bool(exige_login),
         "captcha_detectado": bool(captcha_detectado),
-        "session_ready": sessao_esta_pronta(base_url=base_url, fornecedor=fornecedor_slug),
-        "auth_context": montar_auth_context(base_url=base_url, fornecedor=fornecedor_slug),
+        "session_ready": bool(auth_context.get("session_ready", False)),
+        "manual_mode": bool(auth_context.get("manual_mode", False)),
+        "auth_context": auth_context,
     }
 
 
