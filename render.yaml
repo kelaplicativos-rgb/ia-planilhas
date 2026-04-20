@@ -1,0 +1,13 @@
+
+services:
+  - type: web
+    name: ia-planilhas-bling
+    env: docker
+    plan: starter
+    autoDeploy: true
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10
+
+    healthCheckPath: /
