@@ -57,11 +57,13 @@ def _resetar_estado_site_ui() -> None:
         "site_busca_ultima_url",
         "site_busca_ultimo_total",
         "site_busca_ultimo_status",
+        "site_busca_ultima_execucao",
         "site_busca_diagnostico_df",
         "site_busca_diagnostico_total_descobertos",
         "site_busca_diagnostico_total_validos",
         "site_busca_diagnostico_total_rejeitados",
         "site_login_status",
+        "site_busca_resumo_texto",
     ]:
         st.session_state.pop(chave, None)
 
@@ -348,7 +350,7 @@ def _render_origem_arquivo() -> None:
 
 
 # ============================================================
-# BUSCA POR SITE - NOVO FLUXO SIMPLIFICADO
+# BUSCA POR SITE
 # ============================================================
 
 def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> None:
@@ -384,6 +386,21 @@ def _chamar_busca_site_compativel(url_site: str):
     return buscar_produtos_site_com_gpt(**kwargs)
 
 
+def _resumo_status_site_texto() -> str:
+    status = str(st.session_state.get("site_busca_ultimo_status", "") or "").strip().lower()
+    total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+
+    if status == "sucesso":
+        return f"Busca concluída com {total} produto(s) encontrado(s)."
+    if status == "vazio":
+        return "A busca terminou sem produtos encontrados."
+    if status == "erro":
+        return "A busca terminou com erro."
+    if status == "executando":
+        return "Busca em andamento..."
+    return "Nenhuma busca executada ainda."
+
+
 def _executar_busca_site(url_site: str) -> None:
     url_site = str(url_site or "").strip()
 
@@ -397,6 +414,7 @@ def _executar_busca_site(url_site: str) -> None:
 
     st.session_state["site_busca_em_execucao"] = True
     st.session_state["site_busca_ultimo_status"] = "executando"
+    st.session_state["site_busca_resumo_texto"] = "Busca em andamento..."
 
     log_debug(f"Iniciando busca simplificada por site | url={url_site}", nivel="INFO")
 
@@ -406,6 +424,7 @@ def _executar_busca_site(url_site: str) -> None:
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
             _carimbar_execucao_site(0, url_site, "vazio")
             st.session_state["site_busca_em_execucao"] = False
+            st.session_state["site_busca_resumo_texto"] = "A busca terminou sem produtos encontrados."
             st.warning("Nenhum produto encontrado na busca por site.")
             return
 
@@ -417,6 +436,7 @@ def _executar_busca_site(url_site: str) -> None:
         total = int(len(df_site))
         _carimbar_execucao_site(total, url_site, "sucesso")
         st.session_state["site_busca_em_execucao"] = False
+        st.session_state["site_busca_resumo_texto"] = f"Busca concluída com {total} produto(s) encontrado(s)."
 
         st.success(f"{total} produto(s) encontrados no site.")
         _preview_dataframe(df_site, "Preview da busca por site")
@@ -425,6 +445,7 @@ def _executar_busca_site(url_site: str) -> None:
     except Exception as exc:
         st.session_state["site_busca_em_execucao"] = False
         _carimbar_execucao_site(0, url_site, "erro")
+        st.session_state["site_busca_resumo_texto"] = f"Falha na busca: {exc}"
         st.error(f"Falha ao executar busca no site: {exc}")
         log_debug(f"Falha ao executar busca por site: {exc}", nivel="ERRO")
 
@@ -434,6 +455,7 @@ def _render_resumo_busca_site() -> None:
     ultimo_total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
     ultimo_status = str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo")
     ultima_execucao = str(st.session_state.get("site_busca_ultima_execucao", "") or "").strip()
+    resumo_texto = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip() or _resumo_status_site_texto()
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -442,6 +464,9 @@ def _render_resumo_busca_site() -> None:
         st.metric("Produtos", ultimo_total)
     with c3:
         st.metric("Origem site", "Sim" if _tem_resultado_site() else "Não")
+
+    if resumo_texto:
+        st.caption(resumo_texto)
 
     if ultima_url:
         st.write(f"**Última URL:** {ultima_url}")
@@ -482,24 +507,17 @@ def _render_diagnostico_site() -> None:
             st.info("Sem linhas de diagnóstico disponíveis.")
 
 
-def _render_origem_site() -> None:
-    st.markdown("### Busca no site do fornecedor")
-    st.caption(
-        "Fluxo simplificado: informe a URL, execute a busca, confira o preview e siga para a próxima etapa."
-    )
-
-    url_site = st.text_input(
-        "URL do fornecedor ou categoria",
-        key="site_fornecedor_url",
-        placeholder="https://www.fornecedor.com.br/categoria",
-    ).strip()
-
+def _render_etapas_busca_site(url_site: str) -> None:
     st.markdown("#### Etapa 1 — Informar a URL")
     if not url_site:
         st.info("Cole a URL do fornecedor para habilitar a busca.")
         return
 
-    st.markdown("#### Etapa 2 — Buscar produtos")
+    st.success("URL preenchida.")
+
+    st.markdown("#### Etapa 2 — Executar a busca")
+    executando = bool(st.session_state.get("site_busca_em_execucao", False))
+
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -507,6 +525,7 @@ def _render_origem_site() -> None:
             "Buscar produtos do site",
             use_container_width=True,
             key="btn_buscar_site_simplificado",
+            disabled=executando,
         ):
             _executar_busca_site(url_site)
             st.rerun()
@@ -522,14 +541,35 @@ def _render_origem_site() -> None:
             st.info("Busca por site limpa.")
             st.rerun()
 
+    if executando:
+        st.info("A busca está em andamento...")
+
     st.markdown("---")
     _render_resumo_busca_site()
 
+    st.markdown("#### Etapa 3 — Conferir resultado")
     if _tem_resultado_site():
-        st.markdown("#### Etapa 3 — Conferir resultado")
         _preview_dataframe(st.session_state.get("df_origem"), "Preview da busca por site")
+    else:
+        st.info("Depois da busca, o preview dos produtos encontrados aparecerá aqui.")
 
     _render_diagnostico_site()
+
+
+def _render_origem_site() -> None:
+    st.markdown("### Busca no site do fornecedor")
+    st.caption(
+        "Fluxo simplificado: informe a URL, execute a busca, confira o preview e siga para a próxima etapa."
+    )
+
+    url_site = st.text_input(
+        "URL do fornecedor ou categoria",
+        key="site_fornecedor_url",
+        placeholder="https://www.fornecedor.com.br/categoria",
+    ).strip()
+
+    with st.container(border=True):
+        _render_etapas_busca_site(url_site)
 
 
 # ============================================================
