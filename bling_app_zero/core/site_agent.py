@@ -479,33 +479,28 @@ def _salvar_diagnostico_em_sessao(
     )
 
 
-def _atualizar_progresso(
-    i: int,
+def _atualizar_progresso_main_thread(
+    processados: int,
     total: int,
-    url_produto: str,
-    fase: str,
+    ultimo_status: str,
     progress_bar,
     status_box,
     contador_box,
 ) -> None:
-    st = _streamlit_ctx()
-    if st is None:
-        return
-
     if total <= 0:
         total = 1
 
-    percentual = int((i / total) * 100)
+    percentual = int((processados / total) * 100)
     percentual = max(0, min(percentual, 100))
 
     if progress_bar is not None:
         progress_bar.progress(percentual)
 
     if contador_box is not None:
-        contador_box.write(f"Processando {i} de {total}")
+        contador_box.write(f"Processando {processados} de {total}")
 
-    if status_box is not None:
-        status_box.info(f"{fase}\n\n{safe_str(url_produto)}")
+    if status_box is not None and ultimo_status:
+        status_box.info(ultimo_status)
 
 
 # ============================================================
@@ -651,7 +646,8 @@ def _executar_heuristica(url_produto: str, html_produto: str) -> dict[str, Any]:
     try:
         dados = extrair_detalhes_heuristicos(url_produto, html_produto)
         return dados if isinstance(dados, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _log_debug(f"Heurística falhou | url={url_produto} | erro={exc}", nivel="ERRO")
         return {}
 
 
@@ -667,7 +663,8 @@ def _executar_gpt(url_produto: str, html_produto: str, heuristica: dict[str, Any
                 return dados
             if isinstance(dados, dict):
                 ultimo_resultado = dados
-        except Exception:
+        except Exception as exc:
+            _log_debug(f"GPT falhou | url={url_produto} | erro={exc}", nivel="ERRO")
             continue
 
     return ultimo_resultado
@@ -780,6 +777,7 @@ def _descobrir_produtos_com_contexto(
             max_paginas=400,
             max_produtos=limite,
             max_segundos=900,
+            auth_context=auth_context,
         )
         if isinstance(produtos, list) and produtos:
             return produtos
@@ -872,34 +870,75 @@ def buscar_produtos_site_com_gpt(
     _log_debug(f"Links de produto descobertos: {total}", nivel="INFO")
 
     workers = _max_workers(total)
+    processados = 0
 
-    def worker(idx_url: tuple[int, str]) -> None:
-        i, url_produto = idx_url
-
-        _atualizar_progresso(
-            i=i,
-            total=total,
-            url_produto=url_produto,
-            fase="🌐 Acessando / extraindo produto...",
-            progress_bar=progress_bar,
-            status_box=status_box,
-            contador_box=contador_box,
-        )
-
-        status, payload = _processar_um_produto(
+    def worker(url_produto: str) -> tuple[str, dict[str, Any]]:
+        return _processar_um_produto(
             url_produto=url_produto,
             diagnostico=diagnostico,
             auth_context=auth_context,
         )
 
-        if status == "aprovado":
-            row = payload.get("row", {})
-            final = payload.get("final", {})
-            heuristica = payload.get("heuristica", {})
-            gpt = payload.get("gpt", {})
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_url = {
+                executor.submit(worker, url_produto): url_produto
+                for url_produto in produtos
+            }
 
-            with aprovados_lock:
-                if url_produto in vistos_aprovados:
+            for future in concurrent.futures.as_completed(future_to_url):
+                url_produto = future_to_url[future]
+                processados += 1
+
+                try:
+                    status, payload = future.result()
+                except Exception as exc:
+                    status = "erro"
+                    payload = {
+                        "url_produto": url_produto,
+                        "motivo": "erro_worker_nao_tratado",
+                        "erro": repr(exc),
+                    }
+                    _log_debug(
+                        f"Worker falhou sem tratamento | url={url_produto} | erro={repr(exc)}",
+                        nivel="ERRO",
+                    )
+
+                ultimo_status = f"🌐 Processando produto {processados}/{total}\n\n{url_produto}"
+                _atualizar_progresso_main_thread(
+                    processados=processados,
+                    total=total,
+                    ultimo_status=ultimo_status,
+                    progress_bar=progress_bar,
+                    status_box=status_box,
+                    contador_box=contador_box,
+                )
+
+                if status == "aprovado":
+                    row = payload.get("row", {})
+                    final = payload.get("final", {})
+                    heuristica = payload.get("heuristica", {})
+                    gpt = payload.get("gpt", {})
+
+                    with aprovados_lock:
+                        if url_produto in vistos_aprovados:
+                            if diagnostico:
+                                with diag_lock:
+                                    _registrar_diag(
+                                        diagnosticos,
+                                        url_produto=url_produto,
+                                        heuristica=heuristica,
+                                        gpt=gpt,
+                                        final=final,
+                                        status="rejeitado",
+                                        motivo="url_duplicada",
+                                    )
+                            continue
+                        vistos_aprovados.add(url_produto)
+
+                    with rows_lock:
+                        rows.append(row)
+
                     if diagnostico:
                         with diag_lock:
                             _registrar_diag(
@@ -908,52 +947,34 @@ def buscar_produtos_site_com_gpt(
                                 heuristica=heuristica,
                                 gpt=gpt,
                                 final=final,
-                                status="rejeitado",
-                                motivo="url_duplicada",
+                                status="aprovado",
+                                motivo="produto_valido",
                             )
-                    return
-                vistos_aprovados.add(url_produto)
 
-            with rows_lock:
-                rows.append(row)
+                    continue
 
-            if diagnostico:
-                with diag_lock:
-                    _registrar_diag(
-                        diagnosticos,
-                        url_produto=url_produto,
-                        heuristica=heuristica,
-                        gpt=gpt,
-                        final=final,
-                        status="aprovado",
-                        motivo="produto_valido",
-                    )
+                if diagnostico:
+                    with diag_lock:
+                        _registrar_diag(
+                            diagnosticos,
+                            url_produto=url_produto,
+                            heuristica=payload.get("heuristica"),
+                            gpt=payload.get("gpt"),
+                            final=payload.get("final"),
+                            status=status,
+                            motivo=safe_str(payload.get("motivo")),
+                            erro=safe_str(payload.get("erro")),
+                        )
 
-            if status_box is not None:
-                status_box.success(f"✅ Produto validado\n\n{url_produto}")
-            return
-
-        if diagnostico:
-            with diag_lock:
-                _registrar_diag(
-                    diagnosticos,
-                    url_produto=url_produto,
-                    heuristica=payload.get("heuristica"),
-                    gpt=payload.get("gpt"),
-                    final=payload.get("final"),
-                    status=status,
-                    motivo=safe_str(payload.get("motivo")),
-                    erro=safe_str(payload.get("erro")),
-                )
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        list(executor.map(worker, enumerate(produtos, start=1)))
+    except Exception as exc:
+        _log_debug(f"Falha geral no processamento paralelo: {repr(exc)}", nivel="ERRO")
+        raise RuntimeError(f"Falha no processamento paralelo dos produtos: {repr(exc)}") from exc
 
     if progress_bar is not None:
         progress_bar.progress(100)
 
     if status_box is not None:
-        status_box.success("🎉 Busca finalizada.")
+        status_box.success(f"🎉 Busca finalizada. Produtos válidos: {len(rows)}")
 
     if diagnostico:
         _salvar_diagnostico_em_sessao(
@@ -968,3 +989,4 @@ def buscar_produtos_site_com_gpt(
     )
 
     return _df_saida(rows)
+
