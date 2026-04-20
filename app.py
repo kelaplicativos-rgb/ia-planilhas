@@ -17,7 +17,15 @@ from bling_app_zero.ui.app_helpers import (
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
-from bling_app_zero.ui.preview_final import render_preview_final
+
+# 🔥 FIX REAL: fallback seguro para preview_final
+try:
+    from bling_app_zero.ui.preview_final import render_preview_final
+except Exception:
+    def render_preview_final():
+        st.warning("⚠️ Módulo preview_final não encontrado.")
+        st.info("Verifique se o arquivo bling_app_zero/ui/preview_final.py existe no repositório.")
+        log_debug("preview_final.py não encontrado", nivel="ERRO")
 
 
 ETAPAS_ORDEM = ["origem", "precificacao", "mapeamento", "preview_final"]
