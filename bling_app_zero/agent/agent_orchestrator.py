@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,6 +20,7 @@ from bling_app_zero.agent.agent_tools import (
     construir_resumo_colunas_origem,
     detectar_campos_obrigatorios_modelo,
     extrair_colunas_modelo,
+    forcar_preenchimento_obrigatorios,
     gerar_diagnostico_mapping,
     gerar_mapping_fallback,
     limpar_mapping_para_modelo,
@@ -102,15 +104,6 @@ def sugerir_mapeamento_agente(
     df_modelo: pd.DataFrame,
     operacao: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Orquestra a sugestão de mapeamento entre base do fornecedor e modelo Bling.
-
-    Regras:
-    - nunca altera df_final
-    - apenas sugere mapping
-    - tenta OpenAI primeiro
-    - aplica pós-processamento e fallback local
-    """
     operacao_resolvida = normalizar_texto(operacao or _resolver_operacao()) or "cadastro"
 
     if not safe_df_dados(df_base):
@@ -177,6 +170,13 @@ def sugerir_mapeamento_agente(
         operacao=operacao_resolvida,
     )
 
+    mapping = forcar_preenchimento_obrigatorios(
+        mapping=mapping,
+        df_base=df_base,
+        df_modelo=df_modelo,
+        operacao=operacao_resolvida,
+    )
+
     diagnostico = gerar_diagnostico_mapping(
         mapping=mapping,
         colunas_modelo=colunas_modelo,
@@ -185,6 +185,13 @@ def sugerir_mapeamento_agente(
 
     if mapping_tem_duplicidade(mapping):
         diagnostico["tem_duplicidade"] = True
+
+    if diagnostico.get("faltando_obrigatorios"):
+        log_debug(
+            "Forçando preenchimento obrigatório, mas ainda restaram campos: "
+            + ", ".join(diagnostico["faltando_obrigatorios"]),
+            nivel="ERRO",
+        )
 
     ok = bool(any(str(v or "").strip() for v in mapping.values()))
     erro = str(resultado_openai.get("erro", "") or "").strip()
@@ -227,10 +234,6 @@ def validar_resultado_final_agente(
     df_final: pd.DataFrame,
     operacao: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Gera diagnóstico complementar para o preview final.
-    Não substitui validar_df_para_download; apenas enriquece.
-    """
     operacao_resolvida = normalizar_texto(operacao or _resolver_operacao()) or "cadastro"
 
     valido, erros = validar_df_para_download(df_final, operacao_resolvida)
@@ -263,13 +266,6 @@ def construir_pacote_agente_para_ui(
     df_modelo: pd.DataFrame,
     operacao: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Pacote pronto para a UI consumir no mapeamento:
-    - sugestão
-    - diagnóstico
-    - obrigatórios
-    - duplicidades
-    """
     operacao_resolvida = normalizar_texto(operacao or _resolver_operacao()) or "cadastro"
     sugestao = sugerir_mapeamento_agente(
         df_base=df_base,
@@ -294,5 +290,4 @@ def construir_pacote_agente_para_ui(
 
     st.session_state["agent_ui_package"] = pacote
     return pacote
-
 
