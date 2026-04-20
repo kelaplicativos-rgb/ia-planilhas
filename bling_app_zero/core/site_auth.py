@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -16,6 +16,97 @@ from bling_app_zero.core.site_supplier_profiles import (
     get_supplier_profile,
     supplier_profile_to_dict,
 )
+
+try:
+    from bling_app_zero.core.session_manager import (
+        STATUS_LOGIN_CAPTCHA_DETECTADO,
+        STATUS_LOGIN_REQUERIDO,
+        STATUS_SESSAO_PRONTA,
+        detectar_login_captcha,
+        montar_auth_context,
+        salvar_status_login_em_sessao,
+        salvar_storage_state,
+        sessao_esta_pronta,
+    )
+except Exception:
+    STATUS_LOGIN_CAPTCHA_DETECTADO = "login_captcha_detectado"
+    STATUS_LOGIN_REQUERIDO = "login_required"
+    STATUS_SESSAO_PRONTA = "session_ready"
+
+    def detectar_login_captcha(html: str, url_atual: str = "") -> dict[str, Any]:
+        page = str(html or "").lower()
+        final_url = str(url_atual or "").lower()
+
+        has_login = any(
+            token in page
+            for token in [
+                "login",
+                "fazer login",
+                "faça login",
+                "entrar",
+                "senha",
+                "autenticacao",
+                "autenticação",
+            ]
+        ) or any(
+            token in final_url
+            for token in ["/login", "/entrar", "/account", "/auth", "/conta"]
+        )
+
+        has_captcha = any(
+            token in page
+            for token in [
+                "captcha",
+                "g-recaptcha",
+                "grecaptcha",
+                "hcaptcha",
+                "cloudflare",
+                "não sou um robô",
+                "nao sou um robo",
+            ]
+        )
+
+        status = "publico"
+        if has_login and has_captcha:
+            status = STATUS_LOGIN_CAPTCHA_DETECTADO
+        elif has_login:
+            status = STATUS_LOGIN_REQUERIDO
+
+        return {
+            "exige_login": has_login,
+            "captcha_detectado": has_captcha,
+            "status": status,
+            "motivos": [],
+        }
+
+    def montar_auth_context(base_url: str, fornecedor: str = "") -> dict[str, Any]:
+        return {}
+
+    def salvar_storage_state(
+        *,
+        base_url: str,
+        storage_state: dict[str, Any],
+        fornecedor: str = "",
+        products_url: str = "",
+        login_url: str = "",
+        status: str = STATUS_SESSAO_PRONTA,
+        observacao: str = "",
+    ) -> dict[str, Any]:
+        return {"ok": False}
+
+    def salvar_status_login_em_sessao(
+        *,
+        base_url: str,
+        status: str,
+        mensagem: str = "",
+        exige_login: bool = False,
+        captcha_detectado: bool = False,
+        fornecedor: str = "",
+    ) -> None:
+        return None
+
+    def sessao_esta_pronta(base_url: str, fornecedor: str = "") -> bool:
+        return False
 
 
 AUTH_OUTPUT_DIR = Path("bling_app_zero/output")
@@ -65,6 +156,25 @@ def _hostname(url: str) -> str:
         return ""
 
 
+def _fornecedor_slug(url: str, profile: SupplierProfile | None = None) -> str:
+    if profile and _safe_str(profile.slug):
+        return _safe_str(profile.slug)
+
+    host = _hostname(url)
+    if host:
+        slug = host.replace("www.", "")
+        slug = re.sub(r"[^a-z0-9]+", "_", slug)
+        slug = re.sub(r"_+", "_", slug).strip("_")
+        if slug:
+            return slug
+
+    bruto = _safe_str(url).lower()
+    bruto = re.sub(r"^https?://", "", bruto)
+    bruto = re.sub(r"[^a-z0-9]+", "_", bruto)
+    bruto = re.sub(r"_+", "_", bruto).strip("_")
+    return bruto or "fornecedor"
+
+
 def _auth_state_default() -> dict[str, Any]:
     return {
         "status": "inativo",
@@ -81,6 +191,8 @@ def _auth_state_default() -> dict[str, Any]:
         "notes": "",
         "last_message": "",
         "username_hint": "",
+        "storage_state_path": "",
+        "metadata_path": "",
     }
 
 
@@ -115,8 +227,37 @@ def clear_auth_state() -> dict[str, Any]:
     return state
 
 
+def _merge_auth_state_with_session_manager(state: dict[str, Any]) -> dict[str, Any]:
+    base = _auth_state_default()
+    base.update(state or {})
+
+    provider_slug = _safe_str(base.get("provider_slug"))
+    base_url = _safe_str(base.get("products_url")) or _safe_str(base.get("login_url"))
+
+    if not base_url:
+        return base
+
+    try:
+        contexto = montar_auth_context(base_url=base_url, fornecedor=provider_slug)
+    except Exception:
+        contexto = {}
+
+    if isinstance(contexto, dict) and contexto:
+        base["storage_state_path"] = _safe_str(contexto.get("storage_state_path"))
+        base["metadata_path"] = _safe_str(contexto.get("metadata_path"))
+        base["products_url"] = _safe_str(contexto.get("products_url")) or base["products_url"]
+        base["session_ready"] = bool(contexto.get("session_ready", base.get("session_ready", False)))
+        base["status"] = _safe_str(contexto.get("status")) or base["status"]
+
+        if bool(contexto.get("session_ready", False)):
+            base["cookies"] = contexto.get("cookies", []) or base.get("cookies", [])
+            base["headers"] = contexto.get("headers", {}) or base.get("headers", {})
+
+    return base
+
+
 def auth_state_to_session(st) -> dict[str, Any]:
-    state = load_auth_state()
+    state = _merge_auth_state_with_session_manager(load_auth_state())
     st.session_state["site_auth_state"] = state
     return state
 
@@ -152,8 +293,14 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
     page = _safe_str(html).lower()
     final_url_n = _safe_str(final_url).lower()
 
-    has_password = 'type="password"' in page or "name=\"password\"" in page or "senha" in page
-    has_email = 'type="email"' in page or "name=\"email\"" in page or "usuário" in page or "usuario" in page
+    has_password = 'type="password"' in page or 'name="password"' in page or "senha" in page
+    has_email = (
+        'type="email"' in page
+        or 'name="email"' in page
+        or "usuário" in page
+        or "usuario" in page
+        or "e-mail" in page
+    )
     has_login_text = _contains_any(
         page,
         [
@@ -174,9 +321,14 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
             "não sou um robô",
             "nao sou um robo",
             "hcaptcha",
+            "captcha",
+            "cloudflare",
         ],
     )
-    redirected_to_login = "/login" in final_url_n
+    redirected_to_login = any(
+        token in final_url_n
+        for token in ["/login", "/entrar", "/auth", "/account", "/conta"]
+    )
 
     return {
         "has_password": has_password,
@@ -219,6 +371,32 @@ def inspect_site_auth(url: str) -> AuthResult:
         )
 
     profile = get_supplier_profile(target_url)
+    provider_slug = _fornecedor_slug(target_url, profile)
+
+    if sessao_esta_pronta(base_url=target_url, fornecedor=provider_slug):
+        contexto = montar_auth_context(base_url=target_url, fornecedor=provider_slug)
+        products_url = _safe_str(contexto.get("products_url")) or profile.products_url or target_url
+
+        return AuthResult(
+            ok=True,
+            status=STATUS_SESSAO_PRONTA,
+            provider_slug=provider_slug,
+            provider_name=profile.nome,
+            requires_login=True,
+            captcha_detected=False,
+            login_url=profile.login_url or urljoin(target_url, "/login"),
+            products_url=products_url,
+            message="Sessão autenticada já disponível para este fornecedor.",
+            auth_mode="login",
+            session_ready=True,
+            cookies_count=len(contexto.get("cookies", []) or []),
+            detected_product_area=True,
+            profile=supplier_profile_to_dict(profile),
+            extra={
+                "hostname": _hostname(target_url),
+                "from_saved_session": True,
+            },
+        )
 
     session = _requests_session()
     try:
@@ -229,7 +407,7 @@ def inspect_site_auth(url: str) -> AuthResult:
         return AuthResult(
             ok=False,
             status="erro",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=profile.login_required,
             captcha_detected=profile.captcha_expected,
@@ -243,13 +421,19 @@ def inspect_site_auth(url: str) -> AuthResult:
 
     markers = _detect_login_markers(html, final_url=final_url)
     detected_product_area = _detect_product_area(html, final_url=final_url)
+    analise = detectar_login_captcha(html=html, url_atual=final_url)
 
     requires_login = bool(
         profile.login_required
         or markers["redirected_to_login"]
         or markers["detected_form"]
+        or analise.get("exige_login", False)
     )
-    captcha_detected = bool(profile.captcha_expected or markers["has_captcha"])
+    captcha_detected = bool(
+        profile.captcha_expected
+        or markers["has_captcha"]
+        or analise.get("captcha_detectado", False)
+    )
 
     login_url = profile.login_url or (urljoin(final_url, "/login") if requires_login else "")
     products_url = profile.products_url or target_url
@@ -260,16 +444,13 @@ def inspect_site_auth(url: str) -> AuthResult:
         auth_mode = "public"
         session_ready = True
     elif requires_login and captcha_detected:
-        message = (
-            "Fornecedor com login detectado e indício de captcha. "
-            "Fluxo autenticado necessário."
-        )
-        status = "login_captcha_detectado"
+        message = "Fornecedor com login detectado e indício de captcha. Fluxo autenticado necessário."
+        status = STATUS_LOGIN_CAPTCHA_DETECTADO
         auth_mode = "login"
         session_ready = False
     elif requires_login:
         message = "Fornecedor com login detectado. Fluxo autenticado necessário."
-        status = "login_detectado"
+        status = STATUS_LOGIN_REQUERIDO
         auth_mode = "login"
         session_ready = False
     else:
@@ -278,10 +459,22 @@ def inspect_site_auth(url: str) -> AuthResult:
         auth_mode = "public"
         session_ready = True
 
+    try:
+        salvar_status_login_em_sessao(
+            base_url=target_url,
+            fornecedor=provider_slug,
+            status=status,
+            mensagem=message,
+            exige_login=requires_login,
+            captcha_detectado=captcha_detected,
+        )
+    except Exception:
+        pass
+
     return AuthResult(
         ok=True,
         status=status,
-        provider_slug=profile.slug,
+        provider_slug=provider_slug,
         provider_name=profile.nome,
         requires_login=requires_login,
         captcha_detected=captcha_detected,
@@ -353,6 +546,51 @@ def _best_login_payload(
     return payload
 
 
+def _cookies_to_storage_state_cookies(session: requests.Session) -> list[dict[str, Any]]:
+    cookies: list[dict[str, Any]] = []
+
+    for cookie in session.cookies:
+        cookies.append(
+            {
+                "name": cookie.name,
+                "value": cookie.value,
+                "domain": cookie.domain,
+                "path": cookie.path or "/",
+                "expires": getattr(cookie, "expires", None),
+                "httpOnly": False,
+                "secure": bool(getattr(cookie, "secure", False)),
+                "sameSite": "Lax",
+            }
+        )
+
+    return cookies
+
+
+def _persistir_sessao_requests(
+    *,
+    session: requests.Session,
+    base_url: str,
+    provider_slug: str,
+    login_url: str,
+    products_url: str,
+    observacao: str,
+) -> dict[str, Any]:
+    storage_state = {
+        "cookies": _cookies_to_storage_state_cookies(session),
+        "origins": [],
+    }
+
+    return salvar_storage_state(
+        base_url=base_url,
+        fornecedor=provider_slug,
+        login_url=login_url,
+        products_url=products_url,
+        storage_state=storage_state,
+        status=STATUS_SESSAO_PRONTA,
+        observacao=observacao,
+    )
+
+
 def try_requests_login(
     login_url: str,
     products_url: str,
@@ -364,12 +602,14 @@ def try_requests_login(
 
     login_url = _normalize_url(login_url)
     products_url = _normalize_url(products_url)
+    base_url = products_url or login_url
+    provider_slug = _fornecedor_slug(base_url, profile)
 
     if not login_url:
         return AuthResult(
             ok=False,
             status="erro",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=profile.captcha_expected,
@@ -382,19 +622,28 @@ def try_requests_login(
         )
 
     if profile.captcha_expected:
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_CAPTCHA_DETECTADO,
+                mensagem="Captcha detectado para este fornecedor. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=True,
+            )
+        except Exception:
+            pass
+
         return AuthResult(
             ok=False,
             status="captcha_pendente",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=True,
             login_url=login_url,
             products_url=products_url,
-            message=(
-                "Captcha detectado para este fornecedor. "
-                "Login automático por requests não é seguro neste caso."
-            ),
+            message="Captcha detectado para este fornecedor. Login automático por requests não é seguro neste caso.",
             auth_mode="login",
             session_ready=False,
             profile=supplier_profile_to_dict(profile),
@@ -409,7 +658,7 @@ def try_requests_login(
         return AuthResult(
             ok=False,
             status="erro_login",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=False,
@@ -422,11 +671,25 @@ def try_requests_login(
         )
 
     markers = _detect_login_markers(html, final_url=str(login_page.url))
-    if markers["has_captcha"]:
+    analise_login = detectar_login_captcha(html=html, url_atual=str(login_page.url))
+
+    if markers["has_captcha"] or analise_login.get("captcha_detectado", False):
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_CAPTCHA_DETECTADO,
+                mensagem="Captcha detectado na tela de login. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=True,
+            )
+        except Exception:
+            pass
+
         return AuthResult(
             ok=False,
             status="captcha_pendente",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=True,
@@ -458,7 +721,7 @@ def try_requests_login(
         return AuthResult(
             ok=False,
             status="erro_login",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=False,
@@ -474,19 +737,60 @@ def try_requests_login(
     if products_url:
         try:
             page_products = session.get(products_url, timeout=30, allow_redirects=True)
-            product_area_ok = _detect_product_area(page_products.text or "", final_url=str(page_products.url))
             final_url = str(page_products.url)
+            product_area_ok = _detect_product_area(page_products.text or "", final_url=final_url)
+            final_html = page_products.text or final_html
         except Exception:
             product_area_ok = False
     else:
         product_area_ok = _detect_product_area(final_html, final_url=final_url)
 
+    analise_final = detectar_login_captcha(html=final_html, url_atual=final_url)
+    if analise_final.get("captcha_detectado", False):
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_CAPTCHA_DETECTADO,
+                mensagem="Captcha detectado após tentativa de login. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=True,
+            )
+        except Exception:
+            pass
+
+        return AuthResult(
+            ok=False,
+            status="captcha_pendente",
+            provider_slug=provider_slug,
+            provider_name=profile.nome,
+            requires_login=True,
+            captcha_detected=True,
+            login_url=login_url,
+            products_url=products_url,
+            message="Captcha detectado após tentativa de login.",
+            auth_mode="login",
+            session_ready=False,
+            cookies_count=len(session.cookies),
+            profile=supplier_profile_to_dict(profile),
+            extra={"final_url": final_url},
+        )
+
     if product_area_ok:
+        persistencia = _persistir_sessao_requests(
+            session=session,
+            base_url=base_url,
+            provider_slug=provider_slug,
+            login_url=login_url,
+            products_url=products_url or base_url,
+            observacao="Sessão validada com sucesso via requests.",
+        )
+
         state = load_auth_state()
         state.update(
             {
                 "status": "autenticado",
-                "provider_slug": profile.slug,
+                "provider_slug": provider_slug,
                 "provider_name": profile.nome,
                 "requires_login": True,
                 "captcha_detected": False,
@@ -506,14 +810,28 @@ def try_requests_login(
                 "headers": dict(session.headers),
                 "username_hint": _safe_str(username),
                 "last_message": "Sessão autenticada com sucesso.",
+                "storage_state_path": _safe_str(persistencia.get("storage_state_path")),
+                "metadata_path": _safe_str(persistencia.get("metadata_path")),
             }
         )
         save_auth_state(state)
 
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_SESSAO_PRONTA,
+                mensagem="Sessão autenticada com sucesso.",
+                exige_login=False,
+                captcha_detectado=False,
+            )
+        except Exception:
+            pass
+
         return AuthResult(
             ok=True,
             status="autenticado",
-            provider_slug=profile.slug,
+            provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
             captcha_detected=False,
@@ -525,13 +843,31 @@ def try_requests_login(
             cookies_count=len(session.cookies),
             detected_product_area=True,
             profile=supplier_profile_to_dict(profile),
-            extra={"final_url": final_url},
+            extra={
+                "final_url": final_url,
+                "storage_state_path": _safe_str(persistencia.get("storage_state_path")),
+            },
         )
+
+    try:
+        salvar_status_login_em_sessao(
+            base_url=base_url,
+            fornecedor=provider_slug,
+            status=STATUS_LOGIN_REQUERIDO,
+            mensagem=(
+                "O login foi enviado, mas a área de produtos não ficou acessível. "
+                "Pode haver captcha, proteção extra ou fluxo JS."
+            ),
+            exige_login=True,
+            captcha_detectado=False,
+        )
+    except Exception:
+        pass
 
     return AuthResult(
         ok=False,
         status="falha_autenticacao",
-        provider_slug=profile.slug,
+        provider_slug=provider_slug,
         provider_name=profile.nome,
         requires_login=True,
         captcha_detected=False,
@@ -550,7 +886,8 @@ def try_requests_login(
 
 
 def get_auth_headers_and_cookies() -> dict[str, Any]:
-    state = load_auth_state()
+    state = _merge_auth_state_with_session_manager(load_auth_state())
+
     return {
         "headers": state.get("headers", {}) or {},
         "cookies": state.get("cookies", []) or [],
@@ -562,6 +899,8 @@ def get_auth_headers_and_cookies() -> dict[str, Any]:
         "login_url": _safe_str(state.get("login_url")),
         "requires_login": bool(state.get("requires_login", False)),
         "captcha_detected": bool(state.get("captcha_detected", False)),
+        "storage_state_path": _safe_str(state.get("storage_state_path")),
+        "metadata_path": _safe_str(state.get("metadata_path")),
     }
 
 
