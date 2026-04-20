@@ -14,15 +14,105 @@ try:
 except Exception:
     buscar_produtos_site_com_gpt = None
 
-from bling_app_zero.core.site_auth import (
-    apply_inspection_to_state,
-    auth_state_to_session,
-    clear_auth_state_session,
-    get_auth_headers_and_cookies,
-    get_profile_for_url,
-    inspect_site_auth,
-    try_requests_login,
-)
+try:
+    from bling_app_zero.core.site_auth import (
+        apply_inspection_to_state,
+        auth_state_to_session,
+        clear_auth_state_session,
+        get_auth_headers_and_cookies,
+        get_profile_for_url,
+        inspect_site_auth,
+        try_requests_login,
+    )
+except Exception:
+    def apply_inspection_to_state(resultado) -> None:
+        return None
+
+    def auth_state_to_session(st_module=None) -> dict:
+        return {}
+
+    def clear_auth_state_session(st_module=None) -> None:
+        return None
+
+    def get_auth_headers_and_cookies() -> dict:
+        return {}
+
+    def inspect_site_auth(url_site: str):
+        class _Dummy:
+            provider_slug = "generic_public"
+            status = "inativo"
+        return _Dummy()
+
+    def try_requests_login(**kwargs):
+        class _Dummy:
+            ok = False
+            status = "indisponivel"
+            message = "Fluxo de login requests indisponível."
+            provider_slug = "generic_public"
+        return _Dummy()
+
+    def get_profile_for_url(url_site: str):
+        class _Dummy:
+            slug = "generic_public"
+            nome = "Genérico"
+            login_required = False
+            login_url = url_site
+            products_url = url_site
+        return _Dummy()
+
+
+try:
+    from bling_app_zero.core.session_manager import (
+        STATUS_LOGIN_CAPTCHA_DETECTADO,
+        STATUS_LOGIN_REQUERIDO,
+        STATUS_SESSAO_PRONTA,
+        iniciar_login_assistido,
+        montar_auth_context,
+        obter_status_login_da_sessao,
+        salvar_status_login_em_sessao,
+        sessao_esta_pronta,
+    )
+except Exception:
+    STATUS_LOGIN_CAPTCHA_DETECTADO = "login_captcha_detectado"
+    STATUS_LOGIN_REQUERIDO = "login_required"
+    STATUS_SESSAO_PRONTA = "session_ready"
+
+    def iniciar_login_assistido(
+        *,
+        base_url: str,
+        fornecedor: str = "",
+        login_url: str = "",
+        products_url: str = "",
+        timeout_ms: int = 300000,
+        headless: bool = False,
+    ) -> dict:
+        return {
+            "ok": False,
+            "status": "erro",
+            "mensagem": "Login assistido indisponível neste ambiente.",
+        }
+
+    def montar_auth_context(base_url: str, fornecedor: str = "") -> dict:
+        return {}
+
+    def obter_status_login_da_sessao() -> dict:
+        return {}
+
+    def salvar_status_login_em_sessao(
+        *,
+        base_url: str,
+        status: str,
+        mensagem: str = "",
+        exige_login: bool = False,
+        captcha_detectado: bool = False,
+        fornecedor: str = "",
+    ) -> None:
+        return None
+
+    def sessao_esta_pronta(base_url: str, fornecedor: str = "") -> bool:
+        return False
+
+
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     log_debug,
@@ -67,6 +157,7 @@ def _limpar_estado_origem() -> None:
         "site_busca_diagnostico_total_descobertos",
         "site_busca_diagnostico_total_validos",
         "site_busca_diagnostico_total_rejeitados",
+        "site_busca_login_status",
     ]:
         st.session_state.pop(chave, None)
 
@@ -266,6 +357,79 @@ def _modelo_pronto() -> bool:
     return safe_df_estrutura(st.session_state.get("df_modelo"))
 
 
+def _fornecedor_slug(url_site: str) -> str:
+    valor = str(url_site or "").strip().lower()
+    valor = valor.replace("https://", "").replace("http://", "").replace("www.", "")
+    for ch in ["/", ".", "-", "?", "&", "="]:
+        valor = valor.replace(ch, "_")
+    while "__" in valor:
+        valor = valor.replace("__", "_")
+    return valor.strip("_") or "fornecedor"
+
+
+def _auth_state_atual() -> dict:
+    base = st.session_state.get("site_auth_state", {})
+    if isinstance(base, dict):
+        return dict(base)
+    return {}
+
+
+def _merge_auth_states(*states: dict) -> dict:
+    merged: dict = {}
+    for state in states:
+        if isinstance(state, dict):
+            merged.update(state)
+    return merged
+
+
+def _sync_auth_state_com_session_manager(url_site: str) -> dict:
+    slug = _fornecedor_slug(url_site)
+    estado_atual = _auth_state_atual()
+    estado_site_auth = auth_state_to_session(st)
+
+    contexto_salvo = montar_auth_context(base_url=url_site, fornecedor=slug)
+    status_login = obter_status_login_da_sessao()
+
+    estado_final = _merge_auth_states(estado_atual, estado_site_auth)
+
+    if isinstance(status_login, dict) and status_login:
+        estado_final["status"] = status_login.get("status", estado_final.get("status", "inativo"))
+        estado_final["last_message"] = status_login.get("mensagem", estado_final.get("last_message", ""))
+        estado_final["requires_login"] = bool(
+            status_login.get("exige_login", estado_final.get("requires_login", False))
+        )
+        estado_final["captcha_detected"] = bool(
+            status_login.get("captcha_detectado", estado_final.get("captcha_detected", False))
+        )
+        estado_final["session_ready"] = bool(
+            status_login.get("session_ready", estado_final.get("session_ready", False))
+        )
+
+    if isinstance(contexto_salvo, dict) and contexto_salvo:
+        estado_final["auth_context"] = contexto_salvo
+        estado_final["products_url"] = str(
+            contexto_salvo.get("products_url", estado_final.get("products_url", url_site))
+        ).strip() or url_site
+        estado_final["storage_state_path"] = str(contexto_salvo.get("storage_state_path", "") or "").strip()
+        estado_final["session_ready"] = bool(
+            contexto_salvo.get("session_ready", estado_final.get("session_ready", False))
+        )
+        estado_final["status"] = str(
+            contexto_salvo.get("status", estado_final.get("status", "inativo"))
+        ).strip() or "inativo"
+
+    estado_final["provider_name"] = str(
+        estado_final.get("provider_name") or estado_final.get("provider_slug") or _fornecedor_slug(url_site)
+    ).strip()
+    estado_final["provider_slug"] = str(
+        estado_final.get("provider_slug") or _fornecedor_slug(url_site)
+    ).strip()
+    estado_final["auth_mode"] = "login" if bool(estado_final.get("requires_login", False)) else "public"
+
+    st.session_state["site_auth_state"] = estado_final
+    return estado_final
+
+
 def _render_operacao() -> None:
     tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
     opcoes = {
@@ -324,7 +488,14 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
     if buscar_produtos_site_com_gpt is None:
         raise RuntimeError("Módulo de busca por site indisponível.")
 
-    auth_context = get_auth_headers_and_cookies()
+    estado_auth = _sync_auth_state_com_session_manager(url_site)
+    auth_context = {}
+
+    if bool(estado_auth.get("session_ready", False)):
+        auth_context = estado_auth.get("auth_context", {}) or {}
+    else:
+        auth_context = get_auth_headers_and_cookies() or {}
+
     st.session_state["site_auth_context"] = auth_context
 
     kwargs = {
@@ -361,9 +532,12 @@ def _executar_busca_site(url_site: str) -> None:
         st.error("Módulo de busca por site indisponível.")
         return
 
-    auth_state = st.session_state.get("site_auth_state", {})
-    if bool(auth_state.get("requires_login", False)) and not bool(auth_state.get("session_ready", False)):
-        st.error("Este fornecedor exige login. Valide a sessão antes de iniciar a leitura do catálogo.")
+    estado_auth = _sync_auth_state_com_session_manager(url_site)
+    requires_login = bool(estado_auth.get("requires_login", False))
+    session_ready = bool(estado_auth.get("session_ready", False))
+
+    if requires_login and not session_ready:
+        st.error("Este fornecedor exige login. Faça o login assistido antes de iniciar a leitura do catálogo.")
         return
 
     intervalo = int(st.session_state.get("site_auto_intervalo_segundos", 60) or 60)
@@ -375,9 +549,20 @@ def _executar_busca_site(url_site: str) -> None:
 
     try:
         df_site = _chamar_busca_site_compativel(url_site, intervalo)
+        _sync_auth_state_com_session_manager(url_site)
 
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
-            st.warning("Nenhum produto encontrado.")
+            estado_apos_busca = _sync_auth_state_com_session_manager(url_site)
+            status_bloqueio = str(estado_apos_busca.get("status", "") or "").strip()
+
+            if status_bloqueio in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+                st.warning(
+                    "O fornecedor bloqueou a leitura automática. "
+                    "Use o login assistido para salvar a sessão e tentar novamente."
+                )
+            else:
+                st.warning("Nenhum produto encontrado.")
+
             st.session_state["site_auto_status"] = "erro"
             _carimbar_execucao_site(0, url_site)
             return
@@ -422,7 +607,7 @@ def _render_status_auth_cards(auth_state: dict) -> None:
 
 def _render_bloco_inspecao_site(url_site: str) -> None:
     auth_state_to_session(st)
-    auth_state = st.session_state.get("site_auth_state", {})
+    auth_state = _sync_auth_state_com_session_manager(url_site)
 
     st.markdown("#### Diagnóstico de acesso do fornecedor")
 
@@ -431,9 +616,9 @@ def _render_bloco_inspecao_site(url_site: str) -> None:
         if st.button("🔎 Inspecionar acesso do site", use_container_width=True, key="btn_inspecionar_auth_site"):
             resultado = inspect_site_auth(url_site)
             apply_inspection_to_state(resultado)
-            st.session_state["site_auth_state"] = auth_state_to_session(st)
+            _sync_auth_state_com_session_manager(url_site)
             log_debug(
-                f"Inspeção de autenticação executada | provider={resultado.provider_slug} | status={resultado.status}",
+                f"Inspeção de autenticação executada | provider={getattr(resultado, 'provider_slug', 'desconhecido')} | status={getattr(resultado, 'status', 'inativo')}",
                 nivel="INFO",
             )
             st.rerun()
@@ -441,9 +626,19 @@ def _render_bloco_inspecao_site(url_site: str) -> None:
     with col2:
         if st.button("🧹 Limpar sessão do fornecedor", use_container_width=True, key="btn_limpar_auth_site"):
             clear_auth_state_session(st)
+            salvar_status_login_em_sessao(
+                base_url=url_site,
+                fornecedor=_fornecedor_slug(url_site),
+                status="inativo",
+                mensagem="Sessão do fornecedor foi limpa.",
+                exige_login=False,
+                captcha_detectado=False,
+            )
+            st.session_state["site_auth_state"] = {}
             log_debug("Sessão autenticada do fornecedor foi limpa.", nivel="INFO")
             st.rerun()
 
+    auth_state = _sync_auth_state_com_session_manager(url_site)
     _render_status_auth_cards(auth_state)
 
     if auth_state.get("last_message"):
@@ -452,12 +647,67 @@ def _render_bloco_inspecao_site(url_site: str) -> None:
     if auth_state.get("captcha_detected"):
         st.warning(
             "Este fornecedor apresenta indício de captcha. "
-            "O fluxo ideal é autenticação assistida com sessão persistente no próximo pacote do crawler autenticado."
+            "Use o login assistido com sessão persistente antes de rodar o crawler."
         )
 
 
+def _render_bloco_login_assistido(url_site: str, login_url: str, products_url: str) -> None:
+    st.markdown("#### Login assistido do fornecedor")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔐 Fazer login assistido", use_container_width=True, key="btn_login_assistido_fornecedor"):
+            resultado = iniciar_login_assistido(
+                base_url=url_site,
+                fornecedor=_fornecedor_slug(url_site),
+                login_url=login_url,
+                products_url=products_url,
+                timeout_ms=300000,
+                headless=False,
+            )
+
+            if bool(resultado.get("ok", False)):
+                salvar_status_login_em_sessao(
+                    base_url=url_site,
+                    fornecedor=_fornecedor_slug(url_site),
+                    status=STATUS_SESSAO_PRONTA,
+                    mensagem=str(resultado.get("mensagem", "Sessão autenticada salva com sucesso.")),
+                    exige_login=False,
+                    captcha_detectado=False,
+                )
+                st.success(str(resultado.get("mensagem", "Sessão autenticada salva com sucesso.")))
+                log_debug(
+                    f"Login assistido concluído com sucesso | fornecedor={_fornecedor_slug(url_site)}",
+                    nivel="INFO",
+                )
+            else:
+                status = str(resultado.get("status", "erro") or "erro").strip()
+                mensagem = str(resultado.get("mensagem", "Falha ao executar login assistido.") or "").strip()
+                salvar_status_login_em_sessao(
+                    base_url=url_site,
+                    fornecedor=_fornecedor_slug(url_site),
+                    status=status,
+                    mensagem=mensagem,
+                    exige_login=True,
+                    captcha_detectado=(status == STATUS_LOGIN_CAPTCHA_DETECTADO),
+                )
+                st.warning(mensagem or "Falha ao executar login assistido.")
+                log_debug(
+                    f"Falha no login assistido | fornecedor={_fornecedor_slug(url_site)} | status={status}",
+                    nivel="ERRO",
+                )
+
+            _sync_auth_state_com_session_manager(url_site)
+            st.rerun()
+
+    with col2:
+        if st.button("♻️ Recarregar sessão salva", use_container_width=True, key="btn_recarregar_sessao_assistida"):
+            _sync_auth_state_com_session_manager(url_site)
+            st.rerun()
+
+
 def _render_bloco_login_fornecedor(url_site: str) -> None:
-    auth_state = st.session_state.get("site_auth_state", {})
+    auth_state = _sync_auth_state_com_session_manager(url_site)
     profile = get_profile_for_url(url_site)
 
     login_url_default = str(auth_state.get("login_url", "") or "").strip() or profile.login_url
@@ -470,6 +720,7 @@ def _render_bloco_login_fornecedor(url_site: str) -> None:
         options=[
             "Somente detectar se o site exige login",
             "Informar credenciais e tentar validar sessão",
+            "Abrir login assistido no navegador",
         ],
         horizontal=False,
         key="site_auth_strategy",
@@ -526,7 +777,7 @@ def _render_bloco_login_fornecedor(url_site: str) -> None:
                     profile=profile,
                 )
 
-                st.session_state["site_auth_state"] = auth_state_to_session(st)
+                _sync_auth_state_com_session_manager(url_site)
 
                 if resultado.ok:
                     st.success(resultado.message)
@@ -548,10 +799,17 @@ def _render_bloco_login_fornecedor(url_site: str) -> None:
 
         with col2:
             if st.button("♻️ Recarregar status da sessão", use_container_width=True, key="btn_recarregar_status_sessao"):
-                st.session_state["site_auth_state"] = auth_state_to_session(st)
+                _sync_auth_state_com_session_manager(url_site)
                 st.rerun()
 
-    auth_state = st.session_state.get("site_auth_state", {})
+    elif auth_strategy == "Abrir login assistido no navegador":
+        _render_bloco_login_assistido(
+            url_site=url_site,
+            login_url=login_url,
+            products_url=products_url,
+        )
+
+    auth_state = _sync_auth_state_com_session_manager(url_site)
     session_ready = bool(auth_state.get("session_ready", False))
     requires_login = bool(auth_state.get("requires_login", False))
 
@@ -560,6 +818,27 @@ def _render_bloco_login_fornecedor(url_site: str) -> None:
 
     if session_ready:
         st.success("Sessão autenticada pronta para leitura do catálogo.")
+
+
+def _render_banner_status_login_site(url_site: str) -> None:
+    auth_state = _sync_auth_state_com_session_manager(url_site)
+    status = str(auth_state.get("status", "") or "").strip()
+    session_ready = bool(auth_state.get("session_ready", False))
+
+    if session_ready:
+        st.success("Sessão autenticada detectada e pronta para uso no crawler.")
+        return
+
+    if status == STATUS_LOGIN_CAPTCHA_DETECTADO:
+        st.warning(
+            "Fornecedor com login detectado e indício de captcha. "
+            "Fluxo autenticado necessário."
+        )
+    elif status == STATUS_LOGIN_REQUERIDO:
+        st.warning(
+            "Fornecedor exige login antes da leitura do catálogo. "
+            "Faça a autenticação para continuar."
+        )
 
 
 def _render_origem_site() -> None:
@@ -580,19 +859,23 @@ def _render_origem_site() -> None:
     if profile.slug != "generic_public":
         st.caption(f"Perfil reconhecido: {profile.nome}")
 
+    _sync_auth_state_com_session_manager(url_site)
     _render_bloco_inspecao_site(url_site)
+    _render_banner_status_login_site(url_site)
 
-    auth_state = st.session_state.get("site_auth_state", {})
+    auth_state = _sync_auth_state_com_session_manager(url_site)
     requires_login = bool(auth_state.get("requires_login", False) or profile.login_required)
+    session_ready = bool(auth_state.get("session_ready", False))
+    status_auth = str(auth_state.get("status", "") or "").strip()
 
-    if requires_login:
+    if requires_login or status_auth in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
         st.markdown("---")
         _render_bloco_login_fornecedor(url_site)
 
     st.markdown("---")
     st.markdown("#### Leitura do catálogo")
 
-    auth_state = st.session_state.get("site_auth_state", {})
+    auth_state = _sync_auth_state_com_session_manager(url_site)
     session_ready = bool(auth_state.get("session_ready", False))
     effective_products_url = str(auth_state.get("products_url", "") or "").strip() or url_site
     effective_url = effective_products_url if session_ready else url_site
@@ -606,7 +889,7 @@ def _render_origem_site() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        label = "✨ Ler catálogo autenticado com GPT" if requires_login else "✨ Varrer site inteiro com GPT"
+        label = "✨ Ler catálogo autenticado com GPT" if (requires_login or session_ready) else "✨ Varrer catálogo com GPT"
         if st.button(label, use_container_width=True, key="btn_varrer_site_gpt"):
             _executar_busca_site(effective_url)
             st.rerun()
@@ -614,7 +897,7 @@ def _render_origem_site() -> None:
     with col2:
         if st.button("🟢 Ativar monitoramento", use_container_width=True, key="btn_ativar_monitoramento_site"):
             if requires_login and not session_ready:
-                st.error("Antes de ativar o monitoramento, valide a sessão autenticada.")
+                st.error("Antes de ativar o monitoramento, finalize o login assistido.")
             else:
                 st.session_state["site_auto_loop_ativo"] = True
                 st.session_state["site_auto_status"] = "ativo"
