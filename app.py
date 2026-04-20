@@ -10,7 +10,6 @@ from bling_app_zero.ui.app_helpers import (
     get_etapa,
     log_debug,
     render_log_debug,
-    render_topo_navegacao,
     safe_df_dados,
     safe_df_estrutura,
     sincronizar_etapa_da_url,
@@ -386,7 +385,7 @@ def _executar_monitoramento_site_agora() -> None:
 
 
 def _render_painel_automacao_site() -> None:
-    with st.expander("⚙️ Automação do site + envio Bling", expanded=False):
+    with st.expander("⚙️ Automação do site", expanded=False):
         site_disponivel = _origem_site_disponivel()
         url_site = str(st.session_state.get("site_fornecedor_url", "") or "").strip()
         status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
@@ -394,7 +393,8 @@ def _render_painel_automacao_site() -> None:
         ultimo_total = int(st.session_state.get("site_auto_ultimo_total_produtos", 0) or 0)
 
         st.caption(
-            "Painel de controle do monitoramento da busca por site para uso junto do fluxo final de conexão e envio ao Bling."
+            "Painel de controle do monitoramento da busca por site. "
+            "O envio ao Bling acontece no preview final, depois da validação e da confirmação do download."
         )
 
         col1, col2, col3, col4 = st.columns(4)
@@ -430,71 +430,94 @@ def _render_painel_automacao_site() -> None:
 
         with c1:
             if st.button(
-                "▶️ Ativar loop",
+                "▶️ Executar agora",
                 use_container_width=True,
-                key="btn_ativar_loop_site",
+                key="btn_site_auto_executar_agora",
+                disabled=not site_disponivel,
+            ):
+                _executar_monitoramento_site_agora()
+                st.rerun()
+
+        with c2:
+            if st.button(
+                "🟢 Ativar loop",
+                use_container_width=True,
+                key="btn_site_auto_ativar",
                 disabled=not site_disponivel,
             ):
                 st.session_state["site_auto_loop_ativo"] = True
                 st.session_state["site_auto_status"] = "ativo"
-                st.session_state["site_auto_modo"] = "loop"
-                log_debug(
-                    f"Loop automático do site ativado | url={url_site} | "
-                    f"intervalo={st.session_state.get('site_auto_intervalo_segundos', 60)}s",
-                    nivel="INFO",
-                )
-                st.success("Loop automático ativado.")
-                st.info("O loop ficou armado no sistema. A execução recorrente real depende da infraestrutura ativa.")
-
-        with c2:
-            if st.button(
-                "⏸️ Desativar loop",
-                use_container_width=True,
-                key="btn_desativar_loop_site",
-            ):
-                st.session_state["site_auto_loop_ativo"] = False
-                st.session_state["site_auto_status"] = "inativo"
-                st.session_state["site_auto_modo"] = "manual"
-                log_debug("Loop automático do site desativado.", nivel="INFO")
-                st.success("Loop automático desativado.")
+                st.success("Loop automático marcado como ativo.")
+                log_debug("Loop automático do site ativado.", nivel="INFO")
+                st.rerun()
 
         with c3:
             if st.button(
-                "🔄 Executar agora",
+                "⏹️ Parar loop",
                 use_container_width=True,
-                key="btn_executar_monitor_site_agora",
-                disabled=not site_disponivel,
+                key="btn_site_auto_parar",
             ):
-                _executar_monitoramento_site_agora()
+                st.session_state["site_auto_loop_ativo"] = False
+                st.session_state["site_auto_status"] = "inativo"
+                st.info("Loop automático marcado como inativo.")
+                log_debug("Loop automático do site desativado.", nivel="INFO")
+                st.rerun()
 
         if not site_disponivel:
             st.info(
-                "Para liberar esta automação, use a origem 'Buscar no site do fornecedor' e informe uma URL válida."
-            )
-        else:
-            st.caption(
-                "O loop automático fica preparado aqui no app. O envio real contínuo depende do serviço de sincronização e da infraestrutura ativa."
+                "Esse painel só fica operacional quando a origem atual veio da busca por site e houver URL válida."
             )
 
 
-st.set_page_config(
-    page_title="IA Planilhas → Bling",
-    layout="wide",
-)
+def _render_header() -> None:
+    st.title("🚀 IA Planilhas → Bling")
+    st.caption("Fluxo principal: origem → precificação → mapeamento → preview final → conexão/envio Bling")
 
-init_app()
-_inicializar_estado_global()
-sincronizar_etapa_da_url()
-_sincronizar_wizard_com_estado()
-_atualizar_etapa_maxima_por_progresso()
-_registrar_boot_log()
-_processar_callback_bling()
 
-st.title("🚀 IA Planilhas → Bling")
-_render_navegacao_travada()
-_render_painel_automacao_site()
-_render_etapa_atual()
+def _render_resumo_topo() -> None:
+    df_origem = st.session_state.get("df_origem")
+    df_precificado = st.session_state.get("df_precificado")
+    df_final = st.session_state.get("df_final")
 
-# Painel visual de log sempre no final da tela
-render_log_debug()
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Origem", len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0)
+    with c2:
+        st.metric("Precisificado", len(df_precificado) if isinstance(df_precificado, pd.DataFrame) else 0)
+    with c3:
+        st.metric("Final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
+    with c4:
+        st.metric("Etapa", _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem")).replace("_", " ").title())
 
+
+def _render_layout_principal() -> None:
+    _render_header()
+    _render_resumo_topo()
+    st.markdown("---")
+    _render_navegacao_travada()
+    st.markdown("---")
+    _render_etapa_atual()
+    st.markdown("---")
+    _render_painel_automacao_site()
+    render_log_debug()
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="IA Planilhas → Bling",
+        page_icon="🚀",
+        layout="wide",
+    )
+
+    init_app()
+    _inicializar_estado_global()
+    sincronizar_etapa_da_url()
+    _sincronizar_wizard_com_estado()
+    _atualizar_etapa_maxima_por_progresso()
+    _processar_callback_bling()
+    _registrar_boot_log()
+    _render_layout_principal()
+
+
+if __name__ == "__main__":
+    main()
