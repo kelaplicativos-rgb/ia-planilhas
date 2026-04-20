@@ -1,5 +1,4 @@
 
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -42,9 +41,6 @@ def _eh_vazio(valor: object) -> bool:
 
 
 def _pontuar_semelhanca_simples(a: str, b: str) -> int:
-    """
-    Similaridade leve por tokens normalizados.
-    """
     aa = _norm(a)
     bb = _norm(b)
 
@@ -81,6 +77,14 @@ def _pontuar_semelhanca_simples(a: str, b: str) -> int:
         score += 20
     if "deposito" in aa and "deposito" in bb:
         score += 20
+    if "categoria" in aa and "categoria" in bb:
+        score += 20
+    if "ncm" in aa and "ncm" in bb:
+        score += 20
+    if "quantidade" in aa and "quantidade" in bb:
+        score += 20
+    if "estoque" in aa and "estoque" in bb:
+        score += 20
 
     return score
 
@@ -113,11 +117,7 @@ def construir_resumo_colunas_origem(df_base: pd.DataFrame) -> list[dict[str, Any
 
         amostras = []
         try:
-            valores = (
-                serie.fillna("")
-                .astype(str)
-                .str.strip()
-            )
+            valores = serie.fillna("").astype(str).str.strip()
             valores = valores[valores.ne("")]
             amostras = valores.head(3).tolist()
         except Exception:
@@ -157,7 +157,7 @@ def detectar_campos_obrigatorios_modelo(df_modelo: pd.DataFrame, operacao: str) 
             obrigatorios.append(coluna)
             continue
 
-        if operacao == "estoque" and nome_norm in {"preco unitario", "deposito", "deposito obrigatorio"}:
+        if operacao == "estoque" and nome_norm in {"preco unitario", "deposito", "deposito obrigatorio", "balanco"}:
             obrigatorios.append(coluna)
             continue
 
@@ -231,14 +231,14 @@ def _mapa_sinonimos_modelo(operacao: str) -> dict[str, list[str]]:
     operacao = _norm(operacao) or "cadastro"
 
     base = {
-        "Código": ["codigo", "sku", "referencia", "id produto", "cod"],
+        "Código": ["codigo", "sku", "referencia", "id produto", "cod", "código"],
         "Descrição": ["descricao", "nome", "titulo", "produto", "descricao produto"],
         "Descrição Curta": ["descricao curta", "resumo", "descricao resumida"],
         "Marca": ["marca", "fabricante"],
-        "GTIN/EAN": ["gtin", "ean", "codigo de barras"],
+        "GTIN/EAN": ["gtin", "ean", "codigo de barras", "código de barras"],
         "NCM": ["ncm"],
         "URL Imagens": ["imagem", "imagens", "url imagem", "url imagens", "foto", "fotos"],
-        "Categoria": ["categoria", "departamento", "secao"],
+        "Categoria": ["categoria", "departamento", "secao", "seção"],
     }
 
     if operacao == "cadastro":
@@ -342,11 +342,55 @@ def aplicar_regras_pos_processamento(
         tentar_preencher("Código", ["codigo", "sku", "referencia"])
         tentar_preencher("GTIN/EAN", ["gtin", "ean", "codigo barras"])
         tentar_preencher("URL Imagens", ["imagem", "imagens", "foto", "url imagens"])
+        tentar_preencher("Categoria", ["categoria", "departamento", "secao"])
 
     if _norm(operacao) == "estoque":
         tentar_preencher("Código", ["codigo", "sku", "referencia"])
         tentar_preencher("Preço unitário (OBRIGATÓRIO)", ["preco", "valor", "preco unitario"])
         tentar_preencher("Balanço (OBRIGATÓRIO)", ["estoque", "saldo", "quantidade", "qtd"])
+
+    return saida
+
+
+def forcar_preenchimento_obrigatorios(
+    mapping: dict[str, str],
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    operacao: str,
+) -> dict[str, str]:
+    """
+    Força uma última rodada para obrigatórios ainda vazios.
+    """
+    saida = dict(mapping or {})
+    obrigatorios = detectar_campos_obrigatorios_modelo(df_modelo, operacao)
+    colunas_origem = extrair_colunas_origem(df_base)
+    usados = {v for v in saida.values() if _texto(v)}
+
+    sinonimos = _mapa_sinonimos_modelo(operacao)
+
+    for campo in obrigatorios:
+        if _texto(saida.get(campo)):
+            continue
+
+        candidatos = sinonimos.get(campo, [campo])
+        melhor = ""
+        melhor_score = -1
+
+        for origem in colunas_origem:
+            if origem in usados:
+                continue
+
+            score = 0
+            for candidato in candidatos:
+                score = max(score, _pontuar_semelhanca_simples(candidato, origem))
+
+            if score > melhor_score:
+                melhor_score = score
+                melhor = origem
+
+        if melhor and melhor_score >= 15:
+            saida[campo] = melhor
+            usados.add(melhor)
 
     return saida
 
@@ -403,10 +447,6 @@ def tentar_mapping_openai(
     operacao: str,
     resumo_origem: list[dict[str, Any]] | None = None,
 ) -> AgentResult:
-    """
-    Tenta usar o mapper GPT já existente no projeto.
-    Se não existir ou falhar, devolve erro estruturado.
-    """
     if not safe_df_dados(df_base):
         return AgentResult(
             ok=False,
