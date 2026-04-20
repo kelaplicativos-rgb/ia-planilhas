@@ -14,105 +14,6 @@ try:
 except Exception:
     buscar_produtos_site_com_gpt = None
 
-try:
-    from bling_app_zero.core.site_auth import (
-        apply_inspection_to_state,
-        auth_state_to_session,
-        clear_auth_state_session,
-        get_auth_headers_and_cookies,
-        get_profile_for_url,
-        inspect_site_auth,
-        try_requests_login,
-    )
-except Exception:
-    def apply_inspection_to_state(resultado) -> None:
-        return None
-
-    def auth_state_to_session(st_module=None) -> dict:
-        return {}
-
-    def clear_auth_state_session(st_module=None) -> None:
-        return None
-
-    def get_auth_headers_and_cookies() -> dict:
-        return {}
-
-    def inspect_site_auth(url_site: str):
-        class _Dummy:
-            provider_slug = "generic_public"
-            status = "inativo"
-        return _Dummy()
-
-    def try_requests_login(**kwargs):
-        class _Dummy:
-            ok = False
-            status = "indisponivel"
-            message = "Fluxo de login requests indisponível."
-            provider_slug = "generic_public"
-        return _Dummy()
-
-    def get_profile_for_url(url_site: str):
-        class _Dummy:
-            slug = "generic_public"
-            nome = "Genérico"
-            login_required = False
-            login_url = url_site
-            products_url = url_site
-        return _Dummy()
-
-
-try:
-    from bling_app_zero.core.session_manager import (
-        STATUS_LOGIN_CAPTCHA_DETECTADO,
-        STATUS_LOGIN_REQUERIDO,
-        STATUS_SESSAO_PRONTA,
-        iniciar_login_assistido,
-        montar_auth_context,
-        obter_status_login_da_sessao,
-        salvar_status_login_em_sessao,
-        sessao_esta_pronta,
-    )
-except Exception:
-    STATUS_LOGIN_CAPTCHA_DETECTADO = "login_captcha_detectado"
-    STATUS_LOGIN_REQUERIDO = "login_required"
-    STATUS_SESSAO_PRONTA = "session_ready"
-
-    def iniciar_login_assistido(
-        *,
-        base_url: str,
-        fornecedor: str = "",
-        login_url: str = "",
-        products_url: str = "",
-        timeout_ms: int = 300000,
-        headless: bool = False,
-    ) -> dict:
-        return {
-            "ok": False,
-            "status": "erro",
-            "mensagem": "Login assistido indisponível neste ambiente.",
-        }
-
-    def montar_auth_context(base_url: str, fornecedor: str = "") -> dict:
-        return {}
-
-    def obter_status_login_da_sessao() -> dict:
-        return {}
-
-    def salvar_status_login_em_sessao(
-        *,
-        base_url: str,
-        status: str,
-        mensagem: str = "",
-        exige_login: bool = False,
-        captcha_detectado: bool = False,
-        fornecedor: str = "",
-    ) -> None:
-        return None
-
-    def sessao_esta_pronta(base_url: str, fornecedor: str = "") -> bool:
-        return False
-
-
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     log_debug,
@@ -123,6 +24,10 @@ from bling_app_zero.ui.app_helpers import (
 EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
 EXTENSOES_MODELO = {".csv", ".xlsx", ".xls"}
 
+
+# ============================================================
+# HELPERS BASE
+# ============================================================
 
 def _extensao(upload) -> str:
     nome = str(getattr(upload, "name", "") or "").strip().lower()
@@ -146,6 +51,21 @@ def _resetar_flag_avanco_origem() -> None:
     st.session_state["origem_pronta_para_avancar"] = False
 
 
+def _resetar_estado_site_ui() -> None:
+    for chave in [
+        "site_busca_em_execucao",
+        "site_busca_ultima_url",
+        "site_busca_ultimo_total",
+        "site_busca_ultimo_status",
+        "site_busca_diagnostico_df",
+        "site_busca_diagnostico_total_descobertos",
+        "site_busca_diagnostico_total_validos",
+        "site_busca_diagnostico_total_rejeitados",
+        "site_login_status",
+    ]:
+        st.session_state.pop(chave, None)
+
+
 def _limpar_estado_origem() -> None:
     for chave in [
         "df_origem",
@@ -153,14 +73,10 @@ def _limpar_estado_origem() -> None:
         "origem_upload_bytes",
         "origem_upload_tipo",
         "origem_upload_ext",
-        "site_busca_diagnostico_df",
-        "site_busca_diagnostico_total_descobertos",
-        "site_busca_diagnostico_total_validos",
-        "site_busca_diagnostico_total_rejeitados",
-        "site_busca_login_status",
     ]:
         st.session_state.pop(chave, None)
 
+    _resetar_estado_site_ui()
     _resetar_flag_avanco_origem()
 
 
@@ -271,20 +187,18 @@ def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
 
     if df.empty:
         st.success("Arquivo carregado corretamente, mas sem linhas de dados.")
-        preview = pd.DataFrame(columns=df.columns)
-        st.dataframe(preview, use_container_width=True)
+        st.dataframe(pd.DataFrame(columns=df.columns), use_container_width=True)
         return
 
-    st.dataframe(df.head(10), use_container_width=True)
+    st.dataframe(df.head(20), use_container_width=True)
 
 
 def _processar_upload_origem(upload) -> None:
     if upload is None:
+        _limpar_estado_origem()
         return
 
-    _limpar_estado_origem()
     ext = _extensao(upload)
-
     if ext not in EXTENSOES_ORIGEM:
         st.error("Arquivo de origem inválido. Envie CSV, XLSX, XLS, XML ou PDF.")
         return
@@ -302,6 +216,8 @@ def _processar_upload_origem(upload) -> None:
 
         st.session_state["df_origem"] = df
         _guardar_upload_bruto("origem_upload", upload, "tabular")
+        _resetar_estado_site_ui()
+
         st.success(f"Arquivo de origem carregado: {upload.name}")
         _preview_dataframe(df, "Preview da origem")
         return
@@ -314,21 +230,23 @@ def _processar_upload_origem(upload) -> None:
 
         st.session_state["df_origem"] = df
         _guardar_upload_bruto("origem_upload", upload, "xml")
+        _resetar_estado_site_ui()
+
         st.success("XML convertido com sucesso.")
         _preview_dataframe(df, "Preview do XML")
         return
 
     _guardar_upload_bruto("origem_upload", upload, "documento")
+    _resetar_estado_site_ui()
     st.warning("PDF ainda não processado automaticamente.")
 
 
 def _processar_upload_modelo(upload) -> None:
     if upload is None:
+        _limpar_estado_modelo()
         return
 
-    _limpar_estado_modelo()
     ext = _extensao(upload)
-
     if ext not in EXTENSOES_MODELO:
         st.error("Arquivo modelo inválido. Envie CSV, XLSX ou XLS.")
         return
@@ -345,6 +263,7 @@ def _processar_upload_modelo(upload) -> None:
 
     st.session_state["df_modelo"] = df
     _guardar_upload_bruto("modelo_upload", upload, "tabular")
+
     st.success(f"Modelo carregado: {upload.name}")
     _preview_dataframe(df, "Preview do modelo")
 
@@ -357,87 +276,31 @@ def _modelo_pronto() -> bool:
     return safe_df_estrutura(st.session_state.get("df_modelo"))
 
 
-def _fornecedor_slug(url_site: str) -> str:
-    valor = str(url_site or "").strip().lower()
-    valor = valor.replace("https://", "").replace("http://", "").replace("www.", "")
-    for ch in ["/", ".", "-", "?", "&", "="]:
-        valor = valor.replace(ch, "_")
-    while "__" in valor:
-        valor = valor.replace("__", "_")
-    return valor.strip("_") or "fornecedor"
+def _tem_resultado_site() -> bool:
+    origem_tipo = str(st.session_state.get("origem_upload_tipo", "") or "").strip().lower()
+    return origem_tipo == "site_gpt" and safe_df_dados(st.session_state.get("df_origem"))
 
 
-def _auth_state_atual() -> dict:
-    base = st.session_state.get("site_auth_state", {})
-    if isinstance(base, dict):
-        return dict(base)
-    return {}
+def _resumo_origem_atual() -> None:
+    df_origem = st.session_state.get("df_origem")
+    df_modelo = st.session_state.get("df_modelo")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem))
+    with col2:
+        st.metric("Colunas origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem.columns))
+    with col3:
+        st.metric("Colunas modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
 
 
-def _merge_auth_states(*states: dict) -> dict:
-    merged: dict = {}
-    for state in states:
-        if isinstance(state, dict):
-            merged.update(state)
-    return merged
-
-
-def _sync_auth_state_com_session_manager(url_site: str) -> dict:
-    slug = _fornecedor_slug(url_site)
-    estado_atual = _auth_state_atual()
-    estado_site_auth = auth_state_to_session(st)
-
-    contexto_salvo = montar_auth_context(base_url=url_site, fornecedor=slug)
-    status_login = obter_status_login_da_sessao()
-
-    estado_final = _merge_auth_states(estado_atual, estado_site_auth)
-
-    if isinstance(status_login, dict) and status_login:
-        estado_final["status"] = status_login.get("status", estado_final.get("status", "inativo"))
-        estado_final["last_message"] = status_login.get("mensagem", estado_final.get("last_message", ""))
-        estado_final["requires_login"] = bool(
-            status_login.get("exige_login", estado_final.get("requires_login", False))
-        )
-        estado_final["captcha_detected"] = bool(
-            status_login.get("captcha_detectado", estado_final.get("captcha_detected", False))
-        )
-        estado_final["session_ready"] = bool(
-            status_login.get("session_ready", estado_final.get("session_ready", False))
-        )
-        estado_final["manual_mode"] = bool(
-            status_login.get("manual_mode", estado_final.get("manual_mode", False))
-        )
-
-    if isinstance(contexto_salvo, dict) and contexto_salvo:
-        estado_final["auth_context"] = contexto_salvo
-        estado_final["products_url"] = str(
-            contexto_salvo.get("products_url", estado_final.get("products_url", url_site))
-        ).strip() or url_site
-        estado_final["storage_state_path"] = str(contexto_salvo.get("storage_state_path", "") or "").strip()
-        estado_final["session_ready"] = bool(
-            contexto_salvo.get("session_ready", estado_final.get("session_ready", False))
-        )
-        estado_final["manual_mode"] = bool(
-            contexto_salvo.get("manual_mode", estado_final.get("manual_mode", False))
-        )
-        estado_final["status"] = str(
-            contexto_salvo.get("status", estado_final.get("status", "inativo"))
-        ).strip() or "inativo"
-
-    estado_final["provider_name"] = str(
-        estado_final.get("provider_name") or estado_final.get("provider_slug") or _fornecedor_slug(url_site)
-    ).strip()
-    estado_final["provider_slug"] = str(
-        estado_final.get("provider_slug") or _fornecedor_slug(url_site)
-    ).strip()
-    estado_final["auth_mode"] = "login" if bool(estado_final.get("requires_login", False)) else "public"
-
-    st.session_state["site_auth_state"] = estado_final
-    return estado_final
-
+# ============================================================
+# OPERAÇÃO
+# ============================================================
 
 def _render_operacao() -> None:
     tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
+
     opcoes = {
         "Cadastro de Produtos": "cadastro",
         "Atualização de Estoque": "estoque",
@@ -467,11 +330,16 @@ def _render_operacao() -> None:
     st.session_state["tipo_operacao_bling"] = novo_tipo
 
 
+# ============================================================
+# ORIGEM POR ARQUIVO
+# ============================================================
+
 def _render_origem_arquivo() -> None:
     st.markdown("### Arquivo do fornecedor")
+    st.caption("Envie a planilha ou XML do fornecedor para usar como origem.")
 
     upload_origem = st.file_uploader(
-        "Toque para selecionar o arquivo do fornecedor",
+        "Selecionar arquivo de origem",
         key="upload_origem",
     )
 
@@ -479,54 +347,22 @@ def _render_origem_arquivo() -> None:
         _processar_upload_origem(upload_origem)
 
 
-def _carimbar_execucao_site(total_produtos: int, url_site: str) -> None:
+# ============================================================
+# BUSCA POR SITE - NOVO FLUXO SIMPLIFICADO
+# ============================================================
+
+def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> None:
     from datetime import datetime
 
-    st.session_state["site_auto_ultima_execucao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state["site_auto_ultima_url"] = url_site
-    st.session_state["site_auto_ultimo_total_produtos"] = int(total_produtos)
-    st.session_state["site_auto_status"] = (
-        "ativo" if st.session_state.get("site_auto_loop_ativo", False) else "inativo"
-    )
+    st.session_state["site_busca_ultima_url"] = url_site
+    st.session_state["site_busca_ultimo_total"] = int(total_produtos)
+    st.session_state["site_busca_ultimo_status"] = status
+    st.session_state["site_busca_ultima_execucao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _contexto_login_manual_confirmado(url_site: str) -> dict:
-    slug = _fornecedor_slug(url_site)
-    estado = _sync_auth_state_com_session_manager(url_site)
-
-    contexto_salvo = estado.get("auth_context", {}) if isinstance(estado, dict) else {}
-    if isinstance(contexto_salvo, dict) and (contexto_salvo.get("session_ready") or contexto_salvo.get("manual_mode")):
-        return contexto_salvo
-
-    products_url = str(estado.get("products_url", "") or "").strip() or url_site
-
-    return {
-        "manual_mode": True,
-        "session_ready": False,
-        "fornecedor_slug": slug,
-        "base_url": url_site,
-        "products_url": products_url,
-        "headers": {},
-        "cookies": [],
-    }
-
-
-def _chamar_busca_site_compativel(url_site: str, intervalo: int):
+def _chamar_busca_site_compativel(url_site: str):
     if buscar_produtos_site_com_gpt is None:
         raise RuntimeError("Módulo de busca por site indisponível.")
-
-    estado_auth = _sync_auth_state_com_session_manager(url_site)
-    auth_context = {}
-
-    if bool(estado_auth.get("session_ready", False)) or bool(estado_auth.get("manual_mode", False)):
-        auth_context = estado_auth.get("auth_context", {}) or {}
-    else:
-        auth_context = get_auth_headers_and_cookies() or {}
-
-    if bool(st.session_state.get("site_login_manual_confirmado", False)):
-        auth_context = _contexto_login_manual_confirmado(url_site)
-
-    st.session_state["site_auth_context"] = auth_context
 
     kwargs = {
         "base_url": url_site,
@@ -539,14 +375,9 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
 
         if "termo" in parametros:
             kwargs["termo"] = ""
+
         if "limite_links" in parametros:
             kwargs["limite_links"] = None
-        if "modo_loop" in parametros:
-            kwargs["modo_loop"] = False
-        if "intervalo_segundos" in parametros:
-            kwargs["intervalo_segundos"] = intervalo
-        if "auth_context" in parametros:
-            kwargs["auth_context"] = auth_context
     except Exception:
         pass
 
@@ -554,6 +385,8 @@ def _chamar_busca_site_compativel(url_site: str, intervalo: int):
 
 
 def _executar_busca_site(url_site: str) -> None:
+    url_site = str(url_site or "").strip()
+
     if not url_site:
         st.error("Informe a URL base do fornecedor.")
         return
@@ -562,486 +395,187 @@ def _executar_busca_site(url_site: str) -> None:
         st.error("Módulo de busca por site indisponível.")
         return
 
-    estado_auth = _sync_auth_state_com_session_manager(url_site)
-    requires_login = bool(estado_auth.get("requires_login", False))
-    session_ready = bool(estado_auth.get("session_ready", False))
-    manual_mode = bool(estado_auth.get("manual_mode", False))
-    login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
+    st.session_state["site_busca_em_execucao"] = True
+    st.session_state["site_busca_ultimo_status"] = "executando"
 
-    if requires_login and not session_ready and not manual_mode and not login_manual_confirmado:
-        st.error("Este fornecedor exige login. Faça o login assistido antes de iniciar a leitura do catálogo.")
-        return
-
-    intervalo = int(st.session_state.get("site_auto_intervalo_segundos", 60) or 60)
-    st.session_state["site_auto_status"] = "executando"
-    log_debug(
-        f"Disparo manual do monitoramento do site | url={url_site} | intervalo={intervalo}s",
-        nivel="INFO",
-    )
+    log_debug(f"Iniciando busca simplificada por site | url={url_site}", nivel="INFO")
 
     try:
-        df_site = _chamar_busca_site_compativel(url_site, intervalo)
-        _sync_auth_state_com_session_manager(url_site)
+        df_site = _chamar_busca_site_compativel(url_site)
 
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
-            estado_apos_busca = _sync_auth_state_com_session_manager(url_site)
-            status_bloqueio = str(estado_apos_busca.get("status", "") or "").strip()
-
-            if status_bloqueio in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
-                st.warning(
-                    "O fornecedor bloqueou a leitura automática. "
-                    "Use o login assistido para salvar a sessão e tentar novamente."
-                )
-            else:
-                st.warning("Nenhum produto encontrado.")
-
-            st.session_state["site_auto_status"] = "erro"
-            _carimbar_execucao_site(0, url_site)
+            _carimbar_execucao_site(0, url_site, "vazio")
+            st.session_state["site_busca_em_execucao"] = False
+            st.warning("Nenhum produto encontrado na busca por site.")
             return
 
         st.session_state["df_origem"] = df_site
         st.session_state["origem_upload_tipo"] = "site_gpt"
-        st.session_state["origem_upload_nome"] = f"varredura_site_{url_site}"
+        st.session_state["origem_upload_nome"] = f"site_{url_site}"
         st.session_state["origem_upload_ext"] = "site_gpt"
 
         total = int(len(df_site))
-        _carimbar_execucao_site(total, url_site)
+        _carimbar_execucao_site(total, url_site, "sucesso")
+        st.session_state["site_busca_em_execucao"] = False
 
-        st.success(f"{total} produtos encontrados")
-        _preview_dataframe(df_site, "Preview do site")
-        log_debug(f"Monitoramento manual executado com {total} produto(s).", nivel="INFO")
+        st.success(f"{total} produto(s) encontrados no site.")
+        _preview_dataframe(df_site, "Preview da busca por site")
+        log_debug(f"Busca por site finalizada com {total} produto(s).", nivel="INFO")
 
     except Exception as exc:
-        st.session_state["site_auto_status"] = "erro"
+        st.session_state["site_busca_em_execucao"] = False
+        _carimbar_execucao_site(0, url_site, "erro")
         st.error(f"Falha ao executar busca no site: {exc}")
-        log_debug(f"Falha ao executar monitoramento do site: {exc}", nivel="ERRO")
+        log_debug(f"Falha ao executar busca por site: {exc}", nivel="ERRO")
 
 
-def _render_status_auth_cards(auth_state: dict) -> None:
-    provider_name = str(auth_state.get("provider_name", "") or "").strip() or "Não identificado"
-    status = str(auth_state.get("status", "inativo") or "inativo").strip()
-    auth_mode = str(auth_state.get("auth_mode", "public") or "public").strip()
-    requires_login = bool(auth_state.get("requires_login", False))
-    session_ready = bool(auth_state.get("session_ready", False))
-    manual_mode = bool(auth_state.get("manual_mode", False))
-    login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
+def _render_resumo_busca_site() -> None:
+    ultima_url = str(st.session_state.get("site_busca_ultima_url", "") or "").strip()
+    ultimo_total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+    ultimo_status = str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo")
+    ultima_execucao = str(st.session_state.get("site_busca_ultima_execucao", "") or "").strip()
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Fornecedor", provider_name)
+        st.metric("Status", ultimo_status.title())
     with c2:
-        st.metric("Modo", "Login" if auth_mode == "login" else "Público")
+        st.metric("Produtos", ultimo_total)
     with c3:
-        st.metric("Exige login", "Sim" if requires_login else "Não")
-    with c4:
-        status_sessao = "Sim" if session_ready else ("Manual" if (manual_mode or login_manual_confirmado) else "Não")
-        st.metric("Sessão pronta", status_sessao)
+        st.metric("Origem site", "Sim" if _tem_resultado_site() else "Não")
 
-    st.caption(f"Status atual: {status}")
-
-
-def _render_bloco_inspecao_site(url_site: str) -> None:
-    auth_state_to_session(st)
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-
-    st.markdown("#### Diagnóstico de acesso do fornecedor")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔎 Inspecionar acesso do site", use_container_width=True, key="btn_inspecionar_auth_site"):
-            resultado = inspect_site_auth(url_site)
-            apply_inspection_to_state(resultado)
-            _sync_auth_state_com_session_manager(url_site)
-            log_debug(
-                f"Inspeção de autenticação executada | provider={getattr(resultado, 'provider_slug', 'desconhecido')} | status={getattr(resultado, 'status', 'inativo')}",
-                nivel="INFO",
-            )
-            st.rerun()
-
-    with col2:
-        if st.button("🧹 Limpar sessão do fornecedor", use_container_width=True, key="btn_limpar_auth_site"):
-            clear_auth_state_session(st)
-            st.session_state["site_login_manual_confirmado"] = False
-            salvar_status_login_em_sessao(
-                base_url=url_site,
-                fornecedor=_fornecedor_slug(url_site),
-                status="inativo",
-                mensagem="Sessão do fornecedor foi limpa.",
-                exige_login=False,
-                captcha_detectado=False,
-            )
-            st.session_state["site_auth_state"] = {}
-            log_debug("Sessão autenticada do fornecedor foi limpa.", nivel="INFO")
-            st.rerun()
-
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    _render_status_auth_cards(auth_state)
-
-    if auth_state.get("last_message"):
-        st.info(str(auth_state.get("last_message")))
-
-    if auth_state.get("captcha_detected"):
-        st.warning(
-            "Este fornecedor apresenta indício de captcha. "
-            "Use o login assistido com sessão persistente antes de rodar o crawler."
-        )
+    if ultima_url:
+        st.write(f"**Última URL:** {ultima_url}")
+    if ultima_execucao:
+        st.write(f"**Última execução:** {ultima_execucao}")
 
 
-def _render_bloco_login_assistido(url_site: str, login_url: str, products_url: str) -> None:
-    st.markdown("#### Login assistido do fornecedor")
+def _render_diagnostico_site() -> None:
+    df_diag = st.session_state.get("site_busca_diagnostico_df")
+    total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
+    total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
+    total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
+    login_status = st.session_state.get("site_login_status", {})
 
-    st.caption(
-        "Use este fluxo quando o fornecedor exigir login ou captcha. "
-        "Se o ambiente não abrir navegador automaticamente, o sistema vai orientar o login manual."
-    )
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔐 Fazer login assistido", use_container_width=True, key="btn_login_assistido_fornecedor"):
-            resultado = iniciar_login_assistido(
-                base_url=url_site,
-                fornecedor=_fornecedor_slug(url_site),
-                login_url=login_url,
-                products_url=products_url,
-                timeout_ms=300000,
-                headless=False,
-            )
-
-            if bool(resultado.get("ok", False)):
-                st.session_state["site_login_manual_confirmado"] = bool(resultado.get("manual_mode", False))
-
-                mensagem = str(resultado.get("mensagem", "Sessão autenticada salva com sucesso."))
-                salvar_status_login_em_sessao(
-                    base_url=url_site,
-                    fornecedor=_fornecedor_slug(url_site),
-                    status=STATUS_SESSAO_PRONTA,
-                    mensagem=mensagem,
-                    exige_login=False,
-                    captcha_detectado=False,
-                )
-                st.success(mensagem)
-
-                log_debug(
-                    f"Login assistido concluído | fornecedor={_fornecedor_slug(url_site)} | manual_mode={bool(resultado.get('manual_mode', False))}",
-                    nivel="INFO",
-                )
-            else:
-                status = str(resultado.get("status", "erro") or "erro").strip()
-                mensagem = str(resultado.get("mensagem", "Falha ao executar login assistido.") or "").strip()
-                salvar_status_login_em_sessao(
-                    base_url=url_site,
-                    fornecedor=_fornecedor_slug(url_site),
-                    status=status,
-                    mensagem=mensagem,
-                    exige_login=True,
-                    captcha_detectado=(status == STATUS_LOGIN_CAPTCHA_DETECTADO),
-                )
-                st.warning(mensagem or "Falha ao executar login assistido.")
-                log_debug(
-                    f"Falha no login assistido | fornecedor={_fornecedor_slug(url_site)} | status={status}",
-                    nivel="ERRO",
-                )
-
-            _sync_auth_state_com_session_manager(url_site)
-            st.rerun()
-
-    with col2:
-        if st.button("♻️ Recarregar sessão salva", use_container_width=True, key="btn_recarregar_sessao_assistida"):
-            _sync_auth_state_com_session_manager(url_site)
-            st.rerun()
-
-    estado = _sync_auth_state_com_session_manager(url_site)
-    if bool(estado.get("manual_mode", False)) or bool(st.session_state.get("site_login_manual_confirmado", False)):
-        st.success("Login manual já confirmado. Você já pode tentar ler o catálogo do fornecedor.")
-
-
-def _render_bloco_login_fornecedor(url_site: str) -> None:
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    profile = get_profile_for_url(url_site)
-
-    login_url_default = str(auth_state.get("login_url", "") or "").strip() or profile.login_url
-    products_url_default = str(auth_state.get("products_url", "") or "").strip() or profile.products_url or url_site
-
-    st.markdown("#### Acesso autenticado do fornecedor")
-
-    auth_strategy = st.radio(
-        "Como deseja tratar o acesso?",
-        options=[
-            "Somente detectar se o site exige login",
-            "Informar credenciais e tentar validar sessão",
-            "Abrir login assistido no navegador",
-        ],
-        horizontal=False,
-        key="site_auth_strategy",
-    )
-
-    login_url = st.text_input(
-        "URL de login",
-        value=login_url_default,
-        key="site_login_url",
-    ).strip()
-
-    products_url = st.text_input(
-        "URL da área de produtos",
-        value=products_url_default,
-        key="site_products_url",
-    ).strip()
-
-    if auth_strategy == "Informar credenciais e tentar validar sessão":
-        username = st.text_input(
-            "Usuário / e-mail do fornecedor",
-            key="site_login_username",
-        ).strip()
-
-        password = st.text_input(
-            "Senha do fornecedor",
-            type="password",
-            key="site_login_password",
-        ).strip()
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔐 Validar sessão agora", use_container_width=True, key="btn_validar_sessao_fornecedor"):
-                if not login_url:
-                    st.error("Informe a URL de login.")
-                    return
-
-                if not products_url:
-                    st.error("Informe a URL da área de produtos.")
-                    return
-
-                if not username:
-                    st.error("Informe o usuário.")
-                    return
-
-                if not password:
-                    st.error("Informe a senha.")
-                    return
-
-                resultado = try_requests_login(
-                    login_url=login_url,
-                    products_url=products_url,
-                    username=username,
-                    password=password,
-                    profile=profile,
-                )
-
-                _sync_auth_state_com_session_manager(url_site)
-
-                if resultado.ok:
-                    st.session_state["site_login_manual_confirmado"] = False
-                    st.success(resultado.message)
-                    log_debug(
-                        f"Sessão autenticada com sucesso | provider={resultado.provider_slug}",
-                        nivel="INFO",
-                    )
-                else:
-                    if resultado.status == "captcha_pendente":
-                        st.warning(resultado.message)
-                    else:
-                        st.error(resultado.message)
-                    log_debug(
-                        f"Falha ao validar sessão | provider={resultado.provider_slug} | status={resultado.status}",
-                        nivel="ERRO",
-                    )
-
-                st.rerun()
-
-        with col2:
-            if st.button("♻️ Recarregar status da sessão", use_container_width=True, key="btn_recarregar_status_sessao"):
-                _sync_auth_state_com_session_manager(url_site)
-                st.rerun()
-
-    elif auth_strategy == "Abrir login assistido no navegador":
-        _render_bloco_login_assistido(
-            url_site=url_site,
-            login_url=login_url,
-            products_url=products_url,
-        )
-
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    session_ready = bool(auth_state.get("session_ready", False))
-    manual_mode = bool(auth_state.get("manual_mode", False))
-    requires_login = bool(auth_state.get("requires_login", False))
-
-    if requires_login and not session_ready and not manual_mode:
-        st.warning("Fornecedor exige autenticação e a sessão ainda não está pronta.")
-
-    if session_ready:
-        st.success("Sessão autenticada pronta para leitura do catálogo.")
-
-    if manual_mode:
-        st.info("Login manual confirmado. Agora tente a leitura do catálogo.")
-
-
-def _render_banner_status_login_site(url_site: str) -> None:
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    status = str(auth_state.get("status", "") or "").strip()
-    session_ready = bool(auth_state.get("session_ready", False))
-    manual_mode = bool(auth_state.get("manual_mode", False))
-    login_manual_confirmado = bool(st.session_state.get("site_login_manual_confirmado", False))
-
-    if session_ready:
-        st.success("Sessão autenticada detectada e pronta para uso no crawler.")
+    if not isinstance(df_diag, pd.DataFrame) and not isinstance(login_status, dict):
         return
 
-    if manual_mode or login_manual_confirmado:
-        st.success("Login manual confirmado. Você já pode tentar a leitura do catálogo.")
-        return
+    with st.expander("Diagnóstico da busca", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Descobertos", total_descobertos)
+        with c2:
+            st.metric("Válidos", total_validos)
+        with c3:
+            st.metric("Rejeitados", total_rejeitados)
 
-    if status == STATUS_LOGIN_CAPTCHA_DETECTADO:
-        st.warning(
-            "Fornecedor com login detectado e indício de captcha. "
-            "Fluxo autenticado necessário."
-        )
-    elif status == STATUS_LOGIN_REQUERIDO:
-        st.warning(
-            "Fornecedor exige login antes da leitura do catálogo. "
-            "Faça a autenticação para continuar."
-        )
+        if isinstance(login_status, dict) and login_status:
+            mensagem = str(login_status.get("mensagem", "") or "").strip()
+            status = str(login_status.get("status", "") or "").strip()
+            if status:
+                st.write(f"**Status de acesso:** {status}")
+            if mensagem:
+                st.caption(mensagem)
+
+        if isinstance(df_diag, pd.DataFrame) and not df_diag.empty:
+            st.dataframe(df_diag.head(100), use_container_width=True)
+        elif isinstance(df_diag, pd.DataFrame):
+            st.info("Sem linhas de diagnóstico disponíveis.")
 
 
 def _render_origem_site() -> None:
     st.markdown("### Busca no site do fornecedor")
-
-    auth_state_to_session(st)
+    st.caption(
+        "Fluxo simplificado: informe a URL, execute a busca, confira o preview e siga para a próxima etapa."
+    )
 
     url_site = st.text_input(
-        "URL base do fornecedor",
+        "URL do fornecedor ou categoria",
         key="site_fornecedor_url",
+        placeholder="https://www.fornecedor.com.br/categoria",
     ).strip()
 
+    st.markdown("#### Etapa 1 — Informar a URL")
     if not url_site:
-        st.info("Informe a URL para habilitar a busca, o diagnóstico e a autenticação do fornecedor.")
+        st.info("Cole a URL do fornecedor para habilitar a busca.")
         return
 
-    profile = get_profile_for_url(url_site)
-    if profile.slug != "generic_public":
-        st.caption(f"Perfil reconhecido: {profile.nome}")
-
-    _sync_auth_state_com_session_manager(url_site)
-    _render_bloco_inspecao_site(url_site)
-    _render_banner_status_login_site(url_site)
-
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    requires_login = bool(auth_state.get("requires_login", False) or profile.login_required)
-    session_ready = bool(auth_state.get("session_ready", False))
-    manual_mode = bool(auth_state.get("manual_mode", False))
-    status_auth = str(auth_state.get("status", "") or "").strip()
-
-    if requires_login or status_auth in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
-        st.markdown("---")
-        _render_bloco_login_fornecedor(url_site)
-
-    st.markdown("---")
-    st.markdown("#### Leitura do catálogo")
-
-    auth_state = _sync_auth_state_com_session_manager(url_site)
-    session_ready = bool(auth_state.get("session_ready", False))
-    manual_mode = bool(auth_state.get("manual_mode", False))
-    effective_products_url = str(auth_state.get("products_url", "") or "").strip() or url_site
-    effective_url = effective_products_url if (session_ready or manual_mode) else url_site
-
-    if requires_login and not session_ready and not manual_mode:
-        st.info(
-            "Este fornecedor precisa de sessão autenticada. "
-            "Depois que a sessão estiver pronta, a leitura será feita pela URL da área de produtos."
-        )
-
-    if manual_mode:
-        st.info(
-            "Login manual confirmado. Agora toque em ler catálogo para tentar a varredura."
-        )
-
-    col1, col2 = st.columns(2)
+    st.markdown("#### Etapa 2 — Buscar produtos")
+    col1, col2 = st.columns([2, 1])
 
     with col1:
-        label = "✨ Ler catálogo autenticado com GPT" if (requires_login or session_ready or manual_mode) else "✨ Varrer catálogo com GPT"
-        if st.button(label, use_container_width=True, key="btn_varrer_site_gpt"):
-            _executar_busca_site(effective_url)
+        if st.button(
+            "Buscar produtos do site",
+            use_container_width=True,
+            key="btn_buscar_site_simplificado",
+        ):
+            _executar_busca_site(url_site)
             st.rerun()
 
     with col2:
-        if st.button("🟢 Ativar monitoramento", use_container_width=True, key="btn_ativar_monitoramento_site"):
-            if requires_login and not session_ready and not manual_mode:
-                st.error("Antes de ativar o monitoramento, finalize o login assistido.")
-            else:
-                st.session_state["site_auto_loop_ativo"] = True
-                st.session_state["site_auto_status"] = "ativo"
-                st.success("Monitoramento automático ativado.")
-                log_debug("Loop automático do site ativado.", nivel="INFO")
-                st.rerun()
+        if st.button(
+            "Limpar busca",
+            use_container_width=True,
+            key="btn_limpar_busca_site",
+        ):
+            _limpar_estado_origem()
+            st.session_state["site_fornecedor_url"] = url_site
+            st.info("Busca por site limpa.")
+            st.rerun()
 
-    origem_tipo = str(st.session_state.get("origem_upload_tipo", "") or "").strip().lower()
-    origem_nome = str(st.session_state.get("origem_upload_nome", "") or "").strip().lower()
-    site_ativo = "site_gpt" in origem_tipo or "varredura_site_" in origem_nome
+    st.markdown("---")
+    _render_resumo_busca_site()
 
-    if site_ativo:
-        st.markdown("---")
-        with st.expander("⚙️ Automação do site", expanded=True):
-            status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
-            ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "").strip()
-            ultimo_total = int(st.session_state.get("site_auto_ultimo_total_produtos", 0) or 0)
+    if _tem_resultado_site():
+        st.markdown("#### Etapa 3 — Conferir resultado")
+        _preview_dataframe(st.session_state.get("df_origem"), "Preview da busca por site")
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("Loop automático", "Ativo" if st.session_state.get("site_auto_loop_ativo", False) else "Inativo")
-            with c2:
-                st.metric("Status", status.title())
-            with c3:
-                st.metric("Último total", ultimo_total)
+    _render_diagnostico_site()
 
-            st.number_input(
-                "Intervalo do monitoramento (segundos)",
-                min_value=5,
-                step=5,
-                key="site_auto_intervalo_segundos",
-                help="Define o intervalo base do monitoramento do site.",
-            )
 
-            st.write(f"**URL monitorada:** {effective_url}")
-            if ultima_execucao:
-                st.write(f"**Última execução:** {ultima_execucao}")
-
-            b1, b2, b3 = st.columns(3)
-
-            with b1:
-                if st.button("▶️ Executar agora", use_container_width=True, key="btn_site_auto_executar_agora_origem"):
-                    _executar_busca_site(effective_url)
-                    st.rerun()
-
-            with b2:
-                if st.button("🟢 Ativar loop", use_container_width=True, key="btn_site_auto_ativar_origem"):
-                    if requires_login and not session_ready and not manual_mode:
-                        st.error("Valide a sessão autenticada antes de ativar o loop.")
-                    else:
-                        st.session_state["site_auto_loop_ativo"] = True
-                        st.session_state["site_auto_status"] = "ativo"
-                        st.success("Loop automático marcado como ativo.")
-                        log_debug("Loop automático do site ativado.", nivel="INFO")
-                        st.rerun()
-
-            with b3:
-                if st.button("⏹️ Parar loop", use_container_width=True, key="btn_site_auto_parar_origem"):
-                    st.session_state["site_auto_loop_ativo"] = False
-                    st.session_state["site_auto_status"] = "inativo"
-                    st.info("Loop automático marcado como inativo.")
-                    log_debug("Loop automático do site desativado.", nivel="INFO")
-                    st.rerun()
-
+# ============================================================
+# MODELO
+# ============================================================
 
 def _render_modelo() -> None:
-    upload_modelo = st.file_uploader("Enviar modelo", key="upload_modelo")
+    st.markdown("### Modelo do Bling")
+    st.caption("Envie o modelo que será usado como estrutura de saída.")
+
+    upload_modelo = st.file_uploader(
+        "Selecionar modelo",
+        key="upload_modelo",
+    )
 
     if upload_modelo:
         _processar_upload_modelo(upload_modelo)
 
 
-def _render_continuar() -> None:
-    if _origem_pronta() and _modelo_pronto():
-        if st.button("Continuar ➜", key="btn_continuar_origem"):
-            ir_para_etapa("precificacao")
+# ============================================================
+# CONTINUAR
+# ============================================================
 
+def _render_continuar() -> None:
+    st.markdown("---")
+    st.markdown("### Pronto para seguir?")
+    _resumo_origem_atual()
+
+    origem_ok = _origem_pronta()
+    modelo_ok = _modelo_pronto()
+
+    if not origem_ok:
+        st.info("Carregue uma origem válida para continuar.")
+        return
+
+    if not modelo_ok:
+        st.info("Envie um modelo válido para continuar.")
+        return
+
+    if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
+        ir_para_etapa("precificacao")
+
+
+# ============================================================
+# RENDER PRINCIPAL
+# ============================================================
 
 def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
@@ -1049,7 +583,7 @@ def render_origem_dados() -> None:
     _render_operacao()
 
     modo = st.radio(
-        "Origem",
+        "Como deseja informar a origem?",
         ["Arquivo do fornecedor", "Buscar no site do fornecedor"],
         horizontal=True,
         key="modo_origem",
@@ -1060,5 +594,6 @@ def render_origem_dados() -> None:
     else:
         _render_origem_site()
 
+    st.markdown("---")
     _render_modelo()
     _render_continuar()
