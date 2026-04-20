@@ -4,29 +4,26 @@ from __future__ import annotations
 """
 Core do projeto IA Planilhas → Bling.
 
-Este pacote concentra módulos centrais do sistema, como:
-- autenticação OAuth com Bling
-- sessão do usuário
-- integração com API
-- serviços internos de origem e processamento
+🔥 BLINGFIX:
+- Removido import automático de módulos
+- Evita import circular
+- Evita crash global no app
 
-Importe daqui apenas os módulos já estabilizados para evitar
-quebra circular entre UI, services e core.
+IMPORTANTE:
+Sempre importar módulos diretamente, ex:
+from bling_app_zero.core import bling_auth  ❌ (não usar)
+from bling_app_zero.core.bling_auth import BlingAuthManager ✅
 """
 
 # ============================================================
-# EXPORTS DISPONÍVEIS
+# EXPORTS (NÃO IMPORTAR AUTOMÁTICO)
 # ============================================================
 
-from . import bling_auth
-
-__all__ = [
-    "bling_auth",
-]
+__all__ = []
 
 # ============================================================
 # METADADOS
 # ============================================================
 
 CORE_PACKAGE_NAME = "bling_app_zero.core"
-CORE_PACKAGE_VERSION = "1.0.0"
+CORE_PACKAGE_VERSION = "1.0.1"
