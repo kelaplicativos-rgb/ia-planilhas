@@ -537,7 +537,6 @@ def _render_etapas_busca_site(url_site: str) -> None:
             key="btn_limpar_busca_site",
         ):
             _limpar_estado_origem()
-            st.session_state["site_fornecedor_url"] = url_site
             st.info("Busca por site limpa.")
             st.rerun()
 
@@ -561,6 +560,9 @@ def _render_origem_site() -> None:
     st.caption(
         "Fluxo simplificado: informe a URL, execute a busca, confira o preview e siga para a próxima etapa."
     )
+
+    if "site_fornecedor_url" not in st.session_state:
+        st.session_state["site_fornecedor_url"] = ""
 
     url_site = st.text_input(
         "URL do fornecedor ou categoria",
