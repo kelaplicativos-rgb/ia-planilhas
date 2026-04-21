@@ -271,6 +271,67 @@ def _garantir_coluna_descricao_canonica(df: pd.DataFrame, tipo_operacao: str) ->
     return base.fillna("")
 
 
+def _garantir_coluna_descricao_curta_canonica(df: pd.DataFrame, tipo_operacao: str) -> pd.DataFrame:
+    """
+    Garante a coluna canônica 'Descrição Curta'.
+    - reaproveita alias existentes
+    - preenche a partir de 'Descrição' quando vier vazia
+    - em último caso gera fallback textual estável
+    """
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    operacao = normalizar_texto(tipo_operacao) or "cadastro"
+
+    coluna_curta = _coluna_por_match_ou_parcial(
+        base,
+        ["Descrição Curta", "Descricao Curta"],
+        ["descricao curta", "descrição curta"],
+    )
+    coluna_descricao = _coluna_por_match_ou_parcial(
+        base,
+        ["Descrição", "descricao", "Descrição do produto", "Nome", "nome", "Título", "titulo"],
+        ["descricao", "descrição", "nome", "titulo", "título"],
+    )
+
+    if "Descrição Curta" not in base.columns:
+        base["Descrição Curta"] = ""
+
+    serie_curta = _serie_texto_limpa(base, "Descrição Curta")
+    if serie_curta.empty or serie_curta.eq("").all():
+        if coluna_curta and coluna_curta in base.columns and coluna_curta != "Descrição Curta":
+            serie_origem = _serie_texto_limpa(base, coluna_curta)
+            if not serie_origem.empty and not serie_origem.eq("").all():
+                base["Descrição Curta"] = serie_origem
+                log_debug(f"Coluna canônica Descrição Curta criada a partir de: {coluna_curta}", nivel="INFO")
+
+    serie_curta = _serie_texto_limpa(base, "Descrição Curta")
+    if serie_curta.empty or serie_curta.eq("").all():
+        if coluna_descricao and coluna_descricao in base.columns:
+            serie_desc = _serie_texto_limpa(base, coluna_descricao)
+            if not serie_desc.empty and not serie_desc.eq("").all():
+                base["Descrição Curta"] = serie_desc
+                log_debug("Descrição Curta preenchida automaticamente a partir da Descrição.", nivel="INFO")
+
+    serie_curta = _serie_texto_limpa(base, "Descrição Curta")
+    if serie_curta.empty or serie_curta.eq("").all():
+        coluna_codigo = _coluna_codigo(base)
+        serie_codigo = _serie_texto_limpa(base, coluna_codigo) if coluna_codigo else pd.Series(dtype="object")
+
+        if operacao == "estoque":
+            base["Descrição Curta"] = [
+                f"Produto {codigo}" if str(codigo).strip() else f"Produto {i+1}"
+                for i, codigo in enumerate(serie_codigo.tolist() or [""] * len(base.index))
+            ]
+        else:
+            base["Descrição Curta"] = [f"Produto {i+1}" for i in range(len(base.index))]
+
+        log_debug("Descrição Curta gerada automaticamente no preview final por ausência de valor válido.", nivel="INFO")
+
+    return base.fillna("")
+
+
 def _garantir_df_final_canonico(df: pd.DataFrame, tipo_operacao: str, deposito_nome: str) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -283,6 +344,7 @@ def _garantir_df_final_canonico(df: pd.DataFrame, tipo_operacao: str, deposito_n
     )
     base = _garantir_coluna_codigo_canonica(base)
     base = _garantir_coluna_descricao_canonica(base, tipo_operacao)
+    base = _garantir_coluna_descricao_curta_canonica(base, tipo_operacao)
 
     return base.fillna("")
 
