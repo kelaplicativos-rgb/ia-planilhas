@@ -58,6 +58,12 @@ except Exception:
 
 
 try:
+    from bling_app_zero.core.site_crawler_sitemap import descobrir_produtos_via_sitemap
+except Exception:
+    descobrir_produtos_via_sitemap = None
+
+
+try:
     from bling_app_zero.core.site_crawler_validators import (
         pontuar_produto,
         produto_final_valido,
@@ -702,6 +708,7 @@ def _salvar_diagnostico_em_sessao(
     produtos_descobertos: list[str],
     rows_validos: list[dict],
     login_status: dict[str, Any] | None = None,
+    fonte_descoberta: str = "",
 ) -> None:
     st = _streamlit_ctx()
     if st is None:
@@ -720,6 +727,7 @@ def _salvar_diagnostico_em_sessao(
         0,
     )
     st.session_state["site_busca_login_status"] = login_status or {}
+    st.session_state["site_busca_fonte_descoberta"] = safe_str(fonte_descoberta)
 
 
 def _atualizar_progresso_main_thread(
@@ -1738,12 +1746,59 @@ def _coletar_produto_direto_se_fizer_sentido(
     return []
 
 
+def _deduplicar_urls(urls: list[str], limite: int | None = None) -> list[str]:
+    saida: list[str] = []
+    vistos: set[str] = set()
+
+    for url in urls:
+        url_n = safe_str(url)
+        if not url_n:
+            continue
+        if url_n in vistos:
+            continue
+        vistos.add(url_n)
+        saida.append(url_n)
+        if isinstance(limite, int) and limite > 0 and len(saida) >= limite:
+            break
+
+    return saida
+
+
+def _descobrir_produtos_via_sitemap_com_contexto(
+    base_url: str,
+    limite: int,
+) -> list[str]:
+    if descobrir_produtos_via_sitemap is None:
+        return []
+
+    try:
+        produtos = descobrir_produtos_via_sitemap(
+            base_url=base_url,
+            limite=limite,
+            max_sitemaps=50,
+            max_urls_total=max(limite * 10, 5000),
+        )
+        produtos = [safe_str(url) for url in produtos if safe_str(url)]
+        if produtos:
+            _log_debug(
+                f"Descoberta via sitemap encontrou {len(produtos)} links de produto | url={base_url}",
+                nivel="INFO",
+            )
+        return _deduplicar_urls(produtos, limite=limite)
+    except Exception as exc:
+        _log_debug(
+            f"Falha na descoberta via sitemap | url={base_url} | erro={exc}",
+            nivel="ERRO",
+        )
+        return []
+
+
 def _descobrir_produtos_com_contexto(
     base_url: str,
     termo: str,
     limite: int,
     auth_context: dict[str, Any] | None = None,
-) -> list[str]:
+) -> tuple[list[str], str]:
     alvo_descoberta = _url_produtos_contexto(base_url, auth_context)
 
     if _url_eh_admin(alvo_descoberta) and not _auth_context_valido(auth_context):
@@ -1751,7 +1806,13 @@ def _descobrir_produtos_com_contexto(
             f"Rota administrativa sem sessão HTTP válida | url={alvo_descoberta}",
             nivel="ERRO",
         )
-        return []
+        return [], ""
+
+    # 1) sitemap primeiro
+    if not _url_eh_admin(alvo_descoberta):
+        produtos_sitemap = _descobrir_produtos_via_sitemap_com_contexto(alvo_descoberta, limite=limite)
+        if produtos_sitemap:
+            return produtos_sitemap, "sitemap"
 
     candidatos_tentativa: list[tuple[str, dict[str, Any] | None]] = []
 
@@ -1789,7 +1850,7 @@ def _descobrir_produtos_com_contexto(
                         if url_n not in saida:
                             saida.append(url_n)
                     if saida:
-                        return saida
+                        return _deduplicar_urls(saida, limite=limite), "crawler_links"
             except Exception as exc:
                 modo = "autenticado_http" if ctx else "publico"
                 _log_debug(
@@ -1803,7 +1864,7 @@ def _descobrir_produtos_com_contexto(
                 if url not in saida:
                     saida.append(url)
             if saida:
-                return saida
+                return _deduplicar_urls(saida, limite=limite), "http_direto"
         except Exception as exc:
             _log_debug(
                 f"Falha na descoberta HTTP direta | url={alvo} | erro={exc}",
@@ -1816,14 +1877,14 @@ def _descobrir_produtos_com_contexto(
                 if url not in saida:
                     saida.append(url)
             if saida:
-                return saida
+                return _deduplicar_urls(saida, limite=limite), "produto_direto"
         except Exception as exc:
             _log_debug(
                 f"Falha no fallback de produto direto | url={alvo} | erro={exc}",
                 nivel="ERRO",
             )
 
-    return []
+    return [], ""
 
 
 # ============================================================
@@ -1913,12 +1974,22 @@ def buscar_produtos_site_com_gpt(
             captcha_detectado=False,
         )
 
-    produtos = _descobrir_produtos_com_contexto(
+    produtos, fonte_descoberta = _descobrir_produtos_com_contexto(
         base_url=base_url,
         termo=termo,
         limite=limite,
         auth_context=auth_context,
     )
+
+    if fonte_descoberta and status_box is not None:
+        if fonte_descoberta == "sitemap":
+            status_box.info("🗺️ Produtos descobertos via sitemap do fornecedor.")
+        elif fonte_descoberta == "crawler_links":
+            status_box.info("🕸️ Produtos descobertos via varredura de links do domínio.")
+        elif fonte_descoberta == "http_direto":
+            status_box.info("🌐 Produtos descobertos via leitura direta do HTML.")
+        elif fonte_descoberta == "produto_direto":
+            status_box.info("📦 URL inicial já aparenta ser uma página de produto.")
 
     if not produtos:
         if _url_eh_admin(base_url) and not auth_http_ok:
@@ -1962,6 +2033,7 @@ def buscar_produtos_site_com_gpt(
                 produtos_descobertos=[],
                 rows_validos=[],
                 login_status=login_status,
+                fonte_descoberta=fonte_descoberta,
             )
         return pd.DataFrame()
 
@@ -1992,7 +2064,10 @@ def buscar_produtos_site_com_gpt(
 
     login_bloqueios = 0
 
-    _log_debug(f"Links de produto descobertos: {total}", nivel="INFO")
+    _log_debug(
+        f"Links de produto descobertos: {total} | fonte={fonte_descoberta or 'desconhecida'}",
+        nivel="INFO",
+    )
 
     workers = _max_workers(total)
     processados = 0
@@ -2134,11 +2209,13 @@ def buscar_produtos_site_com_gpt(
             produtos_descobertos=produtos,
             rows_validos=rows,
             login_status=login_status,
+            fonte_descoberta=fonte_descoberta,
         )
 
     _log_debug(
         (
             "Busca por site finalizada | "
+            f"fonte={fonte_descoberta or 'desconhecida'} | "
             f"descobertos={len(produtos)} | "
             f"validos={len(rows)} | "
             f"rejeitados={max(len(produtos) - len(rows), 0)} | "
