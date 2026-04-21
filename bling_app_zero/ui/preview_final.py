@@ -232,6 +232,32 @@ def _fonte_descoberta_label(valor: str) -> str:
     return mapa.get(valor_n, valor_n.replace("_", " ").title() or "-")
 
 
+
+
+def _obter_deposito_nome_persistido() -> str:
+    """
+    Recupera o depósito preservando caixa alta/baixa e faz fallback entre chaves.
+    """
+    candidatos = [
+        st.session_state.get("deposito_nome"),
+        st.session_state.get("deposito_nome_widget"),
+        st.session_state.get("deposito"),
+    ]
+
+    for valor in candidatos:
+        texto = str(valor or "").strip()
+        if texto:
+            return texto
+
+    return ""
+
+
+def _sincronizar_deposito_nome() -> str:
+    deposito = _obter_deposito_nome_persistido()
+    st.session_state["deposito_nome"] = deposito
+    st.session_state["deposito_nome_widget"] = deposito
+    return deposito
+
 def _resumo_rotina_site() -> dict[str, Any]:
     return {
         "origem_site_ativa": _origem_site_ativa(),
@@ -766,7 +792,7 @@ def render_preview_final() -> None:
     )
 
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
-    deposito_nome = normalizar_texto(st.session_state.get("deposito_nome", ""))
+    deposito_nome = _sincronizar_deposito_nome()
 
     df_final = _obter_df_final_exclusivo()
 
