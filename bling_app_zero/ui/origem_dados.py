@@ -302,6 +302,8 @@ def _resumo_origem_atual() -> None:
     df_origem = st.session_state.get("df_origem")
     df_modelo = st.session_state.get("df_modelo")
     fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+    deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -311,7 +313,10 @@ def _resumo_origem_atual() -> None:
     with col3:
         st.metric("Colunas modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
     with col4:
-        st.metric("Fonte descoberta", fonte_descoberta)
+        if operacao == "estoque":
+            st.metric("Depósito", deposito_nome or "-")
+        else:
+            st.metric("Fonte descoberta", fonte_descoberta)
 
 
 # ============================================================
@@ -348,6 +353,28 @@ def _render_operacao() -> None:
 
     st.session_state["tipo_operacao"] = novo_tipo
     st.session_state["tipo_operacao_bling"] = novo_tipo
+
+
+def _render_dados_operacao() -> None:
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+
+    if operacao != "estoque":
+        return
+
+    st.markdown("### Dados da operação")
+    st.caption("Informe o depósito que será aplicado automaticamente no fluxo de estoque.")
+
+    valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
+
+    novo_valor = st.text_input(
+        "Nome do depósito",
+        value=valor_atual,
+        key="deposito_nome_input",
+        placeholder="Ex.: Depósito Principal",
+        help="Esse valor será levado automaticamente para a coluna de depósito no mapeamento e no resultado final.",
+    ).strip()
+
+    st.session_state["deposito_nome"] = novo_valor
 
 
 # ============================================================
@@ -635,6 +662,20 @@ def _render_modelo() -> None:
 # CONTINUAR
 # ============================================================
 
+def _validar_dados_operacao_para_continuar() -> bool:
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+
+    if operacao != "estoque":
+        return True
+
+    deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
+    if not deposito_nome:
+        st.error("Informe o nome do depósito para continuar no fluxo de estoque.")
+        return False
+
+    return True
+
+
 def _render_continuar() -> None:
     st.markdown("---")
     st.markdown("### Pronto para seguir?")
@@ -651,6 +692,9 @@ def _render_continuar() -> None:
         st.info("Envie um modelo válido para continuar.")
         return
 
+    if not _validar_dados_operacao_para_continuar():
+        return
+
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
         ir_para_etapa("precificacao")
 
@@ -663,6 +707,7 @@ def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
 
     _render_operacao()
+    _render_dados_operacao()
 
     modo = st.radio(
         "Como deseja informar a origem?",
