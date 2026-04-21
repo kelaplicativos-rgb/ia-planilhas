@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import concurrent.futures
@@ -25,7 +24,10 @@ try:
     from bling_app_zero.core.site_crawler_cleaners import normalizar_url, safe_str
 except Exception:
     def normalizar_url(url: str) -> str:
-        return str(url or "").strip()
+        url = str(url or "").strip()
+        if url and not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+        return url.rstrip("/")
 
     def safe_str(value: Any) -> str:
         return str(value or "").strip()
@@ -180,6 +182,14 @@ DEFAULT_HEADERS = {
     "Pragma": "no-cache",
 }
 
+MOBILE_HEADERS = {
+    **DEFAULT_HEADERS,
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 12; SM-G991B) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Mobile Safari/537.36"
+    ),
+}
 
 ASSET_EXTENSIONS = {
     ".css", ".js", ".mjs", ".map", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
@@ -211,6 +221,7 @@ PRODUCT_URL_SIGNALS = [
     "/p/",
     "/item/",
     "/sku/",
+    "/prd/",
 ]
 
 CATEGORY_URL_SIGNALS = [
@@ -221,6 +232,50 @@ CATEGORY_URL_SIGNALS = [
     "/collections",
     "/busca",
     "/search",
+]
+
+PRODUCT_TEXT_SIGNALS = [
+    '"@type":"product"',
+    '"@type": "product"',
+    '"@type":"Product"',
+    '"@type": "Product"',
+    "application/ld+json",
+    "add to cart",
+    "adicionar ao carrinho",
+    "comprar agora",
+    "buy now",
+    "sku",
+    "código",
+    "codigo",
+    "gtin",
+    "ean",
+    "parcel",
+    "r$",
+    "price",
+    "product",
+    "produto",
+    "product_id",
+    "productid",
+    "itemprop=\"price\"",
+    "itemprop='price'",
+    "itemprop=\"sku\"",
+    "itemprop='sku'",
+    "og:type",
+    "availability",
+    "in stock",
+    "out of stock",
+]
+
+BLOCK_PAGE_SIGNALS = [
+    "cloudflare",
+    "attention required",
+    "verify you are human",
+    "checking your browser",
+    "access denied",
+    "forbidden",
+    "captcha",
+    "g-recaptcha",
+    "hcaptcha",
 ]
 
 
@@ -296,7 +351,7 @@ def _quantidade_padrao(final: dict[str, Any]) -> str:
     descricao = safe_str(final.get("descricao_detalhada")).lower()
     if any(
         x in descricao
-        for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado"]
+        for x in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado", "out of stock"]
     ):
         return "0"
 
@@ -707,25 +762,14 @@ def _texto_tem_sinais_de_produto(texto: str) -> bool:
     texto_n = safe_str(texto).lower()
     if not texto_n:
         return False
+    return any(s in texto_n for s in PRODUCT_TEXT_SIGNALS)
 
-    sinais = [
-        '"@type":"product"',
-        '"@type": "product"',
-        "application/ld+json",
-        "add to cart",
-        "adicionar ao carrinho",
-        "comprar agora",
-        "sku",
-        "código",
-        "codigo",
-        "gtin",
-        "ean",
-        "parcel",
-        "r$",
-        "price",
-        "product",
-    ]
-    return any(s in texto_n for s in sinais)
+
+def _html_tem_sinais_de_bloqueio(html: str) -> bool:
+    html_n = safe_str(html).lower()
+    if not html_n:
+        return False
+    return any(s in html_n for s in BLOCK_PAGE_SIGNALS)
 
 
 def _score_html_produto(texto: str) -> int:
@@ -734,7 +778,7 @@ def _score_html_produto(texto: str) -> int:
         return 0
 
     score = 0
-    if '"@type":"product"' in texto_n or '"@type": "product"' in texto_n:
+    if '"@type":"product"' in texto_n or '"@type": "product"' in texto_n or '"@type":"Product"' in texto_n:
         score += 4
     if "adicionar ao carrinho" in texto_n or "add to cart" in texto_n or "comprar agora" in texto_n:
         score += 2
@@ -742,6 +786,8 @@ def _score_html_produto(texto: str) -> int:
         score += 1
     if "r$" in texto_n or "price" in texto_n or "parcel" in texto_n:
         score += 1
+    if "og:type" in texto_n and "product" in texto_n:
+        score += 2
     return score
 
 
@@ -810,7 +856,10 @@ def _score_url_produto(url: str, anchor_text: str = "", contexto_texto: str = ""
     if _url_eh_institucional(url_n):
         return -999
 
-    if any(b in url_n for b in ["/login", "/conta", "/account", "/carrinho", "/cart", "/checkout", "javascript:", "mailto:", "tel:"]):
+    if any(
+        b in url_n
+        for b in ["/login", "/conta", "/account", "/carrinho", "/cart", "/checkout", "javascript:", "mailto:", "tel:"]
+    ):
         return -999
 
     if any(s in url_n for s in PRODUCT_URL_SIGNALS):
@@ -834,6 +883,28 @@ def _score_url_produto(url: str, anchor_text: str = "", contexto_texto: str = ""
 
 def _url_parece_produto(url: str) -> bool:
     return _score_url_produto(url) >= 2
+
+
+def _html_parece_pagina_produto_real(url: str, html: str) -> bool:
+    url_n = safe_str(url).lower()
+    html_n = safe_str(html).lower()
+
+    if not html_n:
+        return False
+
+    if _url_eh_institucional(url_n):
+        return False
+
+    if _score_url_produto(url_n) >= 6 and _score_html_produto(html_n) >= 1:
+        return True
+
+    if _score_html_produto(html_n) >= 4:
+        return True
+
+    if _texto_tem_sinais_de_produto(html_n) and not _html_tem_sinais_de_bloqueio(html_n):
+        return True
+
+    return False
 
 
 def _extrair_links_bs4(base_url: str, html: str, limite: int) -> list[str]:
@@ -902,7 +973,6 @@ def _extrair_links_json_embutido(base_url: str, html: str, limite: int) -> list[
     candidatos: list[tuple[int, str]] = []
     vistos: set[str] = set()
 
-    # urls literais no html/js/json embutido
     padrao_urls = re.findall(r"""https?://[^\s"'<>]+|/[A-Za-z0-9_\-/%\.]+""", safe_str(html))
     for bruto in padrao_urls:
         url = _normalizar_url_candidata(base_url, bruto)
@@ -918,7 +988,6 @@ def _extrair_links_json_embutido(base_url: str, html: str, limite: int) -> list[
         vistos.add(url)
         candidatos.append((score, url))
 
-    # tentativa de ler application/ld+json
     if BeautifulSoup is not None:
         try:
             soup = BeautifulSoup(html, "html.parser")
@@ -937,10 +1006,10 @@ def _extrair_links_json_embutido(base_url: str, html: str, limite: int) -> list[
                         if url:
                             url_n = _normalizar_url_candidata(base_url, url)
                             if _url_mesmo_dominio(base_url, url_n):
-                                score = _score_url_produto(url_n)
-                                if score >= 2 and url_n not in vistos:
+                                score_local = _score_url_produto(url_n)
+                                if score_local >= 2 and url_n not in vistos:
                                     vistos.add(url_n)
-                                    candidatos.append((score + 2, url_n))
+                                    candidatos.append((score_local + 2, url_n))
                         for v in obj.values():
                             _coletar_urls(v)
                     elif isinstance(obj, list):
@@ -989,6 +1058,9 @@ def _html_base_parece_listagem(html: str, base_url: str = "") -> bool:
     if _url_eh_admin(base_url):
         return False
 
+    if _html_parece_pagina_produto_real(base_url, html):
+        return False
+
     if any(s in url_n for s in CATEGORY_URL_SIGNALS):
         return True
 
@@ -1014,7 +1086,6 @@ def _html_base_parece_listagem(html: str, base_url: str = "") -> bool:
 def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
     html_n = safe_str(html_produto)
 
-    # breadcrumb comum
     breadcrumb_match = re.search(
         r"(breadcrumb|migalha|categoria)[\s\S]{0,800}",
         html_n,
@@ -1029,7 +1100,6 @@ def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
             if categorias:
                 return " > ".join(categorias[:4])
 
-    # pela própria url
     path_parts = [p for p in urlparse(url_produto).path.split("/") if p]
     if path_parts:
         if "produto" in path_parts and len(path_parts) >= 2:
@@ -1196,12 +1266,49 @@ def _url_produtos_contexto(base_url: str, auth_context: dict[str, Any] | None) -
     return normalizar_url(base_url)
 
 
-def _fetch_html_publico(url_produto: str) -> str:
-    urls_tentativa = [url_produto]
-    if url_produto.endswith("/"):
-        urls_tentativa.append(url_produto.rstrip("/"))
+def _expandir_urls_tentativa(url: str) -> list[str]:
+    url = normalizar_url(url)
+    if not url:
+        return []
+
+    urls = [url]
+
+    if url.endswith("/"):
+        urls.append(url.rstrip("/"))
     else:
-        urls_tentativa.append(url_produto + "/")
+        urls.append(url + "/")
+
+    if url.startswith("https://"):
+        urls.append("http://" + url[len("https://"):])
+    elif url.startswith("http://"):
+        urls.append("https://" + url[len("http://"):])
+
+    saida: list[str] = []
+    vistos: set[str] = set()
+    for item in urls:
+        item_n = safe_str(item)
+        if item_n and item_n not in vistos:
+            vistos.add(item_n)
+            saida.append(item_n)
+    return saida
+
+
+def _request_html(url_tentativa: str, headers: dict[str, str], timeout: int = 30, verify: bool = True) -> str:
+    with requests.Session() as session:
+        session.headers.update(headers)
+        response = session.get(
+            url_tentativa,
+            timeout=timeout,
+            allow_redirects=True,
+            verify=verify,
+        )
+        if response.ok and safe_str(response.text):
+            return safe_str(response.text)
+    return ""
+
+
+def _fetch_html_publico(url_produto: str) -> str:
+    urls_tentativa = _expandir_urls_tentativa(url_produto)
 
     if fetch_html_retry is not None:
         ultima_exc: Exception | None = None
@@ -1217,13 +1324,18 @@ def _fetch_html_publico(url_produto: str) -> str:
         if ultima_exc is not None:
             _log_debug(f"fetch_html_retry falhou | url={url_produto} | erro={ultima_exc}", nivel="ERRO")
 
-    for url_tentativa in urls_tentativa:
-        try:
-            resp = requests.get(url_tentativa, headers=DEFAULT_HEADERS, timeout=30, allow_redirects=True)
-            if resp.ok and safe_str(resp.text):
-                return safe_str(resp.text)
-        except Exception as exc:
-            _log_debug(f"requests público falhou | url={url_tentativa} | erro={exc}", nivel="ERRO")
+    for headers in (DEFAULT_HEADERS, MOBILE_HEADERS):
+        for url_tentativa in urls_tentativa:
+            for verify in (True, False):
+                try:
+                    html = _request_html(url_tentativa, headers=headers, timeout=30, verify=verify)
+                    if html:
+                        return html
+                except Exception as exc:
+                    _log_debug(
+                        f"requests público falhou | url={url_tentativa} | verify={verify} | erro={exc}",
+                        nivel="ERRO",
+                    )
 
     return ""
 
@@ -1235,16 +1347,17 @@ def _fetch_html_autenticado(url_produto: str, auth_context: dict[str, Any] | Non
     session = _criar_sessao_autenticada(auth_context)
 
     ultima_exc: Exception | None = None
-    for _ in range(2):
-        try:
-            response = session.get(url_produto, timeout=45, allow_redirects=True)
-            if response.ok and safe_str(response.text):
-                html = safe_str(response.text)
-                if "<html" in html.lower() or "</body>" in html.lower() or len(html) > 500:
-                    return html
-            ultima_exc = RuntimeError(f"HTTP {response.status_code}")
-        except Exception as exc:
-            ultima_exc = exc
+    for url_tentativa in _expandir_urls_tentativa(url_produto):
+        for _ in range(2):
+            try:
+                response = session.get(url_tentativa, timeout=45, allow_redirects=True)
+                if response.ok and safe_str(response.text):
+                    html = safe_str(response.text)
+                    if "<html" in html.lower() or "</body>" in html.lower() or len(html) > 500:
+                        return html
+                ultima_exc = RuntimeError(f"HTTP {response.status_code}")
+            except Exception as exc:
+                ultima_exc = exc
 
     if ultima_exc is not None:
         raise ultima_exc
@@ -1316,6 +1429,15 @@ def _detectar_bloqueio_login(
             "exige_login": False,
             "captcha_detectado": False,
             "mensagem": "Listagem pública detectada. Busca seguirá por HTTP + IA.",
+            "auth_context": auth_context or {},
+        }
+
+    if _html_parece_pagina_produto_real(base_url, html):
+        return {
+            "status": "publico",
+            "exige_login": False,
+            "captcha_detectado": False,
+            "mensagem": "Página de produto detectada. Busca seguirá diretamente.",
             "auth_context": auth_context or {},
         }
 
@@ -1463,6 +1585,9 @@ def _deve_bloquear_produto_por_login(
     if _texto_tem_sinais_de_produto(html_produto):
         return False
 
+    if _html_parece_pagina_produto_real(url_produto, html_produto):
+        return False
+
     if heuristica:
         score_heuristica = pontuar_produto(
             titulo=safe_str(heuristica.get("descricao")) or safe_str(heuristica.get("titulo")),
@@ -1573,13 +1698,44 @@ def _descoberta_http_direta(
     if not html_base:
         return []
 
+    saida: list[str] = []
+    vistos: set[str] = set()
+
+    if _html_parece_pagina_produto_real(base_url, html_base):
+        base_normalizada = normalizar_url(base_url)
+        if base_normalizada:
+            vistos.add(base_normalizada)
+            saida.append(base_normalizada)
+
     links = _extrair_links_produto_html(base_url, html_base, limite=min(max(limite, 20), 1500))
-    if links:
+    for link in links:
+        if link in vistos:
+            continue
+        vistos.add(link)
+        saida.append(link)
+
+    if saida:
         _log_debug(
-            f"Descoberta HTTP direta encontrou {len(links)} links de produto | url={base_url}",
+            f"Descoberta HTTP direta encontrou {len(saida)} links de produto | url={base_url}",
             nivel="INFO",
         )
-    return links
+    return saida[:limite]
+
+
+def _coletar_produto_direto_se_fizer_sentido(
+    base_url: str,
+    auth_context: dict[str, Any] | None = None,
+) -> list[str]:
+    try:
+        html = _executar_fetch_html(base_url, auth_context=auth_context)
+    except Exception as exc:
+        _log_debug(f"Falha no fallback direto de produto | url={base_url} | erro={exc}", nivel="ERRO")
+        return []
+
+    if _html_parece_pagina_produto_real(base_url, html):
+        return [normalizar_url(base_url)]
+
+    return []
 
 
 def _descobrir_produtos_com_contexto(
@@ -1628,7 +1784,7 @@ def _descobrir_produtos_com_contexto(
                         url_n = safe_str(url)
                         if not url_n:
                             continue
-                        if not _url_parece_produto(url_n):
+                        if not _url_parece_produto(url_n) and url_n != normalizar_url(alvo):
                             continue
                         if url_n not in saida:
                             saida.append(url_n)
@@ -1651,6 +1807,19 @@ def _descobrir_produtos_com_contexto(
         except Exception as exc:
             _log_debug(
                 f"Falha na descoberta HTTP direta | url={alvo} | erro={exc}",
+                nivel="ERRO",
+            )
+
+        try:
+            links_diretos = _coletar_produto_direto_se_fizer_sentido(alvo, auth_context=ctx)
+            for url in links_diretos:
+                if url not in saida:
+                    saida.append(url)
+            if saida:
+                return saida
+        except Exception as exc:
+            _log_debug(
+                f"Falha no fallback de produto direto | url={alvo} | erro={exc}",
                 nivel="ERRO",
             )
 
@@ -1802,7 +1971,7 @@ def buscar_produtos_site_com_gpt(
         url_n = safe_str(url)
         if not url_n:
             continue
-        if not _url_parece_produto(url_n):
+        if not _url_parece_produto(url_n) and url_n != normalizar_url(base_url):
             continue
         if url_n in vistos_descoberta:
             continue
