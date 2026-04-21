@@ -147,6 +147,145 @@ def _coluna_gtin(df: pd.DataFrame) -> str:
     )
 
 
+
+
+def _serie_texto_limpa(df: pd.DataFrame, coluna: str) -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or not coluna or coluna not in df.columns:
+        return pd.Series(dtype="object")
+
+    return (
+        df[coluna]
+        .astype(str)
+        .str.strip()
+        .replace({"nan": "", "None": "", "none": ""})
+    )
+
+
+def _garantir_coluna_codigo_canonica(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante a existência da coluna canônica 'Código' para a validação do Bling.
+    - reaproveita aliases úteis (ID Produto, SKU, referência, etc.)
+    - gera código automático quando não existir coluna aproveitável
+    """
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    candidatos = [
+        "Código",
+        "codigo",
+        "Código do produto",
+        "SKU",
+        "Sku",
+        "sku",
+        "ID Produto",
+        "Id Produto",
+        "ID do Produto",
+        "Referencia",
+        "Referência",
+        "Ref",
+    ]
+
+    coluna_origem = _coluna_por_match_ou_parcial(
+        base,
+        candidatos,
+        ["codigo", "código", "sku", "referencia", "referência", "id produto", "id do produto"],
+    )
+
+    if "Código" not in base.columns:
+        base["Código"] = ""
+
+    serie_codigo = _serie_texto_limpa(base, "Código")
+    if serie_codigo.empty or serie_codigo.eq("").all():
+        if coluna_origem and coluna_origem in base.columns:
+            serie_origem = _serie_texto_limpa(base, coluna_origem)
+            if not serie_origem.empty and not serie_origem.eq("").all():
+                base["Código"] = serie_origem
+                log_debug(f"Coluna canônica Código criada a partir de: {coluna_origem}", nivel="INFO")
+
+    serie_codigo = _serie_texto_limpa(base, "Código")
+    if serie_codigo.empty or serie_codigo.eq("").all():
+        base["Código"] = [f"PROD_{i+1:05d}" for i in range(len(base.index))]
+        log_debug("Código automático gerado no preview final por ausência de coluna válida.", nivel="INFO")
+
+    return base.fillna("")
+
+
+def _garantir_coluna_descricao_canonica(df: pd.DataFrame, tipo_operacao: str) -> pd.DataFrame:
+    """
+    Garante a coluna canônica 'Descrição'.
+    - aproveita aliases reais de descrição/nome/título
+    - evita usar a mesma coluna do código como descrição real
+    - em estoque, cria fallback descritivo quando necessário para o preview e envio
+    """
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    operacao = normalizar_texto(tipo_operacao) or "cadastro"
+
+    candidatos_exatos = [
+        "Descrição",
+        "descricao",
+        "Descrição do produto",
+        "Nome",
+        "nome",
+        "Título",
+        "titulo",
+        "Descrição Curta",
+        "Descricao Curta",
+    ]
+    coluna_descricao = _coluna_por_match_ou_parcial(
+        base,
+        candidatos_exatos,
+        ["descricao", "descrição", "nome", "titulo", "título"],
+    )
+    coluna_codigo = _coluna_por_match_ou_parcial(
+        base,
+        ["Código", "codigo", "Código do produto", "SKU", "Sku", "sku", "ID Produto", "Id Produto"],
+        ["codigo", "código", "sku", "referencia", "referência", "id produto"],
+    )
+
+    if "Descrição" not in base.columns:
+        base["Descrição"] = ""
+
+    serie_desc = _serie_texto_limpa(base, "Descrição")
+    if serie_desc.empty or serie_desc.eq("").all():
+        if coluna_descricao and coluna_descricao in base.columns and coluna_descricao != coluna_codigo:
+            serie_origem = _serie_texto_limpa(base, coluna_descricao)
+            if not serie_origem.empty and not serie_origem.eq("").all():
+                base["Descrição"] = serie_origem
+                log_debug(f"Coluna canônica Descrição criada a partir de: {coluna_descricao}", nivel="INFO")
+
+    serie_desc = _serie_texto_limpa(base, "Descrição")
+    serie_codigo = _serie_texto_limpa(base, "Código") if "Código" in base.columns else pd.Series(dtype="object")
+
+    if operacao == "estoque":
+        precisa_fallback = serie_desc.empty or serie_desc.eq("").all() or (
+            not serie_codigo.empty and serie_desc.equals(serie_codigo)
+        )
+        if precisa_fallback:
+            base["Descrição"] = [f"Produto {codigo}" if str(codigo).strip() else f"Produto {i+1}" for i, codigo in enumerate(serie_codigo.tolist() or [""] * len(base.index))]
+            log_debug("Descrição canônica gerada automaticamente no preview final para operação de estoque.", nivel="INFO")
+
+    return base.fillna("")
+
+
+def _garantir_df_final_canonico(df: pd.DataFrame, tipo_operacao: str, deposito_nome: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = _normalizar_df_visual(df)
+    base = blindar_df_para_bling(
+        df=base,
+        tipo_operacao_bling=tipo_operacao,
+        deposito_nome=deposito_nome,
+    )
+    base = _garantir_coluna_codigo_canonica(base)
+    base = _garantir_coluna_descricao_canonica(base, tipo_operacao)
+
+    return base.fillna("")
+
 def _contar_preenchidos(df: pd.DataFrame, coluna: str) -> int:
     if not safe_df_estrutura(df) or not coluna or coluna not in df.columns:
         return 0
@@ -500,6 +639,11 @@ def _render_origem_site_metadata() -> None:
 
 
 def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
+    df_final = _garantir_df_final_canonico(
+        df=df_final,
+        tipo_operacao=tipo_operacao,
+        deposito_nome=_obter_deposito_nome_persistido(),
+    )
     resumo = _montar_resumo(df_final)
     valido, erros = validar_df_para_download(df_final, tipo_operacao)
     st.session_state["preview_validacao_ok"] = bool(valido)
@@ -557,6 +701,8 @@ def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
         st.warning(
             "O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente."
         )
+    elif resumo["codigo_col"] == resumo["descricao_col"]:
+        st.warning("Código e descrição estavam colidindo; o preview final aplicou blindagem para separar os campos canônicos.")
 
 
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
@@ -803,10 +949,9 @@ def render_preview_final() -> None:
             voltar_etapa_anterior()
         return
 
-    df_final = _normalizar_df_visual(df_final)
-    df_final = blindar_df_para_bling(
+    df_final = _garantir_df_final_canonico(
         df=df_final,
-        tipo_operacao_bling=tipo_operacao,
+        tipo_operacao=tipo_operacao,
         deposito_nome=deposito_nome,
     )
 
