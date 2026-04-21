@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -195,6 +194,7 @@ def _origem_site_ativa() -> bool:
         "site" in modo_origem
         or "site_gpt" in origem_tipo
         or "varredura_site_" in origem_nome
+        or "site_" in origem_nome
     )
 
 
@@ -218,10 +218,28 @@ def _oauth_liberado(validacao_ok: bool) -> bool:
     )
 
 
+def _fonte_descoberta_label(valor: str) -> str:
+    valor_n = str(valor or "").strip().lower()
+
+    mapa = {
+        "sitemap": "Sitemap",
+        "crawler_links": "Varredura de links",
+        "http_direto": "Leitura direta do HTML",
+        "produto_direto": "URL de produto",
+        "": "-",
+    }
+
+    return mapa.get(valor_n, valor_n.replace("_", " ").title() or "-")
+
+
 def _resumo_rotina_site() -> dict[str, Any]:
     return {
         "origem_site_ativa": _origem_site_ativa(),
         "url_site": _url_site_atual(),
+        "fonte_descoberta": _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", "")),
+        "diagnostico_descobertos": int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0),
+        "diagnostico_validos": int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0),
+        "diagnostico_rejeitados": int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0),
         "auto_mode": st.session_state.get("bling_sync_auto_mode", "manual"),
         "interval_value": st.session_state.get("bling_sync_interval_value", 15),
         "interval_unit": st.session_state.get("bling_sync_interval_unit", "minutos"),
@@ -421,12 +439,46 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
 # RENDERIZAÇÃO DOS BLOCOS
 # ============================================================
 
+def _render_origem_site_metadata() -> None:
+    st.markdown("### 1. Origem da descoberta")
+
+    if not _origem_site_ativa():
+        st.caption("A origem atual não veio da busca por site do fornecedor.")
+        return
+
+    url_site = _url_site_atual()
+    fonte = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
+    total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
+    total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
+    total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Fonte descoberta", fonte)
+    with c2:
+        st.metric("Descobertos", total_descobertos)
+    with c3:
+        st.metric("Válidos", total_validos)
+    with c4:
+        st.metric("Rejeitados", total_rejeitados)
+
+    if url_site:
+        st.write(f"**URL monitorada:** {url_site}")
+
+    if fonte == "Sitemap":
+        st.success("Os produtos foram descobertos via sitemap do fornecedor, o que tende a trazer maior cobertura do catálogo.")
+    elif fonte != "-":
+        st.info(f"Os produtos foram descobertos via {fonte.lower()}.")
+    else:
+        st.caption("A fonte de descoberta ainda não foi identificada na sessão.")
+
+
 def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
     resumo = _montar_resumo(df_final)
     valido, erros = validar_df_para_download(df_final, tipo_operacao)
     st.session_state["preview_validacao_ok"] = bool(valido)
 
-    st.markdown("### 1. Validação do resultado final")
+    st.markdown("### 2. Validação do resultado final")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -464,7 +516,7 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
 def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
     resumo = _montar_resumo(df_final)
 
-    st.markdown("### 2. Colunas que o envio vai usar")
+    st.markdown("### 3. Colunas que o envio vai usar")
     c1, c2 = st.columns(2)
 
     with c1:
@@ -482,7 +534,7 @@ def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
 
 
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
-    st.markdown("### 3. Preview final")
+    st.markdown("### 4. Preview final")
 
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
@@ -495,7 +547,7 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
 
 
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
-    st.markdown("### 4. Download da planilha padrão Bling")
+    st.markdown("### 5. Download da planilha padrão Bling")
 
     csv_bytes = dataframe_para_csv_bytes(df_final)
 
@@ -523,7 +575,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
 
 def _render_bloco_fluxo_site() -> None:
-    st.markdown("### 5. Varredura do site e conversão GPT")
+    st.markdown("### 6. Varredura do site e conversão GPT")
 
     if not _origem_site_ativa():
         st.caption(
@@ -539,22 +591,28 @@ def _render_bloco_fluxo_site() -> None:
     loop_ativo = bool(st.session_state.get("site_auto_loop_ativo", False))
     loop_status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
     ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "")
+    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
     if _varredura_site_concluida():
-        st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
+        if fonte_descoberta == "Sitemap":
+            st.success("Varredura do site concluída via sitemap. Produtos localizados e prontos para seguir para o Bling.")
+        else:
+            st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
     else:
         st.warning("A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos.")
 
     if url_site:
         st.write(f"**URL monitorada:** {url_site}")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Loop", "Ativo" if loop_ativo else "Inativo")
     with c2:
         st.metric("Status", loop_status.title())
     with c3:
         st.metric("Última busca", ultima_execucao if ultima_execucao else "-")
+    with c4:
+        st.metric("Fonte descoberta", fonte_descoberta)
 
     if modo_auto == "manual":
         st.info("Modo manual: a captura por site será usada no envio desta execução.")
@@ -566,13 +624,18 @@ def _render_bloco_fluxo_site() -> None:
             f"**{interval_value} {interval_unit}** e então enviar ao Bling após conversão."
         )
 
-    st.caption(
-        "Ordem correta do fluxo: varrer site → converter com GPT → validar/download → conectar no Bling → enviar por API."
-    )
+    if fonte_descoberta == "Sitemap":
+        st.caption(
+            "Ordem correta do fluxo: sitemap do fornecedor → validação dos produtos → preview/download → conexão Bling → envio por API."
+        )
+    else:
+        st.caption(
+            "Ordem correta do fluxo: varrer site → converter com GPT → validar/download → conectar no Bling → enviar por API."
+        )
 
 
 def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str, validacao_ok: bool) -> None:
-    st.markdown("### 6. Conectar e enviar ao Bling")
+    st.markdown("### 7. Conectar e enviar ao Bling")
 
     oauth_liberado = _oauth_liberado(validacao_ok)
     conectado, status = _obter_status_conexao_bling()
@@ -650,11 +713,18 @@ def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_no
             )
 
     if _origem_site_ativa():
+        fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
         st.markdown("#### Conversão GPT + fallback de busca por site")
-        st.caption(
-            "Como a origem veio do site do fornecedor, o envio usa a sequência correta: "
-            "captura do site → conversão GPT → validação → conexão Bling → envio por API."
-        )
+        if fonte_descoberta == "Sitemap":
+            st.caption(
+                "Como a origem veio do site do fornecedor por sitemap, o envio usa a sequência correta: "
+                "sitemap → validação → download → conexão Bling → envio por API."
+            )
+        else:
+            st.caption(
+                "Como a origem veio do site do fornecedor, o envio usa a sequência correta: "
+                "captura do site → conversão GPT → validação → conexão Bling → envio por API."
+            )
 
     liberar_envio = bool(conectado and oauth_liberado)
 
@@ -717,6 +787,7 @@ def render_preview_final() -> None:
     st.session_state["df_final"] = df_final
     _sincronizar_estado_quando_df_mudar(df_final)
 
+    _render_origem_site_metadata()
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
     _render_colunas_detectadas_sync(df_final)
     _render_preview_dataframe(df_final)
