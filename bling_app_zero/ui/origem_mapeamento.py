@@ -257,6 +257,36 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
     return mapping_salvo
 
 
+
+
+def _obter_deposito_nome_persistido() -> str:
+    """
+    Recupera o nome do depósito preservando o texto original.
+    Faz fallback entre as chaves usadas no fluxo antigo e no fluxo atual.
+    """
+    candidatos = [
+        st.session_state.get("deposito_nome"),
+        st.session_state.get("deposito_nome_widget"),
+        st.session_state.get("deposito"),
+    ]
+
+    for valor in candidatos:
+        texto = str(valor or "").strip()
+        if texto:
+            return texto
+
+    return ""
+
+
+def _sincronizar_deposito_nome() -> str:
+    """
+    Mantém deposito_nome e deposito_nome_widget sincronizados para o fluxo final.
+    """
+    deposito = _obter_deposito_nome_persistido()
+    st.session_state["deposito_nome"] = deposito
+    st.session_state["deposito_nome_widget"] = deposito
+    return deposito
+
 def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
     bloqueados = set()
 
@@ -283,7 +313,7 @@ def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, 
     if operacao == "estoque":
         coluna_deposito = _coluna_deposito_modelo(df_modelo)
         if coluna_deposito:
-            base[coluna_deposito] = normalizar_texto(st.session_state.get("deposito_nome", ""))
+            base[coluna_deposito] = _obter_deposito_nome_persistido()
 
     coluna_situacao = _coluna_situacao_modelo(df_modelo)
     if coluna_situacao and coluna_situacao in base.columns:
@@ -313,7 +343,7 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
     saida = _aplicar_defaults_pos_mapping(saida, df_modelo, operacao)
 
     tipo_operacao_bling = normalizar_texto(st.session_state.get("tipo_operacao_bling", operacao)) or operacao
-    deposito_nome = normalizar_texto(st.session_state.get("deposito_nome", ""))
+    deposito_nome = _obter_deposito_nome_persistido()
 
     saida = blindar_df_para_bling(
         df=saida,
@@ -579,6 +609,7 @@ def render_origem_mapeamento() -> None:
             ir_para_etapa("origem")
         return
 
+    _sincronizar_deposito_nome()
     _inicializar_mapping(df_base, df_modelo)
     _executar_ia_autonoma(df_base, df_modelo, operacao)
 
