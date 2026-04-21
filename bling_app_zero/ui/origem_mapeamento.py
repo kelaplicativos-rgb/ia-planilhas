@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import hashlib
@@ -154,8 +153,9 @@ def _coluna_imagens_modelo(df_modelo: pd.DataFrame) -> str:
     return ""
 
 
-def _coluna_deposito_modelo(df_modelo: pd.DataFrame) -> str:
+def _colunas_deposito_modelo(df_modelo: pd.DataFrame) -> list[str]:
     colunas = [str(c) for c in df_modelo.columns.tolist()]
+    encontrados: list[str] = []
 
     for prioridade in [
         "Depósito (OBRIGATÓRIO)",
@@ -163,15 +163,20 @@ def _coluna_deposito_modelo(df_modelo: pd.DataFrame) -> str:
         "Deposito (OBRIGATÓRIO)",
         "Deposito",
     ]:
-        if prioridade in colunas:
-            return prioridade
+        if prioridade in colunas and prioridade not in encontrados:
+            encontrados.append(prioridade)
 
     for col in colunas:
         n = _normalizar_texto_busca(col)
-        if "deposito" in n or "depósito" in n:
-            return col
+        if ("deposito" in n or "depósito" in n) and col not in encontrados:
+            encontrados.append(col)
 
-    return ""
+    return encontrados
+
+
+def _coluna_deposito_modelo(df_modelo: pd.DataFrame) -> str:
+    colunas = _colunas_deposito_modelo(df_modelo)
+    return colunas[0] if colunas else ""
 
 
 def _coluna_situacao_modelo(df_modelo: pd.DataFrame) -> str:
@@ -258,7 +263,6 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
 
 
 
-
 def _obter_deposito_nome_persistido() -> str:
     """
     Recupera o nome do depósito preservando o texto original.
@@ -278,6 +282,7 @@ def _obter_deposito_nome_persistido() -> str:
     return ""
 
 
+
 def _sincronizar_deposito_nome() -> str:
     """
     Mantém deposito_nome e deposito_nome_widget sincronizados para o fluxo final.
@@ -286,6 +291,8 @@ def _sincronizar_deposito_nome() -> str:
     st.session_state["deposito_nome"] = deposito
     st.session_state["deposito_nome_widget"] = deposito
     return deposito
+
+
 
 def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
     bloqueados = set()
@@ -301,6 +308,7 @@ def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> se
     return bloqueados
 
 
+
 def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> pd.DataFrame:
     base = saida.copy()
 
@@ -311,9 +319,33 @@ def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, 
             base[coluna_preco] = df_precificado["_preco_calculado"]
 
     if operacao == "estoque":
-        coluna_deposito = _coluna_deposito_modelo(df_modelo)
-        if coluna_deposito:
-            base[coluna_deposito] = _obter_deposito_nome_persistido()
+        deposito = _obter_deposito_nome_persistido()
+        if deposito:
+            colunas_deposito = _colunas_deposito_modelo(df_modelo)
+            if not colunas_deposito:
+                colunas_deposito = [
+                    str(col)
+                    for col in base.columns
+                    if "deposito" in _normalizar_texto_busca(col)
+                    or "depósito" in _normalizar_texto_busca(col)
+                ]
+
+            for coluna_deposito in colunas_deposito:
+                if coluna_deposito in base.columns:
+                    base[coluna_deposito] = deposito
+
+            if colunas_deposito:
+                log_debug(
+                    f"Depósito aplicado automaticamente nas colunas: {', '.join(colunas_deposito)} | valor={deposito}",
+                    nivel="INFO",
+                )
+            else:
+                log_debug(
+                    "Operação de estoque detectada, mas nenhuma coluna de depósito foi encontrada no modelo/saída.",
+                    nivel="ERRO",
+                )
+        else:
+            log_debug("Operação de estoque sem depósito preenchido no session_state.", nivel="ERRO")
 
     coluna_situacao = _coluna_situacao_modelo(df_modelo)
     if coluna_situacao and coluna_situacao in base.columns:
@@ -325,6 +357,7 @@ def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, 
         base[coluna_imagens] = base[coluna_imagens].apply(normalizar_imagens_pipe)
 
     return base.fillna("")
+
 
 
 def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
@@ -354,6 +387,7 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
     return saida.fillna("")
 
 
+
 def _preview_mapping(df_final: pd.DataFrame) -> None:
     if not safe_df_estrutura(df_final):
         return
@@ -369,6 +403,7 @@ def _preview_mapping(df_final: pd.DataFrame) -> None:
         st.dataframe(df_final.head(200), use_container_width=True)
 
 
+
 def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     c1, c2, c3 = st.columns(3)
 
@@ -380,6 +415,7 @@ def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
 
     with c3:
         st.metric("Colunas modelo", len(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else 0)
+
 
 
 def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
@@ -413,6 +449,7 @@ def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operac
     log_debug("IA aplicou mapeamento automático completo.", nivel="INFO")
 
 
+
 def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
     col1, col2 = st.columns(2)
 
@@ -430,6 +467,7 @@ def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, oper
             st.session_state["df_final"] = None
             st.session_state["_ia_auto_mapping_executado"] = False
             st.rerun()
+
 
 
 def _render_resumo_agente() -> None:
@@ -461,6 +499,7 @@ def _render_resumo_agente() -> None:
         )
     else:
         st.success("IA fechou os obrigatórios automaticamente.")
+
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
@@ -521,6 +560,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
 
 
+
 def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) -> tuple[bool, list[str]]:
     erros = []
     operacao = _detectar_operacao()
@@ -549,6 +589,7 @@ def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) ->
         erros.append(f"Existem colunas de origem usadas mais de uma vez: {', '.join(duplicados)}")
 
     return len(erros) == 0, erros
+
 
 
 def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -583,6 +624,7 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
 
             ir_para_etapa("preview_final")
             st.rerun()
+
 
 
 def render_origem_mapeamento() -> None:
@@ -629,4 +671,3 @@ def render_origem_mapeamento() -> None:
     st.markdown("---")
     if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_precificacao_no_rodape_mapping"):
         voltar_etapa_anterior()
-
