@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import inspect
@@ -62,8 +61,10 @@ def _resetar_estado_site_ui() -> None:
         "site_busca_diagnostico_total_descobertos",
         "site_busca_diagnostico_total_validos",
         "site_busca_diagnostico_total_rejeitados",
-        "site_login_status",
+        "site_busca_login_status",
         "site_busca_resumo_texto",
+        "site_busca_fonte_descoberta",
+        "site_busca_modo_sitemap_primeiro",
     ]:
         st.session_state.pop(chave, None)
 
@@ -283,17 +284,34 @@ def _tem_resultado_site() -> bool:
     return origem_tipo == "site_gpt" and safe_df_dados(st.session_state.get("df_origem"))
 
 
+def _fonte_descoberta_label(valor: str) -> str:
+    valor_n = str(valor or "").strip().lower()
+
+    mapa = {
+        "sitemap": "Sitemap",
+        "crawler_links": "Varredura de links",
+        "http_direto": "Leitura direta do HTML",
+        "produto_direto": "URL de produto",
+        "": "-",
+    }
+
+    return mapa.get(valor_n, valor_n.replace("_", " ").title() or "-")
+
+
 def _resumo_origem_atual() -> None:
     df_origem = st.session_state.get("df_origem")
     df_modelo = st.session_state.get("df_modelo")
+    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem))
     with col2:
         st.metric("Colunas origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem.columns))
     with col3:
         st.metric("Colunas modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
+    with col4:
+        st.metric("Fonte descoberta", fonte_descoberta)
 
 
 # ============================================================
@@ -389,8 +407,11 @@ def _chamar_busca_site_compativel(url_site: str):
 def _resumo_status_site_texto() -> str:
     status = str(st.session_state.get("site_busca_ultimo_status", "") or "").strip().lower()
     total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+    fonte = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
     if status == "sucesso":
+        if fonte != "-":
+            return f"Busca concluída com {total} produto(s) encontrado(s) via {fonte.lower()}."
         return f"Busca concluída com {total} produto(s) encontrado(s)."
     if status == "vazio":
         return "A busca terminou sem produtos encontrados."
@@ -415,6 +436,7 @@ def _executar_busca_site(url_site: str) -> None:
     st.session_state["site_busca_em_execucao"] = True
     st.session_state["site_busca_ultimo_status"] = "executando"
     st.session_state["site_busca_resumo_texto"] = "Busca em andamento..."
+    st.session_state["site_busca_fonte_descoberta"] = ""
 
     log_debug(f"Iniciando busca simplificada por site | url={url_site}", nivel="INFO")
 
@@ -436,9 +458,14 @@ def _executar_busca_site(url_site: str) -> None:
         total = int(len(df_site))
         _carimbar_execucao_site(total, url_site, "sucesso")
         st.session_state["site_busca_em_execucao"] = False
-        st.session_state["site_busca_resumo_texto"] = f"Busca concluída com {total} produto(s) encontrado(s)."
+        st.session_state["site_busca_resumo_texto"] = _resumo_status_site_texto()
 
-        st.success(f"{total} produto(s) encontrados no site.")
+        fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
+        if fonte_descoberta != "-":
+            st.success(f"{total} produto(s) encontrados no site via {fonte_descoberta.lower()}.")
+        else:
+            st.success(f"{total} produto(s) encontrados no site.")
+
         _preview_dataframe(df_site, "Preview da busca por site")
         log_debug(f"Busca por site finalizada com {total} produto(s).", nivel="INFO")
 
@@ -456,14 +483,17 @@ def _render_resumo_busca_site() -> None:
     ultimo_status = str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo")
     ultima_execucao = str(st.session_state.get("site_busca_ultima_execucao", "") or "").strip()
     resumo_texto = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip() or _resumo_status_site_texto()
+    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Status", ultimo_status.title())
     with c2:
         st.metric("Produtos", ultimo_total)
     with c3:
         st.metric("Origem site", "Sim" if _tem_resultado_site() else "Não")
+    with c4:
+        st.metric("Fonte descoberta", fonte_descoberta)
 
     if resumo_texto:
         st.caption(resumo_texto)
@@ -479,19 +509,22 @@ def _render_diagnostico_site() -> None:
     total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
     total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
     total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
-    login_status = st.session_state.get("site_login_status", {})
+    login_status = st.session_state.get("site_busca_login_status", {})
+    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
     if not isinstance(df_diag, pd.DataFrame) and not isinstance(login_status, dict):
         return
 
     with st.expander("Diagnóstico da busca", expanded=False):
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.metric("Descobertos", total_descobertos)
         with c2:
             st.metric("Válidos", total_validos)
         with c3:
             st.metric("Rejeitados", total_rejeitados)
+        with c4:
+            st.metric("Fonte", fonte_descoberta)
 
         if isinstance(login_status, dict) and login_status:
             mensagem = str(login_status.get("mensagem", "") or "").strip()
@@ -571,6 +604,13 @@ def _render_origem_site() -> None:
     ).strip()
 
     with st.container(border=True):
+        st.checkbox(
+            "Priorizar sitemap quando disponível",
+            key="site_busca_modo_sitemap_primeiro",
+            value=True,
+            disabled=True,
+            help="Atualmente a busca já usa sitemap primeiro automaticamente quando o site expõe esse recurso.",
+        )
         _render_etapas_busca_site(url_site)
 
 
