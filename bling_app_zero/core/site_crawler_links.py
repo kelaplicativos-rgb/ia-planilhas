@@ -1,10 +1,11 @@
+
 from __future__ import annotations
 
 import re
 import time
 from collections import deque
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,10 +24,12 @@ from bling_app_zero.core.site_crawler_http import (
     url_valida_para_crawl,
 )
 
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
 
-# ============================================================
-# CONSTANTES / SINAIS
-# ============================================================
 
 PRODUCT_HINTS_DEFAULT = [
     "/produto",
@@ -89,9 +92,54 @@ PRODUCT_TEXT_HINTS = [
 ]
 
 
-# ============================================================
-# HELPERS DE AUTENTICAÇÃO
-# ============================================================
+def _host(url: str) -> str:
+    try:
+        return (urlparse(normalizar_url(url)).netloc or "").replace("www.", "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _url_raiz(url: str) -> str:
+    parsed = urlparse(normalizar_url(url))
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return normalizar_url(url)
+
+
+def _path(url: str) -> str:
+    try:
+        return (urlparse(normalizar_url(url)).path or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _profile(url: str):
+    try:
+        return get_supplier_profile(url)
+    except Exception:
+        return None
+
+
+def _profile_product_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "product_url_keywords", ()) or ())
+
+
+def _profile_category_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_url_keywords", ()) or ())
+
+
+def _profile_category_hints(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_path_hints", ()) or ())
+
 
 def _auth_context_tem_dados_http(auth_context: dict[str, Any] | None) -> bool:
     if not isinstance(auth_context, dict):
@@ -336,10 +384,6 @@ def _detectar_links_em_texto_solto(base_url: str, html: str) -> list[str]:
     return encontrados
 
 
-# ============================================================
-# CLASSIFICAÇÃO
-# ============================================================
-
 def _html_tem_sinais_de_bloqueio(html: str) -> bool:
     html_n = normalizar_texto(html)
     if not html_n:
@@ -379,6 +423,44 @@ def _score_html_produto(html: str) -> int:
     return score
 
 
+def _eh_url_categoria(url: str) -> bool:
+    url_n = normalizar_texto(url)
+    path = _path(url)
+
+    if any(h in url_n for h in CATEGORY_HINTS_DEFAULT):
+        return True
+
+    if any(h in url_n for h in _profile_category_hints(url)):
+        return True
+
+    if any(token in url_n for token in _profile_category_keywords(url)):
+        return True
+
+    if any(token in path for token in ["categoria", "categorias", "departamento", "departamentos", "collection", "collections", "search", "busca"]):
+        return True
+
+    return False
+
+
+def _eh_url_produto_forte(url: str) -> bool:
+    url_n = normalizar_texto(url)
+
+    if any(h in url_n for h in PRODUCT_HINTS_DEFAULT):
+        return True
+
+    if re.search(r"/p/[\w\-]+|/produto/|/product/|/sku/|/item/", url_n):
+        return True
+
+    if any(token in url_n for token in _profile_product_keywords(url)):
+        return True
+
+    ultimo_slug = _path(url).split("/")[-1] if _path(url) else ""
+    if ultimo_slug and "-" in ultimo_slug and len(ultimo_slug) >= 10 and not _eh_url_categoria(url):
+        return True
+
+    return False
+
+
 def _score_url_produto(url: str, texto_ancora: str = "", bloco: str = "") -> int:
     cfg = fornecedor_cfg(url)
     url_n = normalizar_texto(url)
@@ -397,11 +479,11 @@ def _score_url_produto(url: str, texto_ancora: str = "", bloco: str = "") -> int
     if any(h in url_n for h in hints_categoria):
         score_categoria += 4
 
-    if re.search(r"/p/[\w\-]+|/produto/|/product/|/sku/|/item/", url_n):
+    if _eh_url_produto_forte(url):
         score_produto += 3
 
-    if re.search(r"/categoria/|/categorias/|/collections?/|/departamentos?/", url_n):
-        score_categoria += 3
+    if _eh_url_categoria(url):
+        score_categoria += 5
 
     if any(t in texto_n for t in ["comprar", "ver produto", "detalhes", "sku", "código", "codigo"]):
         score_produto += 2
@@ -502,6 +584,9 @@ def _url_parece_produto(base_url: str, url: str, texto_ancora: str = "", bloco: 
     if any(x in url_n for x in ["/login", "/conta", "/account", "/cart", "/checkout", "/carrinho"]):
         return False
 
+    if _eh_url_categoria(url):
+        return False
+
     return _score_url_produto(url, texto_ancora=texto_ancora, bloco=bloco) >= 2
 
 
@@ -510,6 +595,9 @@ def _html_parece_produto_direto(url: str, html: str) -> bool:
         return False
 
     if _html_tem_sinais_de_bloqueio(html):
+        return False
+
+    if _eh_url_categoria(url):
         return False
 
     score_url = _score_url_produto(url)
@@ -526,10 +614,6 @@ def _html_parece_produto_direto(url: str, html: str) -> bool:
 
     return False
 
-
-# ============================================================
-# EXTRAÇÃO
-# ============================================================
 
 def extrair_produtos_de_cards(base_url: str, soup: BeautifulSoup) -> list[str]:
     links_produto: list[str] = []
@@ -672,7 +756,7 @@ def extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[lis
         )
 
         if classe == "produto" or _url_parece_produto(base_url, url, texto, bloco) or possui_sinal_produto:
-            if url not in vistos_produto:
+            if not _eh_url_categoria(url) and url not in vistos_produto:
                 vistos_produto.add(url)
                 links_produto.append(url)
             continue
@@ -683,7 +767,7 @@ def extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[lis
                 links_categoria.append(url)
             continue
 
-        if url not in vistos_categoria:
+        if url not in vistos_categoria and not _eh_url_produto_forte(url):
             vistos_categoria.add(url)
             links_categoria.append(url)
 
@@ -694,7 +778,7 @@ def extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[lis
         classe = classificar_link(base_url, url_solta, "", html[:1000])
 
         if classe == "produto" or _url_parece_produto(base_url, url_solta, "", html[:1000]):
-            if url_solta not in vistos_produto:
+            if not _eh_url_categoria(url_solta) and url_solta not in vistos_produto:
                 vistos_produto.add(url_solta)
                 links_produto.append(url_solta)
         elif url_solta not in vistos_categoria:
@@ -711,10 +795,6 @@ def extrair_links_pagina(base_url: str, url_pagina: str, html: str) -> tuple[lis
     return links_categoria, links_produto
 
 
-# ============================================================
-# ROTAS INICIAIS
-# ============================================================
-
 def rotas_iniciais(
     base_url: str,
     termo: str = "",
@@ -722,17 +802,30 @@ def rotas_iniciais(
 ) -> list[str]:
     base = normalizar_url(base_url)
     alvo_base = _products_url_contexto(base, auth_context)
+    raiz = _url_raiz(base)
 
-    urls = [base]
+    urls = [alvo_base or base]
 
     for rota in ROTAS_INICIAIS_PADRAO:
         try:
-            urls.append(f"{base}{rota}")
+            urls.append(f"{raiz}{rota}")
         except Exception:
             continue
 
     if alvo_base and alvo_base != base:
         urls.insert(0, alvo_base)
+
+    profile = _profile(base)
+    if profile is not None:
+        for hint in tuple(getattr(profile, "category_path_hints", ()) or ()):
+            hint_n = safe_str(hint)
+            if hint_n:
+                urls.append(f"{raiz}{hint_n if hint_n.startswith('/') else '/' + hint_n}")
+
+        for hint in tuple(getattr(profile, "products_path_hints", ()) or ()):
+            hint_n = safe_str(hint)
+            if hint_n:
+                urls.append(f"{raiz}{hint_n if hint_n.startswith('/') else '/' + hint_n}")
 
     termo = safe_str(termo)
     if termo:
@@ -740,12 +833,12 @@ def rotas_iniciais(
         slug = re.sub(r"[^a-z0-9]+", "-", normalizar_texto(termo)).strip("-")
         urls.extend(
             [
-                f"{base}/search?q={q}",
-                f"{base}/busca?q={q}",
-                f"{base}/busca?search={q}",
-                f"{base}/catalogsearch/result/?q={q}",
-                f"{base}/categoria/{slug}",
-                f"{base}/?s={q}",
+                f"{raiz}/search?q={q}",
+                f"{raiz}/busca?q={q}",
+                f"{raiz}/busca?search={q}",
+                f"{raiz}/catalogsearch/result/?q={q}",
+                f"{raiz}/categoria/{slug}",
+                f"{raiz}/?s={q}",
             ]
         )
 
@@ -765,17 +858,13 @@ def rotas_iniciais(
     vistos: set[str] = set()
     saida: list[str] = []
     for url in urls:
-        url = normalizar_link_crawl(base, url)
+        url = normalizar_link_crawl(raiz, url)
         if url and url not in vistos:
             vistos.add(url)
             saida.append(url)
 
     return saida
 
-
-# ============================================================
-# DESCOBERTA PRINCIPAL
-# ============================================================
 
 def descobrir_produtos_no_dominio(
     base_url: str,
@@ -816,7 +905,7 @@ def descobrir_produtos_no_dominio(
             continue
 
         if _html_parece_produto_direto(url_atual, html):
-            if url_atual not in produtos_vistos:
+            if url_atual not in produtos_vistos and not _eh_url_categoria(url_atual):
                 produtos_vistos.add(url_atual)
                 produtos_encontrados.append(url_atual)
                 if len(produtos_encontrados) >= max_produtos:
@@ -825,7 +914,7 @@ def descobrir_produtos_no_dominio(
         links_categoria, links_produto = extrair_links_pagina(base_url, url_atual, html)
 
         for url_produto in links_produto:
-            if url_produto not in produtos_vistos:
+            if not _eh_url_categoria(url_produto) and url_produto not in produtos_vistos:
                 produtos_vistos.add(url_produto)
                 produtos_encontrados.append(url_produto)
                 if len(produtos_encontrados) >= max_produtos:
@@ -838,7 +927,7 @@ def descobrir_produtos_no_dominio(
     if not produtos_encontrados:
         try:
             html_base = _fetch_html_com_contexto(base_url, auth_context=auth_context)
-            if _html_parece_produto_direto(base_url, html_base):
+            if _html_parece_produto_direto(base_url, html_base) and not _eh_url_categoria(base_url):
                 produtos_encontrados.append(base_url)
         except Exception:
             pass
@@ -847,7 +936,7 @@ def descobrir_produtos_no_dominio(
         products_url = safe_str(auth_context.get("products_url"))
         if products_url:
             url_fallback = normalizar_link_crawl(base_url, products_url)
-            if url_fallback:
+            if url_fallback and not _eh_url_categoria(url_fallback):
                 produtos_encontrados.append(url_fallback)
 
     return produtos_encontrados
