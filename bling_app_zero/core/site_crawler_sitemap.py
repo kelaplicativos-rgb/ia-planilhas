@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import gzip
@@ -5,7 +6,7 @@ import re
 import xml.etree.ElementTree as ET
 from io import BytesIO
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -21,6 +22,12 @@ except Exception:
 
     def safe_str(value: Any) -> str:
         return str(value or "").strip()
+
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
 
 
 # ============================================================
@@ -59,6 +66,10 @@ SITEMAP_CANDIDATE_PATHS = [
     "/product-sitemap.xml",
     "/produto-sitemap.xml",
     "/produtos-sitemap.xml",
+    "/post-sitemap.xml",
+    "/page-sitemap.xml",
+    "/category-sitemap.xml",
+    "/categoria-sitemap.xml",
     "/sitemaps.xml",
 ]
 
@@ -73,6 +84,39 @@ PRODUCT_SITEMAP_HINTS = [
     "store",
     "item",
     "sku",
+    "inventory",
+    "estoque",
+]
+
+CATEGORY_SITEMAP_HINTS = [
+    "category",
+    "categories",
+    "categoria",
+    "categorias",
+    "collection",
+    "collections",
+    "departamento",
+    "departamentos",
+    "taxonomy",
+    "terms",
+]
+
+BAD_SITEMAP_HINTS = [
+    "post",
+    "posts",
+    "page",
+    "pages",
+    "blog",
+    "news",
+    "noticia",
+    "noticias",
+    "image",
+    "images",
+    "video",
+    "videos",
+    "author",
+    "tag",
+    "tags",
 ]
 
 URL_PRODUCT_HINTS = [
@@ -151,7 +195,11 @@ def _log_debug(msg: str, nivel: str = "INFO") -> None:
 # ============================================================
 
 def _normalizar_base(url: str) -> str:
-    return normalizar_url(url)
+    url_n = normalizar_url(url)
+    parsed = urlparse(url_n)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return url_n
 
 
 def _dominio(url: str) -> str:
@@ -170,6 +218,41 @@ def _path_url(url: str) -> str:
         return safe_str(urlparse(url).path).lower()
     except Exception:
         return ""
+
+
+def _query_url(url: str) -> str:
+    try:
+        return safe_str(urlparse(url).query).lower()
+    except Exception:
+        return ""
+
+
+def _profile(url: str):
+    try:
+        return get_supplier_profile(url)
+    except Exception:
+        return None
+
+
+def _profile_product_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "product_url_keywords", ()) or ())
+
+
+def _profile_category_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_url_keywords", ()) or ())
+
+
+def _profile_category_hints(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_path_hints", ()) or ())
 
 
 def _url_tem_extensao_asset(url: str) -> bool:
@@ -191,6 +274,27 @@ def _url_ruim(url: str) -> bool:
     return False
 
 
+def _url_eh_categoria(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    if not url_n:
+        return False
+
+    if any(h in url_n for h in CATEGORY_HINTS):
+        return True
+
+    for hint in _profile_category_hints(url):
+        hint_n = safe_str(hint).lower()
+        if hint_n and hint_n in url_n:
+            return True
+
+    for token in _profile_category_keywords(url):
+        token_n = safe_str(token).lower()
+        if token_n and token_n in url_n:
+            return True
+
+    return False
+
+
 def _url_parece_produto(url: str) -> bool:
     url_n = safe_str(url).lower()
     if not url_n:
@@ -202,7 +306,12 @@ def _url_parece_produto(url: str) -> bool:
     if any(h in url_n for h in URL_PRODUCT_HINTS):
         return True
 
-    if any(h in url_n for h in CATEGORY_HINTS):
+    for token in _profile_product_keywords(url):
+        token_n = safe_str(token).lower()
+        if token_n and token_n in url_n:
+            return True
+
+    if _url_eh_categoria(url_n):
         return False
 
     ultimo_slug = safe_str(urlparse(url_n).path.split("/")[-1])
@@ -225,8 +334,13 @@ def _score_url_produto(url: str) -> int:
     if any(h in url_n for h in URL_PRODUCT_HINTS):
         score += 8
 
-    if any(h in url_n for h in CATEGORY_HINTS):
-        score -= 5
+    for token in _profile_product_keywords(url):
+        token_n = safe_str(token).lower()
+        if token_n and token_n in url_n:
+            score += 4
+
+    if _url_eh_categoria(url_n):
+        score -= 6
 
     if re.search(r"/p/[\w\-]+", url_n):
         score += 3
@@ -255,10 +369,17 @@ def _score_sitemap_url(url: str) -> int:
         score += 1
     if "sitemap" in url_n:
         score += 2
+    if url_n.endswith(".xml") or url_n.endswith(".gz"):
+        score += 1
+
     if any(h in url_n for h in PRODUCT_SITEMAP_HINTS):
-        score += 5
-    if any(h in url_n for h in ["category", "categoria", "blog", "page", "pagina", "post"]):
-        score -= 4
+        score += 7
+
+    if any(h in url_n for h in CATEGORY_SITEMAP_HINTS):
+        score -= 5
+
+    if any(h in url_n for h in BAD_SITEMAP_HINTS):
+        score -= 7
 
     return score
 
@@ -360,6 +481,22 @@ def _child_text(element: ET.Element, child_tag_local: str) -> str:
     except Exception:
         return ""
     return ""
+
+
+def _guess_product_sitemap(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    if not url_n:
+        return False
+    if any(h in url_n for h in BAD_SITEMAP_HINTS):
+        return False
+    if any(h in url_n for h in PRODUCT_SITEMAP_HINTS):
+        return True
+    return False
+
+
+def _guess_bad_sitemap(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    return any(h in url_n for h in BAD_SITEMAP_HINTS)
 
 
 # ============================================================
@@ -484,12 +621,15 @@ def expandir_sitemaps(base_url: str, max_sitemaps: int = 50, max_urls_total: int
 
     sitemaps_visitados: set[str] = set()
     urls_final: list[str] = []
+    urls_vistas: set[str] = set()
 
     while fila:
         if len(sitemaps_visitados) >= max_sitemaps:
             break
         if len(urls_final) >= max_urls_total:
             break
+
+        fila.sort(key=_score_sitemap_url, reverse=True)
 
         sitemap_atual = fila.pop(0)
         sitemap_atual = safe_str(sitemap_atual)
@@ -500,13 +640,22 @@ def expandir_sitemaps(base_url: str, max_sitemaps: int = 50, max_urls_total: int
 
         sub_sitemaps, urls = ler_sitemap_xml(sitemap_atual)
 
+        sub_sitemaps = _deduplicar_preservando_ordem(sub_sitemaps)
+        sub_sitemaps.sort(key=_score_sitemap_url, reverse=True)
+
         for sub in sub_sitemaps:
-            if sub not in sitemaps_visitados and sub not in fila:
-                fila.append(sub)
+            if sub in sitemaps_visitados or sub in fila:
+                continue
+            if _guess_bad_sitemap(sub) and not _guess_product_sitemap(sub):
+                continue
+            fila.append(sub)
 
         for url in urls:
             if not _mesmo_dominio(base, url):
                 continue
+            if url in urls_vistas:
+                continue
+            urls_vistas.add(url)
             urls_final.append(url)
             if len(urls_final) >= max_urls_total:
                 break
@@ -533,6 +682,16 @@ def filtrar_urls_produto_de_sitemap(base_url: str, urls: list[str], limite: int 
             continue
 
         score = _score_url_produto(url_n)
+
+        path = _path_url(url_n)
+        query = _query_url(url_n)
+
+        if _url_eh_categoria(url_n):
+            score -= 5
+
+        if "page=" in query or "pagina=" in query or "offset=" in query or "/page/" in path:
+            score -= 2
+
         if score < 2 and not _url_parece_produto(url_n):
             continue
 
@@ -543,7 +702,9 @@ def filtrar_urls_produto_de_sitemap(base_url: str, urls: list[str], limite: int 
     saida: list[str] = []
     vistos: set[str] = set()
 
-    for _, url in candidatos:
+    for score, url in candidatos:
+        if score < 2:
+            continue
         if url in vistos:
             continue
         vistos.add(url)
@@ -609,13 +770,28 @@ def diagnostico_sitemap(base_url: str) -> dict[str, Any]:
     base = _normalizar_base(base_url)
 
     candidatas = descobrir_urls_sitemap(base)
-    urls_brutas = expandir_sitemaps(base, max_sitemaps=20, max_urls_total=20000)
+    urls_brutas = expandir_sitemaps(base, max_sitemaps=30, max_urls_total=40000)
     produtos = filtrar_urls_produto_de_sitemap(base, urls_brutas, limite=5000)
+
+    urls_ruins = 0
+    urls_categoria = 0
+    urls_produto_forte = 0
+
+    for url in urls_brutas[:5000]:
+        if _url_ruim(url):
+            urls_ruins += 1
+        if _url_eh_categoria(url):
+            urls_categoria += 1
+        if _url_parece_produto(url):
+            urls_produto_forte += 1
 
     return {
         "base_url": base,
         "sitemaps_candidatos": candidatas,
         "urls_encontradas_total": len(urls_brutas),
         "produtos_filtrados_total": len(produtos),
+        "urls_ruins_total": urls_ruins,
+        "urls_categoria_total": urls_categoria,
+        "urls_produto_forte_total": urls_produto_forte,
         "amostra_produtos": produtos[:20],
     }
