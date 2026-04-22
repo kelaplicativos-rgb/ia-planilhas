@@ -5,6 +5,7 @@ import streamlit as st
 from bling_app_zero.utils.init_app import init_app
 from bling_app_zero.ui.app_helpers import (
     log_debug,
+    render_botao_download_logs,
     render_log_debug,
     safe_df_dados,
     safe_df_estrutura,
@@ -311,20 +312,15 @@ def _render_atalhos_tecnicos() -> None:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.download_button(
+            render_botao_download_logs(
+                key_sufixo="app_topo",
                 label="📥 Baixar log debug",
-                data=b"",
-                file_name="debug_log.txt",
-                mime="text/plain",
-                use_container_width=True,
-                disabled=True,
-                key="btn_download_log_debug_placeholder_app",
             )
 
         with col2:
             mostrar = bool(st.session_state.get("mostrar_log_debug_ui", False))
             if st.button(
-                "Mostrar/ocultar log na tela",
+                "Mostrar/ocultar log",
                 use_container_width=True,
                 key="btn_toggle_log_debug_app",
             ):
