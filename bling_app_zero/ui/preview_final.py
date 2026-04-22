@@ -695,30 +695,29 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
 
 
 def _render_origem_site_metadata() -> None:
-    st.markdown("### 1. Origem da descoberta")
+    with st.expander("Origem da descoberta", expanded=False):
+        if not _origem_site_ativa():
+            st.caption("A origem atual não veio da busca por site do fornecedor.")
+            return
 
-    if not _origem_site_ativa():
-        st.caption("A origem atual não veio da busca por site do fornecedor.")
-        return
+        url_site = _url_site_atual()
+        fonte = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
+        total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
+        total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
+        total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
 
-    url_site = _url_site_atual()
-    fonte = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
-    total_descobertos = int(st.session_state.get("site_busca_diagnostico_total_descobertos", 0) or 0)
-    total_validos = int(st.session_state.get("site_busca_diagnostico_total_validos", 0) or 0)
-    total_rejeitados = int(st.session_state.get("site_busca_diagnostico_total_rejeitados", 0) or 0)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Fonte descoberta", fonte)
+        with c2:
+            st.metric("Descobertos", total_descobertos)
+        with c3:
+            st.metric("Válidos", total_validos)
+        with c4:
+            st.metric("Rejeitados", total_rejeitados)
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Fonte descoberta", fonte)
-    with c2:
-        st.metric("Descobertos", total_descobertos)
-    with c3:
-        st.metric("Válidos", total_validos)
-    with c4:
-        st.metric("Rejeitados", total_rejeitados)
-
-    if url_site:
-        st.write(f"**URL monitorada:** {url_site}")
+        if url_site:
+            st.write(f"**URL monitorada:** {url_site}")
 
 
 def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
@@ -731,7 +730,7 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
     valido, erros = validar_df_para_download(df_final, tipo_operacao)
     st.session_state["preview_validacao_ok"] = bool(valido)
 
-    st.markdown("### 2. Validação do resultado final")
+    st.markdown("### Validação do resultado final")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -766,21 +765,21 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
 def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
     resumo = _montar_resumo(df_final)
 
-    st.markdown("### 3. Colunas que o envio vai usar")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write(f"**Código detectado:** {resumo['codigo_col'] or 'não encontrado'}")
-        st.write(f"**Descrição detectada:** {resumo['descricao_col'] or 'não encontrada'}")
-    with c2:
-        st.write(f"**Preço detectado:** {resumo['preco_col'] or 'não encontrado'}")
-        st.write(f"**GTIN detectado:** {resumo['gtin_col'] or 'não encontrado'}")
+    with st.expander("Colunas que o envio vai usar", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write(f"**Código detectado:** {resumo['codigo_col'] or 'não encontrado'}")
+            st.write(f"**Descrição detectada:** {resumo['descricao_col'] or 'não encontrada'}")
+        with c2:
+            st.write(f"**Preço detectado:** {resumo['preco_col'] or 'não encontrado'}")
+            st.write(f"**GTIN detectado:** {resumo['gtin_col'] or 'não encontrado'}")
 
-    if not resumo["codigo_col"] or not resumo["descricao_col"]:
-        st.warning("O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente.")
+        if not resumo["codigo_col"] or not resumo["descricao_col"]:
+            st.warning("O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente.")
 
 
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
-    st.markdown("### 4. Preview final")
+    st.markdown("### Preview final")
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
         return
@@ -791,7 +790,7 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
 
 
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
-    st.markdown("### 5. Download da planilha padrão Bling")
+    st.markdown("### Download da planilha padrão Bling")
 
     csv_bytes = dataframe_para_csv_bytes(df_final)
     st.download_button(
@@ -818,41 +817,40 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
 
 def _render_bloco_fluxo_site() -> None:
-    st.markdown("### 6. Varredura do site e conversão GPT")
+    with st.expander("Varredura do site e conversão GPT", expanded=False):
+        if not _origem_site_ativa():
+            st.caption("A origem atual não veio da busca por site.")
+            return
 
-    if not _origem_site_ativa():
-        st.caption("A origem atual não veio da busca por site.")
-        return
+        url_site = _url_site_atual()
+        modo_auto = st.session_state.get("bling_sync_auto_mode", "manual")
+        interval_value = st.session_state.get("bling_sync_interval_value", 15)
+        interval_unit = st.session_state.get("bling_sync_interval_unit", "minutos")
+        loop_ativo = bool(st.session_state.get("site_auto_loop_ativo", False))
+        loop_status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
+        ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "")
+        fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
-    url_site = _url_site_atual()
-    modo_auto = st.session_state.get("bling_sync_auto_mode", "manual")
-    interval_value = st.session_state.get("bling_sync_interval_value", 15)
-    interval_unit = st.session_state.get("bling_sync_interval_unit", "minutos")
-    loop_ativo = bool(st.session_state.get("site_auto_loop_ativo", False))
-    loop_status = str(st.session_state.get("site_auto_status", "inativo") or "inativo")
-    ultima_execucao = str(st.session_state.get("site_auto_ultima_execucao", "") or "")
-    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
+        if _varredura_site_concluida():
+            st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
+        else:
+            st.warning("A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos.")
 
-    if _varredura_site_concluida():
-        st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
-    else:
-        st.warning("A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos.")
+        if url_site:
+            st.write(f"**URL monitorada:** {url_site}")
 
-    if url_site:
-        st.write(f"**URL monitorada:** {url_site}")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Loop", "Ativo" if loop_ativo else "Inativo")
+        with c2:
+            st.metric("Status", loop_status.title())
+        with c3:
+            st.metric("Última busca", ultima_execucao if ultima_execucao else "-")
+        with c4:
+            st.metric("Fonte descoberta", fonte_descoberta)
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Loop", "Ativo" if loop_ativo else "Inativo")
-    with c2:
-        st.metric("Status", loop_status.title())
-    with c3:
-        st.metric("Última busca", ultima_execucao if ultima_execucao else "-")
-    with c4:
-        st.metric("Fonte descoberta", fonte_descoberta)
-
-    if modo_auto == "periodico":
-        st.info(f"Modo periódico configurado: **{interval_value} {interval_unit}**.")
+        if modo_auto == "periodico":
+            st.info(f"Modo periódico configurado: **{interval_value} {interval_unit}**.")
 
 
 def _render_resultado_envio_visual(resultado: dict[str, Any]) -> None:
@@ -908,7 +906,7 @@ def _render_resultado_envio_visual(resultado: dict[str, Any]) -> None:
 
 
 def _render_painel_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome: str, validacao_ok: bool) -> None:
-    st.markdown("### 7. Conectar e enviar ao Bling")
+    st.markdown("### Conectar e enviar ao Bling")
 
     oauth_liberado = _oauth_liberado(validacao_ok)
     conectado, status = _obter_status_conexao_bling()
@@ -1004,10 +1002,6 @@ def render_preview_final() -> None:
     _inicializar_estado_preview()
 
     st.subheader("4. Preview Final")
-    st.caption(
-        "Fluxo final profissional: validar resultado, baixar a planilha padrão Bling, "
-        "conectar com o Bling e acompanhar o envio com progresso real."
-    )
 
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
     deposito_nome = _sincronizar_deposito_nome()
@@ -1028,13 +1022,13 @@ def render_preview_final() -> None:
     st.session_state["df_final"] = df_final
     _sincronizar_estado_quando_df_mudar(df_final)
 
-    _render_origem_site_metadata()
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
-    _render_colunas_detectadas_sync(df_final)
     _render_preview_dataframe(df_final)
     _render_download(df_final, validacao_ok)
-    _render_bloco_fluxo_site()
     _render_painel_bling(df_final, tipo_operacao, deposito_nome, validacao_ok)
+    _render_colunas_detectadas_sync(df_final)
+    _render_origem_site_metadata()
+    _render_bloco_fluxo_site()
 
     st.markdown("---")
     col1, col2 = st.columns(2)
