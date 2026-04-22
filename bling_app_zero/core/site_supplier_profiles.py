@@ -25,6 +25,17 @@ class SupplierProfile:
     requires_assisted_login: bool = False
     public_entry_allowed: bool = True
     notes: str = ""
+    auth_mode: str = "public"
+    requires_whatsapp_code: bool = False
+    public_catalog_expected: bool = False
+    supports_full_site_crawl: bool = True
+    preferred_discovery_mode: str = "auto"
+    category_path_hints: tuple[str, ...] = ()
+    product_url_keywords: tuple[str, ...] = ("produto", "product", "p", "item")
+    category_url_keywords: tuple[str, ...] = ("categoria", "catalogo", "catalog", "colecao", "collection")
+    panel_products_path_hints: tuple[str, ...] = ()
+    stock_path_hints: tuple[str, ...] = ()
+    source_kind: str = "public_catalog"
 
 
 DEFAULT_PROFILE = SupplierProfile(
@@ -40,6 +51,17 @@ DEFAULT_PROFILE = SupplierProfile(
     requires_assisted_login=False,
     public_entry_allowed=True,
     notes="Fornecedor público sem necessidade de autenticação.",
+    auth_mode="public",
+    requires_whatsapp_code=False,
+    public_catalog_expected=True,
+    supports_full_site_crawl=True,
+    preferred_discovery_mode="sitemap_first",
+    category_path_hints=("/categoria", "/catalogo", "/colecao"),
+    product_url_keywords=("produto", "product", "item", "sku"),
+    category_url_keywords=("categoria", "catalogo", "colecao", "collection"),
+    panel_products_path_hints=(),
+    stock_path_hints=(),
+    source_kind="public_catalog",
 )
 
 GENERIC_LOGIN_PROFILE = SupplierProfile(
@@ -55,6 +77,17 @@ GENERIC_LOGIN_PROFILE = SupplierProfile(
     requires_assisted_login=False,
     public_entry_allowed=False,
     notes="Fornecedor com indício de autenticação, sem regra dedicada por domínio.",
+    auth_mode="login",
+    requires_whatsapp_code=False,
+    public_catalog_expected=False,
+    supports_full_site_crawl=False,
+    preferred_discovery_mode="panel_after_login",
+    category_path_hints=("/produtos", "/catalogo"),
+    product_url_keywords=("produto", "product", "item", "sku"),
+    category_url_keywords=("categoria", "catalogo", "colecao", "collection"),
+    panel_products_path_hints=("/admin/products", "/produtos", "/catalogo"),
+    stock_path_hints=("/estoque", "/inventory", "/stock"),
+    source_kind="authenticated_panel",
 )
 
 GENERIC_CAPTCHA_PROFILE = SupplierProfile(
@@ -70,6 +103,17 @@ GENERIC_CAPTCHA_PROFILE = SupplierProfile(
     requires_assisted_login=True,
     public_entry_allowed=False,
     notes="Fornecedor com indício de captcha. O fluxo recomendado é login assistido com sessão persistente.",
+    auth_mode="captcha",
+    requires_whatsapp_code=False,
+    public_catalog_expected=False,
+    supports_full_site_crawl=False,
+    preferred_discovery_mode="panel_after_login",
+    category_path_hints=("/produtos", "/catalogo"),
+    product_url_keywords=("produto", "product", "item", "sku"),
+    category_url_keywords=("categoria", "catalogo", "colecao", "collection"),
+    panel_products_path_hints=("/admin/products", "/produtos", "/catalogo"),
+    stock_path_hints=("/estoque", "/inventory", "/stock"),
+    source_kind="authenticated_panel",
 )
 
 OBA_OBA_MIX_PROFILE = SupplierProfile(
@@ -94,10 +138,104 @@ OBA_OBA_MIX_PROFILE = SupplierProfile(
         "O fluxo recomendado é sessão autenticada com navegador automatizado "
         "e reaproveitamento de estado."
     ),
+    auth_mode="captcha",
+    requires_whatsapp_code=False,
+    public_catalog_expected=False,
+    supports_full_site_crawl=False,
+    preferred_discovery_mode="panel_after_login",
+    category_path_hints=("/admin/products", "/products", "/catalogo"),
+    product_url_keywords=("product", "produto", "sku", "item"),
+    category_url_keywords=("catalogo", "categoria", "produtos"),
+    panel_products_path_hints=("/admin/products", "/products", "/catalogo"),
+    stock_path_hints=("/estoque", "/inventory", "/stock"),
+    source_kind="authenticated_panel",
+)
+
+ATACADUM_PROFILE = SupplierProfile(
+    slug="atacadum",
+    nome="Atacadum",
+    dominio_match=("www.atacadum.com.br", "atacadum.com.br"),
+    login_url="",
+    products_url="https://www.atacadum.com.br/",
+    login_required=False,
+    supports_requests_login=False,
+    supports_playwright_login=False,
+    captcha_expected=False,
+    username_field_candidates=("email", "login", "username"),
+    password_field_candidates=("password", "senha"),
+    submit_field_candidates=("submit", "entrar", "login"),
+    login_path_hints=("/login", "/entrar"),
+    products_path_hints=(
+        "/",
+        "/celulares-smartphone",
+        "/relogio-smartwatch",
+        "/acessorios",
+        "/mais-produtos",
+    ),
+    requires_assisted_login=False,
+    public_entry_allowed=True,
+    notes=(
+        "Catálogo público com descoberta forte por sitemap. "
+        "O foco é varrer categorias, paginação e páginas de produto, "
+        "evitando tratar páginas de categoria como produto final."
+    ),
+    auth_mode="public",
+    requires_whatsapp_code=False,
+    public_catalog_expected=True,
+    supports_full_site_crawl=True,
+    preferred_discovery_mode="sitemap_first",
+    category_path_hints=(
+        "/celulares-smartphone",
+        "/relogio-smartwatch",
+        "/acessorios",
+        "/mais-produtos",
+    ),
+    product_url_keywords=("smartphone", "iphone", "smartwatch", "tablet", "powerbank", "caixa-de-som"),
+    category_url_keywords=("celulares-smartphone", "relogio-smartwatch", "acessorios", "mais-produtos"),
+    panel_products_path_hints=(),
+    stock_path_hints=(),
+    source_kind="public_catalog",
+)
+
+STOQUI_PROFILE = SupplierProfile(
+    slug="stoqui",
+    nome="Stoqui",
+    dominio_match=("stoqui.com.br", "app.stoqui.com.br", "www.stoqui.com.br"),
+    login_url="https://stoqui.com.br/login",
+    products_url="https://stoqui.com.br/",
+    login_required=True,
+    supports_requests_login=False,
+    supports_playwright_login=True,
+    captcha_expected=False,
+    username_field_candidates=("email", "login", "username", "telefone"),
+    password_field_candidates=("password", "senha", "codigo", "code"),
+    submit_field_candidates=("submit", "entrar", "login", "continuar"),
+    login_path_hints=("/login", "/entrar", "/auth/login"),
+    products_path_hints=("/produtos", "/products", "/catalogo", "/admin/products"),
+    requires_assisted_login=True,
+    public_entry_allowed=False,
+    notes=(
+        "Painel autenticado com etapa assistida e possível envio de código por WhatsApp. "
+        "O fluxo recomendado é login assistido, confirmação humana do código e "
+        "persistência da sessão antes de acessar produtos e estoque."
+    ),
+    auth_mode="whatsapp_code",
+    requires_whatsapp_code=True,
+    public_catalog_expected=False,
+    supports_full_site_crawl=False,
+    preferred_discovery_mode="panel_after_login",
+    category_path_hints=("/produtos", "/products", "/catalogo"),
+    product_url_keywords=("produto", "product", "sku", "item"),
+    category_url_keywords=("produtos", "catalogo", "categoria"),
+    panel_products_path_hints=("/produtos", "/products", "/catalogo", "/admin/products"),
+    stock_path_hints=("/estoque", "/inventory", "/stock"),
+    source_kind="authenticated_panel",
 )
 
 _PROFILES = (
     OBA_OBA_MIX_PROFILE,
+    ATACADUM_PROFILE,
+    STOQUI_PROFILE,
 )
 
 
@@ -160,10 +298,29 @@ def infer_supplier_profile_from_detection(
     url: str,
     requires_login: bool = False,
     captcha_detected: bool = False,
+    whatsapp_code_detected: bool = False,
 ) -> SupplierProfile:
     profile = get_supplier_profile(url)
     if profile.slug != DEFAULT_PROFILE.slug:
         return profile
+
+    if whatsapp_code_detected:
+        return build_runtime_profile(
+            base_profile=SupplierProfile(
+                **{
+                    **asdict(GENERIC_LOGIN_PROFILE),
+                    "slug": "generic_whatsapp_code",
+                    "nome": "Fornecedor genérico com código assistido",
+                    "requires_assisted_login": True,
+                    "requires_whatsapp_code": True,
+                    "supports_playwright_login": True,
+                    "auth_mode": "whatsapp_code",
+                    "public_entry_allowed": False,
+                    "notes": "Fornecedor com autenticação assistida por código/2FA.",
+                }
+            ),
+            url=url,
+        )
 
     if captcha_detected:
         return build_runtime_profile(
@@ -220,6 +377,17 @@ def build_runtime_profile(
         requires_assisted_login=base_profile.requires_assisted_login,
         public_entry_allowed=base_profile.public_entry_allowed,
         notes=base_profile.notes,
+        auth_mode=base_profile.auth_mode,
+        requires_whatsapp_code=base_profile.requires_whatsapp_code,
+        public_catalog_expected=base_profile.public_catalog_expected,
+        supports_full_site_crawl=base_profile.supports_full_site_crawl,
+        preferred_discovery_mode=base_profile.preferred_discovery_mode,
+        category_path_hints=base_profile.category_path_hints,
+        product_url_keywords=base_profile.product_url_keywords,
+        category_url_keywords=base_profile.category_url_keywords,
+        panel_products_path_hints=base_profile.panel_products_path_hints,
+        stock_path_hints=base_profile.stock_path_hints,
+        source_kind=base_profile.source_kind,
     )
 
 
@@ -245,3 +413,4 @@ def resolve_profile_urls(
 
 def supplier_profile_to_dict(profile: SupplierProfile) -> dict[str, Any]:
     return asdict(profile)
+
