@@ -460,15 +460,30 @@ def _render_modo_fornecedor(possui_fornecedores: bool) -> str:
     if "site_modo_fornecedor" not in st.session_state:
         st.session_state["site_modo_fornecedor"] = MODO_FORNECEDOR_SALVO if possui_fornecedores else MODO_NOVA_URL
 
-    if not possui_fornecedores and st.session_state.get("site_modo_fornecedor") != MODO_NOVA_URL:
+    if not possui_fornecedores:
         st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
 
+    modo_anterior = _clean_text(st.session_state.get("site_modo_fornecedor_atual"))
     modo = st.radio(
         "Como deseja selecionar o fornecedor?",
         opcoes,
         horizontal=True,
         key="site_modo_fornecedor",
     )
+
+    if modo != modo_anterior:
+        st.session_state["site_modo_fornecedor_atual"] = modo
+        if modo == MODO_FORNECEDOR_SALVO and possui_fornecedores:
+            opcoes_salvas = _carregar_opcoes_fornecedores()
+            if opcoes_salvas:
+                primeiro_slug = _clean_text(opcoes_salvas[0].get("value"))
+                if primeiro_slug:
+                    st.session_state["site_fornecedor_salvo_slug"] = primeiro_slug
+                    st.session_state["site_fornecedor_salvo_slug_aplicado"] = ""
+                    _resetar_estado_busca_ao_trocar_fornecedor()
+        elif modo == MODO_NOVA_URL:
+            _resetar_estado_busca_ao_trocar_fornecedor()
+
     return modo
 
 
@@ -622,7 +637,7 @@ def _salvar_fornecedor_manual() -> None:
             observacoes=observacoes,
         )
         st.session_state["site_fornecedor_salvo_slug"] = fornecedor.get("slug", "")
-        st.session_state["site_fornecedor_salvo_slug_aplicado"] = fornecedor.get("slug", "")
+        st.session_state["site_fornecedor_salvo_slug_aplicado"] = ""
         st.session_state["site_fornecedor_slug"] = fornecedor.get("slug", "")
         _forcar_modo_fornecedor(MODO_FORNECEDOR_SALVO)
         st.success("Fornecedor salvo com sucesso.")
@@ -666,7 +681,9 @@ def render_origem_site_panel() -> None:
         st.caption("Selecione um fornecedor salvo ou informe uma nova URL para buscar os produtos.")
 
         opcoes_fornecedores = _carregar_opcoes_fornecedores()
-        modo = _render_modo_fornecedor(bool(opcoes_fornecedores))
+        possui_fornecedores = bool(opcoes_fornecedores)
+
+        modo = _render_modo_fornecedor(possui_fornecedores)
 
         if modo == MODO_FORNECEDOR_SALVO:
             modo_efetivo = _render_select_fornecedor_salvo(opcoes_fornecedores)
