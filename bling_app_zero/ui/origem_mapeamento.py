@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +22,105 @@ from bling_app_zero.ui.app_helpers import (
     sincronizar_etapa_global,
     voltar_etapa_anterior,
 )
+
+
+ANTI_LIXO_VALORES = {
+    "",
+    "entrando...",
+    "entrando",
+    "loading...",
+    "loading",
+    "carregando...",
+    "carregando",
+    "dark",
+    "light",
+    "theme",
+    "ers-color-scheme",
+    "color-scheme",
+    "undefined",
+    "null",
+    "none",
+    "nan",
+}
+
+MAP_DESTINOS_SEMANTICOS = {
+    "codigo": [
+        "codigo",
+        "código",
+        "sku",
+        "referencia",
+        "referência",
+        "ref",
+        "product id",
+        "id produto",
+    ],
+    "descricao": [
+        "descricao",
+        "descrição",
+        "titulo",
+        "título",
+        "nome",
+        "produto",
+        "product name",
+    ],
+    "descricao_curta": [
+        "descricao curta",
+        "descrição curta",
+        "short description",
+        "resumo",
+    ],
+    "categoria": [
+        "categoria",
+        "category",
+        "departamento",
+        "segmento",
+    ],
+    "marca": [
+        "marca",
+        "brand",
+        "fabricante",
+    ],
+    "gtin": [
+        "gtin",
+        "ean",
+        "codigo de barras",
+        "código de barras",
+        "barcode",
+    ],
+    "ncm": [
+        "ncm",
+    ],
+    "preco": [
+        "preco",
+        "preço",
+        "valor",
+        "price",
+        "preco de custo",
+        "preço de custo",
+        "preco venda",
+        "preço venda",
+        "preco unitario",
+        "preço unitário",
+    ],
+    "quantidade": [
+        "quantidade",
+        "estoque",
+        "qtd",
+        "saldo",
+        "inventory",
+        "stock",
+    ],
+    "url_imagens": [
+        "imagem",
+        "imagens",
+        "image",
+        "images",
+        "url imagem",
+        "url imagens",
+        "foto",
+        "fotos",
+    ],
+}
 
 
 def _garantir_etapa_mapeamento_ativa() -> None:
@@ -65,9 +165,10 @@ def _detectar_operacao() -> str:
 
 
 def _obter_df_base() -> pd.DataFrame:
-    df_precificado = st.session_state.get("df_precificado")
-    if safe_df_dados(df_precificado):
-        return df_precificado.copy()
+    for chave in ["df_precificado", "df_saida", "df_origem"]:
+        df = st.session_state.get(chave)
+        if safe_df_dados(df):
+            return df.copy()
     return pd.DataFrame()
 
 
@@ -286,8 +387,263 @@ def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> se
     return bloqueados
 
 
+def _amostra_valores_validos(serie: pd.Series, limite: int = 12) -> list[str]:
+    valores = []
+    for valor in serie.fillna("").astype(str).tolist():
+        texto = str(valor or "").strip()
+        texto_n = texto.lower()
+        if not texto:
+            continue
+        if texto_n in ANTI_LIXO_VALORES:
+            continue
+        valores.append(texto)
+        if len(valores) >= limite:
+            break
+    return valores
+
+
+def _parece_preco(texto: str) -> bool:
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+    if re.search(r"R\$\s*\d", texto, flags=re.I):
+        return True
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})*,\d{2}", texto):
+        return True
+    if re.fullmatch(r"\d+\.\d{2}", texto):
+        return True
+    return False
+
+
+def _parece_gtin(texto: str) -> bool:
+    dig = re.sub(r"\D+", "", str(texto or ""))
+    return len(dig) in {8, 12, 13, 14}
+
+
+def _parece_url_imagem(texto: str) -> bool:
+    texto = str(texto or "").strip().lower()
+    return texto.startswith(("http://", "https://")) and any(
+        texto.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+    )
+
+
+def _parece_codigo(texto: str) -> bool:
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+    texto_n = texto.lower()
+    if texto_n in ANTI_LIXO_VALORES:
+        return False
+    if len(texto) < 3:
+        return False
+    if " " in texto and len(texto.split()) > 4:
+        return False
+    if re.search(r"\d", texto):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9._/\-]{3,60}", texto):
+        return True
+    return False
+
+
+def _parece_marca(texto: str) -> bool:
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+    texto_n = texto.lower()
+    if texto_n in ANTI_LIXO_VALORES:
+        return False
+    if len(texto.split()) > 3:
+        return False
+    if len(texto) > 40:
+        return False
+    return bool(re.search(r"[A-Za-zÀ-ÿ]", texto))
+
+
+def _parece_categoria(texto: str) -> bool:
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+    texto_n = texto.lower()
+    if texto_n in ANTI_LIXO_VALORES:
+        return False
+    if " > " in texto:
+        return True
+    if len(texto) >= 4 and len(texto) <= 120:
+        return True
+    return False
+
+
+def _parece_descricao(texto: str) -> bool:
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+    texto_n = texto.lower()
+    if texto_n in ANTI_LIXO_VALORES:
+        return False
+    if "entrando" in texto_n or "loading" in texto_n or "carregando" in texto_n:
+        return False
+    return len(texto) >= 6
+
+
+def _inferir_tipo_coluna(nome_coluna: str, serie: pd.Series) -> str:
+    nome_n = _normalizar_texto_busca(nome_coluna)
+    amostras = _amostra_valores_validos(serie, limite=15)
+
+    cont = Counter()
+
+    for chave, aliases in MAP_DESTINOS_SEMANTICOS.items():
+        if any(alias in nome_n for alias in aliases):
+            cont[chave] += 5
+
+    for valor in amostras:
+        if _parece_preco(valor):
+            cont["preco"] += 3
+        if _parece_gtin(valor):
+            cont["gtin"] += 3
+        if _parece_url_imagem(valor):
+            cont["url_imagens"] += 4
+        if _parece_codigo(valor):
+            cont["codigo"] += 2
+        if _parece_marca(valor):
+            cont["marca"] += 1
+        if _parece_categoria(valor):
+            cont["categoria"] += 1
+        if _parece_descricao(valor):
+            cont["descricao"] += 1
+
+        if str(valor).strip().isdigit():
+            cont["quantidade"] += 2
+
+    if not cont:
+        return ""
+
+    tipo, score = cont.most_common(1)[0]
+    return tipo if score > 0 else ""
+
+
+def _score_coluna_para_destino(nome_coluna: str, serie: pd.Series, destino: str) -> int:
+    nome_n = _normalizar_texto_busca(nome_coluna)
+    score = 0
+
+    for alias in MAP_DESTINOS_SEMANTICOS.get(destino, []):
+        if alias in nome_n:
+            score += 8
+
+    amostras = _amostra_valores_validos(serie, limite=15)
+    if not amostras:
+        return score - 10
+
+    for valor in amostras:
+        if destino == "preco" and _parece_preco(valor):
+            score += 4
+        elif destino == "gtin" and _parece_gtin(valor):
+            score += 5
+        elif destino == "url_imagens" and _parece_url_imagem(valor):
+            score += 5
+        elif destino == "codigo" and _parece_codigo(valor):
+            score += 3
+        elif destino == "marca" and _parece_marca(valor):
+            score += 2
+        elif destino == "categoria" and _parece_categoria(valor):
+            score += 2
+        elif destino in {"descricao", "descricao_curta"} and _parece_descricao(valor):
+            score += 2
+        elif destino == "quantidade" and str(valor).strip().isdigit():
+            score += 4
+
+    return score
+
+
+def _destino_modelo_semantico(coluna_modelo: str) -> str:
+    nome_n = _normalizar_texto_busca(coluna_modelo)
+
+    if "gtin" in nome_n or "ean" in nome_n or "barra" in nome_n:
+        return "gtin"
+    if "ncm" in nome_n:
+        return "ncm"
+    if "marca" in nome_n:
+        return "marca"
+    if "categoria" in nome_n:
+        return "categoria"
+    if "imagem" in nome_n or "image" in nome_n:
+        return "url_imagens"
+    if "quantidade" in nome_n or "estoque" in nome_n or "saldo" in nome_n:
+        return "quantidade"
+    if "preco" in nome_n or "preço" in nome_n or "valor" in nome_n:
+        return "preco"
+    if "descrição curta" in nome_n or "descricao curta" in nome_n:
+        return "descricao_curta"
+    if nome_n in {"descrição", "descricao"} or "descricao" in nome_n or "descrição" in nome_n:
+        return "descricao"
+    if "codigo" in nome_n or "código" in nome_n or "sku" in nome_n or "refer" in nome_n:
+        return "codigo"
+
+    return ""
+
+
+def _mapping_semantico(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping_atual: dict[str, str]) -> dict[str, str]:
+    mapping_final = dict(mapping_atual or {})
+    colunas_origem = [str(c) for c in df_base.columns.tolist()]
+    bloqueados = _campos_bloqueados_automaticos(df_modelo, _detectar_operacao())
+    usados = {str(v).strip() for k, v in mapping_final.items() if str(k) not in bloqueados and str(v).strip()}
+
+    inferencias_origem = {
+        coluna: _inferir_tipo_coluna(coluna, df_base[coluna]) for coluna in colunas_origem
+    }
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if coluna_modelo in bloqueados:
+            mapping_final[coluna_modelo] = ""
+            continue
+
+        atual = str(mapping_final.get(coluna_modelo, "") or "").strip()
+        if atual in df_base.columns:
+            continue
+
+        destino = _destino_modelo_semantico(coluna_modelo)
+        if not destino:
+            continue
+
+        candidatos = []
+        for coluna_origem in colunas_origem:
+            if coluna_origem in usados:
+                continue
+
+            score = _score_coluna_para_destino(coluna_origem, df_base[coluna_origem], destino)
+            if inferencias_origem.get(coluna_origem) == destino:
+                score += 6
+
+            if score > 0:
+                candidatos.append((score, coluna_origem))
+
+        candidatos.sort(key=lambda x: x[0], reverse=True)
+        if candidatos:
+            melhor = candidatos[0][1]
+            mapping_final[coluna_modelo] = melhor
+            usados.add(melhor)
+
+    return mapping_final
+
+
+def _limpar_valores_preview(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    for col in base.columns:
+        base[col] = (
+            base[col]
+            .astype(str)
+            .replace({valor: "" for valor in ANTI_LIXO_VALORES})
+            .replace(r"(?i)^entrando\.{0,3}$", "", regex=True)
+            .replace(r"(?i)^loading\.{0,3}$", "", regex=True)
+            .replace(r"(?i)^carregando\.{0,3}$", "", regex=True)
+        )
+    return base.fillna("")
+
+
 def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> pd.DataFrame:
-    base = saida.copy()
+    base = _limpar_valores_preview(saida.copy())
 
     coluna_preco = _coluna_preco_prioritaria(df_modelo, operacao)
     if coluna_preco and "_preco_calculado" in st.session_state.get("df_precificado", pd.DataFrame()).columns:
@@ -360,7 +716,7 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
         deposito_nome=deposito_nome,
     )
 
-    return saida.fillna("")
+    return _limpar_valores_preview(saida.fillna(""))
 
 
 def _preview_mapping(df_final: pd.DataFrame) -> None:
@@ -369,13 +725,15 @@ def _preview_mapping(df_final: pd.DataFrame) -> None:
 
     st.markdown("### Preview do resultado mapeado")
 
-    if df_final.empty:
-        st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
+    preview = _limpar_valores_preview(df_final)
+
+    if preview.empty:
+        st.dataframe(pd.DataFrame(columns=preview.columns), use_container_width=True)
     else:
-        st.dataframe(df_final.head(40), use_container_width=True)
+        st.dataframe(preview.head(40), use_container_width=True)
 
     with st.expander("Ver preview ampliado", expanded=False):
-        st.dataframe(df_final.head(150), use_container_width=True)
+        st.dataframe(preview.head(150), use_container_width=True)
 
 
 def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -413,13 +771,15 @@ def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operac
         if valor in df_base.columns:
             mapping_final[coluna_modelo] = valor
 
+    mapping_final = _mapping_semantico(df_base, df_modelo, mapping_final)
+
     st.session_state["mapping_manual"] = mapping_final
     st.session_state["mapping_sugerido"] = mapping_recebido
     st.session_state["agent_ui_package"] = pacote
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_final)
     st.session_state["_ia_auto_mapping_executado"] = True
 
-    log_debug("IA aplicou mapeamento automático completo.", nivel="INFO")
+    log_debug("IA aplicou mapeamento automático completo com reforço semântico.", nivel="INFO")
 
 
 def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -525,6 +885,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
 
         mapping_atual[coluna_modelo] = novo_valor
 
+    mapping_atual = _mapping_semantico(df_base, df_modelo, mapping_atual)
     st.session_state["mapping_manual"] = mapping_atual
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
 
@@ -634,3 +995,4 @@ def render_origem_mapeamento() -> None:
     st.markdown("---")
     if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_precificacao_no_rodape_mapping"):
         voltar_etapa_anterior()
+
