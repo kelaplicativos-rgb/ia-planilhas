@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any
 from urllib.parse import urlparse
 
@@ -16,6 +18,95 @@ except Exception:
         return None
 
 
+ANTI_LIXO_EXATO = {
+    "",
+    "entrando...",
+    "entrando",
+    "loading...",
+    "loading",
+    "carregando...",
+    "carregando",
+    "aguarde...",
+    "aguarde",
+    "please wait",
+    "dark",
+    "light",
+    "theme",
+    "default",
+    "ers-color-scheme",
+    "color-scheme",
+    "undefined",
+    "null",
+    "none",
+    "nan",
+    "produto",
+    "produtos",
+    "home",
+    "inicio",
+    "início",
+}
+
+ANTI_LIXO_CONTEM = [
+    "ers-color-scheme",
+    "color-scheme",
+    "prefers-color-scheme",
+    "__next",
+    "__nuxt",
+    "loading",
+    "carregando",
+    "skeleton",
+    "placeholder",
+    "hydration",
+    "theme-provider",
+    "theme switch",
+    "dark mode",
+    "light mode",
+    "javascript required",
+    "enable javascript",
+]
+
+ANTI_TITULO_RUIM = [
+    "entrando",
+    "loading",
+    "carregando",
+    "aguarde",
+    "tema",
+    "theme",
+    "produto",
+    "produtos",
+    "catálogo",
+    "catalogo",
+    "home",
+    "início",
+    "inicio",
+]
+
+ANTI_MARCA_RUIM = {
+    "dark",
+    "light",
+    "theme",
+    "loading",
+    "entrando",
+    "produto",
+    "produtos",
+    "store",
+    "shop",
+}
+
+ANTI_CODIGO_RUIM = {
+    "dark",
+    "light",
+    "theme",
+    "loading",
+    "entrando",
+    "undefined",
+    "null",
+    "none",
+    "ers-color-scheme",
+    "color-scheme",
+}
+
+
 def safe_str(valor: Any) -> str:
     try:
         if valor is None:
@@ -27,6 +118,16 @@ def safe_str(valor: Any) -> str:
 
 def normalizar_texto(valor: Any) -> str:
     return safe_str(valor).lower()
+
+
+def _sem_acentos(texto: str) -> str:
+    texto = safe_str(texto)
+    if not texto:
+        return ""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", texto)
+        if not unicodedata.combining(ch)
+    )
 
 
 def normalizar_url(url: str) -> str:
@@ -47,6 +148,46 @@ def dominio(url: str) -> str:
 
 def mesmo_dominio(base_url: str, url: str) -> bool:
     return dominio(base_url) == dominio(url)
+
+
+def _eh_lixo_generico(texto: str) -> bool:
+    bruto = safe_str(texto)
+    if not bruto:
+        return True
+
+    texto_n = normalizar_texto(bruto)
+    texto_sa = _sem_acentos(texto_n)
+
+    if texto_n in ANTI_LIXO_EXATO or texto_sa in ANTI_LIXO_EXATO:
+        return True
+
+    if any(token in texto_n for token in ANTI_LIXO_CONTEM):
+        return True
+
+    if len(texto_n) <= 2:
+        return True
+
+    if re.fullmatch(r"[\W_]+", texto_n):
+        return True
+
+    return False
+
+
+def limpar_texto_produto(valor: Any, max_len: int = 4000) -> str:
+    texto = safe_str(valor)
+    if not texto:
+        return ""
+
+    texto = re.sub(r"[\t\r\n]+", " ", texto)
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+
+    if _eh_lixo_generico(texto):
+        return ""
+
+    if max_len > 0:
+        texto = texto[:max_len].strip()
+
+    return texto
 
 
 def fornecedor_cfg(base_url: str) -> dict:
@@ -107,8 +248,6 @@ def fornecedor_cfg(base_url: str) -> dict:
 
 
 def extrair_preco(texto: str) -> str:
-    import re
-
     texto = safe_str(texto)
     if not texto:
         return ""
@@ -121,6 +260,10 @@ def extrair_preco(texto: str) -> str:
     if match:
         return match.group(0).strip()
 
+    match = re.search(r"\b\d+\.\d{2}\b", texto)
+    if match:
+        return match.group(0).strip()
+
     return ""
 
 
@@ -130,6 +273,8 @@ def normalizar_preco_para_planilha(valor: str) -> str:
         return ""
 
     texto = texto.replace("R$", "").replace(" ", "")
+    texto = texto.replace("\xa0", "")
+
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
     else:
@@ -152,6 +297,8 @@ def imagem_valida(url: str) -> bool:
         return False
     if any(h in url_n for h in STOP_IMAGE_HINTS):
         return False
+    if any(x in url_n for x in ["logo", "favicon", "icon", "sprite", "placeholder", "pixel"]):
+        return False
     return True
 
 
@@ -160,7 +307,7 @@ def normalizar_imagens(valor: Any) -> str:
     if not texto:
         return ""
 
-    texto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|")
+    texto = texto.replace("\n", "|").replace("\r", "|").replace(";", "|").replace(",", "|")
     partes = [p.strip() for p in texto.split("|") if p.strip()]
 
     vistos = set()
@@ -172,11 +319,80 @@ def normalizar_imagens(valor: Any) -> str:
             vistos.add(parte)
             urls.append(parte)
 
-    return "|".join(urls)
+    return "|".join(urls[:12])
+
+
+def limpar_codigo(valor: Any) -> str:
+    texto = limpar_texto_produto(valor, max_len=120)
+    if not texto:
+        return ""
+
+    texto_n = normalizar_texto(texto)
+    if texto_n in ANTI_CODIGO_RUIM:
+        return ""
+
+    texto = re.sub(r"[\t\r\n]+", " ", texto)
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+
+    if len(texto) < 3:
+        return ""
+
+    if re.fullmatch(r"[A-Za-z]{1,2}", texto):
+        return ""
+
+    return texto[:120]
+
+
+def limpar_gtin(valor: Any) -> str:
+    texto = re.sub(r"\D+", "", safe_str(valor))
+    if len(texto) in {8, 12, 13, 14}:
+        return texto
+    return ""
+
+
+def limpar_marca(valor: Any) -> str:
+    texto = limpar_texto_produto(valor, max_len=60)
+    if not texto:
+        return ""
+
+    texto_n = normalizar_texto(texto)
+    if texto_n in ANTI_MARCA_RUIM:
+        return ""
+
+    if texto.isdigit():
+        return ""
+
+    if len(texto.split()) > 4:
+        return ""
+
+    return texto[:60]
+
+
+def titulo_produto_valido(valor: Any) -> bool:
+    texto = limpar_texto_produto(valor, max_len=220)
+    if not texto:
+        return False
+
+    texto_n = normalizar_texto(texto)
+    texto_sa = _sem_acentos(texto_n)
+
+    if texto_n in ANTI_LIXO_EXATO or texto_sa in ANTI_LIXO_EXATO:
+        return False
+
+    if any(token in texto_n for token in ANTI_TITULO_RUIM):
+        return False
+
+    if len(texto) < 4:
+        return False
+
+    if re.fullmatch(r"[\d\W_]+", texto):
+        return False
+
+    return True
 
 
 def descricao_detalhada_valida(descricao: str, titulo: str) -> str:
-    descricao = safe_str(descricao)
+    descricao = limpar_texto_produto(descricao, max_len=4000)
     titulo_n = normalizar_texto(titulo)
     desc_n = normalizar_texto(descricao)
 
