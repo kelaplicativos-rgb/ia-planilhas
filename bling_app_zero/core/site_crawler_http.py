@@ -1,10 +1,9 @@
-
 from __future__ import annotations
 
 import json
 import re
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -13,11 +12,16 @@ from bling_app_zero.core.site_crawler_cleaners import (
     extrair_preco,
     fornecedor_cfg,
     imagem_valida,
+    limpar_codigo,
+    limpar_gtin,
+    limpar_marca,
+    limpar_texto_produto,
     mesmo_dominio,
     normalizar_imagens,
     normalizar_preco_para_planilha,
     normalizar_texto,
     safe_str,
+    titulo_produto_valido,
 )
 
 try:
@@ -27,6 +31,74 @@ except Exception:
         return None
 
 
+TITLE_SELECTORS_FORTES = [
+    "meta[property='og:title']",
+    "meta[name='twitter:title']",
+    "[itemprop='name']",
+    "h1",
+    "[class*='product-title']",
+    "[class*='produto-title']",
+    ".product_title",
+    ".product-name",
+    ".entry-title",
+]
+
+PRICE_SELECTORS_FORTES = [
+    "meta[property='product:price:amount']",
+    "[itemprop='price']",
+    "[data-price]",
+    "[class*='price']",
+    "[class*='preco']",
+]
+
+DESCRIPTION_SELECTORS_FORTES = [
+    "[itemprop='description']",
+    "meta[name='description']",
+    "meta[property='og:description']",
+    "[class*='description']",
+    "[class*='descricao']",
+    "[id*='description']",
+    "[id*='descricao']",
+]
+
+IMAGE_SELECTORS_FORTES = [
+    "meta[property='og:image']",
+    "meta[name='twitter:image']",
+    "[itemprop='image']",
+    "[class*='gallery'] img",
+    "[class*='image'] img",
+    "[class*='foto'] img",
+    "img[src]",
+    "img[data-src]",
+    "img[data-lazy-src]",
+    "a[href$='.jpg']",
+    "a[href$='.jpeg']",
+    "a[href$='.png']",
+    "a[href$='.webp']",
+]
+
+CODE_PATTERNS = [
+    r"(?:sku|c[oó]digo|codigo|ref\.?|refer[eê]ncia)[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
+    r'"sku"\s*:\s*"([^"]{3,60})"',
+    r'"productid"\s*:\s*"([^"]{3,60})"',
+    r'"product_id"\s*:\s*"([^"]{3,60})"',
+    r'"reference"\s*:\s*"([^"]{3,60})"',
+]
+
+GTIN_PATTERNS = [
+    r"(?:gtin|ean)[\s:\-#]*([0-9]{8,14})",
+    r'"gtin(?:8|12|13|14)?"\s*:\s*"([0-9]{8,14})"',
+    r"\b([0-9]{13})\b",
+    r"\b([0-9]{14})\b",
+    r"\b([0-9]{12})\b",
+    r"\b([0-9]{8})\b",
+]
+
+NCM_PATTERNS = [
+    r"(?:ncm)[\s:\-#]*([0-9.\-]{6,12})",
+]
+
+
 def _profile(url: str):
     try:
         return get_supplier_profile(url)
@@ -34,21 +106,82 @@ def _profile(url: str):
         return None
 
 
+def _texto_meta_ou_elemento(el) -> str:
+    if not el:
+        return ""
+    if getattr(el, "name", "") == "meta":
+        return safe_str(el.get("content"))
+    return safe_str(el.get_text(" ", strip=True))
+
+
+def _valor_rank_score(valor: str, campo: str) -> int:
+    texto = safe_str(valor)
+    if not texto:
+        return -999
+
+    score = len(texto)
+    texto_n = normalizar_texto(texto)
+
+    if campo in {"descricao", "descricao_detalhada"}:
+        if "entrando" in texto_n or "loading" in texto_n or "carregando" in texto_n:
+            score -= 200
+        if len(texto) >= 20:
+            score += 40
+        if len(texto) >= 50:
+            score += 30
+
+    if campo == "categoria" and ">" in texto:
+        score += 60
+
+    if campo == "preco" and re.search(r"\d", texto):
+        score += 40
+
+    if campo == "codigo":
+        if re.search(r"\d", texto):
+            score += 30
+        if "-" in texto or "_" in texto or "." in texto or "/" in texto:
+            score += 5
+
+    return score
+
+
+def _melhor_candidato(candidatos: list[tuple[int, str]], campo: str) -> str:
+    if not candidatos:
+        return ""
+
+    candidatos = [(fonte, safe_str(valor)) for fonte, valor in candidatos if safe_str(valor)]
+    if not candidatos:
+        return ""
+
+    melhor = ""
+    melhor_score = -99999
+
+    for fonte_score, valor in candidatos:
+        score = fonte_score + _valor_rank_score(valor, campo)
+        if score > melhor_score:
+            melhor = valor
+            melhor_score = score
+
+    return melhor
+
+
 def texto_por_selectors(soup: BeautifulSoup, selectors: list[str]) -> str:
-    for selector in selectors:
+    candidatos: list[tuple[int, str]] = []
+
+    for idx, selector in enumerate(selectors):
         try:
             el = soup.select_one(selector)
-            if el:
-                if el.name == "meta":
-                    content = safe_str(el.get("content"))
-                    if content:
-                        return content
-                txt = safe_str(el.get_text(" ", strip=True))
-                if txt:
-                    return txt
         except Exception:
+            el = None
+
+        if not el:
             continue
-    return ""
+
+        valor = _texto_meta_ou_elemento(el)
+        if valor:
+            candidatos.append((100 - idx, valor))
+
+    return _melhor_candidato(candidatos, "descricao")
 
 
 def imagens_por_selectors(url_produto: str, soup: BeautifulSoup, selectors: list[str]) -> list[str]:
@@ -57,31 +190,33 @@ def imagens_por_selectors(url_produto: str, soup: BeautifulSoup, selectors: list
 
     for selector in selectors:
         try:
-            for el in soup.select(selector):
-                src = safe_str(
-                    el.get("content")
-                    or el.get("src")
-                    or el.get("data-src")
-                    or el.get("data-lazy-src")
-                    or el.get("data-zoom-image")
-                    or el.get("data-original")
-                    or el.get("href")
-                )
-                if not src:
-                    continue
-
-                url_img = urljoin(url_produto, src)
-                if not imagem_valida(url_img):
-                    continue
-                if url_img in vistos:
-                    continue
-
-                vistos.add(url_img)
-                imagens.append(url_img)
+            elementos = soup.select(selector)
         except Exception:
-            continue
+            elementos = []
 
-    return imagens
+        for el in elementos:
+            src = safe_str(
+                el.get("content")
+                or el.get("src")
+                or el.get("data-src")
+                or el.get("data-lazy-src")
+                or el.get("data-zoom-image")
+                or el.get("data-original")
+                or el.get("href")
+            )
+            if not src:
+                continue
+
+            url_img = urljoin(url_produto, src)
+            if not imagem_valida(url_img):
+                continue
+            if url_img in vistos:
+                continue
+
+            vistos.add(url_img)
+            imagens.append(url_img)
+
+    return imagens[:12]
 
 
 def _regex_busca(texto: str, padroes: list[str]) -> str:
@@ -100,68 +235,6 @@ def _regex_busca(texto: str, padroes: list[str]) -> str:
             continue
 
     return ""
-
-
-def _limpar_codigo(valor: str) -> str:
-    texto = safe_str(valor)
-    if not texto:
-        return ""
-    texto = re.sub(r"[\n\r\t]+", " ", texto).strip()
-    texto = re.sub(r"\s{2,}", " ", texto)
-    return texto[:120]
-
-
-def _limpar_gtin(valor: str) -> str:
-    texto = re.sub(r"\D+", "", safe_str(valor))
-    if len(texto) in {8, 12, 13, 14}:
-        return texto
-    return ""
-
-
-def _normalizar_quantidade(texto_total: str, quantidade_atual: str = "") -> str:
-    qtd = safe_str(quantidade_atual)
-    if qtd:
-        return qtd
-
-    texto_n = normalizar_texto(texto_total)
-
-    if any(x in texto_n for x in ["sem estoque", "indisponivel", "indisponível", "esgotado", "zerado", "outofstock"]):
-        return "0"
-
-    match = re.search(r"(?:estoque|quantidade|qtd)[^\d]{0,12}(\d{1,5})", texto_n, flags=re.I)
-    if match:
-        return safe_str(match.group(1))
-
-    if any(x in texto_n for x in ["em estoque", "disponivel", "disponível", "in stock"]):
-        return "1"
-
-    return "1"
-
-
-def _titulo_valido_para_admin(titulo: str) -> bool:
-    titulo_n = normalizar_texto(titulo)
-    if not titulo_n:
-        return False
-
-    bloqueados = {
-        "produtos",
-        "produto",
-        "catalogo",
-        "catálogo",
-        "painel",
-        "dashboard",
-        "admin",
-        "inicio",
-        "home",
-        "lista de produtos",
-    }
-    if titulo_n in bloqueados:
-        return False
-
-    if len(titulo_n) < 3:
-        return False
-
-    return True
 
 
 def _texto_total_seguro(soup: BeautifulSoup) -> str:
@@ -216,6 +289,31 @@ def achatar_json_ld_produtos(itens: list[dict]) -> list[dict]:
     return produtos
 
 
+def _json_ld_score(prod: dict) -> int:
+    score = 0
+    if safe_str(prod.get("name")):
+        score += 30
+    if safe_str(prod.get("sku")):
+        score += 20
+    if safe_str(prod.get("description")):
+        score += 10
+    if safe_str(prod.get("category")):
+        score += 8
+
+    offers = prod.get("offers")
+    if isinstance(offers, dict):
+        if safe_str(offers.get("price")):
+            score += 20
+        if safe_str(offers.get("availability")):
+            score += 5
+
+    images = prod.get("image")
+    if images:
+        score += 7
+
+    return score
+
+
 def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
     itens = extrair_json_ld(soup)
     produtos = achatar_json_ld_produtos(itens)
@@ -223,10 +321,11 @@ def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
     if not produtos:
         return {}
 
+    produtos.sort(key=_json_ld_score, reverse=True)
     prod = produtos[0]
 
-    nome = safe_str(prod.get("name"))
-    sku = safe_str(prod.get("sku"))
+    nome = limpar_texto_produto(prod.get("name"), max_len=220)
+    sku = limpar_codigo(prod.get("sku"))
 
     gtin = (
         safe_str(prod.get("gtin13"))
@@ -235,17 +334,17 @@ def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
         or safe_str(prod.get("gtin8"))
         or safe_str(prod.get("gtin"))
     )
-    gtin = _limpar_gtin(gtin)
+    gtin = limpar_gtin(gtin)
 
     marca = ""
     brand = prod.get("brand")
     if isinstance(brand, dict):
-        marca = safe_str(brand.get("name"))
+        marca = limpar_marca(brand.get("name"))
     elif isinstance(brand, str):
-        marca = brand
+        marca = limpar_marca(brand)
 
-    categoria = safe_str(prod.get("category"))
-    descricao = safe_str(prod.get("description"))
+    categoria = limpar_texto_produto(prod.get("category"), max_len=120)
+    descricao = descricao_detalhada_valida(prod.get("description", ""), nome)
 
     imagens = prod.get("image", [])
     if isinstance(imagens, str):
@@ -262,23 +361,23 @@ def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
 
     offers = prod.get("offers")
     if isinstance(offers, dict):
-        preco = safe_str(offers.get("price"))
+        preco = normalizar_preco_para_planilha(safe_str(offers.get("price")))
         disponibilidade = normalizar_texto(offers.get("availability"))
 
         if "outofstock" in disponibilidade:
             quantidade = "0"
-        else:
+        elif disponibilidade:
             quantidade = "1"
 
     return {
-        "codigo": _limpar_codigo(sku),
+        "codigo": sku,
         "descricao": nome,
         "descricao_detalhada": descricao,
         "descricao_curta": nome[:120] if nome else "",
         "categoria": categoria,
         "marca": marca,
         "gtin": gtin,
-        "preco": normalizar_preco_para_planilha(preco),
+        "preco": preco,
         "quantidade": quantidade,
         "url_imagens": normalizar_imagens("|".join(imagens[:12])),
         "fonte_extracao": "json_ld",
@@ -286,28 +385,33 @@ def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
 
 
 def extrair_marca(texto: str, soup: BeautifulSoup) -> str:
-    marca = texto_por_selectors(
-        soup,
-        [
-            "meta[property='og:brand']",
-            "meta[name='brand']",
-            "[itemprop='brand']",
-            "[class*='brand']",
-            "[class*='marca']",
-            "[data-brand]",
-        ],
-    )
+    candidatos: list[tuple[int, str]] = []
 
-    if marca:
-        return safe_str(marca)
+    for idx, selector in enumerate([
+        "meta[property='og:brand']",
+        "meta[name='brand']",
+        "[itemprop='brand']",
+        "[class*='brand']",
+        "[class*='marca']",
+        "[data-brand]",
+    ]):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if el:
+            valor = limpar_marca(_texto_meta_ou_elemento(el))
+            if valor:
+                candidatos.append((100 - idx, valor))
 
     texto_total = safe_str(texto)
-
     match = re.search(r"(?:marca|brand)[\s:\-]*([A-Za-z0-9Á-ú .\-]{2,60})", texto_total, re.I)
     if match:
-        return safe_str(match.group(1))
+        valor = limpar_marca(match.group(1))
+        if valor:
+            candidatos.append((50, valor))
 
-    return ""
+    return _melhor_candidato(candidatos, "marca")
 
 
 def extrair_quantidade(texto: str) -> str:
@@ -330,137 +434,105 @@ def extrair_breadcrumb(soup: BeautifulSoup) -> str:
     breadcrumb = []
 
     for el in soup.select("nav a, .breadcrumb a, [class*=breadcrumb] a, [aria-label*=breadcrumb] a"):
-        txt = safe_str(el.get_text(" ", strip=True))
+        txt = limpar_texto_produto(el.get_text(" ", strip=True), max_len=80)
         txt_n = normalizar_texto(txt)
-        if txt and txt_n not in {"home", "inicio"}:
+        if txt and txt_n not in {"home", "inicio", "início"}:
             breadcrumb.append(txt)
+
+    if not breadcrumb:
+        return ""
 
     return " > ".join(dict.fromkeys(breadcrumb))
 
 
 def extrair_codigo(texto: str, soup: BeautifulSoup) -> str:
-    candidatos = [
-        texto_por_selectors(
-            soup,
-            [
-                "[itemprop='sku']",
-                "[class*='sku']",
-                "[class*='codigo']",
-                "[class*='code']",
-                "[data-sku]",
-                "[data-code]",
-                "meta[property='product:retailer_item_id']",
-            ],
-        ),
-        _regex_busca(
-            texto,
-            [
-                r"(?:sku|c[oó]digo|cod\.?|ref\.?)[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
-                r"(?:ean|gtin)[\s:\-#]*([0-9]{8,14})",
-            ],
-        ),
+    candidatos: list[tuple[int, str]] = []
+
+    seletores = [
+        "[itemprop='sku']",
+        "[class*='sku']",
+        "[class*='codigo']",
+        "[class*='code']",
+        "[data-sku]",
+        "[data-code]",
+        "meta[property='product:retailer_item_id']",
     ]
 
-    for candidato in candidatos:
-        codigo = _limpar_codigo(candidato)
-        if codigo:
-            return codigo
+    for idx, selector in enumerate(seletores):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
 
-    return ""
+        valor = limpar_codigo(_texto_meta_ou_elemento(el))
+        if valor:
+            candidatos.append((100 - idx, valor))
+
+    valor_regex = limpar_codigo(_regex_busca(texto, CODE_PATTERNS))
+    if valor_regex:
+        candidatos.append((70, valor_regex))
+
+    return _melhor_candidato(candidatos, "codigo")
 
 
 def extrair_gtin(texto: str, soup: BeautifulSoup) -> str:
-    candidatos = [
-        texto_por_selectors(
-            soup,
-            [
-                "[itemprop='gtin13']",
-                "[itemprop='gtin14']",
-                "[itemprop='gtin12']",
-                "[itemprop='gtin8']",
-                "[class*='gtin']",
-                "[class*='ean']",
-                "[data-gtin]",
-                "[data-ean]",
-            ],
-        ),
-        _regex_busca(
-            texto,
-            [
-                r"(?:gtin|ean)[\s:\-#]*([0-9]{8,14})",
-                r"\b([0-9]{13})\b",
-                r"\b([0-9]{14})\b",
-                r"\b([0-9]{12})\b",
-                r"\b([0-9]{8})\b",
-            ],
-        ),
+    candidatos: list[tuple[int, str]] = []
+
+    seletores = [
+        "[itemprop='gtin13']",
+        "[itemprop='gtin14']",
+        "[itemprop='gtin12']",
+        "[itemprop='gtin8']",
+        "[class*='gtin']",
+        "[class*='ean']",
+        "[data-gtin]",
+        "[data-ean]",
     ]
 
-    for candidato in candidatos:
-        gtin = _limpar_gtin(candidato)
-        if gtin:
-            return gtin
+    for idx, selector in enumerate(seletores):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
 
-    return ""
+        valor = limpar_gtin(_texto_meta_ou_elemento(el))
+        if valor:
+            candidatos.append((100 - idx, valor))
+
+    valor_regex = limpar_gtin(_regex_busca(texto, GTIN_PATTERNS))
+    if valor_regex:
+        candidatos.append((70, valor_regex))
+
+    return _melhor_candidato(candidatos, "gtin")
 
 
 def extrair_ncm(texto: str, soup: BeautifulSoup) -> str:
-    candidatos = [
-        texto_por_selectors(
-            soup,
-            [
-                "[class*='ncm']",
-                "[data-ncm]",
-            ],
-        ),
-        _regex_busca(
-            texto,
-            [
-                r"(?:ncm)[\s:\-#]*([0-9.\-]{6,12})",
-            ],
-        ),
-    ]
+    candidatos: list[tuple[int, str]] = []
 
-    for candidato in candidatos:
-        valor = re.sub(r"\D+", "", safe_str(candidato))
+    for idx, selector in enumerate([
+        "[class*='ncm']",
+        "[data-ncm]",
+    ]):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
+
+        valor = re.sub(r"\D+", "", _texto_meta_ou_elemento(el))[:8]
         if len(valor) >= 6:
-            return valor[:8]
+            candidatos.append((100 - idx, valor))
 
-    return ""
+    valor_regex = re.sub(r"\D+", "", _regex_busca(texto, NCM_PATTERNS))[:8]
+    if len(valor_regex) >= 6:
+        candidatos.append((70, valor_regex))
 
-
-def extrair_descricao_admin_products(soup: BeautifulSoup, texto_total: str, json_ld: dict) -> str:
-    candidatos = [
-        texto_por_selectors(
-            soup,
-            [
-                "h1",
-                "[class*='product-title']",
-                "[class*='produto-title']",
-                "[class*='product_name']",
-                "[class*='name']",
-                "[itemprop='name']",
-                "meta[property='og:title']",
-                "title",
-                "table tr td",
-                "tbody tr td",
-            ],
-        ),
-        json_ld.get("descricao", ""),
-    ]
-
-    for candidato in candidatos:
-        titulo = safe_str(candidato)
-        if _titulo_valido_para_admin(titulo):
-            return titulo
-
-    linhas = [safe_str(x) for x in re.split(r"[\n\r]+", texto_total) if safe_str(x)]
-    for linha in linhas:
-        if _titulo_valido_para_admin(linha):
-            if len(linha) > 5 and not re.fullmatch(r"[0-9.,\- ]+", linha):
-                return linha[:180]
-
-    return ""
+    return _melhor_candidato(candidatos, "ncm")
 
 
 def _categoria_por_url_produto(url_produto: str) -> str:
@@ -478,57 +550,69 @@ def _categoria_por_url_produto(url_produto: str) -> str:
                 continue
             for idx, parte in enumerate(path_parts):
                 if safe_str(parte).lower() == hint_n and idx + 1 < len(path_parts):
-                    return safe_str(path_parts[idx + 1]).replace("-", " ").title()
+                    return limpar_texto_produto(safe_str(path_parts[idx + 1]).replace("-", " ").title(), max_len=120)
 
         category_keywords = tuple(getattr(profile, "category_url_keywords", ()) or ())
+        keywords_n = {safe_str(x).lower() for x in category_keywords if safe_str(x)}
         for parte in path_parts:
             parte_n = safe_str(parte).lower()
-            if parte_n in {safe_str(x).lower() for x in category_keywords if safe_str(x)}:
+            if parte_n in keywords_n:
                 continue
             if parte_n not in {"produto", "produtos", "product", "products", "p", "item", "sku"} and len(parte_n) > 2:
-                return safe_str(parte).replace("-", " ").title()
+                return limpar_texto_produto(safe_str(parte).replace("-", " ").title(), max_len=120)
 
     for parte in path_parts[:-1]:
         parte_n = safe_str(parte).lower()
         if parte_n not in {"produto", "produtos", "product", "products", "p", "item", "sku", "categoria", "categorias", "departamento"}:
             if len(parte_n) > 2:
-                return safe_str(parte).replace("-", " ").title()
+                return limpar_texto_produto(safe_str(parte).replace("-", " ").title(), max_len=120)
 
     return ""
 
 
 def extrair_categoria_admin_products(soup: BeautifulSoup, texto_total: str, json_ld: dict, url_produto: str = "") -> str:
+    candidatos: list[tuple[int, str]] = []
+
     breadcrumb = extrair_breadcrumb(soup)
     if breadcrumb:
-        return breadcrumb
+        candidatos.append((120, breadcrumb))
 
-    candidatos = [
-        texto_por_selectors(
-            soup,
-            [
-                "[class*='category']",
-                "[class*='categoria']",
-                "[data-category]",
-            ],
-        ),
-        json_ld.get("categoria", ""),
+    for idx, selector in enumerate([
+        "[class*='category']",
+        "[class*='categoria']",
+        "[data-category]",
+    ]):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
+
+        valor = limpar_texto_produto(_texto_meta_ou_elemento(el), max_len=120)
+        if valor:
+            candidatos.append((100 - idx, valor))
+
+    categoria_json = limpar_texto_produto(json_ld.get("categoria", ""), max_len=120)
+    if categoria_json:
+        candidatos.append((90, categoria_json))
+
+    categoria_regex = limpar_texto_produto(
         _regex_busca(
             texto_total,
-            [
-                r"(?:categoria|category)[\s:\-]*([A-Za-z0-9Á-ú \-_/]{3,80})",
-            ],
+            [r"(?:categoria|category)[\s:\-]*([A-Za-z0-9Á-ú \-_/]{3,80})"],
         ),
-    ]
-
-    for candidato in candidatos:
-        valor = safe_str(candidato)
-        if valor and len(valor) >= 3:
-            return valor[:120]
+        max_len=120,
+    )
+    if categoria_regex:
+        candidatos.append((70, categoria_regex))
 
     if url_produto:
-        return _categoria_por_url_produto(url_produto)
+        categoria_url = _categoria_por_url_produto(url_produto)
+        if categoria_url:
+            candidatos.append((60, categoria_url))
 
-    return ""
+    return _melhor_candidato(candidatos, "categoria")
 
 
 def _filtrar_imagens(url_produto: str, imagens: list[str]) -> list[str]:
@@ -548,7 +632,85 @@ def _filtrar_imagens(url_produto: str, imagens: list[str]) -> list[str]:
         vistos.add(url_img)
         imagens_filtradas.append(url_img)
 
-    return imagens_filtradas
+    return imagens_filtradas[:12]
+
+
+def _extrair_titulo_priorizado(soup: BeautifulSoup, texto_total: str, json_ld: dict) -> str:
+    candidatos: list[tuple[int, str]] = []
+
+    nome_json = limpar_texto_produto(json_ld.get("descricao", ""), max_len=220)
+    if titulo_produto_valido(nome_json):
+        candidatos.append((140, nome_json))
+
+    for idx, selector in enumerate(TITLE_SELECTORS_FORTES):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
+
+        valor = limpar_texto_produto(_texto_meta_ou_elemento(el), max_len=220)
+        if titulo_produto_valido(valor):
+            candidatos.append((120 - idx, valor))
+
+    linhas = [limpar_texto_produto(x, max_len=220) for x in re.split(r"[\n\r]+", texto_total)]
+    for linha in linhas:
+        if titulo_produto_valido(linha):
+            candidatos.append((40, linha))
+            break
+
+    return _melhor_candidato(candidatos, "descricao")
+
+
+def _extrair_preco_priorizado(soup: BeautifulSoup, texto_total: str, json_ld: dict) -> str:
+    candidatos: list[tuple[int, str]] = []
+
+    preco_json = normalizar_preco_para_planilha(json_ld.get("preco", ""))
+    if preco_json:
+        candidatos.append((140, preco_json))
+
+    for idx, selector in enumerate(PRICE_SELECTORS_FORTES):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
+
+        valor = normalizar_preco_para_planilha(_texto_meta_ou_elemento(el))
+        if valor:
+            candidatos.append((120 - idx, valor))
+
+    match_regex = extrair_preco(texto_total)
+    valor_regex = normalizar_preco_para_planilha(match_regex)
+    if valor_regex:
+        candidatos.append((80, valor_regex))
+
+    return _melhor_candidato(candidatos, "preco")
+
+
+def _extrair_descricao_detalhada_priorizada(soup: BeautifulSoup, titulo: str, json_ld: dict) -> str:
+    candidatos: list[tuple[int, str]] = []
+
+    desc_json = descricao_detalhada_valida(json_ld.get("descricao_detalhada", ""), titulo)
+    if desc_json:
+        candidatos.append((140, desc_json))
+
+    for idx, selector in enumerate(DESCRIPTION_SELECTORS_FORTES):
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if not el:
+            continue
+
+        valor = _texto_meta_ou_elemento(el)
+        valor = descricao_detalhada_valida(valor, titulo)
+        if valor:
+            candidatos.append((120 - idx, valor))
+
+    return _melhor_candidato(candidatos, "descricao_detalhada")
 
 
 def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
@@ -558,108 +720,59 @@ def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
 
     json_ld = extrair_produto_json_ld(soup, url_produto)
 
-    titulo = extrair_descricao_admin_products(soup, texto_total, json_ld)
-    if not titulo:
-        titulo = texto_por_selectors(
-            soup,
-            [
-                "h1",
-                ".product-title",
-                "[itemprop='name']",
-                "meta[property='og:title']",
-                "title",
-            ],
-        ) or json_ld.get("descricao", "")
+    titulo = _extrair_titulo_priorizado(soup, texto_total, json_ld)
+    preco = _extrair_preco_priorizado(soup, texto_total, json_ld)
 
-    if not _titulo_valido_para_admin(titulo):
-        titulo = json_ld.get("descricao", "") or titulo
-
-    preco = texto_por_selectors(
-        soup,
-        [
-            "[class*=price]",
-            "[class*=preco]",
-            "[itemprop='price']",
-            "meta[property='product:price:amount']",
-            "[data-price]",
-        ],
-    )
-    if not preco:
-        preco = extrair_preco(texto_total)
-
-    preco = normalizar_preco_para_planilha(preco or json_ld.get("preco", ""))
-
-    imagens = imagens_por_selectors(
-        url_produto,
-        soup,
-        [
-            "meta[property='og:image']",
-            "[itemprop='image']",
-            "[class*='gallery'] img",
-            "[class*='image'] img",
-            "[class*='foto'] img",
-            "img",
-            "a[href$='.jpg']",
-            "a[href$='.jpeg']",
-            "a[href$='.png']",
-            "a[href$='.webp']",
-        ],
-    )
+    imagens = imagens_por_selectors(url_produto, soup, IMAGE_SELECTORS_FORTES)
 
     if not imagens and json_ld.get("url_imagens"):
-        imagens = [x for x in json_ld["url_imagens"].split("|") if safe_str(x)]
+        imagens = [x for x in safe_str(json_ld["url_imagens"]).split("|") if safe_str(x)]
 
     imagens_filtradas = _filtrar_imagens(url_produto, imagens)
 
-    marca = extrair_marca(texto_total, soup) or json_ld.get("marca", "")
-    codigo = extrair_codigo(texto_total, soup) or json_ld.get("codigo", "")
-    gtin = extrair_gtin(texto_total, soup) or json_ld.get("gtin", "")
+    marca = extrair_marca(texto_total, soup) or limpar_marca(json_ld.get("marca", ""))
+    codigo = extrair_codigo(texto_total, soup) or limpar_codigo(json_ld.get("codigo", ""))
+    gtin = extrair_gtin(texto_total, soup) or limpar_gtin(json_ld.get("gtin", ""))
     ncm = extrair_ncm(texto_total, soup)
 
-    quantidade = extrair_quantidade(texto_total) or json_ld.get("quantidade", "")
-    quantidade = _normalizar_quantidade(texto_total, quantidade_atual=quantidade)
+    quantidade = extrair_quantidade(texto_total) or safe_str(json_ld.get("quantidade", ""))
+    quantidade = quantidade if quantidade in {"0", "1"} or safe_str(quantidade).isdigit() else ""
 
-    descricao_detalhada = (
-        json_ld.get("descricao_detalhada", "")
-        or texto_por_selectors(
-            soup,
-            [
-                "[class*=description]",
-                "[class*=descricao]",
-                "[itemprop='description']",
-                "meta[name='description']",
-            ],
-        )
-    )
-
-    descricao_detalhada = descricao_detalhada_valida(descricao_detalhada, titulo)
-
+    descricao_detalhada = _extrair_descricao_detalhada_priorizada(soup, titulo, json_ld)
     categoria = extrair_categoria_admin_products(soup, texto_total, json_ld, url_produto=url_produto)
 
     url_n = normalizar_texto(url_produto)
     if "/admin/products" in url_n and not codigo:
-        codigo = _regex_busca(
-            texto_total,
-            [
-                r"\bsku[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
-                r"\bc[oó]digo[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
-            ],
+        codigo = limpar_codigo(
+            _regex_busca(
+                texto_total,
+                [
+                    r"\bsku[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
+                    r"\bc[oó]digo[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
+                ],
+            )
         )
 
     if not codigo:
         slug = safe_str(urlparse(url_produto).path.split("/")[-1])
         if slug and len(slug) >= 6 and slug.lower() not in {"produto", "product", "produtos", "products"}:
-            codigo = slug[:60]
+            codigo = limpar_codigo(slug[:60])
+
+    titulo = limpar_texto_produto(titulo, max_len=220)
+    categoria = limpar_texto_produto(categoria, max_len=120)
+    marca = limpar_marca(marca)
+    codigo = limpar_codigo(codigo)
+    gtin = limpar_gtin(gtin)
 
     return {
         "url_produto": url_produto,
-        "codigo": _limpar_codigo(codigo),
-        "descricao": safe_str(titulo),
-        "descricao_curta": safe_str(titulo)[:120],
+        "codigo": codigo,
+        "descricao": titulo if titulo_produto_valido(titulo) else "",
+        "descricao_curta": titulo[:120] if titulo_produto_valido(titulo) else "",
         "descricao_detalhada": descricao_detalhada,
-        "categoria": safe_str(categoria),
-        "marca": safe_str(marca),
-        "gtin": _limpar_gtin(gtin),
+        "categoria": categoria,
+        "marca": marca,
+        "gtin": gtin,
         "ncm": safe_str(ncm),
         "preco": preco,
         "quantidade": quantidade or "1",
