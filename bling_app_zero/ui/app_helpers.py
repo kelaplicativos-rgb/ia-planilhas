@@ -10,27 +10,13 @@ import pandas as pd
 import streamlit as st
 
 
-# ============================================================
-# CONFIG DE LOG
-# ============================================================
-
 LOG_PATH = Path("bling_app_zero/output/debug_log.txt")
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 ETAPAS_VALIDAS = ("origem", "precificacao", "mapeamento", "preview_final")
 
 
-# ============================================================
-# HELPERS GERAIS
-# ============================================================
-
 def normalizar_texto(valor: object) -> str:
-    """
-    Normaliza texto para comparações internas:
-    - trim
-    - remove acentos
-    - lower
-    """
     texto = str(valor or "").strip()
     if not texto:
         return ""
@@ -41,27 +27,22 @@ def normalizar_texto(valor: object) -> str:
 
 
 def safe_lower(valor: object) -> str:
-    """Alias semântico usado por módulos antigos/atuais."""
     return normalizar_texto(valor)
 
 
 def safe_df(df: object) -> bool:
-    """Retorna True quando existe DataFrame com colunas e pelo menos 1 linha."""
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
 
 
 def safe_df_dados(df: object) -> bool:
-    """Compatibilidade: DataFrame com estrutura e linhas."""
     return safe_df(df)
 
 
 def safe_df_estrutura(df: object) -> bool:
-    """Retorna True quando existe DataFrame com pelo menos colunas."""
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
 
 
 def obter_df_sessao(*chaves: str) -> pd.DataFrame:
-    """Retorna o primeiro DataFrame válido encontrado no session_state."""
     for chave in chaves:
         valor = st.session_state.get(chave)
         if isinstance(valor, pd.DataFrame):
@@ -70,17 +51,11 @@ def obter_df_sessao(*chaves: str) -> pd.DataFrame:
 
 
 def limpar_chaves_sessao(*chaves: str) -> None:
-    """Remove chaves do session_state sem erro."""
     for chave in chaves:
         st.session_state.pop(chave, None)
 
 
-# ============================================================
-# LOG DEBUG
-# ============================================================
-
 def log_debug(msg: object, nivel: str = "INFO") -> None:
-    """Registra log em memória e em arquivo."""
     if "logs_debug" not in st.session_state:
         st.session_state["logs_debug"] = []
 
@@ -99,7 +74,6 @@ def log_debug(msg: object, nivel: str = "INFO") -> None:
 
 
 def obter_logs() -> str:
-    """Lê o log persistido; se falhar, usa memória da sessão."""
     try:
         if LOG_PATH.exists():
             return LOG_PATH.read_text(encoding="utf-8")
@@ -113,7 +87,6 @@ def obter_logs() -> str:
 
 
 def limpar_logs() -> None:
-    """Limpa logs da sessão e do arquivo persistido."""
     st.session_state["logs_debug"] = []
 
     try:
@@ -123,28 +96,51 @@ def limpar_logs() -> None:
         pass
 
 
-def render_botao_download_logs() -> None:
-    """Renderiza apenas o botão de download do log."""
+def render_botao_download_logs(
+    *,
+    key_sufixo: str = "default",
+    label: str = "📥 Baixar log debug",
+) -> None:
     logs_txt = obter_logs()
 
     st.download_button(
-        label="📥 Baixar log debug",
+        label=label,
         data=logs_txt.encode("utf-8") if isinstance(logs_txt, str) else b"",
         file_name="debug_log.txt",
         mime="text/plain",
         use_container_width=True,
-        key="btn_download_log_debug",
+        key=f"btn_download_log_debug_{key_sufixo}",
         disabled=not bool(str(logs_txt).strip()),
     )
 
 
-def render_log_debug() -> None:
-    """
-    Painel visual de log debug sempre visível.
-    Mostra o botão mesmo sem conteúdo, evitando sumiço na UI.
-    """
+def render_log_debug(modo: str = "padrao") -> None:
     logs_txt = obter_logs()
     tem_logs = bool(str(logs_txt).strip())
+
+    if modo == "compacto":
+        st.markdown("### Log debug")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            render_botao_download_logs(key_sufixo="compacto", label="📥 Baixar log")
+
+        with col2:
+            if st.button(
+                "🗑️ Limpar log",
+                use_container_width=True,
+                key="btn_clear_log_debug_compacto",
+                disabled=not tem_logs,
+            ):
+                limpar_logs()
+                st.rerun()
+
+        if tem_logs:
+            with st.expander("Ver log", expanded=False):
+                st.code(logs_txt, language="text")
+        else:
+            st.caption("Nenhum log registrado até o momento.")
+        return
 
     st.markdown("---")
     st.markdown("### 🧠 LOG DEBUG")
@@ -160,15 +156,7 @@ def render_log_debug() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.download_button(
-            label="📥 Baixar log",
-            data=logs_txt.encode("utf-8") if isinstance(logs_txt, str) else b"",
-            file_name="debug_log.txt",
-            mime="text/plain",
-            use_container_width=True,
-            key="btn_download_log_debug_final",
-            disabled=not tem_logs,
-        )
+        render_botao_download_logs(key_sufixo="padrao", label="📥 Baixar log")
 
     with col2:
         if st.button(
@@ -181,12 +169,7 @@ def render_log_debug() -> None:
             st.rerun()
 
 
-# ============================================================
-# NAVEGAÇÃO / ETAPAS
-# ============================================================
-
 def _coletar_query_param(nome: str) -> str:
-    """Lê query param compatível com diferentes formatos do Streamlit."""
     try:
         valor = st.query_params.get(nome, "")
     except Exception:
@@ -198,7 +181,6 @@ def _coletar_query_param(nome: str) -> str:
 
 
 def _definir_query_param(nome: str, valor: str) -> None:
-    """Define query param com fallback seguro."""
     try:
         st.query_params[nome] = valor
     except Exception:
@@ -206,7 +188,6 @@ def _definir_query_param(nome: str, valor: str) -> None:
 
 
 def get_etapa() -> str:
-    """Retorna a etapa válida atual do fluxo."""
     etapa = normalizar_texto(st.session_state.get("etapa", "origem"))
     if etapa not in ETAPAS_VALIDAS:
         etapa = "origem"
@@ -215,7 +196,6 @@ def get_etapa() -> str:
 
 
 def set_etapa(etapa: str) -> str:
-    """Define a etapa atual com sanitização."""
     etapa_limpa = normalizar_texto(etapa)
     if etapa_limpa not in ETAPAS_VALIDAS:
         etapa_limpa = "origem"
@@ -226,17 +206,14 @@ def set_etapa(etapa: str) -> str:
 
 
 def ir_para_etapa(etapa: str) -> None:
-    """Navega diretamente para uma etapa válida."""
     set_etapa(etapa)
 
 
 def voltar_para_etapa(etapa: str) -> None:
-    """Alias de compatibilidade com fluxo antigo."""
     set_etapa(etapa)
 
 
 def sincronizar_etapa_da_url() -> None:
-    """Sincroniza session_state com a etapa presente na URL."""
     etapa_url = normalizar_texto(_coletar_query_param("etapa"))
     etapa_state = normalizar_texto(st.session_state.get("etapa", ""))
 
@@ -253,11 +230,6 @@ def sincronizar_etapa_da_url() -> None:
 
 
 def sincronizar_etapa_global(etapa: str | None = None) -> None:
-    """
-    Compatibilidade com chamadas antigas e novas.
-    - sem argumento: sincroniza pela URL
-    - com argumento: força etapa específica
-    """
     if etapa:
         set_etapa(etapa)
         return
@@ -266,7 +238,6 @@ def sincronizar_etapa_global(etapa: str | None = None) -> None:
 
 
 def avancar_etapa() -> str:
-    """Avança para a próxima etapa do fluxo principal."""
     etapa_atual = get_etapa()
     ordem = list(ETAPAS_VALIDAS)
 
@@ -281,7 +252,6 @@ def avancar_etapa() -> str:
 
 
 def voltar_etapa() -> str:
-    """Volta para a etapa anterior do fluxo principal."""
     etapa_atual = get_etapa()
     ordem = list(ETAPAS_VALIDAS)
 
@@ -296,7 +266,6 @@ def voltar_etapa() -> str:
 
 
 def voltar_etapa_anterior() -> str:
-    """Alias usado pelos módulos de precificação, mapeamento e preview."""
     return voltar_etapa()
 
 
@@ -311,7 +280,6 @@ def _label_etapa(etapa: str) -> str:
 
 
 def render_topo_navegacao() -> None:
-    """Renderiza o topo simples de navegação do app."""
     etapa_atual = get_etapa()
     colunas = st.columns(len(ETAPAS_VALIDAS))
 
@@ -328,15 +296,7 @@ def render_topo_navegacao() -> None:
                 st.rerun()
 
 
-# ============================================================
-# NORMALIZAÇÕES ESPECÍFICAS BLING
-# ============================================================
-
 def normalizar_imagens_pipe(valor: object) -> str:
-    """
-    Garante separação por pipe nas URLs de imagem.
-    Aceita entradas separadas por vírgula, ponto e vírgula, quebra de linha ou pipe.
-    """
     texto = str(valor or "").strip()
     if not texto:
         return ""
@@ -372,10 +332,6 @@ def _coluna_encontrada(df: pd.DataFrame, candidatos: list[str]) -> str:
 
 
 def _limpar_gtin(valor: object) -> str:
-    """
-    Mantém apenas GTINs possíveis.
-    Se inválido por tamanho, devolve vazio.
-    """
     texto = re.sub(r"\D+", "", str(valor or "").strip())
     if not texto:
         return ""
@@ -415,13 +371,6 @@ def blindar_df_para_bling(
     tipo_operacao_bling: str = "cadastro",
     deposito_nome: str = "",
 ) -> pd.DataFrame:
-    """
-    Blindagem final do DataFrame para exportação/preview:
-    - fillna
-    - normaliza imagens com pipe
-    - limpa GTIN inválido por tamanho
-    - injeta depósito quando operação for estoque
-    """
     if not safe_df_estrutura(df):
         return pd.DataFrame()
 
@@ -461,7 +410,6 @@ def blindar_df_para_bling(
 
 
 def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
-    """Exporta DataFrame como CSV UTF-8 BOM para melhor compatibilidade com Excel/Bling."""
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
 
@@ -469,16 +417,6 @@ def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
-    """
-    Validação BLOQUEANTE antes do download/envio.
-    Regras principais:
-    - df final precisa existir
-    - precisa ter colunas
-    - precisa ter código preenchido
-    - cadastro precisa ter descrição
-    - precisa ter preço válido
-    - estoque precisa ter depósito
-    """
     erros: list[str] = []
 
     if not safe_df_estrutura(df):
@@ -558,7 +496,9 @@ def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool
         serie_gtin = _serie_texto_limpa(df, coluna_gtin)
         gtins_preenchidos = serie_gtin[serie_gtin.ne("")]
         if not gtins_preenchidos.empty:
-            tamanhos_invalidos = gtins_preenchidos.apply(lambda x: len(re.sub(r"\D+", "", x)) not in {8, 12, 13, 14})
+            tamanhos_invalidos = gtins_preenchidos.apply(
+                lambda x: len(re.sub(r"\D+", "", x)) not in {8, 12, 13, 14}
+            )
             if bool(tamanhos_invalidos.any()):
                 erros.append("Existem GTINs preenchidos com tamanho inválido na planilha final.")
 
