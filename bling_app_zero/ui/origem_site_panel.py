@@ -151,6 +151,16 @@ def _resetar_estado_busca_ao_trocar_fornecedor() -> None:
     _limpar_df_origem_site()
 
 
+def _forcar_modo_fornecedor(modo: str) -> None:
+    st.session_state["site_modo_fornecedor_forcado"] = modo
+
+
+def _aplicar_modo_fornecedor_forcado() -> None:
+    modo_forcado = _clean_text(st.session_state.pop("site_modo_fornecedor_forcado", ""))
+    if modo_forcado in {MODO_FORNECEDOR_SALVO, MODO_NOVA_URL}:
+        st.session_state["site_modo_fornecedor"] = modo_forcado
+
+
 def _inspecionar_site(url_site: str) -> dict:
     if inspect_site_auth is None:
         return {}
@@ -442,17 +452,16 @@ def _aplicar_fornecedor_salvo_na_tela(fornecedor: Optional[Dict[str, Any]]) -> N
     st.session_state["site_fornecedor_observacoes"] = str(fornecedor.get("observacoes", "") or "")
 
 
-def _render_modo_fornecedor() -> str:
+def _render_modo_fornecedor(possui_fornecedores: bool) -> str:
     opcoes = [MODO_FORNECEDOR_SALVO, MODO_NOVA_URL]
 
+    _aplicar_modo_fornecedor_forcado()
+
     if "site_modo_fornecedor" not in st.session_state:
-        fornecedores = []
-        if list_site_suppliers is not None:
-            try:
-                fornecedores = list_site_suppliers()
-            except Exception:
-                fornecedores = []
-        st.session_state["site_modo_fornecedor"] = MODO_FORNECEDOR_SALVO if fornecedores else MODO_NOVA_URL
+        st.session_state["site_modo_fornecedor"] = MODO_FORNECEDOR_SALVO if possui_fornecedores else MODO_NOVA_URL
+
+    if not possui_fornecedores and st.session_state.get("site_modo_fornecedor") != MODO_NOVA_URL:
+        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
 
     modo = st.radio(
         "Como deseja selecionar o fornecedor?",
@@ -463,13 +472,12 @@ def _render_modo_fornecedor() -> str:
     return modo
 
 
-def _render_select_fornecedor_salvo() -> None:
-    opcoes = _carregar_opcoes_fornecedores()
+def _render_select_fornecedor_salvo(opcoes: Optional[list[dict]] = None) -> str:
+    opcoes = opcoes if opcoes is not None else _carregar_opcoes_fornecedores()
 
     if not opcoes:
         st.info("Nenhum fornecedor salvo ainda. Cadastre uma nova URL abaixo.")
-        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
-        return
+        return MODO_NOVA_URL
 
     valores = [item["value"] for item in opcoes] + [OPCAO_NOVO_FORNECEDOR]
     labels = {item["value"]: item["label"] for item in opcoes}
@@ -493,8 +501,8 @@ def _render_select_fornecedor_salvo() -> None:
         _resetar_estado_busca_ao_trocar_fornecedor()
 
     if escolhido == OPCAO_NOVO_FORNECEDOR:
-        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
-        return
+        _forcar_modo_fornecedor(MODO_NOVA_URL)
+        return MODO_NOVA_URL
 
     fornecedor = _get_fornecedor_salvo_escolhido()
     _aplicar_fornecedor_salvo_na_tela(fornecedor)
@@ -519,12 +527,15 @@ def _render_select_fornecedor_salvo() -> None:
                         st.success("Fornecedor removido com sucesso.")
                         st.session_state["site_fornecedor_salvo_slug"] = ""
                         st.session_state["site_fornecedor_salvo_slug_aplicado"] = ""
-                        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
+                        _forcar_modo_fornecedor(MODO_NOVA_URL)
                         _resetar_estado_busca_ao_trocar_fornecedor()
                         st.rerun()
-                    st.error("Não foi possível remover o fornecedor.")
+                    else:
+                        st.error("Não foi possível remover o fornecedor.")
                 except Exception as exc:
                     st.error(f"Falha ao remover fornecedor: {exc}")
+
+    return MODO_FORNECEDOR_SALVO
 
 
 def _render_campos_fornecedor_manual() -> None:
@@ -613,6 +624,7 @@ def _salvar_fornecedor_manual() -> None:
         st.session_state["site_fornecedor_salvo_slug"] = fornecedor.get("slug", "")
         st.session_state["site_fornecedor_salvo_slug_aplicado"] = fornecedor.get("slug", "")
         st.session_state["site_fornecedor_slug"] = fornecedor.get("slug", "")
+        _forcar_modo_fornecedor(MODO_FORNECEDOR_SALVO)
         st.success("Fornecedor salvo com sucesso.")
         st.rerun()
     except Exception as exc:
@@ -653,12 +665,14 @@ def render_origem_site_panel() -> None:
         st.markdown("### Buscar no site do fornecedor")
         st.caption("Selecione um fornecedor salvo ou informe uma nova URL para buscar os produtos.")
 
-        modo = _render_modo_fornecedor()
+        opcoes_fornecedores = _carregar_opcoes_fornecedores()
+        modo = _render_modo_fornecedor(bool(opcoes_fornecedores))
 
         if modo == MODO_FORNECEDOR_SALVO:
-            _render_select_fornecedor_salvo()
-            if st.session_state.get("site_modo_fornecedor") == MODO_NOVA_URL:
-                st.rerun()
+            modo_efetivo = _render_select_fornecedor_salvo(opcoes_fornecedores)
+            if modo_efetivo == MODO_NOVA_URL:
+                modo = MODO_NOVA_URL
+                _render_campos_fornecedor_manual()
         else:
             _render_campos_fornecedor_manual()
 
