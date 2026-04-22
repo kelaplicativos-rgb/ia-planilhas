@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -14,6 +14,7 @@ from bling_app_zero.core.site_supplier_profiles import (
     DEFAULT_PROFILE,
     SupplierProfile,
     get_supplier_profile,
+    infer_supplier_profile_from_detection,
     supplier_profile_to_dict,
 )
 
@@ -21,6 +22,7 @@ try:
     from bling_app_zero.core.session_manager import (
         STATUS_LOGIN_CAPTCHA_DETECTADO,
         STATUS_LOGIN_REQUERIDO,
+        STATUS_PUBLICO,
         STATUS_SESSAO_PRONTA,
         detectar_login_captcha,
         montar_auth_context,
@@ -29,6 +31,7 @@ try:
         sessao_esta_pronta,
     )
 except Exception:
+    STATUS_PUBLICO = "publico"
     STATUS_LOGIN_CAPTCHA_DETECTADO = "login_captcha_detectado"
     STATUS_LOGIN_REQUERIDO = "login_required"
     STATUS_SESSAO_PRONTA = "session_ready"
@@ -66,7 +69,7 @@ except Exception:
             ]
         )
 
-        status = "publico"
+        status = STATUS_PUBLICO
         if has_login and has_captcha:
             status = STATUS_LOGIN_CAPTCHA_DETECTADO
         elif has_login:
@@ -75,6 +78,7 @@ except Exception:
         return {
             "exige_login": has_login,
             "captcha_detectado": has_captcha,
+            "login_detectado": has_login,
             "status": status,
             "motivos": [],
         }
@@ -132,6 +136,7 @@ class AuthResult:
     detected_login_form: bool = False
     detected_redirect_to_login: bool = False
     detected_product_area: bool = False
+    detected_whatsapp_code: bool = False
     profile: dict[str, Any] | None = None
     extra: dict[str, Any] | None = None
 
@@ -147,6 +152,13 @@ def _normalize_url(url: str) -> str:
     if not raw.startswith(("http://", "https://")):
         raw = f"https://{raw}"
     return raw.strip()
+
+
+def _normalize_base_root(url: str) -> str:
+    parsed = urlparse(_normalize_url(url))
+    if not parsed.scheme or not parsed.netloc:
+        return _normalize_url(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _hostname(url: str) -> str:
@@ -193,6 +205,9 @@ def _auth_state_default() -> dict[str, Any]:
         "username_hint": "",
         "storage_state_path": "",
         "metadata_path": "",
+        "detected_whatsapp_code": False,
+        "requires_whatsapp_code": False,
+        "source_kind": "",
     }
 
 
@@ -246,6 +261,7 @@ def _merge_auth_state_with_session_manager(state: dict[str, Any]) -> dict[str, A
         base["storage_state_path"] = _safe_str(contexto.get("storage_state_path"))
         base["metadata_path"] = _safe_str(contexto.get("metadata_path"))
         base["products_url"] = _safe_str(contexto.get("products_url")) or base["products_url"]
+        base["login_url"] = _safe_str(contexto.get("login_url")) or base["login_url"]
         base["session_ready"] = bool(contexto.get("session_ready", base.get("session_ready", False)))
         base["status"] = _safe_str(contexto.get("status")) or base["status"]
 
@@ -297,9 +313,13 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
     has_email = (
         'type="email"' in page
         or 'name="email"' in page
+        or 'name="login"' in page
+        or 'name="username"' in page
         or "usuário" in page
         or "usuario" in page
         or "e-mail" in page
+        or "telefone" in page
+        or "celular" in page
     )
     has_login_text = _contains_any(
         page,
@@ -311,6 +331,11 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
             "login",
             "autenticação",
             "autenticacao",
+            "código",
+            "codigo",
+            "verificação",
+            "verificacao",
+            "whatsapp",
         ],
     )
     has_captcha = _contains_any(
@@ -329,6 +354,19 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
         token in final_url_n
         for token in ["/login", "/entrar", "/auth", "/account", "/conta"]
     )
+    has_whatsapp_code = _contains_any(
+        page,
+        [
+            "whatsapp",
+            "código enviado",
+            "codigo enviado",
+            "confirme o código",
+            "confirme o codigo",
+            "verificação por whatsapp",
+            "verificacao por whatsapp",
+            "token enviado",
+        ],
+    )
 
     return {
         "has_password": has_password,
@@ -336,7 +374,8 @@ def _detect_login_markers(html: str, final_url: str = "") -> dict[str, bool]:
         "has_login_text": has_login_text,
         "has_captcha": has_captcha,
         "redirected_to_login": redirected_to_login,
-        "detected_form": bool(has_password and (has_email or has_login_text)),
+        "detected_form": bool((has_password or has_whatsapp_code) and (has_email or has_login_text)),
+        "has_whatsapp_code": has_whatsapp_code,
     }
 
 
@@ -347,10 +386,46 @@ def _detect_product_area(html: str, final_url: str = "") -> bool:
     return any(
         [
             "/admin/products" in final_url_n,
+            "/produtos" in final_url_n,
+            "/products" in final_url_n,
+            "/estoque" in final_url_n,
             "products" in final_url_n and "admin" in final_url_n,
-            _contains_any(page, ["produto", "produtos", "catálogo", "catalogo", "sku", "estoque"]),
+            _contains_any(page, ["produto", "produtos", "catálogo", "catalogo", "sku", "estoque", "inventory", "stock"]),
         ]
     )
+
+
+def _resolve_profile_and_urls(
+    *,
+    url: str,
+    profile: SupplierProfile,
+    requires_login: bool = False,
+    captcha_detected: bool = False,
+    whatsapp_code_detected: bool = False,
+) -> tuple[SupplierProfile, str, str]:
+    resolved_profile = profile
+
+    if resolved_profile.slug == DEFAULT_PROFILE.slug:
+        resolved_profile = infer_supplier_profile_from_detection(
+            url=url,
+            requires_login=requires_login,
+            captcha_detected=captcha_detected,
+            whatsapp_code_detected=whatsapp_code_detected,
+        )
+
+    login_url = _safe_str(resolved_profile.login_url)
+    products_url = _safe_str(resolved_profile.products_url)
+
+    if not login_url and resolved_profile.login_required and resolved_profile.login_path_hints:
+        login_url = urljoin(_normalize_base_root(url), resolved_profile.login_path_hints[0])
+
+    if not products_url and resolved_profile.products_path_hints:
+        products_url = urljoin(_normalize_base_root(url), resolved_profile.products_path_hints[0])
+
+    if not products_url:
+        products_url = _normalize_base_root(url)
+
+    return resolved_profile, login_url, products_url
 
 
 def inspect_site_auth(url: str) -> AuthResult:
@@ -372,10 +447,12 @@ def inspect_site_auth(url: str) -> AuthResult:
 
     profile = get_supplier_profile(target_url)
     provider_slug = _fornecedor_slug(target_url, profile)
+    base_root = _normalize_base_root(target_url)
 
-    if sessao_esta_pronta(base_url=target_url, fornecedor=provider_slug):
-        contexto = montar_auth_context(base_url=target_url, fornecedor=provider_slug)
-        products_url = _safe_str(contexto.get("products_url")) or profile.products_url or target_url
+    if sessao_esta_pronta(base_url=base_root, fornecedor=provider_slug):
+        contexto = montar_auth_context(base_url=base_root, fornecedor=provider_slug)
+        products_url = _safe_str(contexto.get("products_url")) or profile.products_url or base_root
+        login_url = _safe_str(contexto.get("login_url")) or profile.login_url or urljoin(base_root, "/login")
 
         return AuthResult(
             ok=True,
@@ -383,18 +460,20 @@ def inspect_site_auth(url: str) -> AuthResult:
             provider_slug=provider_slug,
             provider_name=profile.nome,
             requires_login=True,
-            captcha_detected=False,
-            login_url=profile.login_url or urljoin(target_url, "/login"),
+            captcha_detected=bool(profile.captcha_expected),
+            login_url=login_url,
             products_url=products_url,
             message="Sessão autenticada já disponível para este fornecedor.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
             session_ready=True,
             cookies_count=len(contexto.get("cookies", []) or []),
             detected_product_area=True,
+            detected_whatsapp_code=bool(getattr(profile, "requires_whatsapp_code", False)),
             profile=supplier_profile_to_dict(profile),
             extra={
                 "hostname": _hostname(target_url),
                 "from_saved_session": True,
+                "requires_whatsapp_code": bool(getattr(profile, "requires_whatsapp_code", False)),
             },
         )
 
@@ -404,19 +483,23 @@ def inspect_site_auth(url: str) -> AuthResult:
         html = response.text or ""
         final_url = str(response.url)
     except Exception as exc:
+        resolved_profile, login_url, products_url = _resolve_profile_and_urls(
+            url=target_url,
+            profile=profile,
+        )
         return AuthResult(
             ok=False,
             status="erro",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
-            requires_login=profile.login_required,
-            captcha_detected=profile.captcha_expected,
-            login_url=profile.login_url,
-            products_url=profile.products_url,
+            provider_name=resolved_profile.nome,
+            requires_login=resolved_profile.login_required,
+            captcha_detected=resolved_profile.captcha_expected,
+            login_url=login_url,
+            products_url=products_url,
             message=f"Falha ao inspecionar a URL: {exc}",
-            auth_mode="login" if profile.login_required else "public",
+            auth_mode=_safe_str(getattr(resolved_profile, "auth_mode", "login" if resolved_profile.login_required else "public")) or "public",
             session_ready=False,
-            profile=supplier_profile_to_dict(profile),
+            profile=supplier_profile_to_dict(resolved_profile),
         )
 
     markers = _detect_login_markers(html, final_url=final_url)
@@ -434,34 +517,45 @@ def inspect_site_auth(url: str) -> AuthResult:
         or markers["has_captcha"]
         or analise.get("captcha_detectado", False)
     )
+    whatsapp_code_detected = bool(
+        getattr(profile, "requires_whatsapp_code", False)
+        or markers["has_whatsapp_code"]
+    )
 
-    login_url = profile.login_url or (urljoin(final_url, "/login") if requires_login else "")
-    products_url = profile.products_url or target_url
+    resolved_profile, login_url, products_url = _resolve_profile_and_urls(
+        url=target_url,
+        profile=profile,
+        requires_login=requires_login,
+        captcha_detected=captcha_detected,
+        whatsapp_code_detected=whatsapp_code_detected,
+    )
+
+    auth_mode = _safe_str(getattr(resolved_profile, "auth_mode", "")) or ("login" if requires_login else "public")
 
     if detected_product_area and not requires_login:
         message = "Site público detectado e área de produtos acessível sem autenticação."
-        status = "publico_detectado"
-        auth_mode = "public"
+        status = STATUS_PUBLICO
         session_ready = True
+    elif whatsapp_code_detected:
+        message = "Fornecedor com autenticação assistida por código detectado. Fluxo manual assistido necessário."
+        status = STATUS_LOGIN_REQUERIDO
+        session_ready = False
     elif requires_login and captcha_detected:
         message = "Fornecedor com login detectado e indício de captcha. Fluxo autenticado necessário."
         status = STATUS_LOGIN_CAPTCHA_DETECTADO
-        auth_mode = "login"
         session_ready = False
     elif requires_login:
         message = "Fornecedor com login detectado. Fluxo autenticado necessário."
         status = STATUS_LOGIN_REQUERIDO
-        auth_mode = "login"
         session_ready = False
     else:
         message = "Não houve bloqueio de autenticação na inspeção inicial."
-        status = "publico_detectado"
-        auth_mode = "public"
+        status = STATUS_PUBLICO
         session_ready = True
 
     try:
         salvar_status_login_em_sessao(
-            base_url=target_url,
+            base_url=base_root,
             fornecedor=provider_slug,
             status=status,
             mensagem=message,
@@ -475,7 +569,7 @@ def inspect_site_auth(url: str) -> AuthResult:
         ok=True,
         status=status,
         provider_slug=provider_slug,
-        provider_name=profile.nome,
+        provider_name=resolved_profile.nome,
         requires_login=requires_login,
         captcha_detected=captcha_detected,
         login_url=login_url,
@@ -487,10 +581,13 @@ def inspect_site_auth(url: str) -> AuthResult:
         detected_login_form=markers["detected_form"],
         detected_redirect_to_login=markers["redirected_to_login"],
         detected_product_area=detected_product_area,
-        profile=supplier_profile_to_dict(profile),
+        detected_whatsapp_code=whatsapp_code_detected,
+        profile=supplier_profile_to_dict(resolved_profile),
         extra={
             "final_url": final_url,
             "hostname": _hostname(final_url),
+            "requires_whatsapp_code": bool(getattr(resolved_profile, "requires_whatsapp_code", False)),
+            "source_kind": _safe_str(getattr(resolved_profile, "source_kind", "")),
         },
     )
 
@@ -510,6 +607,9 @@ def apply_inspection_to_state(result: AuthResult) -> dict[str, Any]:
             "session_ready": result.session_ready,
             "notes": result.message,
             "last_message": result.message,
+            "detected_whatsapp_code": result.detected_whatsapp_code,
+            "requires_whatsapp_code": bool((result.profile or {}).get("requires_whatsapp_code", False)),
+            "source_kind": _safe_str((result.profile or {}).get("source_kind", "")),
         }
     )
     save_auth_state(state)
@@ -602,7 +702,7 @@ def try_requests_login(
 
     login_url = _normalize_url(login_url)
     products_url = _normalize_url(products_url)
-    base_url = products_url or login_url
+    base_url = _normalize_base_root(products_url or login_url)
     provider_slug = _fornecedor_slug(base_url, profile)
 
     if not login_url:
@@ -616,8 +716,37 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message="URL de login inválida.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
             session_ready=False,
+            profile=supplier_profile_to_dict(profile),
+        )
+
+    if getattr(profile, "requires_whatsapp_code", False):
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_REQUERIDO,
+                mensagem="Este fornecedor exige autenticação assistida por código. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=False,
+            )
+        except Exception:
+            pass
+
+        return AuthResult(
+            ok=False,
+            status="codigo_assistido_pendente",
+            provider_slug=provider_slug,
+            provider_name=profile.nome,
+            requires_login=True,
+            captcha_detected=False,
+            login_url=login_url,
+            products_url=products_url,
+            message="Este fornecedor exige autenticação assistida por código/WhatsApp. Requests não é o fluxo correto.",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "whatsapp_code")) or "whatsapp_code",
+            session_ready=False,
+            detected_whatsapp_code=True,
             profile=supplier_profile_to_dict(profile),
         )
 
@@ -644,7 +773,7 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message="Captcha detectado para este fornecedor. Login automático por requests não é seguro neste caso.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "captcha")) or "captcha",
             session_ready=False,
             profile=supplier_profile_to_dict(profile),
         )
@@ -665,13 +794,42 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message=f"Falha ao abrir login: {exc}",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
             session_ready=False,
             profile=supplier_profile_to_dict(profile),
         )
 
     markers = _detect_login_markers(html, final_url=str(login_page.url))
     analise_login = detectar_login_captcha(html=html, url_atual=str(login_page.url))
+
+    if markers["has_whatsapp_code"] or getattr(profile, "requires_whatsapp_code", False):
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_REQUERIDO,
+                mensagem="Código/2FA detectado na tela de login. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=False,
+            )
+        except Exception:
+            pass
+
+        return AuthResult(
+            ok=False,
+            status="codigo_assistido_pendente",
+            provider_slug=provider_slug,
+            provider_name=profile.nome,
+            requires_login=True,
+            captcha_detected=False,
+            login_url=login_url,
+            products_url=products_url,
+            message="Código/2FA detectado na tela de login.",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "whatsapp_code")) or "whatsapp_code",
+            session_ready=False,
+            detected_whatsapp_code=True,
+            profile=supplier_profile_to_dict(profile),
+        )
 
     if markers["has_captcha"] or analise_login.get("captcha_detectado", False):
         try:
@@ -696,7 +854,7 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message="Captcha detectado na tela de login.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "captcha")) or "captcha",
             session_ready=False,
             profile=supplier_profile_to_dict(profile),
         )
@@ -728,7 +886,7 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message=f"Falha no envio do login: {exc}",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
             session_ready=False,
             profile=supplier_profile_to_dict(profile),
         )
@@ -746,6 +904,39 @@ def try_requests_login(
         product_area_ok = _detect_product_area(final_html, final_url=final_url)
 
     analise_final = detectar_login_captcha(html=final_html, url_atual=final_url)
+    markers_final = _detect_login_markers(final_html, final_url=final_url)
+
+    if markers_final["has_whatsapp_code"]:
+        try:
+            salvar_status_login_em_sessao(
+                base_url=base_url,
+                fornecedor=provider_slug,
+                status=STATUS_LOGIN_REQUERIDO,
+                mensagem="Código/2FA detectado após tentativa de login. Use o login assistido no navegador.",
+                exige_login=True,
+                captcha_detectado=False,
+            )
+        except Exception:
+            pass
+
+        return AuthResult(
+            ok=False,
+            status="codigo_assistido_pendente",
+            provider_slug=provider_slug,
+            provider_name=profile.nome,
+            requires_login=True,
+            captcha_detected=False,
+            login_url=login_url,
+            products_url=products_url,
+            message="Código/2FA detectado após tentativa de login.",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "whatsapp_code")) or "whatsapp_code",
+            session_ready=False,
+            cookies_count=len(session.cookies),
+            detected_whatsapp_code=True,
+            profile=supplier_profile_to_dict(profile),
+            extra={"final_url": final_url},
+        )
+
     if analise_final.get("captcha_detectado", False):
         try:
             salvar_status_login_em_sessao(
@@ -769,7 +960,7 @@ def try_requests_login(
             login_url=login_url,
             products_url=products_url,
             message="Captcha detectado após tentativa de login.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "captcha")) or "captcha",
             session_ready=False,
             cookies_count=len(session.cookies),
             profile=supplier_profile_to_dict(profile),
@@ -795,8 +986,8 @@ def try_requests_login(
                 "requires_login": True,
                 "captcha_detected": False,
                 "login_url": login_url,
-                "products_url": products_url,
-                "auth_mode": "login",
+                "products_url": products_url or base_url,
+                "auth_mode": _safe_str(getattr(profile, "auth_mode", "login")) or "login",
                 "session_ready": True,
                 "cookies": [
                     {
@@ -812,6 +1003,9 @@ def try_requests_login(
                 "last_message": "Sessão autenticada com sucesso.",
                 "storage_state_path": _safe_str(persistencia.get("storage_state_path")),
                 "metadata_path": _safe_str(persistencia.get("metadata_path")),
+                "detected_whatsapp_code": False,
+                "requires_whatsapp_code": bool(getattr(profile, "requires_whatsapp_code", False)),
+                "source_kind": _safe_str(getattr(profile, "source_kind", "")),
             }
         )
         save_auth_state(state)
@@ -836,12 +1030,13 @@ def try_requests_login(
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
-            products_url=products_url,
+            products_url=products_url or base_url,
             message="Sessão autenticada com sucesso.",
-            auth_mode="login",
+            auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
             session_ready=True,
             cookies_count=len(session.cookies),
             detected_product_area=True,
+            detected_whatsapp_code=False,
             profile=supplier_profile_to_dict(profile),
             extra={
                 "final_url": final_url,
@@ -856,7 +1051,7 @@ def try_requests_login(
             status=STATUS_LOGIN_REQUERIDO,
             mensagem=(
                 "O login foi enviado, mas a área de produtos não ficou acessível. "
-                "Pode haver captcha, proteção extra ou fluxo JS."
+                "Pode haver captcha, proteção extra, JS ou 2FA."
             ),
             exige_login=True,
             captcha_detectado=False,
@@ -875,9 +1070,9 @@ def try_requests_login(
         products_url=products_url,
         message=(
             "O login foi enviado, mas a área de produtos não ficou acessível. "
-            "Pode haver captcha, proteção extra ou fluxo JS."
+            "Pode haver captcha, proteção extra, JS ou 2FA."
         ),
-        auth_mode="login",
+        auth_mode=_safe_str(getattr(profile, "auth_mode", "login")) or "login",
         session_ready=False,
         cookies_count=len(session.cookies),
         profile=supplier_profile_to_dict(profile),
@@ -901,9 +1096,13 @@ def get_auth_headers_and_cookies() -> dict[str, Any]:
         "captcha_detected": bool(state.get("captcha_detected", False)),
         "storage_state_path": _safe_str(state.get("storage_state_path")),
         "metadata_path": _safe_str(state.get("metadata_path")),
+        "detected_whatsapp_code": bool(state.get("detected_whatsapp_code", False)),
+        "requires_whatsapp_code": bool(state.get("requires_whatsapp_code", False)),
+        "source_kind": _safe_str(state.get("source_kind", "")),
     }
 
 
 def get_profile_for_url(url: str) -> SupplierProfile:
     profile = get_supplier_profile(url)
     return profile if profile else DEFAULT_PROFILE
+
