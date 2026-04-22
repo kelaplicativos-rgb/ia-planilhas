@@ -14,6 +14,19 @@ try:
 except Exception:
     buscar_produtos_site_com_gpt = None
 
+try:
+    from bling_app_zero.core.site_auth import (
+        apply_inspection_to_state,
+        get_auth_headers_and_cookies,
+        get_profile_for_url,
+        inspect_site_auth,
+    )
+except Exception:
+    apply_inspection_to_state = None
+    get_auth_headers_and_cookies = None
+    get_profile_for_url = None
+    inspect_site_auth = None
+
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     log_debug,
@@ -43,6 +56,71 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     return base
 
 
+def _safe_auth_state() -> dict:
+    valor = st.session_state.get("site_auth_state")
+    return valor if isinstance(valor, dict) else {}
+
+
+def _safe_profile(url_site: str) -> dict:
+    if get_profile_for_url is None:
+        return {}
+
+    try:
+        profile = get_profile_for_url(url_site)
+        if profile is None:
+            return {}
+        if hasattr(profile, "__dict__"):
+            return dict(profile.__dict__)
+        if isinstance(profile, dict):
+            return profile
+    except Exception:
+        return {}
+    return {}
+
+
+def _profile_slug(url_site: str) -> str:
+    profile = _safe_profile(url_site)
+    return str(profile.get("slug", "") or "").strip().lower()
+
+
+def _fornecedor_nome(url_site: str) -> str:
+    profile = _safe_profile(url_site)
+    nome = str(profile.get("nome", "") or "").strip()
+    if nome:
+        return nome
+    return "Fornecedor"
+
+
+def _profile_requires_login(url_site: str) -> bool:
+    profile = _safe_profile(url_site)
+    return bool(profile.get("login_required", False))
+
+
+def _profile_requires_assisted_login(url_site: str) -> bool:
+    profile = _safe_profile(url_site)
+    return bool(profile.get("requires_assisted_login", False))
+
+
+def _profile_requires_whatsapp_code(url_site: str) -> bool:
+    profile = _safe_profile(url_site)
+    return bool(profile.get("requires_whatsapp_code", False))
+
+
+def _profile_captcha_expected(url_site: str) -> bool:
+    profile = _safe_profile(url_site)
+    return bool(profile.get("captcha_expected", False))
+
+
+def _profile_products_url(url_site: str) -> str:
+    profile = _safe_profile(url_site)
+    return str(profile.get("products_url", "") or "").strip()
+
+
+def _profile_login_url(url_site: str) -> str:
+    profile = _safe_profile(url_site)
+    return str(profile.get("login_url", "") or "").strip()
+
+
 def _resetar_flag_avanco_origem() -> None:
     st.session_state["origem_pronta_para_avancar"] = False
 
@@ -62,6 +140,11 @@ def _resetar_estado_site_ui() -> None:
         "site_busca_resumo_texto",
         "site_busca_fonte_descoberta",
         "site_busca_modo_sitemap_primeiro",
+        "site_auth_state",
+        "site_auth_last_result",
+        "site_auth_inspecionado_url",
+        "site_login_assistido_confirmado",
+        "site_login_assistido_observacao",
     ]:
         st.session_state.pop(chave, None)
 
@@ -388,6 +471,70 @@ def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> 
     st.session_state["site_busca_ultima_execucao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _inspecionar_site(url_site: str) -> dict:
+    if inspect_site_auth is None:
+        return {}
+
+    try:
+        resultado = inspect_site_auth(url_site)
+        if apply_inspection_to_state is not None:
+            apply_inspection_to_state(resultado)
+        if hasattr(resultado, "__dict__"):
+            data = dict(resultado.__dict__)
+        elif isinstance(resultado, dict):
+            data = resultado
+        else:
+            data = {}
+        st.session_state["site_auth_last_result"] = data
+        st.session_state["site_auth_state"] = {
+            **_safe_auth_state(),
+            "status": str(data.get("status", "") or ""),
+            "provider_slug": str(data.get("provider_slug", "") or ""),
+            "provider_name": str(data.get("provider_name", "") or ""),
+            "requires_login": bool(data.get("requires_login", False)),
+            "captcha_detected": bool(data.get("captcha_detected", False)),
+            "login_url": str(data.get("login_url", "") or ""),
+            "products_url": str(data.get("products_url", "") or ""),
+            "auth_mode": str(data.get("auth_mode", "public") or "public"),
+            "session_ready": bool(data.get("session_ready", False)),
+            "last_message": str(data.get("message", "") or ""),
+            "detected_whatsapp_code": bool(data.get("detected_whatsapp_code", False)),
+            "requires_whatsapp_code": bool((data.get("profile") or {}).get("requires_whatsapp_code", False)),
+            "source_kind": str((data.get("profile") or {}).get("source_kind", "") or ""),
+        }
+        st.session_state["site_auth_inspecionado_url"] = url_site
+        return data
+    except Exception as exc:
+        log_debug(f"Falha ao inspecionar site: {exc}", nivel="ERRO")
+        return {}
+
+
+def _auth_context_para_busca(url_site: str) -> dict | None:
+    if get_auth_headers_and_cookies is None:
+        return None
+
+    try:
+        contexto = get_auth_headers_and_cookies()
+        if not isinstance(contexto, dict):
+            return None
+
+        provider_slug = str(contexto.get("provider_slug", "") or "").strip()
+        products_url = str(contexto.get("products_url", "") or "").strip()
+        login_url = str(contexto.get("login_url", "") or "").strip()
+
+        if not provider_slug:
+            provider_slug = _profile_slug(url_site)
+
+        contexto["fornecedor_slug"] = provider_slug
+        contexto["products_url"] = products_url or _profile_products_url(url_site) or url_site
+        contexto["login_url"] = login_url or _profile_login_url(url_site)
+        contexto["manual_mode"] = bool(st.session_state.get("site_login_assistido_confirmado", False))
+        return contexto
+    except Exception as exc:
+        log_debug(f"Falha ao montar auth_context para busca: {exc}", nivel="ERRO")
+        return None
+
+
 def _chamar_busca_site_compativel(url_site: str):
     if buscar_produtos_site_com_gpt is None:
         raise RuntimeError("Módulo de busca por site indisponível.")
@@ -396,6 +543,10 @@ def _chamar_busca_site_compativel(url_site: str):
         "base_url": url_site,
         "diagnostico": True,
     }
+
+    auth_context = _auth_context_para_busca(url_site)
+    if auth_context:
+        kwargs["auth_context"] = auth_context
 
     try:
         assinatura = inspect.signature(buscar_produtos_site_com_gpt)
@@ -536,6 +687,155 @@ def _render_diagnostico_site() -> None:
             st.info("Sem linhas de diagnóstico disponíveis.")
 
 
+def _render_resumo_fornecedor(url_site: str) -> None:
+    profile = _safe_profile(url_site)
+    if not profile:
+        return
+
+    with st.expander("Perfil do fornecedor", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Fornecedor", str(profile.get("nome", "-") or "-"))
+        with c2:
+            st.metric("Modo", str(profile.get("auth_mode", "public") or "public"))
+        with c3:
+            st.metric("Tipo", str(profile.get("source_kind", "-") or "-"))
+
+        notes = str(profile.get("notes", "") or "").strip()
+        if notes:
+            st.caption(notes)
+
+
+def _render_status_autenticacao(url_site: str) -> None:
+    state = _safe_auth_state()
+    if not state and not url_site:
+        return
+
+    with st.container(border=True):
+        st.markdown("### Autenticação do fornecedor")
+
+        provider_name = str(state.get("provider_name", "") or _fornecedor_nome(url_site) or "Fornecedor").strip()
+        status = str(state.get("status", "") or "inativo").strip()
+        auth_mode = str(state.get("auth_mode", "") or "public").strip()
+        session_ready = bool(state.get("session_ready", False))
+        captcha_detected = bool(state.get("captcha_detected", False))
+        detected_whatsapp_code = bool(state.get("detected_whatsapp_code", False))
+        requires_whatsapp_code = bool(state.get("requires_whatsapp_code", False))
+        last_message = str(state.get("last_message", "") or "").strip()
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Fornecedor", provider_name or "-")
+        with c2:
+            st.metric("Status", status or "-")
+        with c3:
+            st.metric("Modo", auth_mode or "-")
+        with c4:
+            st.metric("Sessão", "Pronta" if session_ready else "Pendente")
+
+        if captcha_detected:
+            st.warning("Captcha detectado. O fluxo recomendado é login assistido.")
+        if detected_whatsapp_code or requires_whatsapp_code:
+            st.warning("Código assistido/WhatsApp detectado. A sessão precisa ser autenticada manualmente.")
+        if last_message:
+            st.caption(last_message)
+
+
+def _render_login_assistido(url_site: str) -> None:
+    profile = _safe_profile(url_site)
+    if not profile:
+        return
+
+    requires_login = bool(profile.get("login_required", False))
+    requires_assisted = bool(profile.get("requires_assisted_login", False))
+    requires_whatsapp = bool(profile.get("requires_whatsapp_code", False))
+    captcha_expected = bool(profile.get("captcha_expected", False))
+    login_url = str(profile.get("login_url", "") or "").strip()
+    products_url = str(profile.get("products_url", "") or "").strip()
+
+    if not requires_login:
+        return
+
+    with st.container(border=True):
+        st.markdown("### Login assistido")
+        st.caption("Use este bloco para fornecedores com painel autenticado, captcha ou código via WhatsApp.")
+
+        if login_url:
+            st.write(f"**URL de login:** {login_url}")
+        if products_url:
+            st.write(f"**Área de produtos:** {products_url}")
+
+        if requires_whatsapp:
+            st.info("Este fornecedor pode exigir código por WhatsApp antes de liberar o painel.")
+        elif captcha_expected:
+            st.info("Este fornecedor pode exigir captcha antes de liberar o painel.")
+        elif requires_assisted:
+            st.info("Este fornecedor exige autenticação assistida antes da busca.")
+
+        observacao_atual = str(st.session_state.get("site_login_assistido_observacao", "") or "").strip()
+        observacao = st.text_input(
+            "Observação da sessão assistida",
+            value=observacao_atual,
+            key="site_login_assistido_observacao",
+            placeholder="Ex.: login concluído e painel de produtos já aberto",
+        ).strip()
+
+        confirmado = bool(st.session_state.get("site_login_assistido_confirmado", False))
+        novo_confirmado = st.checkbox(
+            "Confirmo que o login assistido foi concluído e a sessão do fornecedor está pronta",
+            value=confirmado,
+            key="site_login_assistido_confirmado_checkbox",
+        )
+
+        st.session_state["site_login_assistido_confirmado"] = novo_confirmado
+        st.session_state["site_login_assistido_observacao"] = observacao
+
+        if novo_confirmado:
+            st.success("Sessão assistida marcada como pronta para a próxima busca.")
+        else:
+            st.caption("Depois de autenticar no fornecedor, marque a sessão como pronta.")
+
+
+def _render_inspecao_site(url_site: str) -> None:
+    if not url_site:
+        return
+
+    with st.container(border=True):
+        st.markdown("### Inspeção inteligente do fornecedor")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            if st.button(
+                "Inspecionar fornecedor",
+                use_container_width=True,
+                key="btn_inspecionar_fornecedor",
+            ):
+                resultado = _inspecionar_site(url_site)
+                if resultado:
+                    st.success("Inspeção concluída.")
+                    st.rerun()
+                st.error("Não foi possível inspecionar o fornecedor.")
+
+        with col2:
+            if st.button(
+                "Limpar autenticação",
+                use_container_width=True,
+                key="btn_limpar_auth_site",
+            ):
+                st.session_state.pop("site_auth_state", None)
+                st.session_state.pop("site_auth_last_result", None)
+                st.session_state.pop("site_auth_inspecionado_url", None)
+                st.session_state["site_login_assistido_confirmado"] = False
+                st.session_state["site_login_assistido_observacao"] = ""
+                st.info("Estado de autenticação limpo.")
+                st.rerun()
+
+        _render_resumo_fornecedor(url_site)
+        _render_status_autenticacao(url_site)
+        _render_login_assistido(url_site)
+
+
 def _render_etapas_busca_site(url_site: str) -> None:
     if not url_site:
         st.info("Cole a URL do fornecedor para habilitar a busca.")
@@ -598,6 +898,7 @@ def _render_origem_site() -> None:
             help="A busca já usa sitemap primeiro automaticamente quando o site expõe esse recurso.",
         )
 
+        _render_inspecao_site(url_site)
         _render_etapas_busca_site(url_site)
 
 
