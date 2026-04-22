@@ -9,6 +9,12 @@ from bling_app_zero.core.site_crawler_config import (
     STOP_IMAGE_HINTS,
 )
 
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
+
 
 def safe_str(valor: Any) -> str:
     try:
@@ -34,7 +40,7 @@ def normalizar_url(url: str) -> str:
 
 def dominio(url: str) -> str:
     try:
-        return urlparse(url).netloc.lower().replace("www.", "")
+        return urlparse(normalizar_url(url)).netloc.lower().replace("www.", "")
     except Exception:
         return ""
 
@@ -44,7 +50,60 @@ def mesmo_dominio(base_url: str, url: str) -> bool:
 
 
 def fornecedor_cfg(base_url: str) -> dict:
-    return FORNECEDORES_DEDICADOS.get(dominio(base_url), {})
+    cfg = dict(FORNECEDORES_DEDICADOS.get(dominio(base_url), {}) or {})
+
+    try:
+        profile = get_supplier_profile(base_url)
+    except Exception:
+        profile = None
+
+    if profile is None:
+        return cfg
+
+    if hasattr(profile, "__dict__"):
+        profile_data = dict(profile.__dict__)
+    elif isinstance(profile, dict):
+        profile_data = profile
+    else:
+        profile_data = {}
+
+    if not cfg.get("nome"):
+        cfg["nome"] = safe_str(profile_data.get("nome"))
+    if not cfg.get("slug"):
+        cfg["slug"] = safe_str(profile_data.get("slug"))
+
+    produto_hints = list(cfg.get("produto_hints", []) or [])
+    categoria_hints = list(cfg.get("categoria_hints", []) or [])
+
+    for hint in tuple(profile_data.get("product_url_keywords", ()) or ()):
+        hint_n = safe_str(hint)
+        if not hint_n:
+            continue
+        if not hint_n.startswith("/"):
+            hint_n = f"/{hint_n}"
+        if hint_n not in produto_hints:
+            produto_hints.append(hint_n)
+
+    for hint in tuple(profile_data.get("category_path_hints", ()) or ()):
+        hint_n = safe_str(hint)
+        if not hint_n:
+            continue
+        if hint_n not in categoria_hints:
+            categoria_hints.append(hint_n)
+
+    for hint in tuple(profile_data.get("category_url_keywords", ()) or ()):
+        hint_n = safe_str(hint)
+        if not hint_n:
+            continue
+        if not hint_n.startswith("/"):
+            hint_n = f"/{hint_n}"
+        if hint_n not in categoria_hints:
+            categoria_hints.append(hint_n)
+
+    cfg["produto_hints"] = produto_hints
+    cfg["categoria_hints"] = categoria_hints
+
+    return cfg
 
 
 def extrair_preco(texto: str) -> str:
