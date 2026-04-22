@@ -7,6 +7,12 @@ from urllib.parse import urlparse
 from bling_app_zero.core.site_crawler_cleaners import normalizar_texto, safe_str
 from bling_app_zero.core.site_crawler_config import STOP_TITLE_EXATO, STOP_URL_HINTS
 
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
+
 
 STOP_PATH_EXACT = {
     "",
@@ -95,6 +101,34 @@ def _query_url(url: str) -> str:
         return ""
 
 
+def _profile(url: str):
+    try:
+        return get_supplier_profile(url)
+    except Exception:
+        return None
+
+
+def _profile_product_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "product_url_keywords", ()) or ())
+
+
+def _profile_category_keywords(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_url_keywords", ()) or ())
+
+
+def _profile_category_hints(url: str) -> tuple[str, ...]:
+    profile = _profile(url)
+    if profile is None:
+        return ()
+    return tuple(getattr(profile, "category_path_hints", ()) or ())
+
+
 def _eh_home_ou_raiz(url_produto: str) -> bool:
     path = _path_url(url_produto)
     return path in STOP_PATH_EXACT
@@ -117,6 +151,16 @@ def _eh_url_categoria(url_produto: str) -> bool:
     if "category" in query or "categoria" in query:
         return True
 
+    for hint in _profile_category_hints(url_produto):
+        hint_n = normalizar_texto(hint)
+        if hint_n and hint_n in url_n:
+            return True
+
+    for token in _profile_category_keywords(url_produto):
+        token_n = normalizar_texto(token)
+        if token_n and token_n in url_n:
+            return True
+
     return False
 
 
@@ -133,6 +177,16 @@ def _eh_url_produto_forte(url_produto: str) -> bool:
         return True
 
     if re.search(r"/product/[\w\-]+", url_n):
+        return True
+
+    for token in _profile_product_keywords(url_produto):
+        token_n = normalizar_texto(token)
+        if token_n and token_n in url_n and not _eh_url_categoria(url_produto):
+            return True
+
+    path = _path_url(url_produto)
+    ultimo_slug = path.split("/")[-1] if path else ""
+    if ultimo_slug and "-" in ultimo_slug and len(ultimo_slug) >= 10 and not _eh_url_categoria(url_produto):
         return True
 
     return False
@@ -265,6 +319,9 @@ def titulo_valido(titulo: str, url_produto: str) -> bool:
     if _eh_home_ou_raiz(url_produto):
         return False
 
+    if _eh_url_categoria(url_produto):
+        return False
+
     if len(titulo_n) < 3:
         return False
 
@@ -290,7 +347,7 @@ def pontuar_produto(
         score += 2
 
     if safe_str(codigo):
-        score += 1
+        score += 2
 
     if safe_str(gtin):
         score += 1
@@ -302,10 +359,10 @@ def pontuar_produto(
         score += 1
 
     if _eh_url_produto_forte(url_produto):
-        score += 2
+        score += 3
 
     if _eh_url_categoria(url_produto):
-        score -= 4
+        score -= 6
 
     if _eh_home_ou_raiz(url_produto):
         score -= 5
@@ -357,6 +414,6 @@ def produto_final_valido(item: dict) -> bool:
     )
 
     if _eh_url_produto_forte(url_produto):
-        return score >= 4
+        return score >= 3
 
-    return score >= 6
+    return score >= 5
