@@ -490,17 +490,19 @@ def _render_modo_fornecedor(possui_fornecedores: bool) -> str:
 def _render_select_fornecedor_salvo(opcoes: Optional[list[dict]] = None) -> str:
     opcoes = opcoes if opcoes is not None else _carregar_opcoes_fornecedores()
 
-    if not opcoes:
-        st.info("Nenhum fornecedor salvo ainda. Cadastre uma nova URL abaixo.")
-        return MODO_NOVA_URL
+    valores = [item["value"] for item in opcoes] if opcoes else []
+    labels = {item["value"]: item["label"] for item in opcoes} if opcoes else {}
 
-    valores = [item["value"] for item in opcoes] + [OPCAO_NOVO_FORNECEDOR]
-    labels = {item["value"]: item["label"] for item in opcoes}
+    valores.append(OPCAO_NOVO_FORNECEDOR)
     labels[OPCAO_NOVO_FORNECEDOR] = "Outro fornecedor / inserir URL manualmente"
+
+    if not opcoes:
+        st.warning("Nenhum fornecedor salvo ainda.")
+        st.caption("Cadastre uma nova URL abaixo para reutilizar depois.")
 
     valor_atual = _clean_text(st.session_state.get("site_fornecedor_salvo_slug"))
     if valor_atual not in valores:
-        valor_atual = valores[0]
+        valor_atual = OPCAO_NOVO_FORNECEDOR
         st.session_state["site_fornecedor_salvo_slug"] = valor_atual
 
     escolhido = st.selectbox(
@@ -712,3 +714,4 @@ def render_origem_site_panel() -> None:
             _preview_dataframe(df_origem, "Preview da busca por site")
 
         _render_diagnostico()
+
