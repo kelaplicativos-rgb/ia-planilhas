@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import inspect
@@ -14,6 +13,11 @@ try:
     from bling_app_zero.core.site_agent import buscar_produtos_site_com_gpt
 except Exception:
     buscar_produtos_site_com_gpt = None
+
+try:
+    from bling_app_zero.core.site_agent import SiteAgent
+except Exception:
+    SiteAgent = None
 
 try:
     from bling_app_zero.core.site_auth import (
@@ -65,6 +69,24 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
 
     base = df.copy().fillna("")
     base.columns = [str(c).strip() for c in base.columns]
+    return base
+
+
+def _normalizar_df_saida_site(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = _normalizar_df(df)
+
+    if base.empty and len(base.columns) == 0:
+        return pd.DataFrame()
+
+    for col in base.columns:
+        try:
+            base[col] = base[col].astype(str).replace({"nan": "", "None": "", "none": ""}).fillna("")
+        except Exception:
+            continue
+
     return base
 
 
@@ -461,6 +483,7 @@ def _render_origem_arquivo() -> None:
 
 def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> None:
     from datetime import datetime
+
     st.session_state["site_busca_ultima_url"] = url_site
     st.session_state["site_busca_ultimo_total"] = int(total_produtos)
     st.session_state["site_busca_ultimo_status"] = status
@@ -616,31 +639,77 @@ def _auth_context_para_busca(url_site: str) -> dict | None:
 
 
 def _chamar_busca_site_compativel(url_site: str):
-    if buscar_produtos_site_com_gpt is None:
-        raise RuntimeError("Módulo de busca por site indisponível.")
-
-    kwargs = {
-        "base_url": url_site,
-        "diagnostico": True,
-    }
-
     auth_context = _auth_context_para_busca(url_site)
-    if auth_context:
-        kwargs["auth_context"] = auth_context
 
-    try:
-        assinatura = inspect.signature(buscar_produtos_site_com_gpt)
-        parametros = assinatura.parameters
+    if buscar_produtos_site_com_gpt is not None:
+        try:
+            kwargs = {
+                "base_url": url_site,
+                "diagnostico": True,
+            }
 
-        if "termo" in parametros:
-            kwargs["termo"] = ""
+            if auth_context:
+                kwargs["auth_context"] = auth_context
 
-        if "limite_links" in parametros:
-            kwargs["limite_links"] = None
-    except Exception:
-        pass
+            try:
+                assinatura = inspect.signature(buscar_produtos_site_com_gpt)
+                parametros = assinatura.parameters
 
-    return buscar_produtos_site_com_gpt(**kwargs)
+                if "termo" in parametros:
+                    kwargs["termo"] = ""
+
+                if "limite_links" in parametros:
+                    kwargs["limite_links"] = None
+            except Exception:
+                pass
+
+            resultado = buscar_produtos_site_com_gpt(**kwargs)
+
+            if isinstance(resultado, pd.DataFrame):
+                return _normalizar_df_saida_site(resultado)
+
+            if isinstance(resultado, list):
+                return _normalizar_df_saida_site(pd.DataFrame(resultado))
+        except Exception as exc:
+            log_debug(f"Fallback GPT falhou: {exc}", nivel="ERRO")
+
+    if SiteAgent is not None:
+        try:
+            agent = SiteAgent()
+
+            if hasattr(agent, "buscar_dataframe"):
+                resultado = agent.buscar_dataframe(
+                    base_url=url_site,
+                    diagnostico=True,
+                    auth_context=auth_context,
+                    limite=500,
+                )
+            elif hasattr(agent, "buscar_produtos"):
+                resultado = agent.buscar_produtos(
+                    base_url=url_site,
+                    diagnostico=True,
+                    auth_context=auth_context,
+                    limite=500,
+                )
+            elif hasattr(agent, "executar"):
+                resultado = agent.executar(
+                    url_site,
+                    limite=500,
+                )
+            else:
+                raise RuntimeError("SiteAgent não expõe método compatível de busca.")
+
+            if isinstance(resultado, pd.DataFrame):
+                return _normalizar_df_saida_site(resultado)
+
+            if isinstance(resultado, list):
+                return _normalizar_df_saida_site(pd.DataFrame(resultado))
+
+            return pd.DataFrame()
+        except Exception as exc:
+            log_debug(f"Fallback SiteAgent falhou: {exc}", nivel="ERRO")
+
+    raise RuntimeError("Nenhum mecanismo de busca por site disponível.")
 
 
 def _resumo_status_site_texto() -> str:
@@ -668,7 +737,7 @@ def _executar_busca_site(url_site: str) -> None:
         st.error("Informe a URL base do fornecedor.")
         return
 
-    if not buscar_produtos_site_com_gpt:
+    if buscar_produtos_site_com_gpt is None and SiteAgent is None:
         st.error("Módulo de busca por site indisponível.")
         return
 
@@ -681,6 +750,7 @@ def _executar_busca_site(url_site: str) -> None:
 
     try:
         df_site = _chamar_busca_site_compativel(url_site)
+        df_site = _normalizar_df_saida_site(df_site)
 
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
             _carimbar_execucao_site(0, url_site, "vazio")
@@ -985,7 +1055,12 @@ def _render_etapas_busca_site(url_site: str) -> None:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        if st.button("Buscar produtos do site", use_container_width=True, key="btn_buscar_site_simplificado", disabled=executando):
+        if st.button(
+            "Buscar produtos do site",
+            use_container_width=True,
+            key="btn_buscar_site_simplificado",
+            disabled=executando,
+        ):
             _executar_busca_site(url_site)
             st.rerun()
 
@@ -1103,4 +1178,3 @@ def render_origem_dados() -> None:
     _render_modelo()
     st.markdown("---")
     _render_continuar()
-
