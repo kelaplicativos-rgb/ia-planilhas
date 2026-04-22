@@ -5,7 +5,7 @@ Responsável por:
 - Escolher o fornecedor correto
 - Aplicar fallback inteligente
 - Garantir captura de ESTOQUE (prioridade máxima)
-- Expor função pública compatível com a UI: buscar_produtos_site_com_gpt()
+- Expor função pública compatível com a UI
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ class SiteAgent:
 
         fornecedor = self._detectar_fornecedor(url)
         produtos: List[Dict[str, Any]] = []
-
         kwargs_limpos = self._filtrar_kwargs_fornecedor(kwargs)
 
         # ===============================
@@ -65,11 +64,40 @@ class SiteAgent:
                     self._log(f"[ERRO fallback] {exc}")
 
         # ===============================
-        # 3. PÓS-PROCESSAMENTO (CRÍTICO)
+        # 3. PÓS-PROCESSAMENTO
         # ===============================
-        produtos = self._padronizar(produtos)
+        return self._padronizar(produtos)
 
-        return produtos
+    # -------------------------------
+    # ALIASES DE COMPATIBILIDADE
+    # -------------------------------
+    def buscar_produtos(self, base_url: str, **kwargs) -> pd.DataFrame:
+        return self.buscar_dataframe(base_url=base_url, **kwargs)
+
+    def buscar_dataframe(
+        self,
+        *,
+        base_url: str,
+        diagnostico: bool = False,
+        auth_context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        url = self._normalizar_url(base_url)
+        fornecedor = self._detectar_fornecedor(url)
+
+        produtos = self.executar(url, **kwargs)
+        df = self.para_dataframe(produtos)
+
+        if diagnostico:
+            diag = self._diagnostico_basico(
+                url=url,
+                fornecedor=fornecedor,
+                produtos=produtos,
+                auth_context=auth_context,
+            )
+            self._aplicar_diagnostico_streamlit(diag)
+
+        return df
 
     # -------------------------------
     # DETECTAR FORNECEDOR
@@ -146,7 +174,7 @@ class SiteAgent:
         return self._deduplicar(resultado)
 
     # -------------------------------
-    # NORMALIZA ESTOQUE (REGRA GLOBAL)
+    # NORMALIZA ESTOQUE
     # -------------------------------
     def _normalizar_estoque(self, valor: Any) -> int:
         if valor is None:
@@ -156,8 +184,7 @@ class SiteAgent:
             return int(valor)
 
         if isinstance(valor, (int, float)):
-            valor_int = int(valor)
-            return max(valor_int, 0)
+            return max(int(valor), 0)
 
         texto = self._texto_limpo(valor).lower()
         if not texto:
@@ -231,15 +258,15 @@ class SiteAgent:
         if not imagens:
             return ""
 
-        lista_final: List[str] = []
-
         if isinstance(imagens, list):
             itens = imagens
         else:
             bruto = str(imagens).replace(";", "|").replace(",", "|")
             itens = bruto.split("|")
 
+        lista_final: List[str] = []
         vistos = set()
+
         for item in itens:
             valor = self._texto_limpo(item)
             if not valor:
@@ -288,10 +315,12 @@ class SiteAgent:
                 or self._texto_limpo(p.get("sku"))
                 or self._texto_limpo(p.get("nome"))
             )
+
             if not chave:
                 continue
             if chave in vistos:
                 continue
+
             vistos.add(chave)
             resultado.append(p)
 
@@ -308,6 +337,7 @@ class SiteAgent:
     # -------------------------------
     def para_dataframe(self, produtos: List[Dict[str, Any]]) -> pd.DataFrame:
         produtos = self._padronizar(produtos)
+
         if not produtos:
             return pd.DataFrame(
                 columns=[
@@ -325,15 +355,15 @@ class SiteAgent:
             )
 
         df = pd.DataFrame(produtos).fillna("")
-        for col in ["estoque"]:
-            if col in df.columns:
-                df[col] = df[col].apply(self._normalizar_estoque)
-        for col in ["preco"]:
-            if col in df.columns:
-                df[col] = df[col].apply(self._normalizar_preco)
-        for col in ["imagens"]:
-            if col in df.columns:
-                df[col] = df[col].apply(self._normalizar_imagens)
+
+        if "estoque" in df.columns:
+            df["estoque"] = df["estoque"].apply(self._normalizar_estoque)
+
+        if "preco" in df.columns:
+            df["preco"] = df["preco"].apply(self._normalizar_preco)
+
+        if "imagens" in df.columns:
+            df["imagens"] = df["imagens"].apply(self._normalizar_imagens)
 
         return df
 
@@ -355,11 +385,13 @@ class SiteAgent:
             nome_fornecedor = ""
 
         fonte = "crawler_links"
-        if nome_fornecedor.lower().startswith("fornecedor gen"):
+        nome_fornecedor_l = nome_fornecedor.lower()
+
+        if nome_fornecedor_l.startswith("fornecedor gen"):
             fonte = "sitemap"
-        elif "mega center" in nome_fornecedor.lower():
+        elif "mega center" in nome_fornecedor_l:
             fonte = "crawler_links"
-        elif "atacadum" in nome_fornecedor.lower():
+        elif "atacadum" in nome_fornecedor_l:
             fonte = "sitemap"
 
         df_diag = pd.DataFrame(produtos).copy() if produtos else pd.DataFrame()
@@ -385,6 +417,7 @@ class SiteAgent:
     def _aplicar_diagnostico_streamlit(self, diagnostico: Dict[str, Any]) -> None:
         if st is None:
             return
+
         try:
             st.session_state["site_busca_diagnostico_df"] = diagnostico.get("diagnostico_df", pd.DataFrame())
             st.session_state["site_busca_diagnostico_total_descobertos"] = int(
@@ -402,34 +435,6 @@ class SiteAgent:
             ).strip()
         except Exception:
             pass
-
-    # -------------------------------
-    # BUSCA PÚBLICA COMPATÍVEL COM A UI
-    # -------------------------------
-    def buscar_dataframe(
-        self,
-        *,
-        base_url: str,
-        diagnostico: bool = False,
-        auth_context: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> pd.DataFrame:
-        url = self._normalizar_url(base_url)
-        fornecedor = self._detectar_fornecedor(url)
-
-        produtos = self.executar(url, **kwargs)
-        df = self.para_dataframe(produtos)
-
-        if diagnostico:
-            diag = self._diagnostico_basico(
-                url=url,
-                fornecedor=fornecedor,
-                produtos=produtos,
-                auth_context=auth_context,
-            )
-            self._aplicar_diagnostico_streamlit(diag)
-
-        return df
 
 
 # -------------------------------
