@@ -784,9 +784,9 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
         return
 
-    st.dataframe(df_final.head(100), use_container_width=True)
+    st.dataframe(df_final.head(80), use_container_width=True)
     with st.expander("Ver preview ampliado", expanded=False):
-        st.dataframe(df_final.head(300), use_container_width=True)
+        st.dataframe(df_final.head(250), use_container_width=True)
 
 
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
@@ -805,7 +805,7 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     if validacao_ok:
         if st.button(
-            "✅ Já baixei / quero seguir para conexão e envio",
+            "✅ Já baixei / seguir para conexão e envio",
             use_container_width=True,
             key="btn_confirmar_download_preview",
         ):
