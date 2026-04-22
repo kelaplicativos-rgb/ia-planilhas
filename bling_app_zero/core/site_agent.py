@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -16,10 +17,6 @@ except Exception:
     BeautifulSoup = None
 
 
-# ============================================================
-# IMPORTS BLINDADOS
-# ============================================================
-
 try:
     from bling_app_zero.core.site_crawler_cleaners import normalizar_url, safe_str
 except Exception:
@@ -27,6 +24,11 @@ except Exception:
         url = str(url or "").strip()
         if url and not url.startswith(("http://", "https://")):
             url = f"https://{url}"
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            root = f"{parsed.scheme}://{parsed.netloc}"
+            path = parsed.path.rstrip("/")
+            return f"{root}{path}" if path else root
         return url.rstrip("/")
 
     def safe_str(value: Any) -> str:
@@ -71,13 +73,40 @@ try:
     )
 except Exception:
     def pontuar_produto(**kwargs) -> int:
-        return 0
+        score = 0
+        if safe_str(kwargs.get("titulo")):
+            score += 2
+        if safe_str(kwargs.get("preco")):
+            score += 1
+        if safe_str(kwargs.get("codigo")):
+            score += 2
+        if safe_str(kwargs.get("gtin")):
+            score += 1
+        if safe_str(kwargs.get("imagens")):
+            score += 1
+        if safe_str(kwargs.get("categoria")):
+            score += 1
+        if safe_str(kwargs.get("url_produto")):
+            score += 1
+        return score
 
     def produto_final_valido(item: dict) -> bool:
         return bool(safe_str(item.get("descricao")) and safe_str(item.get("url_produto")))
 
     def titulo_valido(titulo: str, url_produto: str = "") -> bool:
-        return bool(safe_str(titulo))
+        titulo_n = safe_str(titulo)
+        if not titulo_n:
+            return False
+        if len(titulo_n) < 3:
+            return False
+        return True
+
+
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
 
 
 try:
@@ -85,7 +114,6 @@ try:
         STATUS_LOGIN_CAPTCHA_DETECTADO,
         STATUS_LOGIN_REQUERIDO,
         STATUS_SESSAO_PRONTA,
-        detectar_e_salvar_status_login,
         detectar_login_captcha,
         montar_auth_context,
         salvar_status_login_em_sessao,
@@ -142,21 +170,6 @@ except Exception:
             "motivos": [],
         }
 
-    def detectar_e_salvar_status_login(
-        *,
-        base_url: str,
-        html: str,
-        url_atual: str = "",
-        mensagem_extra: str = "",
-        fornecedor: str = "",
-    ) -> dict[str, Any]:
-        analise = detectar_login_captcha(html=html, url_atual=url_atual)
-        return {
-            **analise,
-            "mensagem": mensagem_extra,
-            "auth_context": {},
-        }
-
     def montar_auth_context(base_url: str, fornecedor: str = "") -> dict[str, Any]:
         return {}
 
@@ -171,10 +184,6 @@ except Exception:
     ) -> None:
         return None
 
-
-# ============================================================
-# HELPERS GERAIS
-# ============================================================
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -217,6 +226,7 @@ INSTITUTIONAL_SLUGS = [
     "termos-de-uso",
     "seguranca",
     "privacidade",
+    "regras-dropshipping",
 ]
 
 PRODUCT_URL_SIGNALS = [
@@ -315,15 +325,26 @@ def _log_debug(msg: str, nivel: str = "INFO") -> None:
             pass
 
 
+def _url_raiz(url: str) -> str:
+    parsed = urlparse(normalizar_url(url))
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return normalizar_url(url)
+
+
+def _host(url: str) -> str:
+    try:
+        return (urlparse(normalizar_url(url)).netloc or "").replace("www.", "").strip().lower()
+    except Exception:
+        return ""
+
+
 def _limite_tecnico(limite_links: int | None) -> int:
     limite_padrao = 8000
-
     if not isinstance(limite_links, int):
         return limite_padrao
-
     if limite_links <= 0:
         return limite_padrao
-
     return min(max(limite_links, 1), limite_padrao)
 
 
@@ -455,33 +476,10 @@ def _inferir_marca_do_titulo(titulo: str) -> str:
         return ""
 
     palavras_invalidas = {
-        "fone",
-        "fones",
-        "cabo",
-        "cabos",
-        "carregador",
-        "carregadores",
-        "caixa",
-        "som",
-        "produto",
-        "kit",
-        "para",
-        "com",
-        "sem",
-        "de",
-        "da",
-        "do",
-        "usb",
-        "bluetooth",
-        "wireless",
-        "tipo",
-        "celular",
-        "smartphone",
-        "iphone",
-        "hdmi",
-        "ouvido",
-        "completo",
-        "fonte",
+        "fone", "fones", "cabo", "cabos", "carregador", "carregadores", "caixa", "som",
+        "produto", "kit", "para", "com", "sem", "de", "da", "do", "usb", "bluetooth",
+        "wireless", "tipo", "celular", "smartphone", "iphone", "hdmi", "ouvido",
+        "completo", "fonte",
     }
 
     tokens = re.split(r"\s+", titulo)
@@ -563,13 +561,6 @@ def _df_saida(rows: list[dict]) -> pd.DataFrame:
     return df[colunas_ordenadas].reset_index(drop=True)
 
 
-def _limpar_dict_debug(data: dict[str, Any]) -> dict[str, str]:
-    saida: dict[str, str] = {}
-    for chave, valor in data.items():
-        saida[chave] = safe_str(valor)
-    return saida
-
-
 def _score_produto(item: dict) -> int:
     return pontuar_produto(
         titulo=safe_str(item.get("descricao")),
@@ -588,11 +579,6 @@ def _campos_criticos_ok(final: dict[str, Any]) -> tuple[bool, list[str]]:
     campos = {
         "codigo": safe_str(final.get("codigo")),
         "descricao": safe_str(final.get("descricao")),
-        "descricao_curta": _descricao_curta_padrao(final),
-        "quantidade": _quantidade_padrao(final),
-        "categoria": safe_str(final.get("categoria")),
-        "marca": safe_str(final.get("marca")),
-        "url_imagens": safe_str(final.get("url_imagens")),
         "url_produto": safe_str(final.get("url_produto")),
     }
 
@@ -600,7 +586,7 @@ def _campos_criticos_ok(final: dict[str, Any]) -> tuple[bool, list[str]]:
         if not valor:
             faltando.append(chave)
 
-    criticos_duros = {"descricao", "url_produto", "url_imagens"}
+    criticos_duros = {"descricao", "url_produto"}
     if any(campo in faltando for campo in criticos_duros):
         return False, faltando
 
@@ -609,17 +595,8 @@ def _campos_criticos_ok(final: dict[str, Any]) -> tuple[bool, list[str]]:
 
 def _motivo_rejeicao(final: dict) -> str:
     descricao = safe_str(final.get("descricao"))
-    preco = safe_str(final.get("preco"))
-    codigo = safe_str(final.get("codigo"))
-    gtin = safe_str(final.get("gtin"))
-    imagens = safe_str(final.get("url_imagens"))
-    categoria = safe_str(final.get("categoria"))
-    marca = safe_str(final.get("marca"))
-    quantidade = safe_str(final.get("quantidade"))
     url_produto = safe_str(final.get("url_produto"))
-
     url_n = url_produto.lower()
-    categoria_n = categoria.lower()
 
     if not descricao:
         return "sem_descricao"
@@ -630,133 +607,32 @@ def _motivo_rejeicao(final: dict) -> str:
     if url_n in {"", "/"} or url_n.endswith("/conta") or url_n.endswith("/login"):
         return "url_institucional"
 
-    if any(x in url_n for x in CATEGORY_URL_SIGNALS):
+    if _url_eh_categoria(url_n):
         return "url_de_categoria"
-
-    if categoria_n and all(ch in " 0123456789>-" for ch in categoria_n):
-        return "categoria_invalida"
 
     campos_ok, faltando = _campos_criticos_ok(final)
     if not campos_ok:
         return f"faltando_campos_criticos_{'_'.join(faltando)}"
 
-    sinais = 0
-    if preco:
-        sinais += 1
-    if codigo:
-        sinais += 1
-    if gtin:
-        sinais += 1
-    if imagens:
-        sinais += 1
-    if categoria:
-        sinais += 1
-    if marca:
-        sinais += 1
-    if quantidade:
-        sinais += 1
-
-    if sinais == 0:
+    score = _score_produto(final)
+    if score <= 0:
         return "sem_sinais_minimos_de_produto"
 
-    score = _score_produto(final)
     return f"reprovado_na_validacao_final_score_{score}"
-
-
-def _registrar_diag(
-    diagnosticos: list[dict],
-    url_produto: str,
-    heuristica: dict | None = None,
-    gpt: dict | None = None,
-    final: dict | None = None,
-    status: str = "",
-    motivo: str = "",
-    erro: str = "",
-) -> None:
-    item = {
-        "url_produto": safe_str(url_produto),
-        "status": safe_str(status),
-        "motivo": safe_str(motivo),
-        "erro": safe_str(erro),
-    }
-
-    if heuristica is not None:
-        heuristica_limpa = _limpar_dict_debug(heuristica)
-        for chave, valor in heuristica_limpa.items():
-            item[f"heuristica_{chave}"] = valor
-
-    if gpt is not None:
-        gpt_limpo = _limpar_dict_debug(gpt)
-        for chave, valor in gpt_limpo.items():
-            item[f"gpt_{chave}"] = valor
-
-    if final is not None:
-        final_limpo = _limpar_dict_debug(final)
-        for chave, valor in final_limpo.items():
-            item[f"final_{chave}"] = valor
-        item["final_descricao_curta"] = _descricao_curta_padrao(final)
-        item["final_quantidade_normalizada"] = _quantidade_padrao(final)
-        item["final_score"] = str(_score_produto(final))
-        _, faltando = _campos_criticos_ok(final)
-        item["final_campos_criticos_faltando"] = ", ".join(faltando)
-
-    diagnosticos.append(item)
-
-
-def _salvar_diagnostico_em_sessao(
-    diagnosticos: list[dict],
-    produtos_descobertos: list[str],
-    rows_validos: list[dict],
-    login_status: dict[str, Any] | None = None,
-    fonte_descoberta: str = "",
-) -> None:
-    st = _streamlit_ctx()
-    if st is None:
-        return
-
-    try:
-        df_diag = pd.DataFrame(diagnosticos).fillna("")
-    except Exception:
-        df_diag = pd.DataFrame()
-
-    st.session_state["site_busca_diagnostico_df"] = df_diag
-    st.session_state["site_busca_diagnostico_total_descobertos"] = len(produtos_descobertos)
-    st.session_state["site_busca_diagnostico_total_validos"] = len(rows_validos)
-    st.session_state["site_busca_diagnostico_total_rejeitados"] = max(
-        len(diagnosticos) - len(rows_validos),
-        0,
-    )
-    st.session_state["site_busca_login_status"] = login_status or {}
-    st.session_state["site_busca_fonte_descoberta"] = safe_str(fonte_descoberta)
-
-
-def _atualizar_progresso_main_thread(
-    processados: int,
-    total: int,
-    ultimo_status: str,
-    progress_bar,
-    status_box,
-    contador_box,
-) -> None:
-    if total <= 0:
-        total = 1
-
-    percentual = int((processados / total) * 100)
-    percentual = max(0, min(percentual, 100))
-
-    if progress_bar is not None:
-        progress_bar.progress(percentual)
-
-    if contador_box is not None:
-        contador_box.write(f"Processando {processados} de {total}")
-
-    if status_box is not None and ultimo_status:
-        status_box.info(ultimo_status)
 
 
 def _fornecedor_slug_do_contexto(base_url: str, auth_context: dict[str, Any] | None) -> str:
     if isinstance(auth_context, dict):
         slug = safe_str(auth_context.get("fornecedor_slug"))
+        if slug:
+            return slug
+    profile = None
+    try:
+        profile = get_supplier_profile(base_url)
+    except Exception:
+        profile = None
+    if profile is not None:
+        slug = safe_str(getattr(profile, "slug", ""))
         if slug:
             return slug
     base = safe_str(base_url).lower()
@@ -828,8 +704,8 @@ def _normalizar_url_candidata(base_url: str, href: str) -> str:
 
 def _url_mesmo_dominio(base_url: str, candidata: str) -> bool:
     try:
-        host_base = safe_str(urlparse(normalizar_url(base_url)).netloc).replace("www.", "")
-        host_cand = safe_str(urlparse(normalizar_url(candidata)).netloc).replace("www.", "")
+        host_base = _host(base_url)
+        host_cand = _host(candidata)
         return bool(host_base and host_cand and host_base == host_cand)
     except Exception:
         return False
@@ -848,6 +724,52 @@ def _url_eh_admin(base_url: str) -> bool:
 def _url_eh_institucional(url: str) -> bool:
     url_n = safe_str(url).lower()
     return any(slug in url_n for slug in INSTITUTIONAL_SLUGS)
+
+
+def _profile_for_url(url: str):
+    try:
+        return get_supplier_profile(url)
+    except Exception:
+        return None
+
+
+def _url_eh_categoria(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    profile = _profile_for_url(url_n)
+
+    if any(s in url_n for s in CATEGORY_URL_SIGNALS):
+        return True
+
+    if profile is not None:
+        hints = getattr(profile, "category_path_hints", ()) or ()
+        for hint in hints:
+            if safe_str(hint).lower() and safe_str(hint).lower() in url_n:
+                return True
+
+        category_keywords = getattr(profile, "category_url_keywords", ()) or ()
+        for token in category_keywords:
+            token_n = safe_str(token).lower()
+            if token_n and token_n in url_n:
+                return True
+
+    return False
+
+
+def _url_tem_sinal_forte_de_produto(url: str) -> bool:
+    url_n = safe_str(url).lower()
+    profile = _profile_for_url(url_n)
+
+    if any(s in url_n for s in PRODUCT_URL_SIGNALS):
+        return True
+
+    if profile is not None:
+        product_keywords = getattr(profile, "product_url_keywords", ()) or ()
+        for token in product_keywords:
+            token_n = safe_str(token).lower()
+            if token_n and token_n in url_n:
+                return True
+
+    return False
 
 
 def _score_url_produto(url: str, anchor_text: str = "", contexto_texto: str = "") -> int:
@@ -870,11 +792,11 @@ def _score_url_produto(url: str, anchor_text: str = "", contexto_texto: str = ""
     ):
         return -999
 
-    if any(s in url_n for s in PRODUCT_URL_SIGNALS):
+    if _url_tem_sinal_forte_de_produto(url_n):
         score += 8
 
-    if any(s in url_n for s in CATEGORY_URL_SIGNALS):
-        score -= 5
+    if _url_eh_categoria(url_n):
+        score -= 6
 
     ultimo_slug = safe_str(urlparse(url_n).path.split("/")[-1])
     if ultimo_slug and "-" in ultimo_slug and len(ultimo_slug) >= 10:
@@ -890,7 +812,7 @@ def _score_url_produto(url: str, anchor_text: str = "", contexto_texto: str = ""
 
 
 def _url_parece_produto(url: str) -> bool:
-    return _score_url_produto(url) >= 2
+    return _score_url_produto(url) >= 2 and not _url_eh_categoria(url)
 
 
 def _html_parece_pagina_produto_real(url: str, html: str) -> bool:
@@ -901,6 +823,9 @@ def _html_parece_pagina_produto_real(url: str, html: str) -> bool:
         return False
 
     if _url_eh_institucional(url_n):
+        return False
+
+    if _url_eh_categoria(url_n):
         return False
 
     if _score_url_produto(url_n) >= 6 and _score_html_produto(html_n) >= 1:
@@ -1069,7 +994,7 @@ def _html_base_parece_listagem(html: str, base_url: str = "") -> bool:
     if _html_parece_pagina_produto_real(base_url, html):
         return False
 
-    if any(s in url_n for s in CATEGORY_URL_SIGNALS):
+    if _url_eh_categoria(base_url):
         return True
 
     qtd_links = len(_extrair_links_produto_html(base_url or "https://example.com", html, 200))
@@ -1115,30 +1040,127 @@ def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
             if idx > 0:
                 return safe_str(path_parts[idx - 1]).replace("-", " ").title()
 
+    profile = _profile_for_url(url_produto)
+    if profile is not None:
+        for hint in getattr(profile, "category_path_hints", ()) or ():
+            hint_n = safe_str(hint).strip("/")
+            for p in path_parts:
+                if safe_str(p).lower() == hint_n.lower():
+                    return safe_str(p).replace("-", " ").title()
+
+    for p in path_parts[:-1]:
+        p_n = safe_str(p)
+        if p_n and len(p_n) > 2 and not p_n.isdigit():
+            if p_n.lower() not in {"produto", "produtos", "product", "products"}:
+                return p_n.replace("-", " ").title()
+
+    return ""
+
+
+def _extrair_imagens_basicas(url_produto: str, html_produto: str) -> str:
+    imgs_ok: list[str] = []
+    vistos: set[str] = set()
+
+    if BeautifulSoup is not None:
+        try:
+            soup = BeautifulSoup(html_produto, "html.parser")
+            for img in soup.find_all("img"):
+                src = safe_str(img.get("src") or img.get("data-src") or img.get("data-lazy-src"))
+                img_url = _normalizar_url_candidata(url_produto, src)
+                img_l = img_url.lower()
+                if not img_url:
+                    continue
+                if not _url_tem_extensao_asset(img_url):
+                    continue
+                if any(
+                    x in img_l
+                    for x in [
+                        "sprite", "icon", "logo", "banner", "placeholder",
+                        "facebook", "tracking", "pixel",
+                    ]
+                ):
+                    continue
+                if img_url in vistos:
+                    continue
+                vistos.add(img_url)
+                imgs_ok.append(img_url)
+                if len(imgs_ok) >= 8:
+                    break
+        except Exception:
+            pass
+
+    return "|".join(imgs_ok)
+
+
+def _extrair_codigo_basico(url_produto: str, html_produto: str) -> str:
+    html_n = safe_str(html_produto)
+
+    patterns = [
+        r"(?:sku|c[oó]digo|codigo)[^A-Za-z0-9]{0,10}([A-Za-z0-9\-_]{3,40})",
+        r'"sku"\s*:\s*"([^"]{3,40})"',
+        r'"productid"\s*:\s*"([^"]{3,40})"',
+        r'"product_id"\s*:\s*"([^"]{3,40})"',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, html_n, flags=re.IGNORECASE)
+        if m:
+            codigo = safe_str(m.group(1))
+            if codigo:
+                return codigo
+
+    slug = safe_str(urlparse(url_produto).path.split("/")[-1])
+    if slug and "-" in slug and len(slug) >= 8:
+        return slug[:40]
+
+    return ""
+
+
+def _extrair_titulo_basico(html_produto: str) -> str:
+    html_n = safe_str(html_produto)
+
+    m_og = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html_n, flags=re.IGNORECASE)
+    if m_og:
+        return safe_str(m_og.group(1))
+
+    m_title = re.search(r"<title[^>]*>(.*?)</title>", html_n, flags=re.IGNORECASE | re.DOTALL)
+    if m_title:
+        titulo = re.sub(r"\s+", " ", safe_str(m_title.group(1))).strip()
+        if titulo:
+            return titulo
+
+    if BeautifulSoup is not None:
+        try:
+            soup = BeautifulSoup(html_n, "html.parser")
+            for sel in ["h1", "[itemprop='name']", "[itemprop=\"name\"]"]:
+                el = soup.select_one(sel)
+                if el:
+                    texto = safe_str(el.get_text(" ", strip=True))
+                    if texto:
+                        return texto
+        except Exception:
+            pass
+
     return ""
 
 
 def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heuristica: dict[str, Any]) -> dict[str, Any]:
     base = dict(heuristica or {})
-    html_n = safe_str(html_produto)
 
     if not base.get("url_produto"):
         base["url_produto"] = url_produto
 
     if not safe_str(base.get("descricao")) and not safe_str(base.get("titulo")):
-        m_title = re.search(r"<title[^>]*>(.*?)</title>", html_n, flags=re.IGNORECASE | re.DOTALL)
-        if m_title:
-            titulo = re.sub(r"\s+", " ", safe_str(m_title.group(1))).strip()
-            if titulo:
-                base["titulo"] = titulo
+        titulo = _extrair_titulo_basico(html_produto)
+        if titulo:
+            base["titulo"] = titulo
 
     if not safe_str(base.get("preco")):
-        m_preco = re.search(r"R\$\s*[\d\.\,]+", html_n, flags=re.IGNORECASE)
+        m_preco = re.search(r"R\$\s*[\d\.\,]+", safe_str(html_produto), flags=re.IGNORECASE)
         if m_preco:
             base["preco"] = safe_str(m_preco.group(0))
 
     if not safe_str(base.get("gtin")):
-        m_gtin = re.search(r"\b(\d{8}|\d{12,14})\b", html_n)
+        m_gtin = re.search(r"\b(\d{8}|\d{12,14})\b", safe_str(html_produto))
         if m_gtin:
             base["gtin"] = safe_str(m_gtin.group(1))
 
@@ -1148,46 +1170,17 @@ def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heurist
             base["categoria"] = categoria
 
     if not safe_str(base.get("url_imagens")):
-        imgs_ok: list[str] = []
-        vistos: set[str] = set()
+        imagens = _extrair_imagens_basicas(url_produto, html_produto)
+        if imagens:
+            base["url_imagens"] = imagens
 
-        if BeautifulSoup is not None:
-            try:
-                soup = BeautifulSoup(html_n, "html.parser")
-                for img in soup.find_all("img"):
-                    src = safe_str(img.get("src") or img.get("data-src") or img.get("data-lazy-src"))
-                    img_url = _normalizar_url_candidata(url_produto, src)
-                    img_l = img_url.lower()
-                    if not img_url:
-                        continue
-                    if _url_tem_extensao_asset(img_url) is False:
-                        continue
-                    if any(
-                        x in img_l
-                        for x in [
-                            "sprite", "icon", "logo", "banner", "placeholder",
-                            "facebook", "tracking", "pixel",
-                        ]
-                    ):
-                        continue
-                    if img_url in vistos:
-                        continue
-                    vistos.add(img_url)
-                    imgs_ok.append(img_url)
-                    if len(imgs_ok) >= 8:
-                        break
-            except Exception:
-                pass
-
-        if imgs_ok:
-            base["url_imagens"] = "|".join(imgs_ok)
+    if not safe_str(base.get("codigo")):
+        codigo = _extrair_codigo_basico(url_produto, html_produto)
+        if codigo:
+            base["codigo"] = codigo
 
     return base
 
-
-# ============================================================
-# AUTENTICAÇÃO / CONTEXTO
-# ============================================================
 
 def _auth_context_tem_dados_http(auth_context: dict[str, Any] | None) -> bool:
     if not isinstance(auth_context, dict):
@@ -1377,7 +1370,7 @@ def _primeiro_fetch_para_deteccao(
     base_url: str,
     auth_context: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
-    alvo = _url_produtos_contexto(base_url, auth_context)
+    alvo = _url_produtos_contexto(base_url, auth_context=auth_context)
 
     if _auth_context_valido(auth_context):
         try:
@@ -1449,22 +1442,33 @@ def _detectar_bloqueio_login(
             "auth_context": auth_context or {},
         }
 
-    analise = detectar_e_salvar_status_login(
-        base_url=base_url,
-        html=html,
-        url_atual=url_final,
-        mensagem_extra="",
-        fornecedor=fornecedor,
-    )
-
+    analise = detectar_login_captcha(html=html, url_atual=url_final)
     status = safe_str(analise.get("status"))
-    if status in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
-        _log_debug(
-            f"Possível bloqueio de login detectado | url={base_url} | status={status}",
-            nivel="INFO",
-        )
+    mensagem = ""
 
-    return analise
+    if status == STATUS_LOGIN_CAPTCHA_DETECTADO:
+        mensagem = "Login com captcha detectado."
+    elif status == STATUS_LOGIN_REQUERIDO:
+        mensagem = "Login detectado."
+
+    if status in {STATUS_LOGIN_CAPTCHA_DETECTADO, STATUS_LOGIN_REQUERIDO}:
+        try:
+            salvar_status_login_em_sessao(
+                base_url=_url_raiz(base_url),
+                fornecedor=fornecedor,
+                status=status,
+                mensagem=mensagem,
+                exige_login=bool(analise.get("exige_login")),
+                captcha_detectado=bool(analise.get("captcha_detectado")),
+            )
+        except Exception:
+            pass
+
+    return {
+        **analise,
+        "mensagem": mensagem,
+        "auth_context": auth_context or {},
+    }
 
 
 def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1473,7 +1477,7 @@ def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = 
 
     try:
         fornecedor = _fornecedor_slug_do_contexto(base_url, auth_context)
-        contexto_salvo = montar_auth_context(base_url=base_url, fornecedor=fornecedor)
+        contexto_salvo = montar_auth_context(base_url=_url_raiz(base_url), fornecedor=fornecedor)
         if _auth_context_valido(contexto_salvo):
             _log_debug(
                 f"Sessão HTTP autenticada reutilizada com sucesso | url={base_url} | fornecedor={fornecedor}",
@@ -1488,10 +1492,6 @@ def _resolver_auth_context(base_url: str, auth_context: dict[str, Any] | None = 
 
     return auth_context or {}
 
-
-# ============================================================
-# FALLBACKS PRO
-# ============================================================
 
 def _executar_fetch_html(url_produto: str, auth_context: dict[str, Any] | None = None) -> str:
     if _auth_context_valido(auth_context):
@@ -1711,7 +1711,7 @@ def _descoberta_http_direta(
 
     if _html_parece_pagina_produto_real(base_url, html_base):
         base_normalizada = normalizar_url(base_url)
-        if base_normalizada:
+        if base_normalizada and not _url_eh_categoria(base_normalizada):
             vistos.add(base_normalizada)
             saida.append(base_normalizada)
 
@@ -1764,6 +1764,28 @@ def _deduplicar_urls(urls: list[str], limite: int | None = None) -> list[str]:
     return saida
 
 
+def _filtrar_urls_produto(urls: list[str], limite: int) -> list[str]:
+    saida: list[str] = []
+    vistos: set[str] = set()
+
+    for url in urls:
+        url_n = safe_str(url)
+        if not url_n:
+            continue
+        if not _url_parece_produto(url_n):
+            continue
+        if _url_eh_categoria(url_n):
+            continue
+        if url_n in vistos:
+            continue
+        vistos.add(url_n)
+        saida.append(url_n)
+        if len(saida) >= limite:
+            break
+
+    return saida
+
+
 def _descobrir_produtos_via_sitemap_com_contexto(
     base_url: str,
     limite: int,
@@ -1772,16 +1794,18 @@ def _descobrir_produtos_via_sitemap_com_contexto(
         return []
 
     try:
+        raiz = _url_raiz(base_url)
         produtos = descobrir_produtos_via_sitemap(
-            base_url=base_url,
+            base_url=raiz,
             limite=limite,
             max_sitemaps=50,
             max_urls_total=max(limite * 10, 5000),
         )
         produtos = [safe_str(url) for url in produtos if safe_str(url)]
+        produtos = _filtrar_urls_produto(produtos, limite=limite)
         if produtos:
             _log_debug(
-                f"Descoberta via sitemap encontrou {len(produtos)} links de produto | url={base_url}",
+                f"Descoberta via sitemap encontrou {len(produtos)} links de produto | url={raiz}",
                 nivel="INFO",
             )
         return _deduplicar_urls(produtos, limite=limite)
@@ -1800,6 +1824,7 @@ def _descobrir_produtos_com_contexto(
     auth_context: dict[str, Any] | None = None,
 ) -> tuple[list[str], str]:
     alvo_descoberta = _url_produtos_contexto(base_url, auth_context)
+    raiz_alvo = _url_raiz(alvo_descoberta)
 
     if _url_eh_admin(alvo_descoberta) and not _auth_context_valido(auth_context):
         _log_debug(
@@ -1808,9 +1833,11 @@ def _descobrir_produtos_com_contexto(
         )
         return [], ""
 
-    # 1) sitemap primeiro
-    if not _url_eh_admin(alvo_descoberta):
-        produtos_sitemap = _descobrir_produtos_via_sitemap_com_contexto(alvo_descoberta, limite=limite)
+    profile = _profile_for_url(raiz_alvo)
+    discovery_mode = safe_str(getattr(profile, "preferred_discovery_mode", "")) if profile is not None else ""
+
+    if discovery_mode in {"sitemap_first", "auto", ""} and not _url_eh_admin(alvo_descoberta):
+        produtos_sitemap = _descobrir_produtos_via_sitemap_com_contexto(raiz_alvo, limite=limite)
         if produtos_sitemap:
             return produtos_sitemap, "sitemap"
 
@@ -1820,6 +1847,8 @@ def _descobrir_produtos_com_contexto(
         candidatos_tentativa.append((alvo_descoberta, auth_context))
 
     candidatos_tentativa.append((alvo_descoberta, None))
+    if raiz_alvo != alvo_descoberta:
+        candidatos_tentativa.append((raiz_alvo, None))
 
     vistos_urls: set[str] = set()
     saida: list[str] = []
@@ -1832,20 +1861,23 @@ def _descobrir_produtos_com_contexto(
 
         if descobrir_produtos_no_dominio is not None:
             try:
-                produtos = descobrir_produtos_no_dominio(
-                    base_url=alvo,
-                    termo=termo,
-                    max_paginas=400,
-                    max_produtos=limite,
-                    max_segundos=900,
-                    auth_context=ctx,
-                )
+                kwargs: dict[str, Any] = {
+                    "base_url": alvo,
+                    "termo": termo,
+                    "max_paginas": 400,
+                    "max_produtos": limite,
+                    "max_segundos": 900,
+                }
+                if ctx is not None:
+                    kwargs["auth_context"] = ctx
+
+                produtos = descobrir_produtos_no_dominio(**kwargs)
                 if isinstance(produtos, list) and produtos:
                     for url in produtos:
                         url_n = safe_str(url)
                         if not url_n:
                             continue
-                        if not _url_parece_produto(url_n) and url_n != normalizar_url(alvo):
+                        if not _url_parece_produto(url_n):
                             continue
                         if url_n not in saida:
                             saida.append(url_n)
@@ -1886,10 +1918,6 @@ def _descobrir_produtos_com_contexto(
 
     return [], ""
 
-
-# ============================================================
-# FUNÇÃO PRINCIPAL
-# ============================================================
 
 def buscar_produtos_site_com_gpt(
     base_url: str,
@@ -1966,7 +1994,7 @@ def buscar_produtos_site_com_gpt(
 
     if auth_http_ok:
         salvar_status_login_em_sessao(
-            base_url=base_url,
+            base_url=_url_raiz(base_url),
             fornecedor=fornecedor,
             status=STATUS_SESSAO_PRONTA,
             mensagem="Sessão HTTP autenticada pronta para uso.",
@@ -1998,7 +2026,7 @@ def buscar_produtos_site_com_gpt(
                 "A IA não consegue captar produtos sem acesso real ao conteúdo protegido."
             )
             salvar_status_login_em_sessao(
-                base_url=base_url,
+                base_url=_url_raiz(base_url),
                 fornecedor=fornecedor,
                 status=STATUS_LOGIN_REQUERIDO,
                 mensagem=mensagem,
@@ -2013,7 +2041,7 @@ def buscar_produtos_site_com_gpt(
                 "Busca pública não encontrou catálogo."
             )
             salvar_status_login_em_sessao(
-                base_url=base_url,
+                base_url=_url_raiz(base_url),
                 fornecedor=fornecedor,
                 status=login_status_normalizado or STATUS_LOGIN_REQUERIDO,
                 mensagem=mensagem,
@@ -2027,30 +2055,9 @@ def buscar_produtos_site_com_gpt(
                 status_box.warning("Nenhum produto encontrado na descoberta inicial do domínio.")
             _log_debug("Nenhum produto encontrado na descoberta inicial do domínio.", nivel="ERRO")
 
-        if diagnostico:
-            _salvar_diagnostico_em_sessao(
-                diagnosticos=[],
-                produtos_descobertos=[],
-                rows_validos=[],
-                login_status=login_status,
-                fonte_descoberta=fonte_descoberta,
-            )
         return pd.DataFrame()
 
-    produtos_limpos: list[str] = []
-    vistos_descoberta: set[str] = set()
-    for url in produtos:
-        url_n = safe_str(url)
-        if not url_n:
-            continue
-        if not _url_parece_produto(url_n) and url_n != normalizar_url(base_url):
-            continue
-        if url_n in vistos_descoberta:
-            continue
-        vistos_descoberta.add(url_n)
-        produtos_limpos.append(url_n)
-
-    produtos = produtos_limpos
+    produtos = _filtrar_urls_produto(produtos, limite=limite)
     total = len(produtos)
 
     rows: list[dict] = []
@@ -2058,9 +2065,6 @@ def buscar_produtos_site_com_gpt(
 
     vistos_aprovados: set[str] = set()
     aprovados_lock = threading.Lock()
-
-    diagnosticos: list[dict] = []
-    diag_lock = threading.Lock()
 
     login_bloqueios = 0
 
@@ -2104,69 +2108,32 @@ def buscar_produtos_site_com_gpt(
                         nivel="ERRO",
                     )
 
-                ultimo_status = f"🌐 Processando produto {processados}/{total}\n\n{url_produto}"
-                _atualizar_progresso_main_thread(
-                    processados=processados,
-                    total=total,
-                    ultimo_status=ultimo_status,
-                    progress_bar=progress_bar,
-                    status_box=status_box,
-                    contador_box=contador_box,
-                )
+                if total <= 0:
+                    total = 1
+                percentual = int((processados / total) * 100)
+                percentual = max(0, min(percentual, 100))
+
+                if progress_bar is not None:
+                    progress_bar.progress(percentual)
+                if contador_box is not None:
+                    contador_box.write(f"Processando {processados} de {total}")
+                if status_box is not None:
+                    status_box.info(f"🌐 Processando produto {processados}/{total}\n\n{url_produto}")
 
                 if status == "aprovado":
                     row = payload.get("row", {})
-                    final = payload.get("final", {})
-                    heuristica = payload.get("heuristica", {})
-                    gpt = payload.get("gpt", {})
 
                     with aprovados_lock:
                         if url_produto in vistos_aprovados:
-                            if diagnostico:
-                                with diag_lock:
-                                    _registrar_diag(
-                                        diagnosticos,
-                                        url_produto=url_produto,
-                                        heuristica=heuristica,
-                                        gpt=gpt,
-                                        final=final,
-                                        status="rejeitado",
-                                        motivo="url_duplicada",
-                                    )
                             continue
                         vistos_aprovados.add(url_produto)
 
                     with rows_lock:
                         rows.append(row)
-
-                    if diagnostico:
-                        with diag_lock:
-                            _registrar_diag(
-                                diagnosticos,
-                                url_produto=url_produto,
-                                heuristica=heuristica,
-                                gpt=gpt,
-                                final=final,
-                                status="aprovado",
-                                motivo="produto_valido",
-                            )
                     continue
 
                 if status == "bloqueado_login":
                     login_bloqueios += 1
-
-                if diagnostico:
-                    with diag_lock:
-                        _registrar_diag(
-                            diagnosticos,
-                            url_produto=url_produto,
-                            heuristica=payload.get("heuristica"),
-                            gpt=payload.get("gpt"),
-                            final=payload.get("final"),
-                            status=status,
-                            motivo=safe_str(payload.get("motivo")),
-                            erro=safe_str(payload.get("erro")),
-                        )
 
     except Exception as exc:
         _log_debug(f"Falha geral no processamento paralelo: {repr(exc)}", nivel="ERRO")
@@ -2178,7 +2145,7 @@ def buscar_produtos_site_com_gpt(
             "para continuar a captura no deploy atual."
         )
         salvar_status_login_em_sessao(
-            base_url=base_url,
+            base_url=_url_raiz(base_url),
             fornecedor=fornecedor,
             status=STATUS_LOGIN_CAPTCHA_DETECTADO,
             mensagem=mensagem_bloqueio,
@@ -2202,15 +2169,6 @@ def buscar_produtos_site_com_gpt(
             status_box.warning("Busca finalizada sem produtos válidos por login/captcha sem sessão HTTP utilizável.")
         else:
             status_box.warning("Busca finalizada sem produtos válidos.")
-
-    if diagnostico:
-        _salvar_diagnostico_em_sessao(
-            diagnosticos=diagnosticos,
-            produtos_descobertos=produtos,
-            rows_validos=rows,
-            login_status=login_status,
-            fonte_descoberta=fonte_descoberta,
-        )
 
     _log_debug(
         (
