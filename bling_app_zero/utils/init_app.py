@@ -1,86 +1,149 @@
-
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import streamlit as st
 
 
 # ============================================================
-# PLAYWRIGHT CONTROLE
+# PLAYWRIGHT / MODO HÍBRIDO
 # ============================================================
 
 PLAYWRIGHT_MARKER_DIR = Path("bling_app_zero/output")
 PLAYWRIGHT_MARKER_DIR.mkdir(parents=True, exist_ok=True)
 
 PLAYWRIGHT_OK_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_ok.marker"
+PLAYWRIGHT_FAIL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_fail.marker"
 
 
 def _log(msg: str) -> None:
     try:
         from bling_app_zero.ui.app_helpers import log_debug  # type: ignore
+
         log_debug(msg)
     except Exception:
         print(f"[INIT_APP] {msg}")
 
 
-def _playwright_instalado() -> bool:
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "sim"}
+
+
+def _playwright_modulo_instalado() -> bool:
     try:
-        import playwright  # noqa
+        import playwright  # noqa: F401
+
         return True
     except Exception:
         return False
 
 
-def _browser_ok() -> bool:
+def _playwright_browser_ok() -> bool:
+    """
+    Valida o browser APENAS se o uso de Playwright estiver explicitamente habilitado.
+    Não tenta instalar nada.
+    Não deve travar bootstrap do app.
+    """
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
             browser.close()
         return True
-    except Exception:
+    except Exception as exc:
+        _log(f"[PLAYWRIGHT] Browser indisponível no ambiente: {exc}")
         return False
 
 
-def _instalar_browser():
+def _detectar_modo_crawler() -> dict[str, object]:
     """
-    Resolve erro clássico do Streamlit Cloud:
-    Playwright instalado, mas Chromium não.
+    Define o modo de operação do crawler sem instalar Chromium no boot.
+
+    Regras:
+    - HTTP/Híbrido é o padrão.
+    - Playwright só entra se o ambiente permitir E se estiver habilitado por env.
+    - Nunca quebrar a inicialização por causa de browser.
     """
+    playwright_habilitado = _bool_env("BLING_ENABLE_PLAYWRIGHT", default=False)
+    modulo_instalado = _playwright_modulo_instalado()
 
-    if not _playwright_instalado():
+    status = {
+        "playwright_habilitado": playwright_habilitado,
+        "playwright_modulo_instalado": modulo_instalado,
+        "playwright_browser_ok": False,
+        "crawler_runtime_mode": "http_hybrid",
+        "crawler_browser_disponivel": False,
+        "crawler_forcar_http": True,
+    }
+
+    if not playwright_habilitado:
+        _log("[PLAYWRIGHT] Desabilitado no bootstrap. Sistema em modo HTTP híbrido.")
+        return status
+
+    if not modulo_instalado:
+        _log("[PLAYWRIGHT] Módulo não instalado. Sistema em modo HTTP híbrido.")
+        return status
+
+    browser_ok = _playwright_browser_ok()
+    status["playwright_browser_ok"] = browser_ok
+    status["crawler_browser_disponivel"] = browser_ok
+    status["crawler_forcar_http"] = not browser_ok
+
+    if browser_ok:
+        status["crawler_runtime_mode"] = "hybrid_browser"
+        try:
+            PLAYWRIGHT_OK_MARKER.write_text("ok", encoding="utf-8")
+        except Exception:
+            pass
+        _log("[PLAYWRIGHT] Browser validado. Sistema em modo híbrido com navegador opcional.")
+    else:
+        try:
+            PLAYWRIGHT_FAIL_MARKER.write_text("fail", encoding="utf-8")
+        except Exception:
+            pass
+        _log("[PLAYWRIGHT] Browser não validado. Fallback HTTP híbrido ativo.")
+
+    return status
+
+
+def _bootstrap_crawler_runtime() -> None:
+    """
+    Faz o bootstrap uma única vez por sessão.
+    Não instala Chromium.
+    Não roda subprocess.
+    Não derruba o app.
+    """
+    if st.session_state.get("_crawler_runtime_bootstrap_done"):
         return
 
-    if PLAYWRIGHT_OK_MARKER.exists():
-        return
+    st.session_state["_crawler_runtime_bootstrap_done"] = True
 
-    if _browser_ok():
-        PLAYWRIGHT_OK_MARKER.write_text("ok")
-        return
+    status = _detectar_modo_crawler()
+    for chave, valor in status.items():
+        st.session_state[chave] = valor
 
-    _log("Instalando Chromium do Playwright...")
+    st.session_state["site_runtime_modo"] = str(status.get("crawler_runtime_mode", "http_hybrid"))
+    st.session_state["site_runtime_http_first"] = True
+    st.session_state["site_runtime_browser_opcional"] = bool(status.get("crawler_browser_disponivel", False))
 
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=600,
-        )
-
-        if _browser_ok():
-            PLAYWRIGHT_OK_MARKER.write_text("ok")
-            _log("Playwright Chromium OK")
-        else:
-            _log("Falha ao validar Chromium após instalação")
-
-    except Exception as e:
-        _log(f"Erro ao instalar Chromium: {e}")
+    _log(
+        "[CRAWLER] Bootstrap concluído | "
+        f"modo={st.session_state['site_runtime_modo']} | "
+        f"http_first={st.session_state['site_runtime_http_first']} | "
+        f"browser_opcional={st.session_state['site_runtime_browser_opcional']}"
+    )
 
 
 # ============================================================
@@ -89,16 +152,14 @@ def _instalar_browser():
 
 def init_app() -> None:
     """
-    Inicialização global do estado do app
+    Inicialização global do estado do app.
     """
 
     # ============================================================
-    # BOOTSTRAP PLAYWRIGHT (CRÍTICO)
+    # BOOTSTRAP CRAWLER (SEM INSTALAR CHROMIUM)
     # ============================================================
 
-    if "_playwright_bootstrap" not in st.session_state:
-        st.session_state["_playwright_bootstrap"] = True
-        _instalar_browser()
+    _bootstrap_crawler_runtime()
 
     # ============================================================
     # ETAPA PRINCIPAL
