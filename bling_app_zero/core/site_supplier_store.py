@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -49,9 +50,7 @@ def _infer_name_from_url(url: str) -> str:
 
 
 def _default_payload() -> Dict[str, Any]:
-    return {
-        "fornecedores": [],
-    }
+    return {"fornecedores": []}
 
 
 def _normalize_supplier(item: Any) -> Optional[Dict[str, Any]]:
@@ -87,22 +86,30 @@ def _normalize_supplier(item: Any) -> Optional[Dict[str, Any]]:
 
 
 def load_site_suppliers() -> List[Dict[str, Any]]:
-    if not SUPPLIERS_FILE.exists():
-        save_site_suppliers([])
-        return []
-
     try:
-        data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
+        if not SUPPLIERS_FILE.exists():
+            save_site_suppliers([])
+            return []
+
+        raw = SUPPLIERS_FILE.read_text(encoding="utf-8")
+
+        if not raw.strip():
+            save_site_suppliers([])
+            return []
+
+        data = json.loads(raw)
+
+        if not isinstance(data, dict):
+            save_site_suppliers([])
+            return []
+
+        fornecedores = data.get("fornecedores", [])
+
+        if not isinstance(fornecedores, list):
+            save_site_suppliers([])
+            return []
+
     except Exception:
-        save_site_suppliers([])
-        return []
-
-    if not isinstance(data, dict):
-        save_site_suppliers([])
-        return []
-
-    fornecedores = data.get("fornecedores", [])
-    if not isinstance(fornecedores, list):
         save_site_suppliers([])
         return []
 
@@ -115,6 +122,7 @@ def load_site_suppliers() -> List[Dict[str, Any]]:
             continue
 
         chave = fornecedor["slug"]
+
         if chave in vistos:
             continue
 
@@ -122,7 +130,9 @@ def load_site_suppliers() -> List[Dict[str, Any]]:
         normalizados.append(fornecedor)
 
     normalizados.sort(key=lambda x: x.get("nome", "").lower())
+
     save_site_suppliers(normalizados)
+
     return normalizados
 
 
@@ -220,3 +230,4 @@ def get_site_supplier_options() -> List[Dict[str, str]]:
             }
         )
     return opcoes
+
