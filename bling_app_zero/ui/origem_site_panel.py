@@ -30,14 +30,12 @@ try:
         delete_site_supplier,
         get_site_supplier_by_slug,
         get_site_supplier_options,
-        list_site_suppliers,
         upsert_site_supplier,
     )
 except Exception:
     delete_site_supplier = None
     get_site_supplier_by_slug = None
     get_site_supplier_options = None
-    list_site_suppliers = None
     upsert_site_supplier = None
 
 from bling_app_zero.ui.app_helpers import log_debug
@@ -183,6 +181,111 @@ def _forcar_http_first_execucao() -> None:
         "site_login_modo_browser",
     ]:
         st.session_state.pop(chave, None)
+
+
+def _fornecedores_preset() -> list[dict]:
+    """
+    Fornecedores base para preenchimento rápido.
+    """
+    return [
+        {
+            "slug": "preset_atacadum",
+            "nome": "Atacadum",
+            "url_base": "https://www.atacadum.com.br/",
+            "login_url": "",
+            "products_url": "https://www.atacadum.com.br/",
+            "auth_mode": "public",
+            "observacoes": "Catálogo público. Busca direta por site em modo HTTP-first.",
+            "origem": "preset",
+        },
+        {
+            "slug": "preset_obaobamix",
+            "nome": "Oba Oba Mix",
+            "url_base": "https://app.obaobamix.com.br/",
+            "login_url": "https://app.obaobamix.com.br/login",
+            "products_url": "https://app.obaobamix.com.br/admin/products",
+            "auth_mode": "captcha",
+            "observacoes": "Fornecedor com login/painel. Pode exigir inspeção/autenticação antes da busca.",
+            "origem": "preset",
+        },
+        {
+            "slug": "preset_megacenter",
+            "nome": "Mega Center",
+            "url_base": "https://www.megacentereletronicos.com.br/",
+            "login_url": "",
+            "products_url": "https://www.megacentereletronicos.com.br/",
+            "auth_mode": "public",
+            "observacoes": "Catálogo público. Use a home ou uma categoria específica.",
+            "origem": "preset",
+        },
+        {
+            "slug": "preset_stoqui",
+            "nome": "Stoqui",
+            "url_base": "https://stoqui.com.br/",
+            "login_url": "https://stoqui.com.br/login",
+            "products_url": "https://stoqui.com.br/",
+            "auth_mode": "whatsapp_code",
+            "observacoes": "Ambiente autenticado. Pode exigir código e inspeção antes da busca.",
+            "origem": "preset",
+        },
+    ]
+
+
+def _carregar_fornecedores_mixados() -> list[dict]:
+    presets = _fornecedores_preset()
+    salvos: list[dict] = []
+
+    if get_site_supplier_options is not None and get_site_supplier_by_slug is not None:
+        try:
+            opcoes = get_site_supplier_options() or []
+            for item in opcoes:
+                slug = _clean_text(item.get("value"))
+                if not slug:
+                    continue
+                try:
+                    fornecedor = get_site_supplier_by_slug(slug)
+                except Exception:
+                    fornecedor = None
+                if fornecedor:
+                    salvos.append(
+                        {
+                            "slug": str(fornecedor.get("slug", "") or ""),
+                            "nome": str(fornecedor.get("nome", "") or ""),
+                            "url_base": str(fornecedor.get("url_base", "") or ""),
+                            "login_url": str(fornecedor.get("login_url", "") or ""),
+                            "products_url": str(fornecedor.get("products_url", "") or ""),
+                            "auth_mode": str(fornecedor.get("auth_mode", "") or ""),
+                            "observacoes": str(fornecedor.get("observacoes", "") or ""),
+                            "origem": "salvo",
+                        }
+                    )
+        except Exception as exc:
+            log_debug(f"Falha ao carregar fornecedores salvos: {exc}", nivel="ERRO")
+
+    resultado: list[dict] = []
+    slugs_vistos = set()
+
+    for fornecedor in salvos + presets:
+        slug = _clean_text(fornecedor.get("slug"))
+        if not slug or slug in slugs_vistos:
+            continue
+        slugs_vistos.add(slug)
+        resultado.append(fornecedor)
+
+    return resultado
+
+
+def _aplicar_fornecedor_na_tela(fornecedor: Optional[Dict[str, Any]]) -> None:
+    if not fornecedor:
+        return
+
+    st.session_state["site_fornecedor_slug"] = str(fornecedor.get("slug", "") or "")
+    st.session_state["site_fornecedor_nome_manual"] = str(fornecedor.get("nome", "") or "")
+    st.session_state["site_fornecedor_url"] = str(fornecedor.get("url_base", "") or "")
+    st.session_state["site_fornecedor_login_url"] = str(fornecedor.get("login_url", "") or "")
+    st.session_state["site_fornecedor_products_url"] = str(fornecedor.get("products_url", "") or "")
+    st.session_state["site_fornecedor_auth_mode"] = str(fornecedor.get("auth_mode", "") or "")
+    st.session_state["site_fornecedor_observacoes"] = str(fornecedor.get("observacoes", "") or "")
 
 
 def _inspecionar_site(url_site: str) -> dict:
@@ -454,44 +557,6 @@ def _render_diagnostico() -> None:
             st.dataframe(df_diag.head(100), use_container_width=True)
 
 
-def _carregar_opcoes_fornecedores() -> list[dict]:
-    if get_site_supplier_options is None:
-        return []
-    try:
-        return get_site_supplier_options()
-    except Exception as exc:
-        log_debug(f"Falha ao carregar fornecedores salvos: {exc}", nivel="ERRO")
-        return []
-
-
-def _get_fornecedor_salvo_escolhido() -> Optional[Dict[str, Any]]:
-    if get_site_supplier_by_slug is None:
-        return None
-
-    slug = _clean_text(st.session_state.get("site_fornecedor_salvo_slug"))
-    if not slug or slug == OPCAO_NOVO_FORNECEDOR:
-        return None
-
-    try:
-        return get_site_supplier_by_slug(slug)
-    except Exception as exc:
-        log_debug(f"Falha ao carregar fornecedor salvo: {exc}", nivel="ERRO")
-        return None
-
-
-def _aplicar_fornecedor_salvo_na_tela(fornecedor: Optional[Dict[str, Any]]) -> None:
-    if not fornecedor:
-        return
-
-    st.session_state["site_fornecedor_slug"] = str(fornecedor.get("slug", "") or "")
-    st.session_state["site_fornecedor_nome_manual"] = str(fornecedor.get("nome", "") or "")
-    st.session_state["site_fornecedor_url"] = str(fornecedor.get("url_base", "") or "")
-    st.session_state["site_fornecedor_login_url"] = str(fornecedor.get("login_url", "") or "")
-    st.session_state["site_fornecedor_products_url"] = str(fornecedor.get("products_url", "") or "")
-    st.session_state["site_fornecedor_auth_mode"] = str(fornecedor.get("auth_mode", "") or "")
-    st.session_state["site_fornecedor_observacoes"] = str(fornecedor.get("observacoes", "") or "")
-
-
 def _render_modo_fornecedor(possui_fornecedores: bool) -> str:
     opcoes = [MODO_FORNECEDOR_SALVO, MODO_NOVA_URL]
 
@@ -513,40 +578,32 @@ def _render_modo_fornecedor(possui_fornecedores: bool) -> str:
 
     if modo != modo_anterior:
         st.session_state["site_modo_fornecedor_atual"] = modo
-        if modo == MODO_FORNECEDOR_SALVO and possui_fornecedores:
-            opcoes_salvas = _carregar_opcoes_fornecedores()
-            if opcoes_salvas:
-                primeiro_slug = _clean_text(opcoes_salvas[0].get("value"))
-                if primeiro_slug:
-                    st.session_state["site_fornecedor_salvo_slug"] = primeiro_slug
-                    st.session_state["site_fornecedor_salvo_slug_aplicado"] = ""
-                    _resetar_estado_busca_ao_trocar_fornecedor()
-        elif modo == MODO_NOVA_URL:
-            _resetar_estado_busca_ao_trocar_fornecedor()
+        _resetar_estado_busca_ao_trocar_fornecedor()
 
     return modo
 
 
-def _render_select_fornecedor_salvo(opcoes: Optional[list[dict]] = None) -> str:
-    opcoes = opcoes if opcoes is not None else _carregar_opcoes_fornecedores()
+def _render_select_fornecedor_salvo() -> str:
+    fornecedores = _carregar_fornecedores_mixados()
 
-    valores = [item["value"] for item in opcoes] if opcoes else []
-    labels = {item["value"]: item["label"] for item in opcoes} if opcoes else {}
+    valores = [item["slug"] for item in fornecedores]
+    labels = {
+        item["slug"]: (
+            f"{item['nome']} ({'salvo' if item.get('origem') == 'salvo' else 'preset'})"
+        )
+        for item in fornecedores
+    }
 
     valores.append(OPCAO_NOVO_FORNECEDOR)
     labels[OPCAO_NOVO_FORNECEDOR] = "Outro fornecedor / inserir URL manualmente"
 
-    if not opcoes:
-        st.warning("Nenhum fornecedor salvo ainda.")
-        st.caption("Cadastre uma nova URL abaixo para reutilizar depois.")
-
     valor_atual = _clean_text(st.session_state.get("site_fornecedor_salvo_slug"))
     if valor_atual not in valores:
-        valor_atual = OPCAO_NOVO_FORNECEDOR
+        valor_atual = valores[0] if fornecedores else OPCAO_NOVO_FORNECEDOR
         st.session_state["site_fornecedor_salvo_slug"] = valor_atual
 
     escolhido = st.selectbox(
-        "Fornecedor cadastrado",
+        "Fornecedor",
         options=valores,
         index=valores.index(valor_atual),
         format_func=lambda x: labels.get(x, x),
@@ -557,12 +614,15 @@ def _render_select_fornecedor_salvo(opcoes: Optional[list[dict]] = None) -> str:
         st.session_state["site_fornecedor_salvo_slug_aplicado"] = escolhido
         _resetar_estado_busca_ao_trocar_fornecedor()
 
+        if escolhido != OPCAO_NOVO_FORNECEDOR:
+            fornecedor = next((f for f in fornecedores if f["slug"] == escolhido), None)
+            _aplicar_fornecedor_na_tela(fornecedor)
+
     if escolhido == OPCAO_NOVO_FORNECEDOR:
         _forcar_modo_fornecedor(MODO_NOVA_URL)
         return MODO_NOVA_URL
 
-    fornecedor = _get_fornecedor_salvo_escolhido()
-    _aplicar_fornecedor_salvo_na_tela(fornecedor)
+    fornecedor = next((f for f in fornecedores if f["slug"] == escolhido), None)
 
     if fornecedor:
         with st.expander("Detalhes do fornecedor selecionado", expanded=False):
@@ -576,7 +636,7 @@ def _render_select_fornecedor_salvo(opcoes: Optional[list[dict]] = None) -> str:
             if fornecedor.get("observacoes"):
                 st.caption(str(fornecedor.get("observacoes", "") or "").strip())
 
-        if delete_site_supplier is not None:
+        if fornecedor.get("origem") == "salvo" and delete_site_supplier is not None:
             if st.button("Excluir fornecedor salvo", use_container_width=True, key="btn_excluir_fornecedor_salvo"):
                 try:
                     ok = delete_site_supplier(fornecedor.get("slug", ""))
@@ -708,15 +768,20 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
                     st.rerun()
 
     with col2:
-        clicou_buscar = st.button(
+        if st.button(
             "Buscar produtos",
             use_container_width=True,
             key="btn_buscar_site_origem",
             disabled=em_execucao,
-        )
-        if clicou_buscar:
-            with st.spinner("Executando varredura do site..."):
-                _executar_busca_site(url_site)
+        ):
+            url_site = str(st.session_state.get("site_fornecedor_url", "")).strip()
+            log_debug(f"[CLICK] Botão buscar acionado | URL: {url_site}")
+
+            if not url_site:
+                st.error("Informe a URL antes de buscar.")
+            else:
+                with st.spinner("Executando varredura do site..."):
+                    _executar_busca_site(url_site)
 
     with col3:
         if modo == MODO_NOVA_URL:
@@ -743,16 +808,16 @@ def render_origem_site_panel() -> None:
     _forcar_http_first_execucao()
 
     with st.container(border=True):
-        st.markdown("### Buscar no site do fornecedor")
-        st.caption("Selecione um fornecedor salvo ou informe uma nova URL para buscar os produtos.")
+        # sem título duplicado aqui
+        st.caption("Selecione um fornecedor salvo, um fornecedor sugerido, ou informe uma nova URL para buscar os produtos.")
 
-        opcoes_fornecedores = _carregar_opcoes_fornecedores()
-        possui_fornecedores = bool(opcoes_fornecedores)
+        fornecedores_mixados = _carregar_fornecedores_mixados()
+        possui_fornecedores = bool(fornecedores_mixados)
 
         modo = _render_modo_fornecedor(possui_fornecedores)
 
         if modo == MODO_FORNECEDOR_SALVO:
-            modo_efetivo = _render_select_fornecedor_salvo(opcoes_fornecedores)
+            modo_efetivo = _render_select_fornecedor_salvo()
             if modo_efetivo == MODO_NOVA_URL:
                 modo = MODO_NOVA_URL
                 _render_campos_fornecedor_manual()
