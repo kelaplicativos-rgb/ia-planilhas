@@ -15,25 +15,13 @@ from bling_app_zero.ui.app_helpers import (
 )
 
 
-# ============================================================
-# BLINDAGEM DE ETAPA
-# ============================================================
-
 def _garantir_etapa_precificacao_ativa() -> None:
-    """
-    Mantém a tela travada em precificacao durante os reruns normais
-    do Streamlit (selectbox, number_input, etc).
-    """
     if get_etapa() != "precificacao":
         sincronizar_etapa_global("precificacao")
 
     st.session_state["_etapa_url_inicializada"] = True
     st.session_state["_ultima_etapa_sincronizada_url"] = "precificacao"
 
-
-# ============================================================
-# HELPERS DE CÁLCULO
-# ============================================================
 
 def _to_float(valor) -> float:
     if valor is None:
@@ -103,10 +91,6 @@ def _normalizar_texto(valor) -> str:
     return str(valor or "").strip().lower()
 
 
-# ============================================================
-# DETECÇÃO DE COLUNAS
-# ============================================================
-
 def _detectar_coluna_custo(df: pd.DataFrame) -> str:
     if not safe_df_dados(df):
         return ""
@@ -151,10 +135,6 @@ def _coluna_preco_destino() -> str:
     return "Preço de venda"
 
 
-# ============================================================
-# ESTADO DA PRECIFICAÇÃO
-# ============================================================
-
 def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
     colunas = [str(c) for c in df_origem.columns.tolist()]
     sugestao_custo = _detectar_coluna_custo(df_origem)
@@ -185,10 +165,6 @@ def _limpar_preview_se_base_sumiu(df_origem: pd.DataFrame) -> None:
         st.session_state["df_precificado"] = None
         st.session_state["pricing_aplicada_ok"] = False
 
-
-# ============================================================
-# PROCESSAMENTO
-# ============================================================
 
 def _aplicar_precificacao_dataframe(
     df: pd.DataFrame,
@@ -247,16 +223,11 @@ def _aplicar_precificacao_dataframe(
     return base
 
 
-# ============================================================
-# UI
-# ============================================================
-
 def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     if not safe_df_dados(df):
         return
 
     destino = _coluna_preco_destino()
-
     st.markdown("### Preview da planilha precificada")
 
     colunas_preview = []
@@ -277,21 +248,17 @@ def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     if not colunas_preview:
         colunas_preview = list(df.columns[:8])
 
-    preview = df[colunas_preview].head(50).copy()
+    preview = df[colunas_preview].head(30).copy()
     st.dataframe(preview, use_container_width=True)
 
-    with st.expander("Ver preview completo", expanded=False):
-        st.dataframe(df.head(200), use_container_width=True)
+    with st.expander("Ver preview ampliado", expanded=False):
+        st.dataframe(df.head(150), use_container_width=True)
 
 
 def render_origem_precificacao() -> None:
     _garantir_etapa_precificacao_ativa()
 
     st.subheader("2. Precificação")
-    st.caption(
-        "Calculadora manual estilo Olist. "
-        "Você escolhe a coluna base e informa os custos e percentuais."
-    )
 
     df_origem = st.session_state.get("df_origem")
     _limpar_preview_se_base_sumiu(df_origem)
@@ -323,103 +290,105 @@ def render_origem_precificacao() -> None:
     colunas = [str(c) for c in df_origem.columns.tolist()]
     destino = _coluna_preco_destino()
 
-    st.info(f"O preço calculado será refletido no preview e gravado em: **{destino}**")
+    with st.container(border=True):
+        st.markdown("### Base de cálculo")
 
-    st.markdown("### Base de cálculo")
+        opcoes_coluna = [""] + colunas
+        valor_atual = st.session_state.get("pricing_coluna_custo", "")
+        indice_coluna = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
 
-    opcoes_coluna = [""] + colunas
-    valor_atual = st.session_state.get("pricing_coluna_custo", "")
-    indice_coluna = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
-
-    coluna_custo = st.selectbox(
-        "Selecione a coluna de custo/base",
-        options=opcoes_coluna,
-        index=indice_coluna,
-        key="pricing_coluna_custo",
-    )
-
-    st.markdown("### Campos manuais da calculadora")
-
-    c1, c2 = st.columns(2)
-    c3, c4 = st.columns(2)
-    c5, c6 = st.columns(2)
-
-    with c1:
-        custo_fixo = st.number_input(
-            "Custo fixo (R$)",
-            min_value=0.0,
-            step=0.01,
-            key="pricing_custo_fixo",
+        coluna_custo = st.selectbox(
+            "Coluna de custo/base",
+            options=opcoes_coluna,
+            index=indice_coluna,
+            key="pricing_coluna_custo",
         )
 
-    with c2:
-        frete_fixo = st.number_input(
-            "Frete / custo logístico (R$)",
+        st.caption(f"O preço calculado será gravado em: {destino}")
+
+    with st.container(border=True):
+        st.markdown("### Calculadora")
+
+        c1, c2 = st.columns(2)
+        c3, c4 = st.columns(2)
+        c5, c6 = st.columns(2)
+
+        with c1:
+            custo_fixo = st.number_input(
+                "Custo fixo (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="pricing_custo_fixo",
+            )
+
+        with c2:
+            frete_fixo = st.number_input(
+                "Frete / custo logístico (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="pricing_frete_fixo",
+            )
+
+        with c3:
+            taxa_extra = st.number_input(
+                "Taxa extra (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="pricing_taxa_extra",
+            )
+
+        with c4:
+            impostos_percent = st.number_input(
+                "Impostos (%)",
+                min_value=0.0,
+                max_value=99.99,
+                step=0.01,
+                key="pricing_impostos_percent",
+            )
+
+        with c5:
+            margem_percent = st.number_input(
+                "Margem de lucro (%)",
+                min_value=0.0,
+                max_value=99.99,
+                step=0.01,
+                key="pricing_margem_percent",
+            )
+
+        with c6:
+            outros_percent = st.number_input(
+                "Outros percentuais (%)",
+                min_value=0.0,
+                max_value=99.99,
+                step=0.01,
+                key="pricing_outros_percent",
+            )
+
+    with st.container(border=True):
+        st.markdown("### Simulação")
+        custo_teste = st.number_input(
+            "Valor de teste (R$)",
             min_value=0.0,
             step=0.01,
-            key="pricing_frete_fixo",
+            key="pricing_valor_teste",
         )
 
-    with c3:
-        taxa_extra = st.number_input(
-            "Taxa extra (R$)",
-            min_value=0.0,
-            step=0.01,
-            key="pricing_taxa_extra",
+        resultado_teste = _calcular_preco_olist(
+            custo=custo_teste,
+            custo_fixo=custo_fixo,
+            frete_fixo=frete_fixo,
+            taxa_extra=taxa_extra,
+            impostos_percent=impostos_percent,
+            margem_percent=margem_percent,
+            outros_percent=outros_percent,
         )
 
-    with c4:
-        impostos_percent = st.number_input(
-            "Impostos (%)",
-            min_value=0.0,
-            max_value=99.99,
-            step=0.01,
-            key="pricing_impostos_percent",
-        )
-
-    with c5:
-        margem_percent = st.number_input(
-            "Margem de lucro (%)",
-            min_value=0.0,
-            max_value=99.99,
-            step=0.01,
-            key="pricing_margem_percent",
-        )
-
-    with c6:
-        outros_percent = st.number_input(
-            "Outros percentuais (%)",
-            min_value=0.0,
-            max_value=99.99,
-            step=0.01,
-            key="pricing_outros_percent",
-        )
-
-    st.markdown("### Simulação unitária")
-
-    custo_teste = st.number_input(
-        "Valor de teste da calculadora (R$)",
-        min_value=0.0,
-        step=0.01,
-        key="pricing_valor_teste",
-    )
-
-    resultado_teste = _calcular_preco_olist(
-        custo=custo_teste,
-        custo_fixo=custo_fixo,
-        frete_fixo=frete_fixo,
-        taxa_extra=taxa_extra,
-        impostos_percent=impostos_percent,
-        margem_percent=margem_percent,
-        outros_percent=outros_percent,
-    )
-
-    st.success(f"Preço calculado: {_fmt_brl(resultado_teste)}")
+        st.success(f"Preço calculado: {_fmt_brl(resultado_teste)}")
 
     st.markdown("### Aplicar na planilha")
 
     if st.button(
-        "Aplicar precificação na origem",
+        "Aplicar precificação",
         use_container_width=True,
         key="btn_aplicar_precificacao",
     ):
@@ -440,7 +409,6 @@ def render_origem_precificacao() -> None:
             st.session_state["df_precificado"] = df_precificado
             st.session_state["pricing_df_preview"] = df_precificado.copy()
             st.session_state["pricing_aplicada_ok"] = True
-
             st.success("Precificação aplicada com sucesso.")
 
     df_preview = st.session_state.get("pricing_df_preview")
@@ -472,4 +440,3 @@ def render_origem_precificacao() -> None:
 
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             ir_para_etapa("mapeamento")
-            
