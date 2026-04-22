@@ -66,6 +66,37 @@ def _limpar_estado_modelo() -> None:
         st.session_state.pop(chave, None)
 
 
+def _forcar_modo_site_http_first() -> None:
+    """
+    Blindagem do fluxo novo:
+    - força o crawler a operar sem depender de browser
+    - remove resíduos de bootstrap antigo do Playwright
+    - mantém flags consistentes para o painel de site
+    """
+    st.session_state["preferir_http"] = True
+    st.session_state["site_runtime_http_first"] = True
+    st.session_state["site_runtime_modo"] = "http_hybrid"
+    st.session_state["site_runtime_browser_opcional"] = False
+    st.session_state["crawler_runtime_mode"] = "http_hybrid"
+    st.session_state["crawler_browser_disponivel"] = False
+    st.session_state["crawler_forcar_http"] = True
+    st.session_state["playwright_habilitado"] = False
+    st.session_state["playwright_browser_ok"] = False
+
+    for chave in [
+        "_playwright_bootstrap",
+        "_crawler_runtime_bootstrap_done",
+        "playwright_modulo_instalado",
+        "playwright_browser_ok",
+        "_playwright_forcado_erro",
+        "site_login_modo_browser",
+        "site_login_usa_playwright",
+        "site_busca_usa_playwright",
+        "site_origem_usa_playwright",
+    ]:
+        st.session_state.pop(chave, None)
+
+
 def _ler_tabular(upload) -> pd.DataFrame:
     nome = str(upload.name).lower()
 
@@ -296,6 +327,16 @@ def _render_origem_arquivo() -> None:
             _processar_upload_origem(upload_origem)
 
 
+def _render_origem_site() -> None:
+    _forcar_modo_site_http_first()
+
+    with st.container(border=True):
+        st.markdown("### Busca no site do fornecedor")
+        st.caption("Modo HTTP-first ativo. O sistema vai priorizar varredura híbrida sem depender de navegador.")
+
+        render_origem_site_panel()
+
+
 def _render_modelo() -> None:
     with st.container(border=True):
         st.markdown("### Modelo do Bling")
@@ -374,9 +415,8 @@ def render_origem_dados() -> None:
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
     else:
-        render_origem_site_panel()
+        _render_origem_site()
 
     _render_modelo()
     st.markdown("---")
     _render_continuar()
-
