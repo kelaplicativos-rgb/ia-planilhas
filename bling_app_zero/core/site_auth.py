@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -17,6 +16,15 @@ from bling_app_zero.core.site_supplier_profiles import (
     infer_supplier_profile_from_detection,
     supplier_profile_to_dict,
 )
+
+try:
+    from bling_app_zero.core.site_supplier_store import (
+        get_site_supplier_by_slug,
+        list_site_suppliers,
+    )
+except Exception:
+    get_site_supplier_by_slug = None
+    list_site_suppliers = None
 
 try:
     from bling_app_zero.core.session_manager import (
@@ -168,6 +176,12 @@ def _hostname(url: str) -> str:
         return ""
 
 
+def _same_host(url_a: str, url_b: str) -> bool:
+    host_a = _hostname(url_a)
+    host_b = _hostname(url_b)
+    return bool(host_a and host_b and host_a == host_b)
+
+
 def _fornecedor_slug(url: str, profile: SupplierProfile | None = None) -> str:
     if profile and _safe_str(profile.slug):
         return _safe_str(profile.slug)
@@ -242,28 +256,162 @@ def clear_auth_state() -> dict[str, Any]:
     return state
 
 
-def _merge_auth_state_with_session_manager(state: dict[str, Any]) -> dict[str, Any]:
+def _listar_fornecedores_salvos() -> list[dict[str, Any]]:
+    if list_site_suppliers is None:
+        return []
+    try:
+        fornecedores = list_site_suppliers()
+        return fornecedores if isinstance(fornecedores, list) else []
+    except Exception:
+        return []
+
+
+def _get_saved_supplier(*, slug: str = "", url: str = "") -> dict[str, Any] | None:
+    slug = _safe_str(slug)
+    url = _normalize_url(url)
+
+    if slug and get_site_supplier_by_slug is not None:
+        try:
+            fornecedor = get_site_supplier_by_slug(slug)
+            if isinstance(fornecedor, dict) and fornecedor:
+                return fornecedor
+        except Exception:
+            pass
+
+    if not url:
+        return None
+
+    base_root = _normalize_base_root(url)
+    host = _hostname(url)
+
+    for item in _listar_fornecedores_salvos():
+        if not isinstance(item, dict):
+            continue
+
+        item_url = _normalize_url(item.get("url_base", ""))
+        item_login = _normalize_url(item.get("login_url", ""))
+        item_products = _normalize_url(item.get("products_url", ""))
+
+        if item_url and _normalize_base_root(item_url) == base_root:
+            return item
+        if item_login and _same_host(item_login, url):
+            return item
+        if item_products and _same_host(item_products, url):
+            return item
+        if host and _hostname(item_url) == host:
+            return item
+
+    return None
+
+
+def _profile_from_saved_supplier(saved_supplier: dict[str, Any] | None, url: str) -> SupplierProfile:
+    base_profile = get_supplier_profile(url)
+    if not saved_supplier:
+        return base_profile if base_profile else DEFAULT_PROFILE
+
+    base = base_profile if base_profile else DEFAULT_PROFILE
+    nome = _safe_str(saved_supplier.get("nome")) or _safe_str(getattr(base, "nome", "")) or "Fornecedor"
+    slug = _safe_str(saved_supplier.get("slug")) or _safe_str(getattr(base, "slug", "")) or _fornecedor_slug(url)
+    login_url = _normalize_url(saved_supplier.get("login_url")) or _safe_str(getattr(base, "login_url", ""))
+    products_url = _normalize_url(saved_supplier.get("products_url")) or _safe_str(getattr(base, "products_url", ""))
+    auth_mode = _safe_str(saved_supplier.get("auth_mode")) or _safe_str(getattr(base, "auth_mode", "")) or "public"
+    observacoes = _safe_str(saved_supplier.get("observacoes"))
+
+    login_required = bool(
+        getattr(base, "login_required", False)
+        or auth_mode in {"login", "captcha", "whatsapp_code"}
+        or bool(login_url)
+    )
+    captcha_expected = bool(getattr(base, "captcha_expected", False) or auth_mode == "captcha")
+    requires_whatsapp_code = bool(getattr(base, "requires_whatsapp_code", False) or auth_mode == "whatsapp_code")
+
+    try:
+        return SupplierProfile(
+            slug=slug,
+            nome=nome,
+            auth_mode=auth_mode,
+            login_required=login_required,
+            captcha_expected=captcha_expected,
+            requires_whatsapp_code=requires_whatsapp_code,
+            login_url=login_url,
+            products_url=products_url,
+            login_path_hints=list(getattr(base, "login_path_hints", []) or []),
+            products_path_hints=list(getattr(base, "products_path_hints", []) or []),
+            username_field_candidates=list(getattr(base, "username_field_candidates", []) or ["email"]),
+            password_field_candidates=list(getattr(base, "password_field_candidates", []) or ["password"]),
+            source_kind=_safe_str(getattr(base, "source_kind", "")) or "saved_supplier",
+            observacoes=observacoes or _safe_str(getattr(base, "observacoes", "")),
+        )
+    except TypeError:
+        # fallback conservador caso a dataclass tenha mudado
+        return base
+
+
+def _resolve_saved_supplier_profile(url: str, fornecedor: str = "") -> tuple[SupplierProfile, dict[str, Any] | None]:
+    saved_supplier = _get_saved_supplier(slug=fornecedor, url=url)
+    profile = _profile_from_saved_supplier(saved_supplier, url)
+    return profile, saved_supplier
+
+
+def _merge_auth_state_with_session_manager(
+    state: dict[str, Any],
+    *,
+    base_url: str = "",
+    fornecedor: str = "",
+) -> dict[str, Any]:
     base = _auth_state_default()
     base.update(state or {})
 
-    provider_slug = _safe_str(base.get("provider_slug"))
-    base_url = _safe_str(base.get("products_url")) or _safe_str(base.get("login_url"))
+    requested_url = _normalize_url(base_url)
+    requested_slug = _safe_str(fornecedor)
 
-    if not base_url:
+    profile, saved_supplier = _resolve_saved_supplier_profile(
+        requested_url or _safe_str(base.get("products_url")) or _safe_str(base.get("login_url")),
+        requested_slug or _safe_str(base.get("provider_slug")),
+    )
+
+    if saved_supplier:
+        base["provider_slug"] = _safe_str(saved_supplier.get("slug")) or _safe_str(base.get("provider_slug"))
+        base["provider_name"] = _safe_str(saved_supplier.get("nome")) or _safe_str(base.get("provider_name"))
+        base["login_url"] = _normalize_url(saved_supplier.get("login_url")) or _safe_str(base.get("login_url"))
+        base["products_url"] = _normalize_url(saved_supplier.get("products_url")) or _safe_str(base.get("products_url"))
+        base["auth_mode"] = _safe_str(saved_supplier.get("auth_mode")) or _safe_str(base.get("auth_mode")) or "public"
+
+    if not _safe_str(base.get("provider_slug")):
+        base["provider_slug"] = _safe_str(getattr(profile, "slug", "")) or requested_slug
+    if not _safe_str(base.get("provider_name")):
+        base["provider_name"] = _safe_str(getattr(profile, "nome", ""))
+    if not _safe_str(base.get("login_url")):
+        base["login_url"] = _safe_str(getattr(profile, "login_url", ""))
+    if not _safe_str(base.get("products_url")):
+        base["products_url"] = _safe_str(getattr(profile, "products_url", ""))
+    if not _safe_str(base.get("auth_mode")):
+        base["auth_mode"] = _safe_str(getattr(profile, "auth_mode", "")) or "public"
+
+    contexto_base = (
+        requested_url
+        or _safe_str(base.get("products_url"))
+        or _safe_str(base.get("login_url"))
+    )
+    contexto_fornecedor = requested_slug or _safe_str(base.get("provider_slug"))
+
+    if not contexto_base:
         return base
 
     try:
-        contexto = montar_auth_context(base_url=base_url, fornecedor=provider_slug)
+        contexto = montar_auth_context(base_url=contexto_base, fornecedor=contexto_fornecedor)
     except Exception:
         contexto = {}
 
     if isinstance(contexto, dict) and contexto:
-        base["storage_state_path"] = _safe_str(contexto.get("storage_state_path"))
-        base["metadata_path"] = _safe_str(contexto.get("metadata_path"))
-        base["products_url"] = _safe_str(contexto.get("products_url")) or base["products_url"]
-        base["login_url"] = _safe_str(contexto.get("login_url")) or base["login_url"]
+        base["storage_state_path"] = _safe_str(contexto.get("storage_state_path")) or _safe_str(base.get("storage_state_path"))
+        base["metadata_path"] = _safe_str(contexto.get("metadata_path")) or _safe_str(base.get("metadata_path"))
+        base["products_url"] = _safe_str(contexto.get("products_url")) or _safe_str(base.get("products_url"))
+        base["login_url"] = _safe_str(contexto.get("login_url")) or _safe_str(base.get("login_url"))
         base["session_ready"] = bool(contexto.get("session_ready", base.get("session_ready", False)))
-        base["status"] = _safe_str(contexto.get("status")) or base["status"]
+        base["status"] = _safe_str(contexto.get("status")) or _safe_str(base.get("status"))
+        base["provider_slug"] = _safe_str(contexto.get("provider_slug")) or _safe_str(base.get("provider_slug"))
+        base["provider_name"] = _safe_str(contexto.get("provider_name")) or _safe_str(base.get("provider_name"))
 
         if bool(contexto.get("session_ready", False)):
             base["cookies"] = contexto.get("cookies", []) or base.get("cookies", [])
@@ -445,20 +593,31 @@ def inspect_site_auth(url: str) -> AuthResult:
             session_ready=False,
         )
 
-    profile = get_supplier_profile(target_url)
-    provider_slug = _fornecedor_slug(target_url, profile)
+    profile, saved_supplier = _resolve_saved_supplier_profile(target_url)
+    provider_slug = _safe_str(saved_supplier.get("slug")) if saved_supplier else _fornecedor_slug(target_url, profile)
+    provider_name = _safe_str(saved_supplier.get("nome")) if saved_supplier else _safe_str(profile.nome)
     base_root = _normalize_base_root(target_url)
 
     if sessao_esta_pronta(base_url=base_root, fornecedor=provider_slug):
         contexto = montar_auth_context(base_url=base_root, fornecedor=provider_slug)
-        products_url = _safe_str(contexto.get("products_url")) or profile.products_url or base_root
-        login_url = _safe_str(contexto.get("login_url")) or profile.login_url or urljoin(base_root, "/login")
+        products_url = (
+            _safe_str(contexto.get("products_url"))
+            or _normalize_url(saved_supplier.get("products_url") if saved_supplier else "")
+            or profile.products_url
+            or base_root
+        )
+        login_url = (
+            _safe_str(contexto.get("login_url"))
+            or _normalize_url(saved_supplier.get("login_url") if saved_supplier else "")
+            or profile.login_url
+            or urljoin(base_root, "/login")
+        )
 
         return AuthResult(
             ok=True,
             status=STATUS_SESSAO_PRONTA,
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=bool(profile.captcha_expected),
             login_url=login_url,
@@ -487,11 +646,15 @@ def inspect_site_auth(url: str) -> AuthResult:
             url=target_url,
             profile=profile,
         )
+        if saved_supplier:
+            login_url = _normalize_url(saved_supplier.get("login_url")) or login_url
+            products_url = _normalize_url(saved_supplier.get("products_url")) or products_url
+
         return AuthResult(
             ok=False,
             status="erro",
             provider_slug=provider_slug,
-            provider_name=resolved_profile.nome,
+            provider_name=provider_name or resolved_profile.nome,
             requires_login=resolved_profile.login_required,
             captcha_detected=resolved_profile.captcha_expected,
             login_url=login_url,
@@ -529,6 +692,10 @@ def inspect_site_auth(url: str) -> AuthResult:
         captcha_detected=captcha_detected,
         whatsapp_code_detected=whatsapp_code_detected,
     )
+
+    if saved_supplier:
+        login_url = _normalize_url(saved_supplier.get("login_url")) or login_url
+        products_url = _normalize_url(saved_supplier.get("products_url")) or products_url
 
     auth_mode = _safe_str(getattr(resolved_profile, "auth_mode", "")) or ("login" if requires_login else "public")
 
@@ -569,7 +736,7 @@ def inspect_site_auth(url: str) -> AuthResult:
         ok=True,
         status=status,
         provider_slug=provider_slug,
-        provider_name=resolved_profile.nome,
+        provider_name=provider_name or resolved_profile.nome,
         requires_login=requires_login,
         captcha_detected=captcha_detected,
         login_url=login_url,
@@ -698,19 +865,22 @@ def try_requests_login(
     password: str,
     profile: SupplierProfile | None = None,
 ) -> AuthResult:
-    profile = profile or get_supplier_profile(login_url or products_url)
+    seed_url = login_url or products_url
+    saved_profile, saved_supplier = _resolve_saved_supplier_profile(seed_url)
+    profile = profile or saved_profile
 
-    login_url = _normalize_url(login_url)
-    products_url = _normalize_url(products_url)
+    login_url = _normalize_url(login_url) or _normalize_url(saved_supplier.get("login_url") if saved_supplier else "")
+    products_url = _normalize_url(products_url) or _normalize_url(saved_supplier.get("products_url") if saved_supplier else "")
     base_url = _normalize_base_root(products_url or login_url)
-    provider_slug = _fornecedor_slug(base_url, profile)
+    provider_slug = _safe_str(saved_supplier.get("slug")) if saved_supplier else _fornecedor_slug(base_url, profile)
+    provider_name = _safe_str(saved_supplier.get("nome")) if saved_supplier else _safe_str(profile.nome)
 
     if not login_url:
         return AuthResult(
             ok=False,
             status="erro",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=profile.captcha_expected,
             login_url=login_url,
@@ -738,7 +908,7 @@ def try_requests_login(
             ok=False,
             status="codigo_assistido_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -767,7 +937,7 @@ def try_requests_login(
             ok=False,
             status="captcha_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=True,
             login_url=login_url,
@@ -788,7 +958,7 @@ def try_requests_login(
             ok=False,
             status="erro_login",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -819,7 +989,7 @@ def try_requests_login(
             ok=False,
             status="codigo_assistido_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -848,7 +1018,7 @@ def try_requests_login(
             ok=False,
             status="captcha_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=True,
             login_url=login_url,
@@ -880,7 +1050,7 @@ def try_requests_login(
             ok=False,
             status="erro_login",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -923,7 +1093,7 @@ def try_requests_login(
             ok=False,
             status="codigo_assistido_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -954,7 +1124,7 @@ def try_requests_login(
             ok=False,
             status="captcha_pendente",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=True,
             login_url=login_url,
@@ -982,7 +1152,7 @@ def try_requests_login(
             {
                 "status": "autenticado",
                 "provider_slug": provider_slug,
-                "provider_name": profile.nome,
+                "provider_name": provider_name or profile.nome,
                 "requires_login": True,
                 "captcha_detected": False,
                 "login_url": login_url,
@@ -1026,7 +1196,7 @@ def try_requests_login(
             ok=True,
             status="autenticado",
             provider_slug=provider_slug,
-            provider_name=profile.nome,
+            provider_name=provider_name or profile.nome,
             requires_login=True,
             captcha_detected=False,
             login_url=login_url,
@@ -1063,7 +1233,7 @@ def try_requests_login(
         ok=False,
         status="falha_autenticacao",
         provider_slug=provider_slug,
-        provider_name=profile.nome,
+        provider_name=provider_name or profile.nome,
         requires_login=True,
         captcha_detected=False,
         login_url=login_url,
@@ -1080,8 +1250,12 @@ def try_requests_login(
     )
 
 
-def get_auth_headers_and_cookies() -> dict[str, Any]:
-    state = _merge_auth_state_with_session_manager(load_auth_state())
+def get_auth_headers_and_cookies(base_url: str = "", fornecedor: str = "") -> dict[str, Any]:
+    state = _merge_auth_state_with_session_manager(
+        load_auth_state(),
+        base_url=base_url,
+        fornecedor=fornecedor,
+    )
 
     return {
         "headers": state.get("headers", {}) or {},
@@ -1103,6 +1277,5 @@ def get_auth_headers_and_cookies() -> dict[str, Any]:
 
 
 def get_profile_for_url(url: str) -> SupplierProfile:
-    profile = get_supplier_profile(url)
+    profile, _saved_supplier = _resolve_saved_supplier_profile(url)
     return profile if profile else DEFAULT_PROFILE
-
