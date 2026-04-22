@@ -13,21 +13,19 @@ Responsável por:
 - usar concorrência nas páginas de produto
 - pontuar qualidade dos produtos extraídos
 
-BLINGNEXT IA ABSURDA PRO:
-- remove dependência operacional de Playwright
-- adiciona descoberta por sitemap.xml
-- adiciona múltiplos modos de varredura
-- adiciona score de qualidade
-- adiciona concorrência para páginas de produto
-- reforça detecção categoria x produto
-- reforça heurística de links de produto
-- reforça diagnóstico e logs
+BLINGFIX SSL + HTTP-FIRST:
+- corrige sites com SSL inválido / hostname mismatch
+- adiciona retry com verify=False somente quando necessário
+- tenta variações com e sem www
+- tenta https/http quando necessário
+- mantém fluxo HTTP-first sem depender de Playwright
 """
 
 from __future__ import annotations
 
 import json
 import re
+import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -37,6 +35,7 @@ from xml.etree import ElementTree as ET
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from requests.exceptions import RequestException, SSLError
 
 try:
     import streamlit as st
@@ -44,6 +43,8 @@ except Exception:  # pragma: no cover
     st = None
 
 from bling_app_zero.core.suppliers.registry import SupplierRegistry, get_registry
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class SiteAgent:
@@ -71,20 +72,9 @@ class SiteAgent:
         if auth_context:
             kwargs_limpos["auth_context"] = auth_context
 
-        preferir_http = self._bool_compat(
-            kwargs.get("preferir_http"),
-            default=True,
-        )
-
-        usar_fornecedor = self._bool_compat(
-            kwargs.get("usar_fornecedor"),
-            default=True,
-        )
-
-        usar_generico = self._bool_compat(
-            kwargs.get("usar_generico"),
-            default=True,
-        )
+        preferir_http = self._bool_compat(kwargs.get("preferir_http"), default=True)
+        usar_fornecedor = self._bool_compat(kwargs.get("usar_fornecedor"), default=True)
+        usar_generico = self._bool_compat(kwargs.get("usar_generico"), default=True)
 
         if not preferir_http and usar_fornecedor and fornecedor is not None:
             try:
@@ -274,7 +264,7 @@ class SiteAgent:
         return produtos if isinstance(produtos, list) else []
 
     # ------------------------------------------------------------------
-    # FALLBACK INTERNO / HTTP-FIRST
+    # HTTP / SSL BLINDADO
     # ------------------------------------------------------------------
     def _build_session(self, auth_context: Optional[Dict[str, Any]] = None) -> requests.Session:
         session = requests.Session()
@@ -291,6 +281,7 @@ class SiteAgent:
                 "Pragma": "no-cache",
             }
         )
+        session.verify = True
 
         if isinstance(auth_context, dict):
             headers = auth_context.get("headers", {}) or {}
@@ -319,8 +310,102 @@ class SiteAgent:
                             except Exception:
                                 pass
 
+            if auth_context.get("ssl_inseguro") is True:
+                session.verify = False
+
         return session
 
+    def _candidate_urls(self, url: str) -> List[str]:
+        base = self._normalizar_url(url)
+        if not base:
+            return []
+
+        parsed = urlparse(base)
+        host = (parsed.netloc or "").strip()
+        path = parsed.path or "/"
+        query = f"?{parsed.query}" if parsed.query else ""
+        variants: List[str] = []
+
+        def add(u: str) -> None:
+            u = self._texto_limpo(u)
+            if u and u not in variants:
+                variants.append(u)
+
+        add(base)
+
+        if host.startswith("www."):
+            host_sem_www = host[4:]
+            add(f"{parsed.scheme}://{host_sem_www}{path}{query}")
+            if parsed.scheme == "https":
+                add(f"http://{host_sem_www}{path}{query}")
+                add(f"http://{host}{path}{query}")
+        else:
+            add(f"{parsed.scheme}://www.{host}{path}{query}")
+            if parsed.scheme == "https":
+                add(f"http://{host}{path}{query}")
+                add(f"http://www.{host}{path}{query}")
+
+        return variants
+
+    def _request_with_ssl_fallback(
+        self,
+        session: requests.Session,
+        url: str,
+        *,
+        timeout: int = 30,
+        allow_redirects: bool = True,
+    ) -> Tuple[Optional[requests.Response], str]:
+        candidates = self._candidate_urls(url)
+        last_error: Optional[Exception] = None
+        final_url = self._normalizar_url(url)
+
+        for candidate in candidates:
+            # tentativa segura primeiro
+            try:
+                resp = session.get(
+                    candidate,
+                    timeout=timeout,
+                    allow_redirects=allow_redirects,
+                    verify=True,
+                )
+                final_url = str(resp.url)
+                return resp, final_url
+            except SSLError as exc:
+                last_error = exc
+                self._log(f"[SSL WARN] {candidate} -> {exc}")
+
+                # retry inseguro somente quando SSL falhar
+                try:
+                    resp = session.get(
+                        candidate,
+                        timeout=timeout,
+                        allow_redirects=allow_redirects,
+                        verify=False,
+                    )
+                    final_url = str(resp.url)
+                    self._log(f"[SSL BYPASS OK] {candidate} -> {final_url}")
+                    return resp, final_url
+                except Exception as exc_insecure:
+                    last_error = exc_insecure
+                    self._log(f"[SSL BYPASS FALHOU] {candidate} -> {exc_insecure}")
+                    continue
+            except RequestException as exc:
+                last_error = exc
+                self._log(f"[HTTP WARN] {candidate} -> {exc}")
+                continue
+            except Exception as exc:
+                last_error = exc
+                self._log(f"[HTTP ERRO] {candidate} -> {exc}")
+                continue
+
+        if last_error:
+            raise last_error
+
+        return None, final_url
+
+    # ------------------------------------------------------------------
+    # FALLBACK INTERNO / HTTP-FIRST
+    # ------------------------------------------------------------------
     def _buscar_com_fallback_interno(
         self,
         *,
@@ -358,7 +443,7 @@ class SiteAgent:
 
         if usar_sitemap and url:
             for link_sitemap in self._descobrir_links_via_sitemap(session, url, limite=limite * 2):
-                if self._hostname(link_sitemap) == host_base:
+                if self._hostname(link_sitemap) == host_base or not host_base:
                     if self._url_parece_produto(link_sitemap):
                         if link_sitemap not in vistos_links_produto:
                             vistos_links_produto.add(link_sitemap)
@@ -602,24 +687,35 @@ class SiteAgent:
 
     def _get_html(self, session: requests.Session, url: str) -> Tuple[str, str]:
         try:
-            resp = session.get(url, timeout=30, allow_redirects=True)
-            if not resp.ok:
-                return "", self._normalizar_url(url)
+            resp, final_url = self._request_with_ssl_fallback(
+                session,
+                url,
+                timeout=30,
+                allow_redirects=True,
+            )
+            if resp is None or not resp.ok:
+                return "", self._normalizar_url(final_url or url)
 
             content_type = self._texto_limpo(resp.headers.get("Content-Type")).lower()
-            if "text/html" not in content_type and "<html" not in (resp.text or "").lower():
+            texto = resp.text or ""
+            if "text/html" not in content_type and "<html" not in texto.lower():
                 return "", str(resp.url)
 
-            return resp.text or "", str(resp.url)
+            return texto, str(resp.url)
         except Exception as exc:
             self._log(f"[GET_HTML ERRO] {url} -> {exc}")
             return "", self._normalizar_url(url)
 
     def _get_text(self, session: requests.Session, url: str) -> Tuple[str, str]:
         try:
-            resp = session.get(url, timeout=30, allow_redirects=True)
-            if not resp.ok:
-                return "", self._normalizar_url(url)
+            resp, final_url = self._request_with_ssl_fallback(
+                session,
+                url,
+                timeout=30,
+                allow_redirects=True,
+            )
+            if resp is None or not resp.ok:
+                return "", self._normalizar_url(final_url or url)
             return resp.text or "", str(resp.url)
         except Exception as exc:
             self._log(f"[GET_TEXT ERRO] {url} -> {exc}")
