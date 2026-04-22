@@ -20,10 +20,19 @@ from bling_app_zero.core.site_crawler_cleaners import (
     safe_str,
 )
 
+try:
+    from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
+except Exception:
+    def get_supplier_profile(url: str):
+        return None
 
-# ============================================================
-# HELPERS BASE
-# ============================================================
+
+def _profile(url: str):
+    try:
+        return get_supplier_profile(url)
+    except Exception:
+        return None
+
 
 def texto_por_selectors(soup: BeautifulSoup, selectors: list[str]) -> str:
     for selector in selectors:
@@ -162,10 +171,6 @@ def _texto_total_seguro(soup: BeautifulSoup) -> str:
         return ""
 
 
-# ============================================================
-# JSON-LD (MAIS FORTE)
-# ============================================================
-
 def extrair_json_ld(soup: BeautifulSoup) -> list[dict]:
     itens = []
 
@@ -279,10 +284,6 @@ def extrair_produto_json_ld(soup: BeautifulSoup, url_produto: str) -> dict:
         "fonte_extracao": "json_ld",
     }
 
-
-# ============================================================
-# EXTRAÇÕES ESPECÍFICAS
-# ============================================================
 
 def extrair_marca(texto: str, soup: BeautifulSoup) -> str:
     marca = texto_por_selectors(
@@ -453,7 +454,6 @@ def extrair_descricao_admin_products(soup: BeautifulSoup, texto_total: str, json
         if _titulo_valido_para_admin(titulo):
             return titulo
 
-    # fallback por regex em páginas administrativas/listagens
     linhas = [safe_str(x) for x in re.split(r"[\n\r]+", texto_total) if safe_str(x)]
     for linha in linhas:
         if _titulo_valido_para_admin(linha):
@@ -463,7 +463,41 @@ def extrair_descricao_admin_products(soup: BeautifulSoup, texto_total: str, json
     return ""
 
 
-def extrair_categoria_admin_products(soup: BeautifulSoup, texto_total: str, json_ld: dict) -> str:
+def _categoria_por_url_produto(url_produto: str) -> str:
+    profile = _profile(url_produto)
+    path_parts = [p for p in urlparse(url_produto).path.split("/") if safe_str(p)]
+
+    if not path_parts:
+        return ""
+
+    if profile is not None:
+        category_hints = tuple(getattr(profile, "category_path_hints", ()) or ())
+        for hint in category_hints:
+            hint_n = safe_str(hint).strip("/").lower()
+            if not hint_n:
+                continue
+            for idx, parte in enumerate(path_parts):
+                if safe_str(parte).lower() == hint_n and idx + 1 < len(path_parts):
+                    return safe_str(path_parts[idx + 1]).replace("-", " ").title()
+
+        category_keywords = tuple(getattr(profile, "category_url_keywords", ()) or ())
+        for parte in path_parts:
+            parte_n = safe_str(parte).lower()
+            if parte_n in {safe_str(x).lower() for x in category_keywords if safe_str(x)}:
+                continue
+            if parte_n not in {"produto", "produtos", "product", "products", "p", "item", "sku"} and len(parte_n) > 2:
+                return safe_str(parte).replace("-", " ").title()
+
+    for parte in path_parts[:-1]:
+        parte_n = safe_str(parte).lower()
+        if parte_n not in {"produto", "produtos", "product", "products", "p", "item", "sku", "categoria", "categorias", "departamento"}:
+            if len(parte_n) > 2:
+                return safe_str(parte).replace("-", " ").title()
+
+    return ""
+
+
+def extrair_categoria_admin_products(soup: BeautifulSoup, texto_total: str, json_ld: dict, url_produto: str = "") -> str:
     breadcrumb = extrair_breadcrumb(soup)
     if breadcrumb:
         return breadcrumb
@@ -491,12 +525,31 @@ def extrair_categoria_admin_products(soup: BeautifulSoup, texto_total: str, json
         if valor and len(valor) >= 3:
             return valor[:120]
 
+    if url_produto:
+        return _categoria_por_url_produto(url_produto)
+
     return ""
 
 
-# ============================================================
-# EXTRAÇÃO PRINCIPAL
-# ============================================================
+def _filtrar_imagens(url_produto: str, imagens: list[str]) -> list[str]:
+    imagens_filtradas = []
+    vistos = set()
+
+    for img in imagens:
+        url_img = safe_str(img)
+        if not url_img:
+            continue
+        if not imagem_valida(url_img):
+            continue
+        if not mesmo_dominio(url_produto, url_img) and "cdn" not in normalizar_texto(url_img):
+            continue
+        if url_img in vistos:
+            continue
+        vistos.add(url_img)
+        imagens_filtradas.append(url_img)
+
+    return imagens_filtradas
+
 
 def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
@@ -556,21 +609,7 @@ def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
     if not imagens and json_ld.get("url_imagens"):
         imagens = [x for x in json_ld["url_imagens"].split("|") if safe_str(x)]
 
-    imagens_filtradas = []
-    vistos = set()
-    for img in imagens:
-        url_img = safe_str(img)
-        if not url_img:
-            continue
-        if not imagem_valida(url_img):
-            continue
-        if not mesmo_dominio(url_produto, url_img) and "cdn" not in normalizar_texto(url_img):
-            # deixa passar cdn, mas evita lixo externo
-            continue
-        if url_img in vistos:
-            continue
-        vistos.add(url_img)
-        imagens_filtradas.append(url_img)
+    imagens_filtradas = _filtrar_imagens(url_produto, imagens)
 
     marca = extrair_marca(texto_total, soup) or json_ld.get("marca", "")
     codigo = extrair_codigo(texto_total, soup) or json_ld.get("codigo", "")
@@ -595,9 +634,8 @@ def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
 
     descricao_detalhada = descricao_detalhada_valida(descricao_detalhada, titulo)
 
-    categoria = extrair_categoria_admin_products(soup, texto_total, json_ld)
+    categoria = extrair_categoria_admin_products(soup, texto_total, json_ld, url_produto=url_produto)
 
-    # heurística extra para admin/products ou grids internos
     url_n = normalizar_texto(url_produto)
     if "/admin/products" in url_n and not codigo:
         codigo = _regex_busca(
@@ -607,6 +645,11 @@ def extrair_detalhes_heuristicos(url_produto: str, html: str) -> dict:
                 r"\bc[oó]digo[\s:\-#]*([A-Za-z0-9._/\-]{3,60})",
             ],
         )
+
+    if not codigo:
+        slug = safe_str(urlparse(url_produto).path.split("/")[-1])
+        if slug and len(slug) >= 6 and slug.lower() not in {"produto", "product", "produtos", "products"}:
+            codigo = slug[:60]
 
     return {
         "url_produto": url_produto,
