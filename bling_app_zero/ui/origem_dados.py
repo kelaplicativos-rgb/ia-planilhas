@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import inspect
@@ -23,10 +24,6 @@ from bling_app_zero.ui.app_helpers import (
 EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
 EXTENSOES_MODELO = {".csv", ".xlsx", ".xls"}
 
-
-# ============================================================
-# HELPERS BASE
-# ============================================================
 
 def _extensao(upload) -> str:
     nome = str(getattr(upload, "name", "") or "").strip().lower()
@@ -178,22 +175,21 @@ def _parse_xml_nfe(upload) -> pd.DataFrame:
 
 
 def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
-    st.markdown(f"**{titulo}**")
+    with st.expander(titulo, expanded=False):
+        if not isinstance(df, pd.DataFrame):
+            st.info("Arquivo sem estrutura tabular.")
+            return
 
-    if not isinstance(df, pd.DataFrame):
-        st.info("Arquivo sem estrutura tabular.")
-        return
+        if len(df.columns) == 0:
+            st.error("Nenhuma coluna encontrada no arquivo.")
+            return
 
-    if len(df.columns) == 0:
-        st.error("Nenhuma coluna encontrada no arquivo.")
-        return
+        if df.empty:
+            st.success("Arquivo carregado corretamente, mas sem linhas de dados.")
+            st.dataframe(pd.DataFrame(columns=df.columns), use_container_width=True)
+            return
 
-    if df.empty:
-        st.success("Arquivo carregado corretamente, mas sem linhas de dados.")
-        st.dataframe(pd.DataFrame(columns=df.columns), use_container_width=True)
-        return
-
-    st.dataframe(df.head(20), use_container_width=True)
+        st.dataframe(df.head(20), use_container_width=True)
 
 
 def _processar_upload_origem(upload) -> None:
@@ -305,23 +301,17 @@ def _resumo_origem_atual() -> None:
     operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
     deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem))
     with col2:
-        st.metric("Colunas origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem.columns))
+        st.metric("Modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
     with col3:
-        st.metric("Colunas modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
-    with col4:
         if operacao == "estoque":
             st.metric("Depósito", deposito_nome or "-")
         else:
-            st.metric("Fonte descoberta", fonte_descoberta)
+            st.metric("Fonte", fonte_descoberta)
 
-
-# ============================================================
-# OPERAÇÃO
-# ============================================================
 
 def _render_operacao() -> None:
     tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
@@ -361,42 +351,33 @@ def _render_dados_operacao() -> None:
     if operacao != "estoque":
         return
 
-    st.markdown("### Dados da operação")
-    st.caption("Informe o depósito que será aplicado automaticamente no fluxo de estoque.")
+    with st.container(border=True):
+        st.markdown("### Dados da operação")
+        valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
 
-    valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
+        novo_valor = st.text_input(
+            "Nome do depósito",
+            value=valor_atual,
+            key="deposito_nome_input",
+            placeholder="Ex.: Depósito Principal",
+            help="Esse valor será levado automaticamente para a coluna de depósito no mapeamento e no resultado final.",
+        ).strip()
 
-    novo_valor = st.text_input(
-        "Nome do depósito",
-        value=valor_atual,
-        key="deposito_nome_input",
-        placeholder="Ex.: Depósito Principal",
-        help="Esse valor será levado automaticamente para a coluna de depósito no mapeamento e no resultado final.",
-    ).strip()
+        st.session_state["deposito_nome"] = novo_valor
 
-    st.session_state["deposito_nome"] = novo_valor
-
-
-# ============================================================
-# ORIGEM POR ARQUIVO
-# ============================================================
 
 def _render_origem_arquivo() -> None:
-    st.markdown("### Arquivo do fornecedor")
-    st.caption("Envie a planilha ou XML do fornecedor para usar como origem.")
+    with st.container(border=True):
+        st.markdown("### Arquivo do fornecedor")
 
-    upload_origem = st.file_uploader(
-        "Selecionar arquivo de origem",
-        key="upload_origem",
-    )
+        upload_origem = st.file_uploader(
+            "Selecionar arquivo de origem",
+            key="upload_origem",
+        )
 
-    if upload_origem is not None:
-        _processar_upload_origem(upload_origem)
+        if upload_origem is not None:
+            _processar_upload_origem(upload_origem)
 
-
-# ============================================================
-# BUSCA POR SITE
-# ============================================================
 
 def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> None:
     from datetime import datetime
@@ -505,30 +486,18 @@ def _executar_busca_site(url_site: str) -> None:
 
 
 def _render_resumo_busca_site() -> None:
-    ultima_url = str(st.session_state.get("site_busca_ultima_url", "") or "").strip()
     ultimo_total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
     ultimo_status = str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo")
-    ultima_execucao = str(st.session_state.get("site_busca_ultima_execucao", "") or "").strip()
     resumo_texto = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip() or _resumo_status_site_texto()
-    fonte_descoberta = _fonte_descoberta_label(st.session_state.get("site_busca_fonte_descoberta", ""))
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
+    col1, col2 = st.columns(2)
+    with col1:
         st.metric("Status", ultimo_status.title())
-    with c2:
+    with col2:
         st.metric("Produtos", ultimo_total)
-    with c3:
-        st.metric("Origem site", "Sim" if _tem_resultado_site() else "Não")
-    with c4:
-        st.metric("Fonte descoberta", fonte_descoberta)
 
     if resumo_texto:
         st.caption(resumo_texto)
-
-    if ultima_url:
-        st.write(f"**Última URL:** {ultima_url}")
-    if ultima_execucao:
-        st.write(f"**Última execução:** {ultima_execucao}")
 
 
 def _render_diagnostico_site() -> None:
@@ -568,16 +537,11 @@ def _render_diagnostico_site() -> None:
 
 
 def _render_etapas_busca_site(url_site: str) -> None:
-    st.markdown("#### Etapa 1 — Informar a URL")
     if not url_site:
         st.info("Cole a URL do fornecedor para habilitar a busca.")
         return
 
-    st.success("URL preenchida.")
-
-    st.markdown("#### Etapa 2 — Executar a busca")
     executando = bool(st.session_state.get("site_busca_em_execucao", False))
-
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -603,64 +567,52 @@ def _render_etapas_busca_site(url_site: str) -> None:
     if executando:
         st.info("A busca está em andamento...")
 
-    st.markdown("---")
     _render_resumo_busca_site()
 
-    st.markdown("#### Etapa 3 — Conferir resultado")
     if _tem_resultado_site():
         _preview_dataframe(st.session_state.get("df_origem"), "Preview da busca por site")
     else:
-        st.info("Depois da busca, o preview dos produtos encontrados aparecerá aqui.")
+        st.caption("Depois da busca, o preview dos produtos encontrados aparecerá aqui.")
 
     _render_diagnostico_site()
 
 
 def _render_origem_site() -> None:
-    st.markdown("### Busca no site do fornecedor")
-    st.caption(
-        "Fluxo simplificado: informe a URL, execute a busca, confira o preview e siga para a próxima etapa."
-    )
-
-    if "site_fornecedor_url" not in st.session_state:
-        st.session_state["site_fornecedor_url"] = ""
-
-    url_site = st.text_input(
-        "URL do fornecedor ou categoria",
-        key="site_fornecedor_url",
-        placeholder="https://www.fornecedor.com.br/categoria",
-    ).strip()
-
     with st.container(border=True):
+        st.markdown("### Buscar no site do fornecedor")
+
+        if "site_fornecedor_url" not in st.session_state:
+            st.session_state["site_fornecedor_url"] = ""
+
+        url_site = st.text_input(
+            "URL do fornecedor ou categoria",
+            key="site_fornecedor_url",
+            placeholder="https://www.fornecedor.com.br/categoria",
+        ).strip()
+
         st.checkbox(
             "Priorizar sitemap quando disponível",
             key="site_busca_modo_sitemap_primeiro",
             value=True,
             disabled=True,
-            help="Atualmente a busca já usa sitemap primeiro automaticamente quando o site expõe esse recurso.",
+            help="A busca já usa sitemap primeiro automaticamente quando o site expõe esse recurso.",
         )
+
         _render_etapas_busca_site(url_site)
 
 
-# ============================================================
-# MODELO
-# ============================================================
-
 def _render_modelo() -> None:
-    st.markdown("### Modelo do Bling")
-    st.caption("Envie o modelo que será usado como estrutura de saída.")
+    with st.container(border=True):
+        st.markdown("### Modelo do Bling")
 
-    upload_modelo = st.file_uploader(
-        "Selecionar modelo",
-        key="upload_modelo",
-    )
+        upload_modelo = st.file_uploader(
+            "Selecionar modelo",
+            key="upload_modelo",
+        )
 
-    if upload_modelo:
-        _processar_upload_modelo(upload_modelo)
+        if upload_modelo:
+            _processar_upload_modelo(upload_modelo)
 
-
-# ============================================================
-# CONTINUAR
-# ============================================================
 
 def _validar_dados_operacao_para_continuar() -> bool:
     operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
@@ -677,8 +629,7 @@ def _validar_dados_operacao_para_continuar() -> bool:
 
 
 def _render_continuar() -> None:
-    st.markdown("---")
-    st.markdown("### Pronto para seguir?")
+    st.markdown("### Continuar")
     _resumo_origem_atual()
 
     origem_ok = _origem_pronta()
@@ -699,10 +650,6 @@ def _render_continuar() -> None:
         ir_para_etapa("precificacao")
 
 
-# ============================================================
-# RENDER PRINCIPAL
-# ============================================================
-
 def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
 
@@ -721,6 +668,6 @@ def render_origem_dados() -> None:
     else:
         _render_origem_site()
 
-    st.markdown("---")
     _render_modelo()
+    st.markdown("---")
     _render_continuar()
