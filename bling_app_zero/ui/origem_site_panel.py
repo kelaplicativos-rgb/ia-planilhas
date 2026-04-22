@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import streamlit as st
@@ -25,7 +25,32 @@ except Exception:
     get_profile_for_url = None
     inspect_site_auth = None
 
+try:
+    from bling_app_zero.core.site_supplier_store import (
+        delete_site_supplier,
+        get_site_supplier_by_slug,
+        get_site_supplier_options,
+        list_site_suppliers,
+        upsert_site_supplier,
+    )
+except Exception:
+    delete_site_supplier = None
+    get_site_supplier_by_slug = None
+    get_site_supplier_options = None
+    list_site_suppliers = None
+    upsert_site_supplier = None
+
 from bling_app_zero.ui.app_helpers import log_debug
+
+
+MODO_FORNECEDOR_SALVO = "Fornecedor salvo"
+MODO_NOVA_URL = "Nova URL"
+OPCAO_NOVO_FORNECEDOR = "__novo_fornecedor__"
+
+
+def _clean_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return "" if text.lower() in {"none", "null", "nan"} else text
 
 
 def _normalizar_df_saida_site(df: pd.DataFrame) -> pd.DataFrame:
@@ -309,25 +334,221 @@ def _render_diagnostico() -> None:
             st.dataframe(df_diag.head(100), use_container_width=True)
 
 
+def _carregar_opcoes_fornecedores() -> list[dict]:
+    if get_site_supplier_options is None:
+        return []
+    try:
+        return get_site_supplier_options()
+    except Exception as exc:
+        log_debug(f"Falha ao carregar fornecedores salvos: {exc}", nivel="ERRO")
+        return []
+
+
+def _get_fornecedor_salvo_escolhido() -> Optional[Dict[str, Any]]:
+    if get_site_supplier_by_slug is None:
+        return None
+
+    slug = _clean_text(st.session_state.get("site_fornecedor_salvo_slug"))
+    if not slug or slug == OPCAO_NOVO_FORNECEDOR:
+        return None
+
+    try:
+        return get_site_supplier_by_slug(slug)
+    except Exception as exc:
+        log_debug(f"Falha ao carregar fornecedor salvo: {exc}", nivel="ERRO")
+        return None
+
+
+def _aplicar_fornecedor_salvo_na_tela(fornecedor: Optional[Dict[str, Any]]) -> None:
+    if not fornecedor:
+        return
+
+    st.session_state["site_fornecedor_nome_manual"] = str(fornecedor.get("nome", "") or "")
+    st.session_state["site_fornecedor_url"] = str(fornecedor.get("url_base", "") or "")
+    st.session_state["site_fornecedor_login_url"] = str(fornecedor.get("login_url", "") or "")
+    st.session_state["site_fornecedor_products_url"] = str(fornecedor.get("products_url", "") or "")
+    st.session_state["site_fornecedor_auth_mode"] = str(fornecedor.get("auth_mode", "") or "")
+    st.session_state["site_fornecedor_observacoes"] = str(fornecedor.get("observacoes", "") or "")
+
+
+def _render_modo_fornecedor() -> str:
+    opcoes = [MODO_FORNECEDOR_SALVO, MODO_NOVA_URL]
+
+    if "site_modo_fornecedor" not in st.session_state:
+        fornecedores = []
+        if list_site_suppliers is not None:
+            try:
+                fornecedores = list_site_suppliers()
+            except Exception:
+                fornecedores = []
+        st.session_state["site_modo_fornecedor"] = MODO_FORNECEDOR_SALVO if fornecedores else MODO_NOVA_URL
+
+    modo = st.radio(
+        "Como deseja selecionar o fornecedor?",
+        opcoes,
+        horizontal=True,
+        key="site_modo_fornecedor",
+    )
+    return modo
+
+
+def _render_select_fornecedor_salvo() -> None:
+    opcoes = _carregar_opcoes_fornecedores()
+
+    if not opcoes:
+        st.info("Nenhum fornecedor salvo ainda. Cadastre uma nova URL abaixo.")
+        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
+        return
+
+    valores = [item["value"] for item in opcoes] + [OPCAO_NOVO_FORNECEDOR]
+    labels = {item["value"]: item["label"] for item in opcoes}
+    labels[OPCAO_NOVO_FORNECEDOR] = "Outro fornecedor / inserir URL manualmente"
+
+    valor_atual = _clean_text(st.session_state.get("site_fornecedor_salvo_slug"))
+    if valor_atual not in valores:
+        valor_atual = valores[0]
+        st.session_state["site_fornecedor_salvo_slug"] = valor_atual
+
+    escolhido = st.selectbox(
+        "Fornecedor cadastrado",
+        options=valores,
+        index=valores.index(valor_atual),
+        format_func=lambda x: labels.get(x, x),
+        key="site_fornecedor_salvo_slug",
+    )
+
+    if escolhido == OPCAO_NOVO_FORNECEDOR:
+        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
+        return
+
+    fornecedor = _get_fornecedor_salvo_escolhido()
+    _aplicar_fornecedor_salvo_na_tela(fornecedor)
+
+    if fornecedor:
+        with st.expander("Detalhes do fornecedor selecionado", expanded=False):
+            st.write(f"**URL base:** {fornecedor.get('url_base', '-')}")
+            if fornecedor.get("login_url"):
+                st.write(f"**Login:** {fornecedor.get('login_url')}")
+            if fornecedor.get("products_url"):
+                st.write(f"**Área de produtos:** {fornecedor.get('products_url')}")
+            if fornecedor.get("auth_mode"):
+                st.write(f"**Modo de acesso:** {fornecedor.get('auth_mode')}")
+            if fornecedor.get("observacoes"):
+                st.caption(str(fornecedor.get("observacoes", "") or "").strip())
+
+        if delete_site_supplier is not None:
+            if st.button("Excluir fornecedor salvo", use_container_width=True, key="btn_excluir_fornecedor_salvo"):
+                try:
+                    ok = delete_site_supplier(fornecedor.get("slug", ""))
+                    if ok:
+                        st.success("Fornecedor removido com sucesso.")
+                        st.session_state["site_fornecedor_salvo_slug"] = ""
+                        st.session_state["site_modo_fornecedor"] = MODO_NOVA_URL
+                        st.rerun()
+                    st.error("Não foi possível remover o fornecedor.")
+                except Exception as exc:
+                    st.error(f"Falha ao remover fornecedor: {exc}")
+
+
+def _render_campos_fornecedor_manual() -> None:
+    st.text_input(
+        "Nome do fornecedor",
+        key="site_fornecedor_nome_manual",
+        placeholder="Ex.: Fornecedor ABC",
+    )
+
+    st.text_input(
+        "URL do fornecedor ou categoria",
+        key="site_fornecedor_url",
+        placeholder="https://www.fornecedor.com.br/categoria",
+    )
+
+    with st.expander("Detalhes opcionais do fornecedor", expanded=False):
+        st.text_input(
+            "URL de login",
+            key="site_fornecedor_login_url",
+            placeholder="https://www.fornecedor.com.br/login",
+        )
+        st.text_input(
+            "URL da área de produtos",
+            key="site_fornecedor_products_url",
+            placeholder="https://www.fornecedor.com.br/produtos",
+        )
+        st.text_input(
+            "Modo de acesso",
+            key="site_fornecedor_auth_mode",
+            placeholder="Ex.: public, login, whatsapp_code",
+        )
+        st.text_area(
+            "Observações",
+            key="site_fornecedor_observacoes",
+            height=90,
+            placeholder="Informações úteis sobre esse fornecedor.",
+        )
+
+
+def _obter_url_ativa() -> str:
+    return _clean_text(st.session_state.get("site_fornecedor_url"))
+
+
+def _salvar_fornecedor_manual() -> None:
+    if upsert_site_supplier is None:
+        st.error("Módulo de fornecedores salvos indisponível.")
+        return
+
+    nome = _clean_text(st.session_state.get("site_fornecedor_nome_manual"))
+    url_base = _clean_text(st.session_state.get("site_fornecedor_url"))
+    login_url = _clean_text(st.session_state.get("site_fornecedor_login_url"))
+    products_url = _clean_text(st.session_state.get("site_fornecedor_products_url"))
+    auth_mode = _clean_text(st.session_state.get("site_fornecedor_auth_mode"))
+    observacoes = _clean_text(st.session_state.get("site_fornecedor_observacoes"))
+
+    if not url_base:
+        st.error("Informe a URL base antes de salvar.")
+        return
+
+    if not nome:
+        st.error("Informe o nome do fornecedor antes de salvar.")
+        return
+
+    try:
+        fornecedor = upsert_site_supplier(
+            nome=nome,
+            url_base=url_base,
+            login_url=login_url,
+            products_url=products_url,
+            auth_mode=auth_mode,
+            observacoes=observacoes,
+        )
+        st.session_state["site_fornecedor_salvo_slug"] = fornecedor.get("slug", "")
+        st.success("Fornecedor salvo com sucesso.")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Falha ao salvar fornecedor: {exc}")
+
+
 def render_origem_site_panel() -> None:
     with st.container(border=True):
         st.markdown("### Buscar no site do fornecedor")
-        st.caption("Informe a URL, inspecione o acesso se necessário e execute a busca.")
+        st.caption("Selecione um fornecedor salvo ou informe uma nova URL para buscar os produtos.")
 
-        if "site_fornecedor_url" not in st.session_state:
-            st.session_state["site_fornecedor_url"] = ""
+        modo = _render_modo_fornecedor()
 
-        url_site = st.text_input(
-            "URL do fornecedor ou categoria",
-            key="site_fornecedor_url",
-            placeholder="https://www.fornecedor.com.br/categoria",
-        ).strip()
+        if modo == MODO_FORNECEDOR_SALVO:
+            _render_select_fornecedor_salvo()
+            if st.session_state.get("site_modo_fornecedor") == MODO_NOVA_URL:
+                st.rerun()
+        else:
+            _render_campos_fornecedor_manual()
+
+        url_site = _obter_url_ativa()
 
         col1, col2, col3 = st.columns(3)
+
         with col1:
-            if st.button("Inspecionar", use_container_width=True):
+            if st.button("Inspecionar", use_container_width=True, key="btn_inspecionar_site_origem"):
                 if not url_site:
-                    st.error("Informe a URL antes de inspecionar.")
+                    st.error("Informe ou selecione uma URL antes de inspecionar.")
                 else:
                     data = _inspecionar_site(url_site)
                     if data:
@@ -335,21 +556,27 @@ def render_origem_site_panel() -> None:
                         st.rerun()
 
         with col2:
-            if st.button("Buscar produtos", use_container_width=True):
+            if st.button("Buscar produtos", use_container_width=True, key="btn_buscar_site_origem"):
                 _executar_busca_site(url_site)
                 st.rerun()
 
         with col3:
-            if st.button("Limpar busca", use_container_width=True):
-                _resetar_estado_site_ui()
-                st.session_state.pop("df_origem", None)
-                st.session_state.pop("origem_upload_tipo", None)
-                st.session_state.pop("origem_upload_nome", None)
-                st.session_state.pop("origem_upload_ext", None)
-                st.info("Busca por site limpa.")
-                st.rerun()
+            if modo == MODO_NOVA_URL:
+                if st.button("Salvar fornecedor", use_container_width=True, key="btn_salvar_fornecedor_site"):
+                    _salvar_fornecedor_manual()
+            else:
+                if st.button("Limpar busca", use_container_width=True, key="btn_limpar_busca_site"):
+                    _resetar_estado_site_ui()
+                    st.session_state.pop("df_origem", None)
+                    st.session_state.pop("origem_upload_tipo", None)
+                    st.session_state.pop("origem_upload_nome", None)
+                    st.session_state.pop("origem_upload_ext", None)
+                    st.info("Busca por site limpa.")
+                    st.rerun()
 
-        _render_status(url_site)
+        if url_site:
+            _render_status(url_site)
+
         _render_resumo_busca()
 
         df_origem = st.session_state.get("df_origem")
