@@ -1,13 +1,9 @@
 
-import inspect
-from datetime import datetime
-
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.utils.init_app import init_app
 from bling_app_zero.ui.app_helpers import (
-    get_etapa,
     log_debug,
     render_log_debug,
     safe_df_dados,
@@ -18,7 +14,6 @@ from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 
-# 🔥 FIX REAL: fallback seguro para preview_final
 try:
     from bling_app_zero.ui.preview_final import render_preview_final
 except Exception:
@@ -45,6 +40,7 @@ def _inicializar_estado_global() -> None:
         "wizard_etapa_maxima": "origem",
         "ultima_etapa_renderizada": "",
         "_troca_etapa_em_andamento": False,
+        "mostrar_log_debug_ui": False,
     }
 
     for chave, valor in defaults.items():
@@ -238,7 +234,7 @@ def _render_navegacao_travada() -> None:
     etapa_atual = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
     etapa_maxima = _etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
 
-    st.markdown("### Etapas do fluxo")
+    st.markdown("### Etapas")
     colunas = st.columns(len(ETAPAS_ORDEM))
 
     labels = {
@@ -290,23 +286,53 @@ def _render_etapa_atual() -> None:
 
 def _render_header() -> None:
     st.title("🚀 IA Planilhas → Bling")
-    st.caption("Fluxo principal: origem → precificação → mapeamento → preview final → conexão/envio Bling")
+    st.caption("Fluxo limpo: origem → precificação → mapeamento → preview final")
 
 
 def _render_resumo_topo() -> None:
     df_origem = st.session_state.get("df_origem")
     df_precificado = st.session_state.get("df_precificado")
     df_final = st.session_state.get("df_final")
+    etapa = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem")).replace("_", " ").title()
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
     with c1:
         st.metric("Origem", len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0)
     with c2:
-        st.metric("Precisificado", len(df_precificado) if isinstance(df_precificado, pd.DataFrame) else 0)
+        st.metric("Precificado", len(df_precificado) if isinstance(df_precificado, pd.DataFrame) else 0)
     with c3:
         st.metric("Final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
     with c4:
-        st.metric("Etapa", _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem")).replace("_", " ").title())
+        st.metric("Etapa", etapa)
+
+
+def _render_atalhos_tecnicos() -> None:
+    with st.expander("Opções técnicas", expanded=False):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.download_button(
+                label="📥 Baixar log debug",
+                data=b"",
+                file_name="debug_log.txt",
+                mime="text/plain",
+                use_container_width=True,
+                disabled=True,
+                key="btn_download_log_debug_placeholder_app",
+            )
+
+        with col2:
+            mostrar = bool(st.session_state.get("mostrar_log_debug_ui", False))
+            if st.button(
+                "Mostrar/ocultar log na tela",
+                use_container_width=True,
+                key="btn_toggle_log_debug_app",
+            ):
+                st.session_state["mostrar_log_debug_ui"] = not mostrar
+                st.rerun()
+
+        if st.session_state.get("mostrar_log_debug_ui", False):
+            render_log_debug(modo="compacto")
 
 
 def _render_layout_principal() -> None:
@@ -317,7 +343,7 @@ def _render_layout_principal() -> None:
     st.markdown("---")
     _render_etapa_atual()
     st.markdown("---")
-    render_log_debug()
+    _render_atalhos_tecnicos()
 
 
 def main() -> None:
