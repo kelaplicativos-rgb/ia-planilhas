@@ -1279,3 +1279,4 @@ def get_auth_headers_and_cookies(base_url: str = "", fornecedor: str = "") -> di
 def get_profile_for_url(url: str) -> SupplierProfile:
     profile, _saved_supplier = _resolve_saved_supplier_profile(url)
     return profile if profile else DEFAULT_PROFILE
+
