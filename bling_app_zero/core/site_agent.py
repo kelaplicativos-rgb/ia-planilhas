@@ -16,9 +16,17 @@ try:
 except Exception:
     BeautifulSoup = None
 
-
 try:
-    from bling_app_zero.core.site_crawler_cleaners import normalizar_url, safe_str
+    from bling_app_zero.core.site_crawler_cleaners import (
+        limpar_codigo,
+        limpar_gtin,
+        limpar_marca,
+        limpar_texto_produto,
+        normalizar_preco_para_planilha,
+        normalizar_url,
+        safe_str,
+        titulo_produto_valido,
+    )
 except Exception:
     def normalizar_url(url: str) -> str:
         url = str(url or "").strip()
@@ -34,6 +42,41 @@ except Exception:
     def safe_str(value: Any) -> str:
         return str(value or "").strip()
 
+    def limpar_texto_produto(valor: Any, max_len: int = 4000) -> str:
+        texto = safe_str(valor)
+        texto = re.sub(r"[\r\n\t]+", " ", texto)
+        texto = re.sub(r"\s{2,}", " ", texto).strip()
+        return texto[:max_len] if max_len > 0 else texto
+
+    def limpar_codigo(valor: Any) -> str:
+        return limpar_texto_produto(valor, max_len=120)
+
+    def limpar_gtin(valor: Any) -> str:
+        texto = re.sub(r"\D+", "", safe_str(valor))
+        return texto if len(texto) in {8, 12, 13, 14} else ""
+
+    def limpar_marca(valor: Any) -> str:
+        return limpar_texto_produto(valor, max_len=60)
+
+    def normalizar_preco_para_planilha(valor: str) -> str:
+        texto = safe_str(valor).replace("R$", "").replace(" ", "").replace(",", ".")
+        try:
+            numero = float(texto)
+            if numero <= 0:
+                return ""
+            return f"{numero:.2f}".replace(".", ",")
+        except Exception:
+            return ""
+
+    def titulo_produto_valido(valor: Any) -> bool:
+        texto = limpar_texto_produto(valor, max_len=220)
+        if not texto:
+            return False
+        if len(texto) < 4:
+            return False
+        if "entrando" in texto.lower() or "loading" in texto.lower() or "carregando" in texto.lower():
+            return False
+        return True
 
 try:
     from bling_app_zero.core.site_crawler_http import extrair_detalhes_heuristicos
@@ -43,30 +86,25 @@ except Exception:
     except Exception:
         extrair_detalhes_heuristicos = None
 
-
 try:
     from bling_app_zero.core.site_crawler_gpt import gpt_extrair_produto
 except Exception:
     gpt_extrair_produto = None
-
 
 try:
     from bling_app_zero.core.site_crawler_http import fetch_html_retry
 except Exception:
     fetch_html_retry = None
 
-
 try:
     from bling_app_zero.core.site_crawler_links import descobrir_produtos_no_dominio
 except Exception:
     descobrir_produtos_no_dominio = None
 
-
 try:
     from bling_app_zero.core.site_crawler_sitemap import descobrir_produtos_via_sitemap
 except Exception:
     descobrir_produtos_via_sitemap = None
-
 
 try:
     from bling_app_zero.core.site_crawler_validators import (
@@ -80,7 +118,7 @@ except Exception:
         if safe_str(kwargs.get("titulo")):
             score += 2
         if safe_str(kwargs.get("preco")):
-            score += 1
+            score += 3
         if safe_str(kwargs.get("codigo")):
             score += 2
         if safe_str(kwargs.get("gtin")):
@@ -94,23 +132,16 @@ except Exception:
         return score
 
     def produto_final_valido(item: dict) -> bool:
-        return bool(safe_str(item.get("descricao")) and safe_str(item.get("url_produto")))
+        return bool(safe_str(item.get("descricao")) and safe_str(item.get("url_produto")) and safe_str(item.get("preco")))
 
     def titulo_valido(titulo: str, url_produto: str = "") -> bool:
-        titulo_n = safe_str(titulo)
-        if not titulo_n:
-            return False
-        if len(titulo_n) < 3:
-            return False
-        return True
-
+        return titulo_produto_valido(titulo)
 
 try:
     from bling_app_zero.core.site_supplier_profiles import get_supplier_profile
 except Exception:
     def get_supplier_profile(url: str):
         return None
-
 
 try:
     from bling_app_zero.core.session_manager import (
@@ -129,43 +160,9 @@ except Exception:
     def detectar_login_captcha(html: str, url_atual: str = "") -> dict[str, Any]:
         html_n = safe_str(html).lower()
         url_n = safe_str(url_atual).lower()
-
-        sinais_login = [
-            "fazer login",
-            "faça login",
-            "entrar",
-            "login",
-            "senha",
-            "autenticacao",
-            "autenticação",
-            "minha conta",
-        ]
-        sinais_captcha = [
-            "captcha",
-            "g-recaptcha",
-            "grecaptcha",
-            "hcaptcha",
-            "cloudflare",
-            "verify you are human",
-            "não sou um robô",
-            "nao sou um robo",
-        ]
-
-        url_sugere_login = any(
-            token in url_n
-            for token in ["/login", "/entrar", "/conta", "/account", "/auth", "/admin"]
-        )
-        html_sugere_login = any(token in html_n for token in sinais_login)
-        captcha_detectado = any(token in html_n for token in sinais_captcha)
-        exige_login = url_sugere_login or html_sugere_login
-
-        if exige_login and captcha_detectado:
-            status = STATUS_LOGIN_CAPTCHA_DETECTADO
-        elif exige_login:
-            status = STATUS_LOGIN_REQUERIDO
-        else:
-            status = "publico"
-
+        exige_login = any(token in url_n for token in ["/login", "/entrar", "/conta", "/account", "/auth", "/admin"])
+        captcha_detectado = any(token in html_n for token in ["captcha", "g-recaptcha", "hcaptcha", "cloudflare"])
+        status = STATUS_LOGIN_CAPTCHA_DETECTADO if exige_login and captcha_detectado else (STATUS_LOGIN_REQUERIDO if exige_login else "publico")
         return {
             "exige_login": exige_login,
             "captcha_detectado": captcha_detectado,
@@ -297,6 +294,29 @@ BLOCK_PAGE_SIGNALS = [
     "hcaptcha",
 ]
 
+ANTI_LIXO_EXATO = {
+    "",
+    "entrando...",
+    "entrando",
+    "loading...",
+    "loading",
+    "carregando...",
+    "carregando",
+    "dark",
+    "light",
+    "theme",
+    "ers-color-scheme",
+    "color-scheme",
+    "undefined",
+    "null",
+    "none",
+    "produto",
+    "produtos",
+    "home",
+    "inicio",
+    "início",
+}
+
 DIAG_COLUNAS = [
     "url_produto",
     "status",
@@ -310,6 +330,11 @@ DIAG_COLUNAS = [
     "preco",
     "fontes_html",
     "url_html_principal",
+    "fonte_descricao",
+    "fonte_codigo",
+    "fonte_preco",
+    "fonte_categoria",
+    "fonte_marca",
 ]
 
 
@@ -343,6 +368,135 @@ def _log_debug(msg: str, nivel: str = "INFO") -> None:
             pass
 
 
+def _texto_eh_lixo(texto: Any) -> bool:
+    valor = limpar_texto_produto(texto, max_len=300)
+    if not valor:
+        return True
+    valor_n = valor.lower()
+    if valor_n in ANTI_LIXO_EXATO:
+        return True
+    if "entrando" in valor_n or "loading" in valor_n or "carregando" in valor_n:
+        return True
+    if "color-scheme" in valor_n or "ers-color-scheme" in valor_n:
+        return True
+    if len(valor) < 3:
+        return True
+    return False
+
+
+def _titulo_eh_confiavel(texto: Any) -> bool:
+    valor = limpar_texto_produto(texto, max_len=220)
+    if not valor:
+        return False
+    if _texto_eh_lixo(valor):
+        return False
+    return titulo_produto_valido(valor) and titulo_valido(valor, "")
+
+
+def _codigo_eh_confiavel(texto: Any) -> bool:
+    valor = limpar_codigo(texto)
+    if not valor:
+        return False
+    valor_n = valor.lower()
+    if valor_n in ANTI_LIXO_EXATO:
+        return False
+    if "ers-color-scheme" in valor_n or "color-scheme" in valor_n:
+        return False
+    if len(valor) < 3:
+        return False
+    if " " in valor and len(valor.split()) > 4:
+        return False
+    return True
+
+
+def _preco_eh_confiavel(texto: Any) -> bool:
+    valor = normalizar_preco_para_planilha(safe_str(texto))
+    return bool(valor)
+
+
+def _categoria_eh_confiavel(texto: Any) -> bool:
+    valor = limpar_texto_produto(texto, max_len=120)
+    if not valor:
+        return False
+    if _texto_eh_lixo(valor):
+        return False
+    return len(valor) >= 3
+
+
+def _marca_eh_confiavel(texto: Any) -> bool:
+    valor = limpar_marca(texto)
+    if not valor:
+        return False
+    if _texto_eh_lixo(valor):
+        return False
+    return True
+
+
+def _score_valor(texto: Any, campo: str, fonte: str = "") -> int:
+    valor = safe_str(texto)
+    if not valor:
+        return -999
+
+    score = len(valor)
+
+    if fonte == "gpt":
+        score += 20
+    elif fonte == "heuristica":
+        score += 10
+    elif fonte == "html_fallback":
+        score += 5
+
+    if campo == "descricao":
+        if _titulo_eh_confiavel(valor):
+            score += 80
+        else:
+            score -= 100
+    elif campo == "codigo":
+        if _codigo_eh_confiavel(valor):
+            score += 60
+        else:
+            score -= 80
+    elif campo == "preco":
+        if _preco_eh_confiavel(valor):
+            score += 90
+        else:
+            score -= 120
+    elif campo == "categoria":
+        if _categoria_eh_confiavel(valor):
+            score += 35
+        else:
+            score -= 40
+    elif campo == "marca":
+        if _marca_eh_confiavel(valor):
+            score += 25
+        else:
+            score -= 35
+
+    if "|" in valor:
+        score += 15
+    if ">" in valor:
+        score += 10
+    if re.search(r"\d", valor):
+        score += 5
+
+    return score
+
+
+def _escolher_melhor_campo(candidatos: list[tuple[str, Any]]) -> tuple[str, str]:
+    melhor_valor = ""
+    melhor_fonte = ""
+    melhor_score = -999999
+
+    for fonte, valor in candidatos:
+        score = _score_valor(valor, campo=fonte.split("::")[-1] if "::" in fonte else "", fonte=fonte.split("::")[0])
+        if score > melhor_score:
+            melhor_score = score
+            melhor_valor = safe_str(valor)
+            melhor_fonte = fonte
+
+    return melhor_valor, melhor_fonte
+
+
 def _url_raiz(url: str) -> str:
     parsed = urlparse(normalizar_url(url))
     if parsed.scheme and parsed.netloc:
@@ -373,15 +527,15 @@ def _max_workers(total: int) -> int:
 
 
 def _descricao_curta_padrao(final: dict[str, Any]) -> str:
-    descricao_curta = safe_str(final.get("descricao_curta"))
+    descricao_curta = limpar_texto_produto(final.get("descricao_curta"), max_len=120)
     if descricao_curta:
         return descricao_curta[:120]
 
-    descricao = safe_str(final.get("descricao"))
+    descricao = limpar_texto_produto(final.get("descricao"), max_len=120)
     if descricao:
         return descricao[:120]
 
-    descricao_detalhada = safe_str(final.get("descricao_detalhada"))
+    descricao_detalhada = limpar_texto_produto(final.get("descricao_detalhada"), max_len=120)
     if descricao_detalhada:
         return descricao_detalhada[:120]
 
@@ -403,9 +557,9 @@ def _quantidade_padrao(final: dict[str, Any]) -> str:
     return "1"
 
 
-def _limpar_marca(marca: str, titulo: str = "") -> str:
-    marca = safe_str(marca).strip()
-    titulo = safe_str(titulo).strip()
+def _limpar_marca_final(marca: str, titulo: str = "") -> str:
+    marca = limpar_marca(marca)
+    titulo = limpar_texto_produto(titulo, max_len=220)
 
     if not marca:
         return ""
@@ -428,68 +582,20 @@ def _limpar_marca(marca: str, titulo: str = "") -> str:
         "shop",
         "ecommerce",
         "e-commerce",
-        "iphone",
-        "hdmi",
-        "ouvido",
-        "completo",
-        "fonte",
     ]
 
     for termo in bloqueadas_parciais:
         if termo in marca_lower:
             return ""
 
-    genericas = {
-        "fone",
-        "fones",
-        "cabo",
-        "cabos",
-        "carregador",
-        "carregadores",
-        "caixa",
-        "som",
-        "produto",
-        "produtos",
-        "acessorio",
-        "acessório",
-        "acessorios",
-        "acessórios",
-        "eletronico",
-        "eletrônico",
-        "eletronicos",
-        "eletrônicos",
-        "bluetooth",
-        "usb",
-        "usb-c",
-        "tipo-c",
-        "celular",
-        "smartphone",
-        "original",
-        "premium",
-        "max",
-        "pro",
-    }
-
-    if marca_lower in genericas:
-        return ""
-
-    if len(marca) > 40:
-        return ""
-
-    if marca.isdigit():
-        return ""
-
     if titulo_lower and marca_lower == titulo_lower:
-        return ""
-
-    if marca.count(" ") >= 4:
         return ""
 
     return marca
 
 
 def _inferir_marca_do_titulo(titulo: str) -> str:
-    titulo = safe_str(titulo).strip()
+    titulo = limpar_texto_produto(titulo, max_len=220)
     if not titulo:
         return ""
 
@@ -517,7 +623,7 @@ def _inferir_marca_do_titulo(titulo: str) -> str:
 
 
 def _resolver_marca(final: dict[str, Any], heuristica: dict[str, Any]) -> str:
-    descricao = safe_str(final.get("descricao")) or safe_str(heuristica.get("descricao"))
+    descricao = limpar_texto_produto(final.get("descricao")) or limpar_texto_produto(heuristica.get("descricao"))
 
     candidatos = [
         safe_str(final.get("marca")),
@@ -525,24 +631,24 @@ def _resolver_marca(final: dict[str, Any], heuristica: dict[str, Any]) -> str:
     ]
 
     for candidato in candidatos:
-        marca_limpa = _limpar_marca(candidato, descricao)
+        marca_limpa = _limpar_marca_final(candidato, descricao)
         if marca_limpa:
             return marca_limpa
 
     marca_titulo = _inferir_marca_do_titulo(descricao)
-    return _limpar_marca(marca_titulo, descricao)
+    return _limpar_marca_final(marca_titulo, descricao)
 
 
 def _montar_linha_saida(final: dict) -> dict:
     return {
-        "Código": safe_str(final.get("codigo")),
-        "Descrição": safe_str(final.get("descricao")),
+        "Código": limpar_codigo(final.get("codigo")),
+        "Descrição": limpar_texto_produto(final.get("descricao"), max_len=220),
         "Descrição Curta": _descricao_curta_padrao(final),
-        "Categoria": safe_str(final.get("categoria")),
-        "Marca": safe_str(final.get("marca")),
-        "GTIN": safe_str(final.get("gtin")),
+        "Categoria": limpar_texto_produto(final.get("categoria"), max_len=120),
+        "Marca": limpar_marca(final.get("marca")),
+        "GTIN": limpar_gtin(final.get("gtin")),
         "NCM": safe_str(final.get("ncm")),
-        "Preço de custo": safe_str(final.get("preco")),
+        "Preço de custo": normalizar_preco_para_planilha(final.get("preco")),
         "Quantidade": _quantidade_padrao(final),
         "URL Imagens": safe_str(final.get("url_imagens")),
         "URL Produto": safe_str(final.get("url_produto")),
@@ -592,12 +698,12 @@ def _df_diagnostico(rows: list[dict]) -> pd.DataFrame:
 
 def _score_produto(item: dict) -> int:
     return pontuar_produto(
-        titulo=safe_str(item.get("descricao")),
-        preco=safe_str(item.get("preco")),
-        codigo=safe_str(item.get("codigo")),
-        gtin=safe_str(item.get("gtin")),
+        titulo=limpar_texto_produto(item.get("descricao"), max_len=220),
+        preco=normalizar_preco_para_planilha(item.get("preco")),
+        codigo=limpar_codigo(item.get("codigo")),
+        gtin=limpar_gtin(item.get("gtin")),
         imagens=safe_str(item.get("url_imagens")),
-        categoria=safe_str(item.get("categoria")),
+        categoria=limpar_texto_produto(item.get("categoria"), max_len=120),
         url_produto=safe_str(item.get("url_produto")),
     )
 
@@ -606,8 +712,9 @@ def _campos_criticos_ok(final: dict[str, Any]) -> tuple[bool, list[str]]:
     faltando: list[str] = []
 
     campos = {
-        "codigo": safe_str(final.get("codigo")),
-        "descricao": safe_str(final.get("descricao")),
+        "codigo": limpar_codigo(final.get("codigo")),
+        "descricao": limpar_texto_produto(final.get("descricao"), max_len=220),
+        "preco": normalizar_preco_para_planilha(final.get("preco")),
         "url_produto": safe_str(final.get("url_produto")),
     }
 
@@ -615,23 +722,26 @@ def _campos_criticos_ok(final: dict[str, Any]) -> tuple[bool, list[str]]:
         if not valor:
             faltando.append(chave)
 
-    criticos_duros = {"descricao", "url_produto"}
-    if any(campo in faltando for campo in criticos_duros):
+    if "descricao" in faltando or "url_produto" in faltando or "preco" in faltando:
         return False, faltando
 
     return True, faltando
 
 
 def _motivo_rejeicao(final: dict) -> str:
-    descricao = safe_str(final.get("descricao"))
+    descricao = limpar_texto_produto(final.get("descricao"), max_len=220)
     url_produto = safe_str(final.get("url_produto"))
     url_n = url_produto.lower()
+    preco = normalizar_preco_para_planilha(final.get("preco"))
 
     if not descricao:
         return "sem_descricao"
 
-    if not titulo_valido(descricao, url_produto):
-        return "titulo_invalido_ou_pagina_institucional"
+    if not _titulo_eh_confiavel(descricao):
+        return "titulo_lixo_ou_invalido"
+
+    if not preco:
+        return "sem_preco_positivo"
 
     if url_n in {"", "/"} or url_n.endswith("/conta") or url_n.endswith("/login"):
         return "url_institucional"
@@ -1055,7 +1165,7 @@ def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
     if breadcrumb_match:
         trecho = breadcrumb_match.group(0)
         categorias = re.findall(r">([^<>]{3,120})<", trecho)
-        categorias = [safe_str(c) for c in categorias if safe_str(c)]
+        categorias = [limpar_texto_produto(c, max_len=120) for c in categorias if limpar_texto_produto(c, max_len=120)]
         if categorias:
             categorias = [c for c in categorias if c.lower() not in {"home", "início", "inicio"}]
             if categorias:
@@ -1066,7 +1176,7 @@ def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
         if "produto" in path_parts and len(path_parts) >= 2:
             idx = path_parts.index("produto")
             if idx > 0:
-                return safe_str(path_parts[idx - 1]).replace("-", " ").title()
+                return limpar_texto_produto(path_parts[idx - 1].replace("-", " ").title(), max_len=120)
 
     profile = _profile_for_url(url_produto)
     if profile is not None:
@@ -1074,13 +1184,13 @@ def _extrair_categoria_do_html(url_produto: str, html_produto: str) -> str:
             hint_n = safe_str(hint).strip("/")
             for p in path_parts:
                 if safe_str(p).lower() == hint_n.lower():
-                    return safe_str(p).replace("-", " ").title()
+                    return limpar_texto_produto(p.replace("-", " ").title(), max_len=120)
 
     for p in path_parts[:-1]:
         p_n = safe_str(p)
         if p_n and len(p_n) > 2 and not p_n.isdigit():
             if p_n.lower() not in {"produto", "produtos", "product", "products"}:
-                return p_n.replace("-", " ").title()
+                return limpar_texto_produto(p_n.replace("-", " ").title(), max_len=120)
 
     return ""
 
@@ -1161,13 +1271,9 @@ def _extrair_codigo_basico(url_produto: str, html_produto: str) -> str:
     for pattern in patterns:
         m = re.search(pattern, html_n, flags=re.IGNORECASE)
         if m:
-            codigo = safe_str(m.group(1))
+            codigo = limpar_codigo(m.group(1))
             if codigo:
                 return codigo
-
-    slug = safe_str(urlparse(url_produto).path.split("/")[-1])
-    if slug and "-" in slug and len(slug) >= 8:
-        return slug[:60]
 
     return ""
 
@@ -1181,7 +1287,9 @@ def _extrair_titulo_basico(html_produto: str) -> str:
         flags=re.IGNORECASE,
     )
     if m_og:
-        return safe_str(m_og.group(1))
+        valor = limpar_texto_produto(m_og.group(1), max_len=220)
+        if _titulo_eh_confiavel(valor):
+            return valor
 
     m_twitter = re.search(
         r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
@@ -1189,12 +1297,15 @@ def _extrair_titulo_basico(html_produto: str) -> str:
         flags=re.IGNORECASE,
     )
     if m_twitter:
-        return safe_str(m_twitter.group(1))
+        valor = limpar_texto_produto(m_twitter.group(1), max_len=220)
+        if _titulo_eh_confiavel(valor):
+            return valor
 
     m_title = re.search(r"<title[^>]*>(.*?)</title>", html_n, flags=re.IGNORECASE | re.DOTALL)
     if m_title:
         titulo = re.sub(r"\s+", " ", safe_str(m_title.group(1))).strip()
-        if titulo:
+        titulo = limpar_texto_produto(titulo, max_len=220)
+        if _titulo_eh_confiavel(titulo):
             return titulo
 
     if BeautifulSoup is not None:
@@ -1203,8 +1314,8 @@ def _extrair_titulo_basico(html_produto: str) -> str:
             for sel in ["h1", "[itemprop='name']", '[itemprop="name"]']:
                 el = soup.select_one(sel)
                 if el:
-                    texto = safe_str(el.get_text(" ", strip=True))
-                    if texto:
+                    texto = limpar_texto_produto(el.get_text(" ", strip=True), max_len=220)
+                    if _titulo_eh_confiavel(texto):
                         return texto
         except Exception:
             pass
@@ -1237,11 +1348,11 @@ def _extrair_descricao_detalhada_basica(html_produto: str) -> str:
                 continue
 
             if el.name == "meta":
-                content = safe_str(el.get("content"))
+                content = limpar_texto_produto(el.get("content"), max_len=4000)
                 if content and len(content) >= 20:
                     return content
 
-            texto = safe_str(el.get_text(" ", strip=True))
+            texto = limpar_texto_produto(el.get_text(" ", strip=True), max_len=4000)
             if texto and len(texto) >= 20:
                 return texto[:4000]
     except Exception:
@@ -1267,11 +1378,11 @@ def _extrair_gtin_basico(html_produto: str) -> str:
     for pattern in patterns:
         m = re.search(pattern, html_n, flags=re.IGNORECASE)
         if m:
-            return safe_str(m.group(1))
+            return limpar_gtin(m.group(1))
 
     m_generic = re.search(r"\b(\d{13}|\d{14}|\d{12}|\d{8})\b", html_n)
     if m_generic:
-        return safe_str(m_generic.group(1))
+        return limpar_gtin(m_generic.group(1))
 
     return ""
 
@@ -1288,8 +1399,9 @@ def _extrair_preco_basico(html_produto: str) -> str:
         if not m:
             continue
         valor = safe_str(m.group(0) if pattern.startswith("R\\$") else m.group(1))
-        if valor:
-            return valor
+        valor_n = normalizar_preco_para_planilha(valor)
+        if valor_n:
+            return valor_n
     return ""
 
 
@@ -1299,22 +1411,22 @@ def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heurist
     if not base.get("url_produto"):
         base["url_produto"] = url_produto
 
-    if not safe_str(base.get("descricao")) and not safe_str(base.get("titulo")):
+    if not limpar_texto_produto(base.get("descricao"), max_len=220) and not limpar_texto_produto(base.get("titulo"), max_len=220):
         titulo = _extrair_titulo_basico(html_produto)
         if titulo:
             base["titulo"] = titulo
 
-    if not safe_str(base.get("descricao_detalhada")):
+    if not limpar_texto_produto(base.get("descricao_detalhada"), max_len=4000):
         descricao_detalhada = _extrair_descricao_detalhada_basica(html_produto)
         if descricao_detalhada:
             base["descricao_detalhada"] = descricao_detalhada
 
-    if not safe_str(base.get("preco")):
+    if not normalizar_preco_para_planilha(base.get("preco")):
         preco = _extrair_preco_basico(html_produto)
         if preco:
             base["preco"] = preco
 
-    if not safe_str(base.get("gtin")):
+    if not limpar_gtin(base.get("gtin")):
         gtin = _extrair_gtin_basico(html_produto)
         if gtin:
             base["gtin"] = gtin
@@ -1324,7 +1436,7 @@ def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heurist
         if ncm:
             base["ncm"] = ncm
 
-    if not safe_str(base.get("categoria")):
+    if not limpar_texto_produto(base.get("categoria"), max_len=120):
         categoria = _extrair_categoria_do_html(url_produto, html_produto)
         if categoria:
             base["categoria"] = categoria
@@ -1334,7 +1446,7 @@ def _enriquecer_heuristica_com_html(url_produto: str, html_produto: str, heurist
         if imagens:
             base["url_imagens"] = imagens
 
-    if not safe_str(base.get("codigo")):
+    if not limpar_codigo(base.get("codigo")):
         codigo = _extrair_codigo_basico(url_produto, html_produto)
         if codigo:
             base["codigo"] = codigo
@@ -1361,10 +1473,7 @@ def _auth_context_valido(auth_context: dict[str, Any] | None) -> bool:
     if not _auth_context_tem_dados_http(auth_context):
         return False
 
-    if bool(auth_context.get("session_ready", False)):
-        return True
-
-    return False
+    return bool(auth_context.get("session_ready", False))
 
 
 def _normalizar_headers_auth(headers: dict[str, Any] | None) -> dict[str, str]:
@@ -1750,31 +1859,6 @@ def _coletar_urls_canonicas_produto(url_produto: str, html_produto: str) -> list
     return urls
 
 
-def _escolher_melhor_valor(*valores: Any) -> str:
-    melhor = ""
-    melhor_score = -1
-
-    for valor in valores:
-        texto = safe_str(valor)
-        if not texto:
-            continue
-
-        score = len(texto)
-        if "|" in texto:
-            score += 80
-        if ">" in texto:
-            score += 30
-        if re.search(r"\d", texto):
-            score += 15
-        if re.search(r"[A-Za-zÀ-ÿ]", texto):
-            score += 10
-        if score > melhor_score:
-            melhor = texto
-            melhor_score = score
-
-    return melhor
-
-
 def _mesclar_imagens(*valores: Any) -> str:
     saida: list[str] = []
     vistos: set[str] = set()
@@ -1810,48 +1894,124 @@ def _mesclar_quantidade(*valores: Any) -> str:
     return ""
 
 
-def _mesclar_dados_produto(url_produto: str, itens: list[dict[str, Any]]) -> dict[str, Any]:
+def _montar_valor_e_fonte(campo: str, heuristicas: list[dict[str, Any]], gpts: list[dict[str, Any]]) -> tuple[str, str]:
+    candidatos: list[tuple[str, Any]] = []
+
+    for item in gpts:
+        if isinstance(item, dict):
+            candidatos.append((f"gpt::{campo}", item.get(campo)))
+
+    for item in heuristicas:
+        if isinstance(item, dict):
+            candidatos.append((f"heuristica::{campo}", item.get(campo)))
+
+    if campo == "descricao":
+        melhor_valor = ""
+        melhor_fonte = ""
+        melhor_score = -999999
+        for fonte, valor in candidatos:
+            score = _score_valor(valor, "descricao", fonte.split("::")[0])
+            if score > melhor_score:
+                melhor_score = score
+                melhor_valor = limpar_texto_produto(valor, max_len=220)
+                melhor_fonte = fonte
+        return melhor_valor, melhor_fonte
+
+    if campo == "codigo":
+        melhor_valor = ""
+        melhor_fonte = ""
+        melhor_score = -999999
+        for fonte, valor in candidatos:
+            score = _score_valor(valor, "codigo", fonte.split("::")[0])
+            if score > melhor_score:
+                melhor_score = score
+                melhor_valor = limpar_codigo(valor)
+                melhor_fonte = fonte
+        return melhor_valor, melhor_fonte
+
+    if campo == "preco":
+        melhor_valor = ""
+        melhor_fonte = ""
+        melhor_score = -999999
+        for fonte, valor in candidatos:
+            score = _score_valor(valor, "preco", fonte.split("::")[0])
+            if score > melhor_score:
+                melhor_score = score
+                melhor_valor = normalizar_preco_para_planilha(valor)
+                melhor_fonte = fonte
+        return melhor_valor, melhor_fonte
+
+    if campo == "categoria":
+        melhor_valor = ""
+        melhor_fonte = ""
+        melhor_score = -999999
+        for fonte, valor in candidatos:
+            score = _score_valor(valor, "categoria", fonte.split("::")[0])
+            if score > melhor_score:
+                melhor_score = score
+                melhor_valor = limpar_texto_produto(valor, max_len=120)
+                melhor_fonte = fonte
+        return melhor_valor, melhor_fonte
+
+    if campo == "marca":
+        melhor_valor = ""
+        melhor_fonte = ""
+        melhor_score = -999999
+        for fonte, valor in candidatos:
+            score = _score_valor(valor, "marca", fonte.split("::")[0])
+            if score > melhor_score:
+                melhor_score = score
+                melhor_valor = limpar_marca(valor)
+                melhor_fonte = fonte
+        return melhor_valor, melhor_fonte
+
+    return "", ""
+
+
+def _mesclar_dados_produto(url_produto: str, itens: list[dict[str, Any]], gpts: list[dict[str, Any]]) -> dict[str, Any]:
     base = {"url_produto": url_produto}
-    if not itens:
+    if not itens and not gpts:
         return base
 
-    melhores_descricoes = []
+    heuristicas = [item for item in itens if isinstance(item, dict)]
+    gpts_validos = [item for item in gpts if isinstance(item, dict)]
+
+    descricao, fonte_descricao = _montar_valor_e_fonte("descricao", heuristicas, gpts_validos)
+    codigo, fonte_codigo = _montar_valor_e_fonte("codigo", heuristicas, gpts_validos)
+    preco, fonte_preco = _montar_valor_e_fonte("preco", heuristicas, gpts_validos)
+    categoria, fonte_categoria = _montar_valor_e_fonte("categoria", heuristicas, gpts_validos)
+    marca, fonte_marca = _montar_valor_e_fonte("marca", heuristicas, gpts_validos)
+
     melhores_curtas = []
     melhores_detalhadas = []
-    categorias = []
-    marcas = []
     imagens = []
-    codigos = []
     gtins = []
     ncms = []
-    precos = []
     quantidades = []
 
-    for item in itens:
-        if not isinstance(item, dict):
-            continue
-        melhores_descricoes.append(item.get("descricao") or item.get("titulo") or item.get("nome"))
+    for item in heuristicas + gpts_validos:
         melhores_curtas.append(item.get("descricao_curta"))
         melhores_detalhadas.append(item.get("descricao_detalhada"))
-        categorias.append(item.get("categoria"))
-        marcas.append(item.get("marca"))
         imagens.append(item.get("url_imagens"))
-        codigos.append(item.get("codigo"))
         gtins.append(item.get("gtin"))
         ncms.append(item.get("ncm"))
-        precos.append(item.get("preco"))
         quantidades.append(item.get("quantidade"))
 
-    base["descricao"] = _escolher_melhor_valor(*melhores_descricoes)
-    base["descricao_curta"] = _escolher_melhor_valor(*melhores_curtas)
-    base["descricao_detalhada"] = _escolher_melhor_valor(*melhores_detalhadas)
-    base["categoria"] = _escolher_melhor_valor(*categorias)
-    base["marca"] = _escolher_melhor_valor(*marcas)
+    base["descricao"] = descricao
+    base["fonte_descricao"] = fonte_descricao
+    base["codigo"] = codigo
+    base["fonte_codigo"] = fonte_codigo
+    base["preco"] = preco
+    base["fonte_preco"] = fonte_preco
+    base["categoria"] = categoria
+    base["fonte_categoria"] = fonte_categoria
+    base["marca"] = marca
+    base["fonte_marca"] = fonte_marca
+    base["descricao_curta"] = limpar_texto_produto(next((x for x in melhores_curtas if limpar_texto_produto(x, 120)), ""), max_len=120)
+    base["descricao_detalhada"] = limpar_texto_produto(next((x for x in melhores_detalhadas if limpar_texto_produto(x, 4000)), ""), max_len=4000)
     base["url_imagens"] = _mesclar_imagens(*imagens)
-    base["codigo"] = _escolher_melhor_valor(*codigos)
-    base["gtin"] = _escolher_melhor_valor(*gtins)
-    base["ncm"] = _escolher_melhor_valor(*ncms)
-    base["preco"] = _escolher_melhor_valor(*precos)
+    base["gtin"] = limpar_gtin(next((x for x in gtins if limpar_gtin(x)), ""))
+    base["ncm"] = safe_str(next((x for x in ncms if safe_str(x)), ""))
     base["quantidade"] = _mesclar_quantidade(*quantidades)
 
     return base
@@ -1916,22 +2076,32 @@ def _enriquecer_produto_pagina_a_pagina(
         if isinstance(gpt, dict) and gpt:
             gpts.append(gpt)
 
-    dados_mesclados = _mesclar_dados_produto(url_produto, heuristicas + gpts)
+    dados_mesclados = _mesclar_dados_produto(url_produto, heuristicas, gpts)
     final = _resolver_final(url_produto, dados_mesclados, {})
     final["url_html_principal"] = url_html_principal
     final["fontes_html"] = len(fontes_html)
 
-    if not safe_str(final.get("descricao")) and html_principal:
+    if not limpar_texto_produto(final.get("descricao"), max_len=220) and html_principal:
         final["descricao"] = _extrair_titulo_basico(html_principal)
+        final["fonte_descricao"] = final.get("fonte_descricao") or "html_fallback::descricao"
 
-    if not safe_str(final.get("descricao_detalhada")) and html_principal:
+    if not limpar_texto_produto(final.get("descricao_detalhada"), max_len=4000) and html_principal:
         final["descricao_detalhada"] = _extrair_descricao_detalhada_basica(html_principal)
 
-    if not safe_str(final.get("categoria")) and html_principal:
+    if not limpar_texto_produto(final.get("categoria"), max_len=120) and html_principal:
         final["categoria"] = _extrair_categoria_do_html(url_produto, html_principal)
+        final["fonte_categoria"] = final.get("fonte_categoria") or "html_fallback::categoria"
 
     if not safe_str(final.get("url_imagens")) and html_principal:
         final["url_imagens"] = _extrair_imagens_basicas(url_produto, html_principal)
+
+    if not limpar_codigo(final.get("codigo")) and html_principal:
+        final["codigo"] = _extrair_codigo_basico(url_produto, html_principal)
+        final["fonte_codigo"] = final.get("fonte_codigo") or "html_fallback::codigo"
+
+    if not normalizar_preco_para_planilha(final.get("preco")) and html_principal:
+        final["preco"] = _extrair_preco_basico(html_principal)
+        final["fonte_preco"] = final.get("fonte_preco") or "html_fallback::preco"
 
     final["descricao_curta"] = _descricao_curta_padrao(final)
     final["quantidade"] = _quantidade_padrao(final)
@@ -1947,32 +2117,33 @@ def _enriquecer_produto_pagina_a_pagina(
 def _resolver_final(url_produto: str, heuristica: dict[str, Any], gpt: dict[str, Any]) -> dict[str, Any]:
     final: dict[str, Any] = {}
 
-    for campo in [
-        "descricao",
-        "descricao_curta",
-        "descricao_detalhada",
-        "categoria",
-        "marca",
-        "url_imagens",
-        "codigo",
-        "gtin",
-        "ncm",
-        "preco",
-        "quantidade",
-    ]:
-        final[campo] = safe_str(gpt.get(campo)) or safe_str(heuristica.get(campo))
+    descricao_gpt = limpar_texto_produto(gpt.get("descricao"), max_len=220)
+    descricao_heur = limpar_texto_produto(heuristica.get("descricao"), max_len=220)
+    titulo_heur = limpar_texto_produto(heuristica.get("titulo"), max_len=220)
 
-    final["url_produto"] = (
-        safe_str(gpt.get("url_produto"))
-        or safe_str(heuristica.get("url_produto"))
-        or url_produto
+    final["descricao"] = descricao_gpt if _titulo_eh_confiavel(descricao_gpt) else (
+        descricao_heur if _titulo_eh_confiavel(descricao_heur) else titulo_heur
     )
-    final["descricao"] = (
-        safe_str(final.get("descricao"))
-        or safe_str(heuristica.get("titulo"))
-        or safe_str(heuristica.get("nome"))
-    )
-    final["descricao_curta"] = _descricao_curta_padrao(final)
+    final["descricao_curta"] = _descricao_curta_padrao({
+        "descricao_curta": gpt.get("descricao_curta") or heuristica.get("descricao_curta"),
+        "descricao": final["descricao"],
+        "descricao_detalhada": gpt.get("descricao_detalhada") or heuristica.get("descricao_detalhada"),
+    })
+    final["descricao_detalhada"] = limpar_texto_produto(gpt.get("descricao_detalhada") or heuristica.get("descricao_detalhada"), max_len=4000)
+    final["categoria"] = limpar_texto_produto(gpt.get("categoria") or heuristica.get("categoria"), max_len=120)
+    final["marca"] = limpar_marca(gpt.get("marca") or heuristica.get("marca"))
+    final["url_imagens"] = safe_str(gpt.get("url_imagens") or heuristica.get("url_imagens"))
+    final["codigo"] = limpar_codigo(gpt.get("codigo") or heuristica.get("codigo"))
+    final["gtin"] = limpar_gtin(gpt.get("gtin") or heuristica.get("gtin"))
+    final["ncm"] = safe_str(gpt.get("ncm") or heuristica.get("ncm"))
+    final["preco"] = normalizar_preco_para_planilha(gpt.get("preco") or heuristica.get("preco"))
+    final["quantidade"] = safe_str(gpt.get("quantidade") or heuristica.get("quantidade"))
+    final["url_produto"] = safe_str(gpt.get("url_produto") or heuristica.get("url_produto") or url_produto)
+    final["fonte_descricao"] = safe_str(heuristica.get("fonte_descricao"))
+    final["fonte_codigo"] = safe_str(heuristica.get("fonte_codigo"))
+    final["fonte_preco"] = safe_str(heuristica.get("fonte_preco"))
+    final["fonte_categoria"] = safe_str(heuristica.get("fonte_categoria"))
+    final["fonte_marca"] = safe_str(heuristica.get("fonte_marca"))
     final["quantidade"] = _quantidade_padrao(final)
     final["marca"] = _resolver_marca(final, heuristica)
 
@@ -1996,12 +2167,12 @@ def _deve_bloquear_produto_por_login(
 
     if heuristica:
         score_heuristica = pontuar_produto(
-            titulo=safe_str(heuristica.get("descricao")) or safe_str(heuristica.get("titulo")),
-            preco=safe_str(heuristica.get("preco")),
-            codigo=safe_str(heuristica.get("codigo")),
-            gtin=safe_str(heuristica.get("gtin")),
+            titulo=limpar_texto_produto(heuristica.get("descricao") or heuristica.get("titulo"), max_len=220),
+            preco=normalizar_preco_para_planilha(heuristica.get("preco")),
+            codigo=limpar_codigo(heuristica.get("codigo")),
+            gtin=limpar_gtin(heuristica.get("gtin")),
             imagens=safe_str(heuristica.get("url_imagens")),
-            categoria=safe_str(heuristica.get("categoria")),
+            categoria=limpar_texto_produto(heuristica.get("categoria"), max_len=120),
             url_produto=safe_str(heuristica.get("url_produto")) or url_produto,
         )
         if score_heuristica > 0:
@@ -2035,14 +2206,19 @@ def _payload_diagnostico(
         "status": status,
         "motivo": motivo,
         "score": score,
-        "descricao": safe_str(final.get("descricao")),
-        "codigo": safe_str(final.get("codigo")),
-        "gtin": safe_str(final.get("gtin")),
-        "categoria": safe_str(final.get("categoria")),
-        "marca": safe_str(final.get("marca")),
-        "preco": safe_str(final.get("preco")),
+        "descricao": limpar_texto_produto(final.get("descricao"), max_len=220),
+        "codigo": limpar_codigo(final.get("codigo")),
+        "gtin": limpar_gtin(final.get("gtin")),
+        "categoria": limpar_texto_produto(final.get("categoria"), max_len=120),
+        "marca": limpar_marca(final.get("marca")),
+        "preco": normalizar_preco_para_planilha(final.get("preco")),
         "fontes_html": fontes_html,
         "url_html_principal": url_html_principal,
+        "fonte_descricao": safe_str(final.get("fonte_descricao")),
+        "fonte_codigo": safe_str(final.get("fonte_codigo")),
+        "fonte_preco": safe_str(final.get("fonte_preco")),
+        "fonte_categoria": safe_str(final.get("fonte_categoria")),
+        "fonte_marca": safe_str(final.get("fonte_marca")),
     }
 
 
@@ -2107,7 +2283,11 @@ def _processar_um_produto(
             nivel="ERRO" if not campos_ok else "INFO",
         )
 
-    if not produto_final_valido(final):
+    if not produto_final_valido({
+        **final,
+        "preco": normalizar_preco_para_planilha(final.get("preco")),
+        "descricao": limpar_texto_produto(final.get("descricao"), max_len=220),
+    }):
         motivo = motivo_enriquecimento or _motivo_rejeicao(final)
         return "rejeitado", {
             "url_produto": url_produto,
