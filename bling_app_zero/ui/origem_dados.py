@@ -27,6 +27,17 @@ except Exception:
     get_profile_for_url = None
     inspect_site_auth = None
 
+try:
+    from bling_app_zero.core.site_login_assisted import (
+        iniciar_fluxo_login_assistido,
+        resumo_fluxo_login_assistido,
+        salvar_sessao_assistida,
+    )
+except Exception:
+    iniciar_fluxo_login_assistido = None
+    resumo_fluxo_login_assistido = None
+    salvar_sessao_assistida = None
+
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     log_debug,
@@ -145,6 +156,11 @@ def _resetar_estado_site_ui() -> None:
         "site_auth_inspecionado_url",
         "site_login_assistido_confirmado",
         "site_login_assistido_observacao",
+        "site_login_assistido_inicio",
+        "site_login_assistido_resumo",
+        "site_login_assistido_cookies_json",
+        "site_login_assistido_headers_json",
+        "site_login_assistido_status_texto",
     ]:
         st.session_state.pop(chave, None)
 
@@ -509,6 +525,90 @@ def _inspecionar_site(url_site: str) -> dict:
         return {}
 
 
+def _atualizar_resumo_login_assistido(url_site: str) -> dict:
+    if resumo_fluxo_login_assistido is None:
+        return {}
+
+    try:
+        resumo = resumo_fluxo_login_assistido(url_site)
+        if isinstance(resumo, dict):
+            st.session_state["site_login_assistido_resumo"] = resumo
+            auth_state = _safe_auth_state()
+            auth_state["session_ready"] = bool(resumo.get("session_ready", auth_state.get("session_ready", False)))
+            auth_state["last_message"] = str(resumo.get("mensagem", auth_state.get("last_message", "")) or "")
+            st.session_state["site_auth_state"] = auth_state
+            return resumo
+    except Exception as exc:
+        log_debug(f"Falha ao atualizar resumo do login assistido: {exc}", nivel="ERRO")
+
+    return {}
+
+
+def _iniciar_login_assistido_real(url_site: str) -> dict:
+    if iniciar_fluxo_login_assistido is None:
+        return {}
+
+    try:
+        resultado = iniciar_fluxo_login_assistido(url_site)
+        if isinstance(resultado, dict):
+            st.session_state["site_login_assistido_inicio"] = resultado
+            st.session_state["site_login_assistido_status_texto"] = str(resultado.get("mensagem", "") or "")
+            return resultado
+    except Exception as exc:
+        log_debug(f"Falha ao iniciar login assistido real: {exc}", nivel="ERRO")
+
+    return {}
+
+
+def _parse_json_texto(texto: str, campo: str):
+    valor = str(texto or "").strip()
+    if not valor:
+        if campo == "cookies":
+            return []
+        return {}
+
+    try:
+        data = __import__("json").loads(valor)
+    except Exception as exc:
+        raise ValueError(f"JSON inválido em {campo}: {exc}") from exc
+
+    if campo == "cookies" and not isinstance(data, list):
+        raise ValueError("O campo cookies precisa ser uma lista JSON.")
+    if campo == "headers" and not isinstance(data, dict):
+        raise ValueError("O campo headers precisa ser um objeto JSON.")
+
+    return data
+
+
+def _salvar_sessao_assistida_real(url_site: str) -> dict:
+    if salvar_sessao_assistida is None:
+        return {}
+
+    cookies_json = str(st.session_state.get("site_login_assistido_cookies_json", "") or "").strip()
+    headers_json = str(st.session_state.get("site_login_assistido_headers_json", "") or "").strip()
+    observacao = str(st.session_state.get("site_login_assistido_observacao", "") or "").strip()
+
+    cookies = _parse_json_texto(cookies_json, "cookies")
+    headers = _parse_json_texto(headers_json, "headers")
+
+    resultado = salvar_sessao_assistida(
+        url=url_site,
+        cookies=cookies,
+        headers=headers,
+        observacao=observacao,
+    )
+
+    if isinstance(resultado, dict):
+        st.session_state["site_login_assistido_resumo"] = resultado
+        auth_state = _safe_auth_state()
+        auth_state["session_ready"] = bool((resultado.get("auth_context") or {}).get("session_ready", False))
+        auth_state["last_message"] = str(resultado.get("mensagem", "") or auth_state.get("last_message", ""))
+        st.session_state["site_auth_state"] = auth_state
+        return resultado
+
+    return {}
+
+
 def _auth_context_para_busca(url_site: str) -> dict | None:
     if get_auth_headers_and_cookies is None:
         return None
@@ -772,6 +872,37 @@ def _render_login_assistido(url_site: str) -> None:
         elif requires_assisted:
             st.info("Este fornecedor exige autenticação assistida antes da busca.")
 
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(
+                "Iniciar login assistido",
+                use_container_width=True,
+                key="btn_iniciar_login_assistido_real",
+            ):
+                resultado = _iniciar_login_assistido_real(url_site)
+                if resultado:
+                    st.success(str(resultado.get("mensagem", "") or "Fluxo assistido iniciado."))
+                    st.rerun()
+                st.error("Não foi possível iniciar o login assistido.")
+
+        with col2:
+            if st.button(
+                "Atualizar status da sessão",
+                use_container_width=True,
+                key="btn_resumo_login_assistido_real",
+            ):
+                resumo = _atualizar_resumo_login_assistido(url_site)
+                if resumo:
+                    st.success(str(resumo.get("mensagem", "") or "Status atualizado."))
+                    st.rerun()
+                st.error("Não foi possível atualizar o status da sessão.")
+
+        inicio = st.session_state.get("site_login_assistido_inicio", {})
+        if isinstance(inicio, dict) and inicio:
+            mensagem_inicio = str(inicio.get("mensagem", "") or "").strip()
+            if mensagem_inicio:
+                st.caption(mensagem_inicio)
+
         observacao_atual = str(st.session_state.get("site_login_assistido_observacao", "") or "").strip()
         observacao = st.text_input(
             "Observação da sessão assistida",
@@ -779,6 +910,25 @@ def _render_login_assistido(url_site: str) -> None:
             key="site_login_assistido_observacao",
             placeholder="Ex.: login concluído e painel de produtos já aberto",
         ).strip()
+
+        cookies_atual = str(st.session_state.get("site_login_assistido_cookies_json", "") or "").strip()
+        headers_atual = str(st.session_state.get("site_login_assistido_headers_json", "") or "").strip()
+
+        st.text_area(
+            "Cookies da sessão em JSON",
+            value=cookies_atual,
+            key="site_login_assistido_cookies_json",
+            height=140,
+            placeholder='[{"name":"session","value":"abc","domain":"app.fornecedor.com","path":"/"}]',
+        )
+
+        st.text_area(
+            "Headers da sessão em JSON",
+            value=headers_atual,
+            key="site_login_assistido_headers_json",
+            height=110,
+            placeholder='{"User-Agent":"Mozilla/5.0","Accept":"text/html"}',
+        )
 
         confirmado = bool(st.session_state.get("site_login_assistido_confirmado", False))
         novo_confirmado = st.checkbox(
@@ -789,6 +939,36 @@ def _render_login_assistido(url_site: str) -> None:
 
         st.session_state["site_login_assistido_confirmado"] = novo_confirmado
         st.session_state["site_login_assistido_observacao"] = observacao
+
+        if st.button(
+            "Salvar sessão assistida",
+            use_container_width=True,
+            key="btn_salvar_sessao_assistida_real",
+        ):
+            try:
+                resultado = _salvar_sessao_assistida_real(url_site)
+                if resultado:
+                    st.success(str(resultado.get("mensagem", "") or "Sessão assistida salva com sucesso."))
+                    st.rerun()
+                st.error("Não foi possível salvar a sessão assistida.")
+            except Exception as exc:
+                st.error(str(exc))
+                log_debug(f"Falha ao salvar sessão assistida: {exc}", nivel="ERRO")
+
+        resumo = st.session_state.get("site_login_assistido_resumo", {})
+        if isinstance(resumo, dict) and resumo:
+            with st.expander("Resumo da sessão assistida", expanded=False):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Fornecedor", str(resumo.get("provider_slug", "-") or "-"))
+                with c2:
+                    st.metric("Modo", str(resumo.get("auth_mode", "-") or "-"))
+                with c3:
+                    st.metric("Sessão", "Pronta" if bool(resumo.get("session_ready", False)) else "Pendente")
+
+                mensagem_resumo = str(resumo.get("mensagem", "") or "").strip()
+                if mensagem_resumo:
+                    st.caption(mensagem_resumo)
 
         if novo_confirmado:
             st.success("Sessão assistida marcada como pronta para a próxima busca.")
@@ -949,26 +1129,3 @@ def _render_continuar() -> None:
 
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
         ir_para_etapa("precificacao")
-
-
-def render_origem_dados() -> None:
-    st.subheader("1. Origem dos dados")
-
-    _render_operacao()
-    _render_dados_operacao()
-
-    modo = st.radio(
-        "Como deseja informar a origem?",
-        ["Arquivo do fornecedor", "Buscar no site do fornecedor"],
-        horizontal=True,
-        key="modo_origem",
-    )
-
-    if modo == "Arquivo do fornecedor":
-        _render_origem_arquivo()
-    else:
-        _render_origem_site()
-
-    _render_modelo()
-    st.markdown("---")
-    _render_continuar()
