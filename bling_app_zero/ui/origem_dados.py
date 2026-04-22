@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -100,26 +101,6 @@ def _fornecedor_nome(url_site: str) -> str:
     if nome:
         return nome
     return "Fornecedor"
-
-
-def _profile_requires_login(url_site: str) -> bool:
-    profile = _safe_profile(url_site)
-    return bool(profile.get("login_required", False))
-
-
-def _profile_requires_assisted_login(url_site: str) -> bool:
-    profile = _safe_profile(url_site)
-    return bool(profile.get("requires_assisted_login", False))
-
-
-def _profile_requires_whatsapp_code(url_site: str) -> bool:
-    profile = _safe_profile(url_site)
-    return bool(profile.get("requires_whatsapp_code", False))
-
-
-def _profile_captcha_expected(url_site: str) -> bool:
-    profile = _safe_profile(url_site)
-    return bool(profile.get("captcha_expected", False))
 
 
 def _profile_products_url(url_site: str) -> str:
@@ -480,7 +461,6 @@ def _render_origem_arquivo() -> None:
 
 def _carimbar_execucao_site(total_produtos: int, url_site: str, status: str) -> None:
     from datetime import datetime
-
     st.session_state["site_busca_ultima_url"] = url_site
     st.session_state["site_busca_ultimo_total"] = int(total_produtos)
     st.session_state["site_busca_ultimo_status"] = status
@@ -495,12 +475,14 @@ def _inspecionar_site(url_site: str) -> dict:
         resultado = inspect_site_auth(url_site)
         if apply_inspection_to_state is not None:
             apply_inspection_to_state(resultado)
+
         if hasattr(resultado, "__dict__"):
             data = dict(resultado.__dict__)
         elif isinstance(resultado, dict):
             data = resultado
         else:
             data = {}
+
         st.session_state["site_auth_last_result"] = data
         st.session_state["site_auth_state"] = {
             **_safe_auth_state(),
@@ -563,12 +545,10 @@ def _iniciar_login_assistido_real(url_site: str) -> dict:
 def _parse_json_texto(texto: str, campo: str):
     valor = str(texto or "").strip()
     if not valor:
-        if campo == "cookies":
-            return []
-        return {}
+        return [] if campo == "cookies" else {}
 
     try:
-        data = __import__("json").loads(valor)
+        data = json.loads(valor)
     except Exception as exc:
         raise ValueError(f"JSON inválido em {campo}: {exc}") from exc
 
@@ -874,11 +854,7 @@ def _render_login_assistido(url_site: str) -> None:
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button(
-                "Iniciar login assistido",
-                use_container_width=True,
-                key="btn_iniciar_login_assistido_real",
-            ):
+            if st.button("Iniciar login assistido", use_container_width=True, key="btn_iniciar_login_assistido_real"):
                 resultado = _iniciar_login_assistido_real(url_site)
                 if resultado:
                     st.success(str(resultado.get("mensagem", "") or "Fluxo assistido iniciado."))
@@ -886,11 +862,7 @@ def _render_login_assistido(url_site: str) -> None:
                 st.error("Não foi possível iniciar o login assistido.")
 
         with col2:
-            if st.button(
-                "Atualizar status da sessão",
-                use_container_width=True,
-                key="btn_resumo_login_assistido_real",
-            ):
+            if st.button("Atualizar status da sessão", use_container_width=True, key="btn_resumo_login_assistido_real"):
                 resumo = _atualizar_resumo_login_assistido(url_site)
                 if resumo:
                     st.success(str(resumo.get("mensagem", "") or "Status atualizado."))
@@ -940,11 +912,7 @@ def _render_login_assistido(url_site: str) -> None:
         st.session_state["site_login_assistido_confirmado"] = novo_confirmado
         st.session_state["site_login_assistido_observacao"] = observacao
 
-        if st.button(
-            "Salvar sessão assistida",
-            use_container_width=True,
-            key="btn_salvar_sessao_assistida_real",
-        ):
+        if st.button("Salvar sessão assistida", use_container_width=True, key="btn_salvar_sessao_assistida_real"):
             try:
                 resultado = _salvar_sessao_assistida_real(url_site)
                 if resultado:
@@ -986,11 +954,7 @@ def _render_inspecao_site(url_site: str) -> None:
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            if st.button(
-                "Inspecionar fornecedor",
-                use_container_width=True,
-                key="btn_inspecionar_fornecedor",
-            ):
+            if st.button("Inspecionar fornecedor", use_container_width=True, key="btn_inspecionar_fornecedor"):
                 resultado = _inspecionar_site(url_site)
                 if resultado:
                     st.success("Inspeção concluída.")
@@ -998,11 +962,7 @@ def _render_inspecao_site(url_site: str) -> None:
                 st.error("Não foi possível inspecionar o fornecedor.")
 
         with col2:
-            if st.button(
-                "Limpar autenticação",
-                use_container_width=True,
-                key="btn_limpar_auth_site",
-            ):
+            if st.button("Limpar autenticação", use_container_width=True, key="btn_limpar_auth_site"):
                 st.session_state.pop("site_auth_state", None)
                 st.session_state.pop("site_auth_last_result", None)
                 st.session_state.pop("site_auth_inspecionado_url", None)
@@ -1025,21 +985,12 @@ def _render_etapas_busca_site(url_site: str) -> None:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        if st.button(
-            "Buscar produtos do site",
-            use_container_width=True,
-            key="btn_buscar_site_simplificado",
-            disabled=executando,
-        ):
+        if st.button("Buscar produtos do site", use_container_width=True, key="btn_buscar_site_simplificado", disabled=executando):
             _executar_busca_site(url_site)
             st.rerun()
 
     with col2:
-        if st.button(
-            "Limpar busca",
-            use_container_width=True,
-            key="btn_limpar_busca_site",
-        ):
+        if st.button("Limpar busca", use_container_width=True, key="btn_limpar_busca_site"):
             _limpar_estado_origem()
             st.info("Busca por site limpa.")
             st.rerun()
@@ -1129,3 +1080,26 @@ def _render_continuar() -> None:
 
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
         ir_para_etapa("precificacao")
+
+
+def render_origem_dados() -> None:
+    st.subheader("1. Origem dos dados")
+
+    _render_operacao()
+    _render_dados_operacao()
+
+    modo = st.radio(
+        "Como deseja informar a origem?",
+        ["Arquivo do fornecedor", "Buscar no site do fornecedor"],
+        horizontal=True,
+        key="modo_origem",
+    )
+
+    if modo == "Arquivo do fornecedor":
+        _render_origem_arquivo()
+    else:
+        _render_origem_site()
+
+    _render_modelo()
+    st.markdown("---")
+    _render_continuar()
