@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import hashlib
@@ -207,19 +208,6 @@ def _coluna_descricao_modelo(df_modelo: pd.DataFrame) -> str:
     return ""
 
 
-def _coluna_descricao_curta_modelo(df_modelo: pd.DataFrame) -> str:
-    for prioridade in ["Descrição Curta", "Descricao Curta"]:
-        if prioridade in df_modelo.columns:
-            return prioridade
-
-    for col in df_modelo.columns:
-        n = _normalizar_texto_busca(col)
-        if "descricao curta" in n or "descrição curta" in n:
-            return str(col)
-
-    return ""
-
-
 def _resetar_mapping_para_modelo(df_modelo: pd.DataFrame) -> dict[str, str]:
     return {str(c): "" for c in df_modelo.columns.tolist()}
 
@@ -262,12 +250,7 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
     return mapping_salvo
 
 
-
 def _obter_deposito_nome_persistido() -> str:
-    """
-    Recupera o nome do depósito preservando o texto original.
-    Faz fallback entre as chaves usadas no fluxo antigo e no fluxo atual.
-    """
     candidatos = [
         st.session_state.get("deposito_nome"),
         st.session_state.get("deposito_nome_widget"),
@@ -282,16 +265,11 @@ def _obter_deposito_nome_persistido() -> str:
     return ""
 
 
-
 def _sincronizar_deposito_nome() -> str:
-    """
-    Mantém deposito_nome e deposito_nome_widget sincronizados para o fluxo final.
-    """
     deposito = _obter_deposito_nome_persistido()
     st.session_state["deposito_nome"] = deposito
     st.session_state["deposito_nome_widget"] = deposito
     return deposito
-
 
 
 def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
@@ -306,7 +284,6 @@ def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> se
         bloqueados.add(coluna_deposito)
 
     return bloqueados
-
 
 
 def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> pd.DataFrame:
@@ -359,7 +336,6 @@ def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, 
     return base.fillna("")
 
 
-
 def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
     operacao = _detectar_operacao()
     saida = pd.DataFrame(index=df_base.index)
@@ -387,7 +363,6 @@ def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
     return saida.fillna("")
 
 
-
 def _preview_mapping(df_final: pd.DataFrame) -> None:
     if not safe_df_estrutura(df_final):
         return
@@ -397,11 +372,10 @@ def _preview_mapping(df_final: pd.DataFrame) -> None:
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
     else:
-        st.dataframe(df_final.head(50), use_container_width=True)
+        st.dataframe(df_final.head(40), use_container_width=True)
 
-    with st.expander("Ver preview completo", expanded=False):
-        st.dataframe(df_final.head(200), use_container_width=True)
-
+    with st.expander("Ver preview ampliado", expanded=False):
+        st.dataframe(df_final.head(150), use_container_width=True)
 
 
 def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -415,7 +389,6 @@ def _render_status_base(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
 
     with c3:
         st.metric("Colunas modelo", len(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else 0)
-
 
 
 def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
@@ -449,8 +422,7 @@ def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operac
     log_debug("IA aplicou mapeamento automático completo.", nivel="INFO")
 
 
-
-def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
+def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     col1, col2 = st.columns(2)
 
     with col1:
@@ -469,7 +441,6 @@ def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame, oper
             st.rerun()
 
 
-
 def _render_resumo_agente() -> None:
     pacote = st.session_state.get("agent_ui_package", {})
     if not isinstance(pacote, dict) or not pacote:
@@ -478,32 +449,30 @@ def _render_resumo_agente() -> None:
     diagnostico = pacote.get("diagnostico", {}) if isinstance(pacote.get("diagnostico"), dict) else {}
     obrigatorios = pacote.get("obrigatorios", []) if isinstance(pacote.get("obrigatorios"), list) else []
 
-    st.markdown("### Diagnóstico da IA")
+    with st.expander("Diagnóstico da IA", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Campos mapeados", int(diagnostico.get("mapeados", 0) or 0))
+        with c2:
+            st.metric("Faltando", int(diagnostico.get("faltando", 0) or 0))
+        with c3:
+            st.metric("Duplicidade", "Sim" if bool(pacote.get("tem_duplicidade", False)) else "Não")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Campos mapeados", int(diagnostico.get("mapeados", 0) or 0))
-    with c2:
-        st.metric("Faltando", int(diagnostico.get("faltando", 0) or 0))
-    with c3:
-        st.metric("Duplicidade", "Sim" if bool(pacote.get("tem_duplicidade", False)) else "Não")
+        faltando_obrigatorios = diagnostico.get("faltando_obrigatorios", [])
+        if obrigatorios:
+            st.caption(f"Obrigatórios monitorados: {', '.join([str(x) for x in obrigatorios])}")
 
-    faltando_obrigatorios = diagnostico.get("faltando_obrigatorios", [])
-    if obrigatorios:
-        st.caption(f"Obrigatórios monitorados: {', '.join([str(x) for x in obrigatorios])}")
-
-    if faltando_obrigatorios:
-        st.warning(
-            "Campos obrigatórios ainda sem sugestão: "
-            + ", ".join([str(x) for x in faltando_obrigatorios])
-        )
-    else:
-        st.success("IA fechou os obrigatórios automaticamente.")
-
+        if faltando_obrigatorios:
+            st.warning(
+                "Campos obrigatórios ainda sem sugestão: "
+                + ", ".join([str(x) for x in faltando_obrigatorios])
+            )
+        else:
+            st.success("IA fechou os obrigatórios automaticamente.")
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.markdown("### Revisão opcional do mapeamento")
+    st.caption("Ajuste manual apenas se quiser revisar ou trocar algum vínculo da IA.")
 
     opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist()]
     bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
@@ -548,7 +517,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         index_atual = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
 
         novo_valor = st.selectbox(
-            f"{coluna_modelo}",
+            coluna_modelo,
             options=opcoes_coluna,
             index=index_atual,
             key=f"map_{coluna_modelo}",
@@ -558,7 +527,6 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
 
     st.session_state["mapping_manual"] = mapping_atual
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
-
 
 
 def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) -> tuple[bool, list[str]]:
@@ -589,7 +557,6 @@ def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) ->
         erros.append(f"Existem colunas de origem usadas mais de uma vez: {', '.join(duplicados)}")
 
     return len(erros) == 0, erros
-
 
 
 def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -626,14 +593,10 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
             st.rerun()
 
 
-
 def render_origem_mapeamento() -> None:
     _garantir_etapa_mapeamento_ativa()
 
     st.subheader("3. Mapeamento com IA")
-    st.caption(
-        "Modo FULL AUTO: a IA roda sozinha, preenche o mapping, gera o df_final e deixa a revisão apenas como opcional."
-    )
 
     df_base = _obter_df_base()
     df_modelo = _obter_df_modelo()
@@ -656,10 +619,10 @@ def render_origem_mapeamento() -> None:
     _executar_ia_autonoma(df_base, df_modelo, operacao)
 
     _render_status_base(df_base, df_modelo)
-    _render_sugestao_agente(df_base, df_modelo, operacao)
+    _render_sugestao_agente(df_base, df_modelo)
     _render_resumo_agente()
 
-    with st.expander("🔍 Revisão manual opcional", expanded=False):
+    with st.expander("Revisão manual opcional", expanded=False):
         _render_revisao_manual(df_base, df_modelo, operacao)
 
     df_preview = st.session_state.get("df_final")
