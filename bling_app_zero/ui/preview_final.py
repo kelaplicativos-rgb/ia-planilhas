@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -38,6 +37,7 @@ def _safe_import_bling_auth():
             tem_token_valido,
             usuario_conectado_bling,
         )
+
         return {
             "obter_resumo_conexao": obter_resumo_conexao,
             "render_conectar_bling": render_conectar_bling,
@@ -51,6 +51,7 @@ def _safe_import_bling_auth():
 def _safe_import_bling_sync():
     try:
         from bling_app_zero.services.bling import bling_sync  # type: ignore
+
         return bling_sync
     except Exception:
         return None
@@ -243,7 +244,10 @@ def _garantir_coluna_descricao_canonica(df: pd.DataFrame, tipo_operacao: str) ->
                 f"Produto {codigo}" if str(codigo).strip() else f"Produto {i+1}"
                 for i, codigo in enumerate(serie_codigo.tolist() or [""] * len(base.index))
             ]
-            log_debug("Descrição canônica gerada automaticamente no preview final para operação de estoque.", nivel="INFO")
+            log_debug(
+                "Descrição canônica gerada automaticamente no preview final para operação de estoque.",
+                nivel="INFO",
+            )
 
     return base.fillna("")
 
@@ -298,7 +302,10 @@ def _garantir_coluna_descricao_curta_canonica(df: pd.DataFrame, tipo_operacao: s
         else:
             base["Descrição Curta"] = [f"Produto {i+1}" for i in range(len(base.index))]
 
-        log_debug("Descrição Curta gerada automaticamente no preview final por ausência de valor válido.", nivel="INFO")
+        log_debug(
+            "Descrição Curta gerada automaticamente no preview final por ausência de valor válido.",
+            nivel="INFO",
+        )
 
     return base.fillna("")
 
@@ -447,6 +454,7 @@ def _inicializar_estado_preview() -> None:
         "bling_envio_resultado": None,
         "preview_download_realizado": False,
         "preview_validacao_ok": False,
+        "preview_validacao_erros": [],
         "preview_hash_df_final": "",
         "preview_envio_em_execucao": False,
         "preview_envio_logs": [],
@@ -486,7 +494,10 @@ def _sincronizar_estado_quando_df_mudar(df_final: pd.DataFrame) -> None:
         st.session_state["bling_envio_resultado"] = None
         st.session_state["preview_hash_df_final"] = hash_atual
         _resetar_status_envio_visual()
-        log_debug("df_final alterado no preview; confirmação de download e resultado de envio foram resetados.", nivel="INFO")
+        log_debug(
+            "df_final alterado no preview; confirmação de download e resultado de envio foram resetados.",
+            nivel="INFO",
+        )
 
 
 def _obter_status_conexao_bling() -> tuple[bool, str]:
@@ -611,13 +622,18 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
             resumo["status_texto"] = "Iniciando envio real ao Bling..."
             box_status.info(resumo["status_texto"])
             progress.progress(0)
+
         elif fase == "item_start":
             codigo = str(evento.get("codigo", "") or "").strip()
             descricao = str(evento.get("descricao", "") or "").strip()
-            resumo["status_texto"] = f"Enviando {int(evento.get('index', 0))}/{total} • {codigo or descricao or 'item sem identificação'}"
+            resumo["status_texto"] = (
+                f"Enviando {int(evento.get('index', 0))}/{total} • "
+                f"{codigo or descricao or 'item sem identificação'}"
+            )
             box_status.info(resumo["status_texto"])
             percentual = int(((max(processados, 0)) / max(total, 1)) * 100)
             progress.progress(min(percentual, 100))
+
         elif fase == "item_result":
             item = evento.get("item", {}) or {}
             status_item = str(item.get("status", "") or "").strip().upper()
@@ -628,6 +644,7 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
             percentual = int((processados / max(total, 1)) * 100)
             progress.progress(min(percentual, 100))
             _append_envio_log(f"[{status_item}] {codigo or 'SEM-CODIGO'} - {mensagem}")
+
         elif fase == "finish":
             summary = evento.get("summary", {}) or {}
             resumo["status_texto"] = str(summary.get("mensagem", "") or "Envio finalizado.")
@@ -729,6 +746,7 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
     resumo = _montar_resumo(df_final)
     valido, erros = validar_df_para_download(df_final, tipo_operacao)
     st.session_state["preview_validacao_ok"] = bool(valido)
+    st.session_state["preview_validacao_erros"] = list(erros)
 
     st.markdown("### Validação do resultado final")
 
@@ -775,11 +793,14 @@ def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
             st.write(f"**GTIN detectado:** {resumo['gtin_col'] or 'não encontrado'}")
 
         if not resumo["codigo_col"] or not resumo["descricao_col"]:
-            st.warning("O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente.")
+            st.warning(
+                "O sincronizador do Bling pode falhar no envio se código ou descrição não forem detectados corretamente."
+            )
 
 
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
     st.markdown("### Preview final")
+
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
         return
@@ -804,7 +825,9 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     )
 
     if validacao_ok:
-        if st.button(
+        if st.session_state.get("preview_download_realizado", False):
+            st.success("Download já confirmado. Conexão e envio ao Bling liberados.")
+        elif st.button(
             "✅ Já baixei / seguir para conexão e envio",
             use_container_width=True,
             key="btn_confirmar_download_preview",
@@ -834,7 +857,9 @@ def _render_bloco_fluxo_site() -> None:
         if _varredura_site_concluida():
             st.success("Varredura do site concluída. Produtos localizados e prontos para seguir para o Bling.")
         else:
-            st.warning("A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos.")
+            st.warning(
+                "A conexão OAuth e o envio só serão liberados depois da varredura do site terminar com dados válidos."
+            )
 
         if url_site:
             st.write(f"**URL monitorada:** {url_site}")
@@ -894,7 +919,11 @@ def _render_resultado_envio_visual(resultado: dict[str, Any]) -> None:
     if isinstance(resultados, list) and resultados:
         df_resultados = pd.DataFrame(resultados)
         if not df_resultados.empty:
-            erros_df = df_resultados[df_resultados["status"].astype(str).str.lower().eq("erro")] if "status" in df_resultados.columns else pd.DataFrame()
+            erros_df = (
+                df_resultados[df_resultados["status"].astype(str).str.lower().eq("erro")]
+                if "status" in df_resultados.columns
+                else pd.DataFrame()
+            )
             with st.expander("Últimos itens processados", expanded=False):
                 st.dataframe(df_resultados.tail(100), use_container_width=True)
             if not erros_df.empty:
