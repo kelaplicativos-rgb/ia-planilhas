@@ -1,14 +1,16 @@
 """
-FORNECEDOR MEGA CENTER (SCRAPER DEDICADO PRO)
+FORNECEDOR MEGA CENTER (VERSÃO PRO IA)
 
-Suporte:
-- megacentereletronicos.com.br
-- mega-center-eletronicos.stoqui.shop
-
-Alta precisão + fallback inteligente
+Agora com:
+- Extração de detalhe do produto
+- JSON-LD (quando disponível)
+- Estoque mais confiável
+- Imagens limpas
+- Fallback inteligente
 """
 
 import re
+import json
 from typing import List, Dict
 from urllib.parse import urljoin
 
@@ -36,7 +38,6 @@ class MegaCenterSupplier(SupplierBase):
         for pagina in range(1, max_paginas + 1):
 
             url_pagina = self._montar_url_paginada(url, pagina)
-
             html = self._get_html(url_pagina)
 
             if not html:
@@ -47,14 +48,19 @@ class MegaCenterSupplier(SupplierBase):
             if not encontrados:
                 break
 
+            # 🔥 ENTRA NO DETALHE (upgrade real)
+            for p in encontrados:
+                detalhe = self._extrair_detalhe_produto(p.get("url_produto"))
+
+                if detalhe:
+                    p.update(detalhe)
+
             produtos.extend(encontrados)
 
-        produtos = self._deduplicar(produtos)
-
-        return produtos
+        return self._deduplicar(produtos)
 
     # -------------------------------
-    # PAGINAÇÃO FLEXÍVEL
+    # PAGINAÇÃO
     # -------------------------------
     def _montar_url_paginada(self, url: str, pagina: int) -> str:
 
@@ -87,18 +93,14 @@ class MegaCenterSupplier(SupplierBase):
             return ""
 
     # -------------------------------
-    # EXTRAÇÃO DE LISTA
+    # LISTA
     # -------------------------------
     def _extrair_lista_produtos(self, html: str, base_url: str) -> List[Dict]:
 
         soup = BeautifulSoup(html, "html.parser")
-
         produtos = []
 
-        # múltiplos seletores (site muda layout)
-        cards = soup.select(
-            ".product, .product-item, .item, .card, [class*=product]"
-        )
+        cards = soup.select(".product, .product-item, .item, .card, [class*=product]")
 
         for card in cards:
 
@@ -108,38 +110,24 @@ class MegaCenterSupplier(SupplierBase):
                 if not texto or len(texto) < 10:
                     continue
 
-                # -------------------------------
-                # LINK
-                # -------------------------------
                 link_tag = card.find("a")
-                link = urljoin(base_url, link_tag.get("href")) if link_tag else base_url
+                link = urljoin(base_url, link_tag.get("href")) if link_tag else ""
 
-                # -------------------------------
-                # NOME
-                # -------------------------------
+                if not link:
+                    continue
+
                 nome = self._extrair_nome(card, texto)
 
-                # -------------------------------
-                # PREÇO
-                # -------------------------------
                 preco_txt = self._regex_first(texto, r'R\$\s?([\d\.,]+)')
                 preco = self._to_float(preco_txt)
 
-                # -------------------------------
-                # ESTOQUE (CRÍTICO)
-                # -------------------------------
-                estoque = self._detectar_estoque(texto)
-
-                # -------------------------------
-                # IMAGEM
-                # -------------------------------
                 imagens = self._extrair_imagem(card, base_url)
 
                 produtos.append({
                     "url_produto": link,
                     "nome": nome,
                     "preco": preco,
-                    "estoque": estoque,
+                    "estoque": 0,  # será ajustado no detalhe
                     "imagens": imagens,
                 })
 
@@ -149,26 +137,68 @@ class MegaCenterSupplier(SupplierBase):
         return produtos
 
     # -------------------------------
-    # NOME INTELIGENTE
+    # DETALHE DO PRODUTO (CRÍTICO)
     # -------------------------------
-    def _extrair_nome(self, card, fallback_texto: str) -> str:
+    def _extrair_detalhe_produto(self, url: str) -> Dict:
 
-        # tenta pegar título direto
-        titulo = card.select_one("h1, h2, h3, .title, .product-title")
+        html = self._get_html(url)
+        if not html:
+            return {}
 
-        if titulo:
-            nome = titulo.get_text(strip=True)
-            if nome:
-                return nome[:200]
+        soup = BeautifulSoup(html, "html.parser")
+        texto = soup.get_text(" ", strip=True)
 
-        return fallback_texto[:200]
+        dados_json = self._extrair_json_ld(soup)
+
+        nome = (
+            dados_json.get("name")
+            or self._extrair_nome(soup, texto)
+        )
+
+        preco = (
+            dados_json.get("offers", {}).get("price")
+            or self._extrair_preco(texto)
+        )
+
+        estoque = self._extrair_estoque(texto)
+        imagens = self._extrair_imagens_detalhe(soup, url)
+
+        return {
+            "nome": nome,
+            "preco": self._to_float(preco),
+            "estoque": estoque,
+            "imagens": imagens,
+        }
 
     # -------------------------------
-    # ESTOQUE (REGRA CRÍTICA)
+    # JSON LD
     # -------------------------------
-    def _detectar_estoque(self, texto: str) -> int:
+    def _extrair_json_ld(self, soup):
+
+        scripts = soup.find_all("script", type="application/ld+json")
+
+        for script in scripts:
+            try:
+                data = json.loads(script.string or "")
+
+                if isinstance(data, dict) and data.get("@type") == "Product":
+                    return data
+
+            except:
+                continue
+
+        return {}
+
+    # -------------------------------
+    # ESTOQUE (MELHORADO)
+    # -------------------------------
+    def _extrair_estoque(self, texto: str) -> int:
 
         texto = texto.lower()
+
+        match = re.search(r'(estoque|quantidade|dispon[ií]vel)[^\d]{0,10}(\d+)', texto)
+        if match:
+            return int(match.group(2))
 
         if any(x in texto for x in [
             "esgotado",
@@ -179,13 +209,56 @@ class MegaCenterSupplier(SupplierBase):
         ]):
             return 0
 
-        # se não detecta, assume disponível
-        return 1
+        if any(x in texto for x in [
+            "disponível",
+            "em estoque"
+        ]):
+            return 1
+
+        return 0
 
     # -------------------------------
-    # IMAGEM
+    # IMAGENS DETALHE
     # -------------------------------
-    def _extrair_imagem(self, card, base_url: str) -> List[str]:
+    def _extrair_imagens_detalhe(self, soup, base_url: str):
+
+        imagens = []
+
+        for img in soup.find_all("img"):
+
+            src = img.get("src") or img.get("data-src")
+
+            if not src:
+                continue
+
+            src = urljoin(base_url, src)
+
+            if any(x in src.lower() for x in ["logo", "icon", "banner"]):
+                continue
+
+            imagens.append(src)
+
+        return list(dict.fromkeys(imagens))[:5]
+
+    # -------------------------------
+    # HELPERS
+    # -------------------------------
+    def _extrair_nome(self, tag, fallback_texto: str):
+
+        titulo = tag.select_one("h1, h2, h3, .title, .product-title")
+
+        if titulo:
+            nome = titulo.get_text(strip=True)
+            if nome:
+                return nome[:200]
+
+        return fallback_texto[:200]
+
+    def _extrair_preco(self, texto: str) -> float:
+        match = re.search(r'R\$\s?([\d\.,]+)', texto)
+        return self._to_float(match.group(1)) if match else 0.0
+
+    def _extrair_imagem(self, card, base_url: str):
 
         imagens = []
 
@@ -203,9 +276,6 @@ class MegaCenterSupplier(SupplierBase):
 
         return imagens
 
-    # -------------------------------
-    # HELPERS
-    # -------------------------------
     def _regex_first(self, text: str, pattern: str) -> str:
         match = re.search(pattern, text)
         return match.group(1) if match else ""
@@ -214,16 +284,13 @@ class MegaCenterSupplier(SupplierBase):
         if not valor:
             return 0.0
 
-        valor = valor.replace(".", "").replace(",", ".")
+        valor = str(valor).replace(".", "").replace(",", ".")
 
         try:
             return float(valor)
         except:
             return 0.0
 
-    # -------------------------------
-    # DEDUPLICAÇÃO
-    # -------------------------------
     def _deduplicar(self, produtos: List[Dict]) -> List[Dict]:
 
         vistos = set()
