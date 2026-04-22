@@ -2,10 +2,11 @@
 SITE AGENT (ORQUESTRADOR GLOBAL)
 
 Responsável por:
-- Escolher o fornecedor correto
-- Aplicar fallback inteligente
-- Garantir captura de ESTOQUE (prioridade máxima)
-- Expor função pública compatível com a UI
+- detectar fornecedor
+- executar fornecedor específico
+- usar fallback genérico
+- preservar auth_context até a coleta real
+- padronizar o resultado
 """
 
 from __future__ import annotations
@@ -27,10 +28,16 @@ class SiteAgent:
     def __init__(self) -> None:
         self.registry: SupplierRegistry = get_registry()
 
-    # -------------------------------
-    # EXECUÇÃO PRINCIPAL
-    # -------------------------------
-    def executar(self, url: str, **kwargs) -> List[Dict[str, Any]]:
+    # ------------------------------------------------------------------
+    # EXECUÇÃO
+    # ------------------------------------------------------------------
+    def executar(
+        self,
+        url: str,
+        *,
+        auth_context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
         url = self._normalizar_url(url)
         if not url:
             return []
@@ -39,9 +46,10 @@ class SiteAgent:
         produtos: List[Dict[str, Any]] = []
         kwargs_limpos = self._filtrar_kwargs_fornecedor(kwargs)
 
-        # ===============================
-        # 1. EXECUTAR FORNECEDOR DETECTADO
-        # ===============================
+        if auth_context:
+            kwargs_limpos["auth_context"] = auth_context
+
+        # 1) fornecedor específico
         if fornecedor is not None:
             try:
                 produtos = fornecedor.fetch(url, **kwargs_limpos)
@@ -49,12 +57,9 @@ class SiteAgent:
             except Exception as exc:
                 self._log(f"[ERRO fornecedor específico] {exc}")
 
-        # ===============================
-        # 2. FALLBACK GENÉRICO
-        # ===============================
+        # 2) fallback genérico
         if not produtos:
             fornecedor_generico = self._obter_fornecedor_generico()
-
             if fornecedor_generico is not None and fornecedor_generico is not fornecedor:
                 self._log("[FALLBACK] usando GenericSupplier")
                 try:
@@ -63,14 +68,11 @@ class SiteAgent:
                 except Exception as exc:
                     self._log(f"[ERRO fallback] {exc}")
 
-        # ===============================
-        # 3. PÓS-PROCESSAMENTO
-        # ===============================
         return self._padronizar(produtos)
 
-    # -------------------------------
-    # ALIASES DE COMPATIBILIDADE
-    # -------------------------------
+    # ------------------------------------------------------------------
+    # COMPATIBILIDADE
+    # ------------------------------------------------------------------
     def buscar_produtos(self, base_url: str, **kwargs) -> pd.DataFrame:
         return self.buscar_dataframe(base_url=base_url, **kwargs)
 
@@ -85,7 +87,11 @@ class SiteAgent:
         url = self._normalizar_url(base_url)
         fornecedor = self._detectar_fornecedor(url)
 
-        produtos = self.executar(url, **kwargs)
+        produtos = self.executar(
+            url,
+            auth_context=auth_context,
+            **kwargs,
+        )
         df = self.para_dataframe(produtos)
 
         if diagnostico:
@@ -99,9 +105,9 @@ class SiteAgent:
 
         return df
 
-    # -------------------------------
-    # DETECTAR FORNECEDOR
-    # -------------------------------
+    # ------------------------------------------------------------------
+    # REGISTRY
+    # ------------------------------------------------------------------
     def _detectar_fornecedor(self, url: str):
         try:
             return self.registry.detectar(url)
@@ -131,9 +137,9 @@ class SiteAgent:
 
         return produtos if isinstance(produtos, list) else []
 
-    # -------------------------------
-    # PADRONIZAÇÃO FINAL
-    # -------------------------------
+    # ------------------------------------------------------------------
+    # PADRONIZAÇÃO
+    # ------------------------------------------------------------------
     def _padronizar(self, produtos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         resultado: List[Dict[str, Any]] = []
 
@@ -173,9 +179,6 @@ class SiteAgent:
 
         return self._deduplicar(resultado)
 
-    # -------------------------------
-    # NORMALIZA ESTOQUE
-    # -------------------------------
     def _normalizar_estoque(self, valor: Any) -> int:
         if valor is None:
             return 0
@@ -224,9 +227,6 @@ class SiteAgent:
 
         return 0
 
-    # -------------------------------
-    # NORMALIZA PREÇO
-    # -------------------------------
     def _normalizar_preco(self, valor: Any) -> float:
         if valor is None:
             return 0.0
@@ -251,9 +251,6 @@ class SiteAgent:
         except Exception:
             return 0.0
 
-    # -------------------------------
-    # NORMALIZA IMAGENS
-    # -------------------------------
     def _normalizar_imagens(self, imagens: Any) -> str:
         if not imagens:
             return ""
@@ -278,9 +275,6 @@ class SiteAgent:
 
         return "|".join(lista_final)
 
-    # -------------------------------
-    # HELPERS
-    # -------------------------------
     def _texto_limpo(self, valor: Any) -> str:
         texto = str(valor or "").strip()
         if texto.lower() in {"nan", "none", "null"}:
@@ -299,7 +293,6 @@ class SiteAgent:
         removidos = {
             "base_url",
             "diagnostico",
-            "auth_context",
             "termo",
             "limite_links",
         }
@@ -332,9 +325,6 @@ class SiteAgent:
         except Exception:
             pass
 
-    # -------------------------------
-    # DATAFRAME
-    # -------------------------------
     def para_dataframe(self, produtos: List[Dict[str, Any]]) -> pd.DataFrame:
         produtos = self._padronizar(produtos)
 
@@ -367,9 +357,6 @@ class SiteAgent:
 
         return df
 
-    # -------------------------------
-    # DIAGNÓSTICO / STREAMLIT
-    # -------------------------------
     def _diagnostico_basico(
         self,
         *,
@@ -408,9 +395,11 @@ class SiteAgent:
             "total_rejeitados": 0,
             "login_status": {
                 "status": "session_ready" if bool((auth_context or {}).get("session_ready")) else "publico",
-                "mensagem": "Sessão autenticada disponível."
-                if bool((auth_context or {}).get("session_ready"))
-                else "Busca pública.",
+                "mensagem": (
+                    "Sessão autenticada aplicada à busca."
+                    if bool((auth_context or {}).get("session_ready"))
+                    else "Busca pública."
+                ),
             },
         }
 
@@ -437,9 +426,6 @@ class SiteAgent:
             pass
 
 
-# -------------------------------
-# INSTÂNCIA GLOBAL
-# -------------------------------
 _site_agent_instance: Optional[SiteAgent] = None
 
 
@@ -450,9 +436,6 @@ def get_site_agent() -> SiteAgent:
     return _site_agent_instance
 
 
-# -------------------------------
-# FUNÇÕES PÚBLICAS USADAS PELA UI
-# -------------------------------
 def buscar_produtos_site(url: str, **kwargs) -> List[Dict[str, Any]]:
     agent = get_site_agent()
     return agent.executar(url, **kwargs)
@@ -472,13 +455,6 @@ def buscar_produtos_site_com_gpt(
     auth_context: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> pd.DataFrame:
-    """
-    Função pública compatível com a UI atual em origem_dados.py.
-
-    Parâmetros extras como termo/auth_context/limite_links são aceitos
-    para compatibilidade com o fluxo atual, mesmo quando não forem usados
-    diretamente pelo fornecedor específico.
-    """
     agent = get_site_agent()
 
     kwargs_execucao = dict(kwargs)
