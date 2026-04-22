@@ -1,14 +1,16 @@
 """
-FORNECEDOR GENÉRICO (ESTOQUE PRIORIDADE TOTAL)
+FORNECEDOR GENÉRICO (VERSÃO IA ABSURDA)
 
 Agora com:
-- Sitemap FIRST
-- Extração agressiva de estoque
-- Entrada em página de detalhe
-- Fallback inteligente
+- Sitemap + fallback HTML
+- Classificação produto vs categoria
+- Extração multi-camada (JSON-LD + HTML + texto)
+- Estoque extremamente robusto
+- Imagens filtradas
 """
 
 import re
+import json
 from typing import List, Dict, Any
 from urllib.parse import urljoin
 
@@ -27,9 +29,9 @@ class GenericSupplier(SupplierBase):
     def can_handle(self, url: str) -> bool:
         return True
 
-    # -------------------------------
-    # FETCH PRINCIPAL (ESTOQUE FIRST)
-    # -------------------------------
+    # ===============================
+    # FETCH PRINCIPAL
+    # ===============================
     def fetch(self, url: str, limite: int = 200, **kwargs) -> List[Dict[str, Any]]:
 
         produtos = []
@@ -40,13 +42,16 @@ class GenericSupplier(SupplierBase):
         urls = descobrir_urls_via_sitemap(url, limite=limite)
 
         for u in urls:
+            if not self._parece_produto_url(u):
+                continue
+
             produto = self._extrair_produto_detalhe(u)
 
-            if produto:
+            if produto and produto.get("nome"):
                 produtos.append(produto)
 
         # ===============================
-        # 2. FALLBACK HTML (se vazio)
+        # 2. FALLBACK HTML
         # ===============================
         if not produtos:
             html = self._get_html(url)
@@ -54,56 +59,111 @@ class GenericSupplier(SupplierBase):
             if html:
                 produtos.extend(self._extrair_html_generico(html, url))
 
-        produtos = self._deduplicar(produtos)
+        return self._deduplicar(produtos)
 
-        return produtos
+    # ===============================
+    # CLASSIFICA URL
+    # ===============================
+    def _parece_produto_url(self, url: str) -> bool:
 
-    # -------------------------------
-    # EXTRAÇÃO DETALHE (CRÍTICO)
-    # -------------------------------
+        url = url.lower()
+
+        sinais_produto = [
+            "/produto",
+            "/product",
+            "/p/",
+            "-p",
+            "sku",
+            "item"
+        ]
+
+        return any(s in url for s in sinais_produto)
+
+    # ===============================
+    # EXTRAÇÃO DETALHE (ULTRA)
+    # ===============================
     def _extrair_produto_detalhe(self, url: str) -> Dict:
 
         html = self._get_html(url)
-
         if not html:
             return {}
 
         soup = BeautifulSoup(html, "html.parser")
-
         texto = soup.get_text(" ", strip=True)
 
-        nome = self._extrair_nome(soup, texto)
-        preco = self._extrair_preco(texto)
-        estoque = self._extrair_estoque(texto)
-        sku = self._extrair_sku(texto)
+        # ===============================
+        # 1. JSON-LD (PRIORIDADE)
+        # ===============================
+        dados_json = self._extrair_json_ld(soup)
 
-        imagens = self._extrair_imagens(soup, url)
+        nome = (
+            dados_json.get("name")
+            or self._extrair_nome(soup, texto)
+        )
+
+        preco = (
+            dados_json.get("offers", {}).get("price")
+            or self._extrair_preco(texto)
+        )
+
+        sku = (
+            dados_json.get("sku")
+            or self._extrair_sku(texto)
+        )
+
+        imagens = (
+            dados_json.get("image")
+            or self._extrair_imagens(soup, url)
+        )
+
+        estoque = self._extrair_estoque(texto)
 
         return {
             "url_produto": url,
             "nome": nome,
-            "preco": preco,
+            "preco": self._to_float(preco),
             "estoque": estoque,
             "sku": sku,
-            "imagens": imagens,
+            "imagens": imagens if isinstance(imagens, list) else [imagens],
         }
 
-    # -------------------------------
-    # ESTOQUE (PRIORIDADE TOTAL)
-    # -------------------------------
+    # ===============================
+    # JSON-LD
+    # ===============================
+    def _extrair_json_ld(self, soup) -> Dict:
+
+        scripts = soup.find_all("script", type="application/ld+json")
+
+        for script in scripts:
+            try:
+                data = json.loads(script.string or "")
+
+                if isinstance(data, list):
+                    for item in data:
+                        if item.get("@type") == "Product":
+                            return item
+
+                if isinstance(data, dict) and data.get("@type") == "Product":
+                    return data
+
+            except:
+                continue
+
+        return {}
+
+    # ===============================
+    # ESTOQUE (SUPER ROBUSTO)
+    # ===============================
     def _extrair_estoque(self, texto: str) -> int:
 
         texto = texto.lower()
 
-        # 1. NUMÉRICO
-        match = re.search(r'(estoque|dispon[ií]vel|quantidade)[^\d]{0,10}(\d+)', texto)
+        # NUMÉRICO
+        match = re.search(r'(estoque|quantidade|dispon[ií]vel)[^\d]{0,10}(\d+)', texto)
         if match:
-            try:
-                return int(match.group(2))
-            except:
-                pass
+            return int(match.group(2))
 
-        # 2. TEXTO
+        # ZERO
         if any(x in texto for x in [
             "esgotado",
             "sem estoque",
@@ -113,27 +173,30 @@ class GenericSupplier(SupplierBase):
         ]):
             return 0
 
-        # 3. DISPONÍVEL SEM NÚMERO
-        if "disponível" in texto or "em estoque" in texto:
+        # DISPONÍVEL
+        if any(x in texto for x in [
+            "em estoque",
+            "disponível",
+            "disponivel",
+            "available",
+            "in stock"
+        ]):
             return 1
 
         return 0
 
-    # -------------------------------
+    # ===============================
     # SKU
-    # -------------------------------
+    # ===============================
     def _extrair_sku(self, texto: str) -> str:
 
         match = re.search(r'(sku|c[oó]digo)[^\w]{0,5}([\w\-]+)', texto, re.IGNORECASE)
-        if match:
-            return match.group(2)
+        return match.group(2) if match else ""
 
-        return ""
-
-    # -------------------------------
+    # ===============================
     # NOME
-    # -------------------------------
-    def _extrair_nome(self, soup, fallback_texto: str) -> str:
+    # ===============================
+    def _extrair_nome(self, soup, texto: str) -> str:
 
         tag = soup.select_one("h1, h2, .product-title")
 
@@ -142,11 +205,11 @@ class GenericSupplier(SupplierBase):
             if nome:
                 return nome[:200]
 
-        return fallback_texto[:200]
+        return texto[:200]
 
-    # -------------------------------
+    # ===============================
     # PREÇO
-    # -------------------------------
+    # ===============================
     def _extrair_preco(self, texto: str) -> float:
 
         match = re.search(r'R\$\s?([\d\.,]+)', texto)
@@ -156,24 +219,32 @@ class GenericSupplier(SupplierBase):
 
         return 0.0
 
-    # -------------------------------
-    # IMAGENS
-    # -------------------------------
+    # ===============================
+    # IMAGENS (FILTRADAS)
+    # ===============================
     def _extrair_imagens(self, soup, base_url: str) -> List[str]:
 
         imagens = []
 
-        for img in soup.find_all("img")[:5]:
+        for img in soup.find_all("img"):
+
             src = img.get("src") or img.get("data-src")
 
-            if src:
-                imagens.append(urljoin(base_url, src))
+            if not src:
+                continue
 
-        return imagens
+            src = urljoin(base_url, src)
 
-    # -------------------------------
+            if any(x in src.lower() for x in ["logo", "icon", "banner"]):
+                continue
+
+            imagens.append(src)
+
+        return list(dict.fromkeys(imagens))[:5]
+
+    # ===============================
     # FALLBACK HTML
-    # -------------------------------
+    # ===============================
     def _extrair_html_generico(self, html: str, base_url: str) -> List[Dict]:
 
         soup = BeautifulSoup(html, "html.parser")
@@ -186,7 +257,7 @@ class GenericSupplier(SupplierBase):
 
             texto = el.get_text(" ", strip=True)
 
-            if len(texto) < 10:
+            if len(texto) < 15:
                 continue
 
             estoque = self._extrair_estoque(texto)
@@ -202,26 +273,27 @@ class GenericSupplier(SupplierBase):
 
         return produtos
 
-    # -------------------------------
+    # ===============================
     # HTTP
-    # -------------------------------
+    # ===============================
     def _get_html(self, url: str) -> str:
         try:
-            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
             if r.status_code != 200:
                 return ""
             return r.text
         except:
             return ""
 
-    # -------------------------------
+    # ===============================
     # HELPERS
-    # -------------------------------
+    # ===============================
     def _to_float(self, valor: str) -> float:
+
         if not valor:
             return 0.0
 
-        valor = valor.replace(".", "").replace(",", ".")
+        valor = str(valor).replace(".", "").replace(",", ".")
 
         try:
             return float(valor)
@@ -234,6 +306,7 @@ class GenericSupplier(SupplierBase):
         resultado = []
 
         for p in produtos:
+
             key = p.get("url_produto") or p.get("nome")
 
             if not key:
