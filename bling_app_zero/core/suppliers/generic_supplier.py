@@ -1,20 +1,20 @@
 """
-FORNECEDOR GENÉRICO (VERSÃO IA ABSURDA)
+FORNECEDOR GENÉRICO
 
-Agora com:
-- Sitemap + fallback HTML
-- Classificação produto vs categoria
-- Extração multi-camada (JSON-LD + HTML + texto)
-- Estoque extremamente robusto
-- Imagens filtradas
+Objetivo:
+- usar sitemap quando existir
+- respeitar auth_context
+- classificar produto x categoria x login
+- extrair detalhe com JSON-LD + HTML + texto
+- ter fallback de listagem quando o sitemap não resolver
 """
 
+from __future__ import annotations
+
 import re
-import json
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 
 from bling_app_zero.core.suppliers.base import SupplierBase
@@ -22,101 +22,136 @@ from bling_app_zero.core.suppliers.sitemap_discovery import descobrir_urls_via_s
 
 
 class GenericSupplier(SupplierBase):
-
     nome = "Fornecedor Genérico"
-    dominio = []
+    dominio: List[str] = []
 
     def can_handle(self, url: str) -> bool:
         return True
 
-    # ===============================
-    # FETCH PRINCIPAL
-    # ===============================
-    def fetch(self, url: str, limite: int = 200, **kwargs) -> List[Dict[str, Any]]:
+    def fetch(
+        self,
+        url: str,
+        limite: int = 300,
+        auth_context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        base_url = self._clean_text(url)
+        if not base_url:
+            return []
 
-        produtos = []
+        produtos: List[Dict[str, Any]] = []
 
-        # ===============================
-        # 1. SITEMAP (PRIORIDADE)
-        # ===============================
-        urls = descobrir_urls_via_sitemap(url, limite=limite)
+        # 1) URL direta de produto
+        html_base = self.get_html(base_url, auth_context=auth_context, timeout=20)
+        if html_base:
+            soup_base = BeautifulSoup(html_base, "html.parser")
+            page_type = self._detect_page_type(base_url, html_base, soup_base)
 
-        for u in urls:
-            if not self._parece_produto_url(u):
-                continue
+            if page_type == "produto":
+                produto = self._extrair_produto_detalhe(base_url, html=html_base, auth_context=auth_context)
+                if produto:
+                    produtos.append(produto)
 
-            produto = self._extrair_produto_detalhe(u)
+            # 2) sitemap
+            if not produtos:
+                urls = descobrir_urls_via_sitemap(base_url, limite=limite)
+                for candidate_url in urls:
+                    if not self._same_domain(base_url, candidate_url):
+                        continue
 
-            if produto and produto.get("nome"):
-                produtos.append(produto)
+                    maybe_product = self._extrair_produto_se_for_produto(
+                        candidate_url,
+                        auth_context=auth_context,
+                    )
+                    if maybe_product:
+                        produtos.append(maybe_product)
 
-        # ===============================
-        # 2. FALLBACK HTML
-        # ===============================
-        if not produtos:
-            html = self._get_html(url)
+                    if len(produtos) >= limite:
+                        break
 
-            if html:
-                produtos.extend(self._extrair_html_generico(html, url))
+            # 3) fallback: extrair links da própria listagem/categoria
+            if not produtos:
+                links = self._extrair_links_candidatos(soup_base, base_url)
+                for candidate_url in links[: limite * 2]:
+                    maybe_product = self._extrair_produto_se_for_produto(
+                        candidate_url,
+                        auth_context=auth_context,
+                    )
+                    if maybe_product:
+                        produtos.append(maybe_product)
 
-        return self._deduplicar(produtos)
+                    if len(produtos) >= limite:
+                        break
 
-    # ===============================
-    # CLASSIFICA URL
-    # ===============================
-    def _parece_produto_url(self, url: str) -> bool:
+            # 4) fallback final: cards simples da listagem
+            if not produtos:
+                produtos.extend(self._extrair_cards_genericos(html_base, base_url))
 
-        url = url.lower()
+        return self.validar_produtos(produtos)
 
-        sinais_produto = [
-            "/produto",
-            "/product",
-            "/p/",
-            "-p",
-            "sku",
-            "item"
-        ]
-
-        return any(s in url for s in sinais_produto)
-
-    # ===============================
-    # EXTRAÇÃO DETALHE (ULTRA)
-    # ===============================
-    def _extrair_produto_detalhe(self, url: str) -> Dict:
-
-        html = self._get_html(url)
+    # ------------------------------------------------------------------
+    # EXTRAÇÃO DE PRODUTO
+    # ------------------------------------------------------------------
+    def _extrair_produto_se_for_produto(
+        self,
+        url: str,
+        auth_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        html = self.get_html(url, auth_context=auth_context, timeout=20)
         if not html:
             return {}
 
         soup = BeautifulSoup(html, "html.parser")
-        texto = soup.get_text(" ", strip=True)
+        page_type = self._detect_page_type(url, html, soup)
+        if page_type != "produto":
+            return {}
 
-        # ===============================
-        # 1. JSON-LD (PRIORIDADE)
-        # ===============================
-        dados_json = self._extrair_json_ld(soup)
+        return self._extrair_produto_detalhe(url, html=html, auth_context=auth_context)
+
+    def _extrair_produto_detalhe(
+        self,
+        url: str,
+        html: str = "",
+        auth_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        page_html = html or self.get_html(url, auth_context=auth_context, timeout=20)
+        if not page_html:
+            return {}
+
+        soup = BeautifulSoup(page_html, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        json_ld_products = self._extract_json_ld_products(soup)
+        json_ld = json_ld_products[0] if json_ld_products else {}
+
+        offers = json_ld.get("offers") or {}
+        if isinstance(offers, list):
+            offers = offers[0] if offers else {}
 
         nome = (
-            dados_json.get("name")
-            or self._extrair_nome(soup, texto)
+            self._clean_text(json_ld.get("name"))
+            or self._extract_title(soup, text)
         )
-
         preco = (
-            dados_json.get("offers", {}).get("price")
-            or self._extrair_preco(texto)
+            offers.get("price")
+            or self._extract_price_from_meta(soup)
+            or self._extract_price_from_text(text)
         )
-
         sku = (
-            dados_json.get("sku")
-            or self._extrair_sku(texto)
+            self._clean_text(json_ld.get("sku"))
+            or self._extract_sku_from_meta(soup)
+            or self._extract_sku_from_text(text)
         )
-
-        imagens = (
-            dados_json.get("image")
-            or self._extrair_imagens(soup, url)
+        gtin = (
+            self._clean_text(json_ld.get("gtin13"))
+            or self._clean_text(json_ld.get("gtin"))
+            or self._extract_gtin_from_text(text)
         )
-
-        estoque = self._extrair_estoque(texto)
+        marca = self._extract_brand(json_ld, soup, text)
+        categoria = self._extract_category(soup, text)
+        descricao = self._extract_description(json_ld, soup, text)
+        imagens = self._extract_images_from_json_ld(json_ld, url) or self._extract_images(soup, url)
+        estoque = self._extract_stock_from_text(text)
 
         return {
             "url_produto": url,
@@ -124,198 +159,184 @@ class GenericSupplier(SupplierBase):
             "preco": self._to_float(preco),
             "estoque": estoque,
             "sku": sku,
-            "imagens": imagens if isinstance(imagens, list) else [imagens],
+            "gtin": gtin,
+            "marca": marca,
+            "categoria": categoria,
+            "descricao": descricao,
+            "imagens": imagens,
         }
 
-    # ===============================
-    # JSON-LD
-    # ===============================
-    def _extrair_json_ld(self, soup) -> Dict:
+    # ------------------------------------------------------------------
+    # FALLBACKS
+    # ------------------------------------------------------------------
+    def _extrair_links_candidatos(self, soup: BeautifulSoup, base_url: str) -> List[str]:
+        links: List[str] = []
+        seen = set()
 
-        scripts = soup.find_all("script", type="application/ld+json")
-
-        for script in scripts:
-            try:
-                data = json.loads(script.string or "")
-
-                if isinstance(data, list):
-                    for item in data:
-                        if item.get("@type") == "Product":
-                            return item
-
-                if isinstance(data, dict) and data.get("@type") == "Product":
-                    return data
-
-            except:
+        for anchor in soup.find_all("a", href=True):
+            href = self._absolute_url(base_url, anchor.get("href"))
+            if not href:
+                continue
+            if not self._same_domain(base_url, href):
                 continue
 
-        return {}
+            text = self._clean_text(anchor.get_text(" ", strip=True))
+            href_low = href.lower()
+            text_low = text.lower()
 
-    # ===============================
-    # ESTOQUE (SUPER ROBUSTO)
-    # ===============================
-    def _extrair_estoque(self, texto: str) -> int:
+            score = 0
+            if self._looks_like_product_url(href):
+                score += 3
+            if any(token in text_low for token in ["comprar", "ver detalhes", "detalhes", "produto"]):
+                score += 2
+            if len(text) >= 8:
+                score += 1
 
-        texto = texto.lower()
-
-        # NUMÉRICO
-        match = re.search(r'(estoque|quantidade|dispon[ií]vel)[^\d]{0,10}(\d+)', texto)
-        if match:
-            return int(match.group(2))
-
-        # ZERO
-        if any(x in texto for x in [
-            "esgotado",
-            "sem estoque",
-            "indisponível",
-            "indisponivel",
-            "zerado"
-        ]):
-            return 0
-
-        # DISPONÍVEL
-        if any(x in texto for x in [
-            "em estoque",
-            "disponível",
-            "disponivel",
-            "available",
-            "in stock"
-        ]):
-            return 1
-
-        return 0
-
-    # ===============================
-    # SKU
-    # ===============================
-    def _extrair_sku(self, texto: str) -> str:
-
-        match = re.search(r'(sku|c[oó]digo)[^\w]{0,5}([\w\-]+)', texto, re.IGNORECASE)
-        return match.group(2) if match else ""
-
-    # ===============================
-    # NOME
-    # ===============================
-    def _extrair_nome(self, soup, texto: str) -> str:
-
-        tag = soup.select_one("h1, h2, .product-title")
-
-        if tag:
-            nome = tag.get_text(strip=True)
-            if nome:
-                return nome[:200]
-
-        return texto[:200]
-
-    # ===============================
-    # PREÇO
-    # ===============================
-    def _extrair_preco(self, texto: str) -> float:
-
-        match = re.search(r'R\$\s?([\d\.,]+)', texto)
-
-        if match:
-            return self._to_float(match.group(1))
-
-        return 0.0
-
-    # ===============================
-    # IMAGENS (FILTRADAS)
-    # ===============================
-    def _extrair_imagens(self, soup, base_url: str) -> List[str]:
-
-        imagens = []
-
-        for img in soup.find_all("img"):
-
-            src = img.get("src") or img.get("data-src")
-
-            if not src:
+            if score < 2:
                 continue
 
-            src = urljoin(base_url, src)
+            if href not in seen:
+                seen.add(href)
+                links.append(href)
 
-            if any(x in src.lower() for x in ["logo", "icon", "banner"]):
-                continue
+        return links
 
-            imagens.append(src)
-
-        return list(dict.fromkeys(imagens))[:5]
-
-    # ===============================
-    # FALLBACK HTML
-    # ===============================
-    def _extrair_html_generico(self, html: str, base_url: str) -> List[Dict]:
-
+    def _extrair_cards_genericos(self, html: str, base_url: str) -> List[Dict[str, Any]]:
         soup = BeautifulSoup(html, "html.parser")
+        produtos: List[Dict[str, Any]] = []
 
-        produtos = []
+        selectors = [
+            "[class*='product']",
+            "[class*='produto']",
+            "[class*='item']",
+            "[class*='card']",
+            "article",
+        ]
 
-        cards = soup.select("[class*=product], [class*=item]")
+        seen = set()
 
-        for el in cards[:100]:
+        for selector in selectors:
+            for card in soup.select(selector):
+                text = self._clean_text(card.get_text(" ", strip=True))
+                if len(text) < 20:
+                    continue
 
-            texto = el.get_text(" ", strip=True)
+                anchor = card.find("a", href=True)
+                href = self._absolute_url(base_url, anchor.get("href") if anchor else "")
+                if not href:
+                    continue
+                if href in seen:
+                    continue
 
-            if len(texto) < 15:
-                continue
+                nome = ""
+                title_node = card.select_one("h2, h3, h4, .title, .product-title")
+                if title_node:
+                    nome = self._clean_text(title_node.get_text(" ", strip=True))
+                if not nome:
+                    nome = text[:180]
 
-            estoque = self._extrair_estoque(texto)
+                preco = self._extract_price_from_text(text)
+                imagens = self._extract_images(card, base_url)
+                estoque = self._extract_stock_from_text(text)
 
-            link_tag = el.find("a")
-            link = urljoin(base_url, link_tag.get("href")) if link_tag else base_url
+                produto = {
+                    "url_produto": href,
+                    "nome": nome,
+                    "preco": preco,
+                    "estoque": estoque,
+                    "imagens": imagens,
+                }
 
-            produtos.append({
-                "url_produto": link,
-                "nome": texto[:120],
-                "estoque": estoque,
-            })
+                seen.add(href)
+                produtos.append(produto)
 
         return produtos
 
-    # ===============================
-    # HTTP
-    # ===============================
-    def _get_html(self, url: str) -> str:
-        try:
-            r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code != 200:
-                return ""
-            return r.text
-        except:
-            return ""
+    # ------------------------------------------------------------------
+    # CAMPOS AUXILIARES
+    # ------------------------------------------------------------------
+    def _extract_price_from_meta(self, soup: BeautifulSoup) -> float:
+        selectors = [
+            "meta[property='product:price:amount']",
+            "meta[itemprop='price']",
+        ]
+        for selector in selectors:
+            node = soup.select_one(selector)
+            if node:
+                value = self._clean_text(node.get("content"))
+                if value:
+                    return self._to_float(value)
+        return 0.0
 
-    # ===============================
-    # HELPERS
-    # ===============================
-    def _to_float(self, valor: str) -> float:
+    def _extract_sku_from_meta(self, soup: BeautifulSoup) -> str:
+        selectors = [
+            "meta[itemprop='sku']",
+            "meta[property='product:retailer_item_id']",
+        ]
+        for selector in selectors:
+            node = soup.select_one(selector)
+            if node:
+                value = self._clean_text(node.get("content"))
+                if value:
+                    return value
+        return ""
 
-        if not valor:
-            return 0.0
+    def _extract_brand(self, json_ld: Dict[str, Any], soup: BeautifulSoup, text: str) -> str:
+        brand = json_ld.get("brand")
+        if isinstance(brand, dict):
+            value = self._clean_text(brand.get("name"))
+            if value:
+                return value
+        if isinstance(brand, str):
+            value = self._clean_text(brand)
+            if value:
+                return value
 
-        valor = str(valor).replace(".", "").replace(",", ".")
+        meta = soup.select_one("meta[property='product:brand'], meta[itemprop='brand']")
+        if meta:
+            value = self._clean_text(meta.get("content"))
+            if value:
+                return value
 
-        try:
-            return float(valor)
-        except:
-            return 0.0
+        match = re.search(r"(marca)\W{0,8}([A-Za-z0-9 .\-_/]+)", text, re.IGNORECASE)
+        return self._clean_text(match.group(2))[:80] if match else ""
 
-    def _deduplicar(self, produtos: List[Dict]) -> List[Dict]:
+    def _extract_category(self, soup: BeautifulSoup, text: str) -> str:
+        breadcrumbs = []
+        for node in soup.select("nav.breadcrumb a, .breadcrumb a, [class*='breadcrumb'] a"):
+            label = self._clean_text(node.get_text(" ", strip=True))
+            if label:
+                breadcrumbs.append(label)
 
-        vistos = set()
-        resultado = []
+        if breadcrumbs:
+            return " > ".join(breadcrumbs[:6])
 
-        for p in produtos:
+        match = re.search(r"(categoria)\W{0,8}([A-Za-z0-9 .\-/]+)", text, re.IGNORECASE)
+        return self._clean_text(match.group(2))[:120] if match else ""
 
-            key = p.get("url_produto") or p.get("nome")
+    def _extract_description(self, json_ld: Dict[str, Any], soup: BeautifulSoup, text: str) -> str:
+        value = self._clean_text(json_ld.get("description"))
+        if value:
+            return value[:3000]
 
-            if not key:
-                continue
+        meta = soup.select_one("meta[name='description'], meta[property='og:description']")
+        if meta:
+            value = self._clean_text(meta.get("content"))
+            if value:
+                return value[:3000]
 
-            if key in vistos:
-                continue
+        node = soup.select_one("[itemprop='description'], .description, .product-description")
+        if node:
+            value = self._clean_text(node.get_text(" ", strip=True))
+            if value:
+                return value[:3000]
 
-            vistos.add(key)
-            resultado.append(p)
+        return self._clean_text(text)[:3000]
 
-        return resultado
+    def _extract_images_from_json_ld(self, json_ld: Dict[str, Any], base_url: str) -> List[str]:
+        image = json_ld.get("image")
+        if isinstance(image, str):
+            return [self._absolute_url(base_url, image)]
+        if isinstance(image, list):
+            return [self._absolute_url(base_url, item) for item in image if self._absolute_url(base_url, item)]
+        return []
