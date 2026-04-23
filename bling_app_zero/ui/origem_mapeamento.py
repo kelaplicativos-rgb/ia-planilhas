@@ -662,6 +662,44 @@ def _mapping_semantico(
     return mapping_final
 
 
+def _limpar_mapeamento_por_status(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_atual: dict[str, str],
+    operacao: str,
+    modo: str = "erros_revisar",
+) -> dict[str, str]:
+    novo_mapping = dict(mapping_atual or {})
+    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if coluna_modelo in bloqueados:
+            continue
+
+        if _eh_coluna_video(coluna_modelo):
+            novo_mapping[coluna_modelo] = ""
+            continue
+
+        if modo == "tudo":
+            novo_mapping[coluna_modelo] = ""
+            continue
+
+        detalhe = _detalhe_confianca_mapeamento(
+            df_base=df_base,
+            coluna_modelo=coluna_modelo,
+            coluna_origem=str(novo_mapping.get(coluna_modelo, "") or "").strip(),
+        )
+
+        if detalhe.get("status") in {"erro", "revisar"}:
+            novo_mapping[coluna_modelo] = ""
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if _eh_coluna_video(coluna_modelo):
+            novo_mapping[coluna_modelo] = ""
+
+    return novo_mapping
+
+
 def _limpar_valores_preview(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -852,7 +890,10 @@ def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operac
 
 
 def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
-    col1, col2 = st.columns(2)
+    operacao = _detectar_operacao()
+    mapping_atual = st.session_state.get("mapping_manual", {}).copy()
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button(
@@ -866,15 +907,41 @@ def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> N
 
     with col2:
         if st.button(
-            "🧹 Zerar mapeamento",
+            "🧹 Limpar vermelho/amarelo",
             use_container_width=True,
-            key="btn_zerar_mapeamento",
+            key="btn_limpar_vermelho_amarelo_mapping",
         ):
-            st.session_state["mapping_manual"] = _resetar_mapping_para_modelo(df_modelo)
-            st.session_state["mapping_sugerido"] = {}
-            st.session_state["agent_ui_package"] = {}
-            st.session_state["df_final"] = None
-            st.session_state["_ia_auto_mapping_executado"] = False
+            novo = _limpar_mapeamento_por_status(
+                df_base=df_base,
+                df_modelo=df_modelo,
+                mapping_atual=mapping_atual,
+                operacao=operacao,
+                modo="erros_revisar",
+            )
+            st.session_state["mapping_manual"] = novo
+            st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, novo)
+            log_debug(
+                "Limpeza seletiva aplicada: campos vermelhos e amarelos foram limpos, preservando os verdes.",
+                nivel="INFO",
+            )
+            st.rerun()
+
+    with col3:
+        if st.button(
+            "💣 Limpar tudo",
+            use_container_width=True,
+            key="btn_limpar_tudo_mapping",
+        ):
+            novo = _limpar_mapeamento_por_status(
+                df_base=df_base,
+                df_modelo=df_modelo,
+                mapping_atual=mapping_atual,
+                operacao=operacao,
+                modo="tudo",
+            )
+            st.session_state["mapping_manual"] = novo
+            st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, novo)
+            log_debug("Limpeza total aplicada no mapeamento manual.", nivel="INFO")
             st.rerun()
 
 
@@ -1278,8 +1345,6 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             novo_valor = ""
 
         mapping_atual[coluna_modelo] = novo_valor
-
-    mapping_atual = _mapping_semantico(df_base, df_modelo, mapping_atual)
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
         if _eh_coluna_video(coluna_modelo):
