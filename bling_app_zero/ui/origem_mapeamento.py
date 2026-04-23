@@ -22,6 +22,11 @@ from bling_app_zero.ui.app_helpers import (
     sincronizar_etapa_global,
     voltar_etapa_anterior,
 )
+from bling_app_zero.utils.gtin import (
+    aplicar_validacao_gtin_em_colunas_automaticas,
+    contar_gtins_invalidos_df,
+    resumir_logs_limpeza_gtin,
+)
 
 
 ANTI_LIXO_VALORES = {
@@ -1354,6 +1359,32 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
 
 
+
+
+def _limpar_gtins_invalidos_resultado_final(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+    df_final = st.session_state.get("df_final")
+    if not safe_df_estrutura(df_final):
+        df_final = _aplicar_mapping(df_base, df_modelo, mapping)
+
+    df_limpo, logs = aplicar_validacao_gtin_em_colunas_automaticas(df_final.copy())
+    resumo = resumir_logs_limpeza_gtin(logs)
+    invalidos = int(resumo.get("invalidos", 0) or 0)
+    colunas_gtin = int(resumo.get("colunas_gtin", 0) or 0)
+
+    st.session_state["df_final"] = df_limpo
+    st.session_state["gtin_logs_limpeza"] = logs
+    st.session_state["gtin_resumo_limpeza"] = resumo
+    st.session_state["gtin_limpeza_realizada"] = True
+
+    if colunas_gtin <= 0:
+        st.info("Nenhuma coluna GTIN/EAN foi encontrada no resultado final.")
+    elif invalidos > 0:
+        st.success(f"{invalidos} GTIN(s) inválido(s) foram limpos e deixados vazios.")
+    else:
+        st.success("Nenhum GTIN inválido foi encontrado no resultado final.")
+
+    return df_limpo
+
 def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) -> tuple[bool, list[str]]:
     erros = []
     operacao = _detectar_operacao()
@@ -1388,9 +1419,26 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
     mapping = st.session_state.get("mapping_manual", {}).copy()
     valido, erros = _validar_mapping_pronto(df_modelo, mapping)
 
-    col1, col2 = st.columns(2)
+    df_final_atual = st.session_state.get("df_final")
+    gtins_invalidos = contar_gtins_invalidos_df(df_final_atual) if safe_df_estrutura(df_final_atual) else 0
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
+        if st.button(
+            "🧹 Limpar GTINs inválidos",
+            use_container_width=True,
+            key="btn_limpar_gtins_invalidos_mapping",
+        ):
+            if not valido:
+                for erro in erros:
+                    st.error(erro)
+                return
+
+            _limpar_gtins_invalidos_resultado_final(df_base, df_modelo, mapping)
+            st.rerun()
+
+    with col2:
         if st.button(
             "✅ Regenerar resultado final",
             use_container_width=True,
@@ -1406,7 +1454,7 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
             st.success("Resultado final gerado com sucesso.")
             st.rerun()
 
-    with col2:
+    with col3:
         if st.button(
             "➡️ Ir para preview final",
             use_container_width=True,
@@ -1424,6 +1472,12 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
 
             ir_para_etapa("preview_final")
             st.rerun()
+
+    if safe_df_estrutura(df_final_atual):
+        if gtins_invalidos > 0:
+            st.warning(f"Resultado atual com {gtins_invalidos} GTIN(s) inválido(s). Use o botão de limpeza para deixá-los vazios.")
+        else:
+            st.caption("GTINs do resultado atual já estão limpos ou válidos.")
 
 
 def render_origem_mapeamento() -> None:
