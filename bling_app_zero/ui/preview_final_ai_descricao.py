@@ -1,336 +1,213 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import pandas as pd
 import streamlit as st
 
 
-COLUNAS_PROTEGIDAS_TRECHOS = [
-    "codigo",
-    "código",
-    "sku",
-    "gtin",
-    "ean",
-    "preco",
-    "preço",
-    "valor",
-    "estoque",
-    "deposito",
-    "depósito",
-    "saldo",
-    "balanco",
-    "balanço",
-    "id",
-    "url",
-    "link",
-    "imagem",
-    "video",
-    "vídeo",
+COLUNAS_PROTEGIDAS = [
+    "codigo", "código", "sku", "gtin", "ean",
+    "preco", "preço", "valor",
+    "estoque", "deposito", "depósito",
+    "saldo", "balanco", "balanço",
+    "id", "url", "link", "imagem", "video", "vídeo",
 ]
 
 
-def _df_valido(df: object) -> bool:
+def _fixar_etapa_preview_final() -> None:
+    """
+    Impede que qualquer interação neste módulo volte o fluxo para mapeamento.
+    """
+    st.session_state["etapa_origem"] = "preview_final"
+    st.session_state["etapa_atual"] = "preview_final"
+    st.session_state["_ultima_etapa_sincronizada_url"] = "preview_final"
+    st.session_state["_preview_final_ia_ativa"] = True
+
+
+def _df_valido(df) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
 
 
-def _normalizar_nome_coluna(nome: object) -> str:
-    return str(nome or "").strip().lower()
+def _coluna_protegida(coluna) -> bool:
+    nome = str(coluna or "").lower()
+    return any(k in nome for k in COLUNAS_PROTEGIDAS)
 
 
-def _coluna_protegida(coluna: object) -> bool:
-    nome = _normalizar_nome_coluna(coluna)
-    return any(trecho in nome for trecho in COLUNAS_PROTEGIDAS_TRECHOS)
-
-
-def _identificar_colunas_descricao(df: pd.DataFrame) -> list[str]:
-    if not _df_valido(df):
-        return []
-
-    candidatas: list[str] = []
+def _identificar_colunas(df: pd.DataFrame) -> list[str]:
+    cols = []
 
     for coluna in df.columns:
-        nome = _normalizar_nome_coluna(coluna)
+        nome = str(coluna or "").lower()
 
         if _coluna_protegida(coluna):
             continue
 
-        if any(chave in nome for chave in ["descr", "titulo", "título", "nome", "produto"]):
-            candidatas.append(str(coluna))
+        if any(k in nome for k in ["descr", "nome", "titulo", "título", "produto"]):
+            cols.append(coluna)
 
-    preferidas = []
-    for alvo in ["Descrição", "Descricao", "Descrição Curta", "Descricao Curta", "Nome", "Produto", "Título", "Titulo"]:
-        for coluna in candidatas:
-            if _normalizar_nome_coluna(coluna) == _normalizar_nome_coluna(alvo) and coluna not in preferidas:
-                preferidas.append(coluna)
-
-    for coluna in candidatas:
-        if coluna not in preferidas:
-            preferidas.append(coluna)
-
-    return preferidas
+    return cols
 
 
-def _obter_df_base(df_final: pd.DataFrame) -> pd.DataFrame:
-    df_session = st.session_state.get("df_final")
-
-    if _df_valido(df_session):
-        return df_session.copy().fillna("")
-
-    if _df_valido(df_final):
-        return df_final.copy().fillna("")
-
-    return pd.DataFrame()
-
-
-def _obter_openai_api_key() -> str:
+def _get_openai_client():
     try:
-        chave = st.secrets.get("OPENAI_API_KEY", "")
+        from openai import OpenAI
     except Exception:
-        chave = ""
+        return None
 
-    if not chave:
-        chave = os.getenv("OPENAI_API_KEY", "")
-
-    return str(chave or "").strip()
-
-
-def _obter_openai_modelo() -> str:
     try:
-        modelo = st.secrets.get("OPENAI_MODEL", "")
+        key = st.secrets.get("OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
     except Exception:
-        modelo = ""
+        key = os.getenv("OPENAI_API_KEY", "")
 
-    if not modelo:
+    key = str(key or "").strip()
+
+    if not key:
+        return None
+
+    try:
+        return OpenAI(api_key=key)
+    except Exception:
+        return None
+
+
+def _get_modelo() -> str:
+    try:
+        modelo = st.secrets.get("OPENAI_MODEL", "") or os.getenv("OPENAI_MODEL", "")
+    except Exception:
         modelo = os.getenv("OPENAI_MODEL", "")
 
     return str(modelo or "gpt-4o-mini").strip()
 
 
-def _openai_disponivel() -> tuple[bool, str]:
-    if not _obter_openai_api_key():
-        return False, "OPENAI_API_KEY não configurada."
-
-    try:
-        import openai  # noqa: F401
-    except Exception:
-        return False, "Pacote openai não instalado no ambiente."
-
-    return True, ""
-
-
-def _limpar_saida_ia(texto: str, limite: int = 450) -> str:
-    texto = str(texto or "").strip()
-    texto = texto.replace("\n", " ").replace("\r", " ")
-    texto = " ".join(texto.split())
-
-    prefixes = [
-        "Descrição:",
-        "Descricao:",
-        "Texto:",
-        "Resposta:",
-        "Resultado:",
-    ]
-
-    for prefixo in prefixes:
-        if texto.lower().startswith(prefixo.lower()):
-            texto = texto[len(prefixo) :].strip()
-
-    if len(texto) > limite:
-        texto = texto[:limite].rstrip()
-        ultimo_ponto = max(texto.rfind("."), texto.rfind("!"), texto.rfind("?"))
-        if ultimo_ponto > 120:
-            texto = texto[: ultimo_ponto + 1].strip()
-
-    return texto
-
-
-def _fallback_descricao(texto: str, estilo: str) -> str:
-    texto = str(texto or "").strip()
-    if not texto:
-        return ""
-
-    if estilo == "Mais técnico":
-        return f"{texto}. Produto desenvolvido para oferecer praticidade, desempenho e confiabilidade no uso diário."
-
-    if estilo == "Mais curto":
-        return texto
-
-    if estilo == "Mais marketplace":
-        return f"{texto}. Uma ótima opção para quem busca praticidade, qualidade e bom custo-benefício."
-
-    return f"{texto}. Ideal para quem procura uma opção prática, funcional e com excelente custo-benefício."
-
-
-def _montar_contexto_linha(row: pd.Series) -> str:
-    partes: list[str] = []
+def _contexto_row(row: pd.Series) -> str:
+    partes = []
 
     for coluna, valor in row.items():
         if _coluna_protegida(coluna):
             continue
 
-        valor_str = str(valor or "").strip()
-        if not valor_str:
-            continue
+        valor = str(valor or "").strip()
 
-        if len(valor_str) > 180:
-            valor_str = valor_str[:180].strip()
+        if valor:
+            partes.append(f"{coluna}: {valor[:140]}")
 
-        partes.append(f"{coluna}: {valor_str}")
-
-    return " | ".join(partes[:12])
+    return " | ".join(partes[:10])
 
 
-def _chamar_openai_descricao(
-    texto_original: str,
-    contexto_produto: str,
-    estilo: str,
-    limite_caracteres: int,
-) -> str:
-    api_key = _obter_openai_api_key()
-    modelo = _obter_openai_modelo()
+def _limpar_texto_ia(texto: str, limite: int = 350) -> str:
+    texto = str(texto or "").strip()
+    texto = texto.replace("\n", " ").replace("\r", " ")
+    texto = " ".join(texto.split())
 
-    from openai import OpenAI
+    for prefixo in ["Descrição:", "Descricao:", "Texto:", "Resposta:", "Resultado:"]:
+        if texto.lower().startswith(prefixo.lower()):
+            texto = texto[len(prefixo):].strip()
 
-    client = OpenAI(api_key=api_key)
+    if len(texto) > limite:
+        texto = texto[:limite].rstrip()
 
-    estilo_instrucao = {
-        "Mais vendedor": (
-            "Reescreva com tom persuasivo e vendedor, despertando desejo de compra, "
-            "mas sem exageros e sem prometer algo que não esteja no texto."
-        ),
-        "Mais técnico": (
-            "Reescreva com tom mais técnico, claro e confiável, destacando utilidade e características existentes."
-        ),
-        "Mais marketplace": (
-            "Reescreva em estilo marketplace, direto, comercial e fácil de entender."
-        ),
-        "Mais curto": (
-            "Reescreva de forma curta, objetiva e comercial, mantendo apenas o essencial."
-        ),
-    }.get(estilo, "Reescreva com tom comercial, claro e persuasivo.")
+    return texto
 
-    prompt_sistema = (
-        "Você é um especialista em descrição de produtos para e-commerce brasileiro. "
-        "Sua tarefa é melhorar descrições para vender melhor. "
-        "Regras obrigatórias: "
-        "não invente marca, voltagem, tamanho, compatibilidade, garantia, material, quantidade, certificação ou função; "
-        "use somente informações existentes no texto original e no contexto da linha; "
-        "não use emojis; "
-        "não use aspas; "
-        "não crie listas; "
-        "não mencione que é IA; "
-        "retorne somente a descrição final pronta."
-    )
 
-    prompt_usuario = f"""
-Estilo desejado: {estilo}
-Instrução: {estilo_instrucao}
-Limite máximo: {limite_caracteres} caracteres.
+def _prompt_copy(texto: str, contexto: str, limite: int) -> str:
+    return f"""
+Você é especialista em copy para e-commerce brasileiro.
+
+Objetivo:
+Reformular a descrição para ficar mais persuasiva e vender melhor.
+
+Regras obrigatórias:
+- Não invente características.
+- Não invente marca, modelo, voltagem, medida, material, compatibilidade ou função.
+- Use somente informações existentes no texto e no contexto.
+- Não use emojis.
+- Não use lista.
+- Não use aspas.
+- Não mencione IA.
+- Retorne somente a descrição final.
+- Máximo de {limite} caracteres.
 
 Texto original:
-{texto_original}
+{texto}
 
 Contexto do produto:
-{contexto_produto}
+{contexto}
 
-Retorne somente a nova descrição.
+Descrição final:
 """.strip()
 
-    resposta = client.chat.completions.create(
-        model=modelo,
-        messages=[
-            {"role": "system", "content": prompt_sistema},
-            {"role": "user", "content": prompt_usuario},
-        ],
-        temperature=0.55,
-        max_tokens=180,
-    )
 
-    conteudo = resposta.choices[0].message.content if resposta.choices else ""
-    return _limpar_saida_ia(conteudo, limite=limite_caracteres)
-
-
-def _gerar_descricao_persuasiva(
-    texto: str,
-    row: pd.Series,
-    estilo: str,
-    limite_caracteres: int,
-    usar_ia_real: bool,
-) -> str:
+def _gerar_copy(texto: str, row: pd.Series, client, limite: int) -> str:
     texto = str(texto or "").strip()
 
     if not texto:
         return ""
 
-    if not usar_ia_real:
-        return _limpar_saida_ia(_fallback_descricao(texto, estilo), limite=limite_caracteres)
-
-    try:
-        contexto = _montar_contexto_linha(row)
-        resultado = _chamar_openai_descricao(
-            texto_original=texto,
-            contexto_produto=contexto,
-            estilo=estilo,
-            limite_caracteres=limite_caracteres,
+    if client is None:
+        return _limpar_texto_ia(
+            f"{texto}. Ideal para quem busca praticidade, qualidade e ótimo custo-benefício no dia a dia.",
+            limite=limite,
         )
 
-        if resultado:
-            return resultado
+    try:
+        resposta = client.chat.completions.create(
+            model=_get_modelo(),
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Você cria descrições comerciais de alta conversão para e-commerce, sem inventar informações.",
+                },
+                {
+                    "role": "user",
+                    "content": _prompt_copy(texto, _contexto_row(row), limite),
+                },
+            ],
+            temperature=0.65,
+            max_tokens=180,
+        )
 
-        return _limpar_saida_ia(_fallback_descricao(texto, estilo), limite=limite_caracteres)
+        conteudo = resposta.choices[0].message.content if resposta.choices else ""
+        saida = _limpar_texto_ia(conteudo, limite=limite)
+
+        return saida or texto
 
     except Exception as exc:
-        st.session_state["ia_descricao_ultimo_erro"] = str(exc)
-        return _limpar_saida_ia(_fallback_descricao(texto, estilo), limite=limite_caracteres)
+        st.session_state["erro_copy"] = str(exc)
+        return _limpar_texto_ia(
+            f"{texto}. Ideal para quem busca praticidade, qualidade e ótimo custo-benefício no dia a dia.",
+            limite=limite,
+        )
 
 
-def _aplicar_ia_em_colunas(
-    df_base: pd.DataFrame,
-    colunas: list[str],
-    estilo: str,
-    apenas_vazios: bool,
-    limite_linhas: int,
-    limite_caracteres: int,
-    usar_ia_real: bool,
-) -> pd.DataFrame:
-    df_saida = df_base.copy().fillna("")
+def _aplicar_copy(df: pd.DataFrame, colunas: list[str], limite_linhas: int, limite_chars: int) -> pd.DataFrame:
+    _fixar_etapa_preview_final()
 
-    if not colunas:
-        return df_saida
+    client = _get_openai_client()
+    df_out = df.copy().fillna("")
 
-    total_linhas = min(int(limite_linhas), len(df_saida.index))
+    total = min(int(limite_linhas), len(df_out.index))
 
-    progresso = st.progress(0, text="Preparando descrições com IA...")
+    if total <= 0:
+        return df_out
 
-    for posicao, idx in enumerate(df_saida.index[:total_linhas]):
-        row = df_saida.loc[idx]
+    barra = st.progress(0, text="Gerando descrições com IA...")
+
+    for i, idx in enumerate(df_out.index[:total]):
+        row = df_out.loc[idx]
 
         for coluna in colunas:
-            if coluna not in df_saida.columns or _coluna_protegida(coluna):
+            if coluna not in df_out.columns or _coluna_protegida(coluna):
                 continue
 
-            valor_atual = str(df_saida.at[idx, coluna] or "").strip()
+            valor = str(df_out.at[idx, coluna] or "").strip()
+            df_out.at[idx, coluna] = _gerar_copy(valor, row, client, limite_chars)
 
-            if apenas_vazios and valor_atual:
-                continue
+        pct = int(((i + 1) / total) * 100)
+        barra.progress(pct, text=f"Gerando descrições com IA... {pct}%")
 
-            novo_valor = _gerar_descricao_persuasiva(
-                texto=valor_atual,
-                row=row,
-                estilo=estilo,
-                limite_caracteres=limite_caracteres,
-                usar_ia_real=usar_ia_real,
-            )
-
-            df_saida.at[idx, coluna] = novo_valor
-
-        percentual = int(((posicao + 1) / max(total_linhas, 1)) * 100)
-        progresso.progress(percentual, text=f"IA ajustando descrições... {percentual}%")
-
-    progresso.empty()
-    return df_saida.fillna("")
+    barra.empty()
+    return df_out.fillna("")
 
 
 def _aplicar_somente_colunas_descricao(
@@ -352,139 +229,123 @@ def _aplicar_somente_colunas_descricao(
 
 
 def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
-    df_base = _obter_df_base(df_final)
+    _fixar_etapa_preview_final()
 
-    if not _df_valido(df_base):
+    if not _df_valido(df_final):
         return df_final
 
-    st.markdown("### ✨ Otimização de descrição com IA")
+    st.markdown("### 🚀 Otimização de descrição com IA")
 
-    colunas_desc = _identificar_colunas_descricao(df_base)
+    df_base_session = st.session_state.get("df_final")
 
-    if not colunas_desc:
-        st.info("Nenhuma coluna de descrição foi identificada para otimização.")
+    if _df_valido(df_base_session):
+        df_base = df_base_session.copy().fillna("")
+    else:
+        df_base = df_final.copy().fillna("")
+
+    colunas = _identificar_colunas(df_base)
+
+    if not colunas:
+        st.info("Nenhuma coluna de descrição encontrada.")
         return df_base
 
-    disponivel, motivo_indisponivel = _openai_disponivel()
-
-    if disponivel:
-        st.caption("IA real ativada via OpenAI.")
-    else:
-        st.caption(f"IA real indisponível: {motivo_indisponivel} Será usado fallback local seguro.")
+    st.caption("A IA só altera as colunas de descrição selecionadas. Código, GTIN, preço, estoque, depósito, imagens e vídeos ficam protegidos.")
 
     colunas_escolhidas = st.multiselect(
-        "Colunas que a IA pode melhorar",
-        options=colunas_desc,
-        default=colunas_desc[:2],
-        key="ia_desc_colunas_escolhidas",
-    )
-
-    estilo = st.selectbox(
-        "Estilo da descrição",
-        options=[
-            "Mais vendedor",
-            "Mais técnico",
-            "Mais marketplace",
-            "Mais curto",
-        ],
-        index=0,
-        key="ia_desc_estilo",
-    )
-
-    col_a, col_b, col_c = st.columns(3)
-
-    with col_a:
-        apenas_vazios = st.checkbox(
-            "Aplicar apenas onde estiver vazio",
-            value=False,
-            key="ia_desc_apenas_vazios",
-        )
-
-    with col_b:
-        limite_linhas = st.number_input(
-            "Quantidade de linhas",
-            min_value=1,
-            max_value=max(len(df_base.index), 1),
-            value=min(len(df_base.index), 20),
-            step=1,
-            key="ia_desc_limite_linhas",
-        )
-
-    with col_c:
-        limite_caracteres = st.number_input(
-            "Máx. caracteres",
-            min_value=80,
-            max_value=1000,
-            value=350,
-            step=10,
-            key="ia_desc_limite_caracteres",
-        )
-
-    usar_ia_real = st.checkbox(
-        "Usar OpenAI real quando disponível",
-        value=disponivel,
-        disabled=not disponivel,
-        key="ia_desc_usar_openai_real",
-    )
-
-    st.caption(
-        "Blindagem ativa: a IA só altera as colunas selecionadas de descrição. "
-        "Código, GTIN, preço, estoque, depósito, imagens, vídeos e links ficam preservados."
+        "Colunas para otimizar",
+        options=colunas,
+        default=colunas[:2],
+        key="copy_pro_colunas",
+        on_change=_fixar_etapa_preview_final,
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("👁️ Gerar prévia com IA", use_container_width=True, key="btn_gerar_preview_ia_desc"):
+        limite = st.number_input(
+            "Quantidade de produtos",
+            min_value=1,
+            max_value=max(len(df_base.index), 1),
+            value=min(20, len(df_base.index)),
+            step=1,
+            key="copy_pro_limite",
+            on_change=_fixar_etapa_preview_final,
+        )
+
+    with col2:
+        limite_chars = st.number_input(
+            "Máx. caracteres",
+            min_value=120,
+            max_value=800,
+            value=350,
+            step=10,
+            key="copy_pro_limite_chars",
+            on_change=_fixar_etapa_preview_final,
+        )
+
+    col_btn1, col_btn2 = st.columns(2)
+
+    with col_btn1:
+        if st.button("👁️ Gerar prévia IA", use_container_width=True, key="btn_copy_pro_gerar"):
+            _fixar_etapa_preview_final()
+
             if not colunas_escolhidas:
                 st.warning("Selecione pelo menos uma coluna de descrição.")
                 return df_base
 
-            df_preview = _aplicar_ia_em_colunas(
-                df_base=df_base,
-                colunas=colunas_escolhidas,
-                estilo=estilo,
-                apenas_vazios=apenas_vazios,
-                limite_linhas=int(limite_linhas),
-                limite_caracteres=int(limite_caracteres),
-                usar_ia_real=bool(usar_ia_real and disponivel),
+            df_prev = _aplicar_copy(
+                df=df_base,
+                colunas=list(colunas_escolhidas),
+                limite_linhas=int(limite),
+                limite_chars=int(limite_chars),
             )
 
-            st.session_state["df_preview_ia_desc"] = df_preview.copy()
-            st.session_state["ia_desc_colunas_preview"] = list(colunas_escolhidas)
-            st.success("Prévia gerada com sucesso.")
+            st.session_state["copy_preview"] = df_prev.copy()
+            st.session_state["copy_preview_colunas"] = list(colunas_escolhidas)
+            st.session_state["df_final"] = df_base.copy()
+            _fixar_etapa_preview_final()
 
-    with col2:
-        if st.button("✅ Aplicar IA nas descrições", use_container_width=True, key="btn_aplicar_ia_desc"):
-            df_preview = st.session_state.get("df_preview_ia_desc")
-            colunas_preview = st.session_state.get("ia_desc_colunas_preview", colunas_escolhidas)
+            st.success("Prévia de descrição gerada com sucesso.")
+            st.rerun()
 
-            if not _df_valido(df_preview):
+    with col_btn2:
+        if st.button("🔥 Aplicar no resultado final", use_container_width=True, key="btn_copy_pro_aplicar"):
+            _fixar_etapa_preview_final()
+
+            df_prev = st.session_state.get("copy_preview")
+            colunas_prev = st.session_state.get("copy_preview_colunas", colunas_escolhidas)
+
+            if not _df_valido(df_prev):
                 st.warning("Gere a prévia antes de aplicar.")
                 return df_base
 
             df_resultado = _aplicar_somente_colunas_descricao(
-                df_base=_obter_df_base(df_base),
-                df_preview=df_preview,
-                colunas=list(colunas_preview),
+                df_base=df_base,
+                df_preview=df_prev,
+                colunas=list(colunas_prev),
             )
 
             st.session_state["df_final"] = df_resultado.copy()
             st.session_state["df_final_manual_preservado"] = True
             st.session_state["ia_descricao_aplicada"] = True
-            st.success("Descrições atualizadas com IA.")
+            _fixar_etapa_preview_final()
+
+            st.success("Descrições aplicadas no resultado final.")
             st.rerun()
 
-    erro = st.session_state.get("ia_descricao_ultimo_erro")
+    erro = st.session_state.get("erro_copy")
     if erro:
-        with st.expander("⚠️ Último erro da IA real", expanded=False):
+        with st.expander("⚠️ Erro da IA", expanded=False):
             st.code(str(erro))
 
-    df_preview = st.session_state.get("df_preview_ia_desc")
-    if _df_valido(df_preview):
-        colunas_visualizacao = [c for c in colunas_escolhidas if c in df_preview.columns]
-        if colunas_visualizacao:
-            with st.expander("🔎 Visualizar prévia das descrições com IA", expanded=False):
-                st.dataframe(df_preview[colunas_visualizacao].head(10), use_container_width=True)
+    df_prev = st.session_state.get("copy_preview")
+    if _df_valido(df_prev):
+        colunas_preview = st.session_state.get("copy_preview_colunas", colunas_escolhidas)
+        colunas_preview = [c for c in colunas_preview if c in df_prev.columns]
 
-    return _obter_df_base(df_base)
+        if colunas_preview:
+            with st.expander("🔎 Prévia das descrições com IA", expanded=False):
+                st.dataframe(df_prev[colunas_preview].head(10), use_container_width=True)
+
+    _fixar_etapa_preview_final()
+    return st.session_state.get("df_final", df_base)
