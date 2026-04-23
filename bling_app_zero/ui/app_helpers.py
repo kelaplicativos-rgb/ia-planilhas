@@ -379,10 +379,6 @@ def _gtin_checksum_valido(gtin: str) -> bool:
 
 
 def _gtin_tem_prefixo_brasil(gtin: str) -> bool:
-    """
-    Regra opcional para cenários em que o usuário quer ser mais rígido
-    e aceitar apenas prefixos brasileiros 789/790.
-    """
     if len(gtin) == 13:
         return gtin.startswith(("789", "790"))
 
@@ -393,10 +389,6 @@ def _gtin_tem_prefixo_brasil(gtin: str) -> bool:
 
 
 def _gtin_tem_prefixo_gs1_alocado(gtin: str) -> bool:
-    """
-    Evita aceitar prefixos inválidos que o Bling rejeita.
-    Ex.: 687.
-    """
     if not gtin or len(gtin) not in {13, 14}:
         return True
 
@@ -465,40 +457,6 @@ def _gtin_valido(valor: object, aceitar_apenas_prefixo_br: bool = False) -> bool
     return True
 
 
-def _gerar_gtin_automatico(seed: object = "", indice: int = 0) -> str:
-    """
-    Gera GTIN-13 válido com prefixo Brasil 789.
-    Usa seed + índice para reduzir repetição.
-    """
-    seed_digitos = _somente_digitos(seed)
-    idx = max(int(indice or 0), 0)
-
-    base_seed = f"{seed_digitos}{idx:09d}"
-    sufixo = base_seed[-9:].zfill(9)
-
-    corpo = f"789{sufixo}"
-    digito = _calcular_digito_gtin(corpo)
-    return f"{corpo}{digito}"
-
-
-def _normalizar_ou_gerar_gtin(
-    valor: object,
-    *,
-    aceitar_apenas_prefixo_br: bool = False,
-    gerar_automatico: bool = False,
-    indice: int = 0,
-) -> str:
-    texto = _somente_digitos(valor)
-
-    if texto and _gtin_valido(texto, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br):
-        return texto
-
-    if gerar_automatico:
-        return _gerar_gtin_automatico(seed=valor, indice=indice)
-
-    return ""
-
-
 def _limpar_gtin(valor: object, aceitar_apenas_prefixo_br: bool = False) -> str:
     texto = _somente_digitos(valor)
     if not texto:
@@ -534,6 +492,191 @@ def _serie_numerica_valida(df: pd.DataFrame, coluna: str) -> pd.Series:
     return pd.to_numeric(serie, errors="coerce")
 
 
+def _gtin_online_disponivel() -> bool:
+    """
+    Mantido como ponto de expansão futura.
+    Hoje, sem credenciais/integração contratada da GS1, o app usa
+    validação local forte e fallback operacional via limpeza.
+    """
+    return False
+
+
+def _inicializar_estado_gtin() -> None:
+    defaults = {
+        "gtin_apenas_prefixo_br": False,
+        "gtin_limpar_invalidos": True,
+        "gtin_modo_online": False,
+        "gtin_ultimo_total_invalidos": 0,
+        "gtin_ultimo_total_limpos": 0,
+    }
+    for chave, valor in defaults.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
+
+
+def render_controles_gtin(df_base: pd.DataFrame | None = None) -> None:
+    _inicializar_estado_gtin()
+
+    with st.expander("GTIN / EAN", expanded=False):
+        st.caption(
+            "Validação local forte para GTIN/EAN e GTIN/EAN tributário. "
+            "Se a integração online oficial não estiver disponível, você pode limpar os inválidos."
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            somente_br = st.checkbox(
+                "Aceitar apenas prefixo BR (789/790)",
+                value=bool(st.session_state.get("gtin_apenas_prefixo_br", False)),
+                key="gtin_apenas_prefixo_br_widget",
+            )
+            st.session_state["gtin_apenas_prefixo_br"] = bool(somente_br)
+
+        with col2:
+            modo_online = st.checkbox(
+                "Tentar validação online oficial",
+                value=bool(st.session_state.get("gtin_modo_online", False)),
+                key="gtin_modo_online_widget",
+                disabled=not _gtin_online_disponivel(),
+                help=(
+                    "Disponível apenas quando houver integração oficial/contratada configurada."
+                    if not _gtin_online_disponivel()
+                    else "Usa a integração online oficial configurada."
+                ),
+            )
+            st.session_state["gtin_modo_online"] = bool(modo_online and _gtin_online_disponivel())
+
+        df_referencia = df_base if isinstance(df_base, pd.DataFrame) else obter_df_sessao("df_final", "df_saida", "df_precificado", "df_origem")
+
+        total_invalidos = contar_gtins_invalidos_df(df_referencia)
+        st.session_state["gtin_ultimo_total_invalidos"] = int(total_invalidos)
+
+        c1, c2, c3 = st.columns([1, 1, 1])
+
+        with c1:
+            st.metric("GTINs inválidos", int(total_invalidos))
+
+        with c2:
+            st.metric("Últimos limpos", int(st.session_state.get("gtin_ultimo_total_limpos", 0)))
+
+        with c3:
+            botao_limpar = st.button(
+                "🧹 Limpar GTINs inválidos",
+                use_container_width=True,
+                key="btn_limpar_gtins_invalidos",
+                disabled=(not safe_df_estrutura(df_referencia) or int(total_invalidos) == 0),
+            )
+
+        if botao_limpar and safe_df_estrutura(df_referencia):
+            for chave in ("df_origem", "df_precificado", "df_saida", "df_final"):
+                df_sessao = st.session_state.get(chave)
+                if isinstance(df_sessao, pd.DataFrame) and safe_df_estrutura(df_sessao):
+                    df_limpo, total_limpos = limpar_gtins_invalidos_df(df_sessao)
+                    st.session_state[chave] = df_limpo
+                    st.session_state["gtin_ultimo_total_limpos"] = int(total_limpos)
+
+            log_debug(
+                f"Botão de limpeza manual de GTINs inválidos acionado. Total limpo: {st.session_state.get('gtin_ultimo_total_limpos', 0)}",
+                nivel="INFO",
+            )
+            st.success(
+                f"GTINs inválidos limpos: {st.session_state.get('gtin_ultimo_total_limpos', 0)}"
+            )
+            st.rerun()
+
+
+def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
+    if not safe_df_estrutura(df):
+        return 0
+
+    aceitar_apenas_prefixo_br = bool(
+        st.session_state.get("gtin_apenas_prefixo_br", False)
+    )
+
+    colunas_gtin = _colunas_encontradas(
+        df,
+        [
+            "GTIN/EAN",
+            "GTIN",
+            "EAN",
+            "GTIN/EAN tributário",
+            "GTIN/EAN Tributário",
+            "GTIN tributário",
+            "GTIN Tributário",
+            "EAN tributário",
+            "EAN Tributário",
+            "Código de barras",
+            "Codigo de barras",
+        ],
+    )
+
+    total_invalidos = 0
+
+    for coluna_gtin in colunas_gtin:
+        serie_gtin = _serie_texto_limpa(df, coluna_gtin)
+        gtins_preenchidos = serie_gtin[serie_gtin.ne("")]
+        if gtins_preenchidos.empty:
+            continue
+
+        invalidos = gtins_preenchidos.apply(
+            lambda x: not _gtin_valido(
+                x,
+                aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+            )
+        )
+        total_invalidos += int(invalidos.sum())
+
+    return int(total_invalidos)
+
+
+def limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not safe_df_estrutura(df):
+        return pd.DataFrame(), 0
+
+    base = df.copy().fillna("")
+    aceitar_apenas_prefixo_br = bool(
+        st.session_state.get("gtin_apenas_prefixo_br", False)
+    )
+
+    colunas_gtin = _colunas_encontradas(
+        base,
+        [
+            "GTIN/EAN",
+            "GTIN",
+            "EAN",
+            "GTIN/EAN tributário",
+            "GTIN/EAN Tributário",
+            "GTIN tributário",
+            "GTIN Tributário",
+            "EAN tributário",
+            "EAN Tributário",
+            "Código de barras",
+            "Codigo de barras",
+        ],
+    )
+
+    total_limpos = 0
+
+    for coluna_gtin in colunas_gtin:
+        serie_original = base[coluna_gtin].astype(str).fillna("")
+        serie_limpa = serie_original.apply(
+            lambda v: _limpar_gtin(v, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br)
+        )
+
+        removidos = int(
+            (
+                serie_original.str.strip().replace({"nan": "", "None": "", "none": ""}).ne("")
+                & serie_limpa.eq("")
+            ).sum()
+        )
+
+        total_limpos += removidos
+        base[coluna_gtin] = serie_limpa
+
+    return base.fillna(""), int(total_limpos)
+
+
 def blindar_df_para_bling(
     df: pd.DataFrame,
     tipo_operacao_bling: str = "cadastro",
@@ -542,6 +685,8 @@ def blindar_df_para_bling(
     if not safe_df_estrutura(df):
         return pd.DataFrame()
 
+    _inicializar_estado_gtin()
+
     base = df.copy().fillna("")
     operacao = normalizar_texto(tipo_operacao_bling) or "cadastro"
     deposito_nome = str(deposito_nome or "").strip()
@@ -549,8 +694,8 @@ def blindar_df_para_bling(
     aceitar_apenas_prefixo_br = bool(
         st.session_state.get("gtin_apenas_prefixo_br", False)
     )
-    gerar_gtin_automatico = bool(
-        st.session_state.get("gtin_gerar_automatico", True)
+    limpar_invalidos = bool(
+        st.session_state.get("gtin_limpar_invalidos", True)
     )
 
     for col in base.columns:
@@ -582,44 +727,35 @@ def blindar_df_para_bling(
     )
 
     total_limpados = 0
-    total_gerados = 0
 
     for coluna_gtin in colunas_gtin:
         serie_original = base[coluna_gtin].astype(str).fillna("")
         novos_valores: list[str] = []
 
-        for indice_linha, valor_original in enumerate(serie_original.tolist()):
-            valor_final = _normalizar_ou_gerar_gtin(
-                valor_original,
+        for valor_original in serie_original.tolist():
+            valor_digitos = _somente_digitos(valor_original)
+
+            if not valor_digitos:
+                novos_valores.append("")
+                continue
+
+            valido = _gtin_valido(
+                valor_digitos,
                 aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
-                gerar_automatico=gerar_gtin_automatico,
-                indice=indice_linha,
             )
 
-            tinha_valor = bool(str(valor_original).strip())
-            valor_original_digitos = _somente_digitos(valor_original)
-            era_invalido = bool(
-                valor_original_digitos and not _gtin_valido(
-                    valor_original_digitos,
-                    aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
-                )
-            )
-
-            if tinha_valor and era_invalido:
-                if valor_final:
-                    total_gerados += 1
-                else:
+            if valido:
+                novos_valores.append(valor_digitos)
+            else:
+                if limpar_invalidos:
+                    novos_valores.append("")
                     total_limpados += 1
-
-            novos_valores.append(valor_final)
+                else:
+                    novos_valores.append(valor_digitos)
 
         base[coluna_gtin] = novos_valores
 
-    if total_gerados > 0:
-        log_debug(
-            f"GTINs inválidos substituídos por GTIN automático válido: {total_gerados}",
-            nivel="INFO",
-        )
+    st.session_state["gtin_ultimo_total_limpos"] = int(total_limpados)
 
     if total_limpados > 0:
         log_debug(
