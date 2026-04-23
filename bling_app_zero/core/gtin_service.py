@@ -13,7 +13,6 @@ import pandas as pd
 REGISTRY_PATH = Path("bling_app_zero/output/gtin_registry.json")
 REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-
 GTIN_CANDIDATE_COLUMNS = [
     "GTIN/EAN",
     "GTIN",
@@ -447,19 +446,3 @@ def gerar_gtins_para_dataframe(
         registrar_gtins(gerados)
 
     return base.fillna(""), int(total_gerados), gerados
-
-
-def detectar_status_gtin(
-    valor: Any,
-    aceitar_apenas_prefixo_br: bool = False,
-) -> str:
-    texto = somente_digitos(valor)
-    if not texto:
-        return "vazio"
-
-    if validar_gtin(texto, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br):
-        if texto in listar_gtins_registrados():
-            return "gerado"
-        return "valido"
-
-    return "invalido"
