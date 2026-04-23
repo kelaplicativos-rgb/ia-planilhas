@@ -20,6 +20,8 @@ from bling_app_zero.ui.app_helpers import (
     validar_df_para_download,
     voltar_etapa_anterior,
 )
+from bling_app_zero.core.gtin_service import contar_gtins_invalidos_df
+from bling_app_zero.ui.gtin_panel import render_gtin_panel
 
 
 def _garantir_etapa_preview_ativa() -> None:
@@ -800,6 +802,15 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
     with c7:
         st.metric("Validação", "OK" if valido else "Ajustes pendentes")
 
+    gtins_invalidos = contar_gtins_invalidos_df(df_final)
+    if gtins_invalidos > 0:
+        erros = list(erros) + [
+            f"Existem {gtins_invalidos} GTIN(s) inválido(s). Limpe ou gere GTINs válidos antes de baixar."
+        ]
+        valido = False
+        st.session_state["preview_validacao_ok"] = False
+        st.session_state["preview_validacao_erros"] = list(erros)
+
     if erros:
         st.error("Existem pendências obrigatórias antes do download e do envio.")
         for erro in erros:
@@ -849,6 +860,8 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     df_final = _zerar_colunas_video(df_final)
     csv_bytes = dataframe_para_csv_bytes(df_final)
+    gtins_invalidos = contar_gtins_invalidos_df(df_final)
+    download_liberado = bool(validacao_ok and gtins_invalidos == 0)
 
     st.download_button(
         label="📥 Baixar CSV final",
@@ -856,11 +869,11 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
         file_name="bling_saida_final.csv",
         mime="text/csv",
         use_container_width=True,
-        disabled=not validacao_ok,
+        disabled=not download_liberado,
         key="btn_download_csv_final_preview",
     )
 
-    if validacao_ok:
+    if download_liberado:
         if st.session_state.get("preview_download_realizado", False):
             st.success("Download já confirmado. Conexão e envio ao Bling liberados.")
         elif st.button(
@@ -872,7 +885,10 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
             log_debug("Usuário confirmou a etapa de download e avançou para conexão/envio.", nivel="INFO")
             st.rerun()
     else:
-        st.info("Ajuste a validação antes de liberar o download e o envio.")
+        if gtins_invalidos > 0:
+            st.info("Ajuste os GTINs inválidos antes de liberar o download e o envio.")
+        else:
+            st.info("Ajuste a validação antes de liberar o download e o envio.")
 
 
 def _render_bloco_fluxo_site() -> None:
@@ -1089,6 +1105,25 @@ def render_preview_final() -> None:
     _sincronizar_estado_quando_df_mudar(df_final)
 
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
+
+    render_gtin_panel(df_final)
+
+    df_final_atualizado = st.session_state.get("df_final", df_final)
+    if isinstance(df_final_atualizado, pd.DataFrame) and safe_df_estrutura(df_final_atualizado):
+        df_final = df_final_atualizado.copy().fillna("")
+        df_final = _garantir_df_final_canonico(
+            df=df_final,
+            tipo_operacao=tipo_operacao,
+            deposito_nome=deposito_nome,
+        )
+        df_final = _zerar_colunas_video(df_final)
+        st.session_state["df_final"] = df_final
+
+    gtins_invalidos = contar_gtins_invalidos_df(df_final)
+    if gtins_invalidos > 0:
+        validacao_ok = False
+        st.session_state["preview_validacao_ok"] = False
+
     _render_preview_dataframe(df_final)
     _render_download(df_final, validacao_ok)
     _render_painel_bling(df_final, tipo_operacao, deposito_nome, validacao_ok)
