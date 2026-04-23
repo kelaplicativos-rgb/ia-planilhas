@@ -135,7 +135,7 @@ def encontrar_colunas_gtin(df: pd.DataFrame) -> List[str]:
     for col in df.columns:
         nome = str(col).strip().lower()
         if "gtin" in nome or "ean" in nome:
-            colunas_gtin.append(col)
+            colunas_gtin.append(str(col))
 
     return colunas_gtin
 
@@ -279,6 +279,39 @@ def aplicar_validacao_gtin_em_colunas_automaticas(
     except Exception as e:
         logs.append(f"Erro na varredura automática de GTIN: {e}")
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
+
+
+def limpar_gtins_invalidos_df(
+    df: pd.DataFrame,
+    preservar_coluna_original: bool = False,
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Função direta para a UI:
+    procura colunas GTIN/EAN automaticamente e limpa apenas os inválidos.
+    """
+    return aplicar_validacao_gtin_em_colunas_automaticas(
+        df=df,
+        preservar_coluna_original=preservar_coluna_original,
+    )
+
+
+def limpar_gtins_invalidos_e_contar(
+    df: pd.DataFrame,
+    preservar_coluna_original: bool = False,
+) -> Tuple[pd.DataFrame, int, List[str]]:
+    """
+    Retorna:
+    - dataframe limpo
+    - total de GTINs inválidos que foram zerados
+    - logs completos
+    """
+    df_saida, logs = aplicar_validacao_gtin_em_colunas_automaticas(
+        df=df,
+        preservar_coluna_original=preservar_coluna_original,
+    )
+    resumo = resumir_logs_limpeza_gtin(logs)
+    total_invalidos = int(resumo.get("invalidos", 0) or 0)
+    return df_saida, total_invalidos, logs
 
 
 def resumir_logs_limpeza_gtin(logs: List[str]) -> dict:
@@ -433,3 +466,66 @@ def gerar_gtins_validos_em_colunas_automaticas(
     except Exception as e:
         logs.append(f"Erro na geração automática de GTIN: {e}")
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
+
+
+def gerar_gtins_apos_limpeza_invalidos(
+    df: pd.DataFrame,
+    prefixo: str = "789",
+    preservar_coluna_original: bool = False,
+) -> Tuple[pd.DataFrame, dict, List[str]]:
+    """
+    Fluxo completo:
+    1. limpa GTINs inválidos
+    2. gera GTINs válidos somente nos vazios
+    3. devolve resumo e logs para a UI
+    """
+    logs_finais: List[str] = []
+
+    try:
+        df_limpo, logs_limpeza = aplicar_validacao_gtin_em_colunas_automaticas(
+            df=df,
+            preservar_coluna_original=preservar_coluna_original,
+        )
+        logs_finais.extend(logs_limpeza)
+
+        resumo_limpeza = resumir_logs_limpeza_gtin(logs_limpeza)
+
+        df_gerado, logs_geracao = gerar_gtins_validos_em_colunas_automaticas(
+            df=df_limpo,
+            prefixo=prefixo,
+            apenas_vazios=True,
+        )
+        logs_finais.extend(logs_geracao)
+
+        total_gerados = 0
+        for item in logs_geracao:
+            texto = str(item)
+            if texto.startswith("GTIN gerados:"):
+                try:
+                    total_gerados += int(texto.split(":")[-1].strip())
+                except Exception:
+                    pass
+
+        resumo = {
+            "colunas_gtin": int(resumo_limpeza.get("colunas_gtin", 0) or 0),
+            "invalidos_limpos": int(resumo_limpeza.get("invalidos", 0) or 0),
+            "validos_mantidos": int(resumo_limpeza.get("validos", 0) or 0),
+            "vazios_originais": int(resumo_limpeza.get("vazios", 0) or 0),
+            "gtins_gerados": int(total_gerados),
+        }
+
+        return df_gerado, resumo, logs_finais
+
+    except Exception as e:
+        logs_finais.append(f"Erro no fluxo limpar+gerar GTIN: {e}")
+        return (
+            df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(),
+            {
+                "colunas_gtin": 0,
+                "invalidos_limpos": 0,
+                "validos_mantidos": 0,
+                "vazios_originais": 0,
+                "gtins_gerados": 0,
+            },
+            logs_finais,
+        )
