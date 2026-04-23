@@ -42,6 +42,8 @@ def _inicializar_estado_global() -> None:
         "_troca_etapa_em_andamento": False,
         "mostrar_log_debug_ui": False,
         "_ultima_etapa_logada_render": "",
+        "_flow_lock_preview_final": False,
+        "_flow_lock_origem": "",
     }
 
     for chave, valor in defaults.items():
@@ -84,6 +86,77 @@ def _contar_linhas_df(df) -> int:
     return len(df) if isinstance(df, pd.DataFrame) else 0
 
 
+def _query_param_etapa_atual() -> str:
+    try:
+        valor = st.query_params.get("etapa", "")
+    except Exception:
+        return ""
+
+    if isinstance(valor, list):
+        return _etapa_valida(valor[0] if valor else "")
+
+    return _etapa_valida(valor)
+
+
+def _definir_query_param_etapa(etapa: str) -> None:
+    etapa = _etapa_valida(etapa)
+    try:
+        st.query_params["etapa"] = etapa
+    except Exception:
+        pass
+
+
+def _preview_final_tem_df() -> bool:
+    return safe_df_estrutura(st.session_state.get("df_final"))
+
+
+def _flow_lock_preview_ativo() -> bool:
+    """
+    Trava inteligente do preview final.
+
+    Corrige o bug:
+    - IA/GTIN altera df_final;
+    - Streamlit reroda;
+    - URL/estado antigo tenta voltar para mapeamento;
+    - app sai do preview final.
+
+    Enquanto houver df_final e uma ação interna do preview estiver ativa,
+    o wizard permanece em preview_final.
+    """
+    if not _preview_final_tem_df():
+        return False
+
+    gatilhos = [
+        "_flow_lock_preview_final",
+        "_preview_final_ia_ativa",
+        "ia_descricao_aplicada",
+        "df_final_manual_preservado",
+        "df_final_gtin_atualizado",
+    ]
+
+    return any(bool(st.session_state.get(chave, False)) for chave in gatilhos)
+
+
+def _ativar_flow_lock_preview_final(origem: str = "sistema") -> None:
+    if not _preview_final_tem_df():
+        return
+
+    st.session_state["_flow_lock_preview_final"] = True
+    st.session_state["_flow_lock_origem"] = origem
+    st.session_state["wizard_etapa_atual"] = "preview_final"
+    st.session_state["wizard_etapa_maxima"] = "preview_final"
+    st.session_state["etapa"] = "preview_final"
+    st.session_state["ultima_etapa_renderizada"] = "preview_final"
+    st.session_state["_ultima_etapa_sincronizada_url"] = "preview_final"
+    _definir_query_param_etapa("preview_final")
+
+
+def _desativar_flow_lock_preview_final() -> None:
+    st.session_state["_flow_lock_preview_final"] = False
+    st.session_state["_preview_final_ia_ativa"] = False
+    st.session_state["_flow_lock_origem"] = ""
+
+
 def _pre_requisitos_etapa(etapa: str) -> tuple[bool, str]:
     etapa = _etapa_valida(etapa)
 
@@ -121,6 +194,19 @@ def _set_etapa_segura(nova_etapa: str, origem: str = "sistema") -> None:
     nova_etapa = _etapa_valida(nova_etapa)
     etapa_atual = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
 
+    # Se o usuário clicou manualmente na navegação para sair do preview, libera.
+    if origem in {"wizard_nav", "botao_preview", "usuario"} and nova_etapa != "preview_final":
+        _desativar_flow_lock_preview_final()
+
+    # Se foi rerun interno/URL/estado tentando sair do preview, bloqueia.
+    if _flow_lock_preview_ativo() and nova_etapa != "preview_final" and origem not in {"wizard_nav", "botao_preview", "usuario"}:
+        _ativar_flow_lock_preview_final(origem=f"bloqueio_saida_{origem}")
+        log_debug(
+            f"FLOW LOCK: tentativa automática bloqueada de sair do preview_final para {nova_etapa}.",
+            nivel="INFO",
+        )
+        return
+
     if etapa_atual == nova_etapa:
         return
 
@@ -148,31 +234,38 @@ def _set_etapa_segura(nova_etapa: str, origem: str = "sistema") -> None:
     )
     st.session_state["ultima_etapa_renderizada"] = nova_etapa
 
-    try:
-        st.query_params["etapa"] = nova_etapa
-    except Exception:
-        pass
+    _definir_query_param_etapa(nova_etapa)
 
     log_debug(f"Etapa alterada: {etapa_atual} → {nova_etapa} | origem={origem}", nivel="INFO")
     st.session_state["_troca_etapa_em_andamento"] = False
 
 
 def _sincronizar_wizard_com_estado() -> None:
-    etapa_url = _etapa_valida(st.session_state.get("etapa", "origem"))
+    if _flow_lock_preview_ativo():
+        _ativar_flow_lock_preview_final(origem="sincronizar_wizard")
+        return
+
+    etapa_url = _query_param_etapa_atual()
+    etapa_state = _etapa_valida(st.session_state.get("etapa", "origem"))
     etapa_wizard = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
+
+    etapa_referencia = etapa_url if etapa_url in ETAPAS_ORDEM else etapa_state
 
     if etapa_wizard not in ETAPAS_ORDEM:
         etapa_wizard = "origem"
 
-    if etapa_url != etapa_wizard:
-        if _pode_abrir_etapa(etapa_url):
-            ok, _ = _pre_requisitos_etapa(etapa_url)
+    if etapa_referencia != etapa_wizard:
+        if _pode_abrir_etapa(etapa_referencia):
+            ok, _ = _pre_requisitos_etapa(etapa_referencia)
             if ok:
-                st.session_state["wizard_etapa_atual"] = etapa_url
+                st.session_state["wizard_etapa_atual"] = etapa_referencia
+                st.session_state["etapa"] = etapa_referencia
             else:
                 st.session_state["etapa"] = etapa_wizard
+                _definir_query_param_etapa(etapa_wizard)
         else:
             st.session_state["etapa"] = etapa_wizard
+            _definir_query_param_etapa(etapa_wizard)
 
     st.session_state["wizard_etapa_atual"] = _etapa_valida(
         st.session_state.get("wizard_etapa_atual", "origem")
@@ -184,6 +277,10 @@ def _sincronizar_wizard_com_estado() -> None:
 
 
 def _atualizar_etapa_maxima_por_progresso() -> None:
+    if _flow_lock_preview_ativo():
+        _ativar_flow_lock_preview_final(origem="atualizar_etapa_maxima")
+        return
+
     etapa_maxima = _etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
 
     df_origem = st.session_state.get("df_origem")
@@ -267,6 +364,9 @@ def _render_navegacao_travada() -> None:
 
 
 def _render_etapa_atual() -> None:
+    if _flow_lock_preview_ativo():
+        _ativar_flow_lock_preview_final(origem="render_etapa_atual")
+
     etapa = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
     etapa_logada = str(st.session_state.get("_ultima_etapa_logada_render", "") or "").strip()
 
@@ -359,9 +459,20 @@ def main() -> None:
 
     init_app()
     _inicializar_estado_global()
+
+    # Primeiro sincroniza a URL normalmente.
     sincronizar_etapa_da_url()
+
+    # Depois o FLOW LOCK corrige qualquer tentativa automática de sair do preview.
+    if _flow_lock_preview_ativo():
+        _ativar_flow_lock_preview_final(origem="main_inicio")
+
     _sincronizar_wizard_com_estado()
     _atualizar_etapa_maxima_por_progresso()
+
+    if _flow_lock_preview_ativo():
+        _ativar_flow_lock_preview_final(origem="main_pos_sync")
+
     _processar_callback_bling()
     _registrar_boot_log()
     _render_layout_principal()
