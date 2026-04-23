@@ -21,6 +21,7 @@ def _safe_df_estrutura(df: Any) -> bool:
 def _log_debug(msg: Any, nivel: str = "INFO") -> None:
     try:
         from bling_app_zero.ui.app_helpers import log_debug
+
         log_debug(msg, nivel=nivel)
     except Exception:
         if "logs_debug" not in st.session_state:
@@ -52,6 +53,7 @@ def _inicializar_estado_gtin_ui() -> None:
         "gtin_ultimo_total_limpos": 0,
         "gtin_ultimo_total_gerados": 0,
         "gtin_ultima_auditoria": {},
+        "gtin_mostrar_detalhes_auditoria": False,
     }
 
     for chave, valor in defaults.items():
@@ -133,7 +135,14 @@ def render_gtin_panel(df_base: pd.DataFrame | None = None) -> None:
             st.metric("Últimos gerados", int(st.session_state.get("gtin_ultimo_total_gerados", 0)))
 
         if auditoria.get("itens"):
-            with st.expander("Detalhes da auditoria", expanded=False):
+            mostrar_detalhes = st.toggle(
+                "Mostrar detalhes da auditoria",
+                value=bool(st.session_state.get("gtin_mostrar_detalhes_auditoria", False)),
+                key="gtin_mostrar_detalhes_auditoria_toggle",
+            )
+            st.session_state["gtin_mostrar_detalhes_auditoria"] = bool(mostrar_detalhes)
+
+            if mostrar_detalhes:
                 st.dataframe(pd.DataFrame(auditoria["itens"]), use_container_width=True)
         else:
             st.info("Nenhuma coluna de GTIN foi encontrada no DataFrame atual.")
