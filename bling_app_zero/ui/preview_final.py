@@ -21,9 +21,11 @@ from bling_app_zero.ui.app_helpers import (
     voltar_etapa_anterior,
 )
 from bling_app_zero.utils.gtin import (
+    aplicar_validacao_gtin_em_colunas_automaticas,
     contar_gtins_invalidos_df,
     encontrar_colunas_gtin,
     gerar_gtins_validos_em_colunas_automaticas,
+    resumir_logs_limpeza_gtin,
 )
 
 
@@ -494,6 +496,7 @@ def _inicializar_estado_preview() -> None:
         "preview_envio_em_execucao": False,
         "preview_envio_logs": [],
         "preview_envio_resumo": {},
+        "gtin_logs_limpeza": [],
     }
     for chave, valor in defaults.items():
         if chave not in st.session_state:
@@ -774,69 +777,22 @@ def _render_origem_site_metadata() -> None:
             st.write(f"**URL monitorada:** {url_site}")
 
 
-def _normalizar_gtin_texto(valor: Any) -> str:
-    texto = str(valor or "").strip()
-    if not texto or texto.lower() in {"nan", "none", "null"}:
-        return ""
+def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int, list[str], dict[str, int]]:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(), 0, ["DataFrame inválido para limpeza de GTIN."], {
+            "colunas_gtin": 0,
+            "invalidos": 0,
+            "validos": 0,
+            "vazios": 0,
+        }
 
-    if texto.endswith(".0"):
-        texto = texto[:-2]
-
-    return "".join(ch for ch in texto if ch.isdigit())
-
-
-def _gtin_checksum_valido(gtin: str) -> bool:
-    if not gtin.isdigit():
-        return False
-
-    if len(gtin) not in {8, 12, 13, 14}:
-        return False
-
-    soma = 0
-    peso_tres = True
-    for digito in reversed(gtin[:-1]):
-        soma += int(digito) * (3 if peso_tres else 1)
-        peso_tres = not peso_tres
-
-    digito_verificador = (10 - (soma % 10)) % 10
-    return digito_verificador == int(gtin[-1])
-
-
-def _gtin_valido(valor: Any) -> bool:
-    gtin = _normalizar_gtin_texto(valor)
-    if not gtin:
-        return False
-    return _gtin_checksum_valido(gtin)
-
-
-def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy(), 0
-
-    base = df.copy().fillna("")
-    colunas_gtin = encontrar_colunas_gtin(base)
-    if not colunas_gtin:
-        return base, 0
-
-    total_limpos = 0
-
-    for coluna in colunas_gtin:
-        if coluna not in base.columns:
-            continue
-
-        serie_original = base[coluna].copy()
-        mascara_invalido = serie_original.apply(
-            lambda valor: bool(_normalizar_gtin_texto(valor)) and not _gtin_valido(valor)
-        )
-        total_limpos += int(mascara_invalido.sum())
-
-        if int(mascara_invalido.sum()) > 0:
-            base.loc[mascara_invalido, coluna] = ""
-
-    if total_limpos > 0:
-        log_debug(f"GTINs inválidos limpos no preview final: {total_limpos}", nivel="INFO")
-
-    return base.fillna(""), total_limpos
+    df_saida, logs = aplicar_validacao_gtin_em_colunas_automaticas(
+        df.copy(),
+        preservar_coluna_original=False,
+    )
+    resumo = resumir_logs_limpeza_gtin(logs)
+    total_limpos = int(resumo.get("invalidos", 0) or 0)
+    return df_saida.copy().fillna(""), total_limpos, logs, resumo
 
 
 def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
@@ -860,8 +816,10 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
             use_container_width=True,
             key="btn_limpar_gtins_invalidos_preview",
         ):
-            df_limpo, total_limpos = _limpar_gtins_invalidos_df(df_final.copy())
+            df_limpo, total_limpos, logs_limpeza, resumo_limpeza = _limpar_gtins_invalidos_df(df_final.copy())
             st.session_state["df_final"] = df_limpo.copy()
+            st.session_state["gtin_logs_limpeza"] = logs_limpeza
+            st.session_state["gtin_resumo_limpeza"] = resumo_limpeza
 
             if total_limpos > 0:
                 st.success(f"{total_limpos} GTIN(s) inválido(s) foram limpos e deixados vazios.")
@@ -872,6 +830,18 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
 
     with col2:
         st.caption("Depois da limpeza, você pode gerar GTINs válidos nos vazios ou seguir para o download.")
+
+    resumo_limpeza = st.session_state.get("gtin_resumo_limpeza", {})
+    if resumo_limpeza:
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        with col_r1:
+            st.metric("Colunas GTIN", int(resumo_limpeza.get("colunas_gtin", 0) or 0))
+        with col_r2:
+            st.metric("Inválidos limpos", int(resumo_limpeza.get("invalidos", 0) or 0))
+        with col_r3:
+            st.metric("Válidos", int(resumo_limpeza.get("validos", 0) or 0))
+        with col_r4:
+            st.metric("Vazios", int(resumo_limpeza.get("vazios", 0) or 0))
 
     st.radio(
         "Deseja gerar GTINs agora ou seguir para o download?",
