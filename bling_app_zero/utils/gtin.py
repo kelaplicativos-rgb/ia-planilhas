@@ -28,6 +28,46 @@ def _somente_digitos(valor: Any) -> str:
         return ""
 
 
+def _todos_digitos_iguais(gtin: str) -> bool:
+    try:
+        return bool(gtin) and len(set(gtin)) == 1
+    except Exception:
+        return False
+
+
+def _sequencia_ciclica(base: str, tamanho: int) -> str:
+    if not base or tamanho <= 0:
+        return ""
+    repeticoes = (tamanho // len(base)) + 2
+    return (base * repeticoes)[:tamanho]
+
+
+def _eh_sequencia_muito_padrao(gtin: str) -> bool:
+    try:
+        if not gtin:
+            return False
+
+        candidatos = [
+            _sequencia_ciclica("0123456789", len(gtin)),
+            _sequencia_ciclica("1234567890", len(gtin)),
+            _sequencia_ciclica("9876543210", len(gtin)),
+            _sequencia_ciclica("0987654321", len(gtin)),
+        ]
+        return gtin in candidatos
+    except Exception:
+        return False
+
+
+def _repeticao_excessiva(gtin: str) -> bool:
+    try:
+        if not gtin:
+            return False
+        maior_repeticao = max(gtin.count(d) for d in set(gtin))
+        return maior_repeticao >= max(len(gtin) - 1, 7)
+    except Exception:
+        return False
+
+
 # =========================================================
 # LIMPEZA DE GTIN
 # =========================================================
@@ -62,7 +102,7 @@ def calcular_digito_verificador_gtin(corpo: str) -> str:
 
 
 def validar_gtin_checksum(gtin: str) -> bool:
-    """Valida GTIN/EAN nos formatos 8, 12, 13 e 14."""
+    """Valida GTIN/EAN nos formatos 8, 12, 13 e 14 pelo checksum."""
     try:
         gtin = limpar_gtin(gtin)
         if not gtin or not gtin.isdigit():
@@ -79,6 +119,67 @@ def validar_gtin_checksum(gtin: str) -> bool:
 
 
 # =========================================================
+# HEURÍSTICAS DE INTELIGÊNCIA / SUSPEITA
+# =========================================================
+def classificar_gtin(valor: Any) -> Tuple[str, str]:
+    """
+    Classifica o GTIN em:
+    - vazio
+    - invalido
+    - suspeito
+    - valido
+
+    Retorna (status, motivo).
+    """
+    try:
+        gtin = limpar_gtin(valor)
+
+        if not gtin:
+            return "vazio", "sem valor"
+
+        if len(gtin) not in {8, 12, 13, 14}:
+            return "invalido", "tamanho invalido"
+
+        if not validar_gtin_checksum(gtin):
+            return "invalido", "checksum invalido"
+
+        if _todos_digitos_iguais(gtin):
+            return "suspeito", "todos os digitos iguais"
+
+        if _eh_sequencia_muito_padrao(gtin):
+            return "suspeito", "sequencia muito padrao"
+
+        if _repeticao_excessiva(gtin):
+            return "suspeito", "repeticao excessiva de digitos"
+
+        return "valido", "checksum ok"
+    except Exception:
+        return "invalido", "erro na classificacao"
+
+
+def gtin_suspeito(valor: Any) -> bool:
+    """Retorna True quando o GTIN passa no checksum, mas parece artificial/suspeito."""
+    try:
+        status, _ = classificar_gtin(valor)
+        return status == "suspeito"
+    except Exception:
+        return False
+
+
+def validar_gtin_inteligente(valor: Any) -> bool:
+    """
+    Validação mais rígida:
+    - checksum ok
+    - não pode ser padrão artificial/suspeito
+    """
+    try:
+        status, _ = classificar_gtin(valor)
+        return status == "valido"
+    except Exception:
+        return False
+
+
+# =========================================================
 # TRATAMENTO FINAL DE GTIN
 # =========================================================
 def tratar_gtin(valor: Any) -> Tuple[str, bool]:
@@ -87,7 +188,7 @@ def tratar_gtin(valor: Any) -> Tuple[str, bool]:
 
     Retorna:
     - GTIN limpo se válido
-    - string vazia se inválido
+    - string vazia se inválido/suspeito
     - bool indicando validade
     """
     try:
@@ -95,7 +196,7 @@ def tratar_gtin(valor: Any) -> Tuple[str, bool]:
         if not gtin:
             return "", False
 
-        if validar_gtin_checksum(gtin):
+        if validar_gtin_inteligente(gtin):
             return gtin, True
 
         return "", False
@@ -104,10 +205,10 @@ def tratar_gtin(valor: Any) -> Tuple[str, bool]:
 
 
 def gtin_valido(valor: Any) -> bool:
-    """Retorna True se o valor for um GTIN válido."""
+    """Retorna True se o valor for um GTIN válido pela validação inteligente."""
     try:
         gtin = limpar_gtin(valor)
-        return validar_gtin_checksum(gtin)
+        return validar_gtin_inteligente(gtin)
     except Exception:
         return False
 
@@ -141,11 +242,11 @@ def encontrar_colunas_gtin(df: pd.DataFrame) -> List[str]:
 
 
 # =========================================================
-# CONTAGEM DE INVÁLIDOS
+# CONTAGEM
 # =========================================================
 def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
     """
-    Conta quantos GTINs inválidos existem nas colunas GTIN/EAN.
+    Conta quantos GTINs inválidos ou suspeitos existem nas colunas GTIN/EAN.
     Vazios não contam como inválidos.
     """
     try:
@@ -160,10 +261,29 @@ def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
                 gtin = limpar_gtin(valor)
                 if not gtin:
                     continue
-                if not validar_gtin_checksum(gtin):
+                if not validar_gtin_inteligente(gtin):
                     total_invalidos += 1
 
         return total_invalidos
+    except Exception:
+        return 0
+
+
+def contar_gtins_suspeitos_df(df: pd.DataFrame) -> int:
+    """Conta quantos GTINs suspeitos existem nas colunas GTIN/EAN."""
+    try:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return 0
+
+        total_suspeitos = 0
+        colunas_gtin = encontrar_colunas_gtin(df)
+
+        for coluna in colunas_gtin:
+            for valor in df[coluna].tolist():
+                if gtin_suspeito(valor):
+                    total_suspeitos += 1
+
+        return total_suspeitos
     except Exception:
         return 0
 
@@ -178,7 +298,7 @@ def aplicar_validacao_gtin_df(
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
     Valida a coluna de GTIN em um DataFrame.
-    GTIN inválido é zerado (fica vazio) automaticamente.
+    GTIN inválido ou suspeito é zerado (fica vazio) automaticamente.
     """
     logs: List[str] = []
 
@@ -201,6 +321,7 @@ def aplicar_validacao_gtin_df(
         total_invalidos = 0
         total_validos = 0
         total_vazios = 0
+        total_suspeitos = 0
 
         for idx, valor in enumerate(df_saida[coluna].tolist(), start=1):
             texto_original = _safe_text(valor)
@@ -212,14 +333,23 @@ def aplicar_validacao_gtin_df(
                 total_vazios += 1
                 continue
 
-            gtin_corrigido, valido = tratar_gtin(gtin_original_limpo)
-            if valido:
-                novos_valores.append(gtin_corrigido)
+            status, motivo = classificar_gtin(gtin_original_limpo)
+
+            if status == "valido":
+                novos_valores.append(gtin_original_limpo)
                 total_validos += 1
             else:
                 novos_valores.append("")
-                total_invalidos += 1
-                logs.append(f"Linha {idx}: GTIN inválido zerado ({texto_original})")
+                if status == "suspeito":
+                    total_suspeitos += 1
+                    logs.append(
+                        f"Linha {idx}: GTIN suspeito zerado ({texto_original}) - motivo: {motivo}"
+                    )
+                else:
+                    total_invalidos += 1
+                    logs.append(
+                        f"Linha {idx}: GTIN inválido zerado ({texto_original}) - motivo: {motivo}"
+                    )
 
         df_saida[coluna] = novos_valores
 
@@ -231,6 +361,7 @@ def aplicar_validacao_gtin_df(
         logs.append(f"Coluna validada: {coluna}")
         logs.append(f"GTIN válido: {total_validos}")
         logs.append(f"GTIN inválido zerado: {total_invalidos}")
+        logs.append(f"GTIN suspeito zerado: {total_suspeitos}")
         logs.append(f"GTIN vazio: {total_vazios}")
 
         return df_saida, logs
@@ -245,7 +376,7 @@ def aplicar_validacao_gtin_em_colunas_automaticas(
     preservar_coluna_original: bool = False,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
-    Procura automaticamente colunas GTIN/EAN e limpa apenas os inválidos,
+    Procura automaticamente colunas GTIN/EAN e limpa inválidos/suspeitos,
     deixando vazios.
     """
     logs: List[str] = []
@@ -287,7 +418,7 @@ def limpar_gtins_invalidos_df(
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
     Função direta para a UI:
-    procura colunas GTIN/EAN automaticamente e limpa apenas os inválidos.
+    procura colunas GTIN/EAN automaticamente e limpa inválidos/suspeitos.
     """
     return aplicar_validacao_gtin_em_colunas_automaticas(
         df=df,
@@ -302,7 +433,7 @@ def limpar_gtins_invalidos_e_contar(
     """
     Retorna:
     - dataframe limpo
-    - total de GTINs inválidos que foram zerados
+    - total de GTINs inválidos/suspeitos que foram zerados
     - logs completos
     """
     df_saida, logs = aplicar_validacao_gtin_em_colunas_automaticas(
@@ -310,7 +441,7 @@ def limpar_gtins_invalidos_e_contar(
         preservar_coluna_original=preservar_coluna_original,
     )
     resumo = resumir_logs_limpeza_gtin(logs)
-    total_invalidos = int(resumo.get("invalidos", 0) or 0)
+    total_invalidos = int(resumo.get("invalidos", 0) or 0) + int(resumo.get("suspeitos", 0) or 0)
     return df_saida, total_invalidos, logs
 
 
@@ -319,6 +450,7 @@ def resumir_logs_limpeza_gtin(logs: List[str]) -> dict:
     resumo = {
         "colunas_gtin": 0,
         "invalidos": 0,
+        "suspeitos": 0,
         "validos": 0,
         "vazios": 0,
     }
@@ -331,6 +463,11 @@ def resumir_logs_limpeza_gtin(logs: List[str]) -> dict:
         elif texto.startswith("GTIN inválido zerado:"):
             try:
                 resumo["invalidos"] += int(texto.split(":")[-1].strip())
+            except Exception:
+                pass
+        elif texto.startswith("GTIN suspeito zerado:"):
+            try:
+                resumo["suspeitos"] += int(texto.split(":")[-1].strip())
             except Exception:
                 pass
         elif texto.startswith("GTIN válido:"):
@@ -409,7 +546,7 @@ def gerar_gtins_validos_df(
                 if valor_limpo:
                     continue
             else:
-                if valor_limpo and validar_gtin_checksum(valor_limpo):
+                if validar_gtin_inteligente(valor_limpo):
                     continue
 
             gtin_gerado = gerar_gtin_13(prefixo=prefixo, sequencia=str(idx))
@@ -475,7 +612,7 @@ def gerar_gtins_apos_limpeza_invalidos(
 ) -> Tuple[pd.DataFrame, dict, List[str]]:
     """
     Fluxo completo:
-    1. limpa GTINs inválidos
+    1. limpa GTINs inválidos/suspeitos
     2. gera GTINs válidos somente nos vazios
     3. devolve resumo e logs para a UI
     """
@@ -509,6 +646,7 @@ def gerar_gtins_apos_limpeza_invalidos(
         resumo = {
             "colunas_gtin": int(resumo_limpeza.get("colunas_gtin", 0) or 0),
             "invalidos_limpos": int(resumo_limpeza.get("invalidos", 0) or 0),
+            "suspeitos_limpos": int(resumo_limpeza.get("suspeitos", 0) or 0),
             "validos_mantidos": int(resumo_limpeza.get("validos", 0) or 0),
             "vazios_originais": int(resumo_limpeza.get("vazios", 0) or 0),
             "gtins_gerados": int(total_gerados),
@@ -523,6 +661,7 @@ def gerar_gtins_apos_limpeza_invalidos(
             {
                 "colunas_gtin": 0,
                 "invalidos_limpos": 0,
+                "suspeitos_limpos": 0,
                 "validos_mantidos": 0,
                 "vazios_originais": 0,
                 "gtins_gerados": 0,
