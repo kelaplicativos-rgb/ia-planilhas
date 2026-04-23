@@ -774,6 +774,69 @@ def _render_origem_site_metadata() -> None:
             st.write(f"**URL monitorada:** {url_site}")
 
 
+def _normalizar_gtin_texto(valor: Any) -> str:
+    texto = str(valor or "").strip()
+    if not texto or texto.lower() in {"nan", "none", "null"}:
+        return ""
+
+    if texto.endswith(".0"):
+        texto = texto[:-2]
+
+    return "".join(ch for ch in texto if ch.isdigit())
+
+
+def _gtin_checksum_valido(gtin: str) -> bool:
+    if not gtin.isdigit():
+        return False
+
+    if len(gtin) not in {8, 12, 13, 14}:
+        return False
+
+    soma = 0
+    peso_tres = True
+    for digito in reversed(gtin[:-1]):
+        soma += int(digito) * (3 if peso_tres else 1)
+        peso_tres = not peso_tres
+
+    digito_verificador = (10 - (soma % 10)) % 10
+    return digito_verificador == int(gtin[-1])
+
+
+def _gtin_valido(valor: Any) -> bool:
+    gtin = _normalizar_gtin_texto(valor)
+    if not gtin:
+        return False
+    return _gtin_checksum_valido(gtin)
+
+
+def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy(), 0
+
+    base = df.copy().fillna("")
+    colunas_gtin = encontrar_colunas_gtin(base)
+    if not colunas_gtin:
+        return base, 0
+
+    total_limpos = 0
+
+    for coluna in colunas_gtin:
+        if coluna not in base.columns:
+            continue
+
+        serie_original = base[coluna].copy()
+        mascara_invalido = serie_original.apply(
+            lambda valor: bool(_normalizar_gtin_texto(valor)) and not _gtin_valido(valor)
+        )
+        total_limpos += int(mascara_invalido.sum())
+
+        if int(mascara_invalido.sum()) > 0:
+            base.loc[mascara_invalido, coluna] = ""
+
+    if total_limpos > 0:
+        log_debug(f"GTINs inválidos limpos no preview final: {total_limpos}", nivel="INFO")
+
+    return base.fillna(""), total_limpos
 
 
 def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
@@ -782,16 +845,42 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
         return df_final
 
     st.markdown("### Tratamento de GTIN")
-    st.caption("Se quiser, gere GTINs válidos apenas nos campos vazios. Se não quiser, siga para o download.")
 
-    escolha = st.radio(
+    gtins_invalidos = contar_gtins_invalidos_df(df_final)
+    if gtins_invalidos > 0:
+        st.warning(f"Foram encontrados **{gtins_invalidos} GTIN(s) inválido(s)** no resultado final.")
+    else:
+        st.caption("Nenhum GTIN inválido encontrado no preview final.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "🧹 Limpar GTINs inválidos",
+            use_container_width=True,
+            key="btn_limpar_gtins_invalidos_preview",
+        ):
+            df_limpo, total_limpos = _limpar_gtins_invalidos_df(df_final.copy())
+            st.session_state["df_final"] = df_limpo.copy()
+
+            if total_limpos > 0:
+                st.success(f"{total_limpos} GTIN(s) inválido(s) foram limpos e deixados vazios.")
+            else:
+                st.info("Nenhum GTIN inválido foi encontrado para limpar.")
+
+            st.rerun()
+
+    with col2:
+        st.caption("Depois da limpeza, você pode gerar GTINs válidos nos vazios ou seguir para o download.")
+
+    st.radio(
         "Deseja gerar GTINs agora ou seguir para o download?",
         options=["Seguir para o download", "Gerar GTINs válidos nos vazios"],
         horizontal=True,
         key="preview_gtin_escolha",
     )
 
-    if escolha == "Gerar GTINs válidos nos vazios":
+    if st.session_state.get("preview_gtin_escolha") == "Gerar GTINs válidos nos vazios":
         prefixo = st.text_input(
             "Prefixo GTIN",
             value=str(st.session_state.get("gtin_prefixo_geracao", "789") or "789"),
@@ -823,6 +912,7 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
             st.rerun()
 
     return st.session_state.get("df_final", df_final)
+
 
 def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
     df_final = _garantir_df_final_canonico(
