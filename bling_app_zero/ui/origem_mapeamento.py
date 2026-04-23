@@ -137,6 +137,11 @@ def _normalizar_texto_busca(valor) -> str:
     return texto
 
 
+def _eh_coluna_video(nome_coluna) -> bool:
+    nome = _normalizar_texto_busca(nome_coluna)
+    return bool(nome and any(token in nome for token in ["video", "vídeo", "youtube"]))
+
+
 def _hash_df(df: pd.DataFrame) -> str:
     if not isinstance(df, pd.DataFrame):
         return ""
@@ -310,7 +315,11 @@ def _coluna_descricao_modelo(df_modelo: pd.DataFrame) -> str:
 
 
 def _resetar_mapping_para_modelo(df_modelo: pd.DataFrame) -> dict[str, str]:
-    return {str(c): "" for c in df_modelo.columns.tolist()}
+    mapping = {str(c): "" for c in df_modelo.columns.tolist()}
+    for coluna in list(mapping.keys()):
+        if _eh_coluna_video(coluna):
+            mapping[coluna] = ""
+    return mapping
 
 
 def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict[str, str]:
@@ -343,6 +352,8 @@ def _inicializar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> dict
 
     for coluna in colunas_modelo:
         mapping_salvo.setdefault(coluna, "")
+        if _eh_coluna_video(coluna):
+            mapping_salvo[coluna] = ""
 
     st.session_state["mapping_manual"] = mapping_salvo
     st.session_state["mapping_hash_base"] = hash_base
@@ -383,6 +394,10 @@ def _campos_bloqueados_automaticos(df_modelo: pd.DataFrame, operacao: str) -> se
     coluna_deposito = _coluna_deposito_modelo(df_modelo)
     if operacao == "estoque" and coluna_deposito:
         bloqueados.add(coluna_deposito)
+
+    for coluna in [str(c) for c in df_modelo.columns.tolist()]:
+        if _eh_coluna_video(coluna):
+            bloqueados.add(coluna)
 
     return bloqueados
 
@@ -486,6 +501,9 @@ def _parece_descricao(texto: str) -> bool:
 
 
 def _inferir_tipo_coluna(nome_coluna: str, serie: pd.Series) -> str:
+    if _eh_coluna_video(nome_coluna):
+        return ""
+
     nome_n = _normalizar_texto_busca(nome_coluna)
     amostras = _amostra_valores_validos(serie, limite=15)
 
@@ -522,6 +540,9 @@ def _inferir_tipo_coluna(nome_coluna: str, serie: pd.Series) -> str:
 
 
 def _score_coluna_para_destino(nome_coluna: str, serie: pd.Series, destino: str) -> int:
+    if _eh_coluna_video(nome_coluna):
+        return -999
+
     nome_n = _normalizar_texto_busca(nome_coluna)
     score = 0
 
@@ -557,6 +578,8 @@ def _score_coluna_para_destino(nome_coluna: str, serie: pd.Series, destino: str)
 def _destino_modelo_semantico(coluna_modelo: str) -> str:
     nome_n = _normalizar_texto_busca(coluna_modelo)
 
+    if _eh_coluna_video(nome_n):
+        return ""
     if "gtin" in nome_n or "ean" in nome_n or "barra" in nome_n:
         return "gtin"
     if "ncm" in nome_n:
@@ -600,12 +623,12 @@ def _mapping_semantico(
     }
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
-        if coluna_modelo in bloqueados:
+        if coluna_modelo in bloqueados or _eh_coluna_video(coluna_modelo):
             mapping_final[coluna_modelo] = ""
             continue
 
         atual = str(mapping_final.get(coluna_modelo, "") or "").strip()
-        if atual in df_base.columns:
+        if atual in df_base.columns and not _eh_coluna_video(atual):
             continue
 
         destino = _destino_modelo_semantico(coluna_modelo)
@@ -615,6 +638,8 @@ def _mapping_semantico(
         candidatos = []
         for coluna_origem in colunas_origem:
             if coluna_origem in usados:
+                continue
+            if _eh_coluna_video(coluna_origem):
                 continue
 
             score = _score_coluna_para_destino(coluna_origem, df_base[coluna_origem], destino)
@@ -629,6 +654,10 @@ def _mapping_semantico(
             melhor = candidatos[0][1]
             mapping_final[coluna_modelo] = melhor
             usados.add(melhor)
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if _eh_coluna_video(coluna_modelo):
+            mapping_final[coluna_modelo] = ""
 
     return mapping_final
 
@@ -704,6 +733,10 @@ def _aplicar_defaults_pos_mapping(
     if coluna_imagens and coluna_imagens in base.columns:
         base[coluna_imagens] = base[coluna_imagens].apply(normalizar_imagens_pipe)
 
+    for coluna in [str(c) for c in base.columns.tolist()]:
+        if _eh_coluna_video(coluna):
+            base[coluna] = ""
+
     return base.fillna("")
 
 
@@ -719,7 +752,11 @@ def _aplicar_mapping(
         coluna_modelo = str(coluna_modelo)
         coluna_origem = str(mapping.get(coluna_modelo, "") or "").strip()
 
-        if coluna_origem and coluna_origem in df_base.columns:
+        if _eh_coluna_video(coluna_modelo):
+            saida[coluna_modelo] = ""
+            continue
+
+        if coluna_origem and coluna_origem in df_base.columns and not _eh_coluna_video(coluna_origem):
             saida[coluna_modelo] = df_base[coluna_origem]
         else:
             saida[coluna_modelo] = ""
@@ -734,6 +771,10 @@ def _aplicar_mapping(
         tipo_operacao_bling=tipo_operacao_bling,
         deposito_nome=deposito_nome,
     )
+
+    for coluna in [str(c) for c in saida.columns.tolist()]:
+        if _eh_coluna_video(coluna):
+            saida[coluna] = ""
 
     return _limpar_valores_preview(saida.fillna(""))
 
@@ -787,10 +828,19 @@ def _executar_ia_autonoma(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operac
     for coluna_modelo in df_modelo.columns:
         coluna_modelo = str(coluna_modelo)
         valor = str(mapping_recebido.get(coluna_modelo, "") or "").strip()
-        if valor in df_base.columns:
+
+        if _eh_coluna_video(coluna_modelo):
+            mapping_final[coluna_modelo] = ""
+            continue
+
+        if valor in df_base.columns and not _eh_coluna_video(valor):
             mapping_final[coluna_modelo] = valor
 
     mapping_final = _mapping_semantico(df_base, df_modelo, mapping_final)
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if _eh_coluna_video(coluna_modelo):
+            mapping_final[coluna_modelo] = ""
 
     st.session_state["mapping_manual"] = mapping_final
     st.session_state["mapping_sugerido"] = mapping_recebido
@@ -900,12 +950,36 @@ def _detalhe_confianca_mapeamento(
     coluna_modelo = str(coluna_modelo or "").strip()
     coluna_origem = str(coluna_origem or "").strip()
 
+    if _eh_coluna_video(coluna_modelo):
+        return {
+            "status": "auto",
+            "emoji": "🚫",
+            "titulo": f"{coluna_modelo} bloqueado automaticamente",
+            "subtitulo": "Campo de vídeo mantido vazio para evitar propaganda do fornecedor.",
+            "pct": 0,
+            "cor_fundo": "#F8FAFC",
+            "cor_borda": "#94A3B8",
+            "cor_texto": "#334155",
+        }
+
     if not coluna_origem or coluna_origem not in df_base.columns:
         return {
             "status": "erro",
             "emoji": "🔴",
             "titulo": f"{coluna_modelo} sem correspondência",
             "subtitulo": "Selecione manualmente uma coluna de origem.",
+            "pct": 0,
+            "cor_fundo": "#FEF2F2",
+            "cor_borda": "#EF4444",
+            "cor_texto": "#991B1B",
+        }
+
+    if _eh_coluna_video(coluna_origem):
+        return {
+            "status": "erro",
+            "emoji": "🔴",
+            "titulo": f"{coluna_modelo} usando coluna de vídeo",
+            "subtitulo": "Vídeo foi bloqueado porque costuma trazer propaganda do fornecedor.",
             "pct": 0,
             "cor_fundo": "#FEF2F2",
             "cor_borda": "#EF4444",
@@ -931,47 +1005,45 @@ def _detalhe_confianca_mapeamento(
     igualdade_total = nome_modelo_n == nome_origem_n
     tipo_confirmado = bool(destino) and inferencia_origem == destino
 
-    pct = 0
+    pct = 20
     motivos: list[str] = []
 
     if igualdade_total:
-        pct = 100
+        pct += 45
         motivos.append("nome idêntico")
-    else:
-        pct = 35
 
-        if foi_sugerido_igual:
-            pct += 20
-            motivos.append("sugestão da IA")
+    if foi_sugerido_igual:
+        pct += 15
+        motivos.append("sugestão da IA")
 
-        if tipo_confirmado:
-            pct += 25
-            motivos.append("tipo confirmado")
+    if tipo_confirmado:
+        pct += 20
+        motivos.append("tipo confirmado")
 
-        if score_semantico >= 18:
-            pct += 20
-            motivos.append("semântica muito forte")
-        elif score_semantico >= 12:
-            pct += 12
-            motivos.append("semântica forte")
-        elif score_semantico >= 8:
-            pct += 6
-            motivos.append("semântica parcial")
+    if score_semantico >= 18:
+        pct += 10
+        motivos.append("semântica muito forte")
+    elif score_semantico >= 12:
+        pct += 8
+        motivos.append("semântica forte")
+    elif score_semantico >= 8:
+        pct += 5
+        motivos.append("semântica parcial")
 
-        nome_origem_busca = _normalizar_texto_busca(coluna_origem)
-        for alias in MAP_DESTINOS_SEMANTICOS.get(destino, []):
-            if alias in nome_origem_busca:
-                pct += 8
-                motivos.append("alias compatível")
-                break
+    nome_origem_busca = _normalizar_texto_busca(coluna_origem)
+    for alias in MAP_DESTINOS_SEMANTICOS.get(destino, []):
+        if alias in nome_origem_busca:
+            pct += 5
+            motivos.append("alias compatível")
+            break
 
-        pct = min(100, pct)
+    pct = min(95, pct)
 
-    if pct >= 100:
+    if pct >= 80:
         return {
             "status": "ok",
             "emoji": "🟢",
-            "titulo": f"{coluna_modelo} reconhecido com 100% de certeza",
+            "titulo": f"{coluna_modelo} confirmado automaticamente",
             "subtitulo": f"Origem: {coluna_origem} • " + ", ".join(motivos or ["alta confiança"]),
             "pct": pct,
             "cor_fundo": "#ECFDF5",
@@ -979,7 +1051,7 @@ def _detalhe_confianca_mapeamento(
             "cor_texto": "#065F46",
         }
 
-    if pct >= 65:
+    if pct >= 55:
         return {
             "status": "revisar",
             "emoji": "🟡",
@@ -1013,7 +1085,7 @@ def _render_resumo_confianca_mapeamento(
     stats = {"ok": 0, "revisar": 0, "erro": 0, "auto": 0}
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
-        if coluna_modelo in bloqueados:
+        if coluna_modelo in bloqueados and not _eh_coluna_video(coluna_modelo):
             stats["auto"] += 1
             continue
 
@@ -1022,7 +1094,7 @@ def _render_resumo_confianca_mapeamento(
             coluna_modelo=coluna_modelo,
             coluna_origem=str(mapping_atual.get(coluna_modelo, "") or "").strip(),
         )
-        stats[detalhe["status"]] += 1
+        stats[detalhe["status"]] = stats.get(detalhe["status"], 0) + 1
 
     total_validaveis = stats["ok"] + stats["revisar"] + stats["erro"]
     pct_conclusao = int(((stats["ok"] + stats["revisar"]) / total_validaveis) * 100) if total_validaveis else 100
@@ -1032,10 +1104,10 @@ def _render_resumo_confianca_mapeamento(
             icone="🧭",
             titulo=f"Mapa visual do mapeamento • {pct_conclusao}% pronto",
             subtitulo=(
-                f"🟢 Confirmados: {stats['ok']}   •   "
-                f"🟡 Revisar: {stats['revisar']}   •   "
                 f"🔴 Corrigir: {stats['erro']}   •   "
-                f"🤖 Automáticos: {stats['auto']}"
+                f"🟡 Revisar: {stats['revisar']}   •   "
+                f"🟢 Confirmados: {stats['ok']}   •   "
+                f"🤖/🚫 Automáticos: {stats['auto']}"
             ),
             fundo="#F8FAFC",
             borda="#CBD5E1",
@@ -1045,10 +1117,48 @@ def _render_resumo_confianca_mapeamento(
     )
 
 
+def _ordem_status_visual(status: str) -> int:
+    ordem = {
+        "erro": 0,
+        "revisar": 1,
+        "ok": 2,
+        "auto": 3,
+    }
+    return ordem.get(str(status or "").strip().lower(), 99)
+
+
+def _ordenar_colunas_para_revisao(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_atual: dict[str, str],
+    operacao: str,
+) -> list[str]:
+    colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
+    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+
+    itens: list[tuple[int, str, str]] = []
+
+    for coluna_modelo in colunas_modelo:
+        if coluna_modelo in bloqueados:
+            status = "auto"
+        else:
+            detalhe = _detalhe_confianca_mapeamento(
+                df_base=df_base,
+                coluna_modelo=coluna_modelo,
+                coluna_origem=str(mapping_atual.get(coluna_modelo, "") or "").strip(),
+            )
+            status = str(detalhe.get("status", "") or "")
+
+        itens.append((_ordem_status_visual(status), coluna_modelo.lower(), coluna_modelo))
+
+    itens.sort(key=lambda x: (x[0], x[1]))
+    return [coluna_modelo for _, _, coluna_modelo in itens]
+
+
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
     st.caption("Ajuste manual apenas se quiser revisar ou trocar algum vínculo da IA.")
 
-    opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist()]
+    opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist() if not _eh_coluna_video(c)]
     bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
     mapping_atual = st.session_state.get("mapping_manual", {}).copy()
 
@@ -1059,10 +1169,37 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         operacao=operacao,
     )
 
-    for coluna_modelo in df_modelo.columns:
-        coluna_modelo = str(coluna_modelo)
+    colunas_ordenadas = _ordenar_colunas_para_revisao(
+        df_base=df_base,
+        df_modelo=df_modelo,
+        mapping_atual=mapping_atual,
+        operacao=operacao,
+    )
 
+    for coluna_modelo in colunas_ordenadas:
         if coluna_modelo in bloqueados:
+            if _eh_coluna_video(coluna_modelo):
+                st.markdown(
+                    _montar_badge_html(
+                        icone="🚫",
+                        titulo=f"{coluna_modelo} mantido vazio",
+                        subtitulo="Campo de vídeo bloqueado para não levar URL de propaganda.",
+                        fundo="#F8FAFC",
+                        borda="#94A3B8",
+                        texto="#334155",
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+                st.text_input(
+                    f"🚫 {coluna_modelo}",
+                    value="Bloqueado automaticamente (vídeo fica vazio)",
+                    disabled=True,
+                    key=f"map_lock_video_{coluna_modelo}",
+                )
+                mapping_atual[coluna_modelo] = ""
+                continue
+
             motivo = []
             if coluna_modelo == _coluna_preco_prioritaria(df_modelo, operacao):
                 motivo.append("preço calculado")
@@ -1097,6 +1234,9 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         }
 
         valor_atual = str(mapping_atual.get(coluna_modelo, "") or "").strip()
+        if _eh_coluna_video(valor_atual):
+            valor_atual = ""
+            mapping_atual[coluna_modelo] = ""
 
         detalhe = _detalhe_confianca_mapeamento(
             df_base=df_base,
@@ -1121,7 +1261,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             if opcao == valor_atual or opcao not in usados_em_outros:
                 opcoes_coluna.append(opcao)
 
-        if valor_atual and valor_atual not in opcoes_coluna:
+        if valor_atual and valor_atual not in opcoes_coluna and not _eh_coluna_video(valor_atual):
             opcoes_coluna.append(valor_atual)
 
         index_atual = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
@@ -1134,9 +1274,17 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             help=f"Confiança atual: {detalhe['pct']}%",
         )
 
+        if _eh_coluna_video(novo_valor):
+            novo_valor = ""
+
         mapping_atual[coluna_modelo] = novo_valor
 
     mapping_atual = _mapping_semantico(df_base, df_modelo, mapping_atual)
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if _eh_coluna_video(coluna_modelo):
+            mapping_atual[coluna_modelo] = ""
+
     st.session_state["mapping_manual"] = mapping_atual
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
 
@@ -1159,7 +1307,7 @@ def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) ->
         if not coluna_origem:
             continue
 
-        if coluna_modelo in bloqueados:
+        if coluna_modelo in bloqueados or _eh_coluna_video(coluna_origem):
             continue
 
         usados.append(coluna_origem)
