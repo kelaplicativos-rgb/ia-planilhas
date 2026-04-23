@@ -23,6 +23,7 @@ from bling_app_zero.ui.app_helpers import (
 from bling_app_zero.utils.gtin import (
     aplicar_validacao_gtin_em_colunas_automaticas,
     contar_gtins_invalidos_df,
+    contar_gtins_suspeitos_df,
     encontrar_colunas_gtin,
     gerar_gtins_validos_em_colunas_automaticas,
     resumir_logs_limpeza_gtin,
@@ -497,6 +498,7 @@ def _inicializar_estado_preview() -> None:
         "preview_envio_logs": [],
         "preview_envio_resumo": {},
         "gtin_logs_limpeza": [],
+        "gtin_resumo_limpeza": {},
     }
     for chave, valor in defaults.items():
         if chave not in st.session_state:
@@ -782,6 +784,7 @@ def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int, lis
         return pd.DataFrame(), 0, ["DataFrame inválido para limpeza de GTIN."], {
             "colunas_gtin": 0,
             "invalidos": 0,
+            "suspeitos": 0,
             "validos": 0,
             "vazios": 0,
         }
@@ -791,7 +794,7 @@ def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int, lis
         preservar_coluna_original=False,
     )
     resumo = resumir_logs_limpeza_gtin(logs)
-    total_limpos = int(resumo.get("invalidos", 0) or 0)
+    total_limpos = int(resumo.get("invalidos", 0) or 0) + int(resumo.get("suspeitos", 0) or 0)
     return df_saida.copy().fillna(""), total_limpos, logs, resumo
 
 
@@ -803,16 +806,22 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
     st.markdown("### Tratamento de GTIN")
 
     gtins_invalidos = contar_gtins_invalidos_df(df_final)
-    if gtins_invalidos > 0:
-        st.warning(f"Foram encontrados **{gtins_invalidos} GTIN(s) inválido(s)** no resultado final.")
+    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
+    total_pendencias_gtin = int(gtins_invalidos) + int(gtins_suspeitos)
+
+    if total_pendencias_gtin > 0:
+        st.warning(
+            f"Foram encontrados **{gtins_invalidos} GTIN(s) inválido(s)** e "
+            f"**{gtins_suspeitos} GTIN(s) suspeito(s)** no resultado final."
+        )
     else:
-        st.caption("Nenhum GTIN inválido encontrado no preview final.")
+        st.caption("Nenhum GTIN inválido ou suspeito encontrado no preview final.")
 
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button(
-            "🧹 Limpar GTINs inválidos",
+            "🧹 Limpar GTINs inválidos/suspeitos",
             use_container_width=True,
             key="btn_limpar_gtins_invalidos_preview",
         ):
@@ -822,9 +831,9 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
             st.session_state["gtin_resumo_limpeza"] = resumo_limpeza
 
             if total_limpos > 0:
-                st.success(f"{total_limpos} GTIN(s) inválido(s) foram limpos e deixados vazios.")
+                st.success(f"{total_limpos} GTIN(s) inválido(s)/suspeito(s) foram limpos e deixados vazios.")
             else:
-                st.info("Nenhum GTIN inválido foi encontrado para limpar.")
+                st.info("Nenhum GTIN inválido ou suspeito foi encontrado para limpar.")
 
             st.rerun()
 
@@ -833,14 +842,16 @@ def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
 
     resumo_limpeza = st.session_state.get("gtin_resumo_limpeza", {})
     if resumo_limpeza:
-        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
         with col_r1:
             st.metric("Colunas GTIN", int(resumo_limpeza.get("colunas_gtin", 0) or 0))
         with col_r2:
             st.metric("Inválidos limpos", int(resumo_limpeza.get("invalidos", 0) or 0))
         with col_r3:
-            st.metric("Válidos", int(resumo_limpeza.get("validos", 0) or 0))
+            st.metric("Suspeitos limpos", int(resumo_limpeza.get("suspeitos", 0) or 0))
         with col_r4:
+            st.metric("Válidos", int(resumo_limpeza.get("validos", 0) or 0))
+        with col_r5:
             st.metric("Vazios", int(resumo_limpeza.get("vazios", 0) or 0))
 
     st.radio(
@@ -916,13 +927,22 @@ def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tupl
         st.metric("Validação", "OK" if valido else "Ajustes pendentes")
 
     gtins_invalidos = contar_gtins_invalidos_df(df_final)
+    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
+
     if gtins_invalidos > 0:
         erros = list(erros) + [
             f"Existem {gtins_invalidos} GTIN(s) inválido(s). Limpe ou gere GTINs válidos antes de baixar."
         ]
         valido = False
-        st.session_state["preview_validacao_ok"] = False
-        st.session_state["preview_validacao_erros"] = list(erros)
+
+    if gtins_suspeitos > 0:
+        erros = list(erros) + [
+            f"Existem {gtins_suspeitos} GTIN(s) suspeito(s). Revise, limpe ou gere GTINs válidos antes de baixar."
+        ]
+        valido = False
+
+    st.session_state["preview_validacao_ok"] = bool(valido)
+    st.session_state["preview_validacao_erros"] = list(erros)
 
     if erros:
         st.error("Existem pendências obrigatórias antes do download e do envio.")
@@ -974,7 +994,8 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     df_final = _zerar_colunas_video(df_final)
     csv_bytes = dataframe_para_csv_bytes(df_final)
     gtins_invalidos = contar_gtins_invalidos_df(df_final)
-    download_liberado = bool(validacao_ok and gtins_invalidos == 0)
+    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
+    download_liberado = bool(validacao_ok and gtins_invalidos == 0 and gtins_suspeitos == 0)
 
     st.download_button(
         label="📥 Baixar CSV final",
@@ -998,8 +1019,8 @@ def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
             log_debug("Usuário confirmou a etapa de download e avançou para conexão/envio.", nivel="INFO")
             st.rerun()
     else:
-        if gtins_invalidos > 0:
-            st.info("Ajuste os GTINs inválidos antes de liberar o download e o envio.")
+        if gtins_invalidos > 0 or gtins_suspeitos > 0:
+            st.info("Ajuste os GTINs inválidos/suspeitos antes de liberar o download e o envio.")
         else:
             st.info("Ajuste a validação antes de liberar o download e o envio.")
 
@@ -1233,7 +1254,8 @@ def render_preview_final() -> None:
         st.session_state["df_final"] = df_final
 
     gtins_invalidos = contar_gtins_invalidos_df(df_final)
-    if gtins_invalidos > 0:
+    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
+    if gtins_invalidos > 0 or gtins_suspeitos > 0:
         validacao_ok = False
         st.session_state["preview_validacao_ok"] = False
 
