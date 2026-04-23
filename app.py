@@ -1,4 +1,3 @@
-
 import pandas as pd
 import streamlit as st
 
@@ -42,6 +41,7 @@ def _inicializar_estado_global() -> None:
         "ultima_etapa_renderizada": "",
         "_troca_etapa_em_andamento": False,
         "mostrar_log_debug_ui": False,
+        "_ultima_etapa_logada_render": "",
     }
 
     for chave, valor in defaults.items():
@@ -78,6 +78,10 @@ def _pode_abrir_etapa(etapa: str) -> bool:
     etapa = _etapa_valida(etapa)
     etapa_maxima = _etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
     return _indice_etapa(etapa) <= _indice_etapa(etapa_maxima)
+
+
+def _contar_linhas_df(df) -> int:
+    return len(df) if isinstance(df, pd.DataFrame) else 0
 
 
 def _pre_requisitos_etapa(etapa: str) -> tuple[bool, str]:
@@ -264,11 +268,14 @@ def _render_navegacao_travada() -> None:
 
 def _render_etapa_atual() -> None:
     etapa = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
+    etapa_logada = str(st.session_state.get("_ultima_etapa_logada_render", "") or "").strip()
 
     if st.session_state.get("ultima_etapa_renderizada", "") != etapa:
         st.session_state["ultima_etapa_renderizada"] = etapa
 
-    log_debug(f"Renderizando etapa: {etapa}")
+    if etapa_logada != etapa:
+        log_debug(f"Renderizando etapa: {etapa}")
+        st.session_state["_ultima_etapa_logada_render"] = etapa
 
     if etapa == "origem":
         render_origem_dados()
@@ -282,6 +289,7 @@ def _render_etapa_atual() -> None:
         log_debug(f"Etapa inválida detectada: {etapa}", nivel="ERRO")
         st.session_state["wizard_etapa_atual"] = "origem"
         st.session_state["etapa"] = "origem"
+        st.session_state["_ultima_etapa_logada_render"] = "origem"
         render_origem_dados()
 
 
@@ -298,11 +306,11 @@ def _render_resumo_topo() -> None:
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
     with c1:
-        st.metric("Origem", len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0)
+        st.metric("Origem", _contar_linhas_df(df_origem))
     with c2:
-        st.metric("Precificado", len(df_precificado) if isinstance(df_precificado, pd.DataFrame) else 0)
+        st.metric("Precificado", _contar_linhas_df(df_precificado))
     with c3:
-        st.metric("Final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
+        st.metric("Final", _contar_linhas_df(df_final))
     with c4:
         st.metric("Etapa", etapa)
 
