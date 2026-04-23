@@ -13,6 +13,63 @@ from bling_app_zero.utils.gtin import (
 )
 
 
+def _df_valido(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+
+
+def _obter_df_base_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
+    """
+    Usa sempre o df_final mais atual do session_state.
+    Isso preserva alterações manuais feitas no mapeamento/preview.
+    """
+    df_session = st.session_state.get("df_final")
+
+    if _df_valido(df_session):
+        return df_session.copy().fillna("")
+
+    if _df_valido(df_final):
+        return df_final.copy().fillna("")
+
+    return pd.DataFrame()
+
+
+def _aplicar_apenas_colunas_gtin(
+    df_base: pd.DataFrame,
+    df_tratado: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Preserva todas as colunas manuais e aplica somente alterações nas colunas GTIN.
+    Nunca deixa o tratamento de GTIN reconstruir/sobrescrever o mapeamento inteiro.
+    """
+    if not _df_valido(df_base):
+        return df_tratado.copy().fillna("") if _df_valido(df_tratado) else pd.DataFrame()
+
+    if not _df_valido(df_tratado):
+        return df_base.copy().fillna("")
+
+    df_saida = df_base.copy().fillna("")
+    df_gtin = df_tratado.copy().fillna("")
+
+    colunas_gtin = encontrar_colunas_gtin(df_saida)
+    if not colunas_gtin:
+        return df_saida
+
+    for coluna in colunas_gtin:
+        if coluna in df_gtin.columns and coluna in df_saida.columns:
+            limite = min(len(df_saida.index), len(df_gtin.index))
+            df_saida.loc[df_saida.index[:limite], coluna] = df_gtin[coluna].iloc[:limite].values
+
+    return df_saida.fillna("")
+
+
+def _salvar_df_final_preservado(df_final: pd.DataFrame) -> pd.DataFrame:
+    df_final = df_final.copy().fillna("") if _df_valido(df_final) else pd.DataFrame()
+    st.session_state["df_final"] = df_final
+    st.session_state["df_final_gtin_atualizado"] = True
+    st.session_state["df_final_manual_preservado"] = True
+    return df_final
+
+
 def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int, list[str], dict[str, int]]:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(), 0, ["DataFrame inválido para limpeza de GTIN."], {
@@ -33,14 +90,19 @@ def _limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int, lis
 
 
 def render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
-    colunas_gtin = encontrar_colunas_gtin(df_final)
-    if not colunas_gtin:
+    df_base = _obter_df_base_gtin(df_final)
+
+    if not _df_valido(df_base):
         return df_final
+
+    colunas_gtin = encontrar_colunas_gtin(df_base)
+    if not colunas_gtin:
+        return df_base
 
     st.markdown("### Tratamento de GTIN")
 
-    gtins_invalidos_total = contar_gtins_invalidos_df(df_final)
-    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
+    gtins_invalidos_total = contar_gtins_invalidos_df(df_base)
+    gtins_suspeitos = contar_gtins_suspeitos_df(df_base)
     gtins_invalidos_reais = max(int(gtins_invalidos_total) - int(gtins_suspeitos), 0)
     total_pendencias_gtin = int(gtins_invalidos_reais) + int(gtins_suspeitos)
 
@@ -60,8 +122,17 @@ def render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
             use_container_width=True,
             key="btn_limpar_gtins_invalidos_preview",
         ):
-            df_limpo, total_limpos, logs_limpeza, resumo_limpeza = _limpar_gtins_invalidos_df(df_final.copy())
-            st.session_state["df_final"] = df_limpo.copy()
+            df_base_atual = _obter_df_base_gtin(df_base)
+            df_limpo_raw, total_limpos, logs_limpeza, resumo_limpeza = _limpar_gtins_invalidos_df(
+                df_base_atual.copy()
+            )
+
+            df_limpo = _aplicar_apenas_colunas_gtin(
+                df_base=df_base_atual,
+                df_tratado=df_limpo_raw,
+            )
+
+            _salvar_df_final_preservado(df_limpo)
             st.session_state["gtin_logs_limpeza"] = logs_limpeza
             st.session_state["gtin_resumo_limpeza"] = resumo_limpeza
 
@@ -104,12 +175,20 @@ def render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
         )
 
         if st.button("⚡ Gerar GTINs válidos", use_container_width=True, key="btn_gerar_gtins_preview"):
-            df_gerado, logs = gerar_gtins_validos_em_colunas_automaticas(
-                df_final.copy(),
+            df_base_atual = _obter_df_base_gtin(df_base)
+
+            df_gerado_raw, logs = gerar_gtins_validos_em_colunas_automaticas(
+                df_base_atual.copy(),
                 prefixo=prefixo,
                 apenas_vazios=True,
             )
-            st.session_state["df_final"] = df_gerado.copy()
+
+            df_gerado = _aplicar_apenas_colunas_gtin(
+                df_base=df_base_atual,
+                df_tratado=df_gerado_raw,
+            )
+
+            _salvar_df_final_preservado(df_gerado)
             st.session_state["gtin_logs_geracao"] = logs
 
             total_gerados = 0
@@ -125,6 +204,7 @@ def render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
                 st.success(f"{total_gerados} GTIN(s) válido(s) foram gerados nos campos vazios.")
             else:
                 st.info("Nenhum GTIN foi gerado porque os campos já estavam preenchidos.")
+
             st.rerun()
 
-    return st.session_state.get("df_final", df_final)
+    return _obter_df_base_gtin(df_base)
