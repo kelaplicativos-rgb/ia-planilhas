@@ -103,20 +103,20 @@ def render_gtin_panel(df_base: pd.DataFrame | None = None) -> None:
             st.session_state["gtin_prefixo_base"] = prefixo_base or "789"
 
         with col_cfg3:
+            opcoes_modo = [
+                "vazios_e_invalidos",
+                "vazios",
+                "invalidos",
+                "sobrescrever_tudo",
+            ]
+            modo_salvo = str(st.session_state.get("gtin_modo_geracao", "vazios_e_invalidos"))
+            if modo_salvo not in opcoes_modo:
+                modo_salvo = "vazios_e_invalidos"
+
             modo_geracao = st.selectbox(
                 "Modo de geração",
-                options=[
-                    "vazios_e_invalidos",
-                    "vazios",
-                    "invalidos",
-                    "sobrescrever_tudo",
-                ],
-                index=[
-                    "vazios_e_invalidos",
-                    "vazios",
-                    "invalidos",
-                    "sobrescrever_tudo",
-                ].index(str(st.session_state.get("gtin_modo_geracao", "vazios_e_invalidos"))),
+                options=opcoes_modo,
+                index=opcoes_modo.index(modo_salvo),
                 key="gtin_modo_geracao_panel",
             )
             st.session_state["gtin_modo_geracao"] = modo_geracao
