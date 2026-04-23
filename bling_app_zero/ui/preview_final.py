@@ -20,8 +20,11 @@ from bling_app_zero.ui.app_helpers import (
     validar_df_para_download,
     voltar_etapa_anterior,
 )
-from bling_app_zero.core.gtin_service import contar_gtins_invalidos_df
-from bling_app_zero.ui.gtin_panel import render_gtin_panel
+from bling_app_zero.utils.gtin import (
+    contar_gtins_invalidos_df,
+    encontrar_colunas_gtin,
+    gerar_gtins_validos_em_colunas_automaticas,
+)
 
 
 def _garantir_etapa_preview_ativa() -> None:
@@ -771,6 +774,56 @@ def _render_origem_site_metadata() -> None:
             st.write(f"**URL monitorada:** {url_site}")
 
 
+
+
+def _render_acoes_gtin(df_final: pd.DataFrame) -> pd.DataFrame:
+    colunas_gtin = encontrar_colunas_gtin(df_final)
+    if not colunas_gtin:
+        return df_final
+
+    st.markdown("### Tratamento de GTIN")
+    st.caption("Se quiser, gere GTINs válidos apenas nos campos vazios. Se não quiser, siga para o download.")
+
+    escolha = st.radio(
+        "Deseja gerar GTINs agora ou seguir para o download?",
+        options=["Seguir para o download", "Gerar GTINs válidos nos vazios"],
+        horizontal=True,
+        key="preview_gtin_escolha",
+    )
+
+    if escolha == "Gerar GTINs válidos nos vazios":
+        prefixo = st.text_input(
+            "Prefixo GTIN",
+            value=str(st.session_state.get("gtin_prefixo_geracao", "789") or "789"),
+            key="gtin_prefixo_geracao",
+        )
+
+        if st.button("⚡ Gerar GTINs válidos", use_container_width=True, key="btn_gerar_gtins_preview"):
+            df_gerado, logs = gerar_gtins_validos_em_colunas_automaticas(
+                df_final.copy(),
+                prefixo=prefixo,
+                apenas_vazios=True,
+            )
+            st.session_state["df_final"] = df_gerado.copy()
+            st.session_state["gtin_logs_geracao"] = logs
+
+            total_gerados = 0
+            for item in logs:
+                texto = str(item)
+                if texto.startswith("GTIN gerados:"):
+                    try:
+                        total_gerados += int(texto.split(":")[-1].strip())
+                    except Exception:
+                        pass
+
+            if total_gerados > 0:
+                st.success(f"{total_gerados} GTIN(s) válido(s) foram gerados nos campos vazios.")
+            else:
+                st.info("Nenhum GTIN foi gerado porque os campos já estavam preenchidos.")
+            st.rerun()
+
+    return st.session_state.get("df_final", df_final)
+
 def _render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple[bool, list[str]]:
     df_final = _garantir_df_final_canonico(
         df=df_final,
@@ -1106,7 +1159,7 @@ def render_preview_final() -> None:
 
     validacao_ok, _ = _render_resumo_validacao(df_final, tipo_operacao)
 
-    render_gtin_panel(df_final)
+    df_final = _render_acoes_gtin(df_final)
 
     df_final_atualizado = st.session_state.get("df_final", df_final)
     if isinstance(df_final_atualizado, pd.DataFrame) and safe_df_estrutura(df_final_atualizado):
