@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from typing import Any
@@ -40,6 +39,52 @@ def _resolver_operacao() -> str:
         or "cadastro"
     )
     return operacao if operacao in {"cadastro", "estoque"} else "cadastro"
+
+
+def _eh_coluna_video(nome_coluna: Any) -> bool:
+    nome = normalizar_texto(str(nome_coluna or ""))
+    return bool(nome and any(token in nome for token in ["video", "vídeo", "youtube"]))
+
+
+def _sanitizar_mapping_bloqueado(
+    mapping: dict[str, str],
+    df_modelo: pd.DataFrame,
+    df_base: pd.DataFrame,
+) -> dict[str, str]:
+    if not isinstance(mapping, dict):
+        return {}
+
+    colunas_modelo = {str(c) for c in df_modelo.columns.tolist()}
+    colunas_base = {str(c) for c in df_base.columns.tolist()}
+
+    mapping_limpo: dict[str, str] = {}
+
+    for coluna_modelo, coluna_origem in mapping.items():
+        destino = str(coluna_modelo or "").strip()
+        origem = str(coluna_origem or "").strip()
+
+        if not destino or destino not in colunas_modelo:
+            continue
+
+        if _eh_coluna_video(destino):
+            mapping_limpo[destino] = ""
+            continue
+
+        if origem and origem not in colunas_base:
+            mapping_limpo[destino] = ""
+            continue
+
+        if origem and _eh_coluna_video(origem):
+            mapping_limpo[destino] = ""
+            continue
+
+        mapping_limpo[destino] = origem
+
+    for coluna_modelo in colunas_modelo:
+        if _eh_coluna_video(coluna_modelo):
+            mapping_limpo[coluna_modelo] = ""
+
+    return mapping_limpo
 
 
 def _normalizar_agent_result(resultado: AgentResult | dict[str, Any] | None) -> dict[str, Any]:
@@ -149,6 +194,12 @@ def sugerir_mapeamento_agente(
         df_base=df_base,
     )
 
+    mapping = _sanitizar_mapping_bloqueado(
+        mapping=mapping,
+        df_modelo=df_modelo,
+        df_base=df_base,
+    )
+
     if not any(str(v or "").strip() for v in mapping.values()):
         fallback = gerar_mapping_fallback(
             df_base=df_base,
@@ -157,6 +208,11 @@ def sugerir_mapeamento_agente(
         )
         mapping = limpar_mapping_para_modelo(
             mapping=fallback,
+            df_modelo=df_modelo,
+            df_base=df_base,
+        )
+        mapping = _sanitizar_mapping_bloqueado(
+            mapping=mapping,
             df_modelo=df_modelo,
             df_base=df_base,
         )
@@ -170,11 +226,23 @@ def sugerir_mapeamento_agente(
         operacao=operacao_resolvida,
     )
 
+    mapping = _sanitizar_mapping_bloqueado(
+        mapping=mapping,
+        df_modelo=df_modelo,
+        df_base=df_base,
+    )
+
     mapping = forcar_preenchimento_obrigatorios(
         mapping=mapping,
         df_base=df_base,
         df_modelo=df_modelo,
         operacao=operacao_resolvida,
+    )
+
+    mapping = _sanitizar_mapping_bloqueado(
+        mapping=mapping,
+        df_modelo=df_modelo,
+        df_base=df_base,
     )
 
     diagnostico = gerar_diagnostico_mapping(
@@ -290,4 +358,3 @@ def construir_pacote_agente_para_ui(
 
     st.session_state["agent_ui_package"] = pacote
     return pacote
-
