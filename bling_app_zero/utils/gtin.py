@@ -5,7 +5,27 @@ import random
 
 import pandas as pd
 
-from bling_app_zero.utils.limpeza import limpar_texto, somente_digitos
+
+# =========================================================
+# HELPERS INTERNOS
+# =========================================================
+def _safe_text(valor: Any) -> str:
+    try:
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.lower() in {"nan", "none", "null"}:
+            return ""
+        return texto
+    except Exception:
+        return ""
+
+
+def _somente_digitos(valor: Any) -> str:
+    try:
+        return "".join(ch for ch in _safe_text(valor) if ch.isdigit())
+    except Exception:
+        return ""
 
 
 # =========================================================
@@ -13,13 +33,7 @@ from bling_app_zero.utils.limpeza import limpar_texto, somente_digitos
 # =========================================================
 def limpar_gtin(valor: Any) -> str:
     """Mantém apenas os dígitos do GTIN/EAN."""
-    try:
-        return somente_digitos(valor)
-    except Exception:
-        try:
-            return "".join(ch for ch in str(valor or "") if ch.isdigit())
-        except Exception:
-            return ""
+    return _somente_digitos(valor)
 
 
 # =========================================================
@@ -127,6 +141,34 @@ def encontrar_colunas_gtin(df: pd.DataFrame) -> List[str]:
 
 
 # =========================================================
+# CONTAGEM DE INVÁLIDOS
+# =========================================================
+def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
+    """
+    Conta quantos GTINs inválidos existem nas colunas GTIN/EAN.
+    Vazios não contam como inválidos.
+    """
+    try:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return 0
+
+        total_invalidos = 0
+        colunas_gtin = encontrar_colunas_gtin(df)
+
+        for coluna in colunas_gtin:
+            for valor in df[coluna].tolist():
+                gtin = limpar_gtin(valor)
+                if not gtin:
+                    continue
+                if not validar_gtin_checksum(gtin):
+                    total_invalidos += 1
+
+        return total_invalidos
+    except Exception:
+        return 0
+
+
+# =========================================================
 # LIMPEZA EM DATAFRAME
 # =========================================================
 def aplicar_validacao_gtin_df(
@@ -161,11 +203,7 @@ def aplicar_validacao_gtin_df(
         total_vazios = 0
 
         for idx, valor in enumerate(df_saida[coluna].tolist(), start=1):
-            try:
-                texto_original = limpar_texto(valor)
-            except Exception:
-                texto_original = str(valor).strip() if valor is not None else ""
-
+            texto_original = _safe_text(valor)
             gtin_original_limpo = limpar_gtin(texto_original)
             valores_originais.append(gtin_original_limpo)
 
@@ -395,25 +433,3 @@ def gerar_gtins_validos_em_colunas_automaticas(
     except Exception as e:
         logs.append(f"Erro na geração automática de GTIN: {e}")
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
-
-
-
-def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
-    """Conta GTINs inválidos em todas as colunas GTIN/EAN detectadas automaticamente."""
-    try:
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            return 0
-
-        total_invalidos = 0
-        for coluna in encontrar_colunas_gtin(df):
-            serie = df[coluna].fillna("").astype(str)
-            for valor in serie.tolist():
-                gtin = limpar_gtin(valor)
-                if not gtin:
-                    continue
-                if not validar_gtin_checksum(gtin):
-                    total_invalidos += 1
-        return total_invalidos
-    except Exception:
-        return 0
-
