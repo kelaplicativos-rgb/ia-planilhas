@@ -1,7 +1,7 @@
-
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import re
 from collections import Counter
 
@@ -581,11 +581,19 @@ def _destino_modelo_semantico(coluna_modelo: str) -> str:
     return ""
 
 
-def _mapping_semantico(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping_atual: dict[str, str]) -> dict[str, str]:
+def _mapping_semantico(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_atual: dict[str, str],
+) -> dict[str, str]:
     mapping_final = dict(mapping_atual or {})
     colunas_origem = [str(c) for c in df_base.columns.tolist()]
     bloqueados = _campos_bloqueados_automaticos(df_modelo, _detectar_operacao())
-    usados = {str(v).strip() for k, v in mapping_final.items() if str(k) not in bloqueados and str(v).strip()}
+    usados = {
+        str(v).strip()
+        for k, v in mapping_final.items()
+        if str(k) not in bloqueados and str(v).strip()
+    }
 
     inferencias_origem = {
         coluna: _inferir_tipo_coluna(coluna, df_base[coluna]) for coluna in colunas_origem
@@ -642,11 +650,18 @@ def _limpar_valores_preview(df: pd.DataFrame) -> pd.DataFrame:
     return base.fillna("")
 
 
-def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> pd.DataFrame:
+def _aplicar_defaults_pos_mapping(
+    saida: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    operacao: str,
+) -> pd.DataFrame:
     base = _limpar_valores_preview(saida.copy())
 
     coluna_preco = _coluna_preco_prioritaria(df_modelo, operacao)
-    if coluna_preco and "_preco_calculado" in st.session_state.get("df_precificado", pd.DataFrame()).columns:
+    if coluna_preco and "_preco_calculado" in st.session_state.get(
+        "df_precificado",
+        pd.DataFrame(),
+    ).columns:
         df_precificado = st.session_state.get("df_precificado")
         if safe_df_dados(df_precificado):
             base[coluna_preco] = df_precificado["_preco_calculado"]
@@ -692,7 +707,11 @@ def _aplicar_defaults_pos_mapping(saida: pd.DataFrame, df_modelo: pd.DataFrame, 
     return base.fillna("")
 
 
-def _aplicar_mapping(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+def _aplicar_mapping(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping: dict[str, str],
+) -> pd.DataFrame:
     operacao = _detectar_operacao()
     saida = pd.DataFrame(index=df_base.index)
 
@@ -786,13 +805,21 @@ def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> N
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("🔄 Reprocessar IA", use_container_width=True, key="btn_reprocessar_agente_mapping"):
+        if st.button(
+            "🔄 Reprocessar IA",
+            use_container_width=True,
+            key="btn_reprocessar_agente_mapping",
+        ):
             st.session_state["_ia_auto_mapping_executado"] = False
             st.session_state["df_final"] = None
             st.rerun()
 
     with col2:
-        if st.button("🧹 Zerar mapeamento", use_container_width=True, key="btn_zerar_mapeamento"):
+        if st.button(
+            "🧹 Zerar mapeamento",
+            use_container_width=True,
+            key="btn_zerar_mapeamento",
+        ):
             st.session_state["mapping_manual"] = _resetar_mapping_para_modelo(df_modelo)
             st.session_state["mapping_sugerido"] = {}
             st.session_state["agent_ui_package"] = {}
@@ -831,13 +858,206 @@ def _render_resumo_agente() -> None:
             st.success("IA fechou os obrigatórios automaticamente.")
 
 
+def _montar_badge_html(
+    icone: str,
+    titulo: str,
+    subtitulo: str = "",
+    fundo: str = "#F3F4F6",
+    borda: str = "#D1D5DB",
+    texto: str = "#111827",
+) -> str:
+    subtitulo_html = ""
+    if subtitulo:
+        subtitulo_html = (
+            f"<div style='font-size:12px; color:{texto}; opacity:0.88; margin-top:2px;'>"
+            f"{html_lib.escape(subtitulo)}"
+            f"</div>"
+        )
+
+    return f"""
+    <div style="
+        background:{fundo};
+        border:1px solid {borda};
+        border-left:6px solid {borda};
+        color:{texto};
+        border-radius:10px;
+        padding:10px 12px;
+        margin:10px 0 8px 0;
+    ">
+        <div style="font-weight:700; font-size:14px;">
+            {html_lib.escape(icone)} {html_lib.escape(titulo)}
+        </div>
+        {subtitulo_html}
+    </div>
+    """
+
+
+def _detalhe_confianca_mapeamento(
+    df_base: pd.DataFrame,
+    coluna_modelo: str,
+    coluna_origem: str,
+) -> dict[str, object]:
+    coluna_modelo = str(coluna_modelo or "").strip()
+    coluna_origem = str(coluna_origem or "").strip()
+
+    if not coluna_origem or coluna_origem not in df_base.columns:
+        return {
+            "status": "erro",
+            "emoji": "🔴",
+            "titulo": f"{coluna_modelo} sem correspondência",
+            "subtitulo": "Selecione manualmente uma coluna de origem.",
+            "pct": 0,
+            "cor_fundo": "#FEF2F2",
+            "cor_borda": "#EF4444",
+            "cor_texto": "#991B1B",
+        }
+
+    destino = _destino_modelo_semantico(coluna_modelo)
+    nome_modelo_n = normalizar_texto(coluna_modelo)
+    nome_origem_n = normalizar_texto(coluna_origem)
+    mapping_sugerido = st.session_state.get("mapping_sugerido", {})
+    sugerido_pela_ia = str(mapping_sugerido.get(coluna_modelo, "") or "").strip()
+    foi_sugerido_igual = sugerido_pela_ia == coluna_origem
+
+    inferencia_origem = _inferir_tipo_coluna(coluna_origem, df_base[coluna_origem])
+    score_semantico = 0
+    if destino:
+        score_semantico = _score_coluna_para_destino(
+            coluna_origem,
+            df_base[coluna_origem],
+            destino,
+        )
+
+    igualdade_total = nome_modelo_n == nome_origem_n
+    tipo_confirmado = bool(destino) and inferencia_origem == destino
+
+    pct = 0
+    motivos: list[str] = []
+
+    if igualdade_total:
+        pct = 100
+        motivos.append("nome idêntico")
+    else:
+        pct = 35
+
+        if foi_sugerido_igual:
+            pct += 20
+            motivos.append("sugestão da IA")
+
+        if tipo_confirmado:
+            pct += 25
+            motivos.append("tipo confirmado")
+
+        if score_semantico >= 18:
+            pct += 20
+            motivos.append("semântica muito forte")
+        elif score_semantico >= 12:
+            pct += 12
+            motivos.append("semântica forte")
+        elif score_semantico >= 8:
+            pct += 6
+            motivos.append("semântica parcial")
+
+        nome_origem_busca = _normalizar_texto_busca(coluna_origem)
+        for alias in MAP_DESTINOS_SEMANTICOS.get(destino, []):
+            if alias in nome_origem_busca:
+                pct += 8
+                motivos.append("alias compatível")
+                break
+
+        pct = min(100, pct)
+
+    if pct >= 100:
+        return {
+            "status": "ok",
+            "emoji": "🟢",
+            "titulo": f"{coluna_modelo} reconhecido com 100% de certeza",
+            "subtitulo": f"Origem: {coluna_origem} • " + ", ".join(motivos or ["alta confiança"]),
+            "pct": pct,
+            "cor_fundo": "#ECFDF5",
+            "cor_borda": "#10B981",
+            "cor_texto": "#065F46",
+        }
+
+    if pct >= 65:
+        return {
+            "status": "revisar",
+            "emoji": "🟡",
+            "titulo": f"{coluna_modelo} com correspondência provável",
+            "subtitulo": f"Origem: {coluna_origem} • revise por segurança",
+            "pct": pct,
+            "cor_fundo": "#FFFBEB",
+            "cor_borda": "#F59E0B",
+            "cor_texto": "#92400E",
+        }
+
+    return {
+        "status": "erro",
+        "emoji": "🔴",
+        "titulo": f"{coluna_modelo} precisa de atenção",
+        "subtitulo": f"Origem atual: {coluna_origem} • baixa confiança",
+        "pct": pct,
+        "cor_fundo": "#FEF2F2",
+        "cor_borda": "#EF4444",
+        "cor_texto": "#991B1B",
+    }
+
+
+def _render_resumo_confianca_mapeamento(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_atual: dict[str, str],
+    operacao: str,
+) -> None:
+    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+    stats = {"ok": 0, "revisar": 0, "erro": 0, "auto": 0}
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if coluna_modelo in bloqueados:
+            stats["auto"] += 1
+            continue
+
+        detalhe = _detalhe_confianca_mapeamento(
+            df_base=df_base,
+            coluna_modelo=coluna_modelo,
+            coluna_origem=str(mapping_atual.get(coluna_modelo, "") or "").strip(),
+        )
+        stats[detalhe["status"]] += 1
+
+    total_validaveis = stats["ok"] + stats["revisar"] + stats["erro"]
+    pct_conclusao = int(((stats["ok"] + stats["revisar"]) / total_validaveis) * 100) if total_validaveis else 100
+
+    st.markdown(
+        _montar_badge_html(
+            icone="🧭",
+            titulo=f"Mapa visual do mapeamento • {pct_conclusao}% pronto",
+            subtitulo=(
+                f"🟢 Confirmados: {stats['ok']}   •   "
+                f"🟡 Revisar: {stats['revisar']}   •   "
+                f"🔴 Corrigir: {stats['erro']}   •   "
+                f"🤖 Automáticos: {stats['auto']}"
+            ),
+            fundo="#F8FAFC",
+            borda="#CBD5E1",
+            texto="#0F172A",
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
     st.caption("Ajuste manual apenas se quiser revisar ou trocar algum vínculo da IA.")
 
     opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist()]
     bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
-
     mapping_atual = st.session_state.get("mapping_manual", {}).copy()
+
+    _render_resumo_confianca_mapeamento(
+        df_base=df_base,
+        df_modelo=df_modelo,
+        mapping_atual=mapping_atual,
+        operacao=operacao,
+    )
 
     for coluna_modelo in df_modelo.columns:
         coluna_modelo = str(coluna_modelo)
@@ -849,8 +1069,20 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             if coluna_modelo == _coluna_deposito_modelo(df_modelo) and operacao == "estoque":
                 motivo.append("depósito fixo da operação")
 
+            st.markdown(
+                _montar_badge_html(
+                    icone="🤖",
+                    titulo=f"{coluna_modelo} preenchido automaticamente",
+                    subtitulo=", ".join(motivo) if motivo else "campo automático",
+                    fundo="#EFF6FF",
+                    borda="#3B82F6",
+                    texto="#1E3A8A",
+                ),
+                unsafe_allow_html=True,
+            )
+
             st.text_input(
-                coluna_modelo,
+                f"🤖 {coluna_modelo}",
                 value=f"Preenchido automaticamente ({', '.join(motivo)})",
                 disabled=True,
                 key=f"map_lock_{coluna_modelo}",
@@ -866,6 +1098,24 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
 
         valor_atual = str(mapping_atual.get(coluna_modelo, "") or "").strip()
 
+        detalhe = _detalhe_confianca_mapeamento(
+            df_base=df_base,
+            coluna_modelo=coluna_modelo,
+            coluna_origem=valor_atual,
+        )
+
+        st.markdown(
+            _montar_badge_html(
+                icone=str(detalhe["emoji"]),
+                titulo=str(detalhe["titulo"]),
+                subtitulo=str(detalhe["subtitulo"]),
+                fundo=str(detalhe["cor_fundo"]),
+                borda=str(detalhe["cor_borda"]),
+                texto=str(detalhe["cor_texto"]),
+            ),
+            unsafe_allow_html=True,
+        )
+
         opcoes_coluna = [""]
         for opcao in opcoes_origem[1:]:
             if opcao == valor_atual or opcao not in usados_em_outros:
@@ -877,10 +1127,11 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         index_atual = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
 
         novo_valor = st.selectbox(
-            coluna_modelo,
+            f"{detalhe['emoji']} {coluna_modelo}",
             options=opcoes_coluna,
             index=index_atual,
             key=f"map_{coluna_modelo}",
+            help=f"Confiança atual: {detalhe['pct']}%",
         )
 
         mapping_atual[coluna_modelo] = novo_valor
@@ -927,7 +1178,11 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✅ Regenerar resultado final", use_container_width=True, key="btn_gerar_resultado_final_mapping"):
+        if st.button(
+            "✅ Regenerar resultado final",
+            use_container_width=True,
+            key="btn_gerar_resultado_final_mapping",
+        ):
             if not valido:
                 for erro in erros:
                     st.error(erro)
@@ -939,7 +1194,11 @@ def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None
             st.rerun()
 
     with col2:
-        if st.button("➡️ Ir para preview final", use_container_width=True, key="btn_ir_preview_final"):
+        if st.button(
+            "➡️ Ir para preview final",
+            use_container_width=True,
+            key="btn_ir_preview_final",
+        ):
             df_final = st.session_state.get("df_final")
             if not safe_df_estrutura(df_final):
                 if not valido:
@@ -965,13 +1224,21 @@ def render_origem_mapeamento() -> None:
 
     if not safe_df_dados(df_base):
         st.warning("Conclua a precificação antes de seguir para o mapeamento.")
-        if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_precificacao_mapping"):
+        if st.button(
+            "⬅️ Voltar para precificação",
+            use_container_width=True,
+            key="btn_voltar_precificacao_mapping",
+        ):
             voltar_etapa_anterior()
         return
 
     if not safe_df_estrutura(df_modelo):
         st.warning("Carregue primeiro o modelo padrão antes de seguir para o mapeamento.")
-        if st.button("⬅️ Voltar para origem", use_container_width=True, key="btn_voltar_origem_sem_modelo_mapping"):
+        if st.button(
+            "⬅️ Voltar para origem",
+            use_container_width=True,
+            key="btn_voltar_origem_sem_modelo_mapping",
+        ):
             ir_para_etapa("origem")
         return
 
@@ -993,6 +1260,9 @@ def render_origem_mapeamento() -> None:
     _render_botoes_fluxo(df_base, df_modelo)
 
     st.markdown("---")
-    if st.button("⬅️ Voltar para precificação", use_container_width=True, key="btn_voltar_precificacao_no_rodape_mapping"):
+    if st.button(
+        "⬅️ Voltar para precificação",
+        use_container_width=True,
+        key="btn_voltar_precificacao_no_rodape_mapping",
+    ):
         voltar_etapa_anterior()
-
