@@ -68,6 +68,41 @@ def _repeticao_excessiva(gtin: str) -> bool:
         return False
 
 
+def _padrao_ciclico_curto(gtin: str) -> bool:
+    """
+    Detecta padrões artificiais como:
+    12121212 / 123123123123 / 909090909090
+    """
+    try:
+        if not gtin or len(gtin) < 8:
+            return False
+
+        for tamanho_bloco in (1, 2, 3, 4):
+            if len(gtin) % tamanho_bloco != 0:
+                continue
+            bloco = gtin[:tamanho_bloco]
+            if bloco and (bloco * (len(gtin) // tamanho_bloco)) == gtin:
+                return True
+
+        return False
+    except Exception:
+        return False
+
+
+def _corpo_quase_zerado(gtin: str) -> bool:
+    """
+    Detecta códigos extremamente improváveis como:
+    0000000000008 / 00000001 / 0000000000017
+    """
+    try:
+        if not gtin or len(gtin) < 8:
+            return False
+        corpo = gtin[:-1]
+        return corpo.count("0") >= max(len(corpo) - 1, 6)
+    except Exception:
+        return False
+
+
 # =========================================================
 # LIMPEZA DE GTIN
 # =========================================================
@@ -151,6 +186,12 @@ def classificar_gtin(valor: Any) -> Tuple[str, str]:
 
         if _repeticao_excessiva(gtin):
             return "suspeito", "repeticao excessiva de digitos"
+
+        if _padrao_ciclico_curto(gtin):
+            return "suspeito", "padrao ciclico curto"
+
+        if _corpo_quase_zerado(gtin):
+            return "suspeito", "corpo praticamente zerado"
 
         return "valido", "checksum ok"
     except Exception:
