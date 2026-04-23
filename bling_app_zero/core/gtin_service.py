@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import random
 import re
+import unicodedata
 from typing import Any
 
 import pandas as pd
@@ -23,8 +24,30 @@ GTIN_CANDIDATE_COLUMNS = [
     "GTIN Tributário",
     "EAN tributário",
     "EAN Tributário",
+    "GTIN/EAN da Embalagem",
+    "GTIN/EAN da embalagem",
+    "GTIN da Embalagem",
+    "GTIN da embalagem",
+    "EAN da Embalagem",
+    "EAN da embalagem",
+    "GTIN Embalagem",
+    "EAN Embalagem",
     "Código de barras",
     "Codigo de barras",
+    "Código de Barras",
+    "Codigo de Barras",
+    "Código de barras da embalagem",
+    "Codigo de barras da embalagem",
+]
+
+GTIN_PARTIAL_MATCH_TERMS = [
+    "gtin",
+    "ean",
+    "codigo de barras",
+    "codigo barras",
+    "cod barras",
+    "barcode",
+    "embalagem",
 ]
 
 
@@ -37,8 +60,17 @@ class GtinAuditItem:
     total_vazios: int
 
 
+def _remover_acentos(valor: str) -> str:
+    texto = str(valor or "")
+    texto = unicodedata.normalize("NFKD", texto)
+    return "".join(ch for ch in texto if not unicodedata.combining(ch))
+
+
 def normalizar_texto(valor: Any) -> str:
-    return str(valor or "").strip().lower()
+    texto = _remover_acentos(str(valor or "")).strip().lower()
+    texto = re.sub(r"[\s_/|()-]+", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
 def somente_digitos(valor: Any) -> str:
@@ -90,39 +122,122 @@ def gtin_tem_prefixo_gs1_alocado(gtin: str) -> bool:
     prefixo = int(gtin[:3] if len(gtin) == 13 else gtin[1:4])
 
     faixas_validas = [
-        (0, 19), (30, 39), (60, 139), (200, 299), (300, 379),
-        (380, 380), (383, 383), (385, 385), (387, 387),
-        (400, 440), (450, 459), (460, 469),
-        (470, 470), (471, 471), (474, 474), (475, 475),
-        (476, 476), (477, 477), (478, 478), (479, 479),
-        (480, 480), (481, 481), (482, 482), (484, 484),
-        (485, 485), (486, 486), (487, 487), (489, 489),
-        (490, 499), (500, 509), (520, 521), (528, 528),
-        (529, 529), (530, 530), (531, 531), (535, 535),
-        (539, 539), (540, 549), (560, 560), (569, 569),
-        (570, 579), (590, 590), (594, 594), (599, 599),
-        (600, 601), (603, 603), (608, 608), (609, 609),
-        (611, 611), (613, 613), (615, 615), (616, 616),
-        (618, 618), (619, 619), (621, 621), (622, 622),
-        (624, 624), (625, 625), (626, 626), (627, 627),
-        (628, 628), (629, 629), (640, 649),
-        (690, 699), (700, 709), (729, 729),
-        (730, 739), (740, 740), (741, 741), (742, 742),
-        (743, 743), (744, 744), (745, 745), (746, 746),
-        (750, 750), (754, 755), (759, 759),
-        (760, 769), (770, 771), (773, 773),
-        (775, 775), (777, 777), (778, 778), (779, 779),
-        (780, 780), (784, 784), (785, 785), (786, 786),
+        (0, 19),
+        (30, 39),
+        (60, 139),
+        (200, 299),
+        (300, 379),
+        (380, 380),
+        (383, 383),
+        (385, 385),
+        (387, 387),
+        (400, 440),
+        (450, 459),
+        (460, 469),
+        (470, 470),
+        (471, 471),
+        (474, 474),
+        (475, 475),
+        (476, 476),
+        (477, 477),
+        (478, 478),
+        (479, 479),
+        (480, 480),
+        (481, 481),
+        (482, 482),
+        (484, 484),
+        (485, 485),
+        (486, 486),
+        (487, 487),
+        (489, 489),
+        (490, 499),
+        (500, 509),
+        (520, 521),
+        (528, 528),
+        (529, 529),
+        (530, 530),
+        (531, 531),
+        (535, 535),
+        (539, 539),
+        (540, 549),
+        (560, 560),
+        (569, 569),
+        (570, 579),
+        (590, 590),
+        (594, 594),
+        (599, 599),
+        (600, 601),
+        (603, 603),
+        (608, 608),
+        (609, 609),
+        (611, 611),
+        (613, 613),
+        (615, 615),
+        (616, 616),
+        (618, 618),
+        (619, 619),
+        (621, 621),
+        (622, 622),
+        (624, 624),
+        (625, 625),
+        (626, 626),
+        (627, 627),
+        (628, 628),
+        (629, 629),
+        (640, 649),
+        (690, 699),
+        (700, 709),
+        (729, 729),
+        (730, 739),
+        (740, 740),
+        (741, 741),
+        (742, 742),
+        (743, 743),
+        (744, 744),
+        (745, 745),
+        (746, 746),
+        (750, 750),
+        (754, 755),
+        (759, 759),
+        (760, 769),
+        (770, 771),
+        (773, 773),
+        (775, 775),
+        (777, 777),
+        (778, 778),
+        (779, 779),
+        (780, 780),
+        (784, 784),
+        (785, 785),
+        (786, 786),
         (789, 790),
-        (800, 839), (840, 849), (850, 850),
-        (858, 858), (859, 859), (860, 860),
-        (865, 865), (867, 867), (868, 869),
-        (870, 879), (880, 880), (883, 883),
-        (884, 884), (885, 885), (888, 888),
-        (890, 890), (893, 893), (896, 896),
-        (899, 899), (900, 919), (930, 939),
-        (940, 949), (950, 950), (951, 951),
-        (955, 955), (958, 958), (977, 979),
+        (800, 839),
+        (840, 849),
+        (850, 850),
+        (858, 858),
+        (859, 859),
+        (860, 860),
+        (865, 865),
+        (867, 867),
+        (868, 869),
+        (870, 879),
+        (880, 880),
+        (883, 883),
+        (884, 884),
+        (885, 885),
+        (888, 888),
+        (890, 890),
+        (893, 893),
+        (896, 896),
+        (899, 899),
+        (900, 919),
+        (930, 939),
+        (940, 949),
+        (950, 950),
+        (951, 951),
+        (955, 955),
+        (958, 958),
+        (977, 979),
     ]
 
     return any(inicio <= prefixo <= fim for inicio, fim in faixas_validas)
@@ -167,17 +282,36 @@ def _normalizar_colunas(df: pd.DataFrame) -> dict[str, str]:
     return {normalizar_texto(col): str(col) for col in df.columns}
 
 
+def _eh_coluna_gtin(nome_coluna: Any) -> bool:
+    nome = normalizar_texto(nome_coluna)
+    if not nome:
+        return False
+
+    candidatos_exatos = {normalizar_texto(col) for col in GTIN_CANDIDATE_COLUMNS}
+    if nome in candidatos_exatos:
+        return True
+
+    possui_gtin_ou_ean = ("gtin" in nome) or ("ean" in nome)
+    possui_codigo_barras = ("codigo de barras" in nome) or ("codigo barras" in nome)
+
+    if possui_gtin_ou_ean or possui_codigo_barras:
+        return True
+
+    return any(termo in nome for termo in GTIN_PARTIAL_MATCH_TERMS[:4]) and (
+        "barra" in nome or "barras" in nome
+    )
+
+
 def localizar_colunas_gtin(df: pd.DataFrame) -> list[str]:
     if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
         return []
 
-    mapa = _normalizar_colunas(df)
     encontradas: list[str] = []
 
-    for candidato in GTIN_CANDIDATE_COLUMNS:
-        real = mapa.get(normalizar_texto(candidato))
-        if real and real not in encontradas:
-            encontradas.append(real)
+    for col in df.columns:
+        nome_real = str(col)
+        if _eh_coluna_gtin(nome_real) and nome_real not in encontradas:
+            encontradas.append(nome_real)
 
     return encontradas
 
@@ -223,7 +357,12 @@ def auditar_gtins_dataframe(
 
         validos = int(
             serie[serie.ne("")]
-            .apply(lambda x: validar_gtin(x, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br))
+            .apply(
+                lambda x: validar_gtin(
+                    x,
+                    aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+                )
+            )
             .sum()
         )
         invalidos = int(preenchidos - validos)
@@ -277,12 +416,17 @@ def limpar_gtins_invalidos_df(
     for coluna in colunas:
         serie_original = base[coluna].astype(str).fillna("")
         serie_limpa = serie_original.apply(
-            lambda valor: limpar_gtin(valor, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br)
+            lambda valor: limpar_gtin(
+                valor,
+                aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+            )
         )
 
         removidos = int(
             (
-                serie_original.str.strip().replace({"nan": "", "None": "", "none": ""}).ne("")
+                serie_original.str.strip()
+                .replace({"nan": "", "None": "", "none": ""})
+                .ne("")
                 & serie_limpa.eq("")
             ).sum()
         )
@@ -418,7 +562,14 @@ def gerar_gtins_para_dataframe(
 
         for valor in base[coluna].astype(str).fillna("").tolist():
             texto = somente_digitos(valor)
-            valido = validar_gtin(texto, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br) if texto else False
+            valido = (
+                validar_gtin(
+                    texto,
+                    aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+                )
+                if texto
+                else False
+            )
 
             deve_gerar = False
 
