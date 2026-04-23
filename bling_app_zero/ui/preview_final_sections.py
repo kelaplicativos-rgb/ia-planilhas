@@ -61,18 +61,6 @@ def render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple
     gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
     gtins_invalidos_reais = max(int(gtins_invalidos_total) - int(gtins_suspeitos), 0)
 
-    if gtins_invalidos_reais > 0:
-        erros = list(erros) + [
-            f"Existem {gtins_invalidos_reais} GTIN(s) inválido(s). Limpe ou gere GTINs válidos antes de baixar."
-        ]
-        valido = False
-
-    if gtins_suspeitos > 0:
-        erros = list(erros) + [
-            f"Existem {gtins_suspeitos} GTIN(s) suspeito(s). Revise, limpe ou gere GTINs válidos antes de baixar."
-        ]
-        valido = False
-
     st.session_state["preview_validacao_ok"] = bool(valido)
     st.session_state["preview_validacao_erros"] = list(erros)
 
@@ -84,6 +72,15 @@ def render_resumo_validacao(df_final: pd.DataFrame, tipo_operacao: str) -> tuple
     else:
         st.success("A planilha final passou na validação principal.")
         log_debug("Validação final aprovada.", nivel="INFO")
+
+    if gtins_invalidos_reais > 0 or gtins_suspeitos > 0:
+        mensagem_gtin = (
+            f"Existem {gtins_invalidos_reais} GTIN(s) inválido(s) e "
+            f"{gtins_suspeitos} GTIN(s) suspeito(s). "
+            "Corrija na etapa anterior se desejar. O preview final não bloqueia mais o download por GTIN."
+        )
+        st.warning(mensagem_gtin)
+        log_debug(mensagem_gtin, nivel="AVISO")
 
     return valido, erros
 
@@ -125,13 +122,12 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     df_final = zerar_colunas_video(df_final)
     csv_bytes = dataframe_para_csv_bytes(df_final)
+
     gtins_invalidos_total = contar_gtins_invalidos_df(df_final)
     gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
     gtins_invalidos_reais = max(int(gtins_invalidos_total) - int(gtins_suspeitos), 0)
 
-    download_liberado = bool(
-        validacao_ok and gtins_invalidos_reais == 0 and gtins_suspeitos == 0
-    )
+    download_liberado = bool(validacao_ok)
 
     st.download_button(
         label="📥 Baixar CSV final",
@@ -144,6 +140,12 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     )
 
     if download_liberado:
+        if gtins_invalidos_reais > 0 or gtins_suspeitos > 0:
+            st.info(
+                f"O download está liberado. Ainda existem {gtins_invalidos_reais} GTIN(s) inválido(s) "
+                f"e {gtins_suspeitos} GTIN(s) suspeito(s), mas essa correção ficou centralizada na etapa anterior."
+            )
+
         if st.session_state.get("preview_download_realizado", False):
             st.success("Download já confirmado. Conexão e envio ao Bling liberados.")
         elif st.button(
@@ -155,10 +157,7 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
             log_debug("Usuário confirmou a etapa de download e avançou para conexão/envio.", nivel="INFO")
             st.rerun()
     else:
-        if gtins_invalidos_reais > 0 or gtins_suspeitos > 0:
-            st.info("Ajuste os GTINs inválidos/suspeitos antes de liberar o download e o envio.")
-        else:
-            st.info("Ajuste a validação antes de liberar o download e o envio.")
+        st.info("Ajuste a validação principal antes de liberar o download e o envio.")
 
 
 def render_origem_site_metadata() -> None:
