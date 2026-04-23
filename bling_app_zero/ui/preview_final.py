@@ -14,7 +14,6 @@ from bling_app_zero.ui.preview_final_data import (
     garantir_df_final_canonico,
     zerar_colunas_video,
 )
-from bling_app_zero.ui.preview_final_gtin import render_acoes_gtin
 from bling_app_zero.ui.preview_final_sections import (
     render_bloco_fluxo_site,
     render_colunas_detectadas_sync,
@@ -29,10 +28,6 @@ from bling_app_zero.ui.preview_final_state import (
     obter_df_final_exclusivo,
     sincronizar_deposito_nome,
     sincronizar_estado_quando_df_mudar,
-)
-from bling_app_zero.utils.gtin import (
-    contar_gtins_invalidos_df,
-    contar_gtins_suspeitos_df,
 )
 
 
@@ -64,8 +59,6 @@ def render_preview_final() -> None:
 
     validacao_ok, _ = render_resumo_validacao(df_final, tipo_operacao)
 
-    df_final = render_acoes_gtin(df_final)
-
     df_final_atualizado = st.session_state.get("df_final", df_final)
     if isinstance(df_final_atualizado, pd.DataFrame) and safe_df_estrutura(df_final_atualizado):
         df_final = df_final_atualizado.copy().fillna("")
@@ -76,14 +69,6 @@ def render_preview_final() -> None:
         )
         df_final = zerar_colunas_video(df_final)
         st.session_state["df_final"] = df_final
-
-    gtins_invalidos_total = contar_gtins_invalidos_df(df_final)
-    gtins_suspeitos = contar_gtins_suspeitos_df(df_final)
-    gtins_invalidos_reais = max(int(gtins_invalidos_total) - int(gtins_suspeitos), 0)
-
-    if gtins_invalidos_reais > 0 or gtins_suspeitos > 0:
-        validacao_ok = False
-        st.session_state["preview_validacao_ok"] = False
 
     render_preview_dataframe(df_final)
     render_download(df_final, validacao_ok)
