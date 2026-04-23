@@ -64,7 +64,14 @@ def _sugerir_coluna_titulo(colunas: list[str]) -> str:
 
 
 def _sugerir_coluna_descricao(colunas: list[str], coluna_titulo: str = "") -> str:
-    for alvo in ["Descrição Curta", "Descricao Curta", "Descrição complementar", "Descricao complementar", "Descrição Completa", "Descricao Completa"]:
+    for alvo in [
+        "Descrição Curta",
+        "Descricao Curta",
+        "Descrição complementar",
+        "Descricao complementar",
+        "Descrição Completa",
+        "Descricao Completa",
+    ]:
         for coluna in colunas:
             if str(coluna).strip().lower() == alvo.lower() and coluna != coluna_titulo:
                 return coluna
@@ -76,35 +83,65 @@ def _sugerir_coluna_descricao(colunas: list[str], coluna_titulo: str = "") -> st
     return "Não otimizar descrição completa"
 
 
+def _get_secret_ou_env(*nomes: str) -> str:
+    for nome in nomes:
+        try:
+            valor = st.secrets.get(nome, "")
+        except Exception:
+            valor = ""
+
+        if valor:
+            return str(valor).strip()
+
+        valor_env = os.getenv(nome, "")
+        if valor_env:
+            return str(valor_env).strip()
+
+    return ""
+
+
+def _get_api_key() -> str:
+    return _get_secret_ou_env("OPENAI_API_KEY", "openai_api_key", "api_key")
+
+
+def _get_modelo() -> str:
+    modelo = _get_secret_ou_env("OPENAI_MODEL", "model", "MODEL", "openai_model")
+    return modelo or "gpt-4o-mini"
+
+
 def _get_openai_client():
     try:
         from openai import OpenAI
-    except Exception:
+    except Exception as exc:
+        st.session_state["erro_copy"] = f"Pacote openai não importou: {exc}"
         return None
 
-    try:
-        key = st.secrets.get("OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
-    except Exception:
-        key = os.getenv("OPENAI_API_KEY", "")
-
-    key = str(key or "").strip()
+    key = _get_api_key()
 
     if not key:
+        st.session_state["erro_copy"] = "OPENAI_API_KEY não configurada nos secrets."
         return None
 
     try:
         return OpenAI(api_key=key)
-    except Exception:
+    except Exception as exc:
+        st.session_state["erro_copy"] = f"Falha ao criar cliente OpenAI: {exc}"
         return None
 
 
-def _get_modelo() -> str:
-    try:
-        modelo = st.secrets.get("OPENAI_MODEL", "") or os.getenv("OPENAI_MODEL", "")
-    except Exception:
-        modelo = os.getenv("OPENAI_MODEL", "")
+def _status_ia() -> tuple[bool, str, str]:
+    api_key = _get_api_key()
+    modelo = _get_modelo()
 
-    return str(modelo or "gpt-4o-mini").strip()
+    if not api_key:
+        return False, modelo, "OPENAI_API_KEY não encontrada nos secrets."
+
+    try:
+        import openai  # noqa: F401
+    except Exception as exc:
+        return False, modelo, f"Pacote openai indisponível: {exc}"
+
+    return True, modelo, "IA real configurada."
 
 
 def _contexto_row(row: pd.Series) -> str:
@@ -161,6 +198,7 @@ Regras obrigatórias:
 - Não use aspas.
 - Não use ponto final.
 - Retorne somente o título final.
+- O título precisa ser diferente do texto original quando for possível melhorar.
 
 Texto original:
 {texto}
@@ -177,7 +215,7 @@ def _prompt_descricao(texto: str, contexto: str, limite: int, tamanho: str) -> s
 Você é especialista em copy para e-commerce brasileiro.
 
 Objetivo:
-Reformular a descrição completa do produto para ficar mais persuasiva e vender melhor.
+Reformular a descrição completa do produto para ficar mais persuasiva, natural e vendedora.
 
 Tamanho desejado:
 {tamanho}
@@ -192,6 +230,7 @@ Regras obrigatórias:
 - Não use aspas.
 - Não mencione IA.
 - Retorne somente a descrição final.
+- A descrição precisa ser diferente do texto original quando for possível melhorar.
 
 Texto original:
 {texto}
@@ -201,6 +240,21 @@ Contexto do produto:
 
 Descrição final:
 """.strip()
+
+
+def _fallback_local(texto: str, limite: int, tipo: str) -> str:
+    texto = str(texto or "").strip()
+
+    if not texto:
+        return ""
+
+    if tipo == "titulo":
+        return _limpar_texto_ia(texto, limite)
+
+    return _limpar_texto_ia(
+        f"{texto}. Uma ótima opção para quem busca praticidade, qualidade e excelente custo-benefício.",
+        limite,
+    )
 
 
 def _gerar_com_ia(
@@ -217,21 +271,18 @@ def _gerar_com_ia(
         return ""
 
     if client is None:
-        if tipo == "titulo":
-            return _limpar_texto_ia(texto, limite)
-
-        return _limpar_texto_ia(
-            f"{texto}. Ideal para quem busca praticidade, qualidade e ótimo custo-benefício no dia a dia.",
-            limite,
-        )
+        st.session_state["ia_copy_usou_fallback"] = True
+        return _fallback_local(texto, limite, tipo)
 
     try:
         contexto = _contexto_row(row)
 
         if tipo == "titulo":
             prompt = _prompt_titulo(texto, contexto, limite)
+            max_tokens = 80
         else:
             prompt = _prompt_descricao(texto, contexto, limite, tamanho_descricao)
+            max_tokens = 280
 
         resposta = client.chat.completions.create(
             model=_get_modelo(),
@@ -245,25 +296,23 @@ def _gerar_com_ia(
                     "content": prompt,
                 },
             ],
-            temperature=0.65,
-            max_tokens=280,
+            temperature=0.75,
+            max_tokens=max_tokens,
         )
 
         conteudo = resposta.choices[0].message.content if resposta.choices else ""
         saida = _limpar_texto_ia(conteudo, limite)
 
-        return saida or texto
+        if not saida:
+            st.session_state["ia_copy_usou_fallback"] = True
+            return _fallback_local(texto, limite, tipo)
+
+        return saida
 
     except Exception as exc:
         st.session_state["erro_copy"] = str(exc)
-
-        if tipo == "titulo":
-            return _limpar_texto_ia(texto, limite)
-
-        return _limpar_texto_ia(
-            f"{texto}. Ideal para quem busca praticidade, qualidade e ótimo custo-benefício no dia a dia.",
-            limite,
-        )
+        st.session_state["ia_copy_usou_fallback"] = True
+        return _fallback_local(texto, limite, tipo)
 
 
 def _linha_contem_palavras(row: pd.Series, palavras: list[str], colunas_busca: list[str]) -> bool:
@@ -281,6 +330,25 @@ def _linha_contem_palavras(row: pd.Series, palavras: list[str], colunas_busca: l
     return any(palavra.lower().strip() in texto for palavra in palavras if palavra.strip())
 
 
+def _contar_alteracoes(df_antes: pd.DataFrame, df_depois: pd.DataFrame, colunas: list[str]) -> int:
+    if not _df_valido(df_antes) or not _df_valido(df_depois):
+        return 0
+
+    total = 0
+
+    for coluna in colunas:
+        if coluna not in df_antes.columns or coluna not in df_depois.columns:
+            continue
+
+        serie_antes = df_antes[coluna].astype(str).fillna("").str.strip()
+        serie_depois = df_depois[coluna].astype(str).fillna("").str.strip()
+
+        limite = min(len(serie_antes), len(serie_depois))
+        total += int((serie_antes.iloc[:limite].values != serie_depois.iloc[:limite].values).sum())
+
+    return int(total)
+
+
 def _aplicar_copy(
     df: pd.DataFrame,
     coluna_titulo: str,
@@ -289,6 +357,9 @@ def _aplicar_copy(
     tamanho_descricao: str,
 ) -> pd.DataFrame:
     _fixar_etapa_preview_final()
+
+    st.session_state["erro_copy"] = ""
+    st.session_state["ia_copy_usou_fallback"] = False
 
     client = _get_openai_client()
     df_out = df.copy().fillna("")
@@ -375,6 +446,14 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
         return df_final
 
     st.markdown("### 🚀 Otimização de descrição com IA")
+
+    ia_ok, modelo, motivo = _status_ia()
+
+    if ia_ok:
+        st.success(f"✅ IA real conectada | Modelo: {modelo}")
+    else:
+        st.error(f"❌ IA real não conectada | {motivo}")
+        st.caption("O sistema vai usar fallback local. Nesse modo, o título pode ficar quase igual ao original.")
 
     df_base_session = st.session_state.get("df_final")
 
@@ -467,6 +546,14 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
         f"Descrição {tamanho_descricao.lower()}: até {_limite_descricao(tamanho_descricao)} caracteres"
     )
 
+    col_debug1, col_debug2, col_debug3 = st.columns(3)
+    with col_debug1:
+        st.metric("Modelo", modelo)
+    with col_debug2:
+        st.metric("Colunas escolhidas", len(colunas_escolhidas))
+    with col_debug3:
+        st.metric("Alterações na última prévia", int(st.session_state.get("copy_preview_total_alteracoes", 0) or 0))
+
     col_btn1, col_btn2 = st.columns(2)
 
     with col_btn1:
@@ -489,12 +576,19 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
                 tamanho_descricao=tamanho_descricao,
             )
 
+            total_alteracoes = _contar_alteracoes(df_base, df_prev, colunas_escolhidas)
+
             st.session_state["copy_preview"] = df_prev.copy()
             st.session_state["copy_preview_colunas"] = list(colunas_escolhidas)
+            st.session_state["copy_preview_total_alteracoes"] = int(total_alteracoes)
             st.session_state["df_final"] = df_base.copy()
             _fixar_etapa_preview_final()
 
-            st.success("Prévia de título/descrição gerada com sucesso.")
+            if total_alteracoes > 0:
+                st.success(f"Prévia gerada. {total_alteracoes} célula(s) foram alteradas.")
+            else:
+                st.warning("A prévia foi gerada, mas nenhuma célula mudou. Verifique se a IA real conectou e se as colunas escolhidas possuem texto.")
+
             st.rerun()
 
     with col_btn2:
@@ -522,9 +616,12 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
             st.success("Título/descrição aplicados no resultado final.")
             st.rerun()
 
+    if st.session_state.get("ia_copy_usou_fallback"):
+        st.warning("⚠️ A última geração usou fallback local. Isso significa que a OpenAI não respondeu corretamente.")
+
     erro = st.session_state.get("erro_copy")
     if erro:
-        with st.expander("⚠️ Erro da IA", expanded=False):
+        with st.expander("⚠️ Erro/diagnóstico da IA", expanded=True):
             st.code(str(erro))
 
     df_prev = st.session_state.get("copy_preview")
@@ -533,8 +630,9 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
         colunas_preview = [c for c in colunas_preview if c in df_prev.columns]
 
         if colunas_preview:
-            with st.expander("🔎 Prévia das alterações com IA", expanded=False):
+            with st.expander("🔎 Prévia das alterações com IA", expanded=True):
                 st.dataframe(df_prev[colunas_preview].head(10), use_container_width=True)
 
     _fixar_etapa_preview_final()
     return st.session_state.get("df_final", df_base)
+
