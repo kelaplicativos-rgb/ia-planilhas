@@ -395,3 +395,25 @@ def gerar_gtins_validos_em_colunas_automaticas(
     except Exception as e:
         logs.append(f"Erro na geração automática de GTIN: {e}")
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(), logs
+
+
+
+def contar_gtins_invalidos_df(df: pd.DataFrame) -> int:
+    """Conta GTINs inválidos em todas as colunas GTIN/EAN detectadas automaticamente."""
+    try:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return 0
+
+        total_invalidos = 0
+        for coluna in encontrar_colunas_gtin(df):
+            serie = df[coluna].fillna("").astype(str)
+            for valor in serie.tolist():
+                gtin = limpar_gtin(valor)
+                if not gtin:
+                    continue
+                if not validar_gtin_checksum(gtin):
+                    total_invalidos += 1
+        return total_invalidos
+    except Exception:
+        return 0
+
