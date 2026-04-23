@@ -315,6 +315,30 @@ def normalizar_imagens_pipe(valor: object) -> str:
     return "|".join(urls)
 
 
+def _eh_coluna_video(nome_coluna: object) -> bool:
+    nome = normalizar_texto(nome_coluna)
+    return bool(nome and any(token in nome for token in ["video", "vídeo", "youtube"]))
+
+
+def zerar_colunas_video(df: pd.DataFrame) -> pd.DataFrame:
+    if not safe_df_estrutura(df):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    colunas_video = [str(col) for col in base.columns if _eh_coluna_video(col)]
+
+    for coluna in colunas_video:
+        base[coluna] = ""
+
+    if colunas_video:
+        log_debug(
+            f"Colunas de vídeo zeradas automaticamente: {', '.join(colunas_video)}",
+            nivel="INFO",
+        )
+
+    return base.fillna("")
+
+
 def _coluna_encontrada(df: pd.DataFrame, candidatos: list[str]) -> str:
     if not safe_df_estrutura(df):
         return ""
@@ -573,6 +597,7 @@ def render_controles_gtin(df_base: pd.DataFrame | None = None) -> None:
                 df_sessao = st.session_state.get(chave)
                 if isinstance(df_sessao, pd.DataFrame) and safe_df_estrutura(df_sessao):
                     df_limpo, total_limpos = limpar_gtins_invalidos_df(df_sessao)
+                    df_limpo = zerar_colunas_video(df_limpo)
                     st.session_state[chave] = df_limpo
                     st.session_state["gtin_ultimo_total_limpos"] = int(total_limpos)
 
@@ -674,6 +699,7 @@ def limpar_gtins_invalidos_df(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
         total_limpos += removidos
         base[coluna_gtin] = serie_limpa
 
+    base = zerar_colunas_video(base)
     return base.fillna(""), int(total_limpos)
 
 
@@ -776,12 +802,16 @@ def blindar_df_para_bling(
         if coluna_deposito:
             base[coluna_deposito] = deposito_nome
 
+    base = zerar_colunas_video(base)
     return base.fillna("")
 
 
 def dataframe_para_csv_bytes(df: pd.DataFrame) -> bytes:
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
+
+    if isinstance(df, pd.DataFrame) and safe_df_estrutura(df):
+        df = zerar_colunas_video(df)
 
     return df.fillna("").to_csv(index=False).encode("utf-8-sig")
 
@@ -791,6 +821,8 @@ def validar_df_para_download(df: pd.DataFrame, tipo_operacao: str) -> tuple[bool
 
     if not safe_df_estrutura(df):
         return False, ["O DataFrame final não foi gerado."]
+
+    df = zerar_colunas_video(df)
 
     if len(df.columns) == 0:
         erros.append("A planilha final não possui colunas.")
