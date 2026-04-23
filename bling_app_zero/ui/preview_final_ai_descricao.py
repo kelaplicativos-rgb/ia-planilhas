@@ -43,17 +43,37 @@ def _eh_coluna_descricao(coluna) -> bool:
     return "descr" in nome
 
 
-def _identificar_colunas(df: pd.DataFrame) -> list[str]:
-    cols = []
+def _identificar_colunas_disponiveis(df: pd.DataFrame) -> list[str]:
+    if not _df_valido(df):
+        return []
 
-    for coluna in df.columns:
-        if _coluna_protegida(coluna):
-            continue
+    return [str(coluna) for coluna in df.columns if not _coluna_protegida(coluna)]
 
-        if _eh_coluna_titulo(coluna) or _eh_coluna_descricao(coluna):
-            cols.append(coluna)
 
-    return cols
+def _sugerir_coluna_titulo(colunas: list[str]) -> str:
+    for alvo in ["Descrição", "Descricao", "Nome", "Produto", "Título", "Titulo"]:
+        for coluna in colunas:
+            if str(coluna).strip().lower() == alvo.lower():
+                return coluna
+
+    for coluna in colunas:
+        if _eh_coluna_titulo(coluna):
+            return coluna
+
+    return "Não otimizar título"
+
+
+def _sugerir_coluna_descricao(colunas: list[str], coluna_titulo: str = "") -> str:
+    for alvo in ["Descrição Curta", "Descricao Curta", "Descrição complementar", "Descricao complementar", "Descrição Completa", "Descricao Completa"]:
+        for coluna in colunas:
+            if str(coluna).strip().lower() == alvo.lower() and coluna != coluna_titulo:
+                return coluna
+
+    for coluna in colunas:
+        if coluna != coluna_titulo and _eh_coluna_descricao(coluna):
+            return coluna
+
+    return "Não otimizar descrição completa"
 
 
 def _get_openai_client():
@@ -125,13 +145,12 @@ def _limite_descricao(tamanho: str) -> int:
     return 350
 
 
-def _prompt_copy(texto: str, contexto: str, coluna: str, limite: int) -> str:
-    if _eh_coluna_titulo(coluna):
-        return f"""
-Você é especialista em títulos para e-commerce brasileiro.
+def _prompt_titulo(texto: str, contexto: str, limite: int) -> str:
+    return f"""
+Você é especialista em títulos de produtos para e-commerce brasileiro.
 
 Objetivo:
-Criar um título comercial, claro e forte para venda.
+Criar um título comercial, claro, direto e forte para venda.
 
 Regras obrigatórias:
 - Máximo de {limite} caracteres.
@@ -152,11 +171,16 @@ Contexto do produto:
 Título final:
 """.strip()
 
+
+def _prompt_descricao(texto: str, contexto: str, limite: int, tamanho: str) -> str:
     return f"""
 Você é especialista em copy para e-commerce brasileiro.
 
 Objetivo:
-Reformular a descrição para ficar mais persuasiva e vender melhor.
+Reformular a descrição completa do produto para ficar mais persuasiva e vender melhor.
+
+Tamanho desejado:
+{tamanho}
 
 Regras obrigatórias:
 - Máximo de {limite} caracteres.
@@ -179,14 +203,21 @@ Descrição final:
 """.strip()
 
 
-def _gerar_copy(texto: str, row: pd.Series, coluna: str, client, limite: int) -> str:
+def _gerar_com_ia(
+    texto: str,
+    row: pd.Series,
+    client,
+    limite: int,
+    tipo: str,
+    tamanho_descricao: str = "Média",
+) -> str:
     texto = str(texto or "").strip()
 
     if not texto:
         return ""
 
     if client is None:
-        if _eh_coluna_titulo(coluna):
+        if tipo == "titulo":
             return _limpar_texto_ia(texto, limite)
 
         return _limpar_texto_ia(
@@ -195,6 +226,13 @@ def _gerar_copy(texto: str, row: pd.Series, coluna: str, client, limite: int) ->
         )
 
     try:
+        contexto = _contexto_row(row)
+
+        if tipo == "titulo":
+            prompt = _prompt_titulo(texto, contexto, limite)
+        else:
+            prompt = _prompt_descricao(texto, contexto, limite, tamanho_descricao)
+
         resposta = client.chat.completions.create(
             model=_get_modelo(),
             messages=[
@@ -204,11 +242,11 @@ def _gerar_copy(texto: str, row: pd.Series, coluna: str, client, limite: int) ->
                 },
                 {
                     "role": "user",
-                    "content": _prompt_copy(texto, _contexto_row(row), str(coluna), limite),
+                    "content": prompt,
                 },
             ],
             temperature=0.65,
-            max_tokens=260,
+            max_tokens=280,
         )
 
         conteudo = resposta.choices[0].message.content if resposta.choices else ""
@@ -219,7 +257,7 @@ def _gerar_copy(texto: str, row: pd.Series, coluna: str, client, limite: int) ->
     except Exception as exc:
         st.session_state["erro_copy"] = str(exc)
 
-        if _eh_coluna_titulo(coluna):
+        if tipo == "titulo":
             return _limpar_texto_ia(texto, limite)
 
         return _limpar_texto_ia(
@@ -228,14 +266,14 @@ def _gerar_copy(texto: str, row: pd.Series, coluna: str, client, limite: int) ->
         )
 
 
-def _linha_contem_palavras(row: pd.Series, palavras: list[str], colunas: list[str]) -> bool:
+def _linha_contem_palavras(row: pd.Series, palavras: list[str], colunas_busca: list[str]) -> bool:
     if not palavras:
         return True
 
     texto_linha = []
 
-    for coluna in colunas:
-        if coluna in row.index:
+    for coluna in colunas_busca:
+        if coluna and coluna in row.index:
             texto_linha.append(str(row[coluna] or "").lower())
 
     texto = " ".join(texto_linha)
@@ -245,7 +283,8 @@ def _linha_contem_palavras(row: pd.Series, palavras: list[str], colunas: list[st
 
 def _aplicar_copy(
     df: pd.DataFrame,
-    colunas: list[str],
+    coluna_titulo: str,
+    coluna_descricao: str,
     palavras_chave: list[str],
     tamanho_descricao: str,
 ) -> pd.DataFrame:
@@ -254,9 +293,19 @@ def _aplicar_copy(
     client = _get_openai_client()
     df_out = df.copy().fillna("")
 
+    colunas_busca = []
+    if coluna_titulo and coluna_titulo in df_out.columns:
+        colunas_busca.append(coluna_titulo)
+    if coluna_descricao and coluna_descricao in df_out.columns:
+        colunas_busca.append(coluna_descricao)
+
+    if not colunas_busca:
+        st.warning("Selecione pelo menos uma coluna válida para otimizar.")
+        return df_out
+
     indices_processar = [
         idx for idx in df_out.index
-        if _linha_contem_palavras(df_out.loc[idx], palavras_chave, colunas)
+        if _linha_contem_palavras(df_out.loc[idx], palavras_chave, colunas_busca)
     ]
 
     total = len(indices_processar)
@@ -265,28 +314,43 @@ def _aplicar_copy(
         st.warning("Nenhum produto encontrado com as palavras-chave informadas.")
         return df_out
 
-    barra = st.progress(0, text="Gerando descrições com IA...")
+    barra = st.progress(0, text="Gerando títulos e descrições com IA...")
+
+    limite_titulo = 60
+    limite_desc = _limite_descricao(tamanho_descricao)
 
     for i, idx in enumerate(indices_processar):
         row = df_out.loc[idx]
 
-        for coluna in colunas:
-            if coluna not in df_out.columns or _coluna_protegida(coluna):
-                continue
+        if coluna_titulo and coluna_titulo in df_out.columns and not _coluna_protegida(coluna_titulo):
+            valor_titulo = str(df_out.at[idx, coluna_titulo] or "").strip()
+            df_out.at[idx, coluna_titulo] = _gerar_com_ia(
+                texto=valor_titulo,
+                row=row,
+                client=client,
+                limite=limite_titulo,
+                tipo="titulo",
+            )
 
-            limite = 59 if _eh_coluna_titulo(coluna) else _limite_descricao(tamanho_descricao)
-            valor = str(df_out.at[idx, coluna] or "").strip()
-
-            df_out.at[idx, coluna] = _gerar_copy(valor, row, str(coluna), client, limite)
+        if coluna_descricao and coluna_descricao in df_out.columns and not _coluna_protegida(coluna_descricao):
+            valor_desc = str(df_out.at[idx, coluna_descricao] or "").strip()
+            df_out.at[idx, coluna_descricao] = _gerar_com_ia(
+                texto=valor_desc,
+                row=row,
+                client=client,
+                limite=limite_desc,
+                tipo="descricao",
+                tamanho_descricao=tamanho_descricao,
+            )
 
         pct = int(((i + 1) / total) * 100)
-        barra.progress(pct, text=f"Gerando descrições com IA... {pct}%")
+        barra.progress(pct, text=f"Gerando títulos e descrições com IA... {pct}%")
 
     barra.empty()
     return df_out.fillna("")
 
 
-def _aplicar_somente_colunas_descricao(
+def _aplicar_somente_colunas_escolhidas(
     df_base: pd.DataFrame,
     df_preview: pd.DataFrame,
     colunas: list[str],
@@ -319,22 +383,48 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
     else:
         df_base = df_final.copy().fillna("")
 
-    colunas = _identificar_colunas(df_base)
+    colunas = _identificar_colunas_disponiveis(df_base)
 
     if not colunas:
-        st.info("Nenhuma coluna de título ou descrição encontrada.")
+        st.info("Nenhuma coluna disponível para otimização.")
         return df_base
 
     st.caption(
-        "A IA altera apenas as colunas selecionadas. "
-        "Título fica limitado a 59 caracteres. Descrições podem ser pequenas, médias ou grandes."
+        "Selecione separadamente a coluna de título e a coluna de descrição completa. "
+        "Código, GTIN, preço, estoque, depósito, imagens e vídeos ficam protegidos."
     )
 
-    colunas_escolhidas = st.multiselect(
-        "Colunas para otimizar",
-        options=colunas,
-        default=colunas[:2],
-        key="copy_pro_colunas",
+    opcoes_titulo = ["Não otimizar título"] + colunas
+    sugestao_titulo = _sugerir_coluna_titulo(colunas)
+    index_titulo = opcoes_titulo.index(sugestao_titulo) if sugestao_titulo in opcoes_titulo else 0
+
+    coluna_titulo_escolhida = st.selectbox(
+        "Coluna do título do produto (máx. 60 caracteres)",
+        options=opcoes_titulo,
+        index=index_titulo,
+        key="copy_pro_coluna_titulo",
+        on_change=_fixar_etapa_preview_final,
+    )
+
+    opcoes_descricao = ["Não otimizar descrição completa"] + [
+        c for c in colunas if c != coluna_titulo_escolhida
+    ]
+    sugestao_descricao = _sugerir_coluna_descricao(colunas, coluna_titulo_escolhida)
+    index_descricao = opcoes_descricao.index(sugestao_descricao) if sugestao_descricao in opcoes_descricao else 0
+
+    coluna_descricao_escolhida = st.selectbox(
+        "Coluna da descrição completa do produto",
+        options=opcoes_descricao,
+        index=index_descricao,
+        key="copy_pro_coluna_descricao",
+        on_change=_fixar_etapa_preview_final,
+    )
+
+    tamanho_descricao = st.selectbox(
+        "Tamanho da descrição completa",
+        options=["Pequena", "Média", "Grande"],
+        index=1,
+        key="copy_pro_tamanho_descricao",
         on_change=_fixar_etapa_preview_final,
     )
 
@@ -350,7 +440,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
 
     if modo_filtro == "Somente produtos com palavras-chave":
         texto_palavras = st.text_input(
-            "Palavras-chave nas descrições/títulos",
+            "Palavras-chave no título/descrição",
             placeholder="Ex: fone, carregador, cabo usb",
             key="copy_pro_palavras_chave",
             on_change=_fixar_etapa_preview_final,
@@ -362,17 +452,18 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
             if p.strip()
         ]
 
-    tamanho_descricao = st.selectbox(
-        "Tamanho das descrições",
-        options=["Pequena", "Média", "Grande"],
-        index=1,
-        key="copy_pro_tamanho_descricao",
-        on_change=_fixar_etapa_preview_final,
-    )
+    coluna_titulo = "" if coluna_titulo_escolhida == "Não otimizar título" else coluna_titulo_escolhida
+    coluna_descricao = "" if coluna_descricao_escolhida == "Não otimizar descrição completa" else coluna_descricao_escolhida
+
+    colunas_escolhidas = []
+    if coluna_titulo:
+        colunas_escolhidas.append(coluna_titulo)
+    if coluna_descricao:
+        colunas_escolhidas.append(coluna_descricao)
 
     st.caption(
         f"Produtos no arquivo: {len(df_base)} | "
-        f"Títulos: até 59 caracteres | "
+        f"Título: até 60 caracteres | "
         f"Descrição {tamanho_descricao.lower()}: até {_limite_descricao(tamanho_descricao)} caracteres"
     )
 
@@ -383,7 +474,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
             _fixar_etapa_preview_final()
 
             if not colunas_escolhidas:
-                st.warning("Selecione pelo menos uma coluna de título ou descrição.")
+                st.warning("Selecione a coluna de título, a coluna de descrição completa ou ambas.")
                 return df_base
 
             if modo_filtro == "Somente produtos com palavras-chave" and not palavras_chave:
@@ -392,7 +483,8 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
 
             df_prev = _aplicar_copy(
                 df=df_base,
-                colunas=list(colunas_escolhidas),
+                coluna_titulo=coluna_titulo,
+                coluna_descricao=coluna_descricao,
                 palavras_chave=palavras_chave,
                 tamanho_descricao=tamanho_descricao,
             )
@@ -402,7 +494,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
             st.session_state["df_final"] = df_base.copy()
             _fixar_etapa_preview_final()
 
-            st.success("Prévia de descrição gerada com sucesso.")
+            st.success("Prévia de título/descrição gerada com sucesso.")
             st.rerun()
 
     with col_btn2:
@@ -416,7 +508,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
                 st.warning("Gere a prévia antes de aplicar.")
                 return df_base
 
-            df_resultado = _aplicar_somente_colunas_descricao(
+            df_resultado = _aplicar_somente_colunas_escolhidas(
                 df_base=df_base,
                 df_preview=df_prev,
                 colunas=list(colunas_prev),
@@ -427,7 +519,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
             st.session_state["ia_descricao_aplicada"] = True
             _fixar_etapa_preview_final()
 
-            st.success("Descrições aplicadas no resultado final.")
+            st.success("Título/descrição aplicados no resultado final.")
             st.rerun()
 
     erro = st.session_state.get("erro_copy")
@@ -441,7 +533,7 @@ def render_ai_descricao(df_final: pd.DataFrame) -> pd.DataFrame:
         colunas_preview = [c for c in colunas_preview if c in df_prev.columns]
 
         if colunas_preview:
-            with st.expander("🔎 Prévia das descrições com IA", expanded=False):
+            with st.expander("🔎 Prévia das alterações com IA", expanded=False):
                 st.dataframe(df_prev[colunas_preview].head(10), use_container_width=True)
 
     _fixar_etapa_preview_final()
