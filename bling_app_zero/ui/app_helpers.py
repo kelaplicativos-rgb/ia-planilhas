@@ -354,6 +354,17 @@ def _todos_digitos_iguais(texto: str) -> bool:
     return bool(texto) and len(set(texto)) == 1
 
 
+def _calcular_digito_gtin(corpo: str) -> int:
+    soma = 0
+    peso = 3
+
+    for digito in reversed(corpo):
+        soma += int(digito) * peso
+        peso = 1 if peso == 3 else 3
+
+    return (10 - (soma % 10)) % 10
+
+
 def _gtin_checksum_valido(gtin: str) -> bool:
     if not gtin or not gtin.isdigit():
         return False
@@ -363,15 +374,7 @@ def _gtin_checksum_valido(gtin: str) -> bool:
 
     corpo = gtin[:-1]
     digito_informado = int(gtin[-1])
-
-    soma = 0
-    peso = 3
-
-    for digito in reversed(corpo):
-        soma += int(digito) * peso
-        peso = 1 if peso == 3 else 3
-
-    digito_calculado = (10 - (soma % 10)) % 10
+    digito_calculado = _calcular_digito_gtin(corpo)
     return digito_calculado == digito_informado
 
 
@@ -389,6 +392,55 @@ def _gtin_tem_prefixo_brasil(gtin: str) -> bool:
     return True
 
 
+def _gtin_tem_prefixo_gs1_alocado(gtin: str) -> bool:
+    """
+    Evita aceitar prefixos inválidos que o Bling rejeita.
+    Ex.: 687.
+    """
+    if not gtin or len(gtin) not in {13, 14}:
+        return True
+
+    prefixo = int(gtin[:3] if len(gtin) == 13 else gtin[1:4])
+
+    faixas_validas = [
+        (0, 19), (30, 39), (60, 139), (200, 299), (300, 379),
+        (380, 380), (383, 383), (385, 385), (387, 387),
+        (400, 440), (450, 459), (460, 469),
+        (470, 470), (471, 471), (474, 474), (475, 475),
+        (476, 476), (477, 477), (478, 478), (479, 479),
+        (480, 480), (481, 481), (482, 482), (484, 484),
+        (485, 485), (486, 486), (487, 487), (489, 489),
+        (490, 499), (500, 509), (520, 521), (528, 528),
+        (529, 529), (530, 530), (531, 531), (535, 535),
+        (539, 539), (540, 549), (560, 560), (569, 569),
+        (570, 579), (590, 590), (594, 594), (599, 599),
+        (600, 601), (603, 603), (608, 608), (609, 609),
+        (611, 611), (613, 613), (615, 615), (616, 616),
+        (618, 618), (619, 619), (621, 621), (622, 622),
+        (624, 624), (625, 625), (626, 626), (627, 627),
+        (628, 628), (629, 629), (640, 649),
+        (690, 699), (700, 709), (729, 729),
+        (730, 739), (740, 740), (741, 741), (742, 742),
+        (743, 743), (744, 744), (745, 745), (746, 746),
+        (750, 750), (754, 755), (759, 759),
+        (760, 769), (770, 771), (773, 773),
+        (775, 775), (777, 777), (778, 778), (779, 779),
+        (780, 780), (784, 784), (785, 785), (786, 786),
+        (789, 790),
+        (800, 839), (840, 849), (850, 850),
+        (858, 858), (859, 859), (860, 860),
+        (865, 865), (867, 867), (868, 869),
+        (870, 879), (880, 880), (883, 883),
+        (884, 884), (885, 885), (888, 888),
+        (890, 890), (893, 893), (896, 896),
+        (899, 899), (900, 919), (930, 939),
+        (940, 949), (950, 950), (951, 951),
+        (955, 955), (958, 958), (977, 979),
+    ]
+
+    return any(inicio <= prefixo <= fim for inicio, fim in faixas_validas)
+
+
 def _gtin_valido(valor: object, aceitar_apenas_prefixo_br: bool = False) -> bool:
     texto = _somente_digitos(valor)
 
@@ -404,10 +456,47 @@ def _gtin_valido(valor: object, aceitar_apenas_prefixo_br: bool = False) -> bool
     if not _gtin_checksum_valido(texto):
         return False
 
+    if not _gtin_tem_prefixo_gs1_alocado(texto):
+        return False
+
     if aceitar_apenas_prefixo_br and not _gtin_tem_prefixo_brasil(texto):
         return False
 
     return True
+
+
+def _gerar_gtin_automatico(seed: object = "", indice: int = 0) -> str:
+    """
+    Gera GTIN-13 válido com prefixo Brasil 789.
+    Usa seed + índice para reduzir repetição.
+    """
+    seed_digitos = _somente_digitos(seed)
+    idx = max(int(indice or 0), 0)
+
+    base_seed = f"{seed_digitos}{idx:09d}"
+    sufixo = base_seed[-9:].zfill(9)
+
+    corpo = f"789{sufixo}"
+    digito = _calcular_digito_gtin(corpo)
+    return f"{corpo}{digito}"
+
+
+def _normalizar_ou_gerar_gtin(
+    valor: object,
+    *,
+    aceitar_apenas_prefixo_br: bool = False,
+    gerar_automatico: bool = False,
+    indice: int = 0,
+) -> str:
+    texto = _somente_digitos(valor)
+
+    if texto and _gtin_valido(texto, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br):
+        return texto
+
+    if gerar_automatico:
+        return _gerar_gtin_automatico(seed=valor, indice=indice)
+
+    return ""
 
 
 def _limpar_gtin(valor: object, aceitar_apenas_prefixo_br: bool = False) -> str:
@@ -460,6 +549,9 @@ def blindar_df_para_bling(
     aceitar_apenas_prefixo_br = bool(
         st.session_state.get("gtin_apenas_prefixo_br", False)
     )
+    gerar_gtin_automatico = bool(
+        st.session_state.get("gtin_gerar_automatico", True)
+    )
 
     for col in base.columns:
         nome = normalizar_texto(col)
@@ -490,20 +582,44 @@ def blindar_df_para_bling(
     )
 
     total_limpados = 0
+    total_gerados = 0
+
     for coluna_gtin in colunas_gtin:
         serie_original = base[coluna_gtin].astype(str).fillna("")
-        serie_limpa = serie_original.apply(
-            lambda v: _limpar_gtin(v, aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br)
-        )
+        novos_valores: list[str] = []
 
-        removidos = int(
-            (
-                serie_original.str.strip().replace({"nan": "", "None": "", "none": ""}).ne("")
-                & serie_limpa.eq("")
-            ).sum()
+        for indice_linha, valor_original in enumerate(serie_original.tolist()):
+            valor_final = _normalizar_ou_gerar_gtin(
+                valor_original,
+                aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+                gerar_automatico=gerar_gtin_automatico,
+                indice=indice_linha,
+            )
+
+            tinha_valor = bool(str(valor_original).strip())
+            valor_original_digitos = _somente_digitos(valor_original)
+            era_invalido = bool(
+                valor_original_digitos and not _gtin_valido(
+                    valor_original_digitos,
+                    aceitar_apenas_prefixo_br=aceitar_apenas_prefixo_br,
+                )
+            )
+
+            if tinha_valor and era_invalido:
+                if valor_final:
+                    total_gerados += 1
+                else:
+                    total_limpados += 1
+
+            novos_valores.append(valor_final)
+
+        base[coluna_gtin] = novos_valores
+
+    if total_gerados > 0:
+        log_debug(
+            f"GTINs inválidos substituídos por GTIN automático válido: {total_gerados}",
+            nivel="INFO",
         )
-        total_limpados += removidos
-        base[coluna_gtin] = serie_limpa
 
     if total_limpados > 0:
         log_debug(
