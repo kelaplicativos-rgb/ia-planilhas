@@ -57,6 +57,34 @@ def _safe_import_bling_sync():
         return None
 
 
+def _normalizar_nome_coluna(valor: Any) -> str:
+    return normalizar_texto(str(valor or ""))
+
+
+def _eh_coluna_video(nome_coluna: Any) -> bool:
+    nome = _normalizar_nome_coluna(nome_coluna)
+    return bool(nome and any(token in nome for token in ["video", "vídeo", "youtube"]))
+
+
+def _zerar_colunas_video(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    colunas_video = [str(col) for col in base.columns if _eh_coluna_video(col)]
+
+    for coluna in colunas_video:
+        base[coluna] = ""
+
+    if colunas_video:
+        log_debug(
+            f"Blindagem final aplicada nas colunas de vídeo: {', '.join(colunas_video)}",
+            nivel="INFO",
+        )
+
+    return base.fillna("")
+
+
 def _normalizar_df_visual(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -67,6 +95,7 @@ def _normalizar_df_visual(df: pd.DataFrame) -> pd.DataFrame:
         if nome in {"url imagens", "url imagem", "imagens", "imagem"} or "imagem" in nome:
             base[col] = base[col].apply(normalizar_imagens_pipe)
 
+    base = _zerar_colunas_video(base)
     return base
 
 
@@ -323,6 +352,7 @@ def _garantir_df_final_canonico(df: pd.DataFrame, tipo_operacao: str, deposito_n
     base = _garantir_coluna_codigo_canonica(base)
     base = _garantir_coluna_descricao_canonica(base, tipo_operacao)
     base = _garantir_coluna_descricao_curta_canonica(base, tipo_operacao)
+    base = _zerar_colunas_video(base)
 
     return base.fillna("")
 
@@ -567,6 +597,8 @@ def _enviar_para_bling(df_final: pd.DataFrame, tipo_operacao: str, deposito_nome
         st.error("Serviço de sincronização do Bling não foi carregado.")
         return
 
+    df_final = _zerar_colunas_video(df_final)
+
     st.session_state["preview_envio_em_execucao"] = True
     st.session_state["bling_envio_resultado"] = None
     st.session_state["preview_envio_resumo"] = {
@@ -801,6 +833,8 @@ def _render_colunas_detectadas_sync(df_final: pd.DataFrame) -> None:
 def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
     st.markdown("### Preview final")
 
+    df_final = _zerar_colunas_video(df_final)
+
     if df_final.empty:
         st.dataframe(pd.DataFrame(columns=df_final.columns), use_container_width=True)
         return
@@ -813,7 +847,9 @@ def _render_preview_dataframe(df_final: pd.DataFrame) -> None:
 def _render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
     st.markdown("### Download da planilha padrão Bling")
 
+    df_final = _zerar_colunas_video(df_final)
     csv_bytes = dataframe_para_csv_bytes(df_final)
+
     st.download_button(
         label="📥 Baixar CSV final",
         data=csv_bytes,
@@ -1048,6 +1084,7 @@ def render_preview_final() -> None:
         tipo_operacao=tipo_operacao,
         deposito_nome=deposito_nome,
     )
+    df_final = _zerar_colunas_video(df_final)
     st.session_state["df_final"] = df_final
     _sincronizar_estado_quando_df_mudar(df_final)
 
