@@ -36,12 +36,18 @@ def _primeiro(*valores: Any) -> str:
 
 
 def _normalizar_preco(valor: Any) -> str:
-    texto = _safe_str(valor)
-    if not texto:
+    if valor is None:
         return ""
 
     if isinstance(valor, (int, float)):
-        return f"{float(valor):.2f}".replace(".", ",")
+        numero = float(valor)
+        if numero <= 0:
+            return ""
+        return f"{numero:.2f}".replace(".", ",")
+
+    texto = _safe_str(valor)
+    if not texto:
+        return ""
 
     texto = texto.replace("R$", "").replace("r$", "").strip()
     texto = re.sub(r"[^\d,.\-]", "", texto)
@@ -73,12 +79,30 @@ def _normalizar_gtin(valor: Any) -> str:
 
 
 def _normalizar_estoque(valor: Any) -> int:
+    if isinstance(valor, bool):
+        return int(valor)
+
+    if isinstance(valor, (int, float)):
+        return max(int(valor), 0)
+
     texto = _safe_str(valor).lower()
 
     if not texto:
         return 0
 
-    if any(t in texto for t in ["sem estoque", "indisponível", "indisponivel", "esgotado", "zerado", "out of stock"]):
+    if any(
+        termo in texto
+        for termo in [
+            "sem estoque",
+            "indisponível",
+            "indisponivel",
+            "esgotado",
+            "zerado",
+            "out of stock",
+            "sold out",
+            "unavailable",
+        ]
+    ):
         return 0
 
     match = re.search(r"(\d+)", texto)
@@ -88,7 +112,17 @@ def _normalizar_estoque(valor: Any) -> int:
         except Exception:
             return 0
 
-    if any(t in texto for t in ["disponível", "disponivel", "em estoque", "in stock", "available", "comprar"]):
+    if any(
+        termo in texto
+        for termo in [
+            "disponível",
+            "disponivel",
+            "em estoque",
+            "in stock",
+            "available",
+            "comprar",
+        ]
+    ):
         return 1
 
     return 0
@@ -98,18 +132,26 @@ def _limpar_nome(nome: Any) -> str:
     texto = _safe_str(nome)
     texto = re.sub(r"\s*[-|]\s*Mega Center.*$", "", texto, flags=re.I)
     texto = re.sub(r"\s*[-|]\s*Comprar.*$", "", texto, flags=re.I)
-    return texto.strip()
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
 def _json_loads_seguro(texto: str) -> Any:
+    texto = _safe_str(texto)
+    if not texto:
+        return None
+
     try:
         return json.loads(texto)
     except Exception:
-        try:
-            texto = re.sub(r"[\x00-\x1f]+", " ", texto)
-            return json.loads(texto)
-        except Exception:
-            return None
+        pass
+
+    try:
+        texto = re.sub(r"[\x00-\x1f]+", " ", texto)
+        texto = texto.strip()
+        return json.loads(texto)
+    except Exception:
+        return None
 
 
 def _flatten_jsonld(data: Any) -> List[Dict[str, Any]]:
@@ -131,8 +173,6 @@ def _flatten_jsonld(data: Any) -> List[Dict[str, Any]]:
 
 
 def _extrair_jsonld(soup: BeautifulSoup) -> Dict[str, Any]:
-    melhor: Dict[str, Any] = {}
-
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         bruto = script.string or script.get_text(" ", strip=True)
         data = _json_loads_seguro(bruto)
@@ -143,18 +183,19 @@ def _extrair_jsonld(soup: BeautifulSoup) -> Dict[str, Any]:
             tipo = item.get("@type") or item.get("type") or ""
             tipo_txt = " ".join(tipo) if isinstance(tipo, list) else str(tipo)
 
-            if "product" not in tipo_txt.lower():
-                continue
+            if "product" in tipo_txt.lower():
+                return item
 
-            melhor = item
-            return melhor
-
-    return melhor
+    return {}
 
 
 def _extrair_meta(soup: BeautifulSoup, *nomes: str) -> str:
     for nome in nomes:
-        meta = soup.find("meta", attrs={"property": nome}) or soup.find("meta", attrs={"name": nome})
+        meta = (
+            soup.find("meta", attrs={"property": nome})
+            or soup.find("meta", attrs={"name": nome})
+            or soup.find("meta", attrs={"itemprop": nome})
+        )
         if meta and meta.get("content"):
             return _safe_str(meta.get("content"))
     return ""
@@ -168,6 +209,9 @@ def _extrair_por_seletores(soup: BeautifulSoup, seletores: List[str]) -> str:
                 texto = el.get_text(" ", strip=True)
                 if texto:
                     return _safe_str(texto)
+                valor = el.get("content") or el.get("value") or el.get("data-price")
+                if valor:
+                    return _safe_str(valor)
         except Exception:
             continue
     return ""
@@ -201,6 +245,8 @@ def _imagem_valida(url: str) -> bool:
         "youtube",
         "pixel",
         "tracking",
+        "loader",
+        "blank",
     ]
 
     if any(b in u for b in bloqueios):
@@ -237,10 +283,15 @@ def _extrair_imagens(soup: BeautifulSoup, base_url: str, jsonld: Dict[str, Any])
             if not src:
                 continue
 
-            if " " in str(src) and "," in str(src):
-                src = str(src).split(",")[0].split(" ")[0]
+            src = str(src)
 
-            imagens.append(_resolver_imagem(str(src), base_url))
+            if "," in src:
+                src = src.split(",")[0]
+
+            if " " in src:
+                src = src.split(" ")[0]
+
+            imagens.append(_resolver_imagem(src, base_url))
 
     final = []
     vistos = set()
@@ -264,11 +315,21 @@ def _extrair_preco_jsonld(jsonld: Dict[str, Any]) -> str:
         offers = offers[0]
 
     if isinstance(offers, dict):
+        price_spec = offers.get("priceSpecification")
+        price_spec_price = ""
+
+        if isinstance(price_spec, dict):
+            price_spec_price = price_spec.get("price")
+        elif isinstance(price_spec, list) and price_spec:
+            primeiro = price_spec[0]
+            if isinstance(primeiro, dict):
+                price_spec_price = primeiro.get("price")
+
         return _normalizar_preco(
             offers.get("price")
             or offers.get("lowPrice")
             or offers.get("highPrice")
-            or offers.get("priceSpecification", {}).get("price")
+            or price_spec_price
         )
 
     return ""
@@ -289,14 +350,14 @@ def _extrair_estoque_jsonld(jsonld: Dict[str, Any]) -> int:
 
 def _extrair_sku_texto(texto: str) -> str:
     padroes = [
-        r"\bSKU[:\s#-]*([A-Z0-9._/-]{3,40})",
-        r"\bC[ÓO]D(?:IGO)?[:\s#-]*([A-Z0-9._/-]{3,40})",
-        r"\bREF(?:ER[ÊE]NCIA)?[:\s#-]*([A-Z0-9._/-]{3,40})",
-        r"\bMODELO[:\s#-]*([A-Z0-9._/-]{3,40})",
+        r"\bSKU[:\s#-]*([A-Z0-9._/-]{3,60})",
+        r"\bC[ÓO]D(?:IGO)?[:\s#-]*([A-Z0-9._/-]{3,60})",
+        r"\bREF(?:ER[ÊE]NCIA)?[:\s#-]*([A-Z0-9._/-]{3,60})",
+        r"\bMODELO[:\s#-]*([A-Z0-9._/-]{3,60})",
     ]
 
     for padrao in padroes:
-        match = re.search(padrao, texto, flags=re.I)
+        match = re.search(padrao, texto or "", flags=re.I)
         if match:
             return _safe_str(match.group(1))
 
@@ -312,7 +373,7 @@ def _extrair_gtin_texto(texto: str) -> str:
     ]
 
     for padrao in padroes:
-        match = re.search(padrao, texto, flags=re.I)
+        match = re.search(padrao, texto or "", flags=re.I)
         if match:
             gtin = _normalizar_gtin(match.group(1))
             if gtin:
@@ -333,6 +394,7 @@ def _extrair_categoria(soup: BeautifulSoup, jsonld: Dict[str, Any]) -> str:
         ".breadcrumbs a",
         "[class*='breadcrumb'] a",
         "nav[aria-label*='breadcrumb'] a",
+        "[class*='categoria'] a",
     ]:
         try:
             for el in soup.select(seletor):
@@ -369,6 +431,7 @@ def extract_product_from_page(html, url):
                 "[class*='product-name']",
                 "[class*='nome-produto']",
                 "[data-testid*='product-title']",
+                "[itemprop='name']",
             ],
         ),
         soup.title.get_text(" ", strip=True) if soup.title else "",
@@ -385,11 +448,12 @@ def extract_product_from_page(html, url):
         _extrair_por_seletores(
             soup,
             [
+                "[itemprop='price']",
+                "[data-price]",
                 "[class*='price']",
                 "[class*='preco']",
                 "[class*='valor']",
-                "[data-price]",
-                "[itemprop='price']",
+                "[class*='money']",
             ],
         ),
     )
@@ -403,6 +467,7 @@ def extract_product_from_page(html, url):
 
     marca = ""
     brand = jsonld.get("brand") if isinstance(jsonld, dict) else ""
+
     if isinstance(brand, dict):
         marca = _safe_str(brand.get("name"))
     else:
@@ -427,6 +492,7 @@ def extract_product_from_page(html, url):
                 "[class*='descricao']",
                 "[id*='description']",
                 "[id*='descricao']",
+                "[itemprop='description']",
             ],
         ),
     )
@@ -438,8 +504,10 @@ def extract_product_from_page(html, url):
     if estoque == 0:
         estoque = _normalizar_estoque(texto_pagina)
 
+    nome_limpo = _limpar_nome(nome)
+
     return {
-        "nome": _limpar_nome(nome),
+        "nome": nome_limpo,
         "preco": _normalizar_preco(preco),
         "url": url,
         "url_produto": url,
