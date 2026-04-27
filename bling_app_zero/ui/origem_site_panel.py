@@ -167,6 +167,9 @@ def _resetar_estado_site_ui() -> None:
         "site_busca_login_status",
         "site_busca_resumo_texto",
         "site_busca_fonte_descoberta",
+        "site_varrer_completo",
+        "site_usar_sitemap_completo",
+        "site_busca_modo_execucao",
         "site_auth_last_result",
         "site_auth_inspecionado_url",
         "site_auth_state",
@@ -401,24 +404,79 @@ def _auth_context_para_busca(url_site: str) -> dict | None:
         return None
 
 
+def _modo_varredura_completa_ativo() -> bool:
+    return bool(st.session_state.get("site_varrer_completo", True))
+
+
+def _modo_sitemap_completo_ativo() -> bool:
+    if "site_usar_sitemap_completo" not in st.session_state:
+        st.session_state["site_usar_sitemap_completo"] = True
+    return bool(st.session_state.get("site_usar_sitemap_completo", True))
+
+
+def _montar_kwargs_busca_site(url_site: str, auth_context: Optional[dict]) -> Dict[str, Any]:
+    modo_completo = _modo_varredura_completa_ativo()
+    sitemap_completo = _modo_sitemap_completo_ativo()
+
+    kwargs_busca: Dict[str, Any] = {
+        "base_url": url_site,
+        "diagnostico": True,
+        "auth_context": auth_context,
+        "preferir_http": True,
+        "usar_fornecedor": True,
+        "usar_generico": True,
+        "max_workers": 16 if modo_completo else 12,
+        "varrer_site_completo": modo_completo,
+        "sitemap_completo": sitemap_completo,
+        "varrer_sitemap_completo": sitemap_completo,
+    }
+
+    if modo_completo:
+        kwargs_busca["limite"] = 0
+        kwargs_busca["limite_links"] = 0
+        kwargs_busca["limite_paginas"] = 0
+    else:
+        kwargs_busca["limite"] = 300
+        kwargs_busca["limite_links"] = 300
+        kwargs_busca["limite_paginas"] = 20
+
+    return kwargs_busca
+
+
+def _registrar_status_execucao_site(mensagem: str, *, status: str = "executando") -> None:
+    st.session_state["site_busca_ultimo_status"] = status
+    st.session_state["site_busca_resumo_texto"] = mensagem
+
+    try:
+        log_debug(mensagem)
+    except Exception:
+        pass
+
+
 def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
     _forcar_http_first_execucao()
     auth_context = _auth_context_para_busca(url_site)
 
+    modo_completo = _modo_varredura_completa_ativo()
+    sitemap_completo = _modo_sitemap_completo_ativo()
+    kwargs_busca = _montar_kwargs_busca_site(url_site, auth_context)
+
+    st.session_state["site_busca_modo_execucao"] = (
+        "varredura_completa" if modo_completo else "varredura_controlada"
+    )
+
+    _registrar_status_execucao_site(
+        (
+            "🚀 Varredura completa iniciada: lendo sitemap completo, categorias, paginações e produtos."
+            if modo_completo
+            else "🔎 Varredura controlada iniciada: limite de 300 produtos e 20 páginas."
+        )
+    )
+
     if SiteAgent is not None:
         try:
             agent = SiteAgent()
-            resultado = agent.buscar_dataframe(
-                base_url=url_site,
-                diagnostico=True,
-                auth_context=auth_context,
-                limite=2000,
-                preferir_http=True,
-                usar_fornecedor=True,
-                usar_generico=True,
-                max_workers=12,
-                limite_paginas=80,
-            )
+            resultado = agent.buscar_dataframe(**kwargs_busca)
             if isinstance(resultado, pd.DataFrame):
                 return _normalizar_df_saida_site(resultado)
             if isinstance(resultado, list):
@@ -428,19 +486,25 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
 
     if buscar_produtos_site_com_gpt is not None:
         try:
-            kwargs_gpt: Dict[str, Any] = {
-                "base_url": url_site,
-                "diagnostico": True,
-                "auth_context": auth_context,
-                "limite_links": 2000,
-            }
+            kwargs_gpt: Dict[str, Any] = dict(kwargs_busca)
 
             try:
                 assinatura = inspect.signature(buscar_produtos_site_com_gpt)
                 parametros = assinatura.parameters
-                kwargs_filtrados = {k: v for k, v in kwargs_gpt.items() if k in parametros}
+
                 if "termo" in parametros:
-                    kwargs_filtrados["termo"] = ""
+                    kwargs_gpt["termo"] = ""
+
+                # Se a função tiver **kwargs, pode enviar tudo.
+                aceita_kwargs = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in parametros.values()
+                )
+
+                if aceita_kwargs:
+                    kwargs_filtrados = kwargs_gpt
+                else:
+                    kwargs_filtrados = {k: v for k, v in kwargs_gpt.items() if k in parametros}
             except Exception:
                 kwargs_filtrados = kwargs_gpt
 
@@ -453,7 +517,6 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
             log_debug(f"Fallback GPT falhou: {exc}", nivel="ERRO")
 
     raise RuntimeError("Nenhum mecanismo de busca por site disponível.")
-
 
 def _executar_busca_site(url_site: str) -> None:
     url_site = str(url_site or "").strip()
@@ -469,10 +532,25 @@ def _executar_busca_site(url_site: str) -> None:
 
     st.session_state["site_busca_em_execucao"] = True
     st.session_state["site_busca_ultimo_status"] = "executando"
-    st.session_state["site_busca_resumo_texto"] = "Executando busca HTTP-first..."
-    st.session_state["site_busca_fonte_descoberta"] = "http_hybrid"
+
+    modo_completo = _modo_varredura_completa_ativo()
+    sitemap_completo = _modo_sitemap_completo_ativo()
+
+    st.session_state["site_busca_resumo_texto"] = (
+        "🚀 Preparando varredura completa: sitemap, categorias, paginações e produtos."
+        if modo_completo
+        else "🔎 Preparando varredura controlada."
+    )
+    st.session_state["site_busca_fonte_descoberta"] = (
+        "http_hybrid_completo_sitemap" if sitemap_completo else "http_hybrid"
+    )
 
     try:
+        st.info(
+            "🔍 A IA está varrendo sitemap, categorias, paginações e páginas de produto. "
+            "No modo completo, isso pode analisar muitas URLs."
+        )
+
         df_site = _chamar_busca_site_compativel(url_site)
         df_site = _normalizar_df_saida_site(df_site)
         df_site = _aplicar_ncm_padrao_df(df_site)
@@ -491,7 +569,9 @@ def _executar_busca_site(url_site: str) -> None:
         total = int(len(df_site))
         _carimbar_execucao_site(total, url_site, "sucesso")
         st.session_state["site_busca_resumo_texto"] = f"Busca concluída com {total} produto(s)."
-        st.session_state["site_busca_fonte_descoberta"] = "http_hybrid"
+        st.session_state["site_busca_fonte_descoberta"] = (
+            "http_hybrid_completo_sitemap" if sitemap_completo else "http_hybrid"
+        )
         st.success(f"{total} produto(s) encontrados.")
     except Exception as exc:
         _carimbar_execucao_site(0, url_site, "erro")
@@ -563,6 +643,10 @@ def _render_resumo_busca() -> None:
     resumo = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip()
     if resumo:
         st.caption(resumo)
+
+    modo_execucao = str(st.session_state.get("site_busca_modo_execucao", "") or "").strip()
+    if modo_execucao:
+        st.caption(f"Modo da última busca: {modo_execucao}")
 
 
 def _render_diagnostico() -> None:
@@ -808,6 +892,41 @@ def _render_ncm_site_panel() -> None:
 
 def _render_bloco_acao(modo: str, url_site: str) -> None:
     em_execucao = bool(st.session_state.get("site_busca_em_execucao", False))
+
+    with st.container(border=True):
+        st.markdown("### Modo de busca")
+
+        col_modo1, col_modo2 = st.columns(2)
+
+        with col_modo1:
+            st.toggle(
+                "🚀 Varrer site completo",
+                key="site_varrer_completo",
+                value=True,
+                disabled=em_execucao,
+                help=(
+                    "Ativa a busca pesada: sem limite de produtos, com categorias, "
+                    "paginações e links internos úteis."
+                ),
+            )
+
+        with col_modo2:
+            st.toggle(
+                "🗺️ Ler sitemap completo",
+                key="site_usar_sitemap_completo",
+                value=True,
+                disabled=em_execucao,
+                help=(
+                    "Lê sitemap.xml, sitemap_index.xml, robots.txt e sitemaps filhos "
+                    "para localizar todos os produtos possíveis."
+                ),
+            )
+
+        if bool(st.session_state.get("site_varrer_completo", True)):
+            st.caption("Modo completo ativo: limite removido. O crawler vai tentar varrer tudo que for público.")
+        else:
+            st.caption("Modo controlado ativo: busca limitada para testes rápidos.")
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -833,12 +952,23 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
             disabled=em_execucao,
         ):
             url_site = str(st.session_state.get("site_fornecedor_url", "")).strip()
-            log_debug(f"[CLICK] Botão buscar acionado | URL: {url_site}")
+            modo_completo = bool(st.session_state.get("site_varrer_completo", True))
+            sitemap_completo = bool(st.session_state.get("site_usar_sitemap_completo", True))
+
+            log_debug(
+                "[CLICK] Botão buscar acionado | "
+                f"URL: {url_site} | completo={modo_completo} | sitemap={sitemap_completo}"
+            )
 
             if not url_site:
                 st.error("Informe a URL antes de buscar.")
             else:
-                with st.spinner("Executando varredura do site..."):
+                texto_spinner = (
+                    "Executando varredura completa do site e sitemaps..."
+                    if modo_completo
+                    else "Executando busca controlada no site..."
+                )
+                with st.spinner(texto_spinner):
                     _executar_busca_site(url_site)
 
     with col3:
@@ -860,7 +990,6 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
                 _resetar_estado_busca_ao_trocar_fornecedor()
                 st.info("Busca por site limpa.")
                 st.rerun()
-
 
 def render_origem_site_panel() -> None:
     _forcar_http_first_execucao()
