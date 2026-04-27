@@ -9,7 +9,12 @@ def fetch_playwright_payload(
     headless: bool = True,
     screenshot_on_error: bool = False,
 ) -> Dict[str, Any]:
-    result = {"ok": False, "html": "", "error": "", "status": ""}
+    result = {
+        "ok": False,
+        "html": "",
+        "error": "",
+        "status": "",
+    }
 
     try:
         from playwright.sync_api import sync_playwright
