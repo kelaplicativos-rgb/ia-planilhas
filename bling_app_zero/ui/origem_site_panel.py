@@ -51,6 +51,36 @@ def _clean_text(value: Any) -> str:
     return "" if text.lower() in {"none", "null", "nan"} else text
 
 
+def _normalizar_ncm(valor: Any) -> str:
+    texto = str(valor or "").strip()
+    somente_digitos = "".join(ch for ch in texto if ch.isdigit())
+    return somente_digitos[:8] if len(somente_digitos) >= 8 else ""
+
+
+def _obter_ncm_padrao_site() -> str:
+    return _normalizar_ncm(st.session_state.get("site_ncm_padrao", ""))
+
+
+def _aplicar_ncm_padrao_df(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    base = df.copy().fillna("")
+    ncm_padrao = _obter_ncm_padrao_site()
+
+    if "NCM" not in base.columns:
+        base["NCM"] = ""
+
+    if ncm_padrao:
+        base["NCM"] = base["NCM"].astype(str).fillna("").apply(
+            lambda atual: _normalizar_ncm(atual) or ncm_padrao
+        )
+    else:
+        base["NCM"] = base["NCM"].astype(str).fillna("").apply(_normalizar_ncm)
+
+    return base
+
+
 def _normalizar_df_saida_site(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -184,9 +214,6 @@ def _forcar_http_first_execucao() -> None:
 
 
 def _fornecedores_preset() -> list[dict]:
-    """
-    Fornecedores base para preenchimento rápido.
-    """
     return [
         {
             "slug": "preset_atacadum",
@@ -448,6 +475,7 @@ def _executar_busca_site(url_site: str) -> None:
     try:
         df_site = _chamar_busca_site_compativel(url_site)
         df_site = _normalizar_df_saida_site(df_site)
+        df_site = _aplicar_ncm_padrao_df(df_site)
 
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
             _carimbar_execucao_site(0, url_site, "vazio")
@@ -748,6 +776,36 @@ def _salvar_fornecedor_manual() -> None:
         st.error(f"Falha ao salvar fornecedor: {exc}")
 
 
+def _render_ncm_site_panel() -> None:
+    with st.container(border=True):
+        st.markdown("### NCM dos produtos capturados")
+        st.caption("Informe um NCM padrão para aplicar aos produtos encontrados na busca por site.")
+
+        ncm_atual = str(st.session_state.get("site_ncm_padrao", "") or "").strip()
+
+        ncm_digitado = st.text_input(
+            "NCM padrão",
+            value=ncm_atual,
+            key="site_ncm_padrao",
+            placeholder="Ex.: 73239900",
+            help="Use somente números. Exemplo: 73239900 para artigos domésticos de aço/inox.",
+        )
+
+        ncm_normalizado = _normalizar_ncm(ncm_digitado)
+
+        if ncm_digitado and not ncm_normalizado:
+            st.warning("Informe um NCM com 8 dígitos.")
+        elif ncm_normalizado:
+            st.success(f"NCM pronto para aplicar: {ncm_normalizado}")
+
+        df_atual = st.session_state.get("df_origem")
+        if isinstance(df_atual, pd.DataFrame) and not df_atual.empty:
+            if st.button("Aplicar NCM aos produtos já capturados", use_container_width=True):
+                st.session_state["df_origem"] = _aplicar_ncm_padrao_df(df_atual)
+                st.success("NCM aplicado aos produtos capturados.")
+                st.rerun()
+
+
 def _render_bloco_acao(modo: str, url_site: str) -> None:
     em_execucao = bool(st.session_state.get("site_busca_em_execucao", False))
     col1, col2, col3 = st.columns(3)
@@ -808,7 +866,6 @@ def render_origem_site_panel() -> None:
     _forcar_http_first_execucao()
 
     with st.container(border=True):
-        # sem título duplicado aqui
         st.caption("Selecione um fornecedor salvo, um fornecedor sugerido, ou informe uma nova URL para buscar os produtos.")
 
         fornecedores_mixados = _carregar_fornecedores_mixados()
@@ -831,6 +888,7 @@ def render_origem_site_panel() -> None:
                 st.session_state.get("site_fornecedor_slug")
             )
 
+        _render_ncm_site_panel()
         _render_bloco_acao(modo, url_site)
 
         if url_site:
