@@ -76,14 +76,15 @@ class SiteAgent:
         usar_fornecedor = self._bool_compat(kwargs.get("usar_fornecedor"), default=True)
         usar_generico = self._bool_compat(kwargs.get("usar_generico"), default=True)
 
-        # BLINGFIX MEGA CENTER:
-        # fornecedor específico também é HTTP-first. Não pode ser bloqueado por
-        # preferir_http=True, senão MegaCenterSupplier nunca roda no painel atual.
-        if usar_fornecedor and fornecedor is not None:
+        fornecedor_eh_generico = self._fornecedor_eh_generico(fornecedor)
+
+        # BLINGFIX MEGA CENTER: fornecedor específico deve rodar também em HTTP-first.
+        if usar_fornecedor and fornecedor is not None and not fornecedor_eh_generico:
             try:
                 self._log(
-                    f"[SITE_AGENT] fornecedor detectado: "
-                    f"{getattr(fornecedor, 'nome', fornecedor.__class__.__name__)}"
+                    f"[SITE_AGENT] fornecedor específico detectado: "
+                    f"{getattr(fornecedor, 'nome', fornecedor.__class__.__name__)} "
+                    f"| http_first={preferir_http}"
                 )
                 produtos = fornecedor.fetch(url, **kwargs_limpos)
                 produtos = self._validar_com_fornecedor(fornecedor, produtos)
@@ -242,6 +243,16 @@ class SiteAgent:
             return self.registry.detectar(url)
         except Exception:
             return None
+
+    def _fornecedor_eh_generico(self, fornecedor: Any) -> bool:
+        if fornecedor is None:
+            return False
+        try:
+            nome = str(getattr(fornecedor, "nome", "") or "").strip().lower()
+            classe = fornecedor.__class__.__name__.strip().lower()
+            return "genérico" in nome or "generico" in nome or "generic" in classe
+        except Exception:
+            return False
 
     def _obter_fornecedor_generico(self):
         for supplier in getattr(self.registry, "suppliers", []):
@@ -939,7 +950,7 @@ class SiteAgent:
                 url = self._limpar_url(urljoin(base_url, href))
                 if not url:
                     continue
-                if not self._mesmo_dominio_ou_fornecedor(base_url, url):
+                if self._hostname(url) != base_host:
                     continue
                 if not self._url_parece_produto(url):
                     continue
@@ -1376,39 +1387,6 @@ class SiteAgent:
             return (urlparse(self._normalizar_url(url)).hostname or "").strip().lower()
         except Exception:
             return ""
-
-    def _mesmo_dominio_ou_fornecedor(self, base_url: str, candidate_url: str) -> bool:
-        """Permite links do mesmo domínio e domínios equivalentes do fornecedor.
-
-        Mega Center pode alternar entre megacentereletronicos.com.br e
-        mega-center-eletronicos.stoqui.shop. Sem isso, links reais de produto
-        descobertos em vitrine/redirect são descartados.
-        """
-        base_host = self._hostname(base_url).replace("www.", "").lower()
-        cand_host = self._hostname(candidate_url).replace("www.", "").lower()
-
-        if not base_host or not cand_host:
-            return True
-
-        if base_host == cand_host or cand_host.endswith(base_host) or base_host.endswith(cand_host):
-            return True
-
-        grupos_equivalentes = [
-            {
-                "megacentereletronicos.com.br",
-                "mega-center-eletronicos.stoqui.shop",
-                "stoqui.shop",
-            }
-        ]
-
-        for grupo in grupos_equivalentes:
-            if base_host in grupo and cand_host in grupo:
-                return True
-            if any(base_host.endswith(item) for item in grupo) and any(cand_host.endswith(item) for item in grupo):
-                return True
-
-        return False
-
 
     def _deduplicar_lista_urls(self, urls: Iterable[str]) -> List[str]:
         vistos: Set[str] = set()
