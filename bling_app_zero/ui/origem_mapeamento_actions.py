@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -12,6 +14,150 @@ from bling_app_zero.ui.origem_mapeamento_helpers import (
     _eh_coluna_video,
     _limpar_mapeamento_por_status,
 )
+
+
+def _normalizar_nome_coluna(valor) -> str:
+    texto = str(valor or "").strip().lower()
+    texto = texto.replace("ç", "c")
+    texto = texto.replace("ã", "a").replace("á", "a").replace("à", "a").replace("â", "a")
+    texto = texto.replace("é", "e").replace("ê", "e")
+    texto = texto.replace("í", "i")
+    texto = texto.replace("ó", "o").replace("ô", "o").replace("õ", "o")
+    texto = texto.replace("ú", "u")
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _colunas_por_termos(df_modelo: pd.DataFrame, termos: list[str]) -> list[str]:
+    if not isinstance(df_modelo, pd.DataFrame):
+        return []
+
+    encontrados: list[str] = []
+    termos_norm = [_normalizar_nome_coluna(t) for t in termos]
+
+    for coluna in df_modelo.columns:
+        nome_original = str(coluna)
+        nome_norm = _normalizar_nome_coluna(nome_original)
+
+        if any(termo and termo in nome_norm for termo in termos_norm):
+            encontrados.append(nome_original)
+
+    return list(dict.fromkeys(encontrados))
+
+
+def _colunas_obrigatorias_cadastro(df_modelo: pd.DataFrame) -> dict[str, list[str]]:
+    descricao = []
+    coluna_descricao = _coluna_descricao_modelo(df_modelo)
+    if coluna_descricao:
+        descricao.append(coluna_descricao)
+    else:
+        descricao = _colunas_por_termos(
+            df_modelo,
+            [
+                "descricao",
+                "descricao do produto",
+                "nome",
+                "produto",
+            ],
+        )
+
+    preco = _colunas_por_termos(
+        df_modelo,
+        [
+            "preco de venda",
+            "preco venda",
+            "preco",
+            "valor venda",
+            "valor unitario",
+            "preco unitario",
+            "preço de venda",
+            "preço venda",
+            "preço",
+            "preço unitário",
+        ],
+    )
+
+    codigo = _colunas_por_termos(
+        df_modelo,
+        [
+            "codigo",
+            "codigo do produto",
+            "sku",
+            "referencia",
+            "código",
+            "código do produto",
+            "referência",
+        ],
+    )
+
+    return {
+        "descricao": descricao,
+        "preco": preco,
+        "codigo": codigo,
+    }
+
+
+def _colunas_obrigatorias_estoque(df_modelo: pd.DataFrame) -> dict[str, list[str]]:
+    codigo = _colunas_por_termos(
+        df_modelo,
+        [
+            "codigo",
+            "codigo do produto",
+            "sku",
+            "referencia",
+            "código",
+            "código do produto",
+            "referência",
+        ],
+    )
+
+    quantidade = _colunas_por_termos(
+        df_modelo,
+        [
+            "quantidade",
+            "estoque",
+            "saldo",
+            "balanco",
+            "balanço",
+            "qtd",
+            "qtde",
+        ],
+    )
+
+    deposito = _colunas_por_termos(
+        df_modelo,
+        [
+            "deposito",
+            "depósito",
+        ],
+    )
+
+    preco = _colunas_por_termos(
+        df_modelo,
+        [
+            "preco unitario",
+            "preco unitario obrigatorio",
+            "preco",
+            "valor unitario",
+            "preço unitário",
+            "preço unitário obrigatório",
+            "preço",
+        ],
+    )
+
+    return {
+        "codigo": codigo,
+        "quantidade": quantidade,
+        "deposito": deposito,
+        "preco": preco,
+    }
+
+
+def _campo_tem_mapeamento(mapping: dict[str, str], colunas_modelo: list[str]) -> bool:
+    for coluna in colunas_modelo:
+        if str(mapping.get(coluna, "") or "").strip():
+            return True
+    return False
 
 
 def _render_sugestao_agente(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
@@ -104,10 +250,6 @@ def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) ->
     erros = []
     operacao = _detectar_operacao()
 
-    coluna_descricao = _coluna_descricao_modelo(df_modelo)
-    if operacao == "cadastro" and coluna_descricao and not str(mapping.get(coluna_descricao, "") or "").strip():
-        erros.append("Mapeie a coluna de descrição.")
-
     bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
 
     usados = []
@@ -127,12 +269,52 @@ def _validar_mapping_pronto(df_modelo: pd.DataFrame, mapping: dict[str, str]) ->
     if duplicados:
         erros.append(f"Existem colunas de origem usadas mais de uma vez: {', '.join(duplicados)}")
 
+    if operacao == "cadastro":
+        obrigatorios = _colunas_obrigatorias_cadastro(df_modelo)
+
+        if obrigatorios["descricao"] and not _campo_tem_mapeamento(mapping, obrigatorios["descricao"]):
+            erros.append("Mapeie a coluna de descrição/nome do produto para o modelo de cadastro.")
+
+        if obrigatorios["preco"] and not _campo_tem_mapeamento(mapping, obrigatorios["preco"]):
+            erros.append(
+                "Mapeie uma coluna de preço para o modelo de cadastro ou aplique a precificação antes de continuar."
+            )
+
+    if operacao == "estoque":
+        obrigatorios = _colunas_obrigatorias_estoque(df_modelo)
+
+        if obrigatorios["codigo"] and not _campo_tem_mapeamento(mapping, obrigatorios["codigo"]):
+            erros.append("Mapeie a coluna de código/SKU/referência para atualização de estoque.")
+
+        if obrigatorios["quantidade"] and not _campo_tem_mapeamento(mapping, obrigatorios["quantidade"]):
+            erros.append("Mapeie a coluna de quantidade/estoque/saldo para atualização de estoque.")
+
+        if obrigatorios["deposito"]:
+            deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
+            if not deposito_nome:
+                erros.append("Informe o nome do depósito antes de gerar a atualização de estoque.")
+
     return len(erros) == 0, erros
+
+
+def _render_alerta_validacao_modelo(df_modelo: pd.DataFrame, mapping: dict[str, str]) -> None:
+    valido, erros = _validar_mapping_pronto(df_modelo, mapping)
+
+    with st.expander("Validação do modelo oficial", expanded=not valido):
+        if valido:
+            st.success("Mapeamento mínimo aprovado para o modelo selecionado.")
+            return
+
+        st.error("Ajuste os campos obrigatórios antes de gerar o resultado final.")
+        for erro in erros:
+            st.write(f"- {erro}")
 
 
 def _render_botoes_fluxo(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     mapping = st.session_state.get("mapping_manual", {}).copy()
     valido, erros = _validar_mapping_pronto(df_modelo, mapping)
+
+    _render_alerta_validacao_modelo(df_modelo, mapping)
 
     col1, col2 = st.columns(2)
 
