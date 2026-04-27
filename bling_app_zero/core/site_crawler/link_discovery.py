@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import List
-from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
@@ -13,6 +13,7 @@ def _clean_url(url: str) -> str:
         return ""
 
     parsed = urlparse(url)
+
     query = [
         (k, v)
         for k, v in parse_qsl(parsed.query, keep_blank_values=True)
@@ -71,7 +72,7 @@ def _hrefs(html: str, base: str) -> List[str]:
 
 
 def _is_product_link(url: str) -> bool:
-    u = url.lower()
+    u = str(url or "").lower()
 
     pistas = [
         "/produto",
@@ -95,7 +96,7 @@ def _is_product_link(url: str) -> bool:
 
 
 def _is_category_link(url: str) -> bool:
-    u = url.lower()
+    u = str(url or "").lower()
 
     bloqueios = [
         "/login",
@@ -134,7 +135,8 @@ def _is_category_link(url: str) -> bool:
 
 
 def _is_pagination_link(url: str) -> bool:
-    u = url.lower()
+    u = str(url or "").lower()
+
     return bool(
         re.search(r"([?&]page=\d+)", u)
         or re.search(r"([?&]p=\d+)", u)
@@ -155,9 +157,11 @@ def extract_pagination_links(html, base):
     links = [u for u in _hrefs(html, base) if _is_pagination_link(u)]
 
     soup = BeautifulSoup(html or "", "lxml")
+
     for a in soup.find_all("a", href=True):
         texto = a.get_text(" ", strip=True).lower()
+
         if texto in {"próximo", "proximo", "next", ">", "»"}:
-            links.append(urljoin(base, a["href"]))
+            links.append(urljoin(base, a.get("href", "")))
 
     return _dedupe(links)
