@@ -1,9 +1,12 @@
 """
 SITE AGENT — ORQUESTRADOR GLOBAL MODULAR
 
-BLINGFIX MODULAR:
-- Este arquivo deixa de concentrar todos os motores do crawler.
-- Mantém compatibilidade com o fluxo atual:
+BLINGFIX INTEGRAÇÃO FORNECEDOR:
+- Detecta fornecedor específico via registry.
+- Se fornecedor específico existir, executa supplier.fetch_dataframe/fetch antes do crawler genérico.
+- Mega Center passa a usar MegaCenterSupplier como prioridade 1.
+- Se fornecedor específico falhar ou retornar vazio, cai no crawler modular como fallback.
+- Mantém compatibilidade com:
   - SiteAgent
   - get_site_agent()
   - buscar_produtos_site()
@@ -12,20 +15,6 @@ BLINGFIX MODULAR:
   - buscar_dataframe()
   - buscar_produtos()
   - para_dataframe()
-- Agora delega a varredura para:
-  bling_app_zero.core.site_crawler.crawler_engine.run_crawler
-
-IMPORTANTE:
-Os motores devem ficar em:
-bling_app_zero/core/site_crawler/
-  __init__.py
-  crawler_engine.py
-  http_client.py
-  sitemap_engine.py
-  link_discovery.py
-  product_extractor.py
-  product_normalizer.py
-  crawler_utils.py
 """
 
 from __future__ import annotations
@@ -58,13 +47,6 @@ except Exception:  # pragma: no cover
 
 
 class SiteAgent:
-    """
-    Orquestrador compatível com o fluxo antigo.
-
-    O trabalho pesado foi movido para os módulos em:
-    bling_app_zero.core.site_crawler
-    """
-
     MARCAS_LOJA_BLOQUEADAS = {
         "mega center",
         "mega center eletrônicos",
@@ -99,9 +81,6 @@ class SiteAgent:
         except Exception:
             self.registry = None
 
-    # ------------------------------------------------------------------
-    # EXECUÇÃO PRINCIPAL
-    # ------------------------------------------------------------------
     def executar(
         self,
         url: str,
@@ -160,8 +139,9 @@ class SiteAgent:
         limite_paginas = kwargs.get("limite_paginas", None)
 
         self._log(
-            "[SITE_AGENT] orquestrador modular iniciado "
+            "[SITE_AGENT] iniciado "
             f"| url={url} "
+            f"| fornecedor={self._nome_fornecedor(fornecedor)} "
             f"| varrer_site_completo={varrer_site_completo} "
             f"| sitemap_completo={sitemap_completo} "
             f"| max_workers={max_workers}"
@@ -169,39 +149,28 @@ class SiteAgent:
 
         df = pd.DataFrame()
 
-        if run_crawler is not None:
-            try:
-                df = run_crawler(
-                    url,
-                    auth_context=auth_context,
-                    varrer_site_completo=varrer_site_completo,
-                    sitemap_completo=sitemap_completo,
-                    max_workers=max_workers,
-                    limite=limite,
-                    limite_paginas=limite_paginas,
-                    usar_sitemap=bool(kwargs.get("usar_sitemap", True)),
-                    usar_home=bool(kwargs.get("usar_home", True)),
-                    usar_categoria=bool(kwargs.get("usar_categoria", True)),
-                    modo=kwargs.get("modo", "completo" if varrer_site_completo else "padrao"),
-                )
-            except TypeError:
-                # Compatibilidade com versão simples do crawler_engine criada antes.
-                try:
-                    df = run_crawler(
-                        url,
-                        auth_context=auth_context,
-                        varrer_site_completo=varrer_site_completo,
-                        sitemap_completo=sitemap_completo,
-                        max_workers=max_workers,
-                    )
-                except Exception as exc:
-                    self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
-                    df = pd.DataFrame()
-            except Exception as exc:
-                self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
-                df = pd.DataFrame()
-        else:
-            self._log("[SITE_AGENT ERRO] crawler_engine.run_crawler não encontrado.")
+        df = self._executar_fornecedor_especifico(
+            fornecedor=fornecedor,
+            url=url,
+            auth_context=auth_context,
+            kwargs=kwargs,
+            limite=limite,
+            limite_paginas=limite_paginas,
+            max_workers=max_workers,
+        )
+
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            self._log("[SITE_AGENT] fornecedor específico vazio/indisponível; usando crawler genérico.")
+            df = self._executar_crawler_generico(
+                url=url,
+                auth_context=auth_context,
+                varrer_site_completo=varrer_site_completo,
+                sitemap_completo=sitemap_completo,
+                max_workers=max_workers,
+                limite=limite,
+                limite_paginas=limite_paginas,
+                kwargs=kwargs,
+            )
 
         df = self._normalizar_dataframe_saida(df)
 
@@ -218,9 +187,112 @@ class SiteAgent:
         self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
         return df
 
-    # ------------------------------------------------------------------
-    # REGISTRY
-    # ------------------------------------------------------------------
+    def _executar_fornecedor_especifico(
+        self,
+        *,
+        fornecedor: Any,
+        url: str,
+        auth_context: Optional[Dict[str, Any]],
+        kwargs: Dict[str, Any],
+        limite: Any,
+        limite_paginas: Any,
+        max_workers: int,
+    ) -> pd.DataFrame:
+        if fornecedor is None:
+            return pd.DataFrame()
+
+        nome = self._nome_fornecedor(fornecedor)
+        nome_l = nome.lower()
+
+        if "gen" in nome_l and "mega" not in nome_l:
+            self._log(f"[SITE_AGENT] fornecedor genérico detectado; pulando prioridade específica: {nome}")
+            return pd.DataFrame()
+
+        self._log(f"[SITE_AGENT] usando fornecedor específico: {nome}")
+
+        kwargs_supplier = dict(kwargs)
+        kwargs_supplier.setdefault("auth_context", auth_context)
+        kwargs_supplier.setdefault("limite", limite)
+        kwargs_supplier.setdefault("limite_links", limite)
+        kwargs_supplier.setdefault("limite_paginas", limite_paginas)
+        kwargs_supplier.setdefault("max_workers", max_workers)
+
+        try:
+            if hasattr(fornecedor, "fetch"):
+                produtos = fornecedor.fetch(url, **kwargs_supplier)
+
+                if hasattr(fornecedor, "validar_produtos"):
+                    try:
+                        produtos = fornecedor.validar_produtos(produtos)
+                    except Exception as exc:
+                        self._log(f"[SITE_AGENT] validar_produtos fornecedor falhou: {exc}")
+
+                if hasattr(fornecedor, "to_dataframe"):
+                    df = fornecedor.to_dataframe(produtos)
+                else:
+                    df = pd.DataFrame(produtos or [])
+
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    self._log(f"[SITE_AGENT] fornecedor específico retornou {len(df)} produto(s).")
+                    return df
+
+        except Exception as exc:
+            self._log(f"[SITE_AGENT] fornecedor específico falhou: {nome} → {exc}")
+
+        return pd.DataFrame()
+
+    def _executar_crawler_generico(
+        self,
+        *,
+        url: str,
+        auth_context: Optional[Dict[str, Any]],
+        varrer_site_completo: bool,
+        sitemap_completo: bool,
+        max_workers: int,
+        limite: Any,
+        limite_paginas: Any,
+        kwargs: Dict[str, Any],
+    ) -> pd.DataFrame:
+        if run_crawler is None:
+            self._log("[SITE_AGENT ERRO] crawler_engine.run_crawler não encontrado.")
+            return pd.DataFrame()
+
+        try:
+            return run_crawler(
+                url,
+                auth_context=auth_context,
+                varrer_site_completo=varrer_site_completo,
+                sitemap_completo=sitemap_completo,
+                max_workers=max_workers,
+                limite=limite,
+                limite_paginas=limite_paginas,
+                usar_sitemap=bool(kwargs.get("usar_sitemap", True)),
+                usar_home=bool(kwargs.get("usar_home", True)),
+                usar_categoria=bool(kwargs.get("usar_categoria", True)),
+                modo=kwargs.get("modo", "completo" if varrer_site_completo else "padrao"),
+            )
+        except TypeError:
+            try:
+                return run_crawler(
+                    url,
+                    auth_context=auth_context,
+                    varrer_site_completo=varrer_site_completo,
+                    sitemap_completo=sitemap_completo,
+                    max_workers=max_workers,
+                )
+            except Exception as exc:
+                self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
+                return pd.DataFrame()
+        except Exception as exc:
+            self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
+            return pd.DataFrame()
+
+    def _nome_fornecedor(self, fornecedor: Any) -> str:
+        try:
+            return str(getattr(fornecedor, "nome", "") or fornecedor.__class__.__name__).strip()
+        except Exception:
+            return ""
+
     def _detectar_fornecedor(self, url: str):
         try:
             if self.registry is not None and hasattr(self.registry, "detectar"):
@@ -229,13 +301,9 @@ class SiteAgent:
             return None
         return None
 
-    # ------------------------------------------------------------------
-    # DATAFRAME / PADRONIZAÇÃO
-    # ------------------------------------------------------------------
     def para_dataframe(self, produtos: List[Dict[str, Any]]) -> pd.DataFrame:
         if not isinstance(produtos, list):
             produtos = []
-
         df = pd.DataFrame(produtos)
         return self._normalizar_dataframe_saida(df)
 
@@ -283,6 +351,8 @@ class SiteAgent:
             "category": "categoria",
             "Estoque": "estoque",
             "stock": "estoque",
+            "quantidade": "estoque",
+            "quantidade_real": "estoque",
             "GTIN": "gtin",
             "EAN": "gtin",
             "ean": "gtin",
@@ -319,7 +389,11 @@ class SiteAgent:
             axis=1,
         )
 
-        df = df[(df["nome"].astype(str).str.strip() != "") | (df["url_produto"].astype(str).str.strip() != "")]
+        df = df[
+            (df["nome"].astype(str).str.strip() != "")
+            | (df["url_produto"].astype(str).str.strip() != "")
+        ]
+
         df = self._deduplicar_dataframe(df)
 
         return df[colunas].reset_index(drop=True)
@@ -346,9 +420,6 @@ class SiteAgent:
         base = base.drop(columns=["_chave_dedupe"], errors="ignore")
         return base
 
-    # ------------------------------------------------------------------
-    # DIAGNÓSTICO
-    # ------------------------------------------------------------------
     def _diagnostico_basico(
         self,
         *,
@@ -357,16 +428,12 @@ class SiteAgent:
         produtos: List[Dict[str, Any]],
         auth_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        nome_fornecedor = ""
-        try:
-            nome_fornecedor = str(getattr(fornecedor, "nome", "") or "").strip()
-        except Exception:
-            nome_fornecedor = ""
+        nome_fornecedor = self._nome_fornecedor(fornecedor)
 
         fonte = "crawler_modular_http_pro"
         nome_fornecedor_l = nome_fornecedor.lower()
 
-        if nome_fornecedor_l.startswith("fornecedor gen"):
+        if nome_fornecedor_l.startswith("fornecedor gen") or "gen" in nome_fornecedor_l:
             fonte = "generic_supplier"
         elif "mega center" in nome_fornecedor_l:
             fonte = "fornecedor_especifico_mega_center"
@@ -376,10 +443,7 @@ class SiteAgent:
         df_diag = pd.DataFrame(produtos).copy() if produtos else pd.DataFrame()
 
         if not df_diag.empty:
-            df_diag["score"] = df_diag.apply(
-                lambda row: self._score_produto(row.to_dict()),
-                axis=1,
-            )
+            df_diag["score"] = df_diag.apply(lambda row: self._score_produto(row.to_dict()), axis=1)
             df_diag["valido"] = df_diag["score"] >= 3
 
         total_descobertos = int(len(produtos))
@@ -426,9 +490,6 @@ class SiteAgent:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # QUALIDADE
-    # ------------------------------------------------------------------
     def _score_produto(self, produto: Dict[str, Any]) -> int:
         if not isinstance(produto, dict):
             return 0
@@ -465,9 +526,6 @@ class SiteAgent:
 
         return score
 
-    # ------------------------------------------------------------------
-    # NORMALIZADORES
-    # ------------------------------------------------------------------
     def _normalizar_estoque(self, valor: Any) -> int:
         if valor is None:
             return 0
@@ -695,9 +753,6 @@ class SiteAgent:
         except Exception:
             return int(default)
 
-    # ------------------------------------------------------------------
-    # LOG
-    # ------------------------------------------------------------------
     def _log(self, mensagem: str) -> None:
         try:
             print(mensagem)
