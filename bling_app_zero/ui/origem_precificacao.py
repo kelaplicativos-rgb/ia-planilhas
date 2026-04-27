@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import re
@@ -152,6 +151,7 @@ def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
         "pricing_valor_teste": 0.0,
         "pricing_df_preview": st.session_state.get("pricing_df_preview"),
         "pricing_aplicada_ok": bool(st.session_state.get("pricing_aplicada_ok", False)),
+        "pricing_pulada_ok": bool(st.session_state.get("pricing_pulada_ok", False)),
     }
 
     for chave, valor in defaults.items():
@@ -164,6 +164,7 @@ def _limpar_preview_se_base_sumiu(df_origem: pd.DataFrame) -> None:
         st.session_state["pricing_df_preview"] = None
         st.session_state["df_precificado"] = None
         st.session_state["pricing_aplicada_ok"] = False
+        st.session_state["pricing_pulada_ok"] = False
 
 
 def _aplicar_precificacao_dataframe(
@@ -223,12 +224,40 @@ def _aplicar_precificacao_dataframe(
     return base
 
 
+def _usar_origem_sem_precificar(df_origem: pd.DataFrame) -> pd.DataFrame:
+    """
+    Permite seguir para o mapeamento sem obrigar a calculadora.
+
+    Regra:
+    - se a origem tem dados válidos, copia df_origem para df_precificado;
+    - não cria colunas artificiais de preço;
+    - preserva o fluxo normal do mapeamento, que já procura df_precificado primeiro;
+    - evita travar cadastro, estoque, XML, site ou planilha quando o usuário não quer calcular preço.
+    """
+    if not safe_df_dados(df_origem):
+        return pd.DataFrame()
+
+    base = df_origem.copy().fillna("")
+    st.session_state["df_precificado"] = base
+    st.session_state["pricing_df_preview"] = base.copy()
+    st.session_state["pricing_aplicada_ok"] = False
+    st.session_state["pricing_pulada_ok"] = True
+    return base
+
+
 def _render_preview(df: pd.DataFrame, coluna_custo: str) -> None:
     if not safe_df_dados(df):
         return
 
     destino = _coluna_preco_destino()
-    st.markdown("### Preview da planilha precificada")
+
+    if bool(st.session_state.get("pricing_pulada_ok", False)) and not bool(
+        st.session_state.get("pricing_aplicada_ok", False)
+    ):
+        st.markdown("### Preview da origem sem precificação")
+        st.caption("A calculadora não foi aplicada. O mapeamento usará os dados originais carregados.")
+    else:
+        st.markdown("### Preview da planilha precificada")
 
     colunas_preview = []
     for nome in [
@@ -290,6 +319,11 @@ def render_origem_precificacao() -> None:
     colunas = [str(c) for c in df_origem.columns.tolist()]
     destino = _coluna_preco_destino()
 
+    st.info(
+        "A precificação é opcional. Você pode aplicar a calculadora ou seguir direto "
+        "para o mapeamento usando os dados originais."
+    )
+
     with st.container(border=True):
         st.markdown("### Base de cálculo")
 
@@ -304,7 +338,7 @@ def render_origem_precificacao() -> None:
             key="pricing_coluna_custo",
         )
 
-        st.caption(f"O preço calculado será gravado em: {destino}")
+        st.caption(f"Se a calculadora for aplicada, o preço calculado será gravado em: {destino}")
 
     with st.container(border=True):
         st.markdown("### Calculadora")
@@ -409,6 +443,7 @@ def render_origem_precificacao() -> None:
             st.session_state["df_precificado"] = df_precificado
             st.session_state["pricing_df_preview"] = df_precificado.copy()
             st.session_state["pricing_aplicada_ok"] = True
+            st.session_state["pricing_pulada_ok"] = False
             st.success("Precificação aplicada com sucesso.")
 
     df_preview = st.session_state.get("pricing_df_preview")
@@ -435,8 +470,11 @@ def render_origem_precificacao() -> None:
             key="btn_continuar_precificacao",
         ):
             if not safe_df_dados(st.session_state.get("df_precificado")):
-                st.error("Aplique a precificação antes de continuar.")
-                return
+                df_sem_precificacao = _usar_origem_sem_precificar(df_origem)
+                if not safe_df_dados(df_sem_precificacao):
+                    st.error("Não foi possível preparar a origem para o mapeamento.")
+                    return
+                st.success("Seguindo sem aplicar precificação. A origem será usada no mapeamento.")
 
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             ir_para_etapa("mapeamento")
