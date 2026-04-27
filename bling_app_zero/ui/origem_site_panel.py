@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -119,6 +120,146 @@ def _safe_auth_state() -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _logs_recentes_site(limite: int = 6) -> List[str]:
+    logs = st.session_state.get("site_busca_progress_logs")
+    if not isinstance(logs, list):
+        logs = []
+
+    globais = st.session_state.get("logs")
+    if isinstance(globais, list):
+        for item in globais[-limite:]:
+            texto = str(item or "").strip()
+            if texto and texto not in logs:
+                logs.append(texto)
+
+    return [str(x).strip() for x in logs[-limite:] if str(x).strip()]
+
+
+def _registrar_evento_progresso_site(mensagem: str) -> None:
+    mensagem = str(mensagem or "").strip()
+    if not mensagem:
+        return
+
+    logs = st.session_state.get("site_busca_progress_logs")
+    if not isinstance(logs, list):
+        logs = []
+
+    logs.append(mensagem)
+    st.session_state["site_busca_progress_logs"] = logs[-12:]
+
+
+def _atualizar_progresso_site(
+    percentual: int,
+    etapa: str,
+    detalhe: str = "",
+    *,
+    status: str = "executando",
+) -> None:
+    percentual = max(0, min(int(percentual or 0), 100))
+    etapa = str(etapa or "").strip()
+    detalhe = str(detalhe or "").strip()
+
+    st.session_state["site_busca_progress_percent"] = percentual
+    st.session_state["site_busca_progress_etapa"] = etapa
+    st.session_state["site_busca_progress_detalhe"] = detalhe
+    st.session_state["site_busca_progress_status"] = status
+    st.session_state["site_busca_ultimo_status"] = status
+
+    if detalhe:
+        st.session_state["site_busca_resumo_texto"] = detalhe
+        _registrar_evento_progresso_site(f"{percentual}% — {etapa}: {detalhe}")
+    elif etapa:
+        st.session_state["site_busca_resumo_texto"] = etapa
+        _registrar_evento_progresso_site(f"{percentual}% — {etapa}")
+
+
+def _iniciar_progresso_site(url_site: str, *, modo_completo: bool, sitemap_completo: bool) -> None:
+    st.session_state["site_busca_progress_inicio_ts"] = time.time()
+    st.session_state["site_busca_progress_logs"] = []
+    st.session_state["site_busca_ultimo_total"] = 0
+    st.session_state["site_busca_ultima_url"] = url_site
+    st.session_state["site_busca_fonte_descoberta"] = (
+        "http_hybrid_completo_sitemap" if sitemap_completo else "http_hybrid"
+    )
+    st.session_state["site_busca_modo_execucao"] = (
+        "varredura_completa" if modo_completo else "varredura_controlada"
+    )
+    _atualizar_progresso_site(
+        3,
+        "Preparando busca",
+        "Montando modo HTTP-first e preparando a leitura do fornecedor.",
+    )
+
+
+def _criar_painel_progresso_site() -> Dict[str, Any]:
+    st.markdown("### Progresso em tempo real")
+    return {
+        "barra": st.empty(),
+        "metricas": st.empty(),
+        "status": st.empty(),
+        "logs": st.empty(),
+    }
+
+
+def _desenhar_painel_progresso_site(painel: Optional[Dict[str, Any]] = None) -> None:
+    if not isinstance(painel, dict):
+        return
+
+    percentual = int(st.session_state.get("site_busca_progress_percent", 0) or 0)
+    etapa = str(st.session_state.get("site_busca_progress_etapa", "") or "").strip()
+    detalhe = str(st.session_state.get("site_busca_progress_detalhe", "") or "").strip()
+    status = str(st.session_state.get("site_busca_progress_status", "executando") or "executando").strip()
+    total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+    modo = str(st.session_state.get("site_busca_modo_execucao", "-") or "-").strip()
+    url = str(st.session_state.get("site_busca_ultima_url", "") or "").strip()
+    inicio = float(st.session_state.get("site_busca_progress_inicio_ts", time.time()) or time.time())
+    decorrido = max(0, int(time.time() - inicio))
+
+    painel["barra"].progress(percentual, text=f"{percentual}% — {etapa or status.title()}")
+
+    with painel["metricas"].container():
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Status", status.title())
+        with c2:
+            st.metric("Produtos", total)
+        with c3:
+            st.metric("Tempo", f"{decorrido}s")
+        with c4:
+            st.metric("Modo", modo.replace("_", " ").title() if modo else "-")
+
+    texto_status = detalhe or etapa or "Busca em andamento."
+    if url:
+        texto_status = f"{texto_status}\n\nURL: {url}"
+
+    painel["status"].info(texto_status)
+
+    logs = _logs_recentes_site(6)
+    if logs:
+        painel["logs"].code("\n".join(logs), language="text")
+    else:
+        painel["logs"].caption("Aguardando os primeiros eventos da busca...")
+
+
+def _render_progresso_persistente_site() -> None:
+    percentual = int(st.session_state.get("site_busca_progress_percent", 0) or 0)
+    etapa = str(st.session_state.get("site_busca_progress_etapa", "") or "").strip()
+    detalhe = str(st.session_state.get("site_busca_progress_detalhe", "") or "").strip()
+    status = str(st.session_state.get("site_busca_progress_status", "") or "").strip()
+
+    if not etapa and not detalhe and not status:
+        return
+
+    with st.expander("Progresso da última busca", expanded=bool(st.session_state.get("site_busca_em_execucao", False))):
+        st.progress(percentual, text=f"{percentual}% — {etapa or status.title()}")
+        if detalhe:
+            st.caption(detalhe)
+
+        logs = _logs_recentes_site(8)
+        if logs:
+            st.code("\n".join(logs), language="text")
+
+
 def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
     with st.expander(titulo, expanded=False):
         if not isinstance(df, pd.DataFrame):
@@ -173,6 +314,12 @@ def _resetar_estado_site_ui() -> None:
         "site_auth_last_result",
         "site_auth_inspecionado_url",
         "site_auth_state",
+        "site_busca_progress_percent",
+        "site_busca_progress_etapa",
+        "site_busca_progress_detalhe",
+        "site_busca_progress_status",
+        "site_busca_progress_inicio_ts",
+        "site_busca_progress_logs",
     ]:
         st.session_state.pop(chave, None)
 
@@ -443,9 +590,27 @@ def _montar_kwargs_busca_site(url_site: str, auth_context: Optional[dict]) -> Di
     return kwargs_busca
 
 
-def _registrar_status_execucao_site(mensagem: str, *, status: str = "executando") -> None:
+def _registrar_status_execucao_site(
+    mensagem: str,
+    *,
+    status: str = "executando",
+    percentual: Optional[int] = None,
+    etapa: str = "",
+    painel_progress: Optional[Dict[str, Any]] = None,
+) -> None:
     st.session_state["site_busca_ultimo_status"] = status
     st.session_state["site_busca_resumo_texto"] = mensagem
+
+    if percentual is not None:
+        _atualizar_progresso_site(
+            percentual,
+            etapa or mensagem,
+            mensagem,
+            status=status,
+        )
+        _desenhar_painel_progresso_site(painel_progress)
+    else:
+        _registrar_evento_progresso_site(mensagem)
 
     try:
         log_debug(mensagem)
@@ -453,12 +618,24 @@ def _registrar_status_execucao_site(mensagem: str, *, status: str = "executando"
         pass
 
 
-def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
+def _chamar_busca_site_compativel(url_site: str, painel_progress: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     _forcar_http_first_execucao()
+    _registrar_status_execucao_site(
+        "Preparando autenticação/sessão do fornecedor.",
+        percentual=8,
+        etapa="Preparando sessão",
+        painel_progress=painel_progress,
+    )
     auth_context = _auth_context_para_busca(url_site)
 
     modo_completo = _modo_varredura_completa_ativo()
     sitemap_completo = _modo_sitemap_completo_ativo()
+    _registrar_status_execucao_site(
+        "Montando parâmetros de varredura, sitemap e limites.",
+        percentual=15,
+        etapa="Montando varredura",
+        painel_progress=painel_progress,
+    )
     kwargs_busca = _montar_kwargs_busca_site(url_site, auth_context)
 
     st.session_state["site_busca_modo_execucao"] = (
@@ -470,13 +647,28 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
             "🚀 Varredura completa iniciada: lendo sitemap completo, categorias, paginações e produtos."
             if modo_completo
             else "🔎 Varredura controlada iniciada: limite de 300 produtos e 20 páginas."
-        )
+        ),
+        percentual=22,
+        etapa="Iniciando crawler",
+        painel_progress=painel_progress,
     )
 
     if SiteAgent is not None:
         try:
+            _registrar_status_execucao_site(
+                "SiteAgent ativo: lendo sitemaps, categorias, paginações e páginas de produto.",
+                percentual=35,
+                etapa="Coletando produtos",
+                painel_progress=painel_progress,
+            )
             agent = SiteAgent()
             resultado = agent.buscar_dataframe(**kwargs_busca)
+            _registrar_status_execucao_site(
+                "SiteAgent retornou dados. Normalizando resultado.",
+                percentual=82,
+                etapa="Normalizando resultado",
+                painel_progress=painel_progress,
+            )
             if isinstance(resultado, pd.DataFrame):
                 return _normalizar_df_saida_site(resultado)
             if isinstance(resultado, list):
@@ -486,6 +678,12 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
 
     if buscar_produtos_site_com_gpt is not None:
         try:
+            _registrar_status_execucao_site(
+                "Fallback de busca ativado. Tentando mecanismo alternativo.",
+                percentual=55,
+                etapa="Fallback de coleta",
+                painel_progress=painel_progress,
+            )
             kwargs_gpt: Dict[str, Any] = dict(kwargs_busca)
 
             try:
@@ -509,6 +707,12 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
                 kwargs_filtrados = kwargs_gpt
 
             resultado = buscar_produtos_site_com_gpt(**kwargs_filtrados)
+            _registrar_status_execucao_site(
+                "Fallback retornou dados. Normalizando resultado.",
+                percentual=82,
+                etapa="Normalizando fallback",
+                painel_progress=painel_progress,
+            )
             if isinstance(resultado, pd.DataFrame):
                 return _normalizar_df_saida_site(resultado)
             if isinstance(resultado, list):
@@ -535,6 +739,9 @@ def _executar_busca_site(url_site: str) -> None:
 
     modo_completo = _modo_varredura_completa_ativo()
     sitemap_completo = _modo_sitemap_completo_ativo()
+    _iniciar_progresso_site(url_site, modo_completo=modo_completo, sitemap_completo=sitemap_completo)
+    painel_progress = _criar_painel_progresso_site()
+    _desenhar_painel_progresso_site(painel_progress)
 
     st.session_state["site_busca_resumo_texto"] = (
         "🚀 Preparando varredura completa: sitemap, categorias, paginações e produtos."
@@ -551,12 +758,20 @@ def _executar_busca_site(url_site: str) -> None:
             "No modo completo, isso pode analisar muitas URLs."
         )
 
-        df_site = _chamar_busca_site_compativel(url_site)
+        df_site = _chamar_busca_site_compativel(url_site, painel_progress=painel_progress)
+        _registrar_status_execucao_site(
+            "Aplicando limpeza final, padronização de colunas e NCM padrão.",
+            percentual=88,
+            etapa="Tratando resultado",
+            painel_progress=painel_progress,
+        )
         df_site = _normalizar_df_saida_site(df_site)
         df_site = _aplicar_ncm_padrao_df(df_site)
 
         if not isinstance(df_site, pd.DataFrame) or df_site.empty:
             _carimbar_execucao_site(0, url_site, "vazio")
+            _atualizar_progresso_site(100, "Concluído sem produtos", "Busca concluída sem produtos válidos.", status="vazio")
+            _desenhar_painel_progresso_site(painel_progress)
             st.session_state["site_busca_resumo_texto"] = "Busca concluída sem produtos válidos."
             st.warning("Nenhum produto válido encontrado.")
             return
@@ -567,7 +782,16 @@ def _executar_busca_site(url_site: str) -> None:
         st.session_state["origem_upload_ext"] = "site_gpt"
 
         total = int(len(df_site))
+        st.session_state["site_busca_ultimo_total"] = total
+        _registrar_status_execucao_site(
+            f"Resultado pronto: {total} produto(s) capturado(s).",
+            percentual=96,
+            etapa="Finalizando",
+            painel_progress=painel_progress,
+        )
         _carimbar_execucao_site(total, url_site, "sucesso")
+        _atualizar_progresso_site(100, "Busca concluída", f"Busca concluída com {total} produto(s).", status="sucesso")
+        _desenhar_painel_progresso_site(painel_progress)
         st.session_state["site_busca_resumo_texto"] = f"Busca concluída com {total} produto(s)."
         st.session_state["site_busca_fonte_descoberta"] = (
             "http_hybrid_completo_sitemap" if sitemap_completo else "http_hybrid"
@@ -575,6 +799,8 @@ def _executar_busca_site(url_site: str) -> None:
         st.success(f"{total} produto(s) encontrados.")
     except Exception as exc:
         _carimbar_execucao_site(0, url_site, "erro")
+        _atualizar_progresso_site(100, "Erro na busca", f"Falha na busca: {exc}", status="erro")
+        _desenhar_painel_progresso_site(painel_progress)
         st.session_state["site_busca_resumo_texto"] = f"Falha na busca: {exc}"
         st.error(f"Falha ao executar busca: {exc}")
         log_debug(f"Falha ao executar busca por site: {exc}", nivel="ERRO")
@@ -963,13 +1189,7 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
             if not url_site:
                 st.error("Informe a URL antes de buscar.")
             else:
-                texto_spinner = (
-                    "Executando varredura completa do site e sitemaps..."
-                    if modo_completo
-                    else "Executando busca controlada no site..."
-                )
-                with st.spinner(texto_spinner):
-                    _executar_busca_site(url_site)
+                _executar_busca_site(url_site)
 
     with col3:
         if modo == MODO_NOVA_URL:
@@ -1024,6 +1244,7 @@ def render_origem_site_panel() -> None:
             _render_status(url_site)
 
         _render_resumo_busca()
+        _render_progresso_persistente_site()
 
         df_origem = st.session_state.get("df_origem")
         if isinstance(df_origem, pd.DataFrame):
