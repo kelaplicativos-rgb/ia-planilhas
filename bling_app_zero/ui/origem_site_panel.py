@@ -412,12 +412,15 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
                 base_url=url_site,
                 diagnostico=True,
                 auth_context=auth_context,
-                limite=500,
+                # BLINGFIX MEGA CENTER:
+                # fornecedor específico precisa rodar; antes estava False e
+                # ignorava MegaCenterSupplier, causando captura parcial/genérica.
+                limite=2000,
                 preferir_http=True,
-                usar_fornecedor=False,
-                usar_generico=False,
-                max_workers=10,
-                limite_paginas=12,
+                usar_fornecedor=True,
+                usar_generico=True,
+                max_workers=12,
+                limite_paginas=80,
             )
             if isinstance(resultado, pd.DataFrame):
                 return _normalizar_df_saida_site(resultado)
@@ -432,7 +435,7 @@ def _chamar_busca_site_compativel(url_site: str) -> pd.DataFrame:
                 "base_url": url_site,
                 "diagnostico": True,
                 "auth_context": auth_context,
-                "limite_links": 500,
+                "limite_links": 2000,
             }
 
             try:
