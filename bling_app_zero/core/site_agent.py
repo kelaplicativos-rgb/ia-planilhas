@@ -1,35 +1,37 @@
 """
 SITE AGENT (ORQUESTRADOR GLOBAL) — IA ABSURDA PRO
 
-Responsável por:
-- detectar fornecedor
-- executar fornecedor específico
-- usar fallback genérico
-- preservar auth_context até a coleta real
-- padronizar o resultado
-- operar em modo HTTP-first
-- fazer descoberta adaptativa por sitemap/home/categoria/produto
-- reprocessar com múltiplas tentativas
-- usar concorrência nas páginas de produto
-- pontuar qualidade dos produtos extraídos
+BLINGFIX — crawler destravado + varredura completa + sitemaps completos.
 
-BLINGFIX SSL + HTTP-FIRST:
-- corrige sites com SSL inválido / hostname mismatch
-- adiciona retry com verify=False somente quando necessário
-- tenta variações com e sem www
-- tenta https/http quando necessário
-- mantém fluxo HTTP-first sem depender de Playwright
+Base respeitada do arquivo enviado:
+- mantém SiteAgent
+- mantém get_site_agent()
+- mantém buscar_produtos_site()
+- mantém buscar_produtos_site_df()
+- mantém buscar_produtos_site_com_gpt()
+- mantém buscar_dataframe(), buscar_produtos() e para_dataframe()
+
+Correções aplicadas:
+- remove parada precoce quando encontra poucos produtos
+- aceita varrer_site_completo / varredura_completa / site_completo
+- aceita sitemap_completo / varrer_sitemap_completo
+- sitemap recursivo: sitemapindex, sitemap.xml, robots.txt e sitemaps filhos
+- limite 0, None ou -1 significa sem limite
+- evita travar com lista vazia ou limite baixo
+- corrige marca vindo como nome da loja, exemplo: "Mega Center" / "Mega Center Eletrônicos"
+- registra logs também em st.session_state["logs"], quando Streamlit estiver disponível
 """
 
 from __future__ import annotations
 
 import json
 import re
+import time
 import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
 import pandas as pd
@@ -48,6 +50,52 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class SiteAgent:
+    MARCAS_LOJA_BLOQUEADAS = {
+        "mega center",
+        "mega center eletrônicos",
+        "mega center eletronicos",
+        "megacenter",
+        "megacenter eletrônicos",
+        "megacenter eletronicos",
+        "loja mega center",
+    }
+
+    MARCAS_CONHECIDAS = [
+        "Samsung", "Apple", "Motorola", "Xiaomi", "Redmi", "Poco", "Realme",
+        "Infinix", "Nokia", "LG", "Sony", "Philips", "Multilaser", "Multi",
+        "Positivo", "Lenovo", "Dell", "HP", "Acer", "Asus", "Intelbras",
+        "Elgin", "Mondial", "Britânia", "Britania", "Oster", "Cadence",
+        "Agratto", "Midea", "Electrolux", "Consul", "Brastemp", "JBL",
+        "Amvox", "Tomate", "Knup", "Hrebos", "Sumexr", "Baseus", "Hoco",
+        "Inova", "Aiwa", "Pulse", "Aquário", "Aquario", "Elsys", "TCL",
+        "AOC", "Philco", "Hayom", "Exbom", "Ugreen", "Geonav", "I2GO",
+        "C3Tech", "Leadership", "Goldentec", "Gshield", "Gorila Shield",
+        "Kingston", "Sandisk", "Western Digital", "Seagate", "Crucial",
+        "Logitech", "Microsoft", "Google", "Amazon", "Epson", "Canon",
+        "Brother", "Zebra", "Dymo", "Mercusys", "TP-Link", "Tenda",
+        "D-Link", "Huawei", "ZTE", "AMD", "Nvidia", "Radeon", "Geforce",
+        "X-Cell", "Pineng", "Kaidi", "Kimaster", "Lelong", "Kross",
+        "Roadstar", "First Option",
+    ]
+
+    PRODUCT_HINTS = (
+        "/produto/", "/produtos/", "/product/", "/products/", "/item/", "/p/"
+    )
+
+    CATEGORY_HINTS = (
+        "/categoria/", "/categorias/", "/catalogo/", "/catalog/", "/colecao/",
+        "/collection/", "/departamento/", "/departamentos/", "/marca/", "/marcas/",
+        "/celulares", "/smartphone", "/smartphones", "/relogio", "/smartwatch",
+        "/acessorios", "/mais-produtos",
+    )
+
+    BAD_LINK_HINTS = (
+        "whatsapp", "facebook", "instagram", "youtube", "tiktok", "linkedin",
+        "mailto:", "tel:", "/login", "/entrar", "/minha-conta", "/account",
+        "/carrinho", "/cart", "/checkout", "/politica", "/privacy", "/termos",
+        "/blog", "/noticia", "/contato", "#",
+    )
+
     def __init__(self) -> None:
         self.registry: SupplierRegistry = get_registry()
 
@@ -65,6 +113,15 @@ class SiteAgent:
         if not url:
             return []
 
+        varrer_site_completo = self._bool_compat(
+            kwargs.get("varrer_site_completo", kwargs.get("varredura_completa", kwargs.get("site_completo"))),
+            default=False,
+        )
+        sitemap_completo = self._bool_compat(
+            kwargs.get("sitemap_completo", kwargs.get("varrer_sitemap_completo")),
+            default=varrer_site_completo,
+        )
+
         fornecedor = self._detectar_fornecedor(url)
         produtos: List[Dict[str, Any]] = []
         kwargs_limpos = self._filtrar_kwargs_fornecedor(kwargs)
@@ -75,10 +132,8 @@ class SiteAgent:
         preferir_http = self._bool_compat(kwargs.get("preferir_http"), default=True)
         usar_fornecedor = self._bool_compat(kwargs.get("usar_fornecedor"), default=True)
         usar_generico = self._bool_compat(kwargs.get("usar_generico"), default=True)
-
         fornecedor_eh_generico = self._fornecedor_eh_generico(fornecedor)
 
-        # BLINGFIX MEGA CENTER: fornecedor específico deve rodar também em HTTP-first.
         if usar_fornecedor and fornecedor is not None and not fornecedor_eh_generico:
             try:
                 self._log(
@@ -105,14 +160,22 @@ class SiteAgent:
                 except Exception as exc:
                     self._log(f"[ERRO fallback GenericSupplier] {exc}")
 
-        if not produtos:
+        # BLINGFIX:
+        # Em modo completo, a varredura adaptativa SEMPRE roda, mesmo que fornecedor específico retorne algo.
+        # Isso evita coleta parcial do Mega Center e outros fornecedores.
+        if varrer_site_completo or sitemap_completo or not produtos:
             self._log("[IA ABSURDA PRO] iniciando varredura adaptativa HTTP-first")
             try:
-                produtos = self._executar_varredura_adaptativa(
+                produtos_adaptativos = self._executar_varredura_adaptativa(
                     url=url,
                     auth_context=auth_context,
                     kwargs=kwargs,
                 )
+
+                if varrer_site_completo or sitemap_completo:
+                    produtos = self._deduplicar((produtos or []) + (produtos_adaptativos or []))
+                else:
+                    produtos = produtos_adaptativos
             except Exception as exc:
                 self._log(f"[ERRO IA ABSURDA PRO] {exc}")
 
@@ -129,34 +192,61 @@ class SiteAgent:
     ) -> List[Dict[str, Any]]:
         kwargs = kwargs or {}
 
-        limite_base = self._int_compat(kwargs.get("limite", kwargs.get("limite_links", 120)), 120)
-        paginas_base = self._int_compat(kwargs.get("limite_paginas"), 8)
+        varrer_site_completo = self._bool_compat(
+            kwargs.get("varrer_site_completo", kwargs.get("varredura_completa", kwargs.get("site_completo"))),
+            default=False,
+        )
+        sitemap_completo = self._bool_compat(
+            kwargs.get("sitemap_completo", kwargs.get("varrer_sitemap_completo")),
+            default=varrer_site_completo,
+        )
+
         max_workers_base = self._int_compat(kwargs.get("max_workers"), 8)
+        max_workers = max(4, min(max_workers_base, 16))
+
+        if varrer_site_completo or sitemap_completo:
+            self._log("[IA] modo completo ativado: sem limite de produtos e com sitemap recursivo")
+            return self._buscar_com_fallback_interno(
+                url=url,
+                auth_context=auth_context,
+                limite=0,
+                limite_paginas=0,
+                max_workers=max_workers,
+                usar_sitemap=True,
+                usar_home=True,
+                usar_categoria=True,
+                modo="completo",
+                sitemap_completo=sitemap_completo,
+                varrer_site_completo=varrer_site_completo,
+            )
+
+        limite_base = self._int_compat(kwargs.get("limite", kwargs.get("limite_links", 300)), 300)
+        paginas_base = self._int_compat(kwargs.get("limite_paginas"), 20)
 
         tentativas = [
             {
                 "modo": "padrao",
-                "limite": max(limite_base, 60),
-                "limite_paginas": max(paginas_base, 6),
-                "max_workers": max(4, min(max_workers_base, 8)),
+                "limite": max(limite_base, 120),
+                "limite_paginas": max(paginas_base, 12),
+                "max_workers": max(4, min(max_workers, 8)),
                 "usar_sitemap": True,
                 "usar_home": True,
                 "usar_categoria": True,
             },
             {
                 "modo": "profundo",
-                "limite": max(int(limite_base * 1.5), limite_base + 40),
-                "limite_paginas": max(paginas_base + 4, 10),
-                "max_workers": max(6, min(max_workers_base + 2, 12)),
+                "limite": max(int(limite_base * 2), limite_base + 200),
+                "limite_paginas": max(paginas_base + 20, 40),
+                "max_workers": max(6, min(max_workers + 2, 12)),
                 "usar_sitemap": True,
                 "usar_home": True,
                 "usar_categoria": True,
             },
             {
                 "modo": "agressivo",
-                "limite": max(int(limite_base * 2), limite_base + 80),
-                "limite_paginas": max(paginas_base + 8, 14),
-                "max_workers": max(8, min(max_workers_base + 4, 16)),
+                "limite": max(int(limite_base * 4), limite_base + 500),
+                "limite_paginas": max(paginas_base + 60, 80),
+                "max_workers": max(8, min(max_workers + 4, 16)),
                 "usar_sitemap": True,
                 "usar_home": True,
                 "usar_categoria": True,
@@ -183,6 +273,8 @@ class SiteAgent:
                 usar_home=tentativa["usar_home"],
                 usar_categoria=tentativa["usar_categoria"],
                 modo=tentativa["modo"],
+                sitemap_completo=False,
+                varrer_site_completo=False,
             )
 
             if len(produtos) > len(melhor_resultado):
@@ -194,7 +286,10 @@ class SiteAgent:
                     f"[IA] tentativa {tentativa['modo']} encontrou "
                     f"{len(produtos)} produto(s), {len(bons)} com score bom"
                 )
-                if len(bons) >= 5 or len(produtos) >= 12:
+
+                # BLINGFIX: não parar com 12 produtos.
+                # Só consolida quando achou um volume razoável ou terminou as tentativas.
+                if len(bons) >= 80 or len(produtos) >= 150:
                     self._log(f"[IA] sucesso consolidado na tentativa {tentativa['modo']}")
                     return produtos
 
@@ -374,7 +469,6 @@ class SiteAgent:
         final_url = self._normalizar_url(url)
 
         for candidate in candidates:
-            # tentativa segura primeiro
             try:
                 resp = session.get(
                     candidate,
@@ -388,7 +482,6 @@ class SiteAgent:
                 last_error = exc
                 self._log(f"[SSL WARN] {candidate} -> {exc}")
 
-                # retry inseguro somente quando SSL falhar
                 try:
                     resp = session.get(
                         candidate,
@@ -432,9 +525,15 @@ class SiteAgent:
         usar_home: bool = True,
         usar_categoria: bool = True,
         modo: str = "padrao",
+        sitemap_completo: bool = False,
+        varrer_site_completo: bool = False,
     ) -> List[Dict[str, Any]]:
         session = self._build_session(auth_context=auth_context)
         self._log(f"[CRAWLER] iniciando varredura em: {url} | modo={modo}")
+
+        sem_limite = limite in (None, 0, -1) or sitemap_completo or varrer_site_completo
+        limite_links = 999999 if sem_limite else max(int(limite), 1)
+        limite_pag = 999999 if sem_limite else max(int(limite_paginas or 1), 1)
 
         paginas_alvo: List[str] = []
         links_produtos: List[str] = []
@@ -456,25 +555,55 @@ class SiteAgent:
             paginas_alvo.append(url)
 
         if usar_sitemap and url:
-            for link_sitemap in self._descobrir_links_via_sitemap(session, url, limite=limite * 2):
-                if self._hostname(link_sitemap) == host_base or not host_base:
-                    if self._url_parece_produto(link_sitemap):
-                        if link_sitemap not in vistos_links_produto:
-                            vistos_links_produto.add(link_sitemap)
-                            links_produtos.append(link_sitemap)
-                    elif usar_categoria and self._url_parece_categoria(link_sitemap):
-                        paginas_alvo.append(link_sitemap)
+            links_sitemap = self._descobrir_links_via_sitemap(
+                session,
+                url,
+                limite=0 if sem_limite else limite_links * 2,
+                recursivo=True,
+            )
+            self._log(f"[SITEMAP] total de links descobertos: {len(links_sitemap)}")
+
+            for link_sitemap in links_sitemap:
+                if self._hostname(link_sitemap) != host_base and host_base:
+                    continue
+
+                if self._url_parece_produto(link_sitemap):
+                    if link_sitemap not in vistos_links_produto:
+                        vistos_links_produto.add(link_sitemap)
+                        links_produtos.append(link_sitemap)
+                elif usar_categoria and self._url_parece_categoria(link_sitemap):
+                    paginas_alvo.append(link_sitemap)
+                elif varrer_site_completo:
+                    paginas_alvo.append(link_sitemap)
+
+                if not sem_limite and len(links_produtos) >= limite_links:
+                    break
 
         paginas_alvo = self._deduplicar_lista_urls(paginas_alvo)
 
-        for pagina in paginas_alvo[: max(limite_paginas * 3, 20)]:
-            if pagina in vistos_paginas:
+        fila_paginas = list(paginas_alvo)
+        idx = 0
+
+        while idx < len(fila_paginas) and len(vistos_paginas) < limite_pag:
+            pagina = fila_paginas[idx]
+            idx += 1
+
+            if not pagina or pagina in vistos_paginas:
                 continue
+            if host_base and self._hostname(pagina) != host_base:
+                continue
+
             vistos_paginas.add(pagina)
 
             html, final_url = self._get_html(session, pagina)
             if not html:
                 continue
+
+            if len(vistos_paginas) == 1 or len(vistos_paginas) % 10 == 0:
+                self._log(
+                    f"[CRAWLER] páginas analisadas={len(vistos_paginas)} "
+                    f"| links_produto={len(links_produtos)} | atual={final_url}"
+                )
 
             jsonld_produtos = self._extrair_produtos_jsonld(html, final_url)
             if jsonld_produtos:
@@ -485,93 +614,49 @@ class SiteAgent:
                 if produto:
                     produtos_coletados.append(produto)
 
-            novos_links = self._extrair_links_produto(html, final_url, limite=limite)
+            novos_links = self._extrair_links_produto(html, final_url, limite=0 if sem_limite else limite_links)
             for link in novos_links:
                 if link not in vistos_links_produto:
                     vistos_links_produto.add(link)
                     links_produtos.append(link)
 
             if usar_categoria:
-                links_categoria = self._extrair_links_categoria(html, final_url, limite=limite_paginas * 4)
+                links_categoria = self._extrair_links_categoria(html, final_url, limite=0 if sem_limite else limite_pag)
                 for link_cat in links_categoria:
-                    if link_cat in vistos_paginas:
-                        continue
-
-                    vistos_paginas.add(link_cat)
-                    html_cat, final_cat = self._get_html(session, link_cat)
-                    if not html_cat:
-                        continue
-
-                    jsonld_cat = self._extrair_produtos_jsonld(html_cat, final_cat)
-                    if jsonld_cat:
-                        produtos_coletados.extend(jsonld_cat)
-
-                    for link_prod in self._extrair_links_produto(html_cat, final_cat, limite=limite):
-                        if link_prod not in vistos_links_produto:
-                            vistos_links_produto.add(link_prod)
-                            links_produtos.append(link_prod)
-
-                    for link_pag in self._extrair_links_paginacao(
-                        html_cat,
-                        final_cat,
-                        limite_paginas=limite_paginas,
-                    ):
-                        if link_pag in vistos_paginas:
-                            continue
-                        vistos_paginas.add(link_pag)
-
-                        html_pag, final_pag = self._get_html(session, link_pag)
-                        if not html_pag:
-                            continue
-
-                        jsonld_pag = self._extrair_produtos_jsonld(html_pag, final_pag)
-                        if jsonld_pag:
-                            produtos_coletados.extend(jsonld_pag)
-
-                        for link_prod_pag in self._extrair_links_produto(html_pag, final_pag, limite=limite):
-                            if link_prod_pag not in vistos_links_produto:
-                                vistos_links_produto.add(link_prod_pag)
-                                links_produtos.append(link_prod_pag)
-
-                        if len(links_produtos) >= limite:
-                            break
-
-                    if len(links_produtos) >= limite:
-                        break
+                    if link_cat not in vistos_paginas and link_cat not in fila_paginas:
+                        fila_paginas.append(link_cat)
 
             for link_pag in self._extrair_links_paginacao(
                 html,
                 final_url,
-                limite_paginas=limite_paginas,
+                limite_paginas=0 if sem_limite else limite_pag,
             ):
-                if link_pag in vistos_paginas:
-                    continue
-                vistos_paginas.add(link_pag)
+                if link_pag not in vistos_paginas and link_pag not in fila_paginas:
+                    fila_paginas.append(link_pag)
 
-                html_pag, final_pag = self._get_html(session, link_pag)
-                if not html_pag:
-                    continue
+            if varrer_site_completo:
+                for link_interno in self._extrair_links_internos(html, final_url, limite=0):
+                    if link_interno in vistos_paginas or link_interno in fila_paginas:
+                        continue
+                    if self._url_parece_produto(link_interno):
+                        if link_interno not in vistos_links_produto:
+                            vistos_links_produto.add(link_interno)
+                            links_produtos.append(link_interno)
+                    elif self._url_parece_categoria(link_interno):
+                        fila_paginas.append(link_interno)
 
-                jsonld_pag = self._extrair_produtos_jsonld(html_pag, final_pag)
-                if jsonld_pag:
-                    produtos_coletados.extend(jsonld_pag)
-
-                for link in self._extrair_links_produto(html_pag, final_pag, limite=limite):
-                    if link not in vistos_links_produto:
-                        vistos_links_produto.add(link)
-                        links_produtos.append(link)
-
-                if len(links_produtos) >= limite:
-                    break
-
-            if len(links_produtos) >= limite:
+            if not sem_limite and len(links_produtos) >= limite_links:
                 break
 
         self._log(f"[CRAWLER] coletados {len(links_produtos)} links de produto")
 
+        links_para_coletar = self._deduplicar_lista_urls(links_produtos)
+        if not sem_limite:
+            links_para_coletar = links_para_coletar[:limite_links]
+
         produtos_detalhados = self._coletar_paginas_produto_concorrente(
             session=session,
-            links_produtos=links_produtos[:limite],
+            links_produtos=links_para_coletar,
             max_workers=max_workers,
         )
 
@@ -601,7 +686,11 @@ class SiteAgent:
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futuros = {executor.submit(_worker, link): link for link in links_produtos}
+            total = len(futuros)
+            concluidos = 0
+
             for futuro in as_completed(futuros):
+                concluidos += 1
                 try:
                     produto = futuro.result()
                     if produto:
@@ -610,6 +699,12 @@ class SiteAgent:
                     link = futuros.get(futuro, "")
                     self._log(f"[WORKER ERRO] {link} -> {exc}")
 
+                if concluidos == 1 or concluidos % 25 == 0 or concluidos == total:
+                    self._log(
+                        f"[CRAWLER] páginas de produto processadas={concluidos}/{total} "
+                        f"| produtos válidos={len(resultados)}"
+                    )
+
         return resultados
 
     def _descobrir_links_via_sitemap(
@@ -617,23 +712,48 @@ class SiteAgent:
         session: requests.Session,
         base_url: str,
         limite: int = 300,
+        recursivo: bool = True,
     ) -> List[str]:
         candidatos = self._gerar_urls_sitemap(base_url)
         encontrados: List[str] = []
-        vistos: Set[str] = set()
+        vistos_links: Set[str] = set()
+        vistos_sitemaps: Set[str] = set()
+        fila = list(candidatos)
+        sem_limite = limite in (None, 0, -1)
 
-        for sitemap_url in candidatos:
+        while fila:
+            sitemap_url = self._normalizar_url(fila.pop(0))
+            if not sitemap_url or sitemap_url in vistos_sitemaps:
+                continue
+
+            vistos_sitemaps.add(sitemap_url)
             xml_texto, final_url = self._get_text(session, sitemap_url)
             if not xml_texto:
                 continue
 
-            for link in self._parse_sitemap_links(xml_texto, final_url):
+            links = self._parse_sitemap_links(xml_texto, final_url)
+            if not links:
+                continue
+
+            self._log(f"[SITEMAP] {final_url} -> {len(links)} link(s)")
+
+            for link in links:
                 link = self._limpar_url(link)
-                if not link or link in vistos:
+                if not link:
                     continue
-                vistos.add(link)
+
+                if recursivo and self._parece_arquivo_sitemap(link):
+                    if link not in vistos_sitemaps and link not in fila:
+                        fila.append(link)
+                    continue
+
+                if link in vistos_links:
+                    continue
+
+                vistos_links.add(link)
                 encontrados.append(link)
-                if len(encontrados) >= limite:
+
+                if not sem_limite and len(encontrados) >= int(limite):
                     return encontrados
 
         return encontrados
@@ -651,8 +771,14 @@ class SiteAgent:
             f"{raiz}/sitemap_index.xml",
             f"{raiz}/sitemap-index.xml",
             f"{raiz}/sitemap-products.xml",
+            f"{raiz}/sitemap_product.xml",
+            f"{raiz}/sitemap-products-1.xml",
             f"{raiz}/product-sitemap.xml",
+            f"{raiz}/products-sitemap.xml",
             f"{raiz}/produto-sitemap.xml",
+            f"{raiz}/produtos-sitemap.xml",
+            f"{raiz}/sitemap_produtos.xml",
+            f"{raiz}/sitemap_produto.xml",
             f"{raiz}/robots.txt",
         ]
         return self._deduplicar_lista_urls(candidatos)
@@ -675,29 +801,29 @@ class SiteAgent:
         try:
             root = ET.fromstring(texto)
         except Exception:
-            return []
+            links_re = re.findall(r"https?://[^\s<>'\"]+", texto)
+            return [self._limpar_url(x) for x in links_re if self._limpar_url(x)]
 
         ns = ""
         if root.tag.startswith("{"):
             ns = root.tag.split("}", 1)[0] + "}"
 
         links: List[str] = []
+        for node in root.findall(f".//{ns}loc"):
+            valor = self._texto_limpo(node.text)
+            if valor:
+                links.append(valor)
 
-        if root.tag.endswith("sitemapindex"):
-            for node in root.findall(f".//{ns}loc"):
-                valor = self._texto_limpo(node.text)
-                if valor:
-                    links.append(valor)
-            return links
+        return links
 
-        if root.tag.endswith("urlset"):
-            for node in root.findall(f".//{ns}loc"):
-                valor = self._texto_limpo(node.text)
-                if valor:
-                    links.append(valor)
-            return links
-
-        return []
+    def _parece_arquivo_sitemap(self, url: str) -> bool:
+        url_l = (url or "").lower()
+        return "sitemap" in url_l and (
+            url_l.endswith(".xml")
+            or ".xml?" in url_l
+            or url_l.endswith(".gz")
+            or ".gz?" in url_l
+        )
 
     def _get_html(self, session: requests.Session, url: str) -> Tuple[str, str]:
         try:
@@ -766,7 +892,9 @@ class SiteAgent:
         def _walk(obj: Any) -> None:
             if isinstance(obj, dict):
                 tipo = obj.get("@type")
-                if tipo == "Product" or (isinstance(tipo, list) and "Product" in tipo):
+                tipo_lista = tipo if isinstance(tipo, list) else [tipo]
+                tipo_lista = [str(t).lower() for t in tipo_lista]
+                if "product" in tipo_lista:
                     itens.append(obj)
                 for valor in obj.values():
                     _walk(valor)
@@ -801,8 +929,13 @@ class SiteAgent:
         imagens = item.get("image", [])
         if isinstance(imagens, str):
             imagens = [imagens]
+        elif isinstance(imagens, dict):
+            imagens = [imagens.get("url", "")]
         elif not isinstance(imagens, list):
             imagens = []
+
+        imagens = [self._limpar_url(urljoin(base_url, self._texto_limpo(img.get("url") if isinstance(img, dict) else img))) for img in imagens]
+        imagens = [img for img in imagens if img]
 
         marca = ""
         brand = item.get("brand")
@@ -822,11 +955,13 @@ class SiteAgent:
         )
 
         url_produto = self._normalizar_url(item.get("url") or base_url)
-        nome = self._texto_limpo(item.get("name"))
+        nome = self._limpar_nome_produto(item.get("name"))
         descricao = self._texto_limpo(item.get("description"))
 
         if not nome and not url_produto:
             return None
+
+        marca = self._normalizar_marca(marca, nome=nome, descricao=descricao)
 
         return {
             "url_produto": url_produto,
@@ -884,6 +1019,9 @@ class SiteAgent:
     def _url_parece_produto(self, url: str) -> bool:
         url_l = (url or "").lower()
 
+        if self._url_indesejada(url_l):
+            return False
+
         if any(token in url_l for token in ["/produto/", "/produtos/", "/product/", "/item/", "/p/"]):
             return True
 
@@ -900,25 +1038,14 @@ class SiteAgent:
 
     def _url_parece_categoria(self, url: str) -> bool:
         url_l = (url or "").lower()
-        return any(
-            token in url_l
-            for token in [
-                "/categoria",
-                "/categorias",
-                "/catalogo",
-                "/catalog",
-                "/colecao",
-                "/collection",
-                "/departamento",
-                "/celulares",
-                "/smartphone",
-                "/smartphones",
-                "/relogio",
-                "/smartwatch",
-                "/acessorios",
-                "/mais-produtos",
-            ]
-        )
+        if self._url_indesejada(url_l):
+            return False
+
+        return any(token in url_l for token in self.CATEGORY_HINTS)
+
+    def _url_indesejada(self, url: str) -> bool:
+        url_l = (url or "").lower()
+        return any(token in url_l for token in self.BAD_LINK_HINTS)
 
     # ------------------------------------------------------------------
     # EXTRAÇÃO DE LINKS
@@ -928,6 +1055,7 @@ class SiteAgent:
         base_host = self._hostname(base_url)
         links: List[str] = []
         vistos: Set[str] = set()
+        sem_limite = limite in (None, 0, -1)
 
         candidatos_css = [
             "a[href]",
@@ -962,7 +1090,7 @@ class SiteAgent:
                 vistos.add(url)
                 links.append(url)
 
-                if len(links) >= limite:
+                if not sem_limite and len(links) >= int(limite):
                     return links
 
         return links
@@ -972,6 +1100,7 @@ class SiteAgent:
         base_host = self._hostname(base_url)
         links: List[str] = []
         vistos: Set[str] = set()
+        sem_limite = limite in (None, 0, -1)
 
         for a in soup.find_all("a", href=True):
             href = self._texto_limpo(a.get("href"))
@@ -992,7 +1121,8 @@ class SiteAgent:
 
             vistos.add(url)
             links.append(url)
-            if len(links) >= limite:
+
+            if not sem_limite and len(links) >= int(limite):
                 break
 
         return links
@@ -1002,6 +1132,7 @@ class SiteAgent:
         base_host = self._hostname(base_url)
         links: List[str] = []
         vistos: Set[str] = set()
+        sem_limite = limite_paginas in (None, 0, -1)
 
         for a in soup.find_all("a", href=True):
             href = self._texto_limpo(a.get("href"))
@@ -1031,7 +1162,38 @@ class SiteAgent:
 
             vistos.add(url)
             links.append(url)
-            if len(links) >= limite_paginas:
+
+            if not sem_limite and len(links) >= int(limite_paginas):
+                break
+
+        return links
+
+    def _extrair_links_internos(self, html: str, base_url: str, limite: int = 0) -> List[str]:
+        soup = BeautifulSoup(html or "", "html.parser")
+        base_host = self._hostname(base_url)
+        links: List[str] = []
+        vistos: Set[str] = set()
+        sem_limite = limite in (None, 0, -1)
+
+        for a in soup.find_all("a", href=True):
+            href = self._texto_limpo(a.get("href"))
+            if not href:
+                continue
+
+            url = self._limpar_url(urljoin(base_url, href))
+            if not url:
+                continue
+            if self._hostname(url) != base_host:
+                continue
+            if self._url_indesejada(url):
+                continue
+            if url in vistos:
+                continue
+
+            vistos.add(url)
+            links.append(url)
+
+            if not sem_limite and len(links) >= int(limite):
                 break
 
         return links
@@ -1097,7 +1259,7 @@ class SiteAgent:
                     valor = self._texto_limpo(tag.get("content"))
                 else:
                     valor = self._texto_limpo(tag.get_text(" ", strip=True))
-                valor = unescape(valor)
+                valor = self._limpar_nome_produto(unescape(valor))
                 if valor and len(valor) >= 3:
                     return valor[:220]
             except Exception:
@@ -1163,12 +1325,12 @@ class SiteAgent:
                 if tag:
                     valor = self._texto_limpo(tag.get("content") or tag.get_text(" ", strip=True))
                     numeros = re.sub(r"\D", "", valor)
-                    if numeros:
-                        return numeros[:14]
+                    if len(numeros) in (8, 12, 13, 14):
+                        return numeros
             except Exception:
                 continue
 
-        match = re.search(r"(?:ean|gtin)\s*[:#]?\s*(\d{8,14})", texto_pagina, flags=re.I)
+        match = re.search(r"(?:ean|gtin|código de barras|codigo de barras)\s*[:#]?\s*(\d{8,14})", texto_pagina, flags=re.I)
         if match:
             return match.group(1)
 
@@ -1176,25 +1338,26 @@ class SiteAgent:
 
     def _extrair_marca(self, soup: BeautifulSoup, texto_pagina: str, nome: str) -> str:
         for tag in soup.find_all(attrs={"itemprop": re.compile(r"brand", re.I)}):
-            valor = self._texto_limpo(tag.get("content") or tag.get_text(" ", strip=True))
+            valor = self._normalizar_marca(
+                tag.get("content") or tag.get_text(" ", strip=True),
+                nome=nome,
+                descricao=texto_pagina,
+            )
             if valor:
                 return valor[:80]
 
         padroes = [
             r"(?:marca)\s*[:#]?\s*([A-Za-z0-9À-ÿ\-_ ]{2,60})",
+            r"(?:fabricante)\s*[:#]?\s*([A-Za-z0-9À-ÿ\-_ ]{2,60})",
         ]
         for padrao in padroes:
             match = re.search(padrao, texto_pagina, flags=re.I)
             if match:
-                return self._texto_limpo(match.group(1))[:80]
+                marca = self._normalizar_marca(match.group(1), nome=nome, descricao=texto_pagina)
+                if marca:
+                    return marca[:80]
 
-        nome_limpo = self._texto_limpo(nome)
-        if nome_limpo:
-            primeira = nome_limpo.split(" ")[0].strip()
-            if primeira and len(primeira) > 1:
-                return primeira[:80]
-
-        return ""
+        return self._normalizar_marca("", nome=nome, descricao=texto_pagina)[:80]
 
     def _extrair_categoria(self, soup: BeautifulSoup, url: str = "") -> str:
         breadcrumbs = []
@@ -1253,7 +1416,7 @@ class SiteAgent:
         for meta in metas:
             if meta:
                 url = self._limpar_url(urljoin(base_url, self._texto_limpo(meta.get("content"))))
-                if url and url not in vistos:
+                if url and url not in vistos and self._imagem_valida(url):
                     vistos.add(url)
                     imagens.append(url)
 
@@ -1270,7 +1433,7 @@ class SiteAgent:
             url = self._limpar_url(urljoin(base_url, src))
             if not url:
                 continue
-            if any(token in url.lower() for token in ["logo", "icon", "sprite", "banner"]):
+            if not self._imagem_valida(url):
                 continue
             if url in vistos:
                 continue
@@ -1280,6 +1443,14 @@ class SiteAgent:
                 break
 
         return imagens
+
+    def _imagem_valida(self, url: str) -> bool:
+        url_l = (url or "").lower()
+        if not url_l:
+            return False
+        if any(token in url_l for token in ["logo", "icon", "sprite", "banner", "placeholder", "whatsapp", "facebook", "instagram"]):
+            return False
+        return True
 
     def _extrair_estoque(self, texto_pagina: str, soup: BeautifulSoup) -> Any:
         texto = self._texto_limpo(texto_pagina).lower()
@@ -1384,7 +1555,10 @@ class SiteAgent:
 
     def _hostname(self, url: str) -> str:
         try:
-            return (urlparse(self._normalizar_url(url)).hostname or "").strip().lower()
+            host = (urlparse(self._normalizar_url(url)).hostname or "").strip().lower()
+            if host.startswith("www."):
+                host = host[4:]
+            return host
         except Exception:
             return ""
 
@@ -1407,7 +1581,11 @@ class SiteAgent:
         texto = self._texto_limpo(valor).lower()
         if not texto:
             return default
-        return texto in {"1", "true", "sim", "yes", "on"}
+        if texto in {"1", "true", "sim", "yes", "on", "s"}:
+            return True
+        if texto in {"0", "false", "nao", "não", "no", "off", "n"}:
+            return False
+        return default
 
     def _int_compat(self, valor: Any, default: int) -> int:
         try:
@@ -1427,13 +1605,13 @@ class SiteAgent:
             if not isinstance(p, dict):
                 continue
 
-            nome = self._texto_limpo(p.get("nome"))
+            nome = self._limpar_nome_produto(p.get("nome"))
             url_produto = self._texto_limpo(p.get("url_produto"))
             sku = self._texto_limpo(p.get("sku"))
-            marca = self._texto_limpo(p.get("marca"))
-            categoria = self._texto_limpo(p.get("categoria"))
-            gtin = self._texto_limpo(p.get("gtin"))
             descricao = self._texto_limpo(p.get("descricao"))
+            marca = self._normalizar_marca(p.get("marca"), nome=nome, descricao=descricao)
+            categoria = self._texto_limpo(p.get("categoria"))
+            gtin = self._normalizar_gtin(p.get("gtin"))
 
             estoque = self._normalizar_estoque(p.get("estoque"))
             preco = self._normalizar_preco(p.get("preco"))
@@ -1531,6 +1709,12 @@ class SiteAgent:
         except Exception:
             return 0.0
 
+    def _normalizar_gtin(self, valor: Any) -> str:
+        numeros = re.sub(r"\D", "", self._texto_limpo(valor))
+        if len(numeros) in (8, 12, 13, 14):
+            return numeros
+        return ""
+
     def _normalizar_imagens(self, imagens: Any) -> str:
         if not imagens:
             return ""
@@ -1553,28 +1737,107 @@ class SiteAgent:
             vistos.add(valor)
             lista_final.append(valor)
 
-        return "|".join(lista_final)
+        return "|".join(lista_final[:12])
 
     def _texto_limpo(self, valor: Any) -> str:
         texto = str(valor or "").strip()
         if texto.lower() in {"nan", "none", "null"}:
             return ""
+        texto = unescape(texto)
+        texto = texto.replace("\ufeff", "").replace("\x00", "")
+        texto = re.sub(r"[\r\n\t]+", " ", texto)
+        texto = re.sub(r"\s+", " ", texto).strip()
         return texto
 
     def _normalizar_url(self, url: str) -> str:
         texto = self._texto_limpo(url)
         if not texto:
             return ""
+        if texto.startswith("//"):
+            texto = f"https:{texto}"
         if not texto.startswith(("http://", "https://")):
             texto = f"https://{texto}"
         return texto
+
+    def _limpar_nome_produto(self, valor: Any) -> str:
+        texto = self._texto_limpo(valor)
+        texto = re.sub(r"\s*[-|]\s*Mega Center.*$", "", texto, flags=re.I)
+        texto = re.sub(r"\s*[-|]\s*Comprar.*$", "", texto, flags=re.I)
+        return texto.strip()
+
+    def _normalizar_marca(self, marca: Any, *, nome: str = "", descricao: str = "") -> str:
+        marca_txt = self._texto_limpo(marca)
+        marca_txt = re.sub(r"\s+", " ", marca_txt).strip(" -|:/")
+
+        if self._marca_invalida(marca_txt):
+            marca_txt = ""
+
+        if not marca_txt:
+            marca_txt = self._inferir_marca(nome=nome, descricao=descricao)
+
+        if self._marca_invalida(marca_txt):
+            return ""
+
+        return marca_txt[:80]
+
+    def _marca_invalida(self, marca: str) -> bool:
+        marca_l = self._sem_acentos(self._texto_limpo(marca)).lower()
+        if not marca_l:
+            return True
+
+        bloqueadas = {self._sem_acentos(x).lower() for x in self.MARCAS_LOJA_BLOQUEADAS}
+        if marca_l in bloqueadas:
+            return True
+
+        if "mega center" in marca_l or "megacenter" in marca_l:
+            return True
+
+        if len(marca_l) > 80:
+            return True
+
+        return False
+
+    def _inferir_marca(self, *, nome: str = "", descricao: str = "") -> str:
+        texto = f" {nome or ''} {descricao or ''} "
+        texto_norm = self._sem_acentos(texto).lower()
+
+        for marca in self.MARCAS_CONHECIDAS:
+            marca_norm = self._sem_acentos(marca).lower()
+            if re.search(rf"(?<![a-z0-9]){re.escape(marca_norm)}(?![a-z0-9])", texto_norm):
+                return marca
+
+        nome_limpo = self._texto_limpo(nome)
+        if nome_limpo:
+            primeira = nome_limpo.split(" ")[0].strip(" -:/")
+            genericas = {
+                "cabo", "fone", "caixa", "carregador", "pelicula", "película",
+                "capinha", "suporte", "adaptador", "controle", "mouse", "teclado",
+                "chip", "troca", "tela", "smartphone", "celular", "produto",
+                "kit", "mini", "novo", "nova", "original", "fonte", "capa",
+            }
+            if (
+                primeira
+                and len(primeira) >= 3
+                and not primeira.isdigit()
+                and primeira.lower() not in genericas
+                and not self._marca_invalida(primeira)
+            ):
+                return primeira
+
+        return ""
+
+    def _sem_acentos(self, texto: str) -> str:
+        mapa = str.maketrans(
+            "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
+            "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC",
+        )
+        return (texto or "").translate(mapa)
 
     def _filtrar_kwargs_fornecedor(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         removidos = {
             "base_url",
             "diagnostico",
             "termo",
-            "limite_links",
         }
         return {k: v for k, v in kwargs.items() if k not in removidos}
 
@@ -1592,6 +1855,7 @@ class SiteAgent:
 
             if not chave:
                 continue
+            chave = chave.lower().strip()
             if chave in vistos:
                 continue
 
@@ -1606,29 +1870,41 @@ class SiteAgent:
         except Exception:
             pass
 
+        if st is not None:
+            try:
+                if "logs" not in st.session_state:
+                    st.session_state["logs"] = []
+                st.session_state["logs"].append(f"{time.strftime('%H:%M:%S')} {mensagem}")
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # DATAFRAME
     # ------------------------------------------------------------------
     def para_dataframe(self, produtos: List[Dict[str, Any]]) -> pd.DataFrame:
         produtos = self._padronizar(produtos)
 
+        colunas = [
+            "url_produto",
+            "nome",
+            "sku",
+            "marca",
+            "categoria",
+            "estoque",
+            "preco",
+            "gtin",
+            "descricao",
+            "imagens",
+        ]
+
         if not produtos:
-            return pd.DataFrame(
-                columns=[
-                    "url_produto",
-                    "nome",
-                    "sku",
-                    "marca",
-                    "categoria",
-                    "estoque",
-                    "preco",
-                    "gtin",
-                    "descricao",
-                    "imagens",
-                ]
-            )
+            return pd.DataFrame(columns=colunas)
 
         df = pd.DataFrame(produtos).fillna("")
+
+        for col in colunas:
+            if col not in df.columns:
+                df[col] = ""
 
         if "estoque" in df.columns:
             df["estoque"] = df["estoque"].apply(self._normalizar_estoque)
@@ -1639,7 +1915,20 @@ class SiteAgent:
         if "imagens" in df.columns:
             df["imagens"] = df["imagens"].apply(self._normalizar_imagens)
 
-        return df
+        if "gtin" in df.columns:
+            df["gtin"] = df["gtin"].apply(self._normalizar_gtin)
+
+        if "marca" in df.columns:
+            df["marca"] = df.apply(
+                lambda row: self._normalizar_marca(
+                    row.get("marca", ""),
+                    nome=row.get("nome", ""),
+                    descricao=row.get("descricao", ""),
+                ),
+                axis=1,
+            )
+
+        return df[colunas].reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # DIAGNÓSTICO
@@ -1749,13 +2038,16 @@ def buscar_produtos_site_com_gpt(
     agent = get_site_agent()
 
     kwargs_execucao = dict(kwargs)
+
     if limite_links is not None and "limite" not in kwargs_execucao:
         kwargs_execucao["limite"] = limite_links
 
+    # BLINGFIX:
+    # Quando o fluxo pedir varrer tudo, usar:
+    # buscar_produtos_site_com_gpt(base_url=..., varrer_site_completo=True, sitemap_completo=True)
     return agent.buscar_dataframe(
         base_url=base_url,
         diagnostico=diagnostico,
         auth_context=auth_context,
         **kwargs_execucao,
     )
-
