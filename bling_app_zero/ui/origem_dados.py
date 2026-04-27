@@ -15,7 +15,7 @@ from bling_app_zero.ui.app_helpers import (
 from bling_app_zero.ui.origem_site_panel import render_origem_site_panel
 
 
-EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml", ".pdf"}
+EXTENSOES_ORIGEM = {".csv", ".xlsx", ".xls", ".xml"}
 EXTENSOES_MODELO = {".csv", ".xlsx", ".xls"}
 
 
@@ -195,7 +195,7 @@ def _processar_upload_origem(upload) -> None:
 
     ext = _extensao(upload)
     if ext not in EXTENSOES_ORIGEM:
-        st.error("Arquivo de origem inválido. Envie CSV, XLSX, XLS, XML ou PDF.")
+        st.error("Arquivo de origem inválido. Envie CSV, XLSX, XLS ou XML.")
         return
 
     if _eh_excel_familia(ext):
@@ -226,9 +226,6 @@ def _processar_upload_origem(upload) -> None:
         st.success("XML convertido com sucesso.")
         _preview_dataframe(df, "Preview do XML")
         return
-
-    _guardar_upload_bruto("origem_upload", upload, "documento")
-    st.warning("PDF ainda não processado automaticamente.")
 
 
 def _processar_upload_modelo(upload) -> None:
@@ -316,10 +313,11 @@ def _render_dados_operacao() -> None:
 def _render_origem_arquivo() -> None:
     with st.container(border=True):
         st.markdown("### Arquivo do fornecedor")
-        st.caption("Use esta opção para planilha, XML ou PDF.")
+        st.caption("Use esta opção para planilha ou XML. PDF será liberado somente quando houver extração automática confiável.")
 
         upload_origem = st.file_uploader(
             "Selecionar arquivo de origem",
+            type=["csv", "xlsx", "xls", "xml"],
             key="upload_origem",
         )
 
@@ -344,6 +342,7 @@ def _render_modelo() -> None:
 
         upload_modelo = st.file_uploader(
             "Selecionar modelo",
+            type=["csv", "xlsx", "xls"],
             key="upload_modelo",
         )
 
