@@ -9,9 +9,12 @@ import pandas as pd
 def _txt(v: Any) -> str:
     if v is None:
         return ""
+
     s = str(v).strip()
+
     if s.lower() in {"none", "nan", "null"}:
         return ""
+
     return re.sub(r"\s+", " ", s).strip()
 
 
