@@ -1,11 +1,11 @@
 """
 SITE AGENT — ORQUESTRADOR GLOBAL MODULAR
 
-BLINGFIX INTEGRAÇÃO FORNECEDOR:
-- Detecta fornecedor específico via registry.
-- Se fornecedor específico existir, executa supplier.fetch_dataframe/fetch antes do crawler genérico.
-- Mega Center passa a usar MegaCenterSupplier como prioridade 1.
-- Se fornecedor específico falhar ou retornar vazio, cai no crawler modular como fallback.
+BLINGFIX CRAWLER:
+- Mantém fornecedor específico como prioridade.
+- Corrige o carregamento do crawler genérico.
+- Remove import silencioso que escondia erro real.
+- Registra diagnóstico detalhado se crawler_engine falhar.
 - Mantém compatibilidade com:
   - SiteAgent
   - get_site_agent()
@@ -19,10 +19,12 @@ BLINGFIX INTEGRAÇÃO FORNECEDOR:
 
 from __future__ import annotations
 
+import importlib
 import re
 import time
+import traceback
 from html import unescape
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
@@ -40,10 +42,54 @@ except Exception:  # pragma: no cover
         return None
 
 
-try:
-    from bling_app_zero.core.site_crawler.crawler_engine import run_crawler
-except Exception:  # pragma: no cover
-    run_crawler = None
+RUN_CRAWLER_IMPORT_ERROR = ""
+
+
+def _carregar_run_crawler() -> Optional[Callable[..., pd.DataFrame]]:
+    """
+    Carrega o crawler genérico de forma robusta.
+
+    Antes:
+    - O import era feito em um try/except amplo.
+    - Se qualquer import interno do crawler quebrasse, run_crawler virava None.
+    - O app só mostrava "crawler_engine.run_crawler não encontrado".
+
+    Agora:
+    - Tenta os caminhos conhecidos.
+    - Guarda o erro real.
+    - Permite diagnosticar dependência/módulo interno quebrado.
+    """
+    global RUN_CRAWLER_IMPORT_ERROR
+
+    caminhos = [
+        "bling_app_zero.core.site_crawler.crawler_engine",
+        "bling_app_zero.core.site_crawler_engine",
+        "bling_app_zero.core.site_crawler",
+    ]
+
+    erros: List[str] = []
+
+    for caminho in caminhos:
+        try:
+            modulo = importlib.import_module(caminho)
+            funcao = getattr(modulo, "run_crawler", None)
+
+            if callable(funcao):
+                RUN_CRAWLER_IMPORT_ERROR = ""
+                return funcao
+
+            erros.append(f"{caminho}: atributo run_crawler não encontrado.")
+        except Exception as exc:
+            erros.append(
+                f"{caminho}: {exc.__class__.__name__}: {exc}\n"
+                f"{traceback.format_exc(limit=4)}"
+            )
+
+    RUN_CRAWLER_IMPORT_ERROR = "\n\n".join(erros)
+    return None
+
+
+run_crawler = _carregar_run_crawler()
 
 
 class SiteAgent:
@@ -78,8 +124,9 @@ class SiteAgent:
     def __init__(self) -> None:
         try:
             self.registry: Optional[SupplierRegistry] = get_registry()
-        except Exception:
+        except Exception as exc:
             self.registry = None
+            self._log(f"[SITE_AGENT ERRO] registry indisponível: {exc}")
 
     def executar(
         self,
@@ -241,6 +288,21 @@ class SiteAgent:
 
         return pd.DataFrame()
 
+    def _obter_run_crawler_runtime(self) -> Optional[Callable[..., pd.DataFrame]]:
+        global run_crawler
+
+        if callable(run_crawler):
+            return run_crawler
+
+        self._log("[SITE_AGENT] tentando recarregar crawler genérico em runtime.")
+        run_crawler = _carregar_run_crawler()
+
+        if callable(run_crawler):
+            self._log("[SITE_AGENT] crawler genérico recarregado com sucesso.")
+            return run_crawler
+
+        return None
+
     def _executar_crawler_generico(
         self,
         *,
@@ -253,35 +315,60 @@ class SiteAgent:
         limite_paginas: Any,
         kwargs: Dict[str, Any],
     ) -> pd.DataFrame:
-        if run_crawler is None:
-            self._log("[SITE_AGENT ERRO] crawler_engine.run_crawler não encontrado.")
+        crawler = self._obter_run_crawler_runtime()
+
+        if crawler is None:
+            self._log("[SITE_AGENT ERRO] run_crawler indisponível.")
+            if RUN_CRAWLER_IMPORT_ERROR:
+                self._log(f"[SITE_AGENT ERRO DETALHE] {RUN_CRAWLER_IMPORT_ERROR}")
             return pd.DataFrame()
 
+        parametros = {
+            "auth_context": auth_context,
+            "varrer_site_completo": varrer_site_completo,
+            "sitemap_completo": sitemap_completo,
+            "max_workers": max_workers,
+            "limite": limite,
+            "limite_paginas": limite_paginas,
+            "usar_sitemap": bool(kwargs.get("usar_sitemap", True)),
+            "usar_home": bool(kwargs.get("usar_home", True)),
+            "usar_categoria": bool(kwargs.get("usar_categoria", True)),
+            "modo": kwargs.get("modo", "completo" if varrer_site_completo else "padrao"),
+            "preferir_playwright": bool(kwargs.get("preferir_playwright", False)),
+        }
+
         try:
-            return run_crawler(
-                url,
-                auth_context=auth_context,
-                varrer_site_completo=varrer_site_completo,
-                sitemap_completo=sitemap_completo,
-                max_workers=max_workers,
-                limite=limite,
-                limite_paginas=limite_paginas,
-                usar_sitemap=bool(kwargs.get("usar_sitemap", True)),
-                usar_home=bool(kwargs.get("usar_home", True)),
-                usar_categoria=bool(kwargs.get("usar_categoria", True)),
-                modo=kwargs.get("modo", "completo" if varrer_site_completo else "padrao"),
-            )
-        except TypeError:
+            df = crawler(url, **parametros)
+            if isinstance(df, pd.DataFrame):
+                return df
+            if isinstance(df, list):
+                return pd.DataFrame(df)
+            if isinstance(df, dict):
+                for chave in ["df", "dataframe", "produtos", "items", "dados"]:
+                    valor = df.get(chave)
+                    if isinstance(valor, pd.DataFrame):
+                        return valor
+                    if isinstance(valor, list):
+                        return pd.DataFrame(valor)
+            return pd.DataFrame()
+        except TypeError as exc:
+            self._log(f"[SITE_AGENT] assinatura completa do crawler falhou; tentando modo compatível: {exc}")
+
             try:
-                return run_crawler(
+                df = crawler(
                     url,
                     auth_context=auth_context,
                     varrer_site_completo=varrer_site_completo,
                     sitemap_completo=sitemap_completo,
                     max_workers=max_workers,
                 )
-            except Exception as exc:
-                self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
+                if isinstance(df, pd.DataFrame):
+                    return df
+                if isinstance(df, list):
+                    return pd.DataFrame(df)
+                return pd.DataFrame()
+            except Exception as exc2:
+                self._log(f"[SITE_AGENT ERRO] crawler_engine falhou no fallback: {exc2}")
                 return pd.DataFrame()
         except Exception as exc:
             self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
@@ -297,7 +384,8 @@ class SiteAgent:
         try:
             if self.registry is not None and hasattr(self.registry, "detectar"):
                 return self.registry.detectar(url)
-        except Exception:
+        except Exception as exc:
+            self._log(f"[SITE_AGENT ERRO] falha ao detectar fornecedor: {exc}")
             return None
         return None
 
