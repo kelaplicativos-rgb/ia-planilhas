@@ -35,6 +35,7 @@ class MegaCenterSupplier(SupplierBase):
         "megacentereletronicos.com.br",
         "www.megacentereletronicos.com.br",
         "mega-center-eletronicos.stoqui.shop",
+        "stoqui.shop",
     ]
 
     DEFAULT_HEADERS = {
@@ -593,9 +594,13 @@ class MegaCenterSupplier(SupplierBase):
     def _extrair_preco(self, texto: str) -> float:
         match = re.search(r"R\$\s*([\d\.,]+)", texto or "")
         return self._to_float(match.group(1)) if match else 0.0
-
     def _extrair_imagens(self, jsonld: Dict[str, Any], soup: BeautifulSoup, base_url: str) -> List[str]:
         imagens: List[str] = []
+
+        def adicionar(raw: Any) -> None:
+            link = self._limpar_url(urljoin(base_url, self._clean(raw)))
+            if self._imagem_valida(link):
+                imagens.append(link)
 
         raw_json_images = jsonld.get("image") if isinstance(jsonld, dict) else []
         if isinstance(raw_json_images, str):
@@ -603,30 +608,45 @@ class MegaCenterSupplier(SupplierBase):
 
         if isinstance(raw_json_images, list):
             for img in raw_json_images:
-                link = self._limpar_url(urljoin(base_url, self._clean(img)))
-                if self._imagem_valida(link):
-                    imagens.append(link)
+                adicionar(img)
 
-        og = soup.select_one("meta[property='og:image']")
-        if og:
-            link = self._limpar_url(urljoin(base_url, self._clean(og.get("content"))))
-            if self._imagem_valida(link):
-                imagens.append(link)
+        for selector in [
+            "meta[property='og:image']",
+            "meta[property='og:image:secure_url']",
+            "meta[name='twitter:image']",
+            "meta[itemprop='image']",
+        ]:
+            node = soup.select_one(selector)
+            if node:
+                adicionar(node.get("content"))
 
         for img in soup.find_all("img"):
-            src = (
-                img.get("src")
-                or img.get("data-src")
-                or img.get("data-lazy")
-                or img.get("data-original")
-                or img.get("data-zoom-image")
-            )
+            candidatos = [
+                img.get("src"),
+                img.get("data-src"),
+                img.get("data-lazy"),
+                img.get("data-original"),
+                img.get("data-zoom-image"),
+                img.get("data-large-image"),
+                img.get("data-full"),
+            ]
 
-            link = self._limpar_url(urljoin(base_url, self._clean(src)))
-            if self._imagem_valida(link):
-                imagens.append(link)
+            srcset = img.get("srcset") or img.get("data-srcset") or ""
+            if srcset:
+                for item in str(srcset).split(","):
+                    candidatos.append(item.strip().split(" ")[0])
 
-        return self._dedup_urls(imagens)[:12]
+            for candidato in candidatos:
+                adicionar(candidato)
+
+        # prioriza imagens de produto, mas mantém fallback se só houver uma imagem válida
+        dedup = self._dedup_urls(imagens)
+        preferidas = [
+            img for img in dedup
+            if any(token in img.lower() for token in ["/produto", "/product", "products", "produtos", "uploads", "cdn"])
+        ]
+
+        return (preferidas or dedup)[:12]
 
     # ------------------------------------------------------------------
     # HEURÍSTICAS
@@ -730,12 +750,16 @@ class MegaCenterSupplier(SupplierBase):
         ]
 
         return any(b in value for b in bloqueios)
-
     def _imagem_valida(self, url: str) -> bool:
         value = self._clean(url).lower()
 
         if not value.startswith(("http://", "https://")):
             return False
+
+        if not re.search(r"\.(jpg|jpeg|png|webp)(\?|$)", value):
+            # aceita URLs de CDN sem extensão explícita, mas bloqueia rotas claramente não-imagem
+            if any(x in value for x in [".svg", ".gif", ".mp4", ".webm", "/video", "youtube", "youtu.be"]):
+                return False
 
         bloqueios = [
             "logo",
@@ -749,6 +773,7 @@ class MegaCenterSupplier(SupplierBase):
             "facebook",
             "instagram",
             "youtube",
+            "favicon",
         ]
 
         return not any(b in value for b in bloqueios)
@@ -799,7 +824,20 @@ class MegaCenterSupplier(SupplierBase):
         if not base_host or not cand_host:
             return True
 
-        return base_host == cand_host or cand_host.endswith(base_host)
+        if base_host == cand_host or cand_host.endswith(base_host) or base_host.endswith(cand_host):
+            return True
+
+        # BLINGFIX MEGA CENTER:
+        # o catálogo pode alternar entre domínio próprio e vitrine Stoqui.
+        equivalentes = {
+            "megacentereletronicos.com.br",
+            "mega-center-eletronicos.stoqui.shop",
+            "stoqui.shop",
+        }
+        if any(base_host.endswith(d) for d in equivalentes) and any(cand_host.endswith(d) for d in equivalentes):
+            return True
+
+        return False
 
     def _meta(self, soup: BeautifulSoup, name: str) -> str:
         selectors = [
