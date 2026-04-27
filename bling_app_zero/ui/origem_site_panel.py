@@ -292,7 +292,12 @@ def _desenhar_painel_progresso_site(painel: Optional[Dict[str, Any]] = None) -> 
             st.caption("Últimos eventos")
             for log in logs[-5:]:
                 st.caption(f"• {log}")
-            with st.expander("Ver log completo", expanded=False):
+            mostrar_log = st.checkbox(
+                "Ver log completo",
+                value=False,
+                key="site_progress_ver_log_completo_execucao",
+            )
+            if mostrar_log:
                 st.code("\n".join(_logs_recentes_site(12)), language="text")
         else:
             st.caption("Aguardando os primeiros eventos da busca...")
@@ -327,7 +332,16 @@ def _render_progresso_persistente_site() -> None:
 
         logs = _logs_recentes_site(8)
         if logs:
-            with st.expander("Ver log completo", expanded=False):
+            st.caption("Últimos eventos")
+            for log in logs[-5:]:
+                st.caption(f"• {log}")
+
+            mostrar_log = st.checkbox(
+                "Ver log completo",
+                value=False,
+                key="site_progress_ver_log_completo_persistente",
+            )
+            if mostrar_log:
                 st.code("\n".join(logs), language="text")
 
 
