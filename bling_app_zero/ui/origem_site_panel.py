@@ -191,14 +191,61 @@ def _iniciar_progresso_site(url_site: str, *, modo_completo: bool, sitemap_compl
     )
 
 
+def _status_legivel_site(status: str) -> str:
+    status = str(status or "").strip().lower()
+    mapa = {
+        "executando": "Executando varredura",
+        "sucesso": "Concluído com sucesso",
+        "erro": "Erro na busca",
+        "vazio": "Concluído sem produtos",
+        "inativo": "Aguardando busca",
+    }
+    return mapa.get(status, status.replace("_", " ").title() if status else "Aguardando busca")
+
+
+def _modo_legivel_site(modo: str) -> str:
+    modo = str(modo or "").strip().lower()
+    mapa = {
+        "varredura_completa": "Varredura completa",
+        "varredura_controlada": "Busca controlada",
+        "http_hybrid_completo_sitemap": "HTTP + sitemap completo",
+        "http_hybrid": "HTTP híbrido",
+    }
+    return mapa.get(modo, modo.replace("_", " ").title() if modo else "-")
+
+
 def _criar_painel_progresso_site() -> Dict[str, Any]:
     st.markdown("### Progresso em tempo real")
     return {
         "barra": st.empty(),
-        "metricas": st.empty(),
+        "cards": st.empty(),
         "status": st.empty(),
         "logs": st.empty(),
     }
+
+
+def _desenhar_cards_progresso_site(
+    *,
+    container: Any,
+    status: str,
+    total: int,
+    decorrido: int,
+    modo: str,
+) -> None:
+    with container.container():
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.caption("Status")
+            st.markdown(f"**{_status_legivel_site(status)}**")
+        with c2:
+            st.caption("Produtos")
+            st.markdown(f"**{int(total or 0)}**")
+        with c3:
+            st.caption("Tempo")
+            st.markdown(f"**{int(decorrido or 0)}s**")
+        with c4:
+            st.caption("Modo")
+            st.markdown(f"**{_modo_legivel_site(modo)}**")
 
 
 def _desenhar_painel_progresso_site(painel: Optional[Dict[str, Any]] = None) -> None:
@@ -215,30 +262,40 @@ def _desenhar_painel_progresso_site(painel: Optional[Dict[str, Any]] = None) -> 
     inicio = float(st.session_state.get("site_busca_progress_inicio_ts", time.time()) or time.time())
     decorrido = max(0, int(time.time() - inicio))
 
-    painel["barra"].progress(percentual, text=f"{percentual}% — {etapa or status.title()}")
+    texto_barra = f"{percentual}% — {etapa or _status_legivel_site(status)}"
+    painel["barra"].progress(percentual, text=texto_barra)
 
-    with painel["metricas"].container():
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Status", status.title())
-        with c2:
-            st.metric("Produtos", total)
-        with c3:
-            st.metric("Tempo", f"{decorrido}s")
-        with c4:
-            st.metric("Modo", modo.replace("_", " ").title() if modo else "-")
+    _desenhar_cards_progresso_site(
+        container=painel["cards"],
+        status=status,
+        total=total,
+        decorrido=decorrido,
+        modo=modo,
+    )
 
     texto_status = detalhe or etapa or "Busca em andamento."
     if url:
         texto_status = f"{texto_status}\n\nURL: {url}"
 
-    painel["status"].info(texto_status)
-
-    logs = _logs_recentes_site(6)
-    if logs:
-        painel["logs"].code("\n".join(logs), language="text")
+    if status == "erro":
+        painel["status"].error(texto_status)
+    elif status == "sucesso":
+        painel["status"].success(texto_status)
+    elif status == "vazio":
+        painel["status"].warning(texto_status)
     else:
-        painel["logs"].caption("Aguardando os primeiros eventos da busca...")
+        painel["status"].info(texto_status)
+
+    logs = _logs_recentes_site(5)
+    with painel["logs"].container():
+        if logs:
+            st.caption("Últimos eventos")
+            for log in logs[-5:]:
+                st.caption(f"• {log}")
+            with st.expander("Ver log completo", expanded=False):
+                st.code("\n".join(_logs_recentes_site(12)), language="text")
+        else:
+            st.caption("Aguardando os primeiros eventos da busca...")
 
 
 def _render_progresso_persistente_site() -> None:
@@ -250,14 +307,28 @@ def _render_progresso_persistente_site() -> None:
     if not etapa and not detalhe and not status:
         return
 
-    with st.expander("Progresso da última busca", expanded=bool(st.session_state.get("site_busca_em_execucao", False))):
-        st.progress(percentual, text=f"{percentual}% — {etapa or status.title()}")
+    expanded = bool(st.session_state.get("site_busca_em_execucao", False))
+    with st.expander("Progresso da última busca", expanded=expanded):
+        st.progress(percentual, text=f"{percentual}% — {etapa or _status_legivel_site(status)}")
         if detalhe:
             st.caption(detalhe)
 
+        modo = str(st.session_state.get("site_busca_modo_execucao", "") or "").strip()
+        total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+        inicio = float(st.session_state.get("site_busca_progress_inicio_ts", time.time()) or time.time())
+        decorrido = max(0, int(time.time() - inicio))
+        _desenhar_cards_progresso_site(
+            container=st.empty(),
+            status=status,
+            total=total,
+            decorrido=decorrido,
+            modo=modo,
+        )
+
         logs = _logs_recentes_site(8)
         if logs:
-            st.code("\n".join(logs), language="text")
+            with st.expander("Ver log completo", expanded=False):
+                st.code("\n".join(logs), language="text")
 
 
 def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
@@ -858,21 +929,30 @@ def _render_status(url_site: str) -> None:
 
 
 def _render_resumo_busca() -> None:
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Status", str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo").title())
-    with c2:
-        st.metric("Produtos", int(st.session_state.get("site_busca_ultimo_total", 0) or 0))
-    with c3:
-        st.metric("Última URL", "OK" if st.session_state.get("site_busca_ultima_url") else "-")
-
-    resumo = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip()
-    if resumo:
-        st.caption(resumo)
-
+    status = str(st.session_state.get("site_busca_ultimo_status", "inativo") or "inativo").strip()
+    total = int(st.session_state.get("site_busca_ultimo_total", 0) or 0)
+    ultima_url = str(st.session_state.get("site_busca_ultima_url", "") or "").strip()
     modo_execucao = str(st.session_state.get("site_busca_modo_execucao", "") or "").strip()
-    if modo_execucao:
-        st.caption(f"Modo da última busca: {modo_execucao}")
+    resumo = str(st.session_state.get("site_busca_resumo_texto", "") or "").strip()
+
+    with st.container(border=True):
+        st.markdown("### Resumo da busca")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.caption("Status")
+            st.markdown(f"**{_status_legivel_site(status)}**")
+        with c2:
+            st.caption("Produtos capturados")
+            st.markdown(f"**{total}**")
+        with c3:
+            st.caption("URL")
+            st.markdown("**OK**" if ultima_url else "**-**")
+
+        if resumo:
+            st.caption(resumo)
+
+        if modo_execucao:
+            st.caption(f"Modo da última busca: {_modo_legivel_site(modo_execucao)}")
 
 
 def _render_diagnostico() -> None:
@@ -1153,6 +1233,10 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
         else:
             st.caption("Modo controlado ativo: busca limitada para testes rápidos.")
 
+    if em_execucao:
+        st.info("Busca em andamento. Aguarde a conclusão para executar uma nova ação.")
+        return
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -1160,7 +1244,6 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
             "Inspecionar",
             use_container_width=True,
             key="btn_inspecionar_site_origem",
-            disabled=em_execucao,
         ):
             if not url_site:
                 st.error("Informe ou selecione uma URL antes de inspecionar.")
@@ -1175,7 +1258,6 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
             "Buscar produtos",
             use_container_width=True,
             key="btn_buscar_site_origem",
-            disabled=em_execucao,
         ):
             url_site = str(st.session_state.get("site_fornecedor_url", "")).strip()
             modo_completo = bool(st.session_state.get("site_varrer_completo", True))
@@ -1197,7 +1279,6 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
                 "Salvar fornecedor",
                 use_container_width=True,
                 key="btn_salvar_fornecedor_site",
-                disabled=em_execucao,
             ):
                 _salvar_fornecedor_manual()
         else:
@@ -1205,11 +1286,11 @@ def _render_bloco_acao(modo: str, url_site: str) -> None:
                 "Limpar busca",
                 use_container_width=True,
                 key="btn_limpar_busca_site",
-                disabled=em_execucao,
             ):
                 _resetar_estado_busca_ao_trocar_fornecedor()
                 st.info("Busca por site limpa.")
                 st.rerun()
+
 
 def render_origem_site_panel() -> None:
     _forcar_http_first_execucao()
