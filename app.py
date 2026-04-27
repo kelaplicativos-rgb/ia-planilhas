@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 
 from bling_app_zero.utils.init_app import init_app
@@ -80,10 +79,6 @@ def _pode_abrir_etapa(etapa: str) -> bool:
     etapa = _etapa_valida(etapa)
     etapa_maxima = _etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
     return _indice_etapa(etapa) <= _indice_etapa(etapa_maxima)
-
-
-def _contar_linhas_df(df) -> int:
-    return len(df) if isinstance(df, pd.DataFrame) else 0
 
 
 def _query_param_etapa_atual() -> str:
@@ -398,23 +393,6 @@ def _render_header() -> None:
     st.caption("Fluxo limpo: origem → precificação → mapeamento → preview final")
 
 
-def _render_resumo_topo() -> None:
-    df_origem = st.session_state.get("df_origem")
-    df_precificado = st.session_state.get("df_precificado")
-    df_final = st.session_state.get("df_final")
-    etapa = _etapa_valida(st.session_state.get("wizard_etapa_atual", "origem")).replace("_", " ").title()
-
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
-    with c1:
-        st.metric("Origem", _contar_linhas_df(df_origem))
-    with c2:
-        st.metric("Precificado", _contar_linhas_df(df_precificado))
-    with c3:
-        st.metric("Final", _contar_linhas_df(df_final))
-    with c4:
-        st.metric("Etapa", etapa)
-
-
 def _render_atalhos_tecnicos() -> None:
     with st.expander("Opções técnicas", expanded=False):
         col1, col2 = st.columns(2)
@@ -441,7 +419,6 @@ def _render_atalhos_tecnicos() -> None:
 
 def _render_layout_principal() -> None:
     _render_header()
-    _render_resumo_topo()
     st.markdown("---")
     _render_navegacao_travada()
     st.markdown("---")
