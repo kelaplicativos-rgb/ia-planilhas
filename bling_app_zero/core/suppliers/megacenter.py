@@ -1,16 +1,15 @@
 """
-FORNECEDOR MEGA CENTER ELETRÔNICOS — BLINGFIX PRO
+FORNECEDOR MEGA CENTER ELETRÔNICOS — BLINGFIX URGENTE
 
-Foco:
-- Mega Center Eletrônicos
-- Cadastro de produtos
-- Atualização de estoque
-- Busca por URL informada
-- Busca por sitemaps
-- Captura profunda de produtos
-- Prioridade máxima para quantidade de estoque
-- Detecção de produtos novos
-- JSON-LD, HTML, meta tags e heurísticas
+Correções:
+- Remove qualquer risco de estoque fake.
+- Nunca inventa quantidade 10.
+- Se achar quantidade real, usa a quantidade real.
+- Se detectar indisponível/sem estoque/esgotado, retorna 0.
+- Se detectar apenas "comprar/em estoque" sem número, retorna 1.
+- Se não houver sinal confiável, retorna 0.
+- Adiciona diagnóstico interno: estoque_origem.
+- Melhora paginação e descoberta de links.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
 
@@ -50,20 +49,27 @@ class MegaCenterSupplier(SupplierBase):
         "Pragma": "no-cache",
     }
 
-    def fetch(self, url: str, max_paginas: int = 80, **kwargs) -> List[Dict[str, Any]]:
+    def fetch(self, url: str, max_paginas: int = 120, **kwargs) -> List[Dict[str, Any]]:
         url = self._normalizar_url(url)
         if not url:
             return []
 
-        limite_produtos = int(kwargs.get("limite", kwargs.get("limite_links", 2000)) or 2000)
-        max_workers = int(kwargs.get("max_workers", 10) or 10)
+        limite_produtos = int(kwargs.get("limite", kwargs.get("limite_links", 3000)) or 3000)
+        max_workers = int(kwargs.get("max_workers", 12) or 12)
         max_workers = max(2, min(max_workers, 16))
 
         session = self._build_session()
 
         links_produtos: List[str] = []
         links_produtos.extend(self._descobrir_links_sitemap(session, url, limite=limite_produtos))
-        links_produtos.extend(self._descobrir_links_por_url(session, url, max_paginas=max_paginas, limite=limite_produtos))
+        links_produtos.extend(
+            self._descobrir_links_por_url(
+                session,
+                url,
+                max_paginas=max_paginas,
+                limite=limite_produtos,
+            )
+        )
 
         links_produtos = self._dedup_urls(links_produtos)
 
@@ -90,9 +96,6 @@ class MegaCenterSupplier(SupplierBase):
         produtos = self.validar_produtos(produtos)
         return produtos
 
-    # ------------------------------------------------------------------
-    # HTTP
-    # ------------------------------------------------------------------
     def _build_session(self) -> requests.Session:
         session = requests.Session()
         session.headers.update(self.DEFAULT_HEADERS)
@@ -125,23 +128,18 @@ class MegaCenterSupplier(SupplierBase):
 
         return text, final_url
 
-    # ------------------------------------------------------------------
-    # DESCOBERTA POR SITEMAP
-    # ------------------------------------------------------------------
     def _descobrir_links_sitemap(
         self,
         session: requests.Session,
         base_url: str,
-        limite: int = 2000,
+        limite: int = 3000,
     ) -> List[str]:
         encontrados: List[str] = []
         visitados_sitemaps: Set[str] = set()
-
         fila = self._urls_sitemap(base_url)
 
         while fila and len(encontrados) < limite:
-            sitemap_url = fila.pop(0)
-            sitemap_url = self._normalizar_url(sitemap_url)
+            sitemap_url = self._normalizar_url(fila.pop(0))
 
             if not sitemap_url or sitemap_url in visitados_sitemaps:
                 continue
@@ -155,7 +153,7 @@ class MegaCenterSupplier(SupplierBase):
             links_sitemap, links_url = self._parse_sitemap(texto, final_url)
 
             for sm in links_sitemap:
-                if sm not in visitados_sitemaps:
+                if sm not in visitados_sitemaps and sm not in fila:
                     fila.append(sm)
 
             for link in links_url:
@@ -171,19 +169,22 @@ class MegaCenterSupplier(SupplierBase):
         parsed = urlparse(self._normalizar_url(base_url))
         raiz = f"{parsed.scheme}://{parsed.netloc}"
 
-        return self._dedup_urls([
-            f"{raiz}/sitemap.xml",
-            f"{raiz}/sitemap_index.xml",
-            f"{raiz}/sitemap-index.xml",
-            f"{raiz}/sitemap-products.xml",
-            f"{raiz}/product-sitemap.xml",
-            f"{raiz}/produto-sitemap.xml",
-            f"{raiz}/produtos-sitemap.xml",
-            f"{raiz}/robots.txt",
-        ])
+        return self._dedup_urls(
+            [
+                f"{raiz}/sitemap.xml",
+                f"{raiz}/sitemap_index.xml",
+                f"{raiz}/sitemap-index.xml",
+                f"{raiz}/sitemap-products.xml",
+                f"{raiz}/product-sitemap.xml",
+                f"{raiz}/produto-sitemap.xml",
+                f"{raiz}/produtos-sitemap.xml",
+                f"{raiz}/sitemap-produtos.xml",
+                f"{raiz}/robots.txt",
+            ]
+        )
 
     def _parse_sitemap(self, texto: str, base_url: str) -> Tuple[List[str], List[str]]:
-        texto = texto.strip()
+        texto = str(texto or "").strip()
         sitemaps: List[str] = []
         urls: List[str] = []
 
@@ -219,23 +220,19 @@ class MegaCenterSupplier(SupplierBase):
 
         return sitemaps, urls
 
-    # ------------------------------------------------------------------
-    # DESCOBERTA POR URL / CATEGORIA / HOME
-    # ------------------------------------------------------------------
     def _descobrir_links_por_url(
         self,
         session: requests.Session,
         url: str,
-        max_paginas: int = 80,
-        limite: int = 2000,
+        max_paginas: int = 120,
+        limite: int = 3000,
     ) -> List[str]:
         encontrados: List[str] = []
         paginas_visitadas: Set[str] = set()
         fila_paginas: List[str] = [url]
 
         while fila_paginas and len(paginas_visitadas) < max_paginas and len(encontrados) < limite:
-            pagina = fila_paginas.pop(0)
-            pagina = self._normalizar_url(pagina)
+            pagina = self._normalizar_url(fila_paginas.pop(0))
 
             if not pagina or pagina in paginas_visitadas:
                 continue
@@ -264,7 +261,11 @@ class MegaCenterSupplier(SupplierBase):
                 if len(encontrados) >= limite:
                     break
 
-            for pag in self._gerar_paginacao(final_url, max_paginas=10):
+            for pag in self._extrair_links_paginacao_reais(soup, final_url):
+                if pag not in paginas_visitadas and pag not in fila_paginas:
+                    fila_paginas.append(pag)
+
+            for pag in self._gerar_paginacao(final_url, max_paginas=20):
                 if pag not in paginas_visitadas and pag not in fila_paginas:
                     fila_paginas.append(pag)
 
@@ -273,23 +274,58 @@ class MegaCenterSupplier(SupplierBase):
     def _extrair_links_da_pagina(self, soup: BeautifulSoup, base_url: str) -> List[str]:
         links: List[str] = []
 
-        for a in soup.find_all("a", href=True):
-            href = self._clean(a.get("href"))
+        for tag in soup.find_all(["a", "button"], href=True):
+            href = self._clean(tag.get("href"))
             if not href:
                 continue
 
             link = self._limpar_url(urljoin(base_url, href))
-            if not link:
-                continue
+            if link and not self._url_ruim(link):
+                links.append(link)
 
-            if self._url_ruim(link):
-                continue
+        for tag in soup.find_all(attrs={"data-href": True}):
+            href = self._clean(tag.get("data-href"))
+            link = self._limpar_url(urljoin(base_url, href))
+            if link and not self._url_ruim(link):
+                links.append(link)
 
-            links.append(link)
+        for tag in soup.find_all(attrs={"data-url": True}):
+            href = self._clean(tag.get("data-url"))
+            link = self._limpar_url(urljoin(base_url, href))
+            if link and not self._url_ruim(link):
+                links.append(link)
 
         return self._dedup_urls(links)
 
-    def _gerar_paginacao(self, url: str, max_paginas: int = 10) -> List[str]:
+    def _extrair_links_paginacao_reais(self, soup: BeautifulSoup, base_url: str) -> List[str]:
+        links: List[str] = []
+
+        seletores = [
+            "a[rel='next']",
+            "link[rel='next']",
+            ".pagination a",
+            ".paginacao a",
+            "[class*=pagination] a",
+            "[class*=paginacao] a",
+            "a[href*='page=']",
+            "a[href*='pagina=']",
+            "a[href*='/page/']",
+            "a[href*='/pagina/']",
+        ]
+
+        for seletor in seletores:
+            for node in soup.select(seletor):
+                href = self._clean(node.get("href"))
+                if not href:
+                    continue
+
+                link = self._limpar_url(urljoin(base_url, href))
+                if link and not self._url_ruim(link):
+                    links.append(link)
+
+        return self._dedup_urls(links)
+
+    def _gerar_paginacao(self, url: str, max_paginas: int = 20) -> List[str]:
         urls: List[str] = []
 
         for pagina in range(2, max_paginas + 1):
@@ -297,6 +333,10 @@ class MegaCenterSupplier(SupplierBase):
                 urls.append(re.sub(r"page=\d+", f"page={pagina}", url))
             elif "pagina=" in url:
                 urls.append(re.sub(r"pagina=\d+", f"pagina={pagina}", url))
+            elif "/page/" in url:
+                urls.append(re.sub(r"/page/\d+", f"/page/{pagina}", url))
+            elif "/pagina/" in url:
+                urls.append(re.sub(r"/pagina/\d+", f"/pagina/{pagina}", url))
             elif "?" in url:
                 urls.append(f"{url}&page={pagina}")
                 urls.append(f"{url}&pagina={pagina}")
@@ -306,9 +346,6 @@ class MegaCenterSupplier(SupplierBase):
 
         return self._dedup_urls(urls)
 
-    # ------------------------------------------------------------------
-    # DETALHE DO PRODUTO
-    # ------------------------------------------------------------------
     def _extrair_detalhe_produto(self, session: requests.Session, url: str) -> Dict[str, Any]:
         html, final_url = self._get_html(session, url)
         if not html:
@@ -316,7 +353,6 @@ class MegaCenterSupplier(SupplierBase):
 
         soup = BeautifulSoup(html, "html.parser")
         texto = soup.get_text(" ", strip=True)
-
         jsonld = self._extrair_json_ld_produto(soup)
 
         nome = (
@@ -344,13 +380,10 @@ class MegaCenterSupplier(SupplierBase):
         )
 
         gtin = self._extrair_gtin(jsonld, texto)
-
         marca = self._extrair_marca(jsonld, soup, texto, nome)
-
         categoria = self._extrair_categoria(jsonld, soup)
 
-        estoque = self._extrair_estoque(jsonld, soup, texto)
-
+        estoque, estoque_origem = self._extrair_estoque_detalhado(jsonld, soup, texto)
         imagens = self._extrair_imagens(jsonld, soup, final_url)
 
         return {
@@ -362,14 +395,14 @@ class MegaCenterSupplier(SupplierBase):
             "categoria": categoria,
             "preco": self._to_float(preco),
             "estoque": estoque,
+            "quantidade": estoque,
+            "quantidade_real": estoque if estoque_origem == "quantidade_real" else "",
+            "estoque_origem": estoque_origem,
             "gtin": gtin,
             "descricao": descricao,
             "imagens": imagens,
         }
 
-    # ------------------------------------------------------------------
-    # JSON-LD
-    # ------------------------------------------------------------------
     def _extrair_json_ld_produto(self, soup: BeautifulSoup) -> Dict[str, Any]:
         for script in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.I)}):
             raw = script.string or script.get_text(" ", strip=True) or ""
@@ -413,9 +446,6 @@ class MegaCenterSupplier(SupplierBase):
 
         return {}
 
-    # ------------------------------------------------------------------
-    # CAMPOS
-    # ------------------------------------------------------------------
     def _preco_jsonld(self, jsonld: Dict[str, Any]) -> Any:
         offers = jsonld.get("offers") if isinstance(jsonld, dict) else {}
 
@@ -428,6 +458,15 @@ class MegaCenterSupplier(SupplierBase):
         return ""
 
     def _extrair_estoque(self, jsonld: Dict[str, Any], soup: BeautifulSoup, texto: str) -> int:
+        estoque, _origem = self._extrair_estoque_detalhado(jsonld, soup, texto)
+        return estoque
+
+    def _extrair_estoque_detalhado(
+        self,
+        jsonld: Dict[str, Any],
+        soup: BeautifulSoup,
+        texto: str,
+    ) -> Tuple[int, str]:
         texto_l = self._clean(texto).lower()
 
         offers = jsonld.get("offers") if isinstance(jsonld, dict) else {}
@@ -435,42 +474,60 @@ class MegaCenterSupplier(SupplierBase):
             offers = offers[0]
 
         availability = ""
+        inventory_level = ""
+
         if isinstance(offers, dict):
             availability = self._clean(offers.get("availability")).lower()
-
-        if any(x in availability for x in ["outofstock", "soldout", "discontinued"]):
-            return 0
-
-        patterns = [
-            r"(?:estoque|quantidade|dispon[ií]vel|saldo)[^\d]{0,30}(\d+)",
-            r"(\d+)[^\d]{0,12}(?:unidades|itens|peças|pecas)\s*(?:em estoque|dispon[ií]vel)",
-            r"(?:restam|resta)\s*(\d+)",
-            r"qtd[^\d]{0,15}(\d+)",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, texto_l, re.I)
-            if match:
-                try:
-                    return max(int(match.group(1)), 0)
-                except Exception:
-                    pass
+            inventory_level = self._clean(
+                offers.get("inventoryLevel")
+                or offers.get("inventory_level")
+                or offers.get("availabilityStarts")
+            )
 
         zero_terms = [
             "sem estoque",
+            "sem disponibilidade",
             "esgotado",
             "indisponível",
             "indisponivel",
             "produto indisponível",
             "produto indisponivel",
             "avise-me",
+            "avise me",
             "notify me",
             "out of stock",
+            "soldout",
+            "sold out",
             "zerado",
+            "fora de estoque",
         ]
 
+        if any(x in availability for x in ["outofstock", "soldout", "discontinued"]):
+            return 0, "zerado_availability"
+
         if any(term in texto_l for term in zero_terms):
-            return 0
+            return 0, "zerado_texto"
+
+        if inventory_level:
+            match_inventory = re.search(r"\d+", inventory_level)
+            if match_inventory:
+                return max(int(match_inventory.group(0)), 0), "quantidade_real"
+
+        patterns = [
+            r"(?:estoque|quantidade|dispon[ií]vel|saldo)\s*(?:atual|total)?[^0-9]{0,35}(\d+)",
+            r"(\d+)\s*(?:unidades|unidade|itens|item|peças|pecas)\s*(?:em estoque|dispon[ií]ve(?:l|is))",
+            r"(?:restam|resta)\s*(\d+)",
+            r"(?:qtd|qtde|quant\.)[^0-9]{0,20}(\d+)",
+            r"(?:em estoque)[:\s-]{0,10}(\d+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, texto_l, re.I)
+            if match:
+                try:
+                    return max(int(match.group(1)), 0), "quantidade_real"
+                except Exception:
+                    pass
 
         positive_terms = [
             "em estoque",
@@ -483,10 +540,13 @@ class MegaCenterSupplier(SupplierBase):
             "in stock",
         ]
 
-        if any(term in texto_l for term in positive_terms):
-            return 1
+        if any(x in availability for x in ["instock", "in stock"]):
+            return 1, "status_positivo_sem_quantidade"
 
-        return 0
+        if any(term in texto_l for term in positive_terms):
+            return 1, "status_positivo_sem_quantidade"
+
+        return 0, "nao_detectado"
 
     def _extrair_sku(self, texto: str, url: str) -> str:
         patterns = [
@@ -629,9 +689,6 @@ class MegaCenterSupplier(SupplierBase):
 
         return self._dedup_urls(imagens)[:12]
 
-    # ------------------------------------------------------------------
-    # HEURÍSTICAS
-    # ------------------------------------------------------------------
     def _pagina_parece_produto(self, session: requests.Session, url: str) -> bool:
         html, final_url = self._get_html(session, url)
         return self._pagina_html_parece_produto(html, final_url)
@@ -696,9 +753,14 @@ class MegaCenterSupplier(SupplierBase):
             "/collections",
             "/collection",
             "/departamento",
+            "/departamentos",
+            "/marcas",
+            "/marca",
             "page=",
             "pagina=",
             "categoria=",
+            "/page/",
+            "/pagina/",
         ]
 
         return any(s in value for s in sinais)
@@ -754,9 +816,6 @@ class MegaCenterSupplier(SupplierBase):
 
         return not any(b in value for b in bloqueios)
 
-    # ------------------------------------------------------------------
-    # NORMALIZAÇÃO
-    # ------------------------------------------------------------------
     def _normalizar_url(self, url: Any) -> str:
         value = self._clean(url)
         if not value:
@@ -782,6 +841,10 @@ class MegaCenterSupplier(SupplierBase):
 
         if parsed.scheme == "https":
             urls.append(f"http://{host}{path}{query}")
+            if host.startswith("www."):
+                urls.append(f"http://{host[4:]}{path}{query}")
+            else:
+                urls.append(f"http://www.{host}{path}{query}")
 
         return self._dedup_urls(urls)
 
@@ -803,6 +866,7 @@ class MegaCenterSupplier(SupplierBase):
         aliases_mega = {
             "megacentereletronicos.com.br",
             "mega-center-eletronicos.stoqui.shop",
+            "stoqui.shop",
         }
 
         if base_host in aliases_mega and cand_host in aliases_mega:
