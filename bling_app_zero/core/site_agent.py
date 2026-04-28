@@ -2,7 +2,11 @@
 SITE AGENT — ORQUESTRADOR GLOBAL MODULAR
 
 BLINGFIX CRAWLER:
-- Mantém fornecedor específico como prioridade.
+- Mantém fornecedor específico como fallback.
+- Adiciona Instant Scraper como prioridade.
+- Prioriza detecção de marca no título do produto.
+- Se não achar no título, busca na descrição curta/completa.
+- Se não detectar marca real nesses campos, deixa marca vazia.
 - Corrige o carregamento do crawler genérico.
 - Remove import silencioso que escondia erro real.
 - Registra diagnóstico detalhado se crawler_engine falhar.
@@ -46,19 +50,6 @@ RUN_CRAWLER_IMPORT_ERROR = ""
 
 
 def _carregar_run_crawler() -> Optional[Callable[..., pd.DataFrame]]:
-    """
-    Carrega o crawler genérico de forma robusta.
-
-    Antes:
-    - O import era feito em um try/except amplo.
-    - Se qualquer import interno do crawler quebrasse, run_crawler virava None.
-    - O app só mostrava "crawler_engine.run_crawler não encontrado".
-
-    Agora:
-    - Tenta os caminhos conhecidos.
-    - Guarda o erro real.
-    - Permite diagnosticar dependência/módulo interno quebrado.
-    """
     global RUN_CRAWLER_IMPORT_ERROR
 
     caminhos = [
@@ -196,15 +187,23 @@ class SiteAgent:
 
         df = pd.DataFrame()
 
-        df = self._executar_fornecedor_especifico(
-            fornecedor=fornecedor,
+        df = self._executar_instant_scraper(
             url=url,
-            auth_context=auth_context,
             kwargs=kwargs,
             limite=limite,
             limite_paginas=limite_paginas,
-            max_workers=max_workers,
         )
+
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            df = self._executar_fornecedor_especifico(
+                fornecedor=fornecedor,
+                url=url,
+                auth_context=auth_context,
+                kwargs=kwargs,
+                limite=limite,
+                limite_paginas=limite_paginas,
+                max_workers=max_workers,
+            )
 
         if not isinstance(df, pd.DataFrame) or df.empty:
             self._log("[SITE_AGENT] fornecedor específico vazio/indisponível; usando crawler genérico.")
@@ -233,6 +232,51 @@ class SiteAgent:
 
         self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
         return df
+
+    def _executar_instant_scraper(
+        self,
+        *,
+        url: str,
+        kwargs: Dict[str, Any],
+        limite: Any = None,
+        limite_paginas: Any = None,
+    ) -> pd.DataFrame:
+        usar_instant = self._bool_compat(kwargs.get("usar_instant_scraper", True), default=True)
+
+        if not usar_instant:
+            self._log("[SITE_AGENT] InstantScraper desativado por parâmetro.")
+            return pd.DataFrame()
+
+        try:
+            from bling_app_zero.core.instant_scraper.runner import run_scraper
+
+            max_pages = self._int_compat(
+                kwargs.get("instant_max_pages", limite_paginas or kwargs.get("max_pages", 5)),
+                5,
+            )
+
+            if limite is not None:
+                try:
+                    limite_int = int(limite)
+                    if limite_int > 0:
+                        max_pages = min(max_pages, max(1, limite_int))
+                except Exception:
+                    pass
+
+            self._log(f"[SITE_AGENT] tentando InstantScraper | max_pages={max_pages}")
+
+            df = run_scraper(url, max_pages=max_pages)
+
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                self._log(f"[SITE_AGENT] InstantScraper retornou {len(df)} produto(s).")
+                return df
+
+            self._log("[SITE_AGENT] InstantScraper não encontrou produto útil.")
+            return pd.DataFrame()
+
+        except Exception as exc:
+            self._log(f"[SITE_AGENT ERRO] InstantScraper falhou: {exc}")
+            return pd.DataFrame()
 
     def _executar_fornecedor_especifico(
         self,
@@ -426,6 +470,12 @@ class SiteAgent:
             "Descrição": "descricao",
             "Descricao": "descricao",
             "description": "descricao",
+            "descricao_curta": "descricao",
+            "descrição curta": "descricao",
+            "Descrição Curta": "descricao",
+            "descricao_completa": "descricao",
+            "descrição completa": "descricao",
+            "Descrição Completa": "descricao",
             "Preço": "preco",
             "Preco": "preco",
             "price": "preco",
@@ -518,7 +568,7 @@ class SiteAgent:
     ) -> Dict[str, Any]:
         nome_fornecedor = self._nome_fornecedor(fornecedor)
 
-        fonte = "crawler_modular_http_pro"
+        fonte = "instant_scraper_ou_crawler_modular"
         nome_fornecedor_l = nome_fornecedor.lower()
 
         if nome_fornecedor_l.startswith("fornecedor gen") or "gen" in nome_fornecedor_l:
@@ -779,31 +829,21 @@ class SiteAgent:
         return False
 
     def _inferir_marca(self, *, nome: str = "", descricao: str = "") -> str:
-        texto = f" {nome or ''} {descricao or ''} "
-        texto_norm = self._sem_acentos(texto).lower()
+        nome_limpo = self._texto_limpo(nome)
+        descricao_limpa = self._texto_limpo(descricao)
+
+        nome_norm = self._sem_acentos(nome_limpo).lower()
+        descricao_norm = self._sem_acentos(descricao_limpa).lower()
 
         for marca in self.MARCAS_CONHECIDAS:
             marca_norm = self._sem_acentos(marca).lower()
-            if re.search(rf"(?<![a-z0-9]){re.escape(marca_norm)}(?![a-z0-9])", texto_norm):
+            if re.search(rf"(?<![a-z0-9]){re.escape(marca_norm)}(?![a-z0-9])", nome_norm):
                 return marca
 
-        nome_limpo = self._texto_limpo(nome)
-        if nome_limpo:
-            primeira = nome_limpo.split(" ")[0].strip(" -:/")
-            genericas = {
-                "cabo", "fone", "caixa", "carregador", "pelicula", "película",
-                "capinha", "suporte", "adaptador", "controle", "mouse", "teclado",
-                "chip", "troca", "tela", "smartphone", "celular", "produto",
-                "kit", "mini", "novo", "nova", "original", "fonte", "capa",
-            }
-            if (
-                primeira
-                and len(primeira) >= 3
-                and not primeira.isdigit()
-                and primeira.lower() not in genericas
-                and not self._marca_invalida(primeira)
-            ):
-                return primeira
+        for marca in self.MARCAS_CONHECIDAS:
+            marca_norm = self._sem_acentos(marca).lower()
+            if re.search(rf"(?<![a-z0-9]){re.escape(marca_norm)}(?![a-z0-9])", descricao_norm):
+                return marca
 
         return ""
 
@@ -898,3 +938,4 @@ def buscar_produtos_site_com_gpt(
         auth_context=auth_context,
         **kwargs_execucao,
     )
+
