@@ -1,9 +1,12 @@
 """
 SITE AGENT — ORQUESTRADOR GLOBAL MODULAR
 
-BLINGFIX CRAWLER:
+BLINGFIX FLUXO INTELIGENTE:
 - Mantém fornecedor específico como fallback.
 - Adiciona Instant Scraper como prioridade.
+- Não aceita resultado fraco apenas porque retornou algum dado.
+- Se Instant Scraper vier ruim, tenta fornecedor específico.
+- Se fornecedor específico vier ruim, tenta crawler genérico.
 - Prioriza detecção de marca no título do produto.
 - Se não achar no título, busca na descrição curta/completa.
 - Se não detectar marca real nesses campos, deixa marca vazia.
@@ -176,26 +179,52 @@ class SiteAgent:
         limite = kwargs.get("limite", kwargs.get("limite_links", None))
         limite_paginas = kwargs.get("limite_paginas", None)
 
+        modo_fluxo = str(
+            kwargs.get("modo_fluxo_site", kwargs.get("modo_fluxo", "inteligente")) or "inteligente"
+        ).strip().lower()
+
+        somente_instant = modo_fluxo in {
+            "instant",
+            "instant_only",
+            "somente_instant",
+            "apenas_instant",
+        }
+
         self._log(
             "[SITE_AGENT] iniciado "
             f"| url={url} "
             f"| fornecedor={self._nome_fornecedor(fornecedor)} "
             f"| varrer_site_completo={varrer_site_completo} "
             f"| sitemap_completo={sitemap_completo} "
-            f"| max_workers={max_workers}"
+            f"| max_workers={max_workers} "
+            f"| modo_fluxo={modo_fluxo}"
         )
 
         df = pd.DataFrame()
+        motor_vencedor = ""
 
-        df = self._executar_instant_scraper(
+        df_instant = self._executar_instant_scraper(
             url=url,
             kwargs=kwargs,
             limite=limite,
             limite_paginas=limite_paginas,
         )
 
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            df = self._executar_fornecedor_especifico(
+        if not self._resultado_ruim(df_instant, origem="InstantScraper"):
+            df = df_instant
+            motor_vencedor = "instant_scraper"
+        else:
+            self._log("[SITE_AGENT] InstantScraper descartado por baixa qualidade.")
+
+        if somente_instant:
+            self._log("[SITE_AGENT] modo somente InstantScraper ativo; fallback desativado.")
+            df = self._normalizar_dataframe_saida(df)
+            self._registrar_fonte_streamlit(motor_vencedor or "instant_scraper_sem_resultado")
+            self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
+            return df
+
+        if self._resultado_ruim(df, origem=motor_vencedor or "sem_motor"):
+            df_fornecedor = self._executar_fornecedor_especifico(
                 fornecedor=fornecedor,
                 url=url,
                 auth_context=auth_context,
@@ -205,9 +234,15 @@ class SiteAgent:
                 max_workers=max_workers,
             )
 
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            self._log("[SITE_AGENT] fornecedor específico vazio/indisponível; usando crawler genérico.")
-            df = self._executar_crawler_generico(
+            if not self._resultado_ruim(df_fornecedor, origem="FornecedorEspecifico"):
+                df = df_fornecedor
+                motor_vencedor = "fornecedor_especifico"
+            else:
+                self._log("[SITE_AGENT] fornecedor específico descartado por baixa qualidade.")
+
+        if self._resultado_ruim(df, origem=motor_vencedor or "sem_motor"):
+            self._log("[SITE_AGENT] usando crawler genérico como fallback final.")
+            df_crawler = self._executar_crawler_generico(
                 url=url,
                 auth_context=auth_context,
                 varrer_site_completo=varrer_site_completo,
@@ -218,7 +253,17 @@ class SiteAgent:
                 kwargs=kwargs,
             )
 
+            if not self._resultado_ruim(df_crawler, origem="CrawlerGenerico", min_linhas=1):
+                df = df_crawler
+                motor_vencedor = "crawler_generico"
+            else:
+                self._log("[SITE_AGENT] crawler genérico também retornou resultado ruim/vazio.")
+
         df = self._normalizar_dataframe_saida(df)
+
+        self._registrar_fonte_streamlit(motor_vencedor or "sem_resultado")
+        self._log(f"[SITE_AGENT] motor vencedor: {motor_vencedor or 'nenhum'}")
+        self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
 
         if diagnostico:
             produtos = df.fillna("").to_dict(orient="records") if not df.empty else []
@@ -227,11 +272,80 @@ class SiteAgent:
                 fornecedor=fornecedor,
                 produtos=produtos,
                 auth_context=auth_context,
+                fonte=motor_vencedor or "sem_resultado",
             )
             self._aplicar_diagnostico_streamlit(diag)
 
-        self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
         return df
+
+    def _resultado_ruim(
+        self,
+        df: Any,
+        *,
+        origem: str = "",
+        min_linhas: int = 3,
+    ) -> bool:
+        if not isinstance(df, pd.DataFrame):
+            self._log(f"[SITE_AGENT QUALIDADE] {origem}: não é DataFrame.")
+            return True
+
+        if df.empty:
+            self._log(f"[SITE_AGENT QUALIDADE] {origem}: DataFrame vazio.")
+            return True
+
+        linhas = len(df)
+
+        if linhas < min_linhas:
+            self._log(
+                f"[SITE_AGENT QUALIDADE] {origem}: poucas linhas ({linhas} < {min_linhas})."
+            )
+            return True
+
+        base = df.copy().fillna("")
+
+        aliases_nome = ["nome", "Nome", "Produto", "produto", "title", "name"]
+        aliases_preco = ["preco", "Preço", "Preco", "price", "valor"]
+        aliases_url = ["url_produto", "URL", "Url", "url", "link", "Link"]
+        aliases_img = ["imagens", "Imagem", "Imagens", "image", "images"]
+
+        col_nome = self._primeira_coluna_existente(base, aliases_nome)
+        col_preco = self._primeira_coluna_existente(base, aliases_preco)
+        col_url = self._primeira_coluna_existente(base, aliases_url)
+        col_img = self._primeira_coluna_existente(base, aliases_img)
+
+        nome_ok = self._percentual_preenchido(base, col_nome)
+        preco_ok = self._percentual_preenchido(base, col_preco)
+        url_ok = self._percentual_preenchido(base, col_url)
+        img_ok = self._percentual_preenchido(base, col_img)
+
+        self._log(
+            f"[SITE_AGENT QUALIDADE] {origem}: "
+            f"linhas={linhas} | nome={nome_ok:.0%} | preco={preco_ok:.0%} "
+            f"| url={url_ok:.0%} | img={img_ok:.0%}"
+        )
+
+        if nome_ok < 0.50 and url_ok < 0.50:
+            return True
+
+        if preco_ok < 0.15 and img_ok < 0.15 and linhas < 10:
+            return True
+
+        return False
+
+    def _primeira_coluna_existente(self, df: pd.DataFrame, nomes: List[str]) -> str:
+        for nome in nomes:
+            if nome in df.columns:
+                return nome
+        return ""
+
+    def _percentual_preenchido(self, df: pd.DataFrame, coluna: str) -> float:
+        if not coluna or coluna not in df.columns or df.empty:
+            return 0.0
+
+        serie = df[coluna].astype(str).str.strip()
+        serie = serie[~serie.str.lower().isin(["", "nan", "none", "null"])]
+
+        return float(len(serie)) / float(len(df)) if len(df) else 0.0
 
     def _executar_instant_scraper(
         self,
@@ -565,18 +679,10 @@ class SiteAgent:
         fornecedor: Any,
         produtos: List[Dict[str, Any]],
         auth_context: Optional[Dict[str, Any]] = None,
+        fonte: str = "",
     ) -> Dict[str, Any]:
         nome_fornecedor = self._nome_fornecedor(fornecedor)
-
-        fonte = "instant_scraper_ou_crawler_modular"
-        nome_fornecedor_l = nome_fornecedor.lower()
-
-        if nome_fornecedor_l.startswith("fornecedor gen") or "gen" in nome_fornecedor_l:
-            fonte = "generic_supplier"
-        elif "mega center" in nome_fornecedor_l:
-            fonte = "fornecedor_especifico_mega_center"
-        elif "atacadum" in nome_fornecedor_l:
-            fonte = "fornecedor_especifico_atacadum"
+        fonte_descoberta = fonte or "instant_scraper_ou_crawler_modular"
 
         df_diag = pd.DataFrame(produtos).copy() if produtos else pd.DataFrame()
 
@@ -591,7 +697,7 @@ class SiteAgent:
         return {
             "url": url,
             "fornecedor": nome_fornecedor or "Fornecedor Genérico",
-            "fonte_descoberta": fonte,
+            "fonte_descoberta": fonte_descoberta,
             "diagnostico_df": df_diag,
             "total_descobertos": total_descobertos,
             "total_validos": total_validos,
@@ -605,6 +711,15 @@ class SiteAgent:
                 ),
             },
         }
+
+    def _registrar_fonte_streamlit(self, fonte: str) -> None:
+        if st is None:
+            return
+
+        try:
+            st.session_state["site_busca_fonte_descoberta"] = str(fonte or "").strip()
+        except Exception:
+            pass
 
     def _aplicar_diagnostico_streamlit(self, diagnostico: Dict[str, Any]) -> None:
         if st is None:
@@ -938,4 +1053,3 @@ def buscar_produtos_site_com_gpt(
         auth_context=auth_context,
         **kwargs_execucao,
     )
-
