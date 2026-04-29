@@ -63,7 +63,11 @@ def _calcular_preco_olist(
     custo: float,
     custo_fixo: float,
     frete_fixo: float,
+    embalagem_fixa: float,
+    despesa_fixa: float,
     taxa_extra: float,
+    comissao_marketplace_percent: float,
+    taxa_cartao_percent: float,
     impostos_percent: float,
     margem_percent: float,
     outros_percent: float,
@@ -71,13 +75,32 @@ def _calcular_preco_olist(
     custo = _to_float(custo)
     custo_fixo = _to_float(custo_fixo)
     frete_fixo = _to_float(frete_fixo)
+    embalagem_fixa = _to_float(embalagem_fixa)
+    despesa_fixa = _to_float(despesa_fixa)
     taxa_extra = _to_float(taxa_extra)
+
+    comissao_marketplace_percent = _to_float(comissao_marketplace_percent)
+    taxa_cartao_percent = _to_float(taxa_cartao_percent)
     impostos_percent = _to_float(impostos_percent)
     margem_percent = _to_float(margem_percent)
     outros_percent = _to_float(outros_percent)
 
-    custo_total = custo + custo_fixo + frete_fixo + taxa_extra
-    percentual_total = (impostos_percent + margem_percent + outros_percent) / 100.0
+    custo_total = (
+        custo
+        + custo_fixo
+        + frete_fixo
+        + embalagem_fixa
+        + despesa_fixa
+        + taxa_extra
+    )
+
+    percentual_total = (
+        comissao_marketplace_percent
+        + taxa_cartao_percent
+        + impostos_percent
+        + margem_percent
+        + outros_percent
+    ) / 100.0
 
     divisor = 1.0 - percentual_total
     if divisor <= 0:
@@ -144,7 +167,11 @@ def _inicializar_estado_precificacao(df_origem: pd.DataFrame) -> None:
     defaults = {
         "pricing_custo_fixo": 0.0,
         "pricing_frete_fixo": 0.0,
+        "pricing_embalagem_fixa": 0.0,
+        "pricing_despesa_fixa": 0.0,
         "pricing_taxa_extra": 0.0,
+        "pricing_comissao_marketplace_percent": 0.0,
+        "pricing_taxa_cartao_percent": 0.0,
         "pricing_impostos_percent": 0.0,
         "pricing_margem_percent": 0.0,
         "pricing_outros_percent": 0.0,
@@ -172,7 +199,11 @@ def _aplicar_precificacao_dataframe(
     coluna_custo: str,
     custo_fixo: float,
     frete_fixo: float,
+    embalagem_fixa: float,
+    despesa_fixa: float,
     taxa_extra: float,
+    comissao_marketplace_percent: float,
+    taxa_cartao_percent: float,
     impostos_percent: float,
     margem_percent: float,
     outros_percent: float,
@@ -190,7 +221,11 @@ def _aplicar_precificacao_dataframe(
             custo=x,
             custo_fixo=custo_fixo,
             frete_fixo=frete_fixo,
+            embalagem_fixa=embalagem_fixa,
+            despesa_fixa=despesa_fixa,
             taxa_extra=taxa_extra,
+            comissao_marketplace_percent=comissao_marketplace_percent,
+            taxa_cartao_percent=taxa_cartao_percent,
             impostos_percent=impostos_percent,
             margem_percent=margem_percent,
             outros_percent=outros_percent,
@@ -225,15 +260,6 @@ def _aplicar_precificacao_dataframe(
 
 
 def _usar_origem_sem_precificar(df_origem: pd.DataFrame) -> pd.DataFrame:
-    """
-    Permite seguir para o mapeamento sem obrigar a calculadora.
-
-    Regra:
-    - se a origem tem dados válidos, copia df_origem para df_precificado;
-    - não cria colunas artificiais de preço;
-    - preserva o fluxo normal do mapeamento, que já procura df_precificado primeiro;
-    - evita travar cadastro, estoque, XML, site ou planilha quando o usuário não quer calcular preço.
-    """
     if not safe_df_dados(df_origem):
         return pd.DataFrame()
 
@@ -341,15 +367,15 @@ def render_origem_precificacao() -> None:
         st.caption(f"Se a calculadora for aplicada, o preço calculado será gravado em: {destino}")
 
     with st.container(border=True):
-        st.markdown("### Calculadora")
+        st.markdown("### Despesas fixas por produto")
 
         c1, c2 = st.columns(2)
         c3, c4 = st.columns(2)
-        c5, c6 = st.columns(2)
+        c5, _ = st.columns(2)
 
         with c1:
             custo_fixo = st.number_input(
-                "Custo fixo (R$)",
+                "Custo fixo adicional (R$)",
                 min_value=0.0,
                 step=0.01,
                 key="pricing_custo_fixo",
@@ -364,14 +390,55 @@ def render_origem_precificacao() -> None:
             )
 
         with c3:
+            embalagem_fixa = st.number_input(
+                "Embalagem (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="pricing_embalagem_fixa",
+            )
+
+        with c4:
+            despesa_fixa = st.number_input(
+                "Outras despesas fixas (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="pricing_despesa_fixa",
+            )
+
+        with c5:
             taxa_extra = st.number_input(
-                "Taxa extra (R$)",
+                "Taxa extra fixa (R$)",
                 min_value=0.0,
                 step=0.01,
                 key="pricing_taxa_extra",
             )
 
-        with c4:
+    with st.container(border=True):
+        st.markdown("### Percentuais sobre a venda")
+
+        c1, c2 = st.columns(2)
+        c3, c4 = st.columns(2)
+        c5, _ = st.columns(2)
+
+        with c1:
+            comissao_marketplace_percent = st.number_input(
+                "Comissão marketplace (%)",
+                min_value=0.0,
+                max_value=99.99,
+                step=0.01,
+                key="pricing_comissao_marketplace_percent",
+            )
+
+        with c2:
+            taxa_cartao_percent = st.number_input(
+                "Taxa cartão / financeira (%)",
+                min_value=0.0,
+                max_value=99.99,
+                step=0.01,
+                key="pricing_taxa_cartao_percent",
+            )
+
+        with c3:
             impostos_percent = st.number_input(
                 "Impostos (%)",
                 min_value=0.0,
@@ -380,16 +447,16 @@ def render_origem_precificacao() -> None:
                 key="pricing_impostos_percent",
             )
 
-        with c5:
+        with c4:
             margem_percent = st.number_input(
-                "Margem de lucro (%)",
+                "Lucro desejado (%)",
                 min_value=0.0,
                 max_value=99.99,
                 step=0.01,
                 key="pricing_margem_percent",
             )
 
-        with c6:
+        with c5:
             outros_percent = st.number_input(
                 "Outros percentuais (%)",
                 min_value=0.0,
@@ -398,8 +465,22 @@ def render_origem_precificacao() -> None:
                 key="pricing_outros_percent",
             )
 
+    percentual_total = (
+        _to_float(comissao_marketplace_percent)
+        + _to_float(taxa_cartao_percent)
+        + _to_float(impostos_percent)
+        + _to_float(margem_percent)
+        + _to_float(outros_percent)
+    )
+
+    if percentual_total >= 100:
+        st.error("A soma dos percentuais precisa ser menor que 100%.")
+    elif percentual_total >= 80:
+        st.warning("A soma dos percentuais está alta. Confira se as taxas estão corretas.")
+
     with st.container(border=True):
         st.markdown("### Simulação")
+
         custo_teste = st.number_input(
             "Valor de teste (R$)",
             min_value=0.0,
@@ -411,7 +492,11 @@ def render_origem_precificacao() -> None:
             custo=custo_teste,
             custo_fixo=custo_fixo,
             frete_fixo=frete_fixo,
+            embalagem_fixa=embalagem_fixa,
+            despesa_fixa=despesa_fixa,
             taxa_extra=taxa_extra,
+            comissao_marketplace_percent=comissao_marketplace_percent,
+            taxa_cartao_percent=taxa_cartao_percent,
             impostos_percent=impostos_percent,
             margem_percent=margem_percent,
             outros_percent=outros_percent,
@@ -428,13 +513,19 @@ def render_origem_precificacao() -> None:
     ):
         if not coluna_custo:
             st.error("Selecione a coluna base de custo/preço para calcular.")
+        elif percentual_total >= 100:
+            st.error("Não é possível aplicar: a soma dos percentuais precisa ser menor que 100%.")
         else:
             df_precificado = _aplicar_precificacao_dataframe(
                 df=df_origem,
                 coluna_custo=coluna_custo,
                 custo_fixo=custo_fixo,
                 frete_fixo=frete_fixo,
+                embalagem_fixa=embalagem_fixa,
+                despesa_fixa=despesa_fixa,
                 taxa_extra=taxa_extra,
+                comissao_marketplace_percent=comissao_marketplace_percent,
+                taxa_cartao_percent=taxa_cartao_percent,
                 impostos_percent=impostos_percent,
                 margem_percent=margem_percent,
                 outros_percent=outros_percent,
@@ -478,3 +569,4 @@ def render_origem_precificacao() -> None:
 
             st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
             ir_para_etapa("mapeamento")
+
