@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -11,31 +13,34 @@ DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/123.0.0.0 Safari/537.36"
     ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Connection": "keep-alive",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     "Cache-Control": "no-cache",
     "Pragma": "no-cache",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
 class HTMLFetcher:
     """
-    Busca HTML sem derrubar o Streamlit.
+    Fetcher HTTP estável para Streamlit Cloud.
 
-    Regra:
-    - tenta buscar com retries;
-    - se falhar, retorna string vazia;
-    - não lança Exception para a tela principal.
+    Objetivo:
+    - não depender de Playwright;
+    - evitar travar a tela;
+    - tentar variações seguras de URL;
+    - retornar "" em falha controlada;
+    - guardar o último erro em self.last_error.
     """
 
     def __init__(
         self,
-        timeout: int = 20,
+        timeout: int = 25,
         max_retries: int = 3,
-        delay_range: tuple[float, float] = (0.5, 1.5),
+        delay_range: tuple[float, float] = (0.4, 1.2),
     ):
         self.timeout = timeout
         self.max_retries = max_retries
@@ -49,29 +54,77 @@ class HTMLFetcher:
             self.last_error = "URL vazia"
             return ""
 
+        urls_tentativa = self._gerar_variacoes_url(url)
         last_error: Optional[Exception] = None
 
-        for _attempt in range(self.max_retries):
-            try:
-                response = httpx.get(
-                    url,
-                    headers=self._random_headers(),
-                    timeout=self.timeout,
-                    follow_redirects=True,
-                )
+        with httpx.Client(
+            headers=self._random_headers(),
+            timeout=self.timeout,
+            follow_redirects=True,
+        ) as client:
+            for tentativa_url in urls_tentativa:
+                for _attempt in range(self.max_retries):
+                    try:
+                        response = client.get(
+                            tentativa_url,
+                            headers=self._random_headers(referer=tentativa_url),
+                        )
 
-                if response.status_code == 200 and response.text:
-                    return response.text
+                        html = self._extrair_html_response(response)
 
-                last_error = Exception(f"Status code: {response.status_code}")
+                        if html:
+                            self.last_error = ""
+                            return html
 
-            except Exception as e:
-                last_error = e
+                        last_error = Exception(
+                            f"Resposta sem HTML útil | status={response.status_code} | url={tentativa_url}"
+                        )
 
-            time.sleep(random.uniform(*self.delay_range))
+                    except Exception as exc:
+                        last_error = exc
+
+                    time.sleep(random.uniform(*self.delay_range))
 
         self.last_error = f"Erro ao buscar HTML: {last_error}"
         return ""
+
+    def _extrair_html_response(self, response: httpx.Response) -> str:
+        status = int(getattr(response, "status_code", 0) or 0)
+
+        if status >= 400:
+            return ""
+
+        content_type = str(response.headers.get("content-type", "")).lower()
+        texto = response.text or ""
+
+        if not texto.strip():
+            return ""
+
+        if "text/html" not in content_type and "<html" not in texto.lower():
+            return ""
+
+        if self._parece_bloqueio(texto):
+            return ""
+
+        return texto
+
+    def _parece_bloqueio(self, html: str) -> bool:
+        texto = re.sub(r"\s+", " ", str(html or "").lower())
+
+        sinais_bloqueio = [
+            "access denied",
+            "forbidden",
+            "captcha",
+            "cloudflare",
+            "checking your browser",
+            "verificando seu navegador",
+            "enable javascript",
+            "ative o javascript",
+            "blocked",
+            "bot detection",
+        ]
+
+        return any(sinal in texto for sinal in sinais_bloqueio)
 
     def _normalize_url(self, url: str) -> str:
         url = str(url or "").strip()
@@ -85,9 +138,46 @@ class HTMLFetcher:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
-        return url
+        parsed = urlparse(url)
 
-    def _random_headers(self) -> dict:
+        scheme = parsed.scheme or "https"
+        netloc = parsed.netloc.strip()
+        path = parsed.path or "/"
+
+        if not netloc:
+            return ""
+
+        return urlunparse((scheme, netloc, path, "", parsed.query, ""))
+
+    def _gerar_variacoes_url(self, url: str) -> list[str]:
+        parsed = urlparse(url)
+        host = parsed.netloc
+
+        urls = [url]
+
+        if host.startswith("www."):
+            sem_www = parsed._replace(netloc=host[4:])
+            urls.append(urlunparse(sem_www))
+        else:
+            com_www = parsed._replace(netloc=f"www.{host}")
+            urls.append(urlunparse(com_www))
+
+        if parsed.scheme == "https":
+            urls.append(urlunparse(parsed._replace(scheme="http")))
+        elif parsed.scheme == "http":
+            urls.append(urlunparse(parsed._replace(scheme="https")))
+
+        vistos = set()
+        final = []
+
+        for item in urls:
+            if item and item not in vistos:
+                vistos.add(item)
+                final.append(item)
+
+        return final
+
+    def _random_headers(self, referer: str = "") -> dict:
         headers = DEFAULT_HEADERS.copy()
 
         user_agents = [
@@ -95,21 +185,25 @@ class HTMLFetcher:
             (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/121.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/121.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (X11; Linux x86_64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/123.0.0.0 Safari/537.36"
             ),
         ]
 
         headers["User-Agent"] = random.choice(user_agents)
+
+        if referer:
+            headers["Referer"] = referer
+
         return headers
 
 
