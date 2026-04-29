@@ -1,917 +1,802 @@
 """
-SITE AGENT — ORQUESTRADOR GLOBAL MODULAR
+CRAWLER ENGINE — BLINGPERF CRAWLER FULL FIX
 
-BLINGFIX CRAWLER:
-- Mantém fornecedor específico como fallback.
-- Adiciona Instant Scraper como primeira tentativa.
-- Corrige o carregamento do crawler genérico.
-- Remove import silencioso que escondia erro real.
-- Registra diagnóstico detalhado se crawler_engine falhar.
-- Mantém compatibilidade com:
-  - SiteAgent
-  - get_site_agent()
-  - buscar_produtos_site()
-  - buscar_produtos_site_df()
-  - buscar_produtos_site_com_gpt()
-  - buscar_dataframe()
-  - buscar_produtos()
-  - para_dataframe()
+Objetivo:
+- Rodar forte em Streamlit Cloud SEM depender de Playwright.
+- Usar HTTP híbrido robusto.
+- Ler sitemap, páginas, categorias, paginações e links embutidos em JS.
+- Extrair produto com JSON-LD + heurística existente do projeto.
+- Manter compatibilidade com SiteAgent.run_crawler().
 """
 
 from __future__ import annotations
 
-import importlib
+import concurrent.futures
 import re
 import time
-import traceback
-from html import unescape
-from typing import Any, Callable, Dict, List, Optional
+import xml.etree.ElementTree as ET
+from collections import deque
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
 try:
     import streamlit as st
 except Exception:  # pragma: no cover
     st = None
 
-try:
-    from bling_app_zero.core.suppliers.registry import SupplierRegistry, get_registry
-except Exception:  # pragma: no cover
-    SupplierRegistry = Any
-
-    def get_registry():
-        return None
-
-
-RUN_CRAWLER_IMPORT_ERROR = ""
-
-
-def _carregar_run_crawler() -> Optional[Callable[..., pd.DataFrame]]:
-    global RUN_CRAWLER_IMPORT_ERROR
-
-    caminhos = [
-        "bling_app_zero.core.site_crawler.crawler_engine",
-        "bling_app_zero.core.site_crawler_engine",
-        "bling_app_zero.core.site_crawler",
-    ]
-
-    erros: List[str] = []
-
-    for caminho in caminhos:
-        try:
-            modulo = importlib.import_module(caminho)
-            funcao = getattr(modulo, "run_crawler", None)
-
-            if callable(funcao):
-                RUN_CRAWLER_IMPORT_ERROR = ""
-                return funcao
-
-            erros.append(f"{caminho}: atributo run_crawler não encontrado.")
-        except Exception as exc:
-            erros.append(
-                f"{caminho}: {exc.__class__.__name__}: {exc}\n"
-                f"{traceback.format_exc(limit=4)}"
-            )
-
-    RUN_CRAWLER_IMPORT_ERROR = "\n\n".join(erros)
-    return None
-
-
-run_crawler = _carregar_run_crawler()
-
-
-class SiteAgent:
-    MARCAS_LOJA_BLOQUEADAS = {
-        "mega center",
-        "mega center eletrônicos",
-        "mega center eletronicos",
-        "megacenter",
-        "megacenter eletrônicos",
-        "megacenter eletronicos",
-        "loja mega center",
-    }
-
-    MARCAS_CONHECIDAS = [
-        "Samsung", "Apple", "Motorola", "Xiaomi", "Redmi", "Poco", "Realme",
-        "Infinix", "Nokia", "LG", "Sony", "Philips", "Multilaser", "Multi",
-        "Positivo", "Lenovo", "Dell", "HP", "Acer", "Asus", "Intelbras",
-        "Elgin", "Mondial", "Britânia", "Britania", "Oster", "Cadence",
-        "Agratto", "Midea", "Electrolux", "Consul", "Brastemp", "JBL",
-        "Amvox", "Tomate", "Knup", "Hrebos", "Sumexr", "Baseus", "Hoco",
-        "Inova", "Aiwa", "Pulse", "Aquário", "Aquario", "Elsys", "TCL",
-        "AOC", "Philco", "Hayom", "Exbom", "Ugreen", "Geonav", "I2GO",
-        "C3Tech", "Leadership", "Goldentec", "Gshield", "Gorila Shield",
-        "Kingston", "Sandisk", "Western Digital", "Seagate", "Crucial",
-        "Logitech", "Microsoft", "Google", "Amazon", "Epson", "Canon",
-        "Brother", "Zebra", "Dymo", "Mercusys", "TP-Link", "Tenda",
-        "D-Link", "Huawei", "ZTE", "AMD", "Nvidia", "Radeon", "Geforce",
-        "X-Cell", "Pineng", "Kaidi", "Kimaster", "Lelong", "Kross",
-        "Roadstar", "First Option",
-    ]
-
-    def __init__(self) -> None:
-        try:
-            self.registry: Optional[SupplierRegistry] = get_registry()
-        except Exception as exc:
-            self.registry = None
-            self._log(f"[SITE_AGENT ERRO] registry indisponível: {exc}")
-
-    def executar(
-        self,
-        url: str,
-        *,
-        auth_context: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> List[Dict[str, Any]]:
-        url = self._normalizar_url(url)
-        if not url:
-            return []
-
-        df = self.buscar_dataframe(
-            base_url=url,
-            diagnostico=bool(kwargs.pop("diagnostico", False)),
-            auth_context=auth_context,
-            **kwargs,
-        )
-
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return []
-
-        return df.fillna("").to_dict(orient="records")
-
-    def buscar_produtos(self, base_url: str, **kwargs) -> pd.DataFrame:
-        return self.buscar_dataframe(base_url=base_url, **kwargs)
-
-    def buscar_dataframe(
-        self,
-        *,
-        base_url: str,
-        diagnostico: bool = False,
-        auth_context: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> pd.DataFrame:
-        url = self._normalizar_url(base_url)
-        if not url:
-            return self.para_dataframe([])
-
-        fornecedor = self._detectar_fornecedor(url)
-
-        varrer_site_completo = self._bool_compat(
-            kwargs.get(
-                "varrer_site_completo",
-                kwargs.get("varredura_completa", kwargs.get("site_completo")),
-            ),
-            default=True,
-        )
-
-        sitemap_completo = self._bool_compat(
-            kwargs.get("sitemap_completo", kwargs.get("varrer_sitemap_completo")),
-            default=varrer_site_completo,
-        )
-
-        max_workers = self._int_compat(kwargs.get("max_workers"), 12)
-        limite = kwargs.get("limite", kwargs.get("limite_links", None))
-        limite_paginas = kwargs.get("limite_paginas", None)
-
-        self._log(
-            "[SITE_AGENT] iniciado "
-            f"| url={url} "
-            f"| fornecedor={self._nome_fornecedor(fornecedor)} "
-            f"| varrer_site_completo={varrer_site_completo} "
-            f"| sitemap_completo={sitemap_completo} "
-            f"| max_workers={max_workers}"
-        )
-
-        df = pd.DataFrame()
-
-        df = self._executar_instant_scraper(url=url, kwargs=kwargs)
-
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            df = self._executar_fornecedor_especifico(
-                fornecedor=fornecedor,
-                url=url,
-                auth_context=auth_context,
-                kwargs=kwargs,
-                limite=limite,
-                limite_paginas=limite_paginas,
-                max_workers=max_workers,
-            )
-
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            self._log("[SITE_AGENT] fornecedor específico vazio/indisponível; usando crawler genérico.")
-            df = self._executar_crawler_generico(
-                url=url,
-                auth_context=auth_context,
-                varrer_site_completo=varrer_site_completo,
-                sitemap_completo=sitemap_completo,
-                max_workers=max_workers,
-                limite=limite,
-                limite_paginas=limite_paginas,
-                kwargs=kwargs,
-            )
-
-        df = self._normalizar_dataframe_saida(df)
-
-        if diagnostico:
-            produtos = df.fillna("").to_dict(orient="records") if not df.empty else []
-            diag = self._diagnostico_basico(
-                url=url,
-                fornecedor=fornecedor,
-                produtos=produtos,
-                auth_context=auth_context,
-            )
-            self._aplicar_diagnostico_streamlit(diag)
-
-        self._log(f"[SITE_AGENT] total final no DataFrame: {len(df)} produto(s)")
-        return df
-
-    def _executar_instant_scraper(self, *, url: str, kwargs: Dict[str, Any]) -> pd.DataFrame:
-        usar_instant = self._bool_compat(kwargs.get("usar_instant_scraper", True), default=True)
-
-        if not usar_instant:
-            self._log("[SITE_AGENT] Instant Scraper desativado por parâmetro.")
-            return pd.DataFrame()
-
-        try:
-            from bling_app_zero.core.instant_scraper.runner import run_scraper
-
-            self._log("[SITE_AGENT] tentando Instant Scraper...")
-
-            df = run_scraper(url)
-
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                self._log(f"[SITE_AGENT] Instant Scraper retornou {len(df)} produto(s).")
-                return df
-
-            self._log("[SITE_AGENT] Instant Scraper não encontrou produtos.")
-            return pd.DataFrame()
-
-        except Exception as exc:
-            self._log(f"[SITE_AGENT] erro no Instant Scraper: {exc}")
-            return pd.DataFrame()
-
-    def _executar_fornecedor_especifico(
-        self,
-        *,
-        fornecedor: Any,
-        url: str,
-        auth_context: Optional[Dict[str, Any]],
-        kwargs: Dict[str, Any],
-        limite: Any,
-        limite_paginas: Any,
-        max_workers: int,
-    ) -> pd.DataFrame:
-        if fornecedor is None:
-            return pd.DataFrame()
-
-        nome = self._nome_fornecedor(fornecedor)
-        nome_l = nome.lower()
-
-        if "gen" in nome_l and "mega" not in nome_l:
-            self._log(f"[SITE_AGENT] fornecedor genérico detectado; pulando prioridade específica: {nome}")
-            return pd.DataFrame()
-
-        self._log(f"[SITE_AGENT] usando fornecedor específico: {nome}")
-
-        kwargs_supplier = dict(kwargs)
-        kwargs_supplier.setdefault("auth_context", auth_context)
-        kwargs_supplier.setdefault("limite", limite)
-        kwargs_supplier.setdefault("limite_links", limite)
-        kwargs_supplier.setdefault("limite_paginas", limite_paginas)
-        kwargs_supplier.setdefault("max_workers", max_workers)
-
-        try:
-            if hasattr(fornecedor, "fetch"):
-                produtos = fornecedor.fetch(url, **kwargs_supplier)
-
-                if hasattr(fornecedor, "validar_produtos"):
-                    try:
-                        produtos = fornecedor.validar_produtos(produtos)
-                    except Exception as exc:
-                        self._log(f"[SITE_AGENT] validar_produtos fornecedor falhou: {exc}")
-
-                if hasattr(fornecedor, "to_dataframe"):
-                    df = fornecedor.to_dataframe(produtos)
-                else:
-                    df = pd.DataFrame(produtos or [])
-
-                if isinstance(df, pd.DataFrame) and not df.empty:
-                    self._log(f"[SITE_AGENT] fornecedor específico retornou {len(df)} produto(s).")
-                    return df
-
-        except Exception as exc:
-            self._log(f"[SITE_AGENT] fornecedor específico falhou: {nome} → {exc}")
-
-        return pd.DataFrame()
-
-    def _obter_run_crawler_runtime(self) -> Optional[Callable[..., pd.DataFrame]]:
-        global run_crawler
-
-        if callable(run_crawler):
-            return run_crawler
-
-        self._log("[SITE_AGENT] tentando recarregar crawler genérico em runtime.")
-        run_crawler = _carregar_run_crawler()
-
-        if callable(run_crawler):
-            self._log("[SITE_AGENT] crawler genérico recarregado com sucesso.")
-            return run_crawler
-
-        return None
-
-    def _executar_crawler_generico(
-        self,
-        *,
-        url: str,
-        auth_context: Optional[Dict[str, Any]],
-        varrer_site_completo: bool,
-        sitemap_completo: bool,
-        max_workers: int,
-        limite: Any,
-        limite_paginas: Any,
-        kwargs: Dict[str, Any],
-    ) -> pd.DataFrame:
-        crawler = self._obter_run_crawler_runtime()
-
-        if crawler is None:
-            self._log("[SITE_AGENT ERRO] run_crawler indisponível.")
-            if RUN_CRAWLER_IMPORT_ERROR:
-                self._log(f"[SITE_AGENT ERRO DETALHE] {RUN_CRAWLER_IMPORT_ERROR}")
-            return pd.DataFrame()
-
-        parametros = {
-            "auth_context": auth_context,
-            "varrer_site_completo": varrer_site_completo,
-            "sitemap_completo": sitemap_completo,
-            "max_workers": max_workers,
-            "limite": limite,
-            "limite_paginas": limite_paginas,
-            "usar_sitemap": bool(kwargs.get("usar_sitemap", True)),
-            "usar_home": bool(kwargs.get("usar_home", True)),
-            "usar_categoria": bool(kwargs.get("usar_categoria", True)),
-            "modo": kwargs.get("modo", "completo" if varrer_site_completo else "padrao"),
-            "preferir_playwright": bool(kwargs.get("preferir_playwright", False)),
-        }
-
-        try:
-            df = crawler(url, **parametros)
-            if isinstance(df, pd.DataFrame):
-                return df
-            if isinstance(df, list):
-                return pd.DataFrame(df)
-            if isinstance(df, dict):
-                for chave in ["df", "dataframe", "produtos", "items", "dados"]:
-                    valor = df.get(chave)
-                    if isinstance(valor, pd.DataFrame):
-                        return valor
-                    if isinstance(valor, list):
-                        return pd.DataFrame(valor)
-            return pd.DataFrame()
-        except TypeError as exc:
-            self._log(f"[SITE_AGENT] assinatura completa do crawler falhou; tentando modo compatível: {exc}")
-
-            try:
-                df = crawler(
-                    url,
-                    auth_context=auth_context,
-                    varrer_site_completo=varrer_site_completo,
-                    sitemap_completo=sitemap_completo,
-                    max_workers=max_workers,
-                )
-                if isinstance(df, pd.DataFrame):
-                    return df
-                if isinstance(df, list):
-                    return pd.DataFrame(df)
-                return pd.DataFrame()
-            except Exception as exc2:
-                self._log(f"[SITE_AGENT ERRO] crawler_engine falhou no fallback: {exc2}")
-                return pd.DataFrame()
-        except Exception as exc:
-            self._log(f"[SITE_AGENT ERRO] crawler_engine falhou: {exc}")
-            return pd.DataFrame()
-
-    def _nome_fornecedor(self, fornecedor: Any) -> str:
-        try:
-            return str(getattr(fornecedor, "nome", "") or fornecedor.__class__.__name__).strip()
-        except Exception:
-            return ""
-
-    def _detectar_fornecedor(self, url: str):
-        try:
-            if self.registry is not None and hasattr(self.registry, "detectar"):
-                return self.registry.detectar(url)
-        except Exception as exc:
-            self._log(f"[SITE_AGENT ERRO] falha ao detectar fornecedor: {exc}")
-            return None
-        return None
-
-    def para_dataframe(self, produtos: List[Dict[str, Any]]) -> pd.DataFrame:
-        if not isinstance(produtos, list):
-            produtos = []
-        df = pd.DataFrame(produtos)
-        return self._normalizar_dataframe_saida(df)
-
-    def _normalizar_dataframe_saida(self, df: Any) -> pd.DataFrame:
-        colunas = [
-            "url_produto",
-            "nome",
-            "sku",
-            "marca",
-            "categoria",
-            "estoque",
-            "preco",
-            "gtin",
-            "descricao",
-            "imagens",
-        ]
-
-        if not isinstance(df, pd.DataFrame):
-            df = pd.DataFrame()
-
-        df = df.copy().fillna("")
-
-        aliases = {
-            "URL": "url_produto",
-            "Url": "url_produto",
-            "url": "url_produto",
-            "link": "url_produto",
-            "Link": "url_produto",
-            "Nome": "nome",
-            "Produto": "nome",
-            "produto": "nome",
-            "Descrição": "descricao",
-            "Descricao": "descricao",
-            "description": "descricao",
-            "Preço": "preco",
-            "Preco": "preco",
-            "price": "preco",
-            "SKU": "sku",
-            "Sku": "sku",
-            "Código": "sku",
-            "Codigo": "sku",
-            "Marca": "marca",
-            "brand": "marca",
-            "Categoria": "categoria",
-            "category": "categoria",
-            "Estoque": "estoque",
-            "stock": "estoque",
-            "quantidade": "estoque",
-            "quantidade_real": "estoque",
-            "GTIN": "gtin",
-            "EAN": "gtin",
-            "ean": "gtin",
-            "Imagem": "imagens",
-            "Imagens": "imagens",
-            "image": "imagens",
-            "images": "imagens",
-        }
-
-        for origem, destino in aliases.items():
-            if origem in df.columns and destino not in df.columns:
-                df[destino] = df[origem]
-
-        for col in colunas:
-            if col not in df.columns:
-                df[col] = ""
-
-        df["url_produto"] = df["url_produto"].apply(self._texto_limpo)
-        df["nome"] = df["nome"].apply(self._limpar_nome_produto)
-        df["sku"] = df["sku"].apply(self._texto_limpo)
-        df["descricao"] = df["descricao"].apply(self._texto_limpo)
-        df["categoria"] = df["categoria"].apply(self._texto_limpo)
-        df["estoque"] = df["estoque"].apply(self._normalizar_estoque)
-        df["preco"] = df["preco"].apply(self._normalizar_preco)
-        df["gtin"] = df["gtin"].apply(self._normalizar_gtin)
-        df["imagens"] = df["imagens"].apply(self._normalizar_imagens)
-
-        df["marca"] = df.apply(
-            lambda row: self._normalizar_marca(
-                row.get("marca", ""),
-                nome=row.get("nome", ""),
-                descricao=row.get("descricao", ""),
-            ),
-            axis=1,
-        )
-
-        df = df[
-            (df["nome"].astype(str).str.strip() != "")
-            | (df["url_produto"].astype(str).str.strip() != "")
-        ]
-
-        df = self._deduplicar_dataframe(df)
-
-        return df[colunas].reset_index(drop=True)
-
-    def _deduplicar_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return pd.DataFrame(columns=list(df.columns) if isinstance(df, pd.DataFrame) else [])
-
-        base = df.copy()
-        chaves = []
-
-        for _, row in base.iterrows():
-            chave = (
-                self._texto_limpo(row.get("url_produto"))
-                or self._texto_limpo(row.get("sku"))
-                or self._texto_limpo(row.get("gtin"))
-                or self._texto_limpo(row.get("nome"))
-            ).lower()
-            chaves.append(chave)
-
-        base["_chave_dedupe"] = chaves
-        base = base[base["_chave_dedupe"] != ""]
-        base = base.drop_duplicates(subset=["_chave_dedupe"], keep="first")
-        base = base.drop(columns=["_chave_dedupe"], errors="ignore")
-        return base
-
-    def _diagnostico_basico(
-        self,
-        *,
-        url: str,
-        fornecedor: Any,
-        produtos: List[Dict[str, Any]],
-        auth_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        nome_fornecedor = self._nome_fornecedor(fornecedor)
-
-        fonte = "crawler_modular_http_pro"
-        nome_fornecedor_l = nome_fornecedor.lower()
-
-        if nome_fornecedor_l.startswith("fornecedor gen") or "gen" in nome_fornecedor_l:
-            fonte = "generic_supplier"
-        elif "mega center" in nome_fornecedor_l:
-            fonte = "fornecedor_especifico_mega_center"
-        elif "atacadum" in nome_fornecedor_l:
-            fonte = "fornecedor_especifico_atacadum"
-
-        df_diag = pd.DataFrame(produtos).copy() if produtos else pd.DataFrame()
-
-        if not df_diag.empty:
-            df_diag["score"] = df_diag.apply(lambda row: self._score_produto(row.to_dict()), axis=1)
-            df_diag["valido"] = df_diag["score"] >= 3
-
-        total_descobertos = int(len(produtos))
-        total_validos = int(sum(1 for p in produtos if self._score_produto(p) >= 3))
-        total_rejeitados = int(sum(1 for p in produtos if self._score_produto(p) < 3))
-
-        return {
-            "url": url,
-            "fornecedor": nome_fornecedor or "Fornecedor Genérico",
-            "fonte_descoberta": fonte,
-            "diagnostico_df": df_diag,
-            "total_descobertos": total_descobertos,
-            "total_validos": total_validos,
-            "total_rejeitados": total_rejeitados,
-            "login_status": {
-                "status": "session_ready" if bool((auth_context or {}).get("session_ready")) else "publico",
-                "mensagem": (
-                    "Sessão autenticada aplicada à busca."
-                    if bool((auth_context or {}).get("session_ready"))
-                    else "Busca pública."
-                ),
-            },
-        }
-
-    def _aplicar_diagnostico_streamlit(self, diagnostico: Dict[str, Any]) -> None:
-        if st is None:
-            return
-
-        try:
-            st.session_state["site_busca_diagnostico_df"] = diagnostico.get("diagnostico_df", pd.DataFrame())
-            st.session_state["site_busca_diagnostico_total_descobertos"] = int(
-                diagnostico.get("total_descobertos", 0) or 0
-            )
-            st.session_state["site_busca_diagnostico_total_validos"] = int(
-                diagnostico.get("total_validos", 0) or 0
-            )
-            st.session_state["site_busca_diagnostico_total_rejeitados"] = int(
-                diagnostico.get("total_rejeitados", 0) or 0
-            )
-            st.session_state["site_busca_login_status"] = diagnostico.get("login_status", {}) or {}
-            st.session_state["site_busca_fonte_descoberta"] = str(
-                diagnostico.get("fonte_descoberta", "") or ""
-            ).strip()
-        except Exception:
-            pass
-
-    def _score_produto(self, produto: Dict[str, Any]) -> int:
-        if not isinstance(produto, dict):
-            return 0
-
-        score = 0
-        nome = self._texto_limpo(produto.get("nome") or produto.get("Nome") or produto.get("Produto"))
-        preco = produto.get("preco") or produto.get("Preço") or produto.get("Preco")
-        url_produto = self._texto_limpo(produto.get("url_produto") or produto.get("URL") or produto.get("url"))
-        sku = self._texto_limpo(produto.get("sku") or produto.get("SKU") or produto.get("Código"))
-        gtin = self._texto_limpo(produto.get("gtin") or produto.get("GTIN") or produto.get("EAN"))
-        descricao = self._texto_limpo(produto.get("descricao") or produto.get("Descrição"))
-        imagens = produto.get("imagens") or produto.get("Imagem") or produto.get("Imagens")
-        categoria = self._texto_limpo(produto.get("categoria") or produto.get("Categoria"))
-        estoque = produto.get("estoque") or produto.get("Estoque")
-
-        if nome and len(nome) >= 4:
-            score += 2
-        if url_produto:
-            score += 1
-        if sku:
-            score += 1
-        if gtin:
-            score += 1
-        if descricao and len(descricao) >= 20:
-            score += 1
-        if categoria:
-            score += 1
-        if imagens:
-            score += 1
-        if self._normalizar_preco(preco) > 0:
-            score += 2
-        if self._normalizar_estoque(estoque) >= 0:
-            score += 1
-
-        return score
-
-    def _normalizar_estoque(self, valor: Any) -> int:
-        if valor is None:
-            return 0
-
-        if isinstance(valor, bool):
-            return int(valor)
-
-        if isinstance(valor, (int, float)):
-            return max(int(valor), 0)
-
-        texto = self._texto_limpo(valor).lower()
-        if not texto:
-            return 0
-
-        if any(
-            termo in texto
-            for termo in [
-                "esgotado",
-                "sem estoque",
-                "indisponível",
-                "indisponivel",
-                "zerado",
-                "out of stock",
-            ]
-        ):
-            return 0
-
-        match = re.search(r"(\d+)", texto)
-        if match:
-            try:
-                return max(int(match.group(1)), 0)
-            except Exception:
-                return 0
-
-        if any(
-            termo in texto
-            for termo in [
-                "disponível",
-                "disponivel",
-                "em estoque",
-                "available",
-                "in stock",
-            ]
-        ):
-            return 1
-
-        return 0
-
-    def _normalizar_preco(self, valor: Any) -> float:
-        if valor is None:
-            return 0.0
-
-        if isinstance(valor, (int, float)):
-            return float(valor)
-
-        texto = self._texto_limpo(valor)
-        if not texto:
-            return 0.0
-
-        texto = texto.replace("R$", "").replace("r$", "").strip()
-        texto = re.sub(r"[^\d,.\-]", "", texto)
-
-        if texto.count(",") > 0 and texto.count(".") > 0:
-            texto = texto.replace(".", "").replace(",", ".")
-        elif texto.count(",") > 0:
-            texto = texto.replace(",", ".")
-
-        try:
-            return float(texto)
-        except Exception:
-            return 0.0
-
-    def _normalizar_gtin(self, valor: Any) -> str:
-        numeros = re.sub(r"\D", "", self._texto_limpo(valor))
-        if len(numeros) in (8, 12, 13, 14):
-            return numeros
+from bling_app_zero.core.site_crawler_cleaners import (
+    normalizar_texto,
+    normalizar_url,
+    safe_str,
+)
+from bling_app_zero.core.site_crawler_http import (
+    extrair_detalhes_heuristicos,
+    fetch_html_retry,
+    normalizar_link_crawl,
+    url_valida_para_crawl,
+)
+from bling_app_zero.core.site_crawler_links import (
+    descobrir_produtos_no_dominio,
+    extrair_links_pagina,
+)
+
+
+HEADERS_POOL = [
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    },
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 13; SM-S911B) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Mobile Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    },
+]
+
+PRODUCT_HINTS = (
+    "/produto",
+    "/produtos",
+    "/product",
+    "/products",
+    "/p/",
+    "/item",
+    "/sku",
+    "/prd",
+)
+
+BAD_LINK_HINTS = (
+    "/login",
+    "/logout",
+    "/account",
+    "/conta",
+    "/cart",
+    "/carrinho",
+    "/checkout",
+    "/politica",
+    "/privacy",
+    "/termos",
+    "/terms",
+    "mailto:",
+    "tel:",
+    "whatsapp",
+    "javascript:",
+)
+
+SITEMAP_PATHS = (
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/product-sitemap.xml",
+    "/produto-sitemap.xml",
+    "/products-sitemap.xml",
+    "/sitemap_products.xml",
+    "/sitemap-produtos.xml",
+)
+
+
+def _log(msg: str) -> None:
+    texto = safe_str(msg)
+    if not texto:
+        return
+
+    try:
+        if st is not None:
+            logs = st.session_state.setdefault("logs", [])
+            logs.append(texto)
+    except Exception:
+        pass
+
+    try:
+        print(texto)
+    except Exception:
+        pass
+
+
+def _raiz(url: str) -> str:
+    parsed = urlparse(normalizar_url(url))
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return normalizar_url(url)
+
+
+def _host(url: str) -> str:
+    try:
+        return urlparse(normalizar_url(url)).netloc.lower().replace("www.", "")
+    except Exception:
         return ""
 
-    def _normalizar_imagens(self, imagens: Any) -> str:
-        if not imagens:
-            return ""
 
-        if isinstance(imagens, list):
-            itens = imagens
-        else:
-            bruto = str(imagens).replace(";", "|").replace(",", "|")
-            itens = bruto.split("|")
+def _mesmo_host(base_url: str, url: str) -> bool:
+    return _host(base_url) == _host(url)
 
-        lista_final: List[str] = []
-        vistos = set()
 
-        for item in itens:
-            valor = self._texto_limpo(item)
-            if not valor:
-                continue
-            if valor in vistos:
-                continue
-            vistos.add(valor)
-            lista_final.append(valor)
+def _url_ruim(url: str) -> bool:
+    url_n = normalizar_texto(url)
+    return any(x in url_n for x in BAD_LINK_HINTS)
 
-        return "|".join(lista_final[:12])
 
-    def _texto_limpo(self, valor: Any) -> str:
-        texto = str(valor or "").strip()
-        if texto.lower() in {"nan", "none", "null"}:
-            return ""
-
-        texto = unescape(texto)
-        texto = texto.replace("\ufeff", "").replace("\x00", "")
-        texto = re.sub(r"[\r\n\t]+", " ", texto)
-        texto = re.sub(r"\s+", " ", texto).strip()
-        return texto
-
-    def _normalizar_url(self, url: Any) -> str:
-        texto = self._texto_limpo(url)
-        if not texto:
-            return ""
-
-        if texto.startswith("//"):
-            texto = f"https:{texto}"
-
-        if not texto.startswith(("http://", "https://")):
-            texto = f"https://{texto}"
-
-        return texto
-
-    def _limpar_nome_produto(self, valor: Any) -> str:
-        texto = self._texto_limpo(valor)
-        texto = re.sub(r"\s*[-|]\s*Mega Center.*$", "", texto, flags=re.I)
-        texto = re.sub(r"\s*[-|]\s*Comprar.*$", "", texto, flags=re.I)
-        return texto.strip()
-
-    def _normalizar_marca(self, marca: Any, *, nome: str = "", descricao: str = "") -> str:
-        marca_txt = self._texto_limpo(marca)
-        marca_txt = re.sub(r"\s+", " ", marca_txt).strip(" -|:/")
-
-        if self._marca_invalida(marca_txt):
-            marca_txt = ""
-
-        if not marca_txt:
-            marca_txt = self._inferir_marca(nome=nome, descricao=descricao)
-
-        if self._marca_invalida(marca_txt):
-            return ""
-
-        return marca_txt[:80]
-
-    def _marca_invalida(self, marca: str) -> bool:
-        marca_l = self._sem_acentos(self._texto_limpo(marca)).lower()
-        if not marca_l:
-            return True
-
-        bloqueadas = {self._sem_acentos(x).lower() for x in self.MARCAS_LOJA_BLOQUEADAS}
-        if marca_l in bloqueadas:
-            return True
-
-        if "mega center" in marca_l or "megacenter" in marca_l:
-            return True
-
-        if len(marca_l) > 80:
-            return True
-
+def _parece_produto_url(url: str) -> bool:
+    url_n = normalizar_texto(url)
+    if not url_n or _url_ruim(url_n):
         return False
 
-    def _inferir_marca(self, *, nome: str = "", descricao: str = "") -> str:
-        texto = f" {nome or ''} {descricao or ''} "
-        texto_norm = self._sem_acentos(texto).lower()
+    if any(h in url_n for h in PRODUCT_HINTS):
+        return True
 
-        for marca in self.MARCAS_CONHECIDAS:
-            marca_norm = self._sem_acentos(marca).lower()
-            if re.search(rf"(?<![a-z0-9]){re.escape(marca_norm)}(?![a-z0-9])", texto_norm):
-                return marca
+    path = urlparse(normalizar_url(url)).path.strip("/")
+    partes = [p for p in path.split("/") if p]
 
-        nome_limpo = self._texto_limpo(nome)
-        if nome_limpo:
-            primeira = nome_limpo.split(" ")[0].strip(" -:/")
-            genericas = {
-                "cabo", "fone", "caixa", "carregador", "pelicula", "película",
-                "capinha", "suporte", "adaptador", "controle", "mouse", "teclado",
-                "chip", "troca", "tela", "smartphone", "celular", "produto",
-                "kit", "mini", "novo", "nova", "original", "fonte", "capa",
-            }
-            if (
-                primeira
-                and len(primeira) >= 3
-                and not primeira.isdigit()
-                and primeira.lower() not in genericas
-                and not self._marca_invalida(primeira)
-            ):
-                return primeira
-
-        return ""
-
-    def _sem_acentos(self, texto: str) -> str:
-        mapa = str.maketrans(
-            "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
-            "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC",
-        )
-        return (texto or "").translate(mapa)
-
-    def _bool_compat(self, valor: Any, default: bool = False) -> bool:
-        if valor is None:
-            return default
-
-        if isinstance(valor, bool):
-            return valor
-
-        texto = self._texto_limpo(valor).lower()
-        if not texto:
-            return default
-
-        if texto in {"1", "true", "sim", "yes", "on", "s"}:
+    if len(partes) >= 2:
+        ultimo = partes[-1]
+        if "-" in ultimo and len(ultimo) >= 10:
             return True
 
-        if texto in {"0", "false", "nao", "não", "no", "off", "n"}:
-            return False
+    return False
 
-        return default
 
-    def _int_compat(self, valor: Any, default: int) -> int:
+def _parece_categoria_url(url: str) -> bool:
+    url_n = normalizar_texto(url)
+    sinais = (
+        "/categoria",
+        "/categorias",
+        "/departamento",
+        "/departamentos",
+        "/collection",
+        "/collections",
+        "/busca",
+        "/search",
+        "page=",
+        "pagina=",
+        "/page/",
+    )
+    return any(s in url_n for s in sinais)
+
+
+def _html_tem_produto(html: str) -> bool:
+    html_n = normalizar_texto(html)
+    sinais = (
+        '"@type":"product"',
+        '"@type": "product"',
+        "application/ld+json",
+        "product:price",
+        "itemprop='price'",
+        'itemprop="price"',
+        "adicionar ao carrinho",
+        "comprar agora",
+        "add to cart",
+        "sku",
+        "gtin",
+        "ean",
+        "r$",
+    )
+    return any(s in html_n for s in sinais)
+
+
+def _criar_session(auth_context: dict[str, Any] | None = None) -> requests.Session:
+    session = requests.Session()
+    session.headers.update(HEADERS_POOL[0])
+
+    if not isinstance(auth_context, dict):
+        return session
+
+    headers = auth_context.get("headers")
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            k_s = safe_str(k)
+            v_s = safe_str(v)
+            if k_s and v_s:
+                session.headers[k_s] = v_s
+
+    cookies = auth_context.get("cookies")
+    if isinstance(cookies, list):
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                continue
+            nome = safe_str(cookie.get("name"))
+            valor = safe_str(cookie.get("value"))
+            dominio = safe_str(cookie.get("domain"))
+            path = safe_str(cookie.get("path")) or "/"
+            if not nome:
+                continue
+            try:
+                session.cookies.set(nome, valor, domain=dominio or None, path=path)
+            except Exception:
+                continue
+
+    return session
+
+
+def _fetch(session: requests.Session, url: str, timeout: int = 35) -> str:
+    url = normalizar_url(url)
+    if not url:
+        return ""
+
+    try:
+        html = fetch_html_retry(url, timeout=timeout, tentativas=2)
+        if safe_str(html):
+            return safe_str(html)
+    except Exception:
+        pass
+
+    for headers in HEADERS_POOL:
         try:
-            if valor is None or valor == "":
-                return int(default)
-            return int(valor)
-        except Exception:
-            return int(default)
-
-    def _log(self, mensagem: str) -> None:
-        try:
-            print(mensagem)
+            response = session.get(
+                url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=True,
+                verify=True,
+            )
+            if response.ok and safe_str(response.text):
+                return response.text
         except Exception:
             pass
 
-        if st is not None:
-            try:
-                if "logs" not in st.session_state:
-                    st.session_state["logs"] = []
-                st.session_state["logs"].append(f"{time.strftime('%H:%M:%S')} {mensagem}")
-            except Exception:
-                pass
+        try:
+            response = session.get(
+                url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=True,
+                verify=False,
+            )
+            if response.ok and safe_str(response.text):
+                return response.text
+        except Exception:
+            pass
+
+    return ""
 
 
-_site_agent_instance: Optional[SiteAgent] = None
+def _extrair_urls_de_sitemap_xml(base_url: str, xml_text: str) -> list[str]:
+    urls: list[str] = []
+    vistos: set[str] = set()
+
+    xml_text = safe_str(xml_text)
+    if not xml_text:
+        return urls
+
+    try:
+        root = ET.fromstring(xml_text.encode("utf-8"))
+        for loc in root.iter():
+            tag = safe_str(loc.tag).lower()
+            if not tag.endswith("loc"):
+                continue
+            valor = normalizar_link_crawl(base_url, safe_str(loc.text))
+            if not valor or valor in vistos:
+                continue
+            if not url_valida_para_crawl(base_url, valor):
+                continue
+            vistos.add(valor)
+            urls.append(valor)
+    except Exception:
+        for match in re.findall(r"<loc>\s*([^<]+)\s*</loc>", xml_text, flags=re.I):
+            valor = normalizar_link_crawl(base_url, match)
+            if valor and valor not in vistos and url_valida_para_crawl(base_url, valor):
+                vistos.add(valor)
+                urls.append(valor)
+
+    return urls
 
 
-def get_site_agent() -> SiteAgent:
-    global _site_agent_instance
-    if _site_agent_instance is None:
-        _site_agent_instance = SiteAgent()
-    return _site_agent_instance
+def _buscar_sitemaps(session: requests.Session, base_url: str, max_sitemaps: int = 30) -> list[str]:
+    raiz = _raiz(base_url)
+    candidatos = [f"{raiz}{path}" for path in SITEMAP_PATHS]
+    fila = deque(candidatos)
+    visitados: set[str] = set()
+    urls: list[str] = []
+    vistos_urls: set[str] = set()
+
+    while fila and len(visitados) < max_sitemaps:
+        sitemap_url = fila.popleft()
+        if sitemap_url in visitados:
+            continue
+
+        visitados.add(sitemap_url)
+        xml_text = _fetch(session, sitemap_url, timeout=25)
+        if not xml_text:
+            continue
+
+        encontrados = _extrair_urls_de_sitemap_xml(base_url, xml_text)
+
+        for item in encontrados:
+            item_n = normalizar_texto(item)
+
+            if item_n.endswith(".xml") or "sitemap" in item_n and item_n not in visitados:
+                fila.append(item)
+                continue
+
+            if item not in vistos_urls:
+                vistos_urls.add(item)
+                urls.append(item)
+
+    return urls
 
 
-def buscar_produtos_site(url: str, **kwargs) -> List[Dict[str, Any]]:
-    agent = get_site_agent()
-    return agent.executar(url, **kwargs)
+def _extrair_links_js(base_url: str, html: str) -> list[str]:
+    html = safe_str(html)
+    if not html:
+        return []
+
+    padroes = [
+        r"https?://[^\"'<>\\\s]+",
+        r"\\/produto\\/[^\"'<>\\\s]+",
+        r"\\/produtos\\/[^\"'<>\\\s]+",
+        r"\\/product\\/[^\"'<>\\\s]+",
+        r"\\/products\\/[^\"'<>\\\s]+",
+        r"\\/p\\/[^\"'<>\\\s]+",
+        r"\\/item\\/[^\"'<>\\\s]+",
+        r"\\/sku\\/[^\"'<>\\\s]+",
+    ]
+
+    saida: list[str] = []
+    vistos: set[str] = set()
+
+    for padrao in padroes:
+        for raw in re.findall(padrao, html, flags=re.I):
+            raw = safe_str(raw).replace("\\/", "/")
+            url = normalizar_link_crawl(base_url, raw)
+            if not url or url in vistos:
+                continue
+            if not url_valida_para_crawl(base_url, url):
+                continue
+            if _url_ruim(url):
+                continue
+            vistos.add(url)
+            saida.append(url)
+
+    return saida
 
 
-def buscar_produtos_site_df(url: str, **kwargs) -> pd.DataFrame:
-    agent = get_site_agent()
-    return agent.buscar_dataframe(base_url=url, **kwargs)
-
-
-def buscar_produtos_site_com_gpt(
-    *,
+def _descobrir_links_por_bfs(
+    session: requests.Session,
     base_url: str,
-    termo: str = "",
-    limite_links: Optional[int] = None,
-    diagnostico: bool = False,
-    auth_context: Optional[Dict[str, Any]] = None,
-    **kwargs,
+    *,
+    max_paginas: int,
+    max_produtos: int,
+    max_segundos: int,
+) -> list[str]:
+    inicio = time.time()
+    base_url = normalizar_url(base_url)
+    fila = deque([base_url, _raiz(base_url)])
+    visitados: set[str] = set()
+    produtos: list[str] = []
+    produtos_vistos: set[str] = set()
+
+    while fila:
+        if len(visitados) >= max_paginas:
+            break
+        if len(produtos) >= max_produtos:
+            break
+        if time.time() - inicio > max_segundos:
+            break
+
+        pagina = fila.popleft()
+        if pagina in visitados:
+            continue
+
+        visitados.add(pagina)
+
+        html = _fetch(session, pagina)
+        if not html:
+            continue
+
+        if _html_tem_produto(html) and not _parece_categoria_url(pagina):
+            if pagina not in produtos_vistos:
+                produtos_vistos.add(pagina)
+                produtos.append(pagina)
+
+        try:
+            links_categoria, links_produto = extrair_links_pagina(base_url, pagina, html)
+        except Exception:
+            links_categoria, links_produto = [], []
+
+        links_js = _extrair_links_js(base_url, html)
+
+        for link in links_produto + links_js:
+            if not link or link in produtos_vistos:
+                continue
+            if not _mesmo_host(base_url, link):
+                continue
+            if _url_ruim(link):
+                continue
+
+            if _parece_produto_url(link) or not _parece_categoria_url(link):
+                produtos_vistos.add(link)
+                produtos.append(link)
+
+            if len(produtos) >= max_produtos:
+                break
+
+        for link in links_categoria:
+            if not link:
+                continue
+            if link in visitados or link in fila:
+                continue
+            if not _mesmo_host(base_url, link):
+                continue
+            if _url_ruim(link):
+                continue
+            fila.append(link)
+
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.find_all("a", href=True):
+            href = normalizar_link_crawl(base_url, safe_str(a.get("href")))
+            if not href:
+                continue
+            if href in visitados or href in fila:
+                continue
+            if not _mesmo_host(base_url, href):
+                continue
+            if _url_ruim(href):
+                continue
+
+            texto = safe_str(a.get_text(" ", strip=True))
+            contexto = normalizar_texto(f"{href} {texto}")
+
+            if _parece_produto_url(href):
+                if href not in produtos_vistos:
+                    produtos_vistos.add(href)
+                    produtos.append(href)
+            elif _parece_categoria_url(href) or any(x in contexto for x in ("produtos", "categoria", "departamento", "ver mais")):
+                fila.append(href)
+
+    return produtos[:max_produtos]
+
+
+def _descobrir_links_produtos(
+    session: requests.Session,
+    base_url: str,
+    *,
+    usar_sitemap: bool,
+    usar_home: bool,
+    max_paginas: int,
+    max_produtos: int,
+    max_segundos: int,
+    auth_context: dict[str, Any] | None,
+) -> list[str]:
+    encontrados: list[str] = []
+    vistos: set[str] = set()
+
+    def add_many(lista: list[str]) -> None:
+        for url in lista:
+            url = normalizar_link_crawl(base_url, url)
+            if not url or url in vistos:
+                continue
+            if not url_valida_para_crawl(base_url, url):
+                continue
+            if _url_ruim(url):
+                continue
+            vistos.add(url)
+            encontrados.append(url)
+
+    if usar_sitemap:
+        _log("[CRAWLER_ENGINE] Lendo sitemap.")
+        sitemap_urls = _buscar_sitemaps(session, base_url)
+        produtos_sitemap = [u for u in sitemap_urls if _parece_produto_url(u)]
+        add_many(produtos_sitemap)
+
+    if len(encontrados) < max_produtos and usar_home:
+        _log("[CRAWLER_ENGINE] Lendo home, categorias, paginações e JS.")
+        try:
+            descobertos = descobrir_produtos_no_dominio(
+                base_url,
+                max_paginas=max_paginas,
+                max_produtos=max_produtos,
+                max_segundos=max_segundos,
+                auth_context=auth_context,
+            )
+            add_many(descobertos)
+        except Exception as exc:
+            _log(f"[CRAWLER_ENGINE] descoberta via links module falhou: {exc}")
+
+    if len(encontrados) < max_produtos and usar_home:
+        try:
+            bfs = _descobrir_links_por_bfs(
+                session,
+                base_url,
+                max_paginas=max_paginas,
+                max_produtos=max_produtos,
+                max_segundos=max_segundos,
+            )
+            add_many(bfs)
+        except Exception as exc:
+            _log(f"[CRAWLER_ENGINE] BFS fallback falhou: {exc}")
+
+    if not encontrados:
+        html = _fetch(session, base_url)
+        if html and _html_tem_produto(html):
+            add_many([base_url])
+
+    return encontrados[:max_produtos]
+
+
+def _produto_valido(produto: dict[str, Any]) -> bool:
+    nome = safe_str(produto.get("descricao") or produto.get("nome"))
+    url = safe_str(produto.get("url_produto"))
+    preco = safe_str(produto.get("preco"))
+    imagens = safe_str(produto.get("url_imagens") or produto.get("imagens"))
+    codigo = safe_str(produto.get("codigo") or produto.get("sku"))
+    gtin = safe_str(produto.get("gtin"))
+
+    score = 0
+    if nome and len(nome) >= 4:
+        score += 3
+    if url:
+        score += 1
+    if preco:
+        score += 2
+    if imagens:
+        score += 1
+    if codigo:
+        score += 1
+    if gtin:
+        score += 1
+
+    return score >= 3
+
+
+def _extrair_um_produto(session: requests.Session, url_produto: str) -> dict[str, Any]:
+    html = _fetch(session, url_produto)
+    if not html:
+        return {}
+
+    produto = extrair_detalhes_heuristicos(url_produto, html)
+    if not isinstance(produto, dict):
+        return {}
+
+    produto.setdefault("url_produto", url_produto)
+
+    if not safe_str(produto.get("descricao")):
+        soup = BeautifulSoup(html, "lxml")
+        titulo = safe_str(
+            soup.select_one("h1").get_text(" ", strip=True)
+            if soup.select_one("h1")
+            else ""
+        )
+        if titulo:
+            produto["descricao"] = titulo
+
+    return produto if _produto_valido(produto) else {}
+
+
+def _normalizar_saida(produtos: list[dict[str, Any]]) -> pd.DataFrame:
+    linhas: list[dict[str, Any]] = []
+
+    for p in produtos:
+        if not isinstance(p, dict):
+            continue
+
+        linha = {
+            "url_produto": safe_str(p.get("url_produto")),
+            "nome": safe_str(p.get("descricao") or p.get("nome")),
+            "sku": safe_str(p.get("codigo") or p.get("sku")),
+            "marca": safe_str(p.get("marca")),
+            "categoria": safe_str(p.get("categoria")),
+            "estoque": safe_str(p.get("quantidade") or p.get("estoque") or "1"),
+            "preco": safe_str(p.get("preco")),
+            "gtin": re.sub(r"\D+", "", safe_str(p.get("gtin"))),
+            "descricao": safe_str(p.get("descricao_detalhada") or p.get("descricao")),
+            "imagens": safe_str(p.get("url_imagens") or p.get("imagens")),
+        }
+
+        if linha["gtin"] and len(linha["gtin"]) not in (8, 12, 13, 14):
+            linha["gtin"] = ""
+
+        if linha["nome"] or linha["url_produto"]:
+            linhas.append(linha)
+
+    df = pd.DataFrame(linhas)
+
+    colunas = [
+        "url_produto",
+        "nome",
+        "sku",
+        "marca",
+        "categoria",
+        "estoque",
+        "preco",
+        "gtin",
+        "descricao",
+        "imagens",
+    ]
+
+    for col in colunas:
+        if col not in df.columns:
+            df[col] = ""
+
+    if df.empty:
+        return df[colunas]
+
+    df["_dedupe"] = (
+        df["url_produto"].astype(str).str.strip().str.lower()
+        + "|"
+        + df["sku"].astype(str).str.strip().str.lower()
+        + "|"
+        + df["nome"].astype(str).str.strip().str.lower()
+    )
+    df = df.drop_duplicates(subset=["_dedupe"], keep="first")
+    df = df.drop(columns=["_dedupe"], errors="ignore")
+
+    return df[colunas].reset_index(drop=True)
+
+
+def run_crawler(
+    base_url: str,
+    *,
+    auth_context: dict[str, Any] | None = None,
+    varrer_site_completo: bool = True,
+    sitemap_completo: bool = True,
+    max_workers: int = 12,
+    limite: int | None = None,
+    limite_paginas: int | None = None,
+    usar_sitemap: bool = True,
+    usar_home: bool = True,
+    usar_categoria: bool = True,
+    modo: str = "completo",
+    preferir_playwright: bool = False,
+    **kwargs: Any,
 ) -> pd.DataFrame:
-    agent = get_site_agent()
+    """
+    Entrada principal usada pelo SiteAgent.
 
-    kwargs_execucao = dict(kwargs)
+    Observação:
+    preferir_playwright é aceito por compatibilidade, mas este engine não depende dele.
+    """
 
-    if limite_links is not None and "limite" not in kwargs_execucao:
-        kwargs_execucao["limite"] = limite_links
+    inicio = time.time()
+    url = normalizar_url(base_url)
 
-    return agent.buscar_dataframe(
-        base_url=base_url,
-        diagnostico=diagnostico,
-        auth_context=auth_context,
-        **kwargs_execucao,
+    if not url:
+        return pd.DataFrame(
+            columns=[
+                "url_produto",
+                "nome",
+                "sku",
+                "marca",
+                "categoria",
+                "estoque",
+                "preco",
+                "gtin",
+                "descricao",
+                "imagens",
+            ]
+        )
+
+    max_workers = max(1, min(int(max_workers or 8), 24))
+
+    if limite is None:
+        limite_produtos = 8000 if varrer_site_completo else 300
+    else:
+        try:
+            limite_produtos = max(1, int(limite))
+        except Exception:
+            limite_produtos = 8000 if varrer_site_completo else 300
+
+    if limite_paginas is None:
+        max_paginas = 600 if varrer_site_completo else 80
+    else:
+        try:
+            max_paginas = max(1, int(limite_paginas))
+        except Exception:
+            max_paginas = 600 if varrer_site_completo else 80
+
+    max_segundos = int(kwargs.get("max_segundos", 900 if varrer_site_completo else 240))
+
+    session = _criar_session(auth_context)
+
+    _log(
+        "[CRAWLER_ENGINE] Iniciado "
+        f"| modo=http_hybrid_sem_playwright "
+        f"| url={url} "
+        f"| sitemap={usar_sitemap and sitemap_completo} "
+        f"| home={usar_home} "
+        f"| max_paginas={max_paginas} "
+        f"| limite_produtos={limite_produtos} "
+        f"| workers={max_workers}"
     )
 
+    links = _descobrir_links_produtos(
+        session,
+        url,
+        usar_sitemap=bool(usar_sitemap and sitemap_completo),
+        usar_home=bool(usar_home or usar_categoria),
+        max_paginas=max_paginas,
+        max_produtos=limite_produtos,
+        max_segundos=max_segundos,
+        auth_context=auth_context,
+    )
+
+    links = links[:limite_produtos]
+    _log(f"[CRAWLER_ENGINE] Links de produto candidatos: {len(links)}")
+
+    produtos: list[dict[str, Any]] = []
+
+    if not links:
+        html_home = _fetch(session, url)
+        if html_home:
+            direto = extrair_detalhes_heuristicos(url, html_home)
+            if isinstance(direto, dict) and _produto_valido(direto):
+                produtos.append(direto)
+
+        df_vazio_ou_direto = _normalizar_saida(produtos)
+        _log(f"[CRAWLER_ENGINE] Finalizado com {len(df_vazio_ou_direto)} produto(s).")
+        return df_vazio_ou_direto
+
+    def worker(link: str) -> dict[str, Any]:
+        try:
+            return _extrair_um_produto(session, link)
+        except Exception:
+            return {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futuros = {executor.submit(worker, link): link for link in links}
+
+        for idx, futuro in enumerate(concurrent.futures.as_completed(futuros), start=1):
+            if time.time() - inicio > max_segundos:
+                _log("[CRAWLER_ENGINE] Tempo máximo atingido; retornando parcial.")
+                break
+
+            try:
+                produto = futuro.result()
+            except Exception:
+                produto = {}
+
+            if produto:
+                produtos.append(produto)
+
+            if idx % 25 == 0:
+                _log(
+                    f"[CRAWLER_ENGINE] Progresso: {idx}/{len(links)} páginas lidas "
+                    f"| produtos válidos={len(produtos)}"
+                )
+
+            if len(produtos) >= limite_produtos:
+                break
+
+    df = _normalizar_saida(produtos)
+
+    _log(
+        "[CRAWLER_ENGINE] Concluído "
+        f"| links={len(links)} "
+        f"| produtos={len(df)} "
+        f"| tempo={time.time() - inicio:.1f}s"
+    )
+
+    return df
