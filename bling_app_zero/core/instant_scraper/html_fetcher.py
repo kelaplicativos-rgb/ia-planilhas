@@ -3,11 +3,14 @@ from __future__ import annotations
 import random
 import re
 import time
+from functools import lru_cache
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+
+MAX_HTML_CHARS = 800_000
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -25,22 +28,11 @@ DEFAULT_HEADERS = {
 
 
 class HTMLFetcher:
-    """
-    Fetcher HTTP estável para Streamlit Cloud.
-
-    Objetivo:
-    - não depender de Playwright;
-    - evitar travar a tela;
-    - tentar variações seguras de URL;
-    - retornar "" em falha controlada;
-    - guardar o último erro em self.last_error.
-    """
-
     def __init__(
         self,
-        timeout: int = 25,
-        max_retries: int = 3,
-        delay_range: tuple[float, float] = (0.4, 1.2),
+        timeout: int = 20,
+        max_retries: int = 2,
+        delay_range: tuple[float, float] = (0.25, 0.8),
     ):
         self.timeout = timeout
         self.max_retries = max_retries
@@ -57,11 +49,7 @@ class HTMLFetcher:
         urls_tentativa = self._gerar_variacoes_url(url)
         last_error: Optional[Exception] = None
 
-        with httpx.Client(
-            headers=self._random_headers(),
-            timeout=self.timeout,
-            follow_redirects=True,
-        ) as client:
+        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
             for tentativa_url in urls_tentativa:
                 for _attempt in range(self.max_retries):
                     try:
@@ -74,7 +62,7 @@ class HTMLFetcher:
 
                         if html:
                             self.last_error = ""
-                            return html
+                            return html[:MAX_HTML_CHARS]
 
                         last_error = Exception(
                             f"Resposta sem HTML útil | status={response.status_code} | url={tentativa_url}"
@@ -106,7 +94,7 @@ class HTMLFetcher:
         if self._parece_bloqueio(texto):
             return ""
 
-        return texto
+        return texto[:MAX_HTML_CHARS]
 
     def _parece_bloqueio(self, html: str) -> bool:
         texto = re.sub(r"\s+", " ", str(html or "").lower())
@@ -156,11 +144,9 @@ class HTMLFetcher:
         urls = [url]
 
         if host.startswith("www."):
-            sem_www = parsed._replace(netloc=host[4:])
-            urls.append(urlunparse(sem_www))
+            urls.append(urlunparse(parsed._replace(netloc=host[4:])))
         else:
-            com_www = parsed._replace(netloc=f"www.{host}")
-            urls.append(urlunparse(com_www))
+            urls.append(urlunparse(parsed._replace(netloc=f"www.{host}")))
 
         if parsed.scheme == "https":
             urls.append(urlunparse(parsed._replace(scheme="http")))
@@ -207,6 +193,11 @@ class HTMLFetcher:
         return headers
 
 
+@lru_cache(maxsize=32)
 def fetch_html(url: str) -> str:
     fetcher = HTMLFetcher()
     return fetcher.fetch(url)
+
+
+def limpar_cache_html() -> None:
+    fetch_html.cache_clear()
