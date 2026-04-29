@@ -11,6 +11,9 @@ from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
 
 
+MAX_CANDIDATOS_RUNNER = 5
+
+
 def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -21,6 +24,9 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     for col in colunas_base:
         if col not in df.columns:
             df[col] = ""
+
+    for col in df.columns:
+        df[col] = df[col].map(lambda x: str(x or "").strip())
 
     df = df[colunas_base + [c for c in df.columns if c not in colunas_base]]
 
@@ -33,16 +39,6 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_scraper(url: str) -> pd.DataFrame:
-    """
-    Executa o modo automático do Instant Scraper.
-
-    Importante:
-    - Não executa nada no import.
-    - Busca o HTML apenas quando a função é chamada.
-    - Detecta blocos repetidos.
-    - Extrai produtos dos melhores blocos.
-    - Retorna DataFrame pronto para o fluxo do Streamlit.
-    """
     url = str(url or "").strip()
     if not url:
         return pd.DataFrame()
@@ -62,9 +58,9 @@ def run_scraper(url: str) -> pd.DataFrame:
 
     frames: list[pd.DataFrame] = []
 
-    for candidate in candidates:
+    for candidate in candidates[:MAX_CANDIDATOS_RUNNER]:
         try:
-            elements = candidate.get("elements", [])
+            elements = candidate.get("elements", [])[:80]
             produtos = extrair_lista(elements, url)
 
             if produtos:
@@ -81,3 +77,4 @@ def run_scraper(url: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     return _normalizar_df(df)
+
