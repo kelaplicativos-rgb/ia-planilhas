@@ -1,14 +1,12 @@
 """
 CRAWLER ENGINE — UNIVERSAL DATA SCRAPER MODE
 
-Objetivo:
-- Trabalhar no estilo Instant Data Scraper:
-  1. Ler o HTML da página.
-  2. Detectar blocos repetidos automaticamente.
-  3. Extrair tabela/listagem/card sem depender de regra fixa por site.
-  4. Continuar compatível com o fluxo atual do Bling.
-- Mantém fallback antigo:
-  sitemap + links de produto + extração heurística individual.
+Motor estilo Instant Data Scraper:
+- Detecta blocos repetidos no HTML.
+- Extrai cards/listagens/tabelas automaticamente.
+- Não depende primeiro de sitemap.
+- Mantém fallback antigo por sitemap + links + produto individual.
+- Compatível com SiteAgent.run_crawler().
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -48,6 +46,19 @@ from bling_app_zero.core.site_crawler_links import (
     extrair_links_pagina,
 )
 
+
+OUTPUT_COLUMNS = [
+    "url_produto",
+    "nome",
+    "sku",
+    "marca",
+    "categoria",
+    "estoque",
+    "preco",
+    "gtin",
+    "descricao",
+    "imagens",
+]
 
 HEADERS_POOL = [
     {
@@ -113,19 +124,6 @@ SITEMAP_PATHS = (
     "/sitemap-produtos.xml",
 )
 
-OUTPUT_COLUMNS = [
-    "url_produto",
-    "nome",
-    "sku",
-    "marca",
-    "categoria",
-    "estoque",
-    "preco",
-    "gtin",
-    "descricao",
-    "imagens",
-]
-
 CARD_SELECTORS = [
     "li",
     "article",
@@ -142,7 +140,7 @@ PRICE_RE = re.compile(
 GTIN_RE = re.compile(r"\b\d{8}\b|\b\d{12}\b|\b\d{13}\b|\b\d{14}\b")
 
 SKU_RE = re.compile(
-    r"(?:sku|c[oó]digo|cod\.?|ref\.?|refer[eê]ncia|modelo)\s*[:#-]?\s*([A-Z0-9._/-]{3,40})",
+    r"(?:sku|c[oó]digo|cod\.?|ref\.?|refer[eê]ncia|modelo)\s*[:#-]?\s*([A-Z0-9._/-]{3,50})",
     flags=re.I,
 )
 
@@ -161,8 +159,7 @@ def _log(msg: str) -> None:
 
     try:
         if st is not None:
-            logs = st.session_state.setdefault("logs", [])
-            logs.append(texto)
+            st.session_state.setdefault("logs", []).append(texto)
     except Exception:
         pass
 
@@ -170,6 +167,10 @@ def _log(msg: str) -> None:
         print(texto)
     except Exception:
         pass
+
+
+def _empty_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
 
 def _raiz(url: str) -> str:
@@ -353,8 +354,8 @@ def _limpar_gtin(valor: str) -> str:
 
 
 def _dedupe_lista(valores: list[str], limite: int = 12) -> list[str]:
-    saida = []
-    vistos = set()
+    saida: list[str] = []
+    vistos: set[str] = set()
 
     for valor in valores:
         v = safe_str(valor).strip()
@@ -400,7 +401,7 @@ def _imagem_valida(src: str) -> bool:
     if any(r in src_n for r in ruins):
         return False
 
-    boas = (".jpg", ".jpeg", ".png", ".webp", "/image/", "/images/", "/img/")
+    boas = (".jpg", ".jpeg", ".png", ".webp", "/image/", "/images/", "/img/", "cdn")
     return any(b in src_n for b in boas)
 
 
@@ -412,10 +413,12 @@ def _element_text(el: Tag) -> str:
 
 def _signature(el: Tag) -> str:
     classes = el.get("class") or []
+
     if isinstance(classes, str):
         classes = classes.split()
 
     classes_limpas = []
+
     for c in classes:
         c = safe_str(c).strip().lower()
         if not c:
@@ -424,12 +427,12 @@ def _signature(el: Tag) -> str:
             continue
         classes_limpas.append(c)
 
-    classes_limpas = sorted(classes_limpas[:5])
+    classes_limpas = sorted(classes_limpas[:6])
     return f"{el.name}|{'.'.join(classes_limpas)}"
 
 
 def _extrair_nome_do_bloco(el: Tag) -> str:
-    candidatos = []
+    candidatos: list[str] = []
 
     for seletor in [
         "h1",
@@ -444,6 +447,10 @@ def _extrair_nome_do_bloco(el: Tag) -> str:
         ".product-name",
         ".product-title",
         ".card-title",
+        "[class*='name']",
+        "[class*='nome']",
+        "[class*='title']",
+        "[class*='titulo']",
     ]:
         found = el.select_one(seletor)
         if found:
@@ -454,24 +461,41 @@ def _extrair_nome_do_bloco(el: Tag) -> str:
         if valor:
             candidatos.append(valor)
 
+    for img in el.find_all("img"):
+        alt = safe_str(img.get("alt"))
+        title = safe_str(img.get("title"))
+        if alt:
+            candidatos.append(alt)
+        if title:
+            candidatos.append(title)
+
     for a in el.find_all("a", href=True):
         texto = _element_text(a)
         if texto and len(texto) >= 4:
             candidatos.append(texto)
 
-    candidatos = _dedupe_lista(candidatos, limite=10)
-    candidatos = sorted(candidatos, key=lambda x: (len(x) < 4, len(x) > 160, -len(x)))
+    candidatos = _dedupe_lista(candidatos, limite=20)
 
+    candidatos_validos = []
     for c in candidatos:
-        c = safe_str(c)
-        if len(c) >= 4 and not PRICE_RE.fullmatch(c):
-            return c[:220]
+        c = re.sub(r"\s+", " ", safe_str(c)).strip()
+        if len(c) < 4:
+            continue
+        if len(c) > 220:
+            continue
+        if PRICE_RE.fullmatch(c):
+            continue
+        if normalizar_texto(c) in ("comprar", "ver produto", "adicionar ao carrinho"):
+            continue
+        candidatos_validos.append(c)
 
-    return ""
+    candidatos_validos = sorted(candidatos_validos, key=lambda x: (len(x) < 8, len(x)))
+
+    return candidatos_validos[0] if candidatos_validos else ""
 
 
 def _extrair_url_do_bloco(base_url: str, el: Tag) -> str:
-    links = []
+    links: list[str] = []
 
     for a in el.find_all("a", href=True):
         href = normalizar_link_crawl(base_url, safe_str(a.get("href")))
@@ -481,7 +505,7 @@ def _extrair_url_do_bloco(base_url: str, el: Tag) -> str:
             continue
         links.append(href)
 
-    links = _dedupe_lista(links, limite=12)
+    links = _dedupe_lista(links, limite=20)
 
     for link in links:
         if _parece_produto_url(link):
@@ -491,10 +515,18 @@ def _extrair_url_do_bloco(base_url: str, el: Tag) -> str:
 
 
 def _extrair_imagens_do_bloco(base_url: str, el: Tag) -> str:
-    imagens = []
+    imagens: list[str] = []
 
     for img in el.find_all("img"):
-        for attr in ["src", "data-src", "data-original", "data-lazy", "data-lazy-src", "srcset"]:
+        for attr in [
+            "src",
+            "data-src",
+            "data-original",
+            "data-lazy",
+            "data-lazy-src",
+            "data-image",
+            "srcset",
+        ]:
             raw = safe_str(img.get(attr))
             if not raw:
                 continue
@@ -518,7 +550,6 @@ def _extrair_sku_do_texto(texto: str) -> str:
     match = SKU_RE.search(texto)
     if match:
         return safe_str(match.group(1))[:60]
-
     return ""
 
 
@@ -537,11 +568,24 @@ def _extrair_estoque_do_texto(texto: str) -> str:
     if any(s in texto_n for s in sem_estoque):
         return "0"
 
-    match = re.search(r"(?:estoque|dispon[ií]vel|quantidade|qtd)\s*[:#-]?\s*(\d+)", texto, flags=re.I)
+    match = re.search(
+        r"(?:estoque|dispon[ií]vel|quantidade|qtd)\s*[:#-]?\s*(\d+)",
+        texto,
+        flags=re.I,
+    )
     if match:
         return safe_str(match.group(1))
 
-    if any(s in texto_n for s in ("comprar", "adicionar ao carrinho", "em estoque", "disponivel", "disponível")):
+    if any(
+        s in texto_n
+        for s in (
+            "comprar",
+            "adicionar ao carrinho",
+            "em estoque",
+            "disponivel",
+            "disponível",
+        )
+    ):
         return "1"
 
     return ""
@@ -554,8 +598,10 @@ def _linha_do_bloco(base_url: str, el: Tag) -> dict[str, Any]:
     url_produto = _extrair_url_do_bloco(base_url, el)
     imagens = _extrair_imagens_do_bloco(base_url, el)
     preco = _limpar_preco(texto)
+
     gtin_match = GTIN_RE.search(texto)
     gtin = _limpar_gtin(gtin_match.group(0) if gtin_match else "")
+
     sku = _extrair_sku_do_texto(texto)
     estoque = _extrair_estoque_do_texto(texto)
 
@@ -619,12 +665,16 @@ def _linha_valida_universal(row: dict[str, Any]) -> bool:
         return False
 
     pontos = 0
+
     if nome:
         pontos += 2
+
     if preco:
         pontos += 2
+
     if url_produto:
         pontos += 1
+
     if imagens:
         pontos += 1
 
@@ -633,20 +683,20 @@ def _linha_valida_universal(row: dict[str, Any]) -> bool:
 
 def _detectar_blocos_repetidos(base_url: str, html: str, limite: int = 800) -> pd.DataFrame:
     """
-    Tecnologia principal estilo Instant Data Scraper:
+    Núcleo estilo Instant Data Scraper:
     procura grupos de elementos parecidos e transforma o melhor grupo em tabela.
     """
 
     html = safe_str(html)
     if not html:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return _empty_df()
 
     soup = BeautifulSoup(html, "lxml")
 
     for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
         tag.decompose()
 
-    elementos = []
+    elementos: list[Tag] = []
     for seletor in CARD_SELECTORS:
         elementos.extend(soup.find_all(seletor))
 
@@ -657,6 +707,7 @@ def _detectar_blocos_repetidos(base_url: str, html: str, limite: int = 800) -> p
             continue
 
         texto = _element_text(el)
+
         if len(texto) < 20:
             continue
 
@@ -672,8 +723,8 @@ def _detectar_blocos_repetidos(base_url: str, html: str, limite: int = 800) -> p
         if len(els) < 2:
             continue
 
-        rows = []
-        vistos = set()
+        rows: list[dict[str, Any]] = []
+        vistos: set[tuple[str, str, str, str]] = set()
 
         for el in els[:limite]:
             row = _linha_do_bloco(base_url, el)
@@ -699,8 +750,12 @@ def _detectar_blocos_repetidos(base_url: str, html: str, limite: int = 800) -> p
 
         media_score = sum(_score_linha(r) for r in rows) / max(len(rows), 1)
 
-        diversidade_nome = len({safe_str(r.get("nome")).lower() for r in rows if safe_str(r.get("nome"))})
-        diversidade_url = len({safe_str(r.get("url_produto")).lower() for r in rows if safe_str(r.get("url_produto"))})
+        diversidade_nome = len(
+            {safe_str(r.get("nome")).lower() for r in rows if safe_str(r.get("nome"))}
+        )
+        diversidade_url = len(
+            {safe_str(r.get("url_produto")).lower() for r in rows if safe_str(r.get("url_produto"))}
+        )
 
         score = media_score
         score += min(len(rows), 50) * 0.25
@@ -710,7 +765,7 @@ def _detectar_blocos_repetidos(base_url: str, html: str, limite: int = 800) -> p
         candidatos.append(CandidateBlock(selector_signature=sig, score=score, rows=rows))
 
     if not candidatos:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return _empty_df()
 
     candidatos.sort(key=lambda c: c.score, reverse=True)
     melhor = candidatos[0]
@@ -751,18 +806,26 @@ def _extrair_jsonld_produtos(base_url: str, html: str) -> pd.DataFrame:
             if isinstance(imagens, str):
                 imagens = [imagens]
 
+            marca_raw = obj.get("brand")
+            if isinstance(marca_raw, dict):
+                marca = safe_str(marca_raw.get("name"))
+            else:
+                marca = safe_str(marca_raw)
+
+            availability = normalizar_texto(str(offers.get("availability") if isinstance(offers, dict) else ""))
+
             produto = {
                 "url_produto": normalizar_link_crawl(base_url, safe_str(obj.get("url") or base_url)),
                 "nome": safe_str(obj.get("name")),
                 "sku": safe_str(obj.get("sku") or obj.get("mpn")),
-                "marca": safe_str(
-                    obj.get("brand", {}).get("name")
-                    if isinstance(obj.get("brand"), dict)
-                    else obj.get("brand")
-                ),
+                "marca": marca,
                 "categoria": safe_str(obj.get("category")),
-                "estoque": "0" if "outofstock" in normalizar_texto(str(offers.get("availability"))) else "1",
-                "preco": safe_str(offers.get("price") or offers.get("lowPrice") or ""),
+                "estoque": "0" if "outofstock" in availability else "1",
+                "preco": safe_str(
+                    offers.get("price") or offers.get("lowPrice") or ""
+                )
+                if isinstance(offers, dict)
+                else "",
                 "gtin": _limpar_gtin(
                     safe_str(
                         obj.get("gtin")
@@ -774,9 +837,13 @@ def _extrair_jsonld_produtos(base_url: str, html: str) -> pd.DataFrame:
                 ),
                 "descricao": safe_str(obj.get("description") or obj.get("name")),
                 "imagens": "|".join(
-                    _dedupe_lista([urljoin(base_url, safe_str(img)) for img in imagens if safe_str(img)], limite=12)
+                    _dedupe_lista(
+                        [urljoin(base_url, safe_str(img)) for img in imagens if safe_str(img)],
+                        limite=12,
+                    )
                 ),
             }
+
             produtos.append(produto)
 
         for value in obj.values():
@@ -1167,13 +1234,13 @@ def _descobrir_links_produtos(
             encontrados.append(url)
 
     if usar_sitemap:
-        _log("[CRAWLER_ENGINE] Lendo sitemap.")
+        _log("[CRAWLER_ENGINE] Fallback: lendo sitemap.")
         sitemap_urls = _buscar_sitemaps(session, base_url)
         produtos_sitemap = [u for u in sitemap_urls if _parece_produto_url(u)]
         add_many(produtos_sitemap)
 
     if len(encontrados) < max_produtos and usar_home:
-        _log("[CRAWLER_ENGINE] Lendo home, categorias, paginações e JS.")
+        _log("[CRAWLER_ENGINE] Fallback: lendo home, categorias, paginações e JS.")
         try:
             descobertos = descobrir_produtos_no_dominio(
                 base_url,
@@ -1314,7 +1381,7 @@ def _mesclar_dataframes(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     partes = [df for df in dfs if isinstance(df, pd.DataFrame) and not df.empty]
 
     if not partes:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return _empty_df()
 
     df = pd.concat(partes, ignore_index=True)
 
@@ -1357,17 +1424,17 @@ def run_crawler(
     """
     Entrada principal usada pelo SiteAgent.
 
-    Nova ordem:
-    1. Universal DOM Scraper: detecta tabela/listagem/card automaticamente.
+    Ordem nova:
+    1. Universal DOM Scraper — detecta tabela/listagem/card automaticamente.
     2. JSON-LD Product.
-    3. Fallback antigo: sitemap + links de produtos + extração heurística.
+    3. Fallback antigo — sitemap + links de produtos + extração heurística.
     """
 
     inicio = time.time()
     url = normalizar_url(base_url)
 
     if not url:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return _empty_df()
 
     max_workers = max(1, min(int(max_workers or 8), 24))
 
