@@ -110,6 +110,7 @@ COLUNAS_PRIORITARIAS = [
 
 CHAVES_LIMPAR_SITE = [
     "df_origem",
+    "df_saida",
     "origem_upload_nome",
     "origem_upload_bytes",
     "origem_upload_tipo",
@@ -126,7 +127,12 @@ CHAVES_LIMPAR_SITE = [
 ]
 
 
-MOTORES_SITE = ["Exaustivo com checkpoint", "Agente rápido", "Fallback crawler"]
+MOTOR_GOD = "BLINGGOD automático"
+MOTOR_EXAUSTIVO = "Exaustivo com checkpoint"
+MOTOR_RAPIDO = "Agente rápido"
+MOTOR_FALLBACK = "Fallback crawler"
+
+MOTORES_SITE = [MOTOR_GOD, MOTOR_EXAUSTIVO, MOTOR_RAPIDO, MOTOR_FALLBACK]
 
 
 def config_from_preset(preset: ScraperPreset) -> CrawlConfig:
