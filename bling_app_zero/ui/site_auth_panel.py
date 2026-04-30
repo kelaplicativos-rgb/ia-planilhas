@@ -66,16 +66,16 @@ def render_site_auth_panel(base_url: str = "") -> None:
         st.session_state["site_auth_enabled"] = bool(enabled)
 
         cookie_atual = str(st.session_state.get("site_auth_cookie", "") or "")
-        cookie = st.text_area(
+        cookie = st.text_input(
             "Cookie da sessão logada",
             value=cookie_atual,
-            height=90,
             type="password",
             key="site_auth_cookie_widget",
             placeholder="Ex.: PHPSESSID=...; token=...; session=...",
             help="Cole apenas cookies da sua própria conta/sessão. Não cole senha.",
         )
         st.session_state["site_auth_cookie"] = normalize_cookie(cookie)
+        st.caption("Dica: se o cookie for muito grande, cole tudo em uma linha só. O sistema normaliza automaticamente.")
 
         c1, c2 = st.columns(2)
         with c1:
