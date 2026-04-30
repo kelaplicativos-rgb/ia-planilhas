@@ -6,6 +6,7 @@ from bling_app_zero.ui.origem_site_config import PRESETS, MOTORES_SITE
 from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import limpar_busca_site, guardar_resultado
 from bling_app_zero.ui.origem_site_utils import extrair_urls, url_valida
+from bling_app_zero.ui.origem_site_visual import render_origem_site_visual_preview
 
 
 def render_origem_site_panel() -> None:
@@ -52,3 +53,7 @@ def render_origem_site_panel() -> None:
             guardar_resultado(df, urls, preset, motor)
             st.success(f"{len(df)} produtos encontrados")
             st.rerun()
+
+    df_atual = st.session_state.get("df_saida") or st.session_state.get("df_origem")
+    if df_atual is not None:
+        render_origem_site_visual_preview(df_atual)
