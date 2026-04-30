@@ -72,7 +72,6 @@ def _score_rows(rows: list[dict[str, str]]) -> int:
     if any(p in joined for p in ["comprar", "produto", "r$", "sku", "código", "codigo"]):
         score += 15
 
-    # Penaliza menus/listas de navegação.
     if len(rows) > 20 and len(cols) <= 2 and not _parece_preco(joined):
         score -= 35
 
@@ -91,12 +90,9 @@ def _extract_tables(soup: BeautifulSoup, base_url: str) -> list[InstantCandidate
             if not cells or len(cells) < 2:
                 continue
 
-            if not headers or len(headers) != len(cells):
-                headers_local = [f"col_{i+1}" for i in range(len(cells))]
-            else:
-                headers_local = headers
-
+            headers_local = headers if headers and len(headers) == len(cells) else [f"col_{i+1}" for i in range(len(cells))]
             row: dict[str, str] = {}
+
             for i, cell in enumerate(cells):
                 col = headers_local[i] if i < len(headers_local) else f"col_{i+1}"
                 row[col] = _txt(cell.get_text(" ", strip=True))
@@ -149,32 +145,14 @@ def _extract_item(tag: Tag, base_url: str) -> dict[str, str]:
         if alt:
             row["nome"] = alt
 
-    title_selectors = [
-        "[class*=title]",
-        "[class*=name]",
-        "[class*=nome]",
-        "[class*=produto]",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "a",
-    ]
-    for selector in title_selectors:
+    for selector in ["[class*=title]", "[class*=name]", "[class*=nome]", "[class*=produto]", "h1", "h2", "h3", "h4", "a"]:
         el = tag.select_one(selector)
         text = _txt(el.get_text(" ", strip=True)) if el else ""
         if text and len(text) >= 3:
             row.setdefault("nome", text[:180])
             break
 
-    price_selectors = [
-        "[class*=price]",
-        "[class*=preco]",
-        "[class*=preço]",
-        "[data-price]",
-        "[itemprop=price]",
-    ]
-    for selector in price_selectors:
+    for selector in ["[class*=price]", "[class*=preco]", "[class*=preço]", "[data-price]", "[itemprop=price]"]:
         el = tag.select_one(selector)
         text = _txt(el.get_text(" ", strip=True) if el else "")
         data_price = _txt(el.get("data-price", "")) if el else ""
@@ -183,13 +161,12 @@ def _extract_item(tag: Tag, base_url: str) -> dict[str, str]:
             row["preco"] = candidate[:60]
             break
 
+    text_all = _txt(tag.get_text(" ", strip=True))
     if "preco" not in row:
-        text_all = _txt(tag.get_text(" ", strip=True))
         match = re.search(r"R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}|R\$\s*\d+[\.,]\d{2}|\d{1,3}(?:\.\d{3})*,\d{2}", text_all)
         if match:
             row["preco"] = match.group(0)
 
-    text_all = _txt(tag.get_text(" ", strip=True))
     if text_all:
         row["descricao"] = text_all[:500]
 
@@ -237,29 +214,48 @@ def _extract_repeated_blocks(soup: BeautifulSoup, base_url: str) -> list[Instant
     return candidates
 
 
-def instant_extract(html: str, base_url: str, min_score: int = 45) -> pd.DataFrame:
+def instant_candidates(html: str, base_url: str, min_score: int = 30) -> list[InstantCandidate]:
     html = str(html or "")
     if not html.strip():
-        return pd.DataFrame()
+        return []
 
     soup = BeautifulSoup(html, "html.parser")
     for bad in soup(["script", "style", "noscript", "svg"]):
         bad.decompose()
 
-    candidates = []
+    candidates: list[InstantCandidate] = []
     candidates.extend(_extract_tables(soup, base_url))
     candidates.extend(_extract_repeated_blocks(soup, base_url))
+    return [c for c in sorted(candidates, key=lambda c: c.score, reverse=True) if c.score >= min_score]
 
-    candidates = sorted(candidates, key=lambda c: c.score, reverse=True)
-    if not candidates or candidates[0].score < min_score:
-        return pd.DataFrame()
 
-    best = candidates[0]
-    df = pd.DataFrame(best.rows).fillna("")
+def candidate_to_dataframe(candidate: InstantCandidate) -> pd.DataFrame:
+    df = pd.DataFrame(candidate.rows).fillna("")
     if df.empty:
         return df
-
-    df["_instant_kind"] = best.kind
-    df["_instant_score"] = str(best.score)
-    df["_instant_selector"] = best.selector_hint
+    df["_instant_kind"] = candidate.kind
+    df["_instant_score"] = str(candidate.score)
+    df["_instant_selector"] = candidate.selector_hint
     return df.reset_index(drop=True)
+
+
+def instant_candidates_to_frames(html: str, base_url: str, min_score: int = 30, limit: int = 8) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for idx, cand in enumerate(instant_candidates(html, base_url, min_score=min_score)[:limit], start=1):
+        df = candidate_to_dataframe(cand)
+        out.append({
+            "id": idx,
+            "kind": cand.kind,
+            "score": cand.score,
+            "selector": cand.selector_hint,
+            "total_rows": len(df),
+            "dataframe": df,
+        })
+    return out
+
+
+def instant_extract(html: str, base_url: str, min_score: int = 45) -> pd.DataFrame:
+    candidates = instant_candidates(html, base_url, min_score=min_score)
+    if not candidates:
+        return pd.DataFrame()
+    return candidate_to_dataframe(candidates[0])
