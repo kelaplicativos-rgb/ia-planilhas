@@ -3,7 +3,7 @@ import streamlit as st
 from bling_app_zero.utils.init_app import init_app
 from bling_app_zero.ui.app_core_state import init_state
 from bling_app_zero.ui.app_core_layout import render_header, render_nav
-from bling_app_zero.ui.app_core_config import ETAPAS_ORDEM
+from bling_app_zero.ui.app_core_flow import set_etapa_segura, sincronizar_fluxo_inicial
 
 from bling_app_zero.ui.origem_dados import render_origem_dados
 from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
@@ -22,23 +22,22 @@ def render_etapa(etapa):
         render_preview_final()
 
 
+def trocar_etapa(etapa):
+    set_etapa_segura(etapa, origem="nav")
+
+
 def main():
     st.set_page_config(page_title="IA Planilhas → Bling", page_icon="🚀", layout="wide")
 
     init_app()
     init_state()
+    sincronizar_fluxo_inicial()
 
     etapa = st.session_state.get("wizard_etapa_atual", "origem")
     etapa_max = st.session_state.get("wizard_etapa_maxima", "origem")
 
     render_header()
-
-    render_nav(
-        etapa,
-        etapa_max,
-        lambda e: st.session_state.update({"wizard_etapa_atual": e}),
-    )
-
+    render_nav(etapa, etapa_max, trocar_etapa)
     render_etapa(etapa)
 
 
