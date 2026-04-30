@@ -14,6 +14,7 @@ from .ultra_extractor import extrair_lista
 from .instant_dom_engine import instant_extract
 from .ai_normalizer import normalizar_produtos_ai
 from .gpt_enricher import enriquecer_produtos_gpt
+from .auto_learning import aprender_padrao, aplicar_padrao_aprendido
 
 
 MAX_CANDIDATOS = 5
@@ -26,11 +27,14 @@ def _normalizar_df(df):
     return df.copy().fillna("").reset_index(drop=True)
 
 
-def _finalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+def _finalizar_df(df: pd.DataFrame, url_base: str = "") -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
 
     base = df.copy().fillna("")
+
+    if url_base:
+        base = aplicar_padrao_aprendido(url_base, base)
 
     if "url_produto" in base.columns and "nome" in base.columns:
         base = base.drop_duplicates(subset=["url_produto", "nome"], keep="first")
@@ -41,11 +45,14 @@ def _finalizar_df(df: pd.DataFrame) -> pd.DataFrame:
 
     base = normalizar_produtos_ai(base)
     base = enriquecer_produtos_gpt(base, limite=30, score_minimo=50)
+
+    if url_base and not base.empty:
+        aprender_padrao(url_base, base, fonte="ultra_scraper")
+
     return _normalizar_df(base)
 
 
 def _fetch_http(url: str) -> str:
-    # Motor estilo extensão: trabalha em cima do HTML disponível, sem depender de browser.
     return fetch_html(url, force_refresh=True)
 
 
@@ -103,11 +110,10 @@ def _run_instant(url: str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
 
-    return _finalizar_df(pd.concat(frames, ignore_index=True))
+    return _finalizar_df(pd.concat(frames, ignore_index=True), url)
 
 
 def _run_god_mode(url):
-    # GOD MODE agora também usa HTTP + Instant DOM, sem dependência obrigatória de Playwright.
     crawl = descobrir_urls_produto(url, _fetch_http)
 
     frames = []
@@ -124,7 +130,7 @@ def _run_god_mode(url):
     if not frames:
         return pd.DataFrame()
 
-    return _finalizar_df(pd.concat(frames, ignore_index=True))
+    return _finalizar_df(pd.concat(frames, ignore_index=True), url)
 
 
 def run_scraper(url: str):
@@ -135,14 +141,12 @@ def run_scraper(url: str):
     supplier = MegaCenterSupplier()
     if supplier.can_handle(url):
         produtos = supplier.fetch(url)
-        return _finalizar_df(pd.DataFrame(produtos))
+        return _finalizar_df(pd.DataFrame(produtos), url)
 
-    # 1) Estilo Instant Data Scraper: DOM/HTML primeiro.
     df_instant = _run_instant(url)
     if not df_instant.empty:
         return df_instant
 
-    # 2) Crawler de domínio como fallback.
     df_god = _run_god_mode(url)
     if not df_god.empty:
         return df_god
