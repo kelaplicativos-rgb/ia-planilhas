@@ -1,57 +1,29 @@
-# UPDATED RUNNER WITH BROWSER ENGINE
+# GOD MODE RUNNER FINAL
 from __future__ import annotations
 
 import pandas as pd
 
 from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
 
-from .html_fetcher import fetch_html
-from .pagination import coletar_paginas_genericas
-from .domain_crawler import descobrir_urls_produto
-from .instant_dom_engine import instant_extract
-from .self_healing import auto_heal_dataframe
 from .autonomous_agent import run_autonomous_agent
-from .playwright_engine import run_browser_scraper
-
-
-def _safe_df(df):
-    if isinstance(df, pd.DataFrame) and not df.empty:
-        return df.copy().fillna("").reset_index(drop=True)
-    return pd.DataFrame()
+from .god_mode_engine import run_god_mode_scraper
+from .instant_dom_engine import instant_extract
+from .html_fetcher import fetch_html
+from .self_healing import auto_heal_dataframe
 
 
 def _fetch_http(url: str) -> str:
     return fetch_html(url, force_refresh=True)
 
 
-def _run_instant(url: str) -> pd.DataFrame:
-    paginas = coletar_paginas_genericas(url, _fetch_http, max_paginas=5)
-    frames = []
-    for pagina_url in paginas.urls:
-        html = _fetch_http(pagina_url)
-        if not html:
-            continue
-        df = instant_extract(html, pagina_url)
-        if not df.empty:
-            frames.append(df)
-    if not frames:
+def _run_basic(url: str) -> pd.DataFrame:
+    html = _fetch_http(url)
+    if not html:
         return pd.DataFrame()
-    return auto_heal_dataframe(pd.concat(frames, ignore_index=True), url)
-
-
-def _run_fallback(url):
-    crawl = descobrir_urls_produto(url, _fetch_http)
-    frames = []
-    for prod_url in crawl.urls:
-        html = _fetch_http(prod_url)
-        if not html:
-            continue
-        df = instant_extract(html, prod_url)
-        if not df.empty:
-            frames.append(df)
-    if not frames:
-        return pd.DataFrame()
-    return auto_heal_dataframe(pd.concat(frames, ignore_index=True), url)
+    df = instant_extract(html, url)
+    if df.empty:
+        return df
+    return auto_heal_dataframe(df, url)
 
 
 def run_scraper(url: str):
@@ -63,9 +35,8 @@ def run_scraper(url: str):
 
     strategies = {
         "supplier": lambda u: pd.DataFrame(supplier.fetch(u)) if supplier.can_handle(u) else pd.DataFrame(),
-        "instant_dom": _run_instant,
-        "browser": run_browser_scraper,
-        "fallback": _run_fallback,
+        "god_mode": run_god_mode_scraper,
+        "basic": _run_basic,
     }
 
     result = run_autonomous_agent(url, strategies)
