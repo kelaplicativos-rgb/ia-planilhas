@@ -47,9 +47,12 @@ def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
 def _limpar_estado_origem() -> None:
     for chave in [
         "df_origem",
+        "df_saida",
         "df_preview_inteligente",
         "df_auto_mapa",
+        "df_preview_site_modelo_bling",
         "df_final",
+        "origem_site_preview_modelo_bling",
         "origem_upload_nome",
         "origem_upload_bytes",
         "origem_upload_tipo",
@@ -61,13 +64,21 @@ def _limpar_estado_origem() -> None:
 def _limpar_estado_modelo() -> None:
     for chave in [
         "df_modelo",
+        "df_origem",
+        "df_saida",
         "df_preview_inteligente",
         "df_auto_mapa",
+        "df_preview_site_modelo_bling",
         "df_final",
+        "origem_site_preview_modelo_bling",
         "modelo_upload_nome",
         "modelo_upload_bytes",
         "modelo_upload_tipo",
         "modelo_upload_ext",
+        "mapping_manual",
+        "mapping_sugerido",
+        "agent_ui_package",
+        "_ia_auto_mapping_executado",
     ]:
         st.session_state.pop(chave, None)
 
@@ -148,6 +159,9 @@ def _preview_dataframe(df: pd.DataFrame, titulo: str) -> None:
 def _processar_upload_origem(upload) -> None:
     if upload is None:
         _limpar_estado_origem()
+        return
+    if not _modelo_pronto():
+        st.error("Anexe primeiro o modelo Bling antes de enviar a planilha do fornecedor.")
         return
     ext = _extensao(upload)
     if ext not in EXTENSOES_ORIGEM:
@@ -269,7 +283,7 @@ def _render_dados_operacao() -> None:
 def _render_origem_arquivo() -> None:
     with st.container(border=True):
         st.markdown("### Arquivo do fornecedor")
-        st.caption("Use esta opção para planilha ou XML. O preview oficial só aparece depois do modelo Bling anexado.")
+        st.caption("Envie a planilha do fornecedor ou XML somente depois do modelo Bling.")
         upload_origem = st.file_uploader("Selecionar arquivo de origem", type=["csv", "xlsx", "xls", "xml"], key="upload_origem")
         if upload_origem is not None:
             _processar_upload_origem(upload_origem)
@@ -278,17 +292,29 @@ def _render_origem_arquivo() -> None:
 def _render_origem_site() -> None:
     with st.container(border=True):
         st.markdown("### Busca no site do fornecedor")
-        st.caption("Modo híbrido automático ativo: HTTP primeiro e Browser quando disponível.")
+        st.caption("A busca por site só é liberada após o modelo Bling estar anexado.")
         render_origem_site_panel()
 
 
 def _render_modelo() -> None:
     with st.container(border=True):
         st.markdown("### Modelo do Bling")
-        st.caption("Envie o modelo oficial de cadastro ou estoque. Sem esse arquivo, o preview final e o download ficam bloqueados.")
+        st.caption("Primeiro envie o modelo oficial de cadastro ou estoque. Só depois o sistema libera origem por planilha ou busca por site.")
         upload_modelo = st.file_uploader("Selecionar modelo", type=["csv", "xlsx", "xls"], key="upload_modelo")
         if upload_modelo:
             _processar_upload_modelo(upload_modelo)
+
+
+def _render_trava_sem_modelo() -> bool:
+    if _modelo_pronto():
+        return False
+
+    st.info("Anexe primeiro o modelo Bling para liberar o próximo passo.")
+    st.caption(
+        "O sistema precisa saber antes se a saída será Cadastro de Produtos ou Atualização de Estoque, "
+        "e quais colunas existem no modelo oficial. Por isso, planilha do fornecedor e busca por site ficam bloqueadas até o modelo ser anexado."
+    )
+    return True
 
 
 def _render_preview_modelo_bling_origem() -> None:
@@ -310,8 +336,9 @@ def _render_preview_modelo_bling_origem() -> None:
     )
 
     if safe_df_estrutura(df_preview):
-        st.session_state["df_final"] = df_preview.copy()
+        st.session_state["df_preview_inteligente"] = df_preview.copy()
         st.session_state["df_precificado"] = df_origem.copy()
+        st.session_state.pop("df_final", None)
 
 
 def _validar_dados_operacao_para_continuar() -> bool:
@@ -342,11 +369,11 @@ def _render_resumo() -> None:
 def _render_continuar() -> None:
     st.markdown("### Continuar")
     _render_resumo()
-    if not _origem_pronta():
-        st.info("Carregue uma origem válida para continuar.")
-        return
     if not _modelo_pronto():
-        st.info("Envie um modelo Bling válido para gerar o preview oficial e continuar.")
+        st.info("Envie o modelo Bling válido para liberar a origem dos dados.")
+        return
+    if not _origem_pronta():
+        st.info("Agora carregue a planilha do fornecedor ou faça a busca por site.")
         return
     if not _validar_dados_operacao_para_continuar():
         return
@@ -362,6 +389,12 @@ def render_origem_dados() -> None:
     _render_operacao()
     _render_dados_operacao()
     _render_modelo()
+
+    if _render_trava_sem_modelo():
+        st.markdown("---")
+        _render_continuar()
+        return
+
     modo = st.radio("Como deseja informar a origem?", ["Arquivo do fornecedor", "Buscar no site do fornecedor"], horizontal=True, key="modo_origem")
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
