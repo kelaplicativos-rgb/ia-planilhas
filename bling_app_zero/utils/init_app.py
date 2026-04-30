@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import streamlit as st
 
-
-# ============================================================
-# PLAYWRIGHT / MODO HÍBRIDO
-# ============================================================
 
 PLAYWRIGHT_MARKER_DIR = Path("bling_app_zero/output")
 PLAYWRIGHT_MARKER_DIR.mkdir(parents=True, exist_ok=True)
 
 PLAYWRIGHT_OK_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_ok.marker"
 PLAYWRIGHT_FAIL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_fail.marker"
+PLAYWRIGHT_INSTALL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_chromium_install_attempted.marker"
 
 
 def _log(msg: str) -> None:
@@ -25,19 +24,41 @@ def _log(msg: str) -> None:
         print(f"[INIT_APP] {msg}")
 
 
-def _bool_env(name: str, default: bool = False) -> bool:
-    raw = str(os.getenv(name, "")).strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on", "sim"}
-
-
 def _playwright_modulo_instalado() -> bool:
     try:
         import playwright  # noqa: F401
         return True
     except Exception:
         return False
+
+
+def _instalar_chromium_runtime() -> None:
+    """Tenta baixar o Chromium do Playwright no runtime do Streamlit Cloud.
+
+    O Streamlit Cloud nem sempre executa postBuild. Então este fallback roda
+    uma única vez por container quando o browser ainda não existe.
+    """
+    if PLAYWRIGHT_INSTALL_MARKER.exists():
+        return
+
+    if not _playwright_modulo_instalado():
+        return
+
+    try:
+        _log("[PLAYWRIGHT] Chromium ausente. Tentando instalar em runtime...")
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            timeout=180,
+        )
+        PLAYWRIGHT_INSTALL_MARKER.write_text("ok", encoding="utf-8")
+        _log("[PLAYWRIGHT] Chromium instalado em runtime com sucesso.")
+    except Exception as exc:
+        try:
+            PLAYWRIGHT_INSTALL_MARKER.write_text("fail", encoding="utf-8")
+        except Exception:
+            pass
+        _log(f"[PLAYWRIGHT] Falha ao instalar Chromium em runtime: {exc}")
 
 
 def _playwright_browser_ok() -> bool:
@@ -51,6 +72,7 @@ def _playwright_browser_ok() -> bool:
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-setuid-sandbox",
                 ],
             )
             browser.close()
@@ -61,18 +83,10 @@ def _playwright_browser_ok() -> bool:
 
 
 def _detectar_modo_crawler() -> dict[str, object]:
-    """
-    🔥 BLINGFIX:
-    - Playwright agora é AUTO DETECTADO
-    - Não depende mais de ENV
-    - Tenta usar browser se possível
-    - Nunca quebra o sistema
-    """
-
     modulo_instalado = _playwright_modulo_instalado()
 
     status = {
-        "playwright_habilitado": True,  # 🔥 FORÇADO
+        "playwright_habilitado": True,
         "playwright_modulo_instalado": modulo_instalado,
         "playwright_browser_ok": False,
         "crawler_runtime_mode": "http_hybrid",
@@ -84,8 +98,11 @@ def _detectar_modo_crawler() -> dict[str, object]:
         _log("[PLAYWRIGHT] Módulo não instalado. Rodando em HTTP híbrido.")
         return status
 
-    # 🔥 TESTA O BROWSER AUTOMATICAMENTE
     browser_ok = _playwright_browser_ok()
+
+    if not browser_ok:
+        _instalar_chromium_runtime()
+        browser_ok = _playwright_browser_ok()
 
     status["playwright_browser_ok"] = browser_ok
     status["crawler_browser_disponivel"] = browser_ok
@@ -93,20 +110,16 @@ def _detectar_modo_crawler() -> dict[str, object]:
 
     if browser_ok:
         status["crawler_runtime_mode"] = "hybrid_browser"
-
         try:
             PLAYWRIGHT_OK_MARKER.write_text("ok", encoding="utf-8")
         except Exception:
             pass
-
         _log("[PLAYWRIGHT] Browser ATIVO. Sistema com JS habilitado 🚀")
-
     else:
         try:
             PLAYWRIGHT_FAIL_MARKER.write_text("fail", encoding="utf-8")
         except Exception:
             pass
-
         _log("[PLAYWRIGHT] Browser não disponível. Fallback HTTP ativo.")
 
     return status
@@ -133,10 +146,6 @@ def _bootstrap_crawler_runtime() -> None:
         f"browser_opcional={st.session_state['site_runtime_browser_opcional']}"
     )
 
-
-# ============================================================
-# INIT APP
-# ============================================================
 
 def init_app() -> None:
     _bootstrap_crawler_runtime()
