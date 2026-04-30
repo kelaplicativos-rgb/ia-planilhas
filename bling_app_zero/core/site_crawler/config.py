@@ -45,3 +45,5 @@ class CrawlConfig:
     max_depth: int = 2
     timeout: int = 15
     sleep_seconds: float = 0.15
+    max_seconds: int = 180
+    max_queue_size: int = 1500
