@@ -12,6 +12,7 @@ from bling_app_zero.ui.app_helpers import (
     safe_df_dados,
     safe_df_estrutura,
 )
+from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 from bling_app_zero.ui.origem_site_panel import render_origem_site_panel
 
 
@@ -44,12 +45,30 @@ def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
 
 
 def _limpar_estado_origem() -> None:
-    for chave in ["df_origem", "origem_upload_nome", "origem_upload_bytes", "origem_upload_tipo", "origem_upload_ext"]:
+    for chave in [
+        "df_origem",
+        "df_preview_inteligente",
+        "df_auto_mapa",
+        "df_final",
+        "origem_upload_nome",
+        "origem_upload_bytes",
+        "origem_upload_tipo",
+        "origem_upload_ext",
+    ]:
         st.session_state.pop(chave, None)
 
 
 def _limpar_estado_modelo() -> None:
-    for chave in ["df_modelo", "modelo_upload_nome", "modelo_upload_bytes", "modelo_upload_tipo", "modelo_upload_ext"]:
+    for chave in [
+        "df_modelo",
+        "df_preview_inteligente",
+        "df_auto_mapa",
+        "df_final",
+        "modelo_upload_nome",
+        "modelo_upload_bytes",
+        "modelo_upload_tipo",
+        "modelo_upload_ext",
+    ]:
         st.session_state.pop(chave, None)
 
 
@@ -87,13 +106,27 @@ def _parse_xml_nfe(upload) -> pd.DataFrame:
         prod = det.find(".//nfe:prod", ns)
         if prod is None:
             continue
+
         def get(tag: str) -> str:
             el = prod.find(f"nfe:{tag}", ns)
             return el.text.strip() if el is not None and el.text else ""
+
         gtin = get("cEAN")
         if gtin in {"SEM GTIN", "SEM EAN"}:
             gtin = ""
-        rows.append({"Código": get("cProd"), "Descrição": get("xProd"), "NCM": get("NCM"), "CFOP": get("CFOP"), "Unidade": get("uCom"), "Quantidade": get("qCom"), "Preço de custo": get("vUnCom"), "Valor total": get("vProd"), "GTIN": gtin})
+        rows.append(
+            {
+                "Código": get("cProd"),
+                "Descrição": get("xProd"),
+                "NCM": get("NCM"),
+                "CFOP": get("CFOP"),
+                "Unidade": get("uCom"),
+                "Quantidade": get("qCom"),
+                "Preço de custo": get("vUnCom"),
+                "Valor total": get("vProd"),
+                "GTIN": gtin,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -132,7 +165,7 @@ def _processar_upload_origem(upload) -> None:
         st.session_state["df_origem"] = df
         _guardar_upload_bruto("origem_upload", upload, "tabular")
         st.success(f"Arquivo de origem carregado: {upload.name}")
-        _preview_dataframe(df, "Preview da origem")
+        _preview_dataframe(df, "Preview bruto da origem")
         return
     if ext == ".xml":
         df = _parse_xml_nfe(upload)
@@ -142,7 +175,7 @@ def _processar_upload_origem(upload) -> None:
         st.session_state["df_origem"] = df
         _guardar_upload_bruto("origem_upload", upload, "xml")
         st.success("XML convertido com sucesso.")
-        _preview_dataframe(df, "Preview do XML")
+        _preview_dataframe(df, "Preview bruto do XML")
         return
 
 
@@ -165,7 +198,7 @@ def _processar_upload_modelo(upload) -> None:
     st.session_state["df_modelo"] = df
     _guardar_upload_bruto("modelo_upload", upload, "tabular")
     st.success(f"Modelo carregado: {upload.name}")
-    _preview_dataframe(df, "Preview do modelo")
+    _preview_dataframe(df, "Estrutura do modelo Bling anexado")
 
 
 def _origem_pronta() -> bool:
@@ -184,7 +217,13 @@ def _render_operacao() -> None:
         if valor == tipo_atual:
             label_inicial = label
             break
-    escolha = st.radio("Escolha a operação", options=list(opcoes.keys()), index=list(opcoes.keys()).index(label_inicial), horizontal=True, key="tipo_operacao_visual")
+    escolha = st.radio(
+        "Escolha a operação",
+        options=list(opcoes.keys()),
+        index=list(opcoes.keys()).index(label_inicial),
+        horizontal=True,
+        key="tipo_operacao_visual",
+    )
     novo_tipo = opcoes[escolha]
     st.session_state["tipo_operacao"] = novo_tipo
     st.session_state["tipo_operacao_bling"] = novo_tipo
@@ -192,19 +231,45 @@ def _render_operacao() -> None:
 
 def _render_dados_operacao() -> None:
     operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
-    if operacao != "estoque":
-        return
+    if operacao == "estoque":
+        with st.container(border=True):
+            st.markdown("### Dados da operação")
+            valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
+            novo_valor = st.text_input(
+                "Nome do depósito",
+                value=valor_atual,
+                key="deposito_nome_input",
+                placeholder="Ex.: Depósito Principal",
+                help="Esse valor será levado para a planilha final.",
+            ).strip()
+            st.session_state["deposito_nome"] = novo_valor
+
     with st.container(border=True):
-        st.markdown("### Dados da operação")
-        valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
-        novo_valor = st.text_input("Nome do depósito", value=valor_atual, key="deposito_nome_input", placeholder="Ex.: Depósito Principal", help="Esse valor será levado para a planilha final.").strip()
-        st.session_state["deposito_nome"] = novo_valor
+        st.markdown("### Estoque inteligente")
+        st.caption("Usado quando a origem vier com texto como Disponível, Baixo, Esgotado ou Indisponível.")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.session_state["estoque_padrao_disponivel"] = st.number_input(
+                "Estoque para Disponível",
+                min_value=0,
+                value=int(st.session_state.get("estoque_padrao_disponivel", 5) or 5),
+                step=1,
+                key="input_estoque_padrao_disponivel",
+            )
+        with c2:
+            st.session_state["estoque_padrao_baixo"] = st.number_input(
+                "Estoque para Baixo",
+                min_value=0,
+                value=int(st.session_state.get("estoque_padrao_baixo", 1) or 1),
+                step=1,
+                key="input_estoque_padrao_baixo",
+            )
 
 
 def _render_origem_arquivo() -> None:
     with st.container(border=True):
         st.markdown("### Arquivo do fornecedor")
-        st.caption("Use esta opção para planilha ou XML. PDF será liberado somente quando houver extração automática confiável.")
+        st.caption("Use esta opção para planilha ou XML. O preview oficial só aparece depois do modelo Bling anexado.")
         upload_origem = st.file_uploader("Selecionar arquivo de origem", type=["csv", "xlsx", "xls", "xml"], key="upload_origem")
         if upload_origem is not None:
             _processar_upload_origem(upload_origem)
@@ -220,10 +285,33 @@ def _render_origem_site() -> None:
 def _render_modelo() -> None:
     with st.container(border=True):
         st.markdown("### Modelo do Bling")
-        st.caption("Envie o modelo oficial de cadastro ou estoque.")
+        st.caption("Envie o modelo oficial de cadastro ou estoque. Sem esse arquivo, o preview final e o download ficam bloqueados.")
         upload_modelo = st.file_uploader("Selecionar modelo", type=["csv", "xlsx", "xls"], key="upload_modelo")
         if upload_modelo:
             _processar_upload_modelo(upload_modelo)
+
+
+def _render_preview_modelo_bling_origem() -> None:
+    df_origem = st.session_state.get("df_origem")
+    df_modelo = st.session_state.get("df_modelo")
+
+    if not _origem_pronta():
+        return
+
+    if not _modelo_pronto():
+        st.info("Origem carregada. Agora anexe o modelo Bling para gerar o preview oficial nas colunas corretas.")
+        return
+
+    st.markdown("---")
+    df_preview = render_preview_inteligente(
+        df_origem,
+        df_modelo,
+        titulo="Preview oficial montado no modelo Bling anexado",
+    )
+
+    if safe_df_estrutura(df_preview):
+        st.session_state["df_final"] = df_preview.copy()
+        st.session_state["df_precificado"] = df_origem.copy()
 
 
 def _validar_dados_operacao_para_continuar() -> bool:
@@ -258,7 +346,7 @@ def _render_continuar() -> None:
         st.info("Carregue uma origem válida para continuar.")
         return
     if not _modelo_pronto():
-        st.info("Envie um modelo válido para continuar.")
+        st.info("Envie um modelo Bling válido para gerar o preview oficial e continuar.")
         return
     if not _validar_dados_operacao_para_continuar():
         return
@@ -266,18 +354,19 @@ def _render_continuar() -> None:
         st.session_state["df_precificado"] = st.session_state.get("df_origem")
         if set_etapa_segura("precificacao", origem="origem_dados"):
             st.rerun()
-        st.error("Não foi possível avançar. Confira se a origem foi carregada corretamente.")
+        st.error("Não foi possível avançar. Confira se a origem e o modelo Bling foram carregados corretamente.")
 
 
 def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
     _render_operacao()
     _render_dados_operacao()
+    _render_modelo()
     modo = st.radio("Como deseja informar a origem?", ["Arquivo do fornecedor", "Buscar no site do fornecedor"], horizontal=True, key="modo_origem")
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
     else:
         _render_origem_site()
-    _render_modelo()
+    _render_preview_modelo_bling_origem()
     st.markdown("---")
     _render_continuar()
