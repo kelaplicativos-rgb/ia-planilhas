@@ -12,6 +12,7 @@ from .pagination import coletar_paginas_genericas
 from .domain_crawler import descobrir_urls_produto
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
+from .ai_normalizer import normalizar_produtos_ai
 
 
 MAX_CANDIDATOS = 5
@@ -82,7 +83,7 @@ def _run_generico(url):
     if "url_produto" in final.columns and "nome" in final.columns:
         final = final.drop_duplicates(subset=["url_produto", "nome"], keep="first")
 
-    return _normalizar_df(final)
+    return normalizar_produtos_ai(final)
 
 
 def _run_god_mode(url):
@@ -107,7 +108,7 @@ def _run_god_mode(url):
     if "url_produto" in final.columns:
         final = final.drop_duplicates(subset=["url_produto"], keep="first")
 
-    return _normalizar_df(final)
+    return normalizar_produtos_ai(final)
 
 
 def run_scraper(url: str):
@@ -118,9 +119,8 @@ def run_scraper(url: str):
     supplier = MegaCenterSupplier()
     if supplier.can_handle(url):
         produtos = supplier.fetch(url)
-        return pd.DataFrame(produtos)
+        return normalizar_produtos_ai(pd.DataFrame(produtos))
 
-    # tenta modo GOD primeiro
     df_god = _run_god_mode(url)
     if not df_god.empty:
         return df_god
