@@ -10,10 +10,13 @@ import streamlit as st
 
 
 CANONICAL_SOURCE_ALIASES = {
+    "id": ["id", "id produto", "id_produto", "identificador interno"],
+    "url_produto": ["url produto", "url do produto", "link produto", "link do produto", "url_produto", "produto url"],
     "descricao": [
         "descricao",
         "descrição",
         "nome",
+        "nome produto",
         "produto",
         "titulo",
         "title",
@@ -29,7 +32,7 @@ CANONICAL_SOURCE_ALIASES = {
         "informacoes",
         "informações",
     ],
-    "codigo": ["codigo", "código", "sku", "referencia", "referência", "ref", "cod", "cprod"],
+    "codigo": ["codigo", "código", "codigo produto", "código produto", "sku", "referencia", "referência", "ref", "cod", "cprod"],
     "gtin": ["gtin", "ean", "codigo de barras", "código de barras", "barcode", "cean"],
     "preco": ["preco", "preço", "valor", "price", "preco venda", "preço venda", "preco unitario", "preço unitário"],
     "preco_custo": ["preco custo", "preço custo", "custo", "valor custo", "vuncom"],
@@ -42,6 +45,8 @@ CANONICAL_SOURCE_ALIASES = {
 }
 
 TARGET_HINTS = {
+    "id": ["id", "id produto"],
+    "url_produto": ["url produto", "url do produto", "link produto", "link do produto"],
     "descricao_complementar": ["complementar", "detalhada", "longa"],
     "descricao": ["descricao", "descrição", "nome", "produto"],
     "codigo": ["codigo", "código", "sku", "referencia", "referência"],
@@ -54,6 +59,15 @@ TARGET_HINTS = {
     "categoria": ["categoria", "departamento"],
     "ncm": ["ncm"],
     "deposito": ["deposito", "depósito"],
+}
+
+DESTINOS_NUNCA_PREENCHER = {
+    "id",
+    "id produto",
+    "idproduto",
+    "id bling",
+    "codigo id",
+    "codigo interno bling",
 }
 
 
@@ -75,6 +89,53 @@ def origem_valida(df_origem: object) -> bool:
 
 def _canonical_from_name(nome: str) -> str:
     norm = normalizar_texto(nome)
+    compacto = norm.replace(" ", "")
+
+    if not norm or norm.startswith("unnamed") or norm in {"index", "level 0"}:
+        return "ignorar"
+
+    if norm in DESTINOS_NUNCA_PREENCHER or compacto in DESTINOS_NUNCA_PREENCHER:
+        return "id"
+
+    if "url" in norm and any(x in norm for x in ["produto", "product", "link"]):
+        return "url_produto"
+
+    if "gtin" in norm or "ean" in norm or "barra" in norm or "barcode" in norm:
+        return "gtin"
+
+    if "ncm" in norm:
+        return "ncm"
+
+    if "custo" in norm:
+        return "preco_custo"
+
+    if any(x in norm for x in ["preco", "valor", "price", "unitario", "unitário"]):
+        return "preco"
+
+    if any(x in norm for x in ["estoque", "quantidade", "saldo", "qtd", "qtde", "balanco", "balanço", "stock", "disponibilidade"]):
+        return "estoque"
+
+    if any(x in norm for x in ["imagem", "image", "foto", "img"]):
+        return "imagem"
+
+    if "deposito" in norm or "depósito" in norm:
+        return "deposito"
+
+    if "marca" in norm or "brand" in norm or "fabricante" in norm:
+        return "marca"
+
+    if "categoria" in norm or "category" in norm or "departamento" in norm or "breadcrumb" in norm:
+        return "categoria"
+
+    if any(x in norm for x in ["codigo", "código", "sku", "referencia", "referência", "ref", "cod", "cprod"]):
+        return "codigo"
+
+    if any(x in norm for x in ["complementar", "detalhada", "longa", "detalhes", "complemento"]):
+        return "descricao_complementar"
+
+    if any(x in norm for x in ["descricao", "descrição", "nome", "produto", "titulo", "title", "name", "xprod"]):
+        return "descricao"
+
     for canonical, aliases in CANONICAL_SOURCE_ALIASES.items():
         for alias in aliases:
             alias_norm = normalizar_texto(alias)
@@ -83,14 +144,96 @@ def _canonical_from_name(nome: str) -> str:
     return norm
 
 
+def _valores_amostra(serie: pd.Series) -> list[str]:
+    return [str(v or "").strip() for v in serie.astype(str).head(40).tolist() if str(v or "").strip()]
+
+
+def _parece_url(valor: Any) -> bool:
+    texto = str(valor or "").strip().lower()
+    return texto.startswith(("http://", "https://", "www."))
+
+
+def _parece_preco(valor: Any) -> bool:
+    texto = str(valor or "")
+    return bool(re.search(r"R\$\s*\d|\d{1,3}(?:\.\d{3})*,\d{2}|\d+\.\d{2}", texto, flags=re.I))
+
+
+def _parece_gtin(valor: Any) -> bool:
+    digitos = re.sub(r"\D+", "", str(valor or ""))
+    return len(digitos) in {8, 12, 13, 14}
+
+
+def _parece_texto_longo(valor: Any) -> bool:
+    texto = str(valor or "").strip()
+    return len(texto) > 35 and not _parece_url(texto) and not _parece_preco(texto)
+
+
+def _conteudo_compativel(col_destino: str, col_origem: str, serie_origem: pd.Series) -> bool:
+    destino_can = _canonical_from_name(col_destino)
+    origem_can = _canonical_from_name(col_origem)
+    amostras = _valores_amostra(serie_origem)
+
+    if destino_can == "id":
+        return False
+
+    if origem_can == "ignorar":
+        return False
+
+    urls = sum(1 for v in amostras if _parece_url(v))
+    precos = sum(1 for v in amostras if _parece_preco(v))
+    gtins = sum(1 for v in amostras if _parece_gtin(v))
+    longos = sum(1 for v in amostras if _parece_texto_longo(v))
+    total = max(len(amostras), 1)
+
+    if destino_can == "codigo":
+        if origem_can in {"descricao", "descricao_complementar", "url_produto", "imagem", "preco", "gtin"}:
+            return False
+        if longos / total >= 0.35 or urls / total >= 0.20:
+            return False
+
+    if destino_can in {"descricao", "descricao_complementar"}:
+        if origem_can in {"url_produto", "imagem", "preco", "gtin", "estoque", "deposito"}:
+            return False
+        if urls / total >= 0.20 or precos / total >= 0.35 or gtins / total >= 0.60:
+            return False
+
+    if destino_can == "url_produto":
+        if origem_can not in {"url_produto"} and urls / total < 0.30:
+            return False
+
+    if destino_can == "gtin":
+        if origem_can != "gtin" and gtins / total < 0.30:
+            return False
+
+    if destino_can in {"preco", "preco_custo"}:
+        if origem_can not in {"preco", "preco_custo"} and precos / total < 0.20:
+            return False
+        if urls / total >= 0.20:
+            return False
+
+    return True
+
+
 def _score_coluna_destino_para_origem(col_destino: str, col_origem: str) -> float:
     destino_norm = normalizar_texto(col_destino)
     origem_norm = normalizar_texto(col_origem)
     destino_can = _canonical_from_name(destino_norm)
     origem_can = _canonical_from_name(origem_norm)
 
+    if destino_can == "id" or origem_can == "ignorar":
+        return 0.0
+
     if destino_can == origem_can:
         return 1.0
+
+    if destino_can == "codigo" and origem_can != "codigo":
+        return 0.0
+
+    if destino_can in {"descricao", "descricao_complementar"} and origem_can in {"url_produto", "imagem", "preco", "gtin", "estoque"}:
+        return 0.0
+
+    if destino_can == "url_produto" and origem_can != "url_produto":
+        return 0.0
 
     score = SequenceMatcher(None, destino_norm, origem_norm).ratio()
 
@@ -142,10 +285,19 @@ def _destino_eh_estoque(coluna_destino: str) -> bool:
     return any(token in destino_norm for token in ["estoque", "quantidade", "saldo", "balanco", "qtd", "qtde"])
 
 
-def encontrar_melhor_coluna(col_destino: str, colunas_origem: list[str], usadas: set[str]) -> tuple[str, float]:
+def _destino_nunca_preencher(coluna_destino: str) -> bool:
+    destino_norm = normalizar_texto(coluna_destino)
+    compacto = destino_norm.replace(" ", "")
+    return destino_norm in DESTINOS_NUNCA_PREENCHER or compacto in DESTINOS_NUNCA_PREENCHER or _canonical_from_name(coluna_destino) == "id"
+
+
+def encontrar_melhor_coluna(col_destino: str, df_origem: pd.DataFrame, usadas: set[str]) -> tuple[str, float]:
     candidatos: list[tuple[str, float]] = []
-    for col_origem in colunas_origem:
+    for col_origem in list(df_origem.columns):
         if col_origem in usadas:
+            continue
+        if not _conteudo_compativel(col_destino, col_origem, df_origem[col_origem]):
+            candidatos.append((col_origem, 0.0))
             continue
         score = _score_coluna_destino_para_origem(col_destino, col_origem)
         candidatos.append((col_origem, score))
@@ -175,6 +327,14 @@ def montar_preview_inteligente(df_origem: pd.DataFrame, df_modelo: pd.DataFrame,
     for col_destino in resultado.columns:
         destino_norm = normalizar_texto(col_destino)
 
+        if destino_norm.startswith("unnamed") or destino_norm in {"index", "level 0"}:
+            linhas_mapa.append({"Campo Bling": col_destino, "Origem usada": "", "Confiança": "🔴 Ignorado", "Score": 0.0})
+            continue
+
+        if _destino_nunca_preencher(col_destino):
+            linhas_mapa.append({"Campo Bling": col_destino, "Origem usada": "", "Confiança": "🟢 Protegido em branco", "Score": 1.0})
+            continue
+
         if "video" in destino_norm or "youtube" in destino_norm:
             linhas_mapa.append({"Campo Bling": col_destino, "Origem usada": "", "Confiança": "🔴 Ignorado", "Score": 0.0})
             continue
@@ -184,7 +344,7 @@ def montar_preview_inteligente(df_origem: pd.DataFrame, df_modelo: pd.DataFrame,
             linhas_mapa.append({"Campo Bling": col_destino, "Origem usada": "Depósito informado", "Confiança": "🟢 Automático", "Score": 1.0})
             continue
 
-        col_origem, score = encontrar_melhor_coluna(col_destino, list(origem.columns), usadas)
+        col_origem, score = encontrar_melhor_coluna(col_destino, origem, usadas)
         emoji, nivel = _classificar_score(score)
 
         if col_origem and score >= 0.55:
@@ -220,7 +380,7 @@ def render_preview_inteligente(df_origem: pd.DataFrame, df_modelo: pd.DataFrame,
         return df_preview
 
     st.markdown(f"#### 🧠 {titulo}")
-    st.caption("A tabela abaixo já usa exatamente as colunas do modelo Bling anexado. Sem modelo Bling, o sistema não gera preview nem download.")
+    st.caption("A tabela abaixo já usa exatamente as colunas do modelo Bling anexado. Campos de ID do Bling ficam em branco e não são preenchidos automaticamente.")
     st.dataframe(df_preview.head(30), use_container_width=True)
 
     with st.expander("Mapa automático de colunas", expanded=False):
