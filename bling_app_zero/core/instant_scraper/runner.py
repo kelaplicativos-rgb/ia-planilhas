@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List
-
 import pandas as pd
 
 from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
@@ -11,6 +9,7 @@ from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
 from .html_fetcher import fetch_html, obter_ultimo_fetch_info
 from .browser_fetcher import fetch_html_browser
 from .pagination import coletar_paginas_genericas
+from .domain_crawler import descobrir_urls_produto
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
 
@@ -21,8 +20,7 @@ MAX_CANDIDATOS = 5
 def _normalizar_df(df):
     if df is None or df.empty:
         return pd.DataFrame()
-    df = df.copy().fillna("")
-    return df.reset_index(drop=True)
+    return df.copy().fillna("").reset_index(drop=True)
 
 
 def _fetch_hibrido(url):
@@ -73,7 +71,6 @@ def _run_generico(url):
             continue
 
         df = _extrair_da_pagina(html, pagina_url)
-
         if not df.empty:
             frames.append(df)
 
@@ -88,6 +85,31 @@ def _run_generico(url):
     return _normalizar_df(final)
 
 
+def _run_god_mode(url):
+    crawl = descobrir_urls_produto(url, _fetch_hibrido)
+
+    frames = []
+
+    for prod_url in crawl.urls:
+        html = _fetch_hibrido(prod_url)
+        if not html:
+            continue
+
+        df = _extrair_da_pagina(html, prod_url)
+        if not df.empty:
+            frames.append(df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    final = pd.concat(frames, ignore_index=True)
+
+    if "url_produto" in final.columns:
+        final = final.drop_duplicates(subset=["url_produto"], keep="first")
+
+    return _normalizar_df(final)
+
+
 def run_scraper(url: str):
     url = str(url or "").strip()
     if not url:
@@ -97,5 +119,10 @@ def run_scraper(url: str):
     if supplier.can_handle(url):
         produtos = supplier.fetch(url)
         return pd.DataFrame(produtos)
+
+    # tenta modo GOD primeiro
+    df_god = _run_god_mode(url)
+    if not df_god.empty:
+        return df_god
 
     return _run_generico(url)
