@@ -8,6 +8,10 @@ from bling_app_zero.core.instant_scraper import run_scraper
 from bling_app_zero.core.instant_scraper.exhaustive_engine import run_exhaustive_capture
 from bling_app_zero.core.site_crawler import crawl_site
 from bling_app_zero.ui.origem_site_config import (
+    MOTOR_EXAUSTIVO,
+    MOTOR_FALLBACK,
+    MOTOR_GOD,
+    MOTOR_RAPIDO,
     ScraperPreset,
     config_from_preset,
     exhaustive_config_from_preset,
@@ -36,6 +40,30 @@ def _normalizar_saida(df: pd.DataFrame, url: str) -> pd.DataFrame:
     return base.fillna("").reset_index(drop=True)
 
 
+def _executar_god(url: str, preset: ScraperPreset, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
+    auth_context = get_site_auth_context()
+    try:
+        df = run_scraper(
+            url,
+            auth_context=auth_context,
+            config=exhaustive_config_from_preset(preset),
+            progress_callback=progress_callback,
+        )
+    except TypeError:
+        try:
+            df = run_scraper(url, auth_context=auth_context)
+        except TypeError:
+            df = run_scraper(url)
+    except Exception:
+        df = pd.DataFrame()
+
+    base = _safe_df(df)
+    if not base.empty:
+        base["origem_site_status"] = "blinggod_ok"
+        base["origem_site_motor"] = MOTOR_GOD
+    return base
+
+
 def _executar_exaustivo(url: str, preset: ScraperPreset, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     auth_context = get_site_auth_context()
     resultado = run_exhaustive_capture(
@@ -47,6 +75,7 @@ def _executar_exaustivo(url: str, preset: ScraperPreset, progress_callback: Call
     df = _safe_df(resultado.dataframe)
     if not df.empty:
         df["origem_site_status"] = resultado.status
+        df["origem_site_motor"] = MOTOR_EXAUSTIVO
         df["origem_site_checkpoint"] = resultado.checkpoint_path
         df["origem_site_urls_descobertas"] = str(resultado.urls_discovered)
         df["origem_site_urls_processadas"] = str(resultado.urls_processed)
@@ -55,20 +84,32 @@ def _executar_exaustivo(url: str, preset: ScraperPreset, progress_callback: Call
 
 def _executar_agente_rapido(url: str, preset: ScraperPreset) -> pd.DataFrame:
     try:
-        return _safe_df(run_scraper(url, config=exhaustive_config_from_preset(preset)))
+        df = run_scraper(url, config=exhaustive_config_from_preset(preset))
     except TypeError:
-        return _safe_df(run_scraper(url))
+        df = run_scraper(url)
     except Exception:
-        return pd.DataFrame()
+        df = pd.DataFrame()
+
+    base = _safe_df(df)
+    if not base.empty:
+        base["origem_site_status"] = "agente_rapido_ok"
+        base["origem_site_motor"] = MOTOR_RAPIDO
+    return base
 
 
 def _executar_fallback(url: str, preset: ScraperPreset) -> pd.DataFrame:
     try:
-        return _safe_df(crawl_site(url, config_from_preset(preset)))
+        df = crawl_site(url, config_from_preset(preset))
     except TypeError:
-        return _safe_df(crawl_site(url))
+        df = crawl_site(url)
     except Exception:
-        return pd.DataFrame()
+        df = pd.DataFrame()
+
+    base = _safe_df(df)
+    if not base.empty:
+        base["origem_site_status"] = "fallback_ok"
+        base["origem_site_motor"] = MOTOR_FALLBACK
+    return base
 
 
 def executar_busca(
@@ -85,14 +126,16 @@ def executar_busca(
             if progress_callback:
                 progress_callback(1, f"Iniciando URL {indice}/{len(urls_lista)}", indice)
 
-            if motor == "Exaustivo com checkpoint":
+            if motor == MOTOR_GOD:
+                df = _executar_god(url, preset, progress_callback=progress_callback)
+            elif motor == MOTOR_EXAUSTIVO:
                 df = _executar_exaustivo(url, preset, progress_callback=progress_callback)
-            elif motor == "Agente rápido":
+            elif motor == MOTOR_RAPIDO:
                 df = _executar_agente_rapido(url, preset)
-            elif motor == "Fallback crawler":
+            elif motor == MOTOR_FALLBACK:
                 df = _executar_fallback(url, preset)
             else:
-                df = _executar_exaustivo(url, preset, progress_callback=progress_callback)
+                df = _executar_god(url, preset, progress_callback=progress_callback)
 
             df = _normalizar_saida(df, url)
         except Exception:
