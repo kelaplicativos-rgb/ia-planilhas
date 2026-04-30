@@ -13,6 +13,7 @@ from bling_app_zero.ui.origem_site_config import (
     MOTOR_GOD,
     MOTOR_RAPIDO,
     MOTORES_SITE,
+    PRESETS,
     ScraperPreset,
     config_from_preset,
     exhaustive_config_from_preset,
@@ -162,9 +163,30 @@ def _juntar_resultados(resultados: list[pd.DataFrame]) -> pd.DataFrame:
     return saida.reset_index(drop=True)
 
 
+def _executar_auto_total_url(
+    url: str,
+    progress_callback: Callable[[int, str, int], None] | None = None,
+    indice_url: int = 1,
+    total_urls: int = 1,
+) -> pd.DataFrame:
+    frames_url: list[pd.DataFrame] = []
+    for preset_nome, preset_atual in PRESETS.items():
+        for motor_atual in MOTORES_SITE:
+            if progress_callback:
+                progress_callback(5, f"Modo {preset_nome} + {motor_atual} na URL {indice_url}/{total_urls}", indice_url)
+            bruto = _executar_motor(url, preset_atual, motor_atual, progress_callback=progress_callback)
+            normalizado = _normalizar_saida(bruto, url)
+            if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
+                normalizado["URL origem da busca"] = url
+                normalizado["Modo usado"] = preset_nome
+                normalizado["Motor usado"] = motor_atual
+                frames_url.append(normalizado)
+    return _juntar_resultados(frames_url)
+
+
 def executar_busca(
     urls,
-    preset: ScraperPreset,
+    preset: ScraperPreset | None,
     motor: str,
     progress_callback: Callable[[int, str, int], None] | None = None,
 ) -> pd.DataFrame:
@@ -176,12 +198,15 @@ def executar_busca(
             if progress_callback:
                 progress_callback(1, f"Iniciando URL {indice}/{len(urls_lista)}", indice)
 
-            if motor == "AUTO_TODOS":
+            if motor == "AUTO_TOTAL":
+                df = _executar_auto_total_url(url, progress_callback=progress_callback, indice_url=indice, total_urls=len(urls_lista))
+            elif motor == "AUTO_TODOS":
+                preset_base = preset or PRESETS.get("Seguro") or next(iter(PRESETS.values()))
                 frames_url: list[pd.DataFrame] = []
                 for motor_atual in MOTORES_SITE:
                     if progress_callback:
                         progress_callback(5, f"Executando {motor_atual} na URL {indice}/{len(urls_lista)}", indice)
-                    bruto = _executar_motor(url, preset, motor_atual, progress_callback=progress_callback)
+                    bruto = _executar_motor(url, preset_base, motor_atual, progress_callback=progress_callback)
                     normalizado = _normalizar_saida(bruto, url)
                     if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
                         normalizado["URL origem da busca"] = url
@@ -189,7 +214,8 @@ def executar_busca(
                         frames_url.append(normalizado)
                 df = _juntar_resultados(frames_url)
             else:
-                bruto = _executar_motor(url, preset, motor, progress_callback=progress_callback)
+                preset_base = preset or PRESETS.get("Seguro") or next(iter(PRESETS.values()))
+                bruto = _executar_motor(url, preset_base, motor, progress_callback=progress_callback)
                 df = _normalizar_saida(bruto, url)
         except Exception:
             df = pd.DataFrame()
