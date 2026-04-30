@@ -18,6 +18,8 @@ class SitemapCrawlStats:
     urls_produto: int = 0
     paginas_processadas: int = 0
     produtos_extraidos: int = 0
+    categorias_processadas: int = 0
+    urls_visitadas: int = 0
     motivo: str = ""
     erros: list[str] = field(default_factory=list)
 
@@ -34,7 +36,7 @@ def normalizar_url(url: str) -> str:
         url = "https:" + url
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    return url.split("#", 1)[0]
+    return url.split("#", 1)[0].rstrip("/")
 
 
 def _host(url: str) -> str:
@@ -61,6 +63,8 @@ def sitemap_candidates(base_url: str) -> list[str]:
         f"{root}/products-sitemap.xml",
         f"{root}/post-sitemap.xml",
         f"{root}/page-sitemap.xml",
+        f"{root}/category-sitemap.xml",
+        f"{root}/product-category-sitemap.xml",
     ]
 
 
@@ -68,26 +72,21 @@ def extrair_product_id_url(url: str) -> str:
     path = urlparse(normalizar_url(url)).path.strip("/")
     if not path:
         return ""
-
-    partes = [p for p in path.split("/") if p]
-    ultimo = partes[-1] if partes else ""
-
+    ultimo = path.split("/")[-1]
+    full = "/" + path
     padroes = [
         r"(?:produto|product|item|p)[\-/]?(\d{3,})",
         r"(?:id|sku|cod|codigo)[\-/_=]?(\d{3,})",
         r"-(\d{3,})(?:\.html?)?$",
         r"/(\d{3,})(?:\.html?)?$",
     ]
-    full = "/" + path
     for padrao in padroes:
         m = re.search(padrao, full, flags=re.I)
         if m:
             return m.group(1)
-
     m = re.search(r"\b(\d{4,})\b", ultimo)
     if m:
         return m.group(1)
-
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", ultimo).strip("-")
     return slug[:80]
 
@@ -103,6 +102,18 @@ def parece_url_produto(url: str) -> bool:
     if any(s in u for s in sinais):
         return True
     return bool(re.search(r"/(?:[^/]+-)?\d{4,}(?:\.html?)?$", urlparse(u).path))
+
+
+def parece_url_categoria(url: str) -> bool:
+    u = normalizar_url(url).lower()
+    sinais = ["/categoria", "/category", "/departamento", "/colecao", "/collection", "/loja", "/catalogo"]
+    return any(s in u for s in sinais) and not parece_url_produto(u)
+
+
+def _ignorar_url(url: str) -> bool:
+    u = normalizar_url(url).lower()
+    ruins = ["/cart", "/carrinho", "/checkout", "/login", "/account", "/minha-conta", "/politica", "/terms", "/termos", "mailto:", "tel:", "javascript:"]
+    return any(r in u for r in ruins)
 
 
 def parse_sitemap(xml_text: str) -> tuple[list[str], list[str]]:
@@ -130,7 +141,7 @@ def parse_sitemap(xml_text: str) -> tuple[list[str], list[str]]:
     return urls, sitemaps
 
 
-def coletar_urls_de_sitemaps(base_url: str, fetcher: Callable[[str], str], limite_urls: int = 2000, limite_sitemaps: int = 80) -> tuple[list[str], SitemapCrawlStats]:
+def coletar_urls_de_sitemaps(base_url: str, fetcher: Callable[[str], str]) -> tuple[list[str], SitemapCrawlStats]:
     base_url = normalizar_url(base_url)
     stats = SitemapCrawlStats()
     fila = sitemap_candidates(base_url)
@@ -138,7 +149,7 @@ def coletar_urls_de_sitemaps(base_url: str, fetcher: Callable[[str], str], limit
     urls: list[str] = []
     vistos_url = set()
 
-    while fila and stats.sitemap_lidos < limite_sitemaps and len(urls) < limite_urls:
+    while fila:
         sm = fila.pop(0)
         if sm in vistos_sitemap or not mesmo_host(base_url, sm):
             continue
@@ -152,17 +163,28 @@ def coletar_urls_de_sitemaps(base_url: str, fetcher: Callable[[str], str], limit
             if n not in vistos_sitemap and mesmo_host(base_url, n):
                 fila.append(n)
         for u in page_urls:
-            if not mesmo_host(base_url, u) or u in vistos_url:
+            if not mesmo_host(base_url, u) or u in vistos_url or _ignorar_url(u):
                 continue
             vistos_url.add(u)
             urls.append(u)
-            if len(urls) >= limite_urls:
-                break
 
     stats.urls_sitemap = len(urls)
     stats.urls_produto = len([u for u in urls if parece_url_produto(u)])
     stats.motivo = "ok" if urls else "sem_urls_sitemap"
     return urls, stats
+
+
+def coletar_links_html(base_url: str, html: str) -> list[str]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    links: list[str] = []
+    vistos = set()
+    for a in soup.find_all("a", href=True):
+        url = normalizar_url(urljoin(base_url, _txt(a.get("href"))))
+        if not url or url in vistos or not mesmo_host(base_url, url) or _ignorar_url(url):
+            continue
+        vistos.add(url)
+        links.append(url)
+    return links
 
 
 def _json_ld_objects(soup: BeautifulSoup) -> list[dict[str, Any]]:
@@ -207,10 +229,7 @@ def _meta(soup: BeautifulSoup, *names: str) -> str:
 
 def enriquecer_produto_html(url: str, html: str) -> dict[str, str]:
     soup = BeautifulSoup(html or "", "html.parser")
-    data: dict[str, str] = {
-        "url_produto": normalizar_url(url),
-        "produto_id_url": extrair_product_id_url(url),
-    }
+    data: dict[str, str] = {"url_produto": normalizar_url(url), "produto_id_url": extrair_product_id_url(url)}
 
     product_obj: dict[str, Any] = {}
     for obj in _json_ld_objects(soup):
@@ -251,39 +270,70 @@ def enriquecer_produto_html(url: str, html: str) -> dict[str, str]:
     return {k: v for k, v in data.items() if _txt(v)}
 
 
-def varrer_site_por_sitemap(base_url: str, fetcher: Callable[[str], str], limite_produtos: int = 500) -> tuple[pd.DataFrame, SitemapCrawlStats]:
-    urls, stats = coletar_urls_de_sitemaps(base_url, fetcher, limite_urls=max(limite_produtos * 3, 300))
-    produto_urls = [u for u in urls if parece_url_produto(u)]
-    if not produto_urls:
-        produto_urls = urls
+def _ordenar_df(rows: list[dict[str, str]]) -> pd.DataFrame:
+    df = pd.DataFrame(rows).fillna("")
+    if df.empty:
+        return df
+    ordem = ["produto_id_url", "sku", "nome", "preco", "moeda", "marca", "categoria", "gtin", "estoque", "url_produto", "imagens", "descricao"]
+    for col in ordem:
+        if col not in df.columns:
+            df[col] = ""
+    df = df[ordem + [c for c in df.columns if c not in ordem]]
+    if "url_produto" in df.columns:
+        df = df.drop_duplicates(subset=["url_produto"], keep="first")
+    return df.reset_index(drop=True)
+
+
+def varrer_site_por_sitemap(base_url: str, fetcher: Callable[[str], str], limite_produtos: int | None = None) -> tuple[pd.DataFrame, SitemapCrawlStats]:
+    base_url = normalizar_url(base_url)
+    urls, stats = coletar_urls_de_sitemaps(base_url, fetcher)
+
+    fila = []
+    vistos_fila = set()
+    for u in [base_url] + urls:
+        if u and u not in vistos_fila:
+            fila.append(u)
+            vistos_fila.add(u)
 
     rows: list[dict[str, str]] = []
-    vistos = set()
-    for u in produto_urls:
-        if len(rows) >= limite_produtos:
-            stats.motivo = "limite_produtos"
-            break
-        if u in vistos:
+    visitadas = set()
+    produtos_vistos = set()
+    ciclos_sem_novidade = 0
+
+    while fila:
+        u = fila.pop(0)
+        if u in visitadas or not mesmo_host(base_url, u) or _ignorar_url(u):
             continue
-        vistos.add(u)
+        visitadas.add(u)
         html = fetcher(u)
         stats.paginas_processadas += 1
         if not html:
+            ciclos_sem_novidade += 1
             continue
-        row = enriquecer_produto_html(u, html)
-        if row.get("nome") or row.get("preco") or row.get("produto_id_url"):
-            rows.append(row)
 
+        novos_antes = len(fila) + len(rows)
+
+        if parece_url_produto(u):
+            row = enriquecer_produto_html(u, html)
+            key = row.get("produto_id_url") or row.get("url_produto") or u
+            if key and key not in produtos_vistos and (row.get("nome") or row.get("preco") or row.get("produto_id_url")):
+                produtos_vistos.add(key)
+                rows.append(row)
+
+        if parece_url_categoria(u) or u == base_url or not parece_url_produto(u):
+            stats.categorias_processadas += 1
+            for link in coletar_links_html(base_url, html):
+                if link not in visitadas and link not in vistos_fila:
+                    fila.append(link)
+                    vistos_fila.add(link)
+
+        novos_depois = len(fila) + len(rows)
+        ciclos_sem_novidade = ciclos_sem_novidade + 1 if novos_depois <= novos_antes else 0
+        if ciclos_sem_novidade >= 250 and not fila:
+            break
+
+    stats.urls_visitadas = len(visitadas)
+    stats.urls_produto = len([u for u in visitadas if parece_url_produto(u)])
     stats.produtos_extraidos = len(rows)
-    if not rows and stats.motivo == "ok":
-        stats.motivo = "sem_produtos_extraidos"
-
-    df = pd.DataFrame(rows).fillna("")
-    if not df.empty:
-        ordem = ["produto_id_url", "sku", "nome", "preco", "moeda", "marca", "categoria", "gtin", "estoque", "url_produto", "imagens", "descricao"]
-        for col in ordem:
-            if col not in df.columns:
-                df[col] = ""
-        df = df[ordem + [c for c in df.columns if c not in ordem]]
-        df = df.drop_duplicates(subset=["url_produto"], keep="first").reset_index(drop=True)
-    return df, stats
+    stats.motivo = "sem_novas_urls" if rows else "sem_produtos_extraidos"
+    return _ordenar_df(rows), stats
