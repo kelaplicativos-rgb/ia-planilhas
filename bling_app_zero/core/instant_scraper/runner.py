@@ -15,6 +15,7 @@ from .instant_dom_engine import instant_extract
 from .ai_normalizer import normalizar_produtos_ai
 from .gpt_enricher import enriquecer_produtos_gpt
 from .auto_learning import aprender_padrao, aplicar_padrao_aprendido
+from .self_healing import auto_heal_dataframe, diagnosticar_dataframe
 
 
 MAX_CANDIDATOS = 5
@@ -35,6 +36,9 @@ def _finalizar_df(df: pd.DataFrame, url_base: str = "") -> pd.DataFrame:
 
     if url_base:
         base = aplicar_padrao_aprendido(url_base, base)
+
+    # 🔥 SELF HEALING ENTRA AQUI
+    base = auto_heal_dataframe(base, url_base)
 
     if "url_produto" in base.columns and "nome" in base.columns:
         base = base.drop_duplicates(subset=["url_produto", "nome"], keep="first")
