@@ -6,17 +6,18 @@ import pandas as pd
 
 from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
 
-from .html_fetcher import fetch_html, obter_ultimo_fetch_info
-from .browser_fetcher import fetch_html_browser
+from .html_fetcher import fetch_html
 from .pagination import coletar_paginas_genericas
 from .domain_crawler import descobrir_urls_produto
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
+from .instant_dom_engine import instant_extract
 from .ai_normalizer import normalizar_produtos_ai
 from .gpt_enricher import enriquecer_produtos_gpt
 
 
 MAX_CANDIDATOS = 5
+MAX_PAGINAS_INSTANT = 8
 
 
 def _normalizar_df(df):
@@ -25,21 +26,37 @@ def _normalizar_df(df):
     return df.copy().fillna("").reset_index(drop=True)
 
 
-def _fetch_hibrido(url):
-    html = fetch_html(url)
-    info = obter_ultimo_fetch_info()
+def _finalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
 
-    if html:
-        if info.get("parece_javascript"):
-            html_browser = fetch_html_browser(url)
-            if html_browser:
-                return html_browser
-        return html
+    base = df.copy().fillna("")
 
-    return fetch_html_browser(url)
+    if "url_produto" in base.columns and "nome" in base.columns:
+        base = base.drop_duplicates(subset=["url_produto", "nome"], keep="first")
+    elif "url_produto" in base.columns:
+        base = base.drop_duplicates(subset=["url_produto"], keep="first")
+    elif "nome" in base.columns:
+        base = base.drop_duplicates(subset=["nome"], keep="first")
+
+    base = normalizar_produtos_ai(base)
+    base = enriquecer_produtos_gpt(base, limite=30, score_minimo=50)
+    return _normalizar_df(base)
 
 
-def _extrair_da_pagina(html, url):
+def _fetch_http(url: str) -> str:
+    # Motor estilo extensão: trabalha em cima do HTML disponível, sem depender de browser.
+    return fetch_html(url, force_refresh=True)
+
+
+def _extrair_instant_da_pagina(html: str, url: str) -> pd.DataFrame:
+    try:
+        return instant_extract(html, url)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _extrair_fallback_antigo(html, url):
     try:
         candidatos = detectar_blocos_repetidos(html)
     except Exception:
@@ -62,13 +79,20 @@ def _extrair_da_pagina(html, url):
     return pd.concat(frames, ignore_index=True)
 
 
-def _run_generico(url):
-    paginas = coletar_paginas_genericas(url, _fetch_hibrido, max_paginas=8)
+def _extrair_da_pagina(html, url):
+    df_instant = _extrair_instant_da_pagina(html, url)
+    if not df_instant.empty:
+        return df_instant
+    return _extrair_fallback_antigo(html, url)
+
+
+def _run_instant(url: str) -> pd.DataFrame:
+    paginas = coletar_paginas_genericas(url, _fetch_http, max_paginas=MAX_PAGINAS_INSTANT)
 
     frames = []
 
     for pagina_url in paginas.urls:
-        html = _fetch_hibrido(pagina_url)
+        html = _fetch_http(pagina_url)
         if not html:
             continue
 
@@ -79,24 +103,17 @@ def _run_generico(url):
     if not frames:
         return pd.DataFrame()
 
-    final = pd.concat(frames, ignore_index=True)
-
-    if "url_produto" in final.columns and "nome" in final.columns:
-        final = final.drop_duplicates(subset=["url_produto", "nome"], keep="first")
-
-    final = normalizar_produtos_ai(final)
-    final = enriquecer_produtos_gpt(final, limite=30, score_minimo=50)
-
-    return final
+    return _finalizar_df(pd.concat(frames, ignore_index=True))
 
 
 def _run_god_mode(url):
-    crawl = descobrir_urls_produto(url, _fetch_hibrido)
+    # GOD MODE agora também usa HTTP + Instant DOM, sem dependência obrigatória de Playwright.
+    crawl = descobrir_urls_produto(url, _fetch_http)
 
     frames = []
 
     for prod_url in crawl.urls:
-        html = _fetch_hibrido(prod_url)
+        html = _fetch_http(prod_url)
         if not html:
             continue
 
@@ -107,15 +124,7 @@ def _run_god_mode(url):
     if not frames:
         return pd.DataFrame()
 
-    final = pd.concat(frames, ignore_index=True)
-
-    if "url_produto" in final.columns:
-        final = final.drop_duplicates(subset=["url_produto"], keep="first")
-
-    final = normalizar_produtos_ai(final)
-    final = enriquecer_produtos_gpt(final, limite=30, score_minimo=50)
-
-    return final
+    return _finalizar_df(pd.concat(frames, ignore_index=True))
 
 
 def run_scraper(url: str):
@@ -126,13 +135,16 @@ def run_scraper(url: str):
     supplier = MegaCenterSupplier()
     if supplier.can_handle(url):
         produtos = supplier.fetch(url)
-        df = pd.DataFrame(produtos)
-        df = normalizar_produtos_ai(df)
-        df = enriquecer_produtos_gpt(df, limite=30, score_minimo=50)
-        return df
+        return _finalizar_df(pd.DataFrame(produtos))
 
+    # 1) Estilo Instant Data Scraper: DOM/HTML primeiro.
+    df_instant = _run_instant(url)
+    if not df_instant.empty:
+        return df_instant
+
+    # 2) Crawler de domínio como fallback.
     df_god = _run_god_mode(url)
     if not df_god.empty:
         return df_god
 
-    return _run_generico(url)
+    return pd.DataFrame()
