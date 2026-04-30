@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.origem_site_config import MOTORES_SITE, PRESETS
 from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import limpar_busca_site, guardar_resultado
@@ -24,6 +25,79 @@ def _obter_df_atual_site() -> pd.DataFrame | None:
         return df_origem
 
     return None
+
+
+def _df_valido(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+
+
+def _normalizar_preview_oficial(df_preview: pd.DataFrame) -> pd.DataFrame:
+    base = df_preview.copy().fillna("")
+    base.columns = [str(c).strip() for c in base.columns]
+
+    deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+
+    if operacao == "estoque" and deposito_nome:
+        for coluna in base.columns:
+            nome = str(coluna).strip().lower()
+            if "deposito" in nome or "depósito" in nome:
+                base[coluna] = deposito_nome
+
+    for coluna in base.columns:
+        nome = str(coluna).strip().lower()
+        if "video" in nome or "vídeo" in nome or "youtube" in nome:
+            base[coluna] = ""
+
+    return base.fillna("")
+
+
+def _promover_preview_inteligente_para_fluxo(df_preview: pd.DataFrame) -> bool:
+    if not _df_valido(df_preview):
+        st.error("Preview inteligente inválido. Gere a captura novamente antes de continuar.")
+        return False
+
+    df_oficial = _normalizar_preview_oficial(df_preview)
+
+    st.session_state["df_preview_inteligente"] = df_oficial.copy()
+    st.session_state["df_precificado"] = df_oficial.copy()
+    st.session_state["df_final"] = df_oficial.copy()
+    st.session_state["origem_site_preview_oficial"] = True
+    st.session_state["origem_site_preview_oficial_linhas"] = len(df_oficial)
+    st.session_state["origem_site_preview_oficial_colunas"] = len(df_oficial.columns)
+    st.session_state["_ia_auto_mapping_executado"] = False
+
+    if set_etapa_segura("mapeamento", origem="origem_site_preview_oficial"):
+        st.rerun()
+        return True
+
+    st.error("Não foi possível avançar para o mapeamento. Confira se o modelo do Bling foi carregado corretamente.")
+    return False
+
+
+def _render_acao_preview_oficial(df_preview: pd.DataFrame) -> None:
+    if not _df_valido(df_preview):
+        return
+
+    st.markdown("#### ✅ Usar preview no fluxo oficial")
+    st.caption(
+        "Este botão transforma o preview inteligente abaixo na base oficial do mapeamento, "
+        "do preview final e do download. Assim a captura por site passa a seguir exatamente "
+        "as colunas do modelo Bling anexado."
+    )
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        usar_preview = st.button(
+            "✅ Usar este preview no modelo Bling e continuar",
+            key="btn_usar_preview_site_oficial",
+            use_container_width=True,
+        )
+    with col2:
+        st.metric("Linhas prontas", len(df_preview))
+
+    if usar_preview:
+        _promover_preview_inteligente_para_fluxo(df_preview)
 
 
 def _formatar_tempo(segundos: float) -> str:
@@ -104,6 +178,16 @@ def render_origem_site_panel() -> None:
 
         if limpar:
             limpar_busca_site()
+            for chave in [
+                "df_preview_inteligente",
+                "df_auto_mapa",
+                "df_precificado",
+                "df_final",
+                "origem_site_preview_oficial",
+                "origem_site_preview_oficial_linhas",
+                "origem_site_preview_oficial_colunas",
+            ]:
+                st.session_state.pop(chave, None)
             st.rerun()
 
         if executar:
@@ -125,15 +209,34 @@ def render_origem_site_panel() -> None:
                 return
 
             guardar_resultado(df, urls, None, "AUTO_TOTAL")
+            for chave in [
+                "df_preview_inteligente",
+                "df_auto_mapa",
+                "df_precificado",
+                "df_final",
+                "origem_site_preview_oficial",
+                "origem_site_preview_oficial_linhas",
+                "origem_site_preview_oficial_colunas",
+            ]:
+                st.session_state.pop(chave, None)
             finalizar_progresso(len(df))
             st.success(f"{len(df)} produtos encontrados (ULTRA automático)")
             st.rerun()
 
     df_atual = _obter_df_atual_site()
     if df_atual is not None:
+        st.markdown("#### 📦 Preview bruto da captura")
+        st.caption("Este é o resultado extraído do site antes de encaixar no modelo Bling.")
         render_origem_site_visual_preview(df_atual)
 
-        # 🔥 NOVO: PREVIEW INTELIGENTE baseado no modelo do Bling
         df_modelo = st.session_state.get("df_modelo")
         if isinstance(df_modelo, pd.DataFrame) and not df_modelo.empty:
-            render_preview_inteligente(df_atual, df_modelo)
+            st.markdown("---")
+            df_preview = render_preview_inteligente(
+                df_atual,
+                df_modelo,
+                titulo="Preview convertido para o modelo do Bling",
+            )
+            _render_acao_preview_oficial(df_preview)
+        else:
+            st.info("Envie o modelo do Bling para gerar o preview oficial nas colunas corretas.")
