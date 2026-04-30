@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.site_crawler import CrawlConfig, crawl_site
+from bling_app_zero.core.instant_scraper import run_scraper as run_autonomous_scraper
 from bling_app_zero.ui.app_helpers import log_debug, normalizar_imagens_pipe
 
 
@@ -25,7 +26,7 @@ class ScraperPreset:
 PRESETS: dict[str, ScraperPreset] = {
     "Seguro": ScraperPreset(
         nome="Seguro",
-        descricao="Melhor para Streamlit Cloud e sites sensíveis. Evita loop e reduz bloqueios.",
+        descricao="Agente autônomo + fallback seguro. Melhor para Streamlit Cloud e sites sensíveis.",
         max_urls=180,
         max_products=250,
         max_depth=2,
@@ -34,7 +35,7 @@ PRESETS: dict[str, ScraperPreset] = {
     ),
     "Rápido": ScraperPreset(
         nome="Rápido",
-        descricao="Busca mais enxuta para testar uma categoria ou poucas URLs.",
+        descricao="Busca enxuta para testar uma categoria ou poucas URLs.",
         max_urls=80,
         max_products=120,
         max_depth=1,
@@ -55,18 +56,31 @@ PRESETS: dict[str, ScraperPreset] = {
 
 COLUNAS_PRIORITARIAS = [
     "URL",
+    "url_produto",
     "Código",
+    "codigo",
     "SKU",
+    "sku",
     "Descrição",
+    "descricao",
+    "nome",
     "Preço",
+    "preco",
     "Preço de custo",
     "Estoque",
+    "estoque",
     "GTIN",
+    "gtin",
     "EAN",
     "NCM",
     "Marca",
+    "marca",
     "Categoria",
+    "categoria",
     "Imagens",
+    "imagem",
+    "agente_estrategia",
+    "agente_score",
 ]
 
 
@@ -142,16 +156,19 @@ def _normalizar_df_site(df: pd.DataFrame) -> pd.DataFrame:
     for coluna in base.columns:
         base[coluna] = base[coluna].apply(_limpar_texto)
 
-    if "Preço" in base.columns:
-        base["Preço"] = base["Preço"].apply(_normalizar_numero)
+    for coluna_preco in ["Preço", "preco"]:
+        if coluna_preco in base.columns:
+            base[coluna_preco] = base[coluna_preco].apply(_normalizar_numero)
 
     for coluna in base.columns:
         nome = coluna.lower()
-        if "imagem" in nome or nome in {"imagens", "url imagem", "url imagens"}:
+        if "imagem" in nome or nome in {"imagens", "url imagem", "url imagens", "image", "img"}:
             base[coluna] = base[coluna].apply(normalizar_imagens_pipe)
 
     if "URL" in base.columns:
         base = base.drop_duplicates(subset=["URL"], keep="first")
+    elif "url_produto" in base.columns:
+        base = base.drop_duplicates(subset=["url_produto"], keep="first")
     else:
         base = base.drop_duplicates(keep="first")
 
@@ -177,6 +194,7 @@ def _guardar_resultado_site(df: pd.DataFrame, urls: list[str], preset: ScraperPr
     st.session_state["origem_upload_tipo"] = "site"
     st.session_state["origem_upload_ext"] = "site"
     st.session_state["origem_site_url"] = urls[0] if urls else ""
+    st.session_state["site_fornecedor_url"] = urls[0] if urls else ""
     st.session_state["origem_site_urls"] = urls
     st.session_state["origem_site_total_produtos"] = int(len(df))
     st.session_state["origem_site_ultima_busca"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -185,20 +203,25 @@ def _guardar_resultado_site(df: pd.DataFrame, urls: list[str], preset: ScraperPr
         "max_urls": preset.max_urls,
         "max_products": preset.max_products,
         "max_depth": preset.max_depth,
+        "motor": "autonomous_agent_plus_fallback",
     }
 
 
 def _limpar_busca_site() -> None:
-    for chave in CHAVES_LIMPAR_SITE:
+    for chave in CHAVES_LIMPAR_SITE + ["site_fornecedor_url"]:
         st.session_state.pop(chave, None)
     log_debug("Resultado da busca por site limpo pelo usuário.", nivel="INFO")
 
 
 def _render_cards_status(df: pd.DataFrame) -> None:
     total = int(len(df)) if isinstance(df, pd.DataFrame) else 0
-    com_preco = int(df["Preço"].astype(str).str.strip().ne("").sum()) if total and "Preço" in df.columns else 0
-    com_img = int(df["Imagens"].astype(str).str.strip().ne("").sum()) if total and "Imagens" in df.columns else 0
-    estoque_zero = int(df["Estoque"].astype(str).str.strip().eq("0").sum()) if total and "Estoque" in df.columns else 0
+    col_preco = "Preço" if "Preço" in df.columns else "preco" if isinstance(df, pd.DataFrame) and "preco" in df.columns else ""
+    col_img = "Imagens" if "Imagens" in df.columns else "imagem" if isinstance(df, pd.DataFrame) and "imagem" in df.columns else ""
+    col_estoque = "Estoque" if "Estoque" in df.columns else "estoque" if isinstance(df, pd.DataFrame) and "estoque" in df.columns else ""
+
+    com_preco = int(df[col_preco].astype(str).str.strip().ne("").sum()) if total and col_preco else 0
+    com_img = int(df[col_img].astype(str).str.strip().ne("").sum()) if total and col_img else 0
+    estoque_zero = int(df[col_estoque].astype(str).str.strip().eq("0").sum()) if total and col_estoque else 0
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Produtos", total)
@@ -232,8 +255,8 @@ def _render_preview_existente() -> None:
 
 
 def _render_configuracao() -> tuple[list[str], ScraperPreset]:
-    st.markdown("#### 🚀 Captura por site — GOD MODE")
-    st.caption("Cole uma URL de produto, categoria ou várias URLs em linhas separadas. O resultado vira a origem oficial do fluxo.")
+    st.markdown("#### 🚀 Captura por site — Agente Autônomo")
+    st.caption("Cole uma URL de produto, categoria ou várias URLs em linhas separadas. O agente escolhe a melhor estratégia e usa crawler como fallback.")
 
     texto_inicial = "\n".join(st.session_state.get("origem_site_urls", [])) or str(st.session_state.get("origem_site_url", "") or "")
     urls_texto = st.text_area(
@@ -247,7 +270,7 @@ def _render_configuracao() -> tuple[list[str], ScraperPreset]:
     c1, c2 = st.columns([1, 1])
     with c1:
         preset_nome = st.selectbox(
-            "Modo de busca",
+            "Modo de fallback",
             options=list(PRESETS.keys()),
             index=0,
             key="origem_site_preset",
@@ -270,13 +293,29 @@ def _executar_busca(urls: list[str], preset: ScraperPreset) -> pd.DataFrame:
 
     for idx, url in enumerate(urls, start=1):
         base_percent = int(((idx - 1) / total_urls) * 100)
-        status.info(f"Lendo URL {idx}/{len(urls)}: {url}")
+        status.info(f"Agente autônomo lendo URL {idx}/{len(urls)}: {url}")
+        detalhes.caption("Estratégia 1: agente autônomo / Instant Scraper")
+
+        try:
+            df_url = run_autonomous_scraper(url)
+            df_url = _normalizar_df_site(df_url)
+            if not df_url.empty:
+                if "URL origem da busca" not in df_url.columns:
+                    df_url["URL origem da busca"] = url
+                resultados.append(df_url)
+                progress.progress(max(0, min(int((idx / total_urls) * 100), 100)))
+                encontrados_box.caption(f"Produtos encontrados nesta URL: {len(df_url)}")
+                log_debug(f"Agente autônomo capturou {len(df_url)} produto(s) em {url}", nivel="INFO")
+                continue
+            log_debug(f"Agente autônomo não encontrou produtos em {url}; acionando fallback crawler.", nivel="AVISO")
+        except Exception as exc:
+            log_debug(f"Falha no agente autônomo em {url}: {exc}; acionando fallback crawler.", nivel="ERRO")
 
         def _callback(percentual: int, mensagem: str, total: int) -> None:
             parcial = int(base_percent + (max(0, min(int(percentual or 0), 100)) / total_urls))
             progress.progress(max(0, min(parcial, 100)))
-            detalhes.caption(str(mensagem or "Buscando produtos..."))
-            encontrados_box.caption(f"Produtos encontrados nesta URL: {int(total or 0)}")
+            detalhes.caption(str(mensagem or "Buscando produtos via fallback..."))
+            encontrados_box.caption(f"Produtos encontrados no fallback: {int(total or 0)}")
             st.session_state["origem_site_status"] = str(mensagem or "")
 
         try:
@@ -285,12 +324,14 @@ def _executar_busca(urls: list[str], preset: ScraperPreset) -> pd.DataFrame:
             if not df_url.empty:
                 if "URL origem da busca" not in df_url.columns:
                     df_url["URL origem da busca"] = url
+                if "agente_estrategia" not in df_url.columns:
+                    df_url["agente_estrategia"] = "crawler_fallback"
                 resultados.append(df_url)
-                log_debug(f"Busca por site encontrou {len(df_url)} produto(s) em {url}", nivel="INFO")
+                log_debug(f"Fallback crawler encontrou {len(df_url)} produto(s) em {url}", nivel="INFO")
             else:
-                log_debug(f"Busca por site não encontrou produtos em {url}", nivel="AVISO")
+                log_debug(f"Fallback crawler não encontrou produtos em {url}", nivel="AVISO")
         except Exception as exc:
-            log_debug(f"Falha na busca por site em {url}: {exc}", nivel="ERRO")
+            log_debug(f"Falha no fallback crawler em {url}: {exc}", nivel="ERRO")
             st.warning(f"Falha ao buscar em {url}: {exc}")
 
     progress.progress(100)
@@ -327,7 +368,7 @@ def render_origem_site_panel() -> None:
                 st.error("Corrija as URLs inválidas antes de buscar: " + ", ".join(urls_invalidas[:3]))
                 return
 
-            st.info(f"Iniciando busca em {len(urls)} URL(s), modo {preset.nome}.")
+            st.info(f"Iniciando busca em {len(urls)} URL(s), fallback {preset.nome}.")
             df_resultado = _executar_busca(urls, preset)
 
             if df_resultado.empty:
