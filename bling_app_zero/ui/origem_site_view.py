@@ -10,6 +10,7 @@ from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import limpar_busca_site, guardar_resultado
 from bling_app_zero.ui.origem_site_utils import extrair_urls, url_valida
 from bling_app_zero.ui.origem_site_visual import render_origem_site_visual_preview
+from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
 
 def _obter_df_atual_site() -> pd.DataFrame | None:
@@ -131,3 +132,8 @@ def render_origem_site_panel() -> None:
     df_atual = _obter_df_atual_site()
     if df_atual is not None:
         render_origem_site_visual_preview(df_atual)
+
+        # 🔥 NOVO: PREVIEW INTELIGENTE baseado no modelo do Bling
+        df_modelo = st.session_state.get("df_modelo")
+        if isinstance(df_modelo, pd.DataFrame) and not df_modelo.empty:
+            render_preview_inteligente(df_atual, df_modelo)
