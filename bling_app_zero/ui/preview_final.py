@@ -30,10 +30,42 @@ from bling_app_zero.ui.preview_final_state import (
 
 
 def _render_preview_sem_df() -> None:
-    st.warning("O resultado final ainda não foi gerado.")
+    st.warning("O resultado final ainda não foi gerado a partir do modelo Bling anexado.")
+    st.caption("Volte para o mapeamento, anexe o modelo oficial do Bling e gere o resultado final usando esse modelo.")
     if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_preview_sem_df"):
         st.session_state["_ultima_etapa_sincronizada_url"] = "mapeamento"
         voltar_etapa_anterior()
+
+
+def _render_sem_modelo_bling() -> None:
+    st.error("Preview bloqueado: envie primeiro o modelo oficial do Bling.")
+    st.caption("O preview final e o download só podem existir quando forem montados sobre as colunas do modelo Bling anexado.")
+    if st.button("⬅️ Voltar para origem e anexar modelo", use_container_width=True, key="btn_voltar_origem_sem_modelo_preview"):
+        st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
+        ir_para_etapa("origem")
+        st.rerun()
+
+
+def _colunas_iguais_ao_modelo(df_final: pd.DataFrame, df_modelo: pd.DataFrame) -> bool:
+    if not isinstance(df_final, pd.DataFrame) or not isinstance(df_modelo, pd.DataFrame):
+        return False
+    col_final = [str(c).strip() for c in df_final.columns.tolist()]
+    col_modelo = [str(c).strip() for c in df_modelo.columns.tolist()]
+    return col_final == col_modelo
+
+
+def _alinhar_ao_modelo_bling(df_final: pd.DataFrame, df_modelo: pd.DataFrame) -> pd.DataFrame:
+    modelo_cols = [str(c).strip() for c in df_modelo.columns.tolist()]
+    base = df_final.copy().fillna("") if isinstance(df_final, pd.DataFrame) else pd.DataFrame()
+
+    if base.empty and len(modelo_cols) > 0:
+        return pd.DataFrame(columns=modelo_cols)
+
+    for coluna in modelo_cols:
+        if coluna not in base.columns:
+            base[coluna] = ""
+
+    return base[modelo_cols].fillna("")
 
 
 def _eh_valor_preenchido(valor) -> bool:
@@ -133,6 +165,12 @@ def render_preview_final() -> None:
 
     tipo_operacao = normalizar_texto(st.session_state.get("tipo_operacao") or "cadastro") or "cadastro"
     deposito_nome = sincronizar_deposito_nome()
+    df_modelo = st.session_state.get("df_modelo")
+
+    if not safe_df_estrutura(df_modelo):
+        _render_sem_modelo_bling()
+        return
+
     df_final = obter_df_final_exclusivo()
 
     df_final_session = st.session_state.get("df_final")
@@ -149,15 +187,33 @@ def render_preview_final() -> None:
         _render_preview_sem_df()
         return
 
+    df_final = _alinhar_ao_modelo_bling(df_final, df_modelo)
+    st.session_state["df_final"] = df_final
+
+    if not _colunas_iguais_ao_modelo(df_final, df_modelo):
+        st.error("Preview bloqueado: as colunas finais não correspondem ao modelo Bling anexado.")
+        st.caption("Gere novamente o resultado final a partir do mapeamento usando o modelo Bling atual.")
+        if st.button("⬅️ Voltar para mapeamento", use_container_width=True, key="btn_voltar_mapeamento_colunas_divergentes"):
+            ir_para_etapa("mapeamento")
+            st.rerun()
+        return
+
     df_final = _normalizar_df_preview(df_final, tipo_operacao, deposito_nome)
+    df_final = _alinhar_ao_modelo_bling(df_final, df_modelo)
+    st.session_state["df_final"] = df_final
     sincronizar_estado_quando_df_mudar(df_final)
 
     validacao_ok, _ = render_resumo_validacao(df_final, tipo_operacao)
     df_final = _obter_df_preview_atualizado(df_final, tipo_operacao, deposito_nome)
+    df_final = _alinhar_ao_modelo_bling(df_final, df_modelo)
+    st.session_state["df_final"] = df_final
 
     df_final = render_ai_descricao(df_final)
     df_final = _obter_df_preview_atualizado(df_final, tipo_operacao, deposito_nome)
+    df_final = _alinhar_ao_modelo_bling(df_final, df_modelo)
+    st.session_state["df_final"] = df_final
 
+    st.success("Preview final gerado sobre o modelo Bling anexado.")
     render_preview_dataframe(df_final)
     render_download(df_final, validacao_ok)
     render_painel_bling(df_final, tipo_operacao, deposito_nome, validacao_ok)
