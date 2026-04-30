@@ -6,6 +6,8 @@ from typing import Any, List
 
 import pandas as pd
 
+from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
+
 from .html_fetcher import fetch_html
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
@@ -20,7 +22,23 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy().fillna("")
 
-    colunas_base = ["nome", "preco", "url_produto", "imagens", "descricao"]
+    colunas_base = [
+        "fornecedor",
+        "url_produto",
+        "nome",
+        "sku",
+        "marca",
+        "categoria",
+        "preco",
+        "estoque",
+        "quantidade",
+        "quantidade_real",
+        "estoque_origem",
+        "gtin",
+        "descricao",
+        "imagens",
+    ]
+
     for col in colunas_base:
         if col not in df.columns:
             df[col] = ""
@@ -38,11 +56,32 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def run_scraper(url: str) -> pd.DataFrame:
-    url = str(url or "").strip()
-    if not url:
+def _run_mega_center(url: str) -> pd.DataFrame:
+    supplier = MegaCenterSupplier()
+
+    if not supplier.can_handle(url):
         return pd.DataFrame()
 
+    try:
+        produtos = supplier.fetch(
+            url,
+            limite=300,
+            max_paginas=40,
+            max_workers=8,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    if not produtos:
+        return pd.DataFrame()
+
+    try:
+        return _normalizar_df(pd.DataFrame(produtos))
+    except Exception:
+        return pd.DataFrame()
+
+
+def _run_generico(url: str) -> pd.DataFrame:
     try:
         html = fetch_html(url)
     except Exception:
@@ -78,3 +117,14 @@ def run_scraper(url: str) -> pd.DataFrame:
 
     return _normalizar_df(df)
 
+
+def run_scraper(url: str) -> pd.DataFrame:
+    url = str(url or "").strip()
+    if not url:
+        return pd.DataFrame()
+
+    df_mega = _run_mega_center(url)
+    if isinstance(df_mega, pd.DataFrame) and not df_mega.empty:
+        return df_mega
+
+    return _run_generico(url)
