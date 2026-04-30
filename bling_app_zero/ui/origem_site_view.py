@@ -14,14 +14,13 @@ from bling_app_zero.ui.origem_site_visual import render_origem_site_visual_previ
 from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
 
-CHAVES_PREVIEW_OFICIAL_SITE = [
+CHAVES_PREVIEW_SITE_MODELO_BLING = [
     "df_preview_inteligente",
     "df_auto_mapa",
-    "df_precificado",
-    "df_final",
-    "origem_site_preview_oficial",
-    "origem_site_preview_oficial_linhas",
-    "origem_site_preview_oficial_colunas",
+    "df_preview_site_modelo_bling",
+    "origem_site_preview_modelo_bling",
+    "origem_site_preview_modelo_bling_linhas",
+    "origem_site_preview_modelo_bling_colunas",
     "origem_site_preview_hash",
 ]
 
@@ -56,12 +55,12 @@ def _hash_df_simples(df: pd.DataFrame) -> str:
         return ""
 
 
-def _limpar_preview_oficial_site() -> None:
-    for chave in CHAVES_PREVIEW_OFICIAL_SITE:
+def _limpar_preview_site_modelo_bling() -> None:
+    for chave in CHAVES_PREVIEW_SITE_MODELO_BLING:
         st.session_state.pop(chave, None)
 
 
-def _normalizar_preview_oficial(df_preview: pd.DataFrame) -> pd.DataFrame:
+def _normalizar_preview_modelo_bling(df_preview: pd.DataFrame) -> pd.DataFrame:
     base = df_preview.copy().fillna("")
     base.columns = [str(c).strip() for c in base.columns]
 
@@ -82,32 +81,39 @@ def _normalizar_preview_oficial(df_preview: pd.DataFrame) -> pd.DataFrame:
     return base.fillna("")
 
 
-def _promover_preview_inteligente_para_fluxo(df_preview: pd.DataFrame) -> bool:
+def _usar_preview_site_como_base_do_mapeamento(df_preview: pd.DataFrame) -> bool:
     if not _df_valido(df_preview):
-        st.error("Preview inteligente inválido. Gere a captura novamente antes de continuar.")
+        st.error("Preview da busca por site inválido. Gere a captura novamente antes de continuar.")
         return False
 
-    df_oficial = _normalizar_preview_oficial(df_preview)
-    hash_oficial = _hash_df_simples(df_oficial)
+    df_modelo = st.session_state.get("df_modelo")
+    if not isinstance(df_modelo, pd.DataFrame) or len(df_modelo.columns) == 0:
+        st.error("Anexe o modelo Bling antes de usar o preview da busca por site.")
+        return False
 
-    st.session_state["df_preview_inteligente"] = df_oficial.copy()
-    st.session_state["df_precificado"] = df_oficial.copy()
-    st.session_state["df_final"] = df_oficial.copy()
-    st.session_state["origem_site_preview_oficial"] = True
-    st.session_state["origem_site_preview_oficial_linhas"] = len(df_oficial)
-    st.session_state["origem_site_preview_oficial_colunas"] = len(df_oficial.columns)
-    st.session_state["origem_site_preview_hash"] = hash_oficial
-    st.session_state["mapping_hash_base"] = hash_oficial
-    st.session_state["mapping_hash_modelo"] = _hash_df_simples(st.session_state.get("df_modelo", pd.DataFrame()))
-    st.session_state["mapping_manual"] = {str(col): str(col) for col in df_oficial.columns.tolist()}
+    df_preview_modelo = _normalizar_preview_modelo_bling(df_preview)
+    hash_preview = _hash_df_simples(df_preview_modelo)
+
+    st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
+    st.session_state["df_preview_site_modelo_bling"] = df_preview_modelo.copy()
+    st.session_state["df_precificado"] = df_preview_modelo.copy()
+    st.session_state["origem_site_preview_modelo_bling"] = True
+    st.session_state["origem_site_preview_modelo_bling_linhas"] = len(df_preview_modelo)
+    st.session_state["origem_site_preview_modelo_bling_colunas"] = len(df_preview_modelo.columns)
+    st.session_state["origem_site_preview_hash"] = hash_preview
+    st.session_state["mapping_hash_base"] = hash_preview
+    st.session_state["mapping_hash_modelo"] = _hash_df_simples(df_modelo)
+    st.session_state["mapping_manual"] = {str(col): str(col) for col in df_preview_modelo.columns.tolist()}
     st.session_state["mapping_sugerido"] = {}
     st.session_state["agent_ui_package"] = {
-        "status": "preview_site_oficial",
-        "mensagem": "Preview inteligente da captura por site promovido como base oficial do fluxo.",
+        "status": "preview_site_modelo_bling",
+        "mensagem": "Preview da busca por site montado em cima do modelo Bling anexado.",
     }
     st.session_state["_ia_auto_mapping_executado"] = True
 
-    if set_etapa_segura("mapeamento", origem="origem_site_preview_oficial"):
+    st.session_state.pop("df_final", None)
+
+    if set_etapa_segura("mapeamento", origem="origem_site_preview_modelo_bling"):
         st.rerun()
         return True
 
@@ -115,29 +121,28 @@ def _promover_preview_inteligente_para_fluxo(df_preview: pd.DataFrame) -> bool:
     return False
 
 
-def _render_acao_preview_oficial(df_preview: pd.DataFrame) -> None:
+def _render_acao_preview_modelo_bling(df_preview: pd.DataFrame) -> None:
     if not _df_valido(df_preview):
         return
 
-    st.markdown("#### ✅ Usar preview no fluxo oficial")
+    st.markdown("#### ✅ Usar este preview para revisar/mapeamento")
     st.caption(
-        "Este botão transforma o preview inteligente abaixo na base oficial do mapeamento, "
-        "do preview final e do download. Assim a captura por site passa a seguir exatamente "
-        "as colunas do modelo Bling anexado."
+        "Este botão usa a planilha de preview da busca por site como base da próxima etapa. "
+        "Ela já está nas colunas do modelo Bling anexado, mas ainda não é o preview final nem o arquivo de download."
     )
 
     col1, col2 = st.columns([2, 1])
     with col1:
         usar_preview = st.button(
-            "✅ Usar este preview no modelo Bling e continuar",
-            key="btn_usar_preview_site_oficial",
+            "✅ Usar este preview e continuar",
+            key="btn_usar_preview_site_modelo_bling",
             use_container_width=True,
         )
     with col2:
-        st.metric("Linhas prontas", len(df_preview))
+        st.metric("Linhas no preview", len(df_preview))
 
     if usar_preview:
-        _promover_preview_inteligente_para_fluxo(df_preview)
+        _usar_preview_site_como_base_do_mapeamento(df_preview)
 
 
 def _formatar_tempo(segundos: float) -> str:
@@ -198,7 +203,7 @@ def _criar_monitor_progresso(total_urls: int):
             f"{int(total_linhas)} linhas encontradas • "
             f"{total_passos}/{total_passos} etapas finalizadas"
         )
-        detalhe.caption("Resultado consolidado e pronto para preview/mapeamento.")
+        detalhe.caption("Resultado consolidado e pronto para gerar preview baseado no modelo Bling.")
 
     return atualizar, finalizar
 
@@ -218,7 +223,8 @@ def render_origem_site_panel() -> None:
 
         if limpar:
             limpar_busca_site()
-            _limpar_preview_oficial_site()
+            _limpar_preview_site_modelo_bling()
+            st.session_state.pop("df_final", None)
             st.rerun()
 
         if executar:
@@ -240,15 +246,16 @@ def render_origem_site_panel() -> None:
                 return
 
             guardar_resultado(df, urls, None, "AUTO_TOTAL")
-            _limpar_preview_oficial_site()
+            _limpar_preview_site_modelo_bling()
+            st.session_state.pop("df_final", None)
             finalizar_progresso(len(df))
             st.success(f"{len(df)} produtos encontrados (ULTRA automático)")
             st.rerun()
 
     df_atual = _obter_df_atual_site()
     if df_atual is not None:
-        st.markdown("#### 📦 Preview bruto da captura")
-        st.caption("Este é o resultado extraído do site antes de encaixar no modelo Bling.")
+        st.markdown("#### 📦 Dados brutos capturados do site")
+        st.caption("Este é apenas o resultado bruto da captura. A planilha de preview aparece abaixo usando o modelo Bling anexado.")
         render_origem_site_visual_preview(df_atual)
 
         df_modelo = st.session_state.get("df_modelo")
@@ -257,8 +264,8 @@ def render_origem_site_panel() -> None:
             df_preview = render_preview_inteligente(
                 df_atual,
                 df_modelo,
-                titulo="Preview convertido para o modelo do Bling",
+                titulo="Planilha de preview da busca por site baseada no modelo Bling anexado",
             )
-            _render_acao_preview_oficial(df_preview)
+            _render_acao_preview_modelo_bling(df_preview)
         else:
-            st.info("Envie o modelo do Bling para gerar o preview oficial nas colunas corretas.")
+            st.info("Anexe o modelo Bling para gerar a planilha de preview da busca por site nas colunas corretas.")
