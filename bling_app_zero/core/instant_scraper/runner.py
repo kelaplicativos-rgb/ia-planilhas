@@ -2,94 +2,55 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List
 
 import pandas as pd
 
 from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
 
 from .html_fetcher import fetch_html, obter_ultimo_fetch_info
-from .browser_fetcher import fetch_html_browser, obter_ultimo_browser_fetch_info
+from .browser_fetcher import fetch_html_browser
+from .pagination import coletar_paginas_genericas
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
 
 
-MAX_CANDIDATOS_RUNNER = 5
+MAX_CANDIDATOS = 5
 
 
-def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
+def _normalizar_df(df):
     if df is None or df.empty:
         return pd.DataFrame()
-
     df = df.copy().fillna("")
-
-    colunas_base = [
-        "fornecedor",
-        "url_produto",
-        "nome",
-        "sku",
-        "marca",
-        "categoria",
-        "preco",
-        "estoque",
-        "quantidade",
-        "quantidade_real",
-        "estoque_origem",
-        "gtin",
-        "descricao",
-        "imagens",
-    ]
-
-    for col in colunas_base:
-        if col not in df.columns:
-            df[col] = ""
-
-    for col in df.columns:
-        df[col] = df[col].map(lambda x: str(x or "").strip())
-
     return df.reset_index(drop=True)
 
 
-def _obter_html_hibrido(url: str) -> str:
-    # 1. tenta HTTP
+def _fetch_hibrido(url):
     html = fetch_html(url)
     info = obter_ultimo_fetch_info()
 
     if html:
-        # se parece JS pesado, tenta browser também
         if info.get("parece_javascript"):
             html_browser = fetch_html_browser(url)
             if html_browser:
                 return html_browser
-
         return html
 
-    # 2. fallback browser
-    html_browser = fetch_html_browser(url)
-    if html_browser:
-        return html_browser
-
-    return ""
+    return fetch_html_browser(url)
 
 
-def _run_generico(url: str) -> pd.DataFrame:
-    html = _obter_html_hibrido(url)
-
-    if not html:
-        return pd.DataFrame()
-
+def _extrair_da_pagina(html, url):
     try:
-        candidates: List[dict[str, Any]] = detectar_blocos_repetidos(html)
+        candidatos = detectar_blocos_repetidos(html)
     except Exception:
         return pd.DataFrame()
 
-    frames: list[pd.DataFrame] = []
+    frames = []
 
-    for candidate in candidates[:MAX_CANDIDATOS_RUNNER]:
+    for c in candidatos[:MAX_CANDIDATOS]:
         try:
-            elements = candidate.get("elements", [])[:80]
-            produtos = extrair_lista(elements, url)
-
+            elementos = c.get("elements", [])[:80]
+            produtos = extrair_lista(elementos, url)
             if produtos:
                 frames.append(pd.DataFrame(produtos))
         except Exception:
@@ -98,21 +59,43 @@ def _run_generico(url: str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
 
-    try:
-        df = pd.concat(frames, ignore_index=True)
-    except Exception:
+    return pd.concat(frames, ignore_index=True)
+
+
+def _run_generico(url):
+    paginas = coletar_paginas_genericas(url, _fetch_hibrido, max_paginas=8)
+
+    frames = []
+
+    for pagina_url in paginas.urls:
+        html = _fetch_hibrido(pagina_url)
+        if not html:
+            continue
+
+        df = _extrair_da_pagina(html, pagina_url)
+
+        if not df.empty:
+            frames.append(df)
+
+    if not frames:
         return pd.DataFrame()
 
-    return _normalizar_df(df)
+    final = pd.concat(frames, ignore_index=True)
+
+    if "url_produto" in final.columns and "nome" in final.columns:
+        final = final.drop_duplicates(subset=["url_produto", "nome"], keep="first")
+
+    return _normalizar_df(final)
 
 
-def run_scraper(url: str) -> pd.DataFrame:
+def run_scraper(url: str):
     url = str(url or "").strip()
     if not url:
         return pd.DataFrame()
 
     supplier = MegaCenterSupplier()
     if supplier.can_handle(url):
-        return supplier.fetch(url)
+        produtos = supplier.fetch(url)
+        return pd.DataFrame(produtos)
 
     return _run_generico(url)
