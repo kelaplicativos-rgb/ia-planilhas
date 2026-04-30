@@ -14,6 +14,7 @@ PLAYWRIGHT_MARKER_DIR.mkdir(parents=True, exist_ok=True)
 PLAYWRIGHT_OK_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_ok.marker"
 PLAYWRIGHT_FAIL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_browser_fail.marker"
 PLAYWRIGHT_INSTALL_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_chromium_install_attempted.marker"
+PLAYWRIGHT_DEPS_MARKER = PLAYWRIGHT_MARKER_DIR / "playwright_deps_install_attempted.marker"
 
 
 def _log(msg: str) -> None:
@@ -32,33 +33,45 @@ def _playwright_modulo_instalado() -> bool:
         return False
 
 
-def _instalar_chromium_runtime() -> None:
-    """Tenta baixar o Chromium do Playwright no runtime do Streamlit Cloud.
+def _rodar_comando(cmd: list[str], timeout: int = 180) -> bool:
+    try:
+        subprocess.run(cmd, check=True, timeout=timeout)
+        return True
+    except Exception as exc:
+        _log(f"[PLAYWRIGHT] Comando falhou: {' '.join(cmd)} | erro={exc}")
+        return False
 
-    O Streamlit Cloud nem sempre executa postBuild. Então este fallback roda
-    uma única vez por container quando o browser ainda não existe.
-    """
+
+def _instalar_chromium_runtime() -> None:
     if PLAYWRIGHT_INSTALL_MARKER.exists():
         return
-
     if not _playwright_modulo_instalado():
         return
 
+    _log("[PLAYWRIGHT] Chromium ausente. Tentando instalar em runtime...")
+    ok = _rodar_comando([sys.executable, "-m", "playwright", "install", "chromium"], timeout=180)
     try:
-        _log("[PLAYWRIGHT] Chromium ausente. Tentando instalar em runtime...")
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            check=True,
-            timeout=180,
-        )
-        PLAYWRIGHT_INSTALL_MARKER.write_text("ok", encoding="utf-8")
+        PLAYWRIGHT_INSTALL_MARKER.write_text("ok" if ok else "fail", encoding="utf-8")
+    except Exception:
+        pass
+    if ok:
         _log("[PLAYWRIGHT] Chromium instalado em runtime com sucesso.")
-    except Exception as exc:
-        try:
-            PLAYWRIGHT_INSTALL_MARKER.write_text("fail", encoding="utf-8")
-        except Exception:
-            pass
-        _log(f"[PLAYWRIGHT] Falha ao instalar Chromium em runtime: {exc}")
+
+
+def _instalar_deps_runtime() -> None:
+    if PLAYWRIGHT_DEPS_MARKER.exists():
+        return
+    if not _playwright_modulo_instalado():
+        return
+
+    _log("[PLAYWRIGHT] Dependências Linux ausentes. Tentando install-deps...")
+    ok = _rodar_comando([sys.executable, "-m", "playwright", "install-deps", "chromium"], timeout=240)
+    try:
+        PLAYWRIGHT_DEPS_MARKER.write_text("ok" if ok else "fail", encoding="utf-8")
+    except Exception:
+        pass
+    if ok:
+        _log("[PLAYWRIGHT] Dependências Linux instaladas em runtime.")
 
 
 def _playwright_browser_ok() -> bool:
@@ -102,6 +115,10 @@ def _detectar_modo_crawler() -> dict[str, object]:
 
     if not browser_ok:
         _instalar_chromium_runtime()
+        browser_ok = _playwright_browser_ok()
+
+    if not browser_ok:
+        _instalar_deps_runtime()
         browser_ok = _playwright_browser_ok()
 
     status["playwright_browser_ok"] = browser_ok
@@ -152,19 +169,14 @@ def init_app() -> None:
 
     if "etapa" not in st.session_state:
         st.session_state["etapa"] = "origem"
-
     if "etapa_origem" not in st.session_state:
         st.session_state["etapa_origem"] = "origem"
-
     if "etapa_fluxo" not in st.session_state:
         st.session_state["etapa_fluxo"] = "origem"
-
     if "etapa_historico" not in st.session_state:
         st.session_state["etapa_historico"] = []
-
     if "_etapa_url_inicializada" not in st.session_state:
         st.session_state["_etapa_url_inicializada"] = False
-
     if "_ultima_etapa_sincronizada_url" not in st.session_state:
         st.session_state["_ultima_etapa_sincronizada_url"] = "origem"
 
