@@ -11,6 +11,11 @@ def etapa_valida(etapa: str) -> str:
     return etapa if etapa in ETAPAS_ORDEM else "origem"
 
 
+def etapa_ou_vazio(etapa: str) -> str:
+    etapa = str(etapa or "").strip()
+    return etapa if etapa in ETAPAS_ORDEM else ""
+
+
 def indice(etapa: str) -> int:
     return ETAPAS_ORDEM.index(etapa_valida(etapa))
 
@@ -33,7 +38,7 @@ def query_get() -> str:
         return ""
     if isinstance(valor, list):
         valor = valor[0] if valor else ""
-    return etapa_valida(valor)
+    return etapa_ou_vazio(valor)
 
 
 def atualizar_maxima() -> None:
@@ -77,9 +82,11 @@ def set_etapa_segura(etapa: str, origem: str = "sistema") -> bool:
 def sincronizar_fluxo_inicial() -> None:
     atualizar_maxima()
     etapa_url = query_get()
-    etapa_legacy = etapa_valida(st.session_state.get("etapa", ""))
+    etapa_legacy = etapa_ou_vazio(st.session_state.get("etapa", ""))
     etapa_wizard = etapa_valida(st.session_state.get("wizard_etapa_atual", "origem"))
-    alvo = etapa_url if etapa_url in ETAPAS_ORDEM else etapa_legacy if etapa_legacy in ETAPAS_ORDEM else etapa_wizard
+    alvo = etapa_url or etapa_legacy or etapa_wizard
+    alvo = etapa_valida(alvo)
+
     if indice(alvo) <= indice(st.session_state.get("wizard_etapa_maxima", "origem")) and requisitos_ok(alvo):
         st.session_state["wizard_etapa_atual"] = alvo
         st.session_state["etapa"] = alvo
