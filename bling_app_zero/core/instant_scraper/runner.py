@@ -13,6 +13,7 @@ from .domain_crawler import descobrir_urls_produto
 from .ultra_detector import detectar_blocos_repetidos
 from .ultra_extractor import extrair_lista
 from .ai_normalizer import normalizar_produtos_ai
+from .gpt_enricher import enriquecer_produtos_gpt
 
 
 MAX_CANDIDATOS = 5
@@ -83,7 +84,10 @@ def _run_generico(url):
     if "url_produto" in final.columns and "nome" in final.columns:
         final = final.drop_duplicates(subset=["url_produto", "nome"], keep="first")
 
-    return normalizar_produtos_ai(final)
+    final = normalizar_produtos_ai(final)
+    final = enriquecer_produtos_gpt(final, limite=30, score_minimo=50)
+
+    return final
 
 
 def _run_god_mode(url):
@@ -108,7 +112,10 @@ def _run_god_mode(url):
     if "url_produto" in final.columns:
         final = final.drop_duplicates(subset=["url_produto"], keep="first")
 
-    return normalizar_produtos_ai(final)
+    final = normalizar_produtos_ai(final)
+    final = enriquecer_produtos_gpt(final, limite=30, score_minimo=50)
+
+    return final
 
 
 def run_scraper(url: str):
@@ -119,7 +126,10 @@ def run_scraper(url: str):
     supplier = MegaCenterSupplier()
     if supplier.can_handle(url):
         produtos = supplier.fetch(url)
-        return normalizar_produtos_ai(pd.DataFrame(produtos))
+        df = pd.DataFrame(produtos)
+        df = normalizar_produtos_ai(df)
+        df = enriquecer_produtos_gpt(df, limite=30, score_minimo=50)
+        return df
 
     df_god = _run_god_mode(url)
     if not df_god.empty:
