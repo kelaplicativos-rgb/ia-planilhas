@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ class ExhaustiveConfig:
     max_browser_pages: int = 80
     min_score: int = 45
     save_every: int = 25
+    max_runtime_seconds: int = 540
 
 
 @dataclass
@@ -126,6 +128,11 @@ def _extract_http(url: str, auth_context: dict | None = None) -> pd.DataFrame:
     return instant_extract(html, url, min_score=25)
 
 
+def _runtime_exceeded(started_at: float, config: ExhaustiveConfig) -> bool:
+    limite = int(getattr(config, "max_runtime_seconds", 0) or 0)
+    return bool(limite > 0 and (time.time() - started_at) >= limite)
+
+
 def run_exhaustive_capture(
     url: str,
     *,
@@ -138,6 +145,7 @@ def run_exhaustive_capture(
     if not url:
         return ExhaustiveResult(status="url_vazia")
 
+    started_at = time.time()
     frames: list[pd.DataFrame] = []
     processed = 0
 
@@ -158,10 +166,11 @@ def run_exhaustive_capture(
     if not initial.empty:
         frames.append(initial)
 
-    browser_initial = browser_extract(url, max_clicks=20, progress_callback=progress).dataframe
-    browser_initial = _normalize_final(browser_initial, url, "exhaustive_initial_browser")
-    if not browser_initial.empty:
-        frames.append(browser_initial)
+    if not _runtime_exceeded(started_at, config):
+        browser_initial = browser_extract(url, max_clicks=20, progress_callback=progress).dataframe
+        browser_initial = _normalize_final(browser_initial, url, "exhaustive_initial_browser")
+        if not browser_initial.empty:
+            frames.append(browser_initial)
 
     partial = _dedup(pd.concat(frames, ignore_index=True, sort=False)) if frames else pd.DataFrame()
     _save_checkpoint(url, partial, {"stage": "initial", "updated_at": datetime.now().isoformat(), "rows": len(partial)})
@@ -175,7 +184,13 @@ def run_exhaustive_capture(
     )
     product_urls = list(dict.fromkeys(crawl.urls or []))[: int(config.max_product_urls)]
 
+    status = "ok"
     for idx, product_url in enumerate(product_urls, start=1):
+        if _runtime_exceeded(started_at, config):
+            status = "checkpoint_parcial_tempo_limite"
+            progress(98, "Tempo seguro atingido. Salvando checkpoint parcial.", idx)
+            break
+
         processed = idx
         percent = 25 + int((idx / max(len(product_urls), 1)) * 70)
         progress(percent, f"Captura exaustiva: produto {idx}/{len(product_urls)}", idx)
@@ -205,7 +220,8 @@ def run_exhaustive_capture(
         url,
         final,
         {
-            "stage": "done",
+            "stage": "done" if status == "ok" else "partial",
+            "status": status,
             "updated_at": datetime.now().isoformat(),
             "processed": processed,
             "discovered": len(product_urls),
@@ -218,6 +234,6 @@ def run_exhaustive_capture(
         dataframe=final,
         urls_discovered=len(product_urls),
         urls_processed=processed,
-        status="ok" if not final.empty else "sem_resultado",
+        status=status if not final.empty else "sem_resultado",
         checkpoint_path=checkpoint_path,
     )
