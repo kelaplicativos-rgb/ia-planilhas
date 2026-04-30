@@ -10,7 +10,6 @@ from bling_app_zero.ui.origem_site_config import MOTORES_SITE, PRESETS
 from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import limpar_busca_site, guardar_resultado
 from bling_app_zero.ui.origem_site_utils import extrair_urls, url_valida
-from bling_app_zero.ui.origem_site_visual import render_origem_site_visual_preview
 from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
 
@@ -26,6 +25,23 @@ CHAVES_PREVIEW_SITE_MODELO_BLING = [
 
 
 def _obter_df_atual_site() -> pd.DataFrame | None:
+    df_preview = st.session_state.get("df_preview_site_modelo_bling")
+    df_saida = st.session_state.get("df_saida")
+    df_origem = st.session_state.get("df_origem")
+
+    if isinstance(df_preview, pd.DataFrame) and not df_preview.empty:
+        return df_preview
+
+    if isinstance(df_saida, pd.DataFrame) and not df_saida.empty:
+        return df_saida
+
+    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
+        return df_origem
+
+    return None
+
+
+def _obter_df_bruto_site() -> pd.DataFrame | None:
     df_saida = st.session_state.get("df_saida")
     df_origem = st.session_state.get("df_origem")
 
@@ -125,10 +141,10 @@ def _render_acao_preview_modelo_bling(df_preview: pd.DataFrame) -> None:
     if not _df_valido(df_preview):
         return
 
-    st.markdown("#### ✅ Usar este preview para revisar/mapeamento")
+    st.markdown("#### ✅ Continuar para revisão/mapeamento")
     st.caption(
-        "Este botão usa a planilha de preview da busca por site como base da próxima etapa. "
-        "Ela já está nas colunas do modelo Bling anexado, mas ainda não é o preview final nem o arquivo de download."
+        "Use esta planilha de preview como base da próxima etapa. "
+        "Ela já está nas colunas do modelo Bling anexado."
     )
 
     col1, col2 = st.columns([2, 1])
@@ -139,7 +155,7 @@ def _render_acao_preview_modelo_bling(df_preview: pd.DataFrame) -> None:
             use_container_width=True,
         )
     with col2:
-        st.metric("Linhas no preview", len(df_preview))
+        st.metric("Linhas", len(df_preview))
 
     if usar_preview:
         _usar_preview_site_como_base_do_mapeamento(df_preview)
@@ -311,17 +327,12 @@ def render_origem_site_panel() -> None:
             st.success(f"{len(df)} produtos encontrados (ULTRA automático)")
             st.rerun()
 
-    df_atual = _obter_df_atual_site()
-    if df_atual is not None:
-        st.markdown("#### 📦 Dados brutos capturados do site")
-        st.caption("Este é apenas o resultado bruto da captura. A planilha de preview aparece abaixo usando o modelo Bling anexado.")
-        render_origem_site_visual_preview(df_atual)
-
+    df_bruto = _obter_df_bruto_site()
+    if df_bruto is not None:
         df_modelo = st.session_state.get("df_modelo")
         if isinstance(df_modelo, pd.DataFrame) and not df_modelo.empty:
-            st.markdown("---")
             df_preview = render_preview_inteligente(
-                df_atual,
+                df_bruto,
                 df_modelo,
                 titulo="Planilha de preview da busca por site baseada no modelo Bling anexado",
             )
