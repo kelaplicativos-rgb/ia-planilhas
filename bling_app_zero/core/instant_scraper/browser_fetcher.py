@@ -1,15 +1,48 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional
+
+
+LAST_BROWSER_FETCH_INFO = {
+    "habilitado": False,
+    "executado": False,
+    "ok": False,
+    "erro": "",
+    "motivo": "",
+    "html_chars": 0,
+    "url_final": "",
+}
+
+
+def _registrar_browser_info(**kwargs: Any) -> None:
+    for chave in list(LAST_BROWSER_FETCH_INFO.keys()):
+        if chave in kwargs:
+            LAST_BROWSER_FETCH_INFO[chave] = kwargs[chave]
+
+
+def obter_ultimo_browser_fetch_info() -> dict[str, Any]:
+    return dict(LAST_BROWSER_FETCH_INFO)
+
+
+def playwright_disponivel() -> bool:
+    try:
+        import playwright.async_api  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 class BrowserFetcher:
     """
-    Fallback com Playwright:
-    - abre a página como navegador real
-    - faz scroll automático
-    - retorna HTML renderizado
+    Fallback opcional com Playwright.
+
+    Regras:
+    - não quebra o app se Playwright não estiver instalado;
+    - tenta abrir a página como navegador real;
+    - faz scroll automático;
+    - retorna HTML renderizado;
+    - registra diagnóstico para a UI.
     """
 
     def __init__(
@@ -23,19 +56,51 @@ class BrowserFetcher:
         self.wait_after_scroll_ms = wait_after_scroll_ms
 
     def fetch(self, url: str) -> str:
+        url = self._normalize_url(url)
+        _registrar_browser_info(
+            habilitado=playwright_disponivel(),
+            executado=True,
+            ok=False,
+            erro="",
+            motivo="inicio",
+            html_chars=0,
+            url_final=url,
+        )
+
+        if not url:
+            _registrar_browser_info(erro="URL vazia", motivo="url_vazia")
+            return ""
+
+        if not playwright_disponivel():
+            _registrar_browser_info(
+                erro="Playwright não está instalado neste ambiente.",
+                motivo="playwright_indisponivel",
+            )
+            return ""
+
         try:
             return asyncio.run(self._fetch_async(url))
         except RuntimeError:
             loop = asyncio.new_event_loop()
             try:
                 return loop.run_until_complete(self._fetch_async(url))
+            except Exception as exc:
+                _registrar_browser_info(erro=str(exc), motivo="erro_event_loop")
+                return ""
             finally:
                 loop.close()
+        except Exception as exc:
+            _registrar_browser_info(erro=str(exc), motivo="erro_browser_fetch")
+            return ""
 
     async def _fetch_async(self, url: str) -> str:
         try:
             from playwright.async_api import async_playwright
-        except Exception:
+        except Exception as exc:
+            _registrar_browser_info(
+                erro=f"Falha ao importar Playwright: {exc}",
+                motivo="falha_import_playwright",
+            )
             return ""
 
         browser = None
@@ -56,14 +121,14 @@ class BrowserFetcher:
                     user_agent=(
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                         "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
+                        "Chrome/124.0.0.0 Safari/537.36"
                     ),
-                    viewport={"width": 1366, "height": 768},
+                    viewport={"width": 1366, "height": 900},
                     locale="pt-BR",
                 )
 
                 await page.goto(
-                    self._normalize_url(url),
+                    url,
                     wait_until="domcontentloaded",
                     timeout=self.timeout_ms,
                 )
@@ -76,9 +141,25 @@ class BrowserFetcher:
                     pass
 
                 html = await page.content()
-                return html or ""
+                html = html or ""
 
-        except Exception:
+                _registrar_browser_info(
+                    ok=bool(html.strip()),
+                    erro="" if html.strip() else "Browser abriu, mas HTML veio vazio.",
+                    motivo="ok" if html.strip() else "html_vazio",
+                    html_chars=len(html),
+                    url_final=page.url or url,
+                )
+                return html
+
+        except Exception as exc:
+            _registrar_browser_info(
+                ok=False,
+                erro=str(exc),
+                motivo="erro_execucao_playwright",
+                html_chars=0,
+                url_final=url,
+            )
             return ""
 
         finally:
