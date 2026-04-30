@@ -15,7 +15,8 @@ from .instant_dom_engine import instant_extract
 from .ai_normalizer import normalizar_produtos_ai
 from .gpt_enricher import enriquecer_produtos_gpt
 from .auto_learning import aprender_padrao, aplicar_padrao_aprendido
-from .self_healing import auto_heal_dataframe, diagnosticar_dataframe
+from .self_healing import auto_heal_dataframe
+from .autonomous_agent import run_autonomous_agent
 
 
 MAX_CANDIDATOS = 5
@@ -37,15 +38,7 @@ def _finalizar_df(df: pd.DataFrame, url_base: str = "") -> pd.DataFrame:
     if url_base:
         base = aplicar_padrao_aprendido(url_base, base)
 
-    # 🔥 SELF HEALING ENTRA AQUI
     base = auto_heal_dataframe(base, url_base)
-
-    if "url_produto" in base.columns and "nome" in base.columns:
-        base = base.drop_duplicates(subset=["url_produto", "nome"], keep="first")
-    elif "url_produto" in base.columns:
-        base = base.drop_duplicates(subset=["url_produto"], keep="first")
-    elif "nome" in base.columns:
-        base = base.drop_duplicates(subset=["nome"], keep="first")
 
     base = normalizar_produtos_ai(base)
     base = enriquecer_produtos_gpt(base, limite=30, score_minimo=50)
@@ -90,50 +83,33 @@ def _extrair_fallback_antigo(html, url):
     return pd.concat(frames, ignore_index=True)
 
 
-def _extrair_da_pagina(html, url):
-    df_instant = _extrair_instant_da_pagina(html, url)
-    if not df_instant.empty:
-        return df_instant
-    return _extrair_fallback_antigo(html, url)
-
-
 def _run_instant(url: str) -> pd.DataFrame:
     paginas = coletar_paginas_genericas(url, _fetch_http, max_paginas=MAX_PAGINAS_INSTANT)
-
     frames = []
-
     for pagina_url in paginas.urls:
         html = _fetch_http(pagina_url)
         if not html:
             continue
-
-        df = _extrair_da_pagina(html, pagina_url)
+        df = _extrair_instant_da_pagina(html, pagina_url)
         if not df.empty:
             frames.append(df)
-
     if not frames:
         return pd.DataFrame()
-
     return _finalizar_df(pd.concat(frames, ignore_index=True), url)
 
 
-def _run_god_mode(url):
+def _run_fallback(url):
     crawl = descobrir_urls_produto(url, _fetch_http)
-
     frames = []
-
     for prod_url in crawl.urls:
         html = _fetch_http(prod_url)
         if not html:
             continue
-
-        df = _extrair_da_pagina(html, prod_url)
+        df = _extrair_fallback_antigo(html, prod_url)
         if not df.empty:
             frames.append(df)
-
     if not frames:
         return pd.DataFrame()
-
     return _finalizar_df(pd.concat(frames, ignore_index=True), url)
 
 
@@ -143,16 +119,13 @@ def run_scraper(url: str):
         return pd.DataFrame()
 
     supplier = MegaCenterSupplier()
-    if supplier.can_handle(url):
-        produtos = supplier.fetch(url)
-        return _finalizar_df(pd.DataFrame(produtos), url)
 
-    df_instant = _run_instant(url)
-    if not df_instant.empty:
-        return df_instant
+    strategies = {
+        "supplier": lambda u: pd.DataFrame(supplier.fetch(u)) if supplier.can_handle(u) else pd.DataFrame(),
+        "instant": _run_instant,
+        "fallback": _run_fallback,
+    }
 
-    df_god = _run_god_mode(url)
-    if not df_god.empty:
-        return df_god
+    result = run_autonomous_agent(url, strategies)
 
-    return pd.DataFrame()
+    return result.dataframe
