@@ -14,6 +14,18 @@ from bling_app_zero.ui.origem_site_visual import render_origem_site_visual_previ
 from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
 
+CHAVES_PREVIEW_OFICIAL_SITE = [
+    "df_preview_inteligente",
+    "df_auto_mapa",
+    "df_precificado",
+    "df_final",
+    "origem_site_preview_oficial",
+    "origem_site_preview_oficial_linhas",
+    "origem_site_preview_oficial_colunas",
+    "origem_site_preview_hash",
+]
+
+
 def _obter_df_atual_site() -> pd.DataFrame | None:
     df_saida = st.session_state.get("df_saida")
     df_origem = st.session_state.get("df_origem")
@@ -29,6 +41,24 @@ def _obter_df_atual_site() -> pd.DataFrame | None:
 
 def _df_valido(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+
+
+def _hash_df_simples(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame):
+        return ""
+    try:
+        partes = ["|".join([str(c) for c in df.columns.tolist()])]
+        amostra = df.head(30).fillna("").astype(str)
+        for _, row in amostra.iterrows():
+            partes.append("|".join(row.tolist()))
+        return str(hash("\n".join(partes)))
+    except Exception:
+        return ""
+
+
+def _limpar_preview_oficial_site() -> None:
+    for chave in CHAVES_PREVIEW_OFICIAL_SITE:
+        st.session_state.pop(chave, None)
 
 
 def _normalizar_preview_oficial(df_preview: pd.DataFrame) -> pd.DataFrame:
@@ -58,6 +88,7 @@ def _promover_preview_inteligente_para_fluxo(df_preview: pd.DataFrame) -> bool:
         return False
 
     df_oficial = _normalizar_preview_oficial(df_preview)
+    hash_oficial = _hash_df_simples(df_oficial)
 
     st.session_state["df_preview_inteligente"] = df_oficial.copy()
     st.session_state["df_precificado"] = df_oficial.copy()
@@ -65,7 +96,16 @@ def _promover_preview_inteligente_para_fluxo(df_preview: pd.DataFrame) -> bool:
     st.session_state["origem_site_preview_oficial"] = True
     st.session_state["origem_site_preview_oficial_linhas"] = len(df_oficial)
     st.session_state["origem_site_preview_oficial_colunas"] = len(df_oficial.columns)
-    st.session_state["_ia_auto_mapping_executado"] = False
+    st.session_state["origem_site_preview_hash"] = hash_oficial
+    st.session_state["mapping_hash_base"] = hash_oficial
+    st.session_state["mapping_hash_modelo"] = _hash_df_simples(st.session_state.get("df_modelo", pd.DataFrame()))
+    st.session_state["mapping_manual"] = {str(col): str(col) for col in df_oficial.columns.tolist()}
+    st.session_state["mapping_sugerido"] = {}
+    st.session_state["agent_ui_package"] = {
+        "status": "preview_site_oficial",
+        "mensagem": "Preview inteligente da captura por site promovido como base oficial do fluxo.",
+    }
+    st.session_state["_ia_auto_mapping_executado"] = True
 
     if set_etapa_segura("mapeamento", origem="origem_site_preview_oficial"):
         st.rerun()
@@ -178,16 +218,7 @@ def render_origem_site_panel() -> None:
 
         if limpar:
             limpar_busca_site()
-            for chave in [
-                "df_preview_inteligente",
-                "df_auto_mapa",
-                "df_precificado",
-                "df_final",
-                "origem_site_preview_oficial",
-                "origem_site_preview_oficial_linhas",
-                "origem_site_preview_oficial_colunas",
-            ]:
-                st.session_state.pop(chave, None)
+            _limpar_preview_oficial_site()
             st.rerun()
 
         if executar:
@@ -209,16 +240,7 @@ def render_origem_site_panel() -> None:
                 return
 
             guardar_resultado(df, urls, None, "AUTO_TOTAL")
-            for chave in [
-                "df_preview_inteligente",
-                "df_auto_mapa",
-                "df_precificado",
-                "df_final",
-                "origem_site_preview_oficial",
-                "origem_site_preview_oficial_linhas",
-                "origem_site_preview_oficial_colunas",
-            ]:
-                st.session_state.pop(chave, None)
+            _limpar_preview_oficial_site()
             finalizar_progresso(len(df))
             st.success(f"{len(df)} produtos encontrados (ULTRA automático)")
             st.rerun()
