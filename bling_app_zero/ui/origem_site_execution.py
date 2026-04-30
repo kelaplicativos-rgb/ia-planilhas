@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from bling_app_zero.core.instant_scraper import run_scraper
+from bling_app_zero.core.instant_scraper import run_flash, run_scraper
 from bling_app_zero.core.instant_scraper.exhaustive_engine import run_exhaustive_capture
 from bling_app_zero.core.site_crawler import crawl_site
 from bling_app_zero.ui.origem_site_config import (
@@ -20,6 +20,8 @@ from bling_app_zero.ui.origem_site_config import (
 )
 from bling_app_zero.ui.site_auth_panel import get_site_auth_context
 from bling_app_zero.ui.site_capture_normalizer import normalizar_captura_site_para_bling
+
+FLASH_MIN_ROWS_TO_SKIP_HEAVY = 8
 
 
 def _safe_df(valor: Any) -> pd.DataFrame:
@@ -40,6 +42,29 @@ def _normalizar_saida(df: pd.DataFrame, url: str) -> pd.DataFrame:
 
     base["URL origem da busca"] = url
     return base.fillna("").reset_index(drop=True)
+
+
+def _executar_flash(
+    url: str,
+    progress_callback: Callable[[int, str, int], None] | None = None,
+    indice_url: int = 1,
+    total_urls: int = 1,
+) -> pd.DataFrame:
+    try:
+        df = run_flash(
+            url,
+            progress_callback=progress_callback,
+            indice_url=indice_url,
+            total_urls=total_urls,
+        )
+    except Exception:
+        df = pd.DataFrame()
+
+    base = _safe_df(df)
+    if not base.empty:
+        base["origem_site_status"] = base.get("origem_site_status", "flash_ok").replace("", "flash_ok")
+        base["origem_site_motor"] = base.get("origem_site_motor", "FLASH_INSTANT").replace("", "FLASH_INSTANT")
+    return base
 
 
 def _executar_god(url: str, preset: ScraperPreset, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
@@ -170,17 +195,37 @@ def _executar_auto_total_url(
     total_urls: int = 1,
 ) -> pd.DataFrame:
     frames_url: list[pd.DataFrame] = []
-    for preset_nome, preset_atual in PRESETS.items():
-        for motor_atual in MOTORES_SITE:
+
+    if progress_callback:
+        progress_callback(2, f"FLASH: iniciando captura instantânea na URL {indice_url}/{total_urls}", indice_url)
+
+    flash = _normalizar_saida(_executar_flash(url, progress_callback, indice_url, total_urls), url)
+    if isinstance(flash, pd.DataFrame) and not flash.empty:
+        flash["URL origem da busca"] = url
+        flash["Modo usado"] = "Flash Instant"
+        flash["Motor usado"] = "FLASH_INSTANT"
+        frames_url.append(flash)
+
+        if len(flash) >= FLASH_MIN_ROWS_TO_SKIP_HEAVY:
             if progress_callback:
-                progress_callback(5, f"Modo {preset_nome} + {motor_atual} na URL {indice_url}/{total_urls}", indice_url)
-            bruto = _executar_motor(url, preset_atual, motor_atual, progress_callback=progress_callback)
-            normalizado = _normalizar_saida(bruto, url)
-            if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
-                normalizado["URL origem da busca"] = url
-                normalizado["Modo usado"] = preset_nome
-                normalizado["Motor usado"] = motor_atual
-                frames_url.append(normalizado)
+                progress_callback(96, f"FLASH: {len(flash)} produtos detectados; pulando motores pesados", indice_url)
+            return _juntar_resultados(frames_url)
+
+    if progress_callback:
+        progress_callback(22, "FLASH encontrou pouco dado; ativando reforço seletivo", indice_url)
+
+    preset_reforco = PRESETS.get("Seguro") or next(iter(PRESETS.values()))
+    for motor_atual in (MOTOR_RAPIDO, MOTOR_FALLBACK):
+        if progress_callback:
+            progress_callback(35, f"Reforço seletivo {motor_atual} na URL {indice_url}/{total_urls}", indice_url)
+        bruto = _executar_motor(url, preset_reforco, motor_atual, progress_callback=progress_callback)
+        normalizado = _normalizar_saida(bruto, url)
+        if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
+            normalizado["URL origem da busca"] = url
+            normalizado["Modo usado"] = "Reforço seletivo"
+            normalizado["Motor usado"] = motor_atual
+            frames_url.append(normalizado)
+
     return _juntar_resultados(frames_url)
 
 
@@ -201,18 +246,28 @@ def executar_busca(
             if motor == "AUTO_TOTAL":
                 df = _executar_auto_total_url(url, progress_callback=progress_callback, indice_url=indice, total_urls=len(urls_lista))
             elif motor == "AUTO_TODOS":
-                preset_base = preset or PRESETS.get("Seguro") or next(iter(PRESETS.values()))
-                frames_url: list[pd.DataFrame] = []
-                for motor_atual in MOTORES_SITE:
-                    if progress_callback:
-                        progress_callback(5, f"Executando {motor_atual} na URL {indice}/{len(urls_lista)}", indice)
-                    bruto = _executar_motor(url, preset_base, motor_atual, progress_callback=progress_callback)
-                    normalizado = _normalizar_saida(bruto, url)
-                    if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
-                        normalizado["URL origem da busca"] = url
-                        normalizado["Motor usado"] = motor_atual
-                        frames_url.append(normalizado)
-                df = _juntar_resultados(frames_url)
+                df_flash = _normalizar_saida(_executar_flash(url, progress_callback, indice, len(urls_lista)), url)
+                if isinstance(df_flash, pd.DataFrame) and len(df_flash) >= FLASH_MIN_ROWS_TO_SKIP_HEAVY:
+                    df_flash["URL origem da busca"] = url
+                    df_flash["Motor usado"] = "FLASH_INSTANT"
+                    df = df_flash
+                else:
+                    preset_base = preset or PRESETS.get("Seguro") or next(iter(PRESETS.values()))
+                    frames_url: list[pd.DataFrame] = []
+                    if isinstance(df_flash, pd.DataFrame) and not df_flash.empty:
+                        df_flash["URL origem da busca"] = url
+                        df_flash["Motor usado"] = "FLASH_INSTANT"
+                        frames_url.append(df_flash)
+                    for motor_atual in (MOTOR_RAPIDO, MOTOR_FALLBACK):
+                        if progress_callback:
+                            progress_callback(5, f"Executando {motor_atual} na URL {indice}/{len(urls_lista)}", indice)
+                        bruto = _executar_motor(url, preset_base, motor_atual, progress_callback=progress_callback)
+                        normalizado = _normalizar_saida(bruto, url)
+                        if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
+                            normalizado["URL origem da busca"] = url
+                            normalizado["Motor usado"] = motor_atual
+                            frames_url.append(normalizado)
+                    df = _juntar_resultados(frames_url)
             else:
                 preset_base = preset or PRESETS.get("Seguro") or next(iter(PRESETS.values()))
                 bruto = _executar_motor(url, preset_base, motor, progress_callback=progress_callback)
