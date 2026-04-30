@@ -37,6 +37,18 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
         "gtin",
         "descricao",
         "imagens",
+        "_diagnostico",
+        "_status",
+        "_etapa",
+        "_motivo",
+        "_url_testada",
+        "_url_final",
+        "_http_status",
+        "_html_chars",
+        "_links_sitemap",
+        "_links_pagina",
+        "_links_total",
+        "_produtos_extraidos",
     ]
 
     for col in colunas_base:
@@ -56,6 +68,41 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _diagnostico_df(supplier: MegaCenterSupplier) -> pd.DataFrame:
+    diag = getattr(supplier, "last_diagnostics", {}) or {}
+
+    row = {
+        "fornecedor": "DIAGNÓSTICO MEGA CENTER",
+        "url_produto": diag.get("url_original", ""),
+        "nome": "Diagnóstico da busca Mega Center",
+        "sku": "",
+        "marca": "",
+        "categoria": "",
+        "preco": "",
+        "estoque": "",
+        "quantidade": "",
+        "quantidade_real": "",
+        "estoque_origem": "",
+        "gtin": "",
+        "descricao": diag.get("resumo", ""),
+        "imagens": "",
+        "_diagnostico": "SIM",
+        "_status": diag.get("status", ""),
+        "_etapa": diag.get("etapa", ""),
+        "_motivo": diag.get("motivo", ""),
+        "_url_testada": diag.get("url_testada", ""),
+        "_url_final": diag.get("url_final", ""),
+        "_http_status": diag.get("http_status", ""),
+        "_html_chars": diag.get("html_chars", ""),
+        "_links_sitemap": diag.get("links_sitemap", ""),
+        "_links_pagina": diag.get("links_pagina", ""),
+        "_links_total": diag.get("links_total", ""),
+        "_produtos_extraidos": diag.get("produtos_extraidos", ""),
+    }
+
+    return _normalizar_df(pd.DataFrame([row]))
+
+
 def _run_mega_center(url: str) -> pd.DataFrame:
     supplier = MegaCenterSupplier()
 
@@ -69,16 +116,27 @@ def _run_mega_center(url: str) -> pd.DataFrame:
             max_paginas=40,
             max_workers=8,
         )
-    except Exception:
-        return pd.DataFrame()
+    except Exception as exc:
+        supplier.last_diagnostics = {
+            "status": "erro",
+            "etapa": "runner",
+            "motivo": str(exc),
+            "url_original": url,
+            "resumo": f"Erro no runner Mega Center: {exc}",
+        }
+        return _diagnostico_df(supplier)
 
-    if not produtos:
-        return pd.DataFrame()
+    if produtos:
+        try:
+            return _normalizar_df(pd.DataFrame(produtos))
+        except Exception as exc:
+            supplier.last_diagnostics["status"] = "erro"
+            supplier.last_diagnostics["etapa"] = "normalizacao_dataframe"
+            supplier.last_diagnostics["motivo"] = str(exc)
+            supplier.last_diagnostics["resumo"] = f"Erro ao montar DataFrame: {exc}"
+            return _diagnostico_df(supplier)
 
-    try:
-        return _normalizar_df(pd.DataFrame(produtos))
-    except Exception:
-        return pd.DataFrame()
+    return _diagnostico_df(supplier)
 
 
 def _run_generico(url: str) -> pd.DataFrame:
@@ -123,8 +181,8 @@ def run_scraper(url: str) -> pd.DataFrame:
     if not url:
         return pd.DataFrame()
 
-    df_mega = _run_mega_center(url)
-    if isinstance(df_mega, pd.DataFrame) and not df_mega.empty:
-        return df_mega
+    supplier = MegaCenterSupplier()
+    if supplier.can_handle(url):
+        return _run_mega_center(url)
 
     return _run_generico(url)
