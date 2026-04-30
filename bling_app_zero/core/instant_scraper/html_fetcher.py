@@ -27,6 +27,35 @@ DEFAULT_HEADERS = {
 }
 
 
+LAST_FETCH_INFO = {
+    "url": "",
+    "url_final": "",
+    "status_code": "",
+    "content_type": "",
+    "html_chars": 0,
+    "erro": "",
+    "motivo": "",
+    "parece_bloqueio": False,
+    "parece_javascript": False,
+    "cache": "",
+}
+
+
+def _txt(valor) -> str:
+    return str(valor or "").strip()
+
+
+def _registrar_fetch_info(**kwargs) -> None:
+    for chave in list(LAST_FETCH_INFO.keys()):
+        if chave in kwargs:
+            LAST_FETCH_INFO[chave] = kwargs[chave]
+
+
+def obter_ultimo_fetch_info() -> dict:
+    """Retorna diagnóstico leve da última tentativa de busca HTML."""
+    return dict(LAST_FETCH_INFO)
+
+
 class HTMLFetcher:
     def __init__(
         self,
@@ -38,12 +67,28 @@ class HTMLFetcher:
         self.max_retries = max_retries
         self.delay_range = delay_range
         self.last_error: str = ""
+        self.last_info: dict = {}
 
     def fetch(self, url: str) -> str:
         url = self._normalize_url(url)
 
+        self.last_info = {
+            "url": url,
+            "url_final": "",
+            "status_code": "",
+            "content_type": "",
+            "html_chars": 0,
+            "erro": "",
+            "motivo": "",
+            "parece_bloqueio": False,
+            "parece_javascript": False,
+            "cache": "fresh",
+        }
+        _registrar_fetch_info(**self.last_info)
+
         if not url:
             self.last_error = "URL vazia"
+            self._set_last_info(erro=self.last_error, motivo="url_vazia")
             return ""
 
         urls_tentativa = self._gerar_variacoes_url(url)
@@ -62,37 +107,78 @@ class HTMLFetcher:
 
                         if html:
                             self.last_error = ""
+                            self._set_last_info(
+                                url_final=str(response.url),
+                                status_code=str(response.status_code),
+                                content_type=str(response.headers.get("content-type", "")),
+                                html_chars=len(html),
+                                erro="",
+                                motivo="ok",
+                                parece_bloqueio=False,
+                                parece_javascript=False,
+                            )
                             return html[:MAX_HTML_CHARS]
 
+                        motivo = self.last_info.get("motivo") or "sem_html_util"
                         last_error = Exception(
-                            f"Resposta sem HTML útil | status={response.status_code} | url={tentativa_url}"
+                            f"Resposta sem HTML útil | status={response.status_code} | motivo={motivo} | url={tentativa_url}"
                         )
 
                     except Exception as exc:
                         last_error = exc
+                        self._set_last_info(
+                            url_final=tentativa_url,
+                            erro=str(exc),
+                            motivo="erro_requisicao",
+                        )
 
                     time.sleep(random.uniform(*self.delay_range))
 
         self.last_error = f"Erro ao buscar HTML: {last_error}"
+        self._set_last_info(erro=self.last_error)
         return ""
+
+    def _set_last_info(self, **kwargs) -> None:
+        self.last_info.update(kwargs)
+        _registrar_fetch_info(**self.last_info)
 
     def _extrair_html_response(self, response: httpx.Response) -> str:
         status = int(getattr(response, "status_code", 0) or 0)
-
-        if status >= 400:
-            return ""
-
         content_type = str(response.headers.get("content-type", "")).lower()
         texto = response.text or ""
 
+        self._set_last_info(
+            url_final=str(getattr(response, "url", "") or ""),
+            status_code=str(status),
+            content_type=content_type,
+            html_chars=len(texto),
+        )
+
+        if status >= 400:
+            self._set_last_info(motivo=f"http_{status}")
+            return ""
+
         if not texto.strip():
+            self._set_last_info(motivo="resposta_vazia")
             return ""
 
         if "text/html" not in content_type and "<html" not in texto.lower():
+            self._set_last_info(motivo="conteudo_nao_html")
             return ""
 
         if self._parece_bloqueio(texto):
+            self._set_last_info(
+                motivo="bloqueio_ou_antibot",
+                parece_bloqueio=True,
+                parece_javascript=self._parece_dependente_js(texto),
+            )
             return ""
+
+        if self._parece_dependente_js(texto):
+            self._set_last_info(
+                motivo="pagina_possivelmente_dependente_de_javascript",
+                parece_javascript=True,
+            )
 
         return texto[:MAX_HTML_CHARS]
 
@@ -110,9 +196,36 @@ class HTMLFetcher:
             "ative o javascript",
             "blocked",
             "bot detection",
+            "unusual traffic",
+            "request blocked",
+            "security check",
+            "cf-browser-verification",
         ]
 
         return any(sinal in texto for sinal in sinais_bloqueio)
+
+    def _parece_dependente_js(self, html: str) -> bool:
+        texto = re.sub(r"\s+", " ", str(html or "").lower())
+
+        sinais_js = [
+            "enable javascript",
+            "ative o javascript",
+            "noscript",
+            "__next_data__",
+            "window.__nuxt__",
+            "id=\"__next\"",
+            "id='__next'",
+            "data-reactroot",
+            "application/ld+json",
+        ]
+
+        tem_sinal_js = any(sinal in texto for sinal in sinais_js)
+        poucos_produtos = not any(
+            sinal in texto
+            for sinal in ["produto", "preço", "preco", "comprar", "r$", "add to cart"]
+        )
+
+        return bool(tem_sinal_js and poucos_produtos)
 
     def _normalize_url(self, url: str) -> str:
         url = str(url or "").strip()
@@ -194,10 +307,39 @@ class HTMLFetcher:
 
 
 @lru_cache(maxsize=32)
-def fetch_html(url: str) -> str:
+def _fetch_html_cached(url: str) -> str:
     fetcher = HTMLFetcher()
-    return fetcher.fetch(url)
+    html = fetcher.fetch(url)
+    info = fetcher.last_info.copy()
+    info["cache"] = "cached_or_fresh"
+    _registrar_fetch_info(**info)
+    return html
+
+
+def fetch_html(url: str, force_refresh: bool = False) -> str:
+    """
+    Busca HTML com cache controlável.
+
+    - force_refresh=False: usa cache leve para evitar requisições repetidas no rerun do Streamlit.
+    - force_refresh=True: limpa cache e faz uma requisição nova.
+    """
+    url = _txt(url)
+    if force_refresh:
+        limpar_cache_html()
+        fetcher = HTMLFetcher()
+        html = fetcher.fetch(url)
+        info = fetcher.last_info.copy()
+        info["cache"] = "fresh_forced"
+        _registrar_fetch_info(**info)
+        return html
+
+    return _fetch_html_cached(url)
+
+
+def fetch_html_sem_cache(url: str) -> str:
+    return fetch_html(url, force_refresh=True)
 
 
 def limpar_cache_html() -> None:
-    fetch_html.cache_clear()
+    _fetch_html_cached.cache_clear()
+    _registrar_fetch_info(cache="cleared")
