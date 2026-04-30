@@ -7,8 +7,8 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.app_helpers import (
-    ir_para_etapa,
     safe_df_dados,
     safe_df_estrutura,
 )
@@ -263,7 +263,10 @@ def _render_continuar() -> None:
     if not _validar_dados_operacao_para_continuar():
         return
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
-        ir_para_etapa("precificacao")
+        st.session_state["df_precificado"] = st.session_state.get("df_origem")
+        if set_etapa_segura("precificacao", origem="origem_dados"):
+            st.rerun()
+        st.error("Não foi possível avançar. Confira se a origem foi carregada corretamente.")
 
 
 def render_origem_dados() -> None:
