@@ -154,18 +154,44 @@ def _formatar_tempo(segundos: float) -> str:
     return f"{minutos:02d}:{seg:02d}"
 
 
+def _recortar_texto(texto: str, limite: int = 120) -> str:
+    texto_limpo = " ".join(str(texto or "").strip().split())
+    if len(texto_limpo) <= limite:
+        return texto_limpo
+    return texto_limpo[: limite - 3].rstrip() + "..."
+
+
 def _criar_monitor_progresso(total_urls: int):
-    total_passos = max(1, int(total_urls) * max(1, len(PRESETS)) * max(1, len(MOTORES_SITE)))
+    total_urls = max(1, int(total_urls or 1))
+    total_passos = max(1, total_urls * max(1, len(PRESETS)) * max(1, len(MOTORES_SITE)))
     inicio = time.time()
 
-    barra = st.progress(0, text="Preparando captura...")
-    status = st.empty()
-    detalhe = st.empty()
+    st.markdown("#### 🔎 Monitor detalhado da captura")
+    barra = st.progress(0, text="0% • Preparando captura...")
+    resumo = st.empty()
+    grade_metricas = st.empty()
+    etapa_atual = st.empty()
+    trilha = st.empty()
+    pulso = st.empty()
 
     estado = {
         "passo": 0,
         "ultimo_label": "Preparando captura...",
+        "eventos": [],
+        "ultimo_sinal": inicio,
     }
+
+    def _registrar_evento(texto: str, percentual_local: int, indice_url: int) -> None:
+        agora = time.time()
+        estado["ultimo_sinal"] = agora
+        evento = {
+            "hora": time.strftime("%H:%M:%S"),
+            "url": indice_url or "-",
+            "motor": f"{int(percentual_local or 0)}%",
+            "etapa": _recortar_texto(texto, 90),
+        }
+        estado["eventos"].append(evento)
+        estado["eventos"] = estado["eventos"][-8:]
 
     def atualizar(percentual_local: int, mensagem: str, indice_url: int = 0) -> None:
         agora = time.time()
@@ -174,36 +200,69 @@ def _criar_monitor_progresso(total_urls: int):
         if texto != estado["ultimo_label"]:
             estado["passo"] = min(total_passos, estado["passo"] + 1)
             estado["ultimo_label"] = texto
+            _registrar_evento(texto, percentual_local, indice_url)
+        elif agora - float(estado.get("ultimo_sinal") or inicio) >= 1.5:
+            _registrar_evento(texto, percentual_local, indice_url)
 
-        passo = max(1, estado["passo"])
-        progresso = min(0.99, passo / total_passos)
+        passo = max(1, min(total_passos, int(estado["passo"] or 1)))
+        progresso = min(0.99, max(0.01, passo / total_passos))
         decorrido = agora - inicio
         estimado_total = decorrido / progresso if progresso > 0 else 0
         restante = max(0, estimado_total - decorrido)
+        segundos_sem_sinal = max(0, int(agora - float(estado.get("ultimo_sinal") or agora)))
+        percentual_global = int(progresso * 100)
 
         barra.progress(
-            int(progresso * 100),
-            text=f"{int(progresso * 100)}% • {texto}",
+            percentual_global,
+            text=f"{percentual_global}% • Trabalhando agora: {_recortar_texto(texto, 55)}",
         )
-        status.info(
-            f"⏱️ Decorrido: {_formatar_tempo(decorrido)} | "
-            f"⏳ Estimado restante: {_formatar_tempo(restante)} | "
-            f"🧩 Progresso real: {passo}/{total_passos} etapas"
+
+        resumo.info(
+            f"🟢 Sistema trabalhando • sinal recebido há {segundos_sem_sinal}s • "
+            f"etapa {passo}/{total_passos} • URL {indice_url or '-'} de {total_urls}"
         )
-        detalhe.caption(
-            f"URL atual: {indice_url or '-'} de {total_urls} • "
-            f"Sinal interno do motor: {int(percentual_local or 0)}%"
+
+        with grade_metricas.container():
+            col1, col2, col3 = st.columns(3)
+            col1.metric("⏱️ Decorrido", _formatar_tempo(decorrido))
+            col2.metric("⏳ Restante", _formatar_tempo(restante))
+            col3.metric("🧩 Progresso", f"{passo}/{total_passos}")
+
+        etapa_atual.markdown(
+            "\n".join(
+                [
+                    "**📍 O que está acontecendo agora**",
+                    f"- **URL atual:** {indice_url or '-'} de {total_urls}",
+                    f"- **Motor interno:** {int(percentual_local or 0)}%",
+                    f"- **Ação:** {_recortar_texto(texto, 140)}",
+                ]
+            )
+        )
+
+        eventos = estado.get("eventos") or []
+        if eventos:
+            trilha.dataframe(pd.DataFrame(eventos), hide_index=True, use_container_width=True)
+
+        pulso.caption(
+            "💓 Pulso do robô: se este número muda, o sistema não travou. "
+            f"Última atualização: {time.strftime('%H:%M:%S')}"
         )
 
     def finalizar(total_linhas: int) -> None:
         decorrido = time.time() - inicio
         barra.progress(100, text="100% • Captura concluída")
-        status.success(
-            f"✅ Concluído em {_formatar_tempo(decorrido)} • "
+        resumo.success(
+            f"✅ Captura concluída em {_formatar_tempo(decorrido)} • "
             f"{int(total_linhas)} linhas encontradas • "
             f"{total_passos}/{total_passos} etapas finalizadas"
         )
-        detalhe.caption("Resultado consolidado e pronto para gerar preview baseado no modelo Bling.")
+        with grade_metricas.container():
+            col1, col2, col3 = st.columns(3)
+            col1.metric("⏱️ Tempo total", _formatar_tempo(decorrido))
+            col2.metric("📦 Linhas", int(total_linhas))
+            col3.metric("✅ Etapas", f"{total_passos}/{total_passos}")
+        etapa_atual.markdown("**✅ Resultado consolidado e pronto para gerar preview baseado no modelo Bling.**")
+        pulso.caption(f"Finalizado às {time.strftime('%H:%M:%S')}.")
 
     return atualizar, finalizar
 
