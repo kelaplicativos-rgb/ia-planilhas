@@ -12,6 +12,7 @@ from bling_app_zero.ui.origem_site_config import (
     MOTOR_FALLBACK,
     MOTOR_GOD,
     MOTOR_RAPIDO,
+    MOTORES_SITE,
     ScraperPreset,
     config_from_preset,
     exhaustive_config_from_preset,
@@ -112,6 +113,55 @@ def _executar_fallback(url: str, preset: ScraperPreset) -> pd.DataFrame:
     return base
 
 
+def _executar_motor(
+    url: str,
+    preset: ScraperPreset,
+    motor: str,
+    progress_callback: Callable[[int, str, int], None] | None = None,
+) -> pd.DataFrame:
+    if motor == MOTOR_GOD:
+        return _executar_god(url, preset, progress_callback=progress_callback)
+    if motor == MOTOR_EXAUSTIVO:
+        return _executar_exaustivo(url, preset, progress_callback=progress_callback)
+    if motor == MOTOR_RAPIDO:
+        return _executar_agente_rapido(url, preset)
+    if motor == MOTOR_FALLBACK:
+        return _executar_fallback(url, preset)
+    return _executar_god(url, preset, progress_callback=progress_callback)
+
+
+def _chave_dedup(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    candidatos = [
+        "Código",
+        "SKU",
+        "GTIN",
+        "GTIN/EAN",
+        "url_produto",
+        "URL",
+        "URL origem da busca",
+        "Descrição",
+        "Nome",
+        "descricao",
+        "nome",
+    ]
+    return [c for c in candidatos if c in df.columns]
+
+
+def _juntar_resultados(resultados: list[pd.DataFrame]) -> pd.DataFrame:
+    frames = [_safe_df(df) for df in resultados if isinstance(df, pd.DataFrame) and not df.empty]
+    if not frames:
+        return pd.DataFrame()
+    saida = pd.concat(frames, ignore_index=True, sort=False).fillna("")
+    chaves = _chave_dedup(saida)
+    if chaves:
+        saida = saida.drop_duplicates(subset=chaves, keep="first")
+    else:
+        saida = saida.drop_duplicates(keep="first")
+    return saida.reset_index(drop=True)
+
+
 def executar_busca(
     urls,
     preset: ScraperPreset,
@@ -126,18 +176,21 @@ def executar_busca(
             if progress_callback:
                 progress_callback(1, f"Iniciando URL {indice}/{len(urls_lista)}", indice)
 
-            if motor == MOTOR_GOD:
-                df = _executar_god(url, preset, progress_callback=progress_callback)
-            elif motor == MOTOR_EXAUSTIVO:
-                df = _executar_exaustivo(url, preset, progress_callback=progress_callback)
-            elif motor == MOTOR_RAPIDO:
-                df = _executar_agente_rapido(url, preset)
-            elif motor == MOTOR_FALLBACK:
-                df = _executar_fallback(url, preset)
+            if motor == "AUTO_TODOS":
+                frames_url: list[pd.DataFrame] = []
+                for motor_atual in MOTORES_SITE:
+                    if progress_callback:
+                        progress_callback(5, f"Executando {motor_atual} na URL {indice}/{len(urls_lista)}", indice)
+                    bruto = _executar_motor(url, preset, motor_atual, progress_callback=progress_callback)
+                    normalizado = _normalizar_saida(bruto, url)
+                    if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
+                        normalizado["URL origem da busca"] = url
+                        normalizado["Motor usado"] = motor_atual
+                        frames_url.append(normalizado)
+                df = _juntar_resultados(frames_url)
             else:
-                df = _executar_god(url, preset, progress_callback=progress_callback)
-
-            df = _normalizar_saida(df, url)
+                bruto = _executar_motor(url, preset, motor, progress_callback=progress_callback)
+                df = _normalizar_saida(bruto, url)
         except Exception:
             df = pd.DataFrame()
 
@@ -145,8 +198,4 @@ def executar_busca(
             df["URL origem da busca"] = url
             resultados.append(df)
 
-    if not resultados:
-        return pd.DataFrame()
-
-    saida = pd.concat(resultados, ignore_index=True, sort=False).fillna("")
-    return saida.drop_duplicates(keep="first").reset_index(drop=True)
+    return _juntar_resultados(resultados)
