@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import pandas as pd
 
 from .config import CrawlConfig
-from .engine import _extract_product_from_html
+from .product_page_extractor import extract_product_from_html
 from .http_fetcher import fetch_html
 from .link_extractor import extract_links, is_blocked_url
 from .utils import normalize_url
@@ -50,21 +50,15 @@ def crawl_site_perf(
             continue
 
         visited.add(current_url)
-        percent = min(95, 10 + int((len(visited) / max(int(config.max_urls), 1)) * 80))
-
-        if progress_callback:
-            progress_callback(percent, f"Lendo {current_url}", len(products))
 
         html = fetch_html(current_url, timeout=int(config.timeout))
         if not html:
             continue
 
-        product = _extract_product_from_html(current_url, html)
+        product = extract_product_from_html(current_url, html)
         if product and current_url not in product_urls:
             products.append(product)
             product_urls.add(current_url)
-            if progress_callback:
-                progress_callback(percent, f"Produto encontrado: {product.get('Descrição', '')[:80]}", len(products))
             continue
 
         links = extract_links(html, current_url, base_domain)
@@ -81,10 +75,6 @@ def crawl_site_perf(
         sleep_seconds = float(getattr(config, "sleep_seconds", 0) or 0)
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
-
-    if progress_callback:
-        elapsed = int(time.time() - started_at)
-        progress_callback(100, f"Busca finalizada em {elapsed}s com {len(products)} produto(s).", len(products))
 
     return pd.DataFrame(products)
 
