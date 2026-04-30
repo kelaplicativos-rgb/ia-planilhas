@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
 
 import pandas as pd
+
+from .stock_detector import enrich_dataframe_stock
 
 
 MAPA_COLUNAS = {
@@ -15,7 +16,7 @@ MAPA_COLUNAS = {
     "imagem": ["imagem", "imagens", "foto", "image", "img"],
     "sku": ["sku", "codigo", "código", "cod", "referencia", "referência"],
     "gtin": ["gtin", "ean", "codigo de barras", "código de barras"],
-    "estoque": ["estoque", "stock", "disponibilidade", "availability"],
+    "estoque": ["estoque", "stock", "disponibilidade", "availability", "saldo", "quantidade", "quantidade_real", "qtd", "qtde"],
 }
 
 
@@ -65,7 +66,7 @@ def _extrair_preco(row: pd.Series) -> str:
 
 def _extrair_sku(row: pd.Series) -> str:
     texto = _linha_texto(row)
-    achado = re.search(r"(?:SKU|COD|REF)[:\s-]*([A-Z0-9._/-]{3,40})", texto, flags=re.I)
+    achado = re.search(r"(?:SKU|COD|CÓD|REF)[:\s-]*([A-Z0-9._/-]{3,40})", texto, flags=re.I)
     return _txt(achado.group(1)) if achado else ""
 
 
@@ -90,7 +91,16 @@ def diagnosticar_dataframe(df: pd.DataFrame) -> dict:
     score = 20
     if len(df) >= 3:
         score += 10
-    for col, peso in [("nome", 25), ("preco", 25), ("url_produto", 10), ("imagem", 10), ("sku", 5), ("gtin", 5)]:
+    for col, peso in [
+        ("nome", 25),
+        ("preco", 25),
+        ("url_produto", 10),
+        ("imagem", 10),
+        ("sku", 5),
+        ("gtin", 5),
+        ("estoque", 10),
+        ("quantidade_real", 10),
+    ]:
         if col in df.columns and _count(df, col) > 0:
             score += peso
     return {"score": min(score, 100), "linhas": int(len(df)), "status": "ok" if score >= 70 else "fraco"}
@@ -120,6 +130,8 @@ def auto_heal_dataframe(df: pd.DataFrame, url: str = "") -> pd.DataFrame:
         base["gtin"] = base.apply(_extrair_gtin, axis=1)
     if "nome" not in base.columns or _count(base, "nome") == 0:
         base["nome"] = base.apply(_extrair_nome, axis=1)
+
+    base = enrich_dataframe_stock(base)
 
     base = base.fillna("")
     base = base.loc[base.astype(str).apply(lambda row: any(v.strip() for v in row), axis=1)].copy()
