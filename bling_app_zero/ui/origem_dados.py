@@ -50,9 +50,12 @@ def _limpar_estado_origem() -> None:
         "df_saida",
         "df_preview_inteligente",
         "df_auto_mapa",
+        "df_preview_fornecedor_modelo_bling",
         "df_preview_site_modelo_bling",
+        "df_precificado",
         "df_final",
         "origem_site_preview_modelo_bling",
+        "origem_fornecedor_preview_modelo_bling",
         "origem_upload_nome",
         "origem_upload_bytes",
         "origem_upload_tipo",
@@ -68,9 +71,12 @@ def _limpar_estado_modelo() -> None:
         "df_saida",
         "df_preview_inteligente",
         "df_auto_mapa",
+        "df_preview_fornecedor_modelo_bling",
         "df_preview_site_modelo_bling",
+        "df_precificado",
         "df_final",
         "origem_site_preview_modelo_bling",
+        "origem_fornecedor_preview_modelo_bling",
         "modelo_upload_nome",
         "modelo_upload_bytes",
         "modelo_upload_tipo",
@@ -223,6 +229,17 @@ def _modelo_pronto() -> bool:
     return safe_df_estrutura(st.session_state.get("df_modelo"))
 
 
+def _preview_modelo_pronto() -> bool:
+    return safe_df_estrutura(st.session_state.get("df_preview_inteligente"))
+
+
+def _obter_preview_modelo_bling() -> pd.DataFrame:
+    df_preview = st.session_state.get("df_preview_inteligente")
+    if safe_df_estrutura(df_preview):
+        return df_preview.copy()
+    return pd.DataFrame()
+
+
 def _render_operacao() -> None:
     tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
     opcoes = {"Cadastro de Produtos": "cadastro", "Atualização de Estoque": "estoque"}
@@ -332,13 +349,16 @@ def _render_preview_modelo_bling_origem() -> None:
     df_preview = render_preview_inteligente(
         df_origem,
         df_modelo,
-        titulo="Preview oficial montado no modelo Bling anexado",
+        titulo="Preview da planilha do fornecedor baseado no modelo Bling anexado",
     )
 
     if safe_df_estrutura(df_preview):
         st.session_state["df_preview_inteligente"] = df_preview.copy()
-        st.session_state["df_precificado"] = df_origem.copy()
+        st.session_state["df_preview_fornecedor_modelo_bling"] = df_preview.copy()
+        st.session_state["df_precificado"] = df_preview.copy()
+        st.session_state["origem_fornecedor_preview_modelo_bling"] = True
         st.session_state.pop("df_final", None)
+        st.success("Preview da origem montado exatamente nas colunas do modelo Bling e pronto para seguir no fluxo.")
 
 
 def _validar_dados_operacao_para_continuar() -> bool:
@@ -355,14 +375,17 @@ def _validar_dados_operacao_para_continuar() -> bool:
 def _render_resumo() -> None:
     df_origem = st.session_state.get("df_origem")
     df_modelo = st.session_state.get("df_modelo")
+    df_preview = st.session_state.get("df_preview_inteligente")
     operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
     deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Origem", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem))
+        st.metric("Origem bruta", 0 if not isinstance(df_origem, pd.DataFrame) else len(df_origem))
     with c2:
         st.metric("Modelo", 0 if not isinstance(df_modelo, pd.DataFrame) else len(df_modelo.columns))
     with c3:
+        st.metric("Preview", 0 if not isinstance(df_preview, pd.DataFrame) else len(df_preview))
+    with c4:
         st.metric("Depósito" if operacao == "estoque" else "Operação", deposito_nome or operacao.title())
 
 
@@ -375,11 +398,17 @@ def _render_continuar() -> None:
     if not _origem_pronta():
         st.info("Agora carregue a planilha do fornecedor ou faça a busca por site.")
         return
+    if not _preview_modelo_pronto():
+        st.info("Aguarde o sistema montar o preview exatamente nas colunas do modelo Bling anexado.")
+        return
     if not _validar_dados_operacao_para_continuar():
         return
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
-        st.session_state["df_precificado"] = st.session_state.get("df_origem")
-        if set_etapa_segura("precificacao", origem="origem_dados"):
+        df_preview = _obter_preview_modelo_bling()
+        st.session_state["df_precificado"] = df_preview.copy()
+        st.session_state["df_saida"] = df_preview.copy()
+        st.session_state.pop("df_final", None)
+        if set_etapa_segura("precificacao", origem="origem_dados_preview_modelo_bling"):
             st.rerun()
         st.error("Não foi possível avançar. Confira se a origem e o modelo Bling foram carregados corretamente.")
 
