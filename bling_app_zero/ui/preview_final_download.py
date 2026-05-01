@@ -22,6 +22,36 @@ LINHAS_LIXO_DESCRICAO = {
 }
 
 
+def _limpar_texto_celula(valor: object) -> str:
+    texto = str(valor or "")
+    texto = texto.replace("\ufeff", "").replace("\u200b", "").replace("\xa0", " ")
+    texto = re.sub(r"[\r\n\t]+", " ", texto)
+    texto = re.sub(r"\s{2,}", " ", texto)
+    return texto.strip()
+
+
+def _limpar_titulo_produto(valor: object) -> str:
+    texto = _limpar_texto_celula(valor)
+    if not texto:
+        return ""
+
+    texto = re.sub(
+        r"^\s*(?:C[ÓO]D(?:IGO)?|SKU|REF(?:ER[ÊE]NCIA)?|MODELO|ITEM)\s*[:#-]?\s*[A-Za-z0-9._/-]{3,40}\s+",
+        "",
+        texto,
+        flags=re.I,
+    )
+    texto = re.sub(r"\s*R\$\s*\d[\s\S]*$", "", texto, flags=re.I)
+    texto = re.sub(
+        r"\s+(?:no pix|ou no pix|ou r\$.*|cart[aã]o|boleto|comprar|adicionar ao carrinho).*$",
+        "",
+        texto,
+        flags=re.I,
+    )
+    texto = _limpar_texto_celula(texto).strip(" -|•–—")
+    return _limpar_texto_celula(texto)
+
+
 def _coluna_descricao_produto(df: pd.DataFrame) -> str:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return ""
@@ -68,12 +98,12 @@ def _coluna_preco_produto(df: pd.DataFrame) -> str:
 
 
 def _tem_texto(valor: object) -> bool:
-    texto = str(valor or "").strip()
+    texto = _limpar_texto_celula(valor)
     return bool(texto and texto.lower() not in {"nan", "none", "null"})
 
 
 def _tem_preco(valor: object) -> bool:
-    texto = str(valor or "").strip()
+    texto = _limpar_texto_celula(valor)
     if not texto:
         return False
     texto = texto.replace("R$", "").replace("r$", "").replace(" ", "")
@@ -89,7 +119,7 @@ def _tem_preco(valor: object) -> bool:
 
 
 def _descricao_lixo(valor: object) -> bool:
-    texto = str(valor or "").strip()
+    texto = _limpar_texto_celula(valor)
     if not texto:
         return True
     norm = normalizar_texto(texto)
@@ -112,11 +142,15 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     base = remover_colunas_artificiais(base)
     base = zerar_colunas_video(base).fillna("")
 
+    for coluna in base.columns:
+        base[coluna] = base[coluna].map(_limpar_texto_celula)
+
     desc_col = _coluna_descricao_produto(base)
     cod_col = _coluna_codigo_produto(base)
     preco_col = _coluna_preco_produto(base)
 
     if desc_col and desc_col in base.columns:
+        base[desc_col] = base[desc_col].map(_limpar_titulo_produto)
         antes = len(base)
 
         def manter_linha(row: pd.Series) -> bool:
@@ -124,7 +158,6 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
             if _descricao_lixo(descricao):
                 codigo_ok = _tem_texto(row.get(cod_col, "")) if cod_col else False
                 preco_ok = _tem_preco(row.get(preco_col, "")) if preco_col else False
-                # Linha sem produto real, sem código e sem preço válido é lixo de cabeçalho/site.
                 return bool(codigo_ok and preco_ok and not str(descricao or "").strip().lower().startswith("mega center"))
             return True
 
@@ -143,6 +176,7 @@ def _csv_bling_bytes(df: pd.DataFrame) -> bytes:
     - UTF-8 com BOM para abrir corretamente no Excel;
     - sem índice artificial;
     - colunas de vídeo zeradas;
+    - espaços e sujeiras textuais removidos;
     - linhas de cabeçalho/site removidas.
     """
     base = _limpar_df_para_download(df)
@@ -178,7 +212,7 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     download_liberado = bool(validacao_ok)
 
-    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice e sem linha lixo de cabeçalho/site.")
+    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título e sem linha lixo de cabeçalho/site.")
 
     st.download_button(
         label="📥 Baixar CSV final",
