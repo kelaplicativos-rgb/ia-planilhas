@@ -28,8 +28,23 @@ BAD_LINK_HINTS = (
     "politica", "termos", "privacy", "blog", "faq", "atendimento", "contact", "contato"
 )
 PRICE_RE = re.compile(r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}|\d{1,6}\.\d{2})")
+PRICE_BLOCK_RE = re.compile(r"\s*R\$\s*\d[\s\S]*$", re.I)
+CODE_PREFIX_RE = re.compile(r"^\s*(?:c[oó]d(?:igo)?|sku|ref(?:er[eê]ncia)?|modelo|item)\s*[:#-]?\s*([A-Za-z0-9._/-]{3,40})\s*", re.I)
 CODE_RE = re.compile(r"(?:c[oó]d(?:igo)?|sku|ref(?:er[eê]ncia)?|modelo|item)\s*[:#-]?\s*([A-Za-z0-9._/-]{3,40})", re.I)
 GTIN_RE = re.compile(r"\b(\d{8}|\d{12}|\d{13}|\d{14})\b")
+
+STORE_TITLE_HINTS = (
+    "mega center eletronicos",
+    "mega center eletrônicos",
+    "loja de eletronicos",
+    "loja de eletrônicos",
+    "minha loja",
+    "catalogo de produtos",
+    "catálogo de produtos",
+)
+PRICE_ONLY_HINTS = (
+    " no pix", " cartao", " cartão", " boleto", " desconto", " parcela", "x de", "comprar", "adicionar"
+)
 
 
 def _text(tag: Tag | None) -> str:
@@ -40,6 +55,46 @@ def _text(tag: Tag | None) -> str:
 
 def _clean(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _norm_simple(value: Any) -> str:
+    texto = _clean(value).lower()
+    trans = str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc")
+    return re.sub(r"[^a-z0-9]+", " ", texto.translate(trans)).strip()
+
+
+def _is_bad_product_name(value: Any) -> bool:
+    nome = _clean(value)
+    if not nome:
+        return True
+    norm = _norm_simple(nome)
+    if len(nome) < 4:
+        return True
+    if any(h in norm for h in STORE_TITLE_HINTS):
+        return True
+    if re.fullmatch(r"(?:r\$)?\s*[0-9\.,%\s]+", nome.lower()):
+        return True
+    letras = re.sub(r"[^a-zA-ZÀ-ÿ]+", "", nome)
+    if len(letras) < 3:
+        return True
+    if PRICE_RE.search(nome) and any(h in nome.lower() for h in PRICE_ONLY_HINTS) and len(nome) < 90:
+        return True
+    if norm in {"inicio", "home", "produtos", "todos os produtos", "promocoes", "promoções"}:
+        return True
+    return False
+
+
+def _clean_product_name(value: Any) -> str:
+    nome = _clean(value)
+    if not nome:
+        return ""
+    nome = re.sub(r"^\s*(?:C[ÓO]D(?:IGO)?|SKU|REF(?:ER[ÊE]NCIA)?|MODELO|ITEM)\s*[:#-]?\s*[A-Za-z0-9._/-]{3,40}\s+", "", nome, flags=re.I)
+    nome = PRICE_BLOCK_RE.sub("", nome).strip(" -|•–—")
+    nome = re.sub(r"\s+(?:no pix|ou no pix|ou r\$.*|cart[aã]o|boleto|comprar|adicionar ao carrinho).*$", "", nome, flags=re.I).strip()
+    nome = _clean(nome)
+    if _is_bad_product_name(nome):
+        return ""
+    return nome[:180]
 
 
 def _fetch_html(url: str, timeout: int = 18) -> str:
@@ -102,23 +157,23 @@ def _best_name(card: Tag) -> str:
     ]
     for sel in selectors:
         found = card.select_one(sel)
-        txt = _text(found)
-        if 5 <= len(txt) <= 180 and not PRICE_RE.search(txt):
+        txt = _clean_product_name(_text(found))
+        if txt:
             return txt
     alt_titles = []
     for img in card.find_all("img"):
         for attr in ("alt", "title"):
-            value = _clean(img.get(attr, ""))
-            if 5 <= len(value) <= 180 and not PRICE_RE.search(value):
+            value = _clean_product_name(img.get(attr, ""))
+            if value:
                 alt_titles.append(value)
     if alt_titles:
         return max(alt_titles, key=len)
-    link_txts = [_text(a) for a in card.find_all("a")]
-    link_txts = [t for t in link_txts if 5 <= len(t) <= 180 and not PRICE_RE.search(t)]
+    link_txts = [_clean_product_name(_text(a)) for a in card.find_all("a")]
+    link_txts = [t for t in link_txts if t]
     if link_txts:
         return max(link_txts, key=len)
-    txt = _text(card)
-    return txt[:180] if txt else ""
+    txt = _clean_product_name(_text(card))
+    return txt if txt else ""
 
 
 def _best_price(card: Tag) -> str:
@@ -181,11 +236,13 @@ def _score_card(card: Tag, base_url: str, repeated_signatures: set[str] | None =
     if _best_price(card):
         score += 2
     if _best_name(card):
-        score += 2
-    if 20 <= len(txt) <= 1600:
+        score += 3
+    else:
+        score -= 4
+    if 20 <= len(txt) <= 1200:
         score += 1
-    if len(txt) > 2500:
-        score -= 3
+    if len(txt) > 1600:
+        score -= 4
     return score
 
 
@@ -203,17 +260,17 @@ def _candidate_cards(soup: BeautifulSoup, base_url: str) -> list[Tag]:
         if score >= 6:
             scored.append((score, tag))
     scored.sort(key=lambda x: x[0], reverse=True)
-
     result: list[Tag] = []
     seen: set[str] = set()
     for _, tag in scored:
         link = _best_link(tag, base_url)
         name = _best_name(tag)
         price = _best_price(tag)
-        key = link or f"{name}|{price}"
-        if not key or key in seen:
+        code = _best_code(tag) or _best_gtin(tag)
+        key = link or code or f"{name}|{price}"
+        if not key or key in seen or not name:
             continue
-        if len(_text(tag)) > 3000:
+        if len(_text(tag)) > 1600:
             continue
         seen.add(key)
         result.append(tag)
@@ -253,9 +310,12 @@ def _jsonld_products(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]
             image = obj.get("image")
             if isinstance(image, list):
                 image = image[0] if image else ""
+            name = _clean_product_name(obj.get("name"))
+            if not name:
+                continue
             rows.append({
-                "Nome": _clean(obj.get("name")),
-                "Descrição": _clean(obj.get("description")),
+                "Nome": name,
+                "Descrição": _clean_product_name(obj.get("description")) or name,
                 "SKU": _clean(obj.get("sku") or obj.get("mpn")),
                 "GTIN": _clean(obj.get("gtin13") or obj.get("gtin") or obj.get("gtin14") or obj.get("gtin12")),
                 "Preço": _clean(offers.get("price") if isinstance(offers, dict) else ""),
@@ -281,9 +341,12 @@ def _microdata_products(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
         image = ""
         if img_node:
             image = img_node.get("content") or img_node.get("src") or img_node.get("data-src") or ""
+        nome = _clean_product_name(_text(name_node) or _best_name(node))
+        if not nome:
+            continue
         rows.append({
-            "Nome": _text(name_node) or _best_name(node),
-            "Descrição": _best_name(node),
+            "Nome": nome,
+            "Descrição": nome,
             "SKU": _text(sku_node) or _best_code(node),
             "GTIN": _best_gtin(node),
             "Preço": _clean(price_node.get("content") if price_node and price_node.get("content") else _text(price_node)) or _best_price(node),
@@ -299,12 +362,16 @@ def _microdata_products(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
 def _html_tables(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for tr in soup.select("table tr"):
-        cells = [_text(td) for td in tr.find_all(["td", "th"])]
-        joined = " | ".join([c for c in cells if c])
-        if len(cells) < 2 or not PRICE_RE.search(joined):
+        cells = [_clean_product_name(_text(td)) for td in tr.find_all(["td", "th"])]
+        cells = [c for c in cells if c]
+        joined = " | ".join(cells)
+        if len(cells) < 2 or not PRICE_RE.search(_text(tr)):
+            continue
+        nome = max(cells, key=len)[:180] if cells else ""
+        if not nome:
             continue
         rows.append({
-            "Nome": max(cells, key=len)[:180] if cells else "",
+            "Nome": nome,
             "Descrição": joined[:500],
             "SKU": _best_code(tr),
             "GTIN": _best_gtin(tr),
@@ -326,13 +393,13 @@ def _og_single_product(soup: BeautifulSoup, base_url: str) -> list[dict[str, str
                 return _clean(node.get("content"))
         return ""
 
-    title = meta("og:title", "twitter:title") or _text(soup.find("title"))
+    title = _clean_product_name(meta("og:title", "twitter:title") or _text(soup.find("title")))
     price = meta("product:price:amount", "og:price:amount")
     image = meta("og:image", "twitter:image")
     if title and (price or image):
         return [{
             "Nome": title,
-            "Descrição": meta("og:description", "description") or title,
+            "Descrição": _clean_product_name(meta("og:description", "description")) or title,
             "SKU": "",
             "GTIN": "",
             "Preço": price,
@@ -357,7 +424,7 @@ def _card_rows(cards: list[Tag], base_url: str, progress_callback=None, indice_u
         preco = _best_price(card)
         codigo = _best_code(card)
         gtin = _best_gtin(card)
-        if not (nome or link or imagem or preco):
+        if not nome:
             continue
         rows.append({
             "Nome": nome,
@@ -373,6 +440,44 @@ def _card_rows(cards: list[Tag], base_url: str, progress_callback=None, indice_u
             "origem_site_motor": "FLASH_UNIVERSAL_DOM",
         })
     return rows
+
+
+def _qualidade_nome(nome: str) -> int:
+    nome = _clean_product_name(nome)
+    if not nome:
+        return -999
+    score = len(nome)
+    if PRICE_RE.search(nome):
+        score -= 80
+    if CODE_PREFIX_RE.search(nome):
+        score -= 40
+    return score
+
+
+def _limpar_e_deduplicar_df(df: pd.DataFrame, url: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    base = df.copy().fillna("")
+    for col in ("Nome", "Descrição"):
+        if col in base.columns:
+            base[col] = base[col].astype(str).map(_clean_product_name)
+    if "Nome" in base.columns:
+        base = base[base["Nome"].astype(str).str.strip().ne("")].copy()
+    if base.empty:
+        return pd.DataFrame()
+    for col in ("url_produto", "Nome", "SKU", "Código", "GTIN"):
+        if col in base.columns:
+            base[col] = base[col].astype(str).map(_clean)
+    base["_qualidade_nome"] = base.get("Nome", pd.Series([""] * len(base))).apply(_qualidade_nome)
+    base = base.sort_values("_qualidade_nome", ascending=False)
+    for subset in (["GTIN"], ["SKU"], ["Código"], ["url_produto"], ["Nome"]):
+        cols = [c for c in subset if c in base.columns]
+        if cols:
+            mascara = base[cols[0]].astype(str).str.strip().ne("")
+            base = pd.concat([base[mascara].drop_duplicates(subset=cols, keep="first"), base[~mascara]], ignore_index=True, sort=False)
+    base = base.drop(columns=["_qualidade_nome"], errors="ignore")
+    base["URL origem da busca"] = url
+    return base.reset_index(drop=True)
 
 
 def run_flash_scraper(
@@ -415,12 +520,4 @@ def run_flash_scraper(
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows).fillna("")
-    for col in ("url_produto", "Nome", "SKU", "Código", "GTIN"):
-        if col in df.columns:
-            df[col] = df[col].astype(str).map(_clean)
-    subset = [c for c in ["url_produto", "Nome", "SKU"] if c in df.columns]
-    if subset:
-        df = df.drop_duplicates(subset=subset, keep="first")
-    df["URL origem da busca"] = url
-    return df.reset_index(drop=True)
+    return _limpar_e_deduplicar_df(pd.DataFrame(rows), url)
