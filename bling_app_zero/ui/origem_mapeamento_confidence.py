@@ -16,10 +16,23 @@ from bling_app_zero.ui.origem_mapeamento_helpers import (
     _normalizar_texto_busca,
     _aplicar_mapping,
     _score_coluna_para_destino,
-    _detectar_operacao,
     _preview_mapping,
     normalizar_texto,
 )
+
+
+def _bloqueados_sem_preco(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
+    """Mantém bloqueios realmente automáticos, mas libera preço para revisão manual.
+
+    Antes o campo de preço ficava bloqueado como automático. Isso impedia escolher
+    manualmente a coluna correta quando o usuário pulava a calculadora ou quando o
+    preço vinha direto da captura do site.
+    """
+    bloqueados = set(_campos_bloqueados_automaticos(df_modelo, operacao))
+    coluna_preco = _coluna_preco_prioritaria(df_modelo, operacao)
+    if coluna_preco in bloqueados:
+        bloqueados.remove(coluna_preco)
+    return bloqueados
 
 
 def _montar_badge_html(
@@ -195,7 +208,7 @@ def _render_resumo_confianca_mapeamento(
     mapping_atual: dict[str, str],
     operacao: str,
 ) -> None:
-    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+    bloqueados = _bloqueados_sem_preco(df_modelo, operacao)
     stats = {"ok": 0, "revisar": 0, "erro": 0, "auto": 0}
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
@@ -248,7 +261,7 @@ def _ordenar_colunas_para_revisao(
     operacao: str,
 ) -> list[str]:
     colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
-    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+    bloqueados = _bloqueados_sem_preco(df_modelo, operacao)
 
     itens: list[tuple[int, str, str]] = []
 
@@ -273,7 +286,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
     st.caption("Ajuste manual apenas se quiser revisar ou trocar algum vínculo da IA.")
 
     opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist() if not _eh_coluna_video(c)]
-    bloqueados = _campos_bloqueados_automaticos(df_modelo, operacao)
+    bloqueados = _bloqueados_sem_preco(df_modelo, operacao)
     mapping_atual = st.session_state.get("mapping_manual", {}).copy()
 
     _render_resumo_confianca_mapeamento(
@@ -315,8 +328,6 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
                 continue
 
             motivo = []
-            if coluna_modelo == _coluna_preco_prioritaria(df_modelo, operacao):
-                motivo.append("preço calculado")
             if coluna_modelo == _coluna_deposito_modelo(df_modelo) and operacao == "estoque":
                 motivo.append("depósito fixo da operação")
 
