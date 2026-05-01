@@ -240,6 +240,64 @@ def _obter_preview_modelo_bling() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _serie_tem_valor_real(serie: pd.Series) -> bool:
+    if not isinstance(serie, pd.Series):
+        return False
+    limpa = serie.astype(str).str.strip().replace({"nan": "", "None": "", "none": "", "null": ""})
+    return bool(limpa.ne("").any())
+
+
+def _tem_estoque_real_detectado() -> bool:
+    """Retorna True quando a busca/site já trouxe estoque revisado do fornecedor.
+
+    Quando isso acontece, não faz sentido exibir os campos manuais de fallback
+    'Estoque para Disponível/Baixo', porque eles só servem para origem textual sem
+    quantidade real.
+    """
+    fontes = [
+        "df_origem",
+        "df_preview_inteligente",
+        "df_preview_site_modelo_bling",
+        "df_precificado",
+        "df_saida",
+        "df_final",
+    ]
+    for chave in fontes:
+        df = st.session_state.get(chave)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
+        for col in df.columns:
+            nome = str(col).strip().lower()
+            if nome in {"origem_estoque_real", "estoque_origem"} or "estoque_real" in nome:
+                if _serie_tem_valor_real(df[col]):
+                    return True
+        for col in df.columns:
+            nome = str(col).strip().lower()
+            if nome in {"quantidade_real", "estoque real", "estoque_real"}:
+                serie = df[col].astype(str).str.strip().replace({"nan": "", "None": "", "none": "", "null": ""})
+                if serie.ne("").any():
+                    return True
+    return False
+
+
+def _deve_mostrar_estoque_inteligente() -> bool:
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+    if operacao != "estoque":
+        return False
+
+    modo = str(st.session_state.get("modo_origem", "") or "").strip()
+
+    if _tem_estoque_real_detectado():
+        return False
+
+    # Para busca por site, espera a varredura terminar. Se não encontrou estoque real,
+    # libera o fallback manual. Antes da busca, esconder evita confusão.
+    if modo == "Buscar no site do fornecedor" and not _origem_pronta() and not _preview_modelo_pronto():
+        return False
+
+    return True
+
+
 def _render_operacao() -> None:
     tipo_atual = st.session_state.get("tipo_operacao", "cadastro")
     opcoes = {"Cadastro de Produtos": "cadastro", "Atualização de Estoque": "estoque"}
@@ -275,9 +333,22 @@ def _render_dados_operacao() -> None:
             ).strip()
             st.session_state["deposito_nome"] = novo_valor
 
+
+def _render_estoque_inteligente() -> None:
+    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
+    if operacao != "estoque":
+        return
+
+    if _tem_estoque_real_detectado():
+        st.success("Estoque real detectado na busca do fornecedor. O fallback manual de Disponível/Baixo não será aplicado.")
+        return
+
+    if not _deve_mostrar_estoque_inteligente():
+        return
+
     with st.container(border=True):
         st.markdown("### Estoque inteligente")
-        st.caption("Usado quando a origem vier com texto como Disponível, Baixo, Esgotado ou Indisponível.")
+        st.caption("Aparece somente quando o site/arquivo não trouxe estoque real. Use como fallback para textos como Disponível, Baixo, Esgotado ou Indisponível.")
         c1, c2 = st.columns(2)
         with c1:
             st.session_state["estoque_padrao_disponivel"] = st.number_input(
@@ -436,5 +507,8 @@ def render_origem_dados() -> None:
         _render_preview_modelo_bling_origem()
     else:
         _render_origem_site()
+
+    _render_estoque_inteligente()
+
     st.markdown("---")
     _render_continuar()
