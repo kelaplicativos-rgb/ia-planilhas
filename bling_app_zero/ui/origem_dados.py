@@ -338,6 +338,12 @@ def _render_preview_modelo_bling_origem() -> None:
     df_origem = st.session_state.get("df_origem")
     df_modelo = st.session_state.get("df_modelo")
 
+    if st.session_state.get("modo_origem") == "Buscar no site do fornecedor":
+        return
+
+    if st.session_state.get("origem_site_preview_modelo_bling"):
+        return
+
     if not _origem_pronta():
         return
 
@@ -427,8 +433,8 @@ def render_origem_dados() -> None:
     modo = st.radio("Como deseja informar a origem?", ["Arquivo do fornecedor", "Buscar no site do fornecedor"], horizontal=True, key="modo_origem")
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
+        _render_preview_modelo_bling_origem()
     else:
         _render_origem_site()
-    _render_preview_modelo_bling_origem()
     st.markdown("---")
     _render_continuar()
