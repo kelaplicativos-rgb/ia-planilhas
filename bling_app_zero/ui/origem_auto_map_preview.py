@@ -36,7 +36,7 @@ CANONICAL_SOURCE_ALIASES = {
     "gtin": ["gtin", "ean", "codigo de barras", "código de barras", "barcode", "cean"],
     "preco": ["preco", "preço", "valor", "price", "preco venda", "preço venda", "preco unitario", "preço unitário"],
     "preco_custo": ["preco custo", "preço custo", "custo", "valor custo", "vuncom"],
-    "estoque": ["estoque", "quantidade", "saldo", "qtd", "stock", "available", "qcom", "status", "disponibilidade"],
+    "estoque": ["estoque", "quantidade", "saldo", "qtd", "stock", "available", "qcom", "status", "disponibilidade", "balanco", "balanço"],
     "imagem": ["imagem", "imagens", "image", "images", "foto", "fotos", "url imagem", "url imagens"],
     "marca": ["marca", "brand", "fabricante"],
     "categoria": ["categoria", "category", "departamento", "breadcrumb"],
@@ -261,23 +261,32 @@ def _classificar_score(score: float) -> tuple[str, str]:
 
 
 def _texto_para_estoque(valor: Any, estoque_disponivel: int, estoque_baixo: int) -> str:
-    texto = normalizar_texto(valor)
-    if not texto:
-        return str(estoque_disponivel)
+    """Converte status textual em estoque somente quando há sinal claro.
 
-    if any(token in texto for token in ["esgotado", "indisponivel", "indisponivel", "sem estoque", "zerado", "fora estoque"]):
+    Blindagem importante: vazio/indefinido NÃO vira mais estoque padrão 5. O valor
+    padrão deve ser usado apenas para texto explícito como 'Disponível' ou 'Baixo'.
+    Se o fornecedor não trouxe quantidade real, deixamos em branco para a etapa de
+    estoque real/sitemap ou revisão manual resolver, evitando falso estoque.
+    """
+    raw = str(valor or "").strip()
+    texto = normalizar_texto(raw)
+
+    if not texto:
+        return ""
+
+    if re.fullmatch(r"\d+", texto):
+        return texto
+
+    if any(token in texto for token in ["esgotado", "indisponivel", "sem estoque", "zerado", "fora estoque", "outofstock", "soldout"]):
         return "0"
 
     if any(token in texto for token in ["baixo", "poucas", "ultimas", "ultimas unidades", "limitado"]):
         return str(estoque_baixo)
 
-    if any(token in texto for token in ["disponivel", "em estoque", "pronta entrega", "comprar"]):
+    if any(token in texto for token in ["disponivel", "em estoque", "pronta entrega", "comprar", "instock", "in stock"]):
         return str(estoque_disponivel)
 
-    if re.fullmatch(r"\d+", texto):
-        return texto
-
-    return str(estoque_disponivel)
+    return ""
 
 
 def _destino_eh_estoque(coluna_destino: str) -> bool:
