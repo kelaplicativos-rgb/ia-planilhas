@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -20,6 +21,7 @@ LINHAS_LIXO_DESCRICAO = {
     "produtos",
     "todos os produtos",
     "conecte se conosco",
+    "conecte-se conosco",
     "conecte conosco",
     "esgotado",
     "paginas",
@@ -39,9 +41,18 @@ TRECHOS_LIXO_DESCRICAO = (
     "av mateo bei",
     "mateo bei",
     "conecte se conosco",
+    "conecte-se conosco",
     "redes sociais",
     "todos os direitos reservados",
 )
+
+
+def _norm_lixo(valor: object) -> str:
+    texto = str(valor or "").strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
 
 
 def _limpar_texto_celula(valor: object) -> str:
@@ -149,16 +160,18 @@ def _descricao_lixo(valor: object) -> bool:
     texto = _limpar_texto_celula(valor)
     if not texto:
         return True
-    norm = normalizar_texto(texto)
-    if norm in LINHAS_LIXO_DESCRICAO:
+    norm = _norm_lixo(texto)
+    lixos_norm = {_norm_lixo(v) for v in LINHAS_LIXO_DESCRICAO}
+    trechos_norm = tuple(_norm_lixo(v) for v in TRECHOS_LIXO_DESCRICAO)
+    if norm in lixos_norm:
         return True
-    if any(trecho and trecho in norm for trecho in TRECHOS_LIXO_DESCRICAO):
+    if any(trecho and trecho in norm for trecho in trechos_norm):
         return True
     if re.fullmatch(r"(?:r\$)?\s*[0-9\.,%\s]+", texto.lower()):
         return True
     if re.search(r"R\$\s*\d", texto, flags=re.I) and any(t in texto.lower() for t in ["pix", "cart", "boleto", "desconto"]):
         return True
-    if len(texto) > 130 and any(t in norm for t in ["loja", "atendimento", "segunda", "sabado", "sábado", "avenida", "av "]):
+    if len(texto) > 130 and any(t in norm for t in ["loja", "atendimento", "segunda", "sabado", "avenida", "av"]):
         return True
     return False
 
