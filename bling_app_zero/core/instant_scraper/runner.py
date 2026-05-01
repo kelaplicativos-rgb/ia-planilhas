@@ -13,6 +13,10 @@ from .auth_fetcher import fetch_html_with_auth
 from .self_healing import auto_heal_dataframe
 
 
+ORIGENS_ESTOQUE_REAIS = {"quantidade_real", "zerado_texto", "zerado_availability"}
+ORIGENS_SEM_QUANTIDADE = {"status_positivo_sem_quantidade", "nao_detectado"}
+
+
 def _emit_progress(progress_callback, percent: int, message: str, step: int = 0) -> None:
     if not progress_callback:
         return
@@ -30,6 +34,37 @@ def _safe_dataframe(value) -> pd.DataFrame:
 
 def _fetch_http(url: str, auth_context=None) -> str:
     return fetch_html_with_auth(url, auth_context=auth_context)
+
+
+def _corrigir_estoque_megacenter(df: pd.DataFrame) -> pd.DataFrame:
+    base = _safe_dataframe(df)
+    if base.empty or "estoque_origem" not in base.columns:
+        return base
+
+    origem = base["estoque_origem"].astype(str).str.strip().str.lower()
+    sem_quantidade = origem.isin(ORIGENS_SEM_QUANTIDADE)
+    if sem_quantidade.any():
+        for col in ["estoque", "quantidade", "quantidade_real"]:
+            if col in base.columns:
+                base.loc[sem_quantidade, col] = ""
+        if "status_estoque_site" not in base.columns:
+            base["status_estoque_site"] = ""
+        base.loc[sem_quantidade, "status_estoque_site"] = origem[sem_quantidade]
+
+    real = origem.isin(ORIGENS_ESTOQUE_REAIS)
+    if real.any():
+        if "origem_estoque_real" not in base.columns:
+            base["origem_estoque_real"] = ""
+        base.loc[real, "origem_estoque_real"] = "megacenter_supplier:" + origem[real]
+
+    return base.fillna("").reset_index(drop=True)
+
+
+def _run_supplier(url: str) -> pd.DataFrame:
+    supplier = MegaCenterSupplier()
+    if not supplier.can_handle(url):
+        return pd.DataFrame()
+    return _corrigir_estoque_megacenter(pd.DataFrame(supplier.fetch(url, limite=5000, max_paginas=200, max_workers=8)))
 
 
 def _run_basic(url: str, auth_context=None, progress_callback=None) -> pd.DataFrame:
@@ -54,26 +89,25 @@ def run_scraper(url: str, auth_context=None, config=None, progress_callback=None
         return pd.DataFrame()
 
     _emit_progress(progress_callback, 5, "Iniciando captura", 0)
-    supplier = MegaCenterSupplier()
 
     strategies = {
         "instant_dom": lambda u: instant_extract(_fetch_http(u, auth_context), u),
         "click_scraper": lambda u: auto_click_extract(_fetch_http(u, auth_context), u),
-        "supplier": lambda u: pd.DataFrame(supplier.fetch(u, limite=5000, max_paginas=200, max_workers=8)) if supplier.can_handle(u) else pd.DataFrame(),
+        "supplier": lambda u: _run_supplier(u),
         "god_mode": lambda u: run_god_mode_scraper(u),
         "basic": lambda u: _run_basic(u, auth_context, progress_callback),
     }
 
     try:
         result = run_autonomous_agent(url, strategies)
-        df = _safe_dataframe(result.dataframe)
+        df = _corrigir_estoque_megacenter(_safe_dataframe(result.dataframe))
     except Exception:
         df = pd.DataFrame()
 
     if df.empty:
         for name in ("supplier", "instant_dom", "click_scraper", "basic", "god_mode"):
             try:
-                df = _safe_dataframe(strategies[name](url))
+                df = _corrigir_estoque_megacenter(_safe_dataframe(strategies[name](url)))
             except Exception:
                 df = pd.DataFrame()
             if not df.empty:
