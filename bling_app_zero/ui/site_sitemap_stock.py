@@ -4,7 +4,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from typing import Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -252,6 +252,11 @@ def _extract_jsonld_availability(soup: BeautifulSoup) -> str:
 
 
 def _detect_stock_from_html(html: str) -> tuple[str, str]:
+    """Retorna apenas quantidade real ou indisponibilidade clara.
+
+    Disponível/comprar não é estoque real. Isso não pode virar 1 nem acionar a
+    mensagem de estoque real detectado, porque só confirma disponibilidade genérica.
+    """
     if not html:
         return "", "sem_html"
     soup = BeautifulSoup(html, "html.parser")
@@ -277,7 +282,7 @@ def _detect_stock_from_html(html: str) -> tuple[str, str]:
         return "0", "sem_estoque"
 
     if any(term in combined for term in IN_STOCK_TERMS) or "instock" in combined or "in_stock" in combined:
-        return "1", "disponivel"
+        return "", "disponivel_sem_quantidade"
 
     return "", "indefinido"
 
@@ -304,9 +309,9 @@ def enrich_stock_from_sitemaps(
 ) -> pd.DataFrame:
     """Reconsulta páginas de produtos detectadas usando sitemaps como índice.
 
-    A função não inventa quantidade. Quando a página só informa disponibilidade,
-    usa 1 para disponível e 0 para indisponível/esgotado. Quando houver quantidade
-    explícita no HTML, usa a quantidade encontrada.
+    Não inventa quantidade. Se encontrar número explícito, usa esse número. Se
+    encontrar indisponível/esgotado, usa 0. Se encontrar apenas disponível/comprar,
+    registra status auxiliar, mas NÃO altera o balanço como estoque real.
     """
     base = _safe_df(df)
     if base.empty:
@@ -333,7 +338,6 @@ def enrich_stock_from_sitemaps(
     urls_to_check: list[str] = []
     for url in detected_urls:
         key = url.rstrip("/")
-        # Se existir no sitemap, usa a versão do sitemap; senão verifica a URL detectada mesmo assim.
         urls_to_check.append(sitemap_lookup.get(key, url))
 
     urls_to_check = urls_to_check[:MAX_STOCK_PAGES]
@@ -349,18 +353,23 @@ def enrich_stock_from_sitemaps(
         estoque_por_url[product_url.rstrip("/")] = _detect_stock_from_html(html)
 
     base["origem_estoque_real"] = ""
+    base["status_estoque_site"] = ""
     alterados = 0
+    status_detectados = 0
     for idx, row in base.iterrows():
         raw_url = _norm_url(row.get(url_col, "")).rstrip("/")
         sitemap_url = sitemap_lookup.get(raw_url, raw_url).rstrip("/")
         qty, status = estoque_por_url.get(sitemap_url, ("", ""))
+        if status:
+            base.at[idx, "status_estoque_site"] = status
+            status_detectados += 1
         if qty != "":
             base.at[idx, stock_col] = qty
             base.at[idx, "origem_estoque_real"] = f"sitemap_html:{status}"
             alterados += 1
 
     if progress_callback:
-        progress_callback(97, f"SITEMAP ESTOQUE: {alterados} item(ns) com estoque real revisado", indice_url)
+        progress_callback(97, f"SITEMAP ESTOQUE: {alterados} item(ns) com quantidade real/zero explícito; {status_detectados} status lido(s)", indice_url)
 
     return base.fillna("")
 
