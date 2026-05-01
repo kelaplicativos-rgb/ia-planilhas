@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
+
+import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.app_helpers import (
     ir_para_etapa,
     safe_df_dados,
@@ -26,6 +30,133 @@ from bling_app_zero.ui.origem_mapeamento_helpers import (
     _sincronizar_deposito_nome,
     _detectar_operacao,
 )
+
+
+def _norm_coluna(valor: object) -> str:
+    texto = str(valor or "").strip().lower()
+    texto = texto.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
+    return re.sub(r"[^a-z0-9]+", " ", texto).strip()
+
+
+def _serie_tem_valor(serie: pd.Series) -> bool:
+    if not isinstance(serie, pd.Series):
+        return False
+    return bool(serie.astype(str).str.strip().replace({"nan": "", "None": "", "none": ""}).ne("").any())
+
+
+def _coluna_preco_destino(df_modelo: pd.DataFrame, operacao: str) -> str:
+    if not safe_df_estrutura(df_modelo):
+        return ""
+
+    colunas = [str(c) for c in df_modelo.columns.tolist()]
+    prioridades_estoque = [
+        "Preço unitário (OBRIGATÓRIO)",
+        "Preco unitario (OBRIGATORIO)",
+        "Preço unitário",
+        "Preco unitario",
+        "Preço",
+        "Preco",
+        "Valor",
+    ]
+    prioridades_cadastro = [
+        "Preço de venda",
+        "Preco de venda",
+        "Preço unitário (OBRIGATÓRIO)",
+        "Preco unitario (OBRIGATORIO)",
+        "Preço unitário",
+        "Preco unitario",
+        "Preço",
+        "Preco",
+        "Valor",
+    ]
+    prioridades = prioridades_estoque if operacao == "estoque" else prioridades_cadastro
+
+    mapa = {_norm_coluna(c): c for c in colunas}
+    for prioridade in prioridades:
+        achado = mapa.get(_norm_coluna(prioridade))
+        if achado:
+            return achado
+
+    for col in colunas:
+        nome = _norm_coluna(col)
+        if "preco" in nome or "valor" in nome or "unitario" in nome:
+            return col
+
+    return ""
+
+
+def _coluna_preco_origem(df_base: pd.DataFrame, destino: str) -> str:
+    if not safe_df_dados(df_base):
+        return ""
+
+    colunas = [str(c) for c in df_base.columns.tolist()]
+    mapa = {_norm_coluna(c): c for c in colunas}
+
+    if destino:
+        achado = mapa.get(_norm_coluna(destino))
+        if achado and _serie_tem_valor(df_base[achado]):
+            return achado
+
+    prioridades = [
+        "Preço unitário (OBRIGATÓRIO)",
+        "Preço unitário",
+        "Preço de venda",
+        "Preço",
+        "Preco",
+        "Valor",
+        "price",
+    ]
+    for prioridade in prioridades:
+        achado = mapa.get(_norm_coluna(prioridade))
+        if achado and _serie_tem_valor(df_base[achado]):
+            return achado
+
+    for col in colunas:
+        nome = _norm_coluna(col)
+        if ("preco" in nome or "valor" in nome or "price" in nome) and _serie_tem_valor(df_base[col]):
+            return col
+
+    return ""
+
+
+def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
+    """Blindagem final do preço antes do usuário seguir para o preview final.
+
+    No fluxo por site, a planilha já chega no modelo Bling. O mapeamento automático
+    antigo bloqueava preço como campo automático e só preenchia quando existia
+    `_preco_calculado`. Quando o usuário pulava a precificação, o preço do site
+    podia sumir. Esta blindagem preserva o preço capturado no campo correto.
+    """
+    df_final = st.session_state.get("df_final")
+    if not safe_df_estrutura(df_final) or not safe_df_dados(df_base):
+        return
+
+    destino = _coluna_preco_destino(df_modelo, operacao)
+    if not destino or destino not in df_final.columns:
+        return
+
+    if _serie_tem_valor(df_final[destino]):
+        return
+
+    origem_preco = _coluna_preco_origem(df_base, destino)
+    if not origem_preco or origem_preco not in df_base.columns:
+        return
+
+    corrigido = df_final.copy().fillna("")
+    corrigido[destino] = df_base[origem_preco].astype(str).fillna("").values[: len(corrigido)]
+    st.session_state["df_final"] = corrigido
+    st.session_state["df_saida"] = corrigido.copy()
+    st.session_state["_preco_unitario_corrigido_mapping"] = {
+        "destino": destino,
+        "origem": origem_preco,
+        "linhas": int(len(corrigido)),
+    }
+
+
+
+def _avancar_para_preview_final() -> None:
+    if set_etapa_segura("preview_final", origem="mapeamento_fluxo"):
+        st.rerun()
 
 
 def render_origem_mapeamento() -> None:
@@ -60,13 +191,22 @@ def render_origem_mapeamento() -> None:
     _sincronizar_deposito_nome()
     _inicializar_mapping(df_base, df_modelo)
     _executar_ia_autonoma(df_base, df_modelo, operacao)
+    _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
     _render_status_base(df_base, df_modelo)
     _render_sugestao_agente(df_base, df_modelo)
     _render_resumo_agente()
 
+    correcao_preco = st.session_state.get("_preco_unitario_corrigido_mapping")
+    if isinstance(correcao_preco, dict) and correcao_preco.get("destino"):
+        st.success(
+            "Preço preservado automaticamente: "
+            f"{correcao_preco.get('origem')} ➜ {correcao_preco.get('destino')}"
+        )
+
     with st.expander("Revisão manual opcional", expanded=False):
         _render_revisao_manual(df_base, df_modelo, operacao)
+        _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
     df_preview = st.session_state.get("df_final")
     if safe_df_estrutura(df_preview):
