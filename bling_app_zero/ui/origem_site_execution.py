@@ -15,7 +15,6 @@ from bling_app_zero.ui.origem_site_config import (
     MOTOR_FALLBACK,
     MOTOR_GOD,
     MOTOR_RAPIDO,
-    MOTORES_SITE,
     PRESETS,
     ScraperPreset,
     config_from_preset,
@@ -29,46 +28,23 @@ FLASH_MIN_ROWS_TO_SKIP_HEAVY = 8
 MAX_FLASH_CATALOG_URLS = 160
 MAX_FLASH_CATEGORY_URLS = 70
 MAX_FLASH_PAGES_PER_CATEGORY = 8
+LOOP_DUPLICATE_STREAK_LIMIT = 3
+LOOP_EMPTY_STREAK_LIMIT = 3
+LOOP_MIN_PAGES_BEFORE_STOP = 5
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
 }
 BAD_DISCOVERY_HINTS = (
-    "login",
-    "conta",
-    "account",
-    "checkout",
-    "carrinho",
-    "cart",
-    "whatsapp",
-    "facebook",
-    "instagram",
-    "youtube",
-    "politica",
-    "termos",
-    "privacy",
-    "contato",
-    "atendimento",
-    "blog",
-    "faq",
-    "javascript:",
-    "mailto:",
-    "tel:",
+    "login", "conta", "account", "checkout", "carrinho", "cart", "whatsapp",
+    "facebook", "instagram", "youtube", "politica", "termos", "privacy",
+    "contato", "atendimento", "blog", "faq", "javascript:", "mailto:", "tel:",
 )
 PRODUCT_HINTS = ("produto", "product", "/p/", "/prod/", "/item/", "products/")
 CATALOG_HINTS = (
-    "categoria",
-    "category",
-    "departamento",
-    "collection",
-    "collections",
-    "catalogo",
-    "catálogo",
-    "loja",
-    "produtos",
-    "shop",
-    "store",
+    "categoria", "category", "departamento", "collection", "collections", "catalogo",
+    "catálogo", "loja", "produtos", "shop", "store",
 )
 
 
@@ -121,9 +97,7 @@ def _limpar_query_tracking(url: str) -> str:
 def _url_parece_catalogo(url: str, texto_link: str = "") -> bool:
     u = str(url or "").lower()
     texto = str(texto_link or "").lower()
-    if not u:
-        return False
-    if any(bad in u for bad in BAD_DISCOVERY_HINTS):
+    if not u or any(bad in u for bad in BAD_DISCOVERY_HINTS):
         return False
     if any(hint in u for hint in CATALOG_HINTS) or any(hint in texto for hint in CATALOG_HINTS):
         return True
@@ -131,9 +105,7 @@ def _url_parece_catalogo(url: str, texto_link: str = "") -> bool:
         return False
     path = urlparse(u).path.strip("/")
     partes = [p for p in path.split("/") if p]
-    if 1 <= len(partes) <= 3 and len(path) >= 3:
-        return True
-    return False
+    return 1 <= len(partes) <= 3 and len(path) >= 3
 
 
 def _url_parece_produto(url: str) -> bool:
@@ -153,19 +125,10 @@ def _com_query_pagina(url: str, pagina: int) -> str:
 def _com_path_page(url: str, pagina: int) -> str:
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
-    if path.lower().endswith(f"/page/{pagina}"):
-        return url
     return urlunparse(parsed._replace(path=f"{path}/page/{pagina}", fragment=""))
 
 
 def _descobrir_urls_catalogo(url: str, progress_callback: Callable[[int, str, int], None] | None = None, indice_url: int = 1) -> list[str]:
-    """Descobre categorias/listagens antes do Flash.
-
-    O bug principal era capturar só a primeira vitrine encontrada. Em lojas com
-    milhares de itens é necessário abrir categorias e páginas de listagem. Esta
-    descoberta é leve: lê menus/links da home e adiciona variações de paginação
-    comuns sem entrar produto por produto.
-    """
     base_url = _normalizar_url(url)
     if not base_url:
         return []
@@ -184,8 +147,7 @@ def _descobrir_urls_catalogo(url: str, progress_callback: Callable[[int, str, in
             texto = " ".join(a.get_text(" ", strip=True).split())
             if not href:
                 continue
-            absoluto = _limpar_query_tracking(urljoin(base_url, href))
-            absoluto = _normalizar_url(absoluto)
+            absoluto = _normalizar_url(_limpar_query_tracking(urljoin(base_url, href)))
             if not absoluto or not _mesmo_dominio(absoluto, base_url):
                 continue
             if _url_parece_catalogo(absoluto, texto):
@@ -247,19 +209,9 @@ def _normalizar_saida(df: pd.DataFrame, url: str) -> pd.DataFrame:
     return base.fillna("").reset_index(drop=True)
 
 
-def _executar_flash(
-    url: str,
-    progress_callback: Callable[[int, str, int], None] | None = None,
-    indice_url: int = 1,
-    total_urls: int = 1,
-) -> pd.DataFrame:
+def _executar_flash(url: str, progress_callback: Callable[[int, str, int], None] | None = None, indice_url: int = 1, total_urls: int = 1) -> pd.DataFrame:
     try:
-        df = run_flash(
-            url,
-            progress_callback=progress_callback,
-            indice_url=indice_url,
-            total_urls=total_urls,
-        )
+        df = run_flash(url, progress_callback=progress_callback, indice_url=indice_url, total_urls=total_urls)
     except Exception:
         df = pd.DataFrame()
 
@@ -273,12 +225,7 @@ def _executar_flash(
 def _executar_god(url: str, preset: ScraperPreset, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     auth_context = get_site_auth_context()
     try:
-        df = run_scraper(
-            url,
-            auth_context=auth_context,
-            config=exhaustive_config_from_preset(preset),
-            progress_callback=progress_callback,
-        )
+        df = run_scraper(url, auth_context=auth_context, config=exhaustive_config_from_preset(preset), progress_callback=progress_callback)
     except TypeError:
         try:
             df = run_scraper(url, auth_context=auth_context)
@@ -296,12 +243,7 @@ def _executar_god(url: str, preset: ScraperPreset, progress_callback: Callable[[
 
 def _executar_exaustivo(url: str, preset: ScraperPreset, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     auth_context = get_site_auth_context()
-    resultado = run_exhaustive_capture(
-        url,
-        auth_context=auth_context,
-        config=exhaustive_config_from_preset(preset),
-        progress_callback=progress_callback,
-    )
+    resultado = run_exhaustive_capture(url, auth_context=auth_context, config=exhaustive_config_from_preset(preset), progress_callback=progress_callback)
     df = _safe_df(resultado.dataframe)
     if not df.empty:
         df["origem_site_status"] = resultado.status
@@ -342,12 +284,7 @@ def _executar_fallback(url: str, preset: ScraperPreset) -> pd.DataFrame:
     return base
 
 
-def _executar_motor(
-    url: str,
-    preset: ScraperPreset,
-    motor: str,
-    progress_callback: Callable[[int, str, int], None] | None = None,
-) -> pd.DataFrame:
+def _executar_motor(url: str, preset: ScraperPreset, motor: str, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     if motor == MOTOR_GOD:
         return _executar_god(url, preset, progress_callback=progress_callback)
     if motor == MOTOR_EXAUSTIVO:
@@ -362,18 +299,7 @@ def _executar_motor(
 def _chave_dedup(df: pd.DataFrame) -> list[str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
-    candidatos = [
-        "Código",
-        "SKU",
-        "GTIN",
-        "GTIN/EAN",
-        "url_produto",
-        "URL",
-        "Descrição",
-        "Nome",
-        "descricao",
-        "nome",
-    ]
+    candidatos = ["Código", "SKU", "GTIN", "GTIN/EAN", "url_produto", "URL", "Descrição", "Nome", "descricao", "nome"]
     return [c for c in candidatos if c in df.columns]
 
 
@@ -390,37 +316,73 @@ def _juntar_resultados(resultados: list[pd.DataFrame]) -> pd.DataFrame:
     return saida.reset_index(drop=True)
 
 
-def _executar_flash_amplo_url(
-    url: str,
-    progress_callback: Callable[[int, str, int], None] | None = None,
-    indice_url: int = 1,
-    total_urls: int = 1,
-) -> pd.DataFrame:
+def _valor_chave_item(valor: Any) -> str:
+    texto = str(valor or "").strip().lower()
+    return " ".join(texto.split())
+
+
+def _chaves_itens_df(df: pd.DataFrame) -> set[str]:
+    base = _safe_df(df)
+    if base.empty:
+        return set()
+    chaves: set[str] = set()
+    for _, row in base.iterrows():
+        for col in ("GTIN", "GTIN/EAN", "Código", "SKU", "url_produto", "URL", "Descrição", "Nome"):
+            if col in base.columns:
+                valor = _valor_chave_item(row.get(col, ""))
+                if valor:
+                    chaves.add(f"{col}:{valor}")
+                    break
+    return chaves
+
+
+def _executar_flash_amplo_url(url: str, progress_callback: Callable[[int, str, int], None] | None = None, indice_url: int = 1, total_urls: int = 1) -> pd.DataFrame:
     paginas = _descobrir_urls_catalogo(url, progress_callback=progress_callback, indice_url=indice_url)
     frames_url: list[pd.DataFrame] = []
     total_paginas = max(1, len(paginas))
+    chaves_vistas: set[str] = set()
+    duplicadas_em_sequencia = 0
+    vazias_em_sequencia = 0
 
     for posicao, pagina_url in enumerate(paginas, start=1):
         if progress_callback:
             percentual = min(92, 8 + int((posicao / total_paginas) * 84))
             progress_callback(percentual, f"FLASH AMPLO: página/listagem {posicao}/{total_paginas}", indice_url)
+
         bruto = _executar_flash(pagina_url, progress_callback=None, indice_url=indice_url, total_urls=total_urls)
         normalizado = _normalizar_saida(bruto, pagina_url)
-        if isinstance(normalizado, pd.DataFrame) and not normalizado.empty:
+
+        if not isinstance(normalizado, pd.DataFrame) or normalizado.empty:
+            vazias_em_sequencia += 1
+            duplicadas_em_sequencia = 0
+        else:
+            chaves_pagina = _chaves_itens_df(normalizado)
+            novas = chaves_pagina - chaves_vistas
+            if not novas and chaves_pagina:
+                duplicadas_em_sequencia += 1
+            else:
+                duplicadas_em_sequencia = 0
+            vazias_em_sequencia = 0
+            chaves_vistas.update(chaves_pagina)
             normalizado["URL origem da busca"] = pagina_url
             normalizado["Modo usado"] = "Flash Amplo"
             normalizado["Motor usado"] = "FLASH_CATALOGO_AMPLO"
             frames_url.append(normalizado)
 
+        if posicao >= LOOP_MIN_PAGES_BEFORE_STOP and duplicadas_em_sequencia >= LOOP_DUPLICATE_STREAK_LIMIT:
+            if progress_callback:
+                progress_callback(94, f"FLASH AMPLO: interrompido por loop de produtos repetidos após {posicao} páginas", indice_url)
+            break
+
+        if posicao >= LOOP_MIN_PAGES_BEFORE_STOP and vazias_em_sequencia >= LOOP_EMPTY_STREAK_LIMIT:
+            if progress_callback:
+                progress_callback(94, f"FLASH AMPLO: interrompido por páginas vazias repetidas após {posicao} páginas", indice_url)
+            break
+
     return _juntar_resultados(frames_url)
 
 
-def _executar_auto_total_url(
-    url: str,
-    progress_callback: Callable[[int, str, int], None] | None = None,
-    indice_url: int = 1,
-    total_urls: int = 1,
-) -> pd.DataFrame:
+def _executar_auto_total_url(url: str, progress_callback: Callable[[int, str, int], None] | None = None, indice_url: int = 1, total_urls: int = 1) -> pd.DataFrame:
     frames_url: list[pd.DataFrame] = []
 
     if progress_callback:
@@ -431,7 +393,7 @@ def _executar_auto_total_url(
         frames_url.append(flash_amplo)
         if len(flash_amplo) >= FLASH_MIN_ROWS_TO_SKIP_HEAVY:
             if progress_callback:
-                progress_callback(96, f"FLASH AMPLO: {len(flash_amplo)} itens detectados no catálogo", indice_url)
+                progress_callback(96, f"FLASH AMPLO: {len(flash_amplo)} itens únicos detectados no catálogo", indice_url)
             return _juntar_resultados(frames_url)
 
     if progress_callback:
@@ -452,12 +414,7 @@ def _executar_auto_total_url(
     return _juntar_resultados(frames_url)
 
 
-def executar_busca(
-    urls,
-    preset: ScraperPreset | None,
-    motor: str,
-    progress_callback: Callable[[int, str, int], None] | None = None,
-) -> pd.DataFrame:
+def executar_busca(urls, preset: ScraperPreset | None, motor: str, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     resultados: list[pd.DataFrame] = []
     urls_lista = [_normalizar_url(url) for url in (urls or []) if str(url or "").strip()]
     urls_lista = [u for u in urls_lista if u]
