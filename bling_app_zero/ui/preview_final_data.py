@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 from bling_app_zero.ui.app_helpers import (
     blindar_df_para_bling,
@@ -162,11 +163,77 @@ def _valor_numerico_texto(valor: object) -> str:
     return numero
 
 
+def _valor_preco_normalizado(valor: object) -> str:
+    preco_texto = _extrair_primeiro_preco_texto(valor)
+    numero = preco_texto or _valor_numerico_texto(valor)
+    if not numero:
+        return ""
+    try:
+        valor_float = float(str(numero).replace(",", "."))
+    except Exception:
+        return ""
+    if valor_float <= 0:
+        return ""
+    return f"{valor_float:.2f}".replace(".", ",")
+
+
+def _valor_preco_preenchido(valor: object) -> bool:
+    return bool(_valor_preco_normalizado(valor))
+
+
+def _nome_coluna_preco_forte(coluna: object) -> bool:
+    nome = normalizar_texto(coluna)
+    if not nome:
+        return False
+    if any(token in nome for token in ["gtin", "ean", "codigo de barras", "código de barras", "descricao", "descrição", "produto", "deposito", "depósito", "balanco", "balanço", "estoque", "quantidade"]):
+        return False
+    return any(token in nome for token in ["preco", "preço", "valor", "price", "custo", "unitario", "unitário"])
+
+
+def _colunas_preco_candidatas(df: pd.DataFrame, excluir: set[str] | None = None) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    excluir = excluir or set()
+    fortes = []
+    fracas = []
+    for col in [str(c) for c in df.columns.tolist()]:
+        if col in excluir:
+            continue
+        serie = serie_texto_limpa(df, col)
+        if serie.empty:
+            continue
+        valores_validos = int(serie.apply(_valor_preco_preenchido).sum())
+        if valores_validos <= 0:
+            continue
+        if _nome_coluna_preco_forte(col):
+            fortes.append((valores_validos, col))
+        else:
+            # Só aceita coluna fraca se o valor tiver R$ explícito, para não confundir GTIN/código com preço.
+            com_rs = int(serie.astype(str).str.contains(r"R\$\s*\d", case=False, regex=True).sum())
+            if com_rs > 0:
+                fracas.append((com_rs, col))
+    fortes.sort(key=lambda item: item[0], reverse=True)
+    fracas.sort(key=lambda item: item[0], reverse=True)
+    return [col for _, col in fortes + fracas]
+
+
+def _buscar_preco_em_fontes_sessao(indice: int, excluir: set[str] | None = None) -> str:
+    excluir = excluir or set()
+    for chave in ["df_precificado", "pricing_df_preview", "df_preview_inteligente", "df_preview_site_modelo_bling", "df_saida", "df_origem"]:
+        df = st.session_state.get(chave)
+        if not isinstance(df, pd.DataFrame) or df.empty or indice >= len(df.index):
+            continue
+        for coluna in _colunas_preco_candidatas(df, excluir=excluir):
+            valor = _valor_preco_normalizado(df.iloc[indice].get(coluna, ""))
+            if valor:
+                return valor
+    return ""
+
+
 def _estoque_por_texto(row: pd.Series) -> str:
     texto = " ".join(str(v or "") for v in row.tolist()).lower()
     if any(token in texto for token in ["esgotado", "sem estoque", "indisponivel", "indisponível", "fora de estoque", "zerado"]):
         return "0"
-    # Se veio de site com produto/código/preço, mas sem quantidade real, usar 1 como disponível operacional.
     if any(token in texto for token in [" r$", "cód:", "cod:", "comprar", "no pix", "cartao", "cartão"]):
         return "1"
     return ""
@@ -176,7 +243,7 @@ def _preco_por_linha(row: pd.Series) -> str:
     for valor in row.tolist():
         preco = _extrair_primeiro_preco_texto(valor)
         if preco:
-            return preco
+            return _valor_preco_normalizado(preco)
     return ""
 
 
@@ -311,24 +378,40 @@ def garantir_colunas_preco_canonicas(df: pd.DataFrame, tipo_operacao: str) -> pd
     if "Preço de Custo" not in base.columns:
         base["Preço de Custo"] = ""
 
-    preco_col = coluna_preco(base)
+    candidatos_base = _colunas_preco_candidatas(base, excluir={alvo_preco, "Preço de Custo"})
+
     for alvo in [alvo_preco, "Preço de Custo"]:
-        serie = serie_texto_limpa(base, alvo)
-        if serie.empty or serie.eq("").any():
-            novos = []
-            for idx, row in base.iterrows():
-                atual = str(base.at[idx, alvo]).strip()
-                if atual:
-                    novos.append(atual)
-                    continue
-                origem = ""
-                if preco_col and preco_col in base.columns and preco_col != alvo:
-                    origem = _valor_numerico_texto(row.get(preco_col, ""))
-                if not origem:
-                    origem = _preco_por_linha(row)
+        novos = []
+        alterou = False
+        for idx, row in base.iterrows():
+            atual = _valor_preco_normalizado(row.get(alvo, ""))
+            if atual:
+                novos.append(atual)
+                continue
+
+            origem = ""
+            for preco_col in candidatos_base:
+                origem = _valor_preco_normalizado(row.get(preco_col, ""))
+                if origem:
+                    break
+
+            if not origem:
+                origem = _preco_por_linha(row)
+
+            if not origem:
+                origem = _buscar_preco_em_fontes_sessao(idx, excluir={alvo_preco, "Preço de Custo"})
+
+            if origem:
+                alterou = True
                 novos.append(origem)
-            base[alvo] = novos
-    log_debug("Preço unitário/Preço de Custo preenchidos automaticamente quando possível.", nivel="INFO")
+            else:
+                novos.append(str(row.get(alvo, "")).strip())
+
+        base[alvo] = novos
+        if alterou:
+            log_debug(f"{alvo} preservado a partir de preço válido da origem/sessão.", nivel="INFO")
+
+    log_debug("Preço unitário/Preço de Custo revisados no preview final, tratando 0,00 como vazio.", nivel="INFO")
     return base.fillna("")
 
 
