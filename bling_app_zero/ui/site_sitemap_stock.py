@@ -10,6 +10,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.suppliers.megacenter import MegaCenterSupplier
+
 
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
@@ -21,6 +23,12 @@ MAX_SITEMAPS = 18
 MAX_SITEMAP_URLS = 6000
 MAX_STOCK_PAGES = 450
 TIMEOUT = 10
+
+MEGACENTER_HOSTS = (
+    "megacentereletronicos.com.br",
+    "mega-center-eletronicos.stoqui.shop",
+    "stoqui.shop",
+)
 
 OUT_OF_STOCK_TERMS = (
     "sem estoque",
@@ -87,9 +95,21 @@ def _norm_url(url: object) -> str:
     return parsed._replace(fragment="").geturl()
 
 
+def _host(url: object) -> str:
+    try:
+        return urlparse(_norm_url(url)).netloc.replace("www.", "").lower()
+    except Exception:
+        return ""
+
+
+def _is_megacenter_url(url: object) -> bool:
+    host = _host(url)
+    return bool(host and any(host == h or host.endswith("." + h) for h in MEGACENTER_HOSTS))
+
+
 def _same_domain(a: str, b: str) -> bool:
     try:
-        return urlparse(a).netloc.replace("www.", "").lower() == urlparse(b).netloc.replace("www.", "").lower()
+        return _host(a) == _host(b)
     except Exception:
         return False
 
@@ -252,11 +272,7 @@ def _extract_jsonld_availability(soup: BeautifulSoup) -> str:
 
 
 def _detect_stock_from_html(html: str) -> tuple[str, str]:
-    """Retorna apenas quantidade real ou indisponibilidade clara.
-
-    Disponível/comprar não é estoque real. Isso não pode virar 1 nem acionar a
-    mensagem de estoque real detectado, porque só confirma disponibilidade genérica.
-    """
+    """Retorna apenas quantidade real ou indisponibilidade clara."""
     if not html:
         return "", "sem_html"
     soup = BeautifulSoup(html, "html.parser")
@@ -301,17 +317,59 @@ def _product_urls_from_df(df: pd.DataFrame) -> list[str]:
     return urls
 
 
+def _stock_from_megacenter_specialist(url: str) -> tuple[str, str]:
+    """Usa o motor antigo especialista da Mega Center sem transformar disponibilidade em estoque.
+
+    O módulo MegaCenterSupplier já sabe ler HTML, JSON-LD, sitemap e textos do site.
+    Aqui reaproveitamos esse parser, mas só aceitamos como estoque real:
+    - quantidade_real;
+    - zerado_texto;
+    - zerado_availability.
+
+    Status positivo sem quantidade fica apenas como status, nunca como quantidade 1.
+    """
+    if not _is_megacenter_url(url):
+        return "", ""
+    try:
+        supplier = MegaCenterSupplier()
+        session = requests.Session()
+        session.headers.update(supplier.HEADERS)
+        produto = supplier._extrair_produto(session, url)  # noqa: SLF001 - reaproveitamento controlado do especialista
+    except Exception:
+        return "", "megacenter_erro"
+
+    origem = str(produto.get("estoque_origem") or "").strip()
+    estoque = produto.get("estoque", "")
+
+    if origem == "quantidade_real":
+        try:
+            return str(max(int(estoque), 0)), "megacenter_quantidade_real"
+        except Exception:
+            return "", "megacenter_quantidade_invalida"
+
+    if origem in {"zerado_texto", "zerado_availability"}:
+        return "0", f"megacenter_{origem}"
+
+    if origem == "status_positivo_sem_quantidade":
+        return "", "megacenter_disponivel_sem_quantidade"
+
+    if origem == "nao_detectado":
+        return "", "megacenter_nao_detectado"
+
+    return "", f"megacenter_{origem or 'indefinido'}"
+
+
 def enrich_stock_from_sitemaps(
     df: pd.DataFrame,
     base_urls: list[str] | None = None,
     progress_callback: Callable[[int, str, int], None] | None = None,
     indice_url: int = 1,
 ) -> pd.DataFrame:
-    """Reconsulta páginas de produtos detectadas usando sitemaps como índice.
+    """Reconsulta páginas de produtos detectadas usando sitemap + fornecedor especialista.
 
-    Não inventa quantidade. Se encontrar número explícito, usa esse número. Se
-    encontrar indisponível/esgotado, usa 0. Se encontrar apenas disponível/comprar,
-    registra status auxiliar, mas NÃO altera o balanço como estoque real.
+    Para Mega Center, tenta primeiro o parser específico antigo. Para os demais sites,
+    usa o motor universal de sitemap/HTML. Não inventa quantidade: disponível/comprar
+    vira apenas status, não altera o balanço.
     """
     base = _safe_df(df)
     if base.empty:
@@ -349,8 +407,12 @@ def enrich_stock_from_sitemaps(
     for pos, product_url in enumerate(urls_to_check, start=1):
         if progress_callback and (pos == 1 or pos % 15 == 0 or pos == total):
             progress_callback(96, f"SITEMAP ESTOQUE: verificando estoque real {pos}/{total}", indice_url)
-        html = _fetch_text(product_url)
-        estoque_por_url[product_url.rstrip("/")] = _detect_stock_from_html(html)
+
+        qty, status = _stock_from_megacenter_specialist(product_url)
+        if not status:
+            html = _fetch_text(product_url)
+            qty, status = _detect_stock_from_html(html)
+        estoque_por_url[product_url.rstrip("/")] = (qty, status)
 
     base["origem_estoque_real"] = ""
     base["status_estoque_site"] = ""
