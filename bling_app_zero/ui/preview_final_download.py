@@ -35,24 +35,12 @@ LINHAS_LIXO_DESCRICAO = {
 TRECHOS_LIXO_DESCRICAO = (
     "loja fisica e virtual",
     "loja física e virtual",
-    "assistencia tecnica",
-    "assistência técnica",
     "atendimento de segunda",
     "av mateo bei",
     "mateo bei",
     "conecte se conosco",
     "redes sociais",
     "todos os direitos reservados",
-)
-
-TRECHOS_SERVICO_NAO_PRODUTO = (
-    "troca de conector",
-    "assistencia tecnica",
-    "assistência técnica",
-    "manutencao",
-    "manutenção",
-    "conserto",
-    "reparo",
 )
 
 
@@ -166,8 +154,6 @@ def _descricao_lixo(valor: object) -> bool:
         return True
     if any(trecho and trecho in norm for trecho in TRECHOS_LIXO_DESCRICAO):
         return True
-    if any(trecho and trecho in norm for trecho in TRECHOS_SERVICO_NAO_PRODUTO):
-        return True
     if re.fullmatch(r"(?:r\$)?\s*[0-9\.,%\s]+", texto.lower()):
         return True
     if re.search(r"R\$\s*\d", texto, flags=re.I) and any(t in texto.lower() for t in ["pix", "cart", "boleto", "desconto"]):
@@ -177,7 +163,7 @@ def _descricao_lixo(valor: object) -> bool:
     return False
 
 
-def _linha_tem_sinal_produto(row: pd.Series, desc_col: str, cod_col: str, preco_col: str) -> bool:
+def _linha_tem_sinal_item(row: pd.Series, desc_col: str, cod_col: str, preco_col: str) -> bool:
     descricao = _limpar_texto_celula(row.get(desc_col, "")) if desc_col else ""
     codigo = _limpar_texto_celula(row.get(cod_col, "")) if cod_col else ""
     preco = row.get(preco_col, "") if preco_col else ""
@@ -191,9 +177,8 @@ def _linha_tem_sinal_produto(row: pd.Series, desc_col: str, cod_col: str, preco_
     if _tem_preco(preco) and len(descricao) >= 8:
         return True
 
-    # Produtos sem GTIN podem existir, mas precisam parecer nome de produto.
-    palavras_produto = re.findall(r"[A-Za-zÀ-ÿ0-9]+", descricao)
-    return len(palavras_produto) >= 3
+    palavras_item = re.findall(r"[A-Za-zÀ-ÿ0-9]+", descricao)
+    return len(palavras_item) >= 3
 
 
 def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
@@ -214,10 +199,10 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     if desc_col and desc_col in base.columns:
         base[desc_col] = base[desc_col].map(_limpar_titulo_produto)
         antes = len(base)
-        base = base[base.apply(lambda row: _linha_tem_sinal_produto(row, desc_col, cod_col, preco_col), axis=1)].copy().reset_index(drop=True)
+        base = base[base.apply(lambda row: _linha_tem_sinal_item(row, desc_col, cod_col, preco_col), axis=1)].copy().reset_index(drop=True)
         removidas = antes - len(base)
         if removidas > 0:
-            log_debug(f"{removidas} linha(s) não-produto removida(s) do preview/download final.", nivel="INFO")
+            log_debug(f"{removidas} linha(s) lixo removida(s) do preview/download final.", nivel="INFO")
 
     return base.fillna("")
 
@@ -230,7 +215,8 @@ def _csv_bling_bytes(df: pd.DataFrame) -> bytes:
     - sem índice artificial;
     - colunas de vídeo zeradas;
     - espaços e sujeiras textuais removidos;
-    - linhas que não parecem produto real removidas.
+    - linhas de cabeçalho/site removidas;
+    - produtos e serviços válidos preservados.
     """
     base = _limpar_df_para_download(df)
     return base.to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -265,7 +251,7 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     download_liberado = bool(validacao_ok)
 
-    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título e sem linhas que não sejam produto.")
+    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título e sem linhas lixo de site.")
 
     st.download_button(
         label="📥 Baixar CSV final",
