@@ -44,6 +44,28 @@ def _serie_tem_valor(serie: pd.Series) -> bool:
     return bool(serie.astype(str).str.strip().replace({"nan": "", "None": "", "none": ""}).ne("").any())
 
 
+def _valor_preco_valido(valor: object) -> bool:
+    texto = str(valor or "").strip()
+    if not texto:
+        return False
+    texto = texto.replace("R$", "").replace("r$", "").replace(" ", "")
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    else:
+        texto = texto.replace(",", ".")
+    texto = re.sub(r"[^0-9.\-]", "", texto)
+    try:
+        return float(texto) > 0
+    except Exception:
+        return False
+
+
+def _serie_tem_preco_valido(serie: pd.Series) -> bool:
+    if not isinstance(serie, pd.Series):
+        return False
+    return bool(serie.apply(_valor_preco_valido).any())
+
+
 def _coluna_preco_destino(df_modelo: pd.DataFrame, operacao: str) -> str:
     if not safe_df_estrutura(df_modelo):
         return ""
@@ -94,7 +116,7 @@ def _coluna_preco_origem(df_base: pd.DataFrame, destino: str) -> str:
 
     if destino:
         achado = mapa.get(_norm_coluna(destino))
-        if achado and _serie_tem_valor(df_base[achado]):
+        if achado and _serie_tem_preco_valido(df_base[achado]):
             return achado
 
     prioridades = [
@@ -108,24 +130,22 @@ def _coluna_preco_origem(df_base: pd.DataFrame, destino: str) -> str:
     ]
     for prioridade in prioridades:
         achado = mapa.get(_norm_coluna(prioridade))
-        if achado and _serie_tem_valor(df_base[achado]):
+        if achado and _serie_tem_preco_valido(df_base[achado]):
             return achado
 
     for col in colunas:
         nome = _norm_coluna(col)
-        if ("preco" in nome or "valor" in nome or "price" in nome) and _serie_tem_valor(df_base[col]):
+        if ("preco" in nome or "valor" in nome or "price" in nome) and _serie_tem_preco_valido(df_base[col]):
             return col
 
     return ""
 
 
 def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    """Blindagem final do preço antes do usuário seguir para o preview final.
+    """Preserva preço válido vindo do site quando a calculadora é pulada.
 
-    No fluxo por site, a planilha já chega no modelo Bling. O mapeamento automático
-    antigo bloqueava preço como campo automático e só preenchia quando existia
-    `_preco_calculado`. Quando o usuário pulava a precificação, o preço do site
-    podia sumir. Esta blindagem preserva o preço capturado no campo correto.
+    Preço 0,00 agora é tratado como vazio. Assim, se o mapeamento automático gerar
+    0,00, o sistema ainda tenta recuperar o preço real da base capturada.
     """
     df_final = st.session_state.get("df_final")
     if not safe_df_estrutura(df_final) or not safe_df_dados(df_base):
@@ -135,7 +155,7 @@ def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataF
     if not destino or destino not in df_final.columns:
         return
 
-    if _serie_tem_valor(df_final[destino]):
+    if _serie_tem_preco_valido(df_final[destino]):
         return
 
     origem_preco = _coluna_preco_origem(df_base, destino)
@@ -143,7 +163,8 @@ def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataF
         return
 
     corrigido = df_final.copy().fillna("")
-    corrigido[destino] = df_base[origem_preco].astype(str).fillna("").values[: len(corrigido)]
+    valores_origem = df_base[origem_preco].astype(str).fillna("").values[: len(corrigido)]
+    corrigido.loc[:, destino] = valores_origem
     st.session_state["df_final"] = corrigido
     st.session_state["df_saida"] = corrigido.copy()
     st.session_state["_preco_unitario_corrigido_mapping"] = {
