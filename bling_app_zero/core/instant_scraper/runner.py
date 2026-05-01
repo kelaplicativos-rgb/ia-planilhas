@@ -14,7 +14,8 @@ from .self_healing import auto_heal_dataframe
 
 
 ORIGENS_ESTOQUE_REAIS = {"quantidade_real", "zerado_texto", "zerado_availability"}
-ORIGENS_SEM_QUANTIDADE = {"status_positivo_sem_quantidade", "nao_detectado"}
+ORIGENS_POSITIVAS_SEM_QUANTIDADE = {"status_positivo_sem_quantidade"}
+ORIGENS_NAO_DETECTADAS = {"nao_detectado"}
 
 
 def _emit_progress(progress_callback, percent: int, message: str, step: int = 0) -> None:
@@ -37,19 +38,38 @@ def _fetch_http(url: str, auth_context=None) -> str:
 
 
 def _corrigir_estoque_megacenter(df: pd.DataFrame) -> pd.DataFrame:
+    """Alinha o estoque Mega Center com a regra correta.
+
+    Quantidade real e indisponibilidade explícita são mantidas.
+    Produto positivo para compra, mas sem quantidade pública, vira status textual
+    para o fallback manual do fluxo converter depois. Não detectado fica vazio.
+    """
     base = _safe_dataframe(df)
     if base.empty or "estoque_origem" not in base.columns:
         return base
 
     origem = base["estoque_origem"].astype(str).str.strip().str.lower()
-    sem_quantidade = origem.isin(ORIGENS_SEM_QUANTIDADE)
-    if sem_quantidade.any():
-        for col in ["estoque", "quantidade", "quantidade_real"]:
-            if col in base.columns:
-                base.loc[sem_quantidade, col] = ""
+
+    positivo_sem_qtd = origem.isin(ORIGENS_POSITIVAS_SEM_QUANTIDADE)
+    if positivo_sem_qtd.any():
+        if "estoque" in base.columns:
+            base.loc[positivo_sem_qtd, "estoque"] = "disponivel_sem_quantidade"
+        if "quantidade" in base.columns:
+            base.loc[positivo_sem_qtd, "quantidade"] = "disponivel_sem_quantidade"
+        if "quantidade_real" in base.columns:
+            base.loc[positivo_sem_qtd, "quantidade_real"] = ""
         if "status_estoque_site" not in base.columns:
             base["status_estoque_site"] = ""
-        base.loc[sem_quantidade, "status_estoque_site"] = origem[sem_quantidade]
+        base.loc[positivo_sem_qtd, "status_estoque_site"] = origem[positivo_sem_qtd]
+
+    nao_detectado = origem.isin(ORIGENS_NAO_DETECTADAS)
+    if nao_detectado.any():
+        for col in ["estoque", "quantidade", "quantidade_real"]:
+            if col in base.columns:
+                base.loc[nao_detectado, col] = ""
+        if "status_estoque_site" not in base.columns:
+            base["status_estoque_site"] = ""
+        base.loc[nao_detectado, "status_estoque_site"] = origem[nao_detectado]
 
     real = origem.isin(ORIGENS_ESTOQUE_REAIS)
     if real.any():
