@@ -46,45 +46,24 @@ def _guardar_upload_bruto(chave_prefixo: str, upload, tipo: str) -> None:
 
 def _limpar_estado_origem() -> None:
     for chave in [
-        "df_origem",
-        "df_saida",
-        "df_preview_inteligente",
-        "df_auto_mapa",
-        "df_preview_fornecedor_modelo_bling",
-        "df_preview_site_modelo_bling",
-        "df_precificado",
-        "df_final",
-        "origem_site_preview_modelo_bling",
-        "origem_fornecedor_preview_modelo_bling",
-        "origem_upload_nome",
-        "origem_upload_bytes",
-        "origem_upload_tipo",
-        "origem_upload_ext",
+        "df_origem", "df_saida", "df_preview_inteligente", "df_auto_mapa",
+        "df_preview_fornecedor_modelo_bling", "df_preview_site_modelo_bling",
+        "df_precificado", "df_final", "origem_site_preview_modelo_bling",
+        "origem_fornecedor_preview_modelo_bling", "origem_upload_nome",
+        "origem_upload_bytes", "origem_upload_tipo", "origem_upload_ext",
     ]:
         st.session_state.pop(chave, None)
 
 
 def _limpar_estado_modelo() -> None:
     for chave in [
-        "df_modelo",
-        "df_origem",
-        "df_saida",
-        "df_preview_inteligente",
-        "df_auto_mapa",
-        "df_preview_fornecedor_modelo_bling",
-        "df_preview_site_modelo_bling",
-        "df_precificado",
-        "df_final",
-        "origem_site_preview_modelo_bling",
-        "origem_fornecedor_preview_modelo_bling",
-        "modelo_upload_nome",
-        "modelo_upload_bytes",
-        "modelo_upload_tipo",
-        "modelo_upload_ext",
-        "mapping_manual",
-        "mapping_sugerido",
-        "agent_ui_package",
-        "_ia_auto_mapping_executado",
+        "df_modelo", "df_origem", "df_saida", "df_preview_inteligente",
+        "df_auto_mapa", "df_preview_fornecedor_modelo_bling",
+        "df_preview_site_modelo_bling", "df_precificado", "df_final",
+        "origem_site_preview_modelo_bling", "origem_fornecedor_preview_modelo_bling",
+        "modelo_upload_nome", "modelo_upload_bytes", "modelo_upload_tipo",
+        "modelo_upload_ext", "mapping_manual", "mapping_sugerido",
+        "agent_ui_package", "_ia_auto_mapping_executado",
     ]:
         st.session_state.pop(chave, None)
 
@@ -131,19 +110,11 @@ def _parse_xml_nfe(upload) -> pd.DataFrame:
         gtin = get("cEAN")
         if gtin in {"SEM GTIN", "SEM EAN"}:
             gtin = ""
-        rows.append(
-            {
-                "Código": get("cProd"),
-                "Descrição": get("xProd"),
-                "NCM": get("NCM"),
-                "CFOP": get("CFOP"),
-                "Unidade": get("uCom"),
-                "Quantidade": get("qCom"),
-                "Preço de custo": get("vUnCom"),
-                "Valor total": get("vProd"),
-                "GTIN": gtin,
-            }
-        )
+        rows.append({
+            "Código": get("cProd"), "Descrição": get("xProd"), "NCM": get("NCM"),
+            "CFOP": get("CFOP"), "Unidade": get("uCom"), "Quantidade": get("qCom"),
+            "Preço de custo": get("vUnCom"), "Valor total": get("vProd"), "GTIN": gtin,
+        })
     return pd.DataFrame(rows)
 
 
@@ -240,41 +211,39 @@ def _obter_preview_modelo_bling() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _serie_tem_valor_real(serie: pd.Series) -> bool:
+def _serie_tem_estoque_real(serie: pd.Series) -> bool:
     if not isinstance(serie, pd.Series):
         return False
-    limpa = serie.astype(str).str.strip().replace({"nan": "", "None": "", "none": "", "null": ""})
-    return bool(limpa.ne("").any())
+    limpa = serie.astype(str).str.strip().str.lower().replace({"nan": "", "none": "", "null": ""})
+    # Só é estoque real quando o status indica quantidade explícita ou sem estoque explícito.
+    # 'disponivel_sem_quantidade' NÃO é estoque real.
+    return bool(limpa.str.contains("quantidade_texto|sem_estoque", regex=True).any())
 
 
 def _tem_estoque_real_detectado() -> bool:
-    """Retorna True quando a busca/site já trouxe estoque revisado do fornecedor.
-
-    Quando isso acontece, não faz sentido exibir os campos manuais de fallback
-    'Estoque para Disponível/Baixo', porque eles só servem para origem textual sem
-    quantidade real.
-    """
-    fontes = [
-        "df_origem",
-        "df_preview_inteligente",
-        "df_preview_site_modelo_bling",
-        "df_precificado",
-        "df_saida",
-        "df_final",
-    ]
+    fontes = ["df_origem", "df_preview_inteligente", "df_preview_site_modelo_bling", "df_precificado", "df_saida", "df_final"]
     for chave in fontes:
         df = st.session_state.get(chave)
         if not isinstance(df, pd.DataFrame) or df.empty:
             continue
         for col in df.columns:
             nome = str(col).strip().lower()
-            if nome in {"origem_estoque_real", "estoque_origem"} or "estoque_real" in nome:
-                if _serie_tem_valor_real(df[col]):
+            if nome == "origem_estoque_real" or "estoque_real" in nome:
+                if _serie_tem_estoque_real(df[col]):
                     return True
+    return False
+
+
+def _tem_status_estoque_lido_sem_quantidade() -> bool:
+    fontes = ["df_origem", "df_preview_inteligente", "df_preview_site_modelo_bling", "df_precificado", "df_saida", "df_final"]
+    for chave in fontes:
+        df = st.session_state.get(chave)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
         for col in df.columns:
             nome = str(col).strip().lower()
-            if nome in {"quantidade_real", "estoque real", "estoque_real"}:
-                serie = df[col].astype(str).str.strip().replace({"nan": "", "None": "", "none": "", "null": ""})
+            if nome == "status_estoque_site":
+                serie = df[col].astype(str).str.strip().str.lower()
                 if serie.ne("").any():
                     return True
     return False
@@ -284,17 +253,11 @@ def _deve_mostrar_estoque_inteligente() -> bool:
     operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
     if operacao != "estoque":
         return False
-
     modo = str(st.session_state.get("modo_origem", "") or "").strip()
-
     if _tem_estoque_real_detectado():
         return False
-
-    # Para busca por site, espera a varredura terminar. Se não encontrou estoque real,
-    # libera o fallback manual. Antes da busca, esconder evita confusão.
     if modo == "Buscar no site do fornecedor" and not _origem_pronta() and not _preview_modelo_pronto():
         return False
-
     return True
 
 
@@ -306,13 +269,7 @@ def _render_operacao() -> None:
         if valor == tipo_atual:
             label_inicial = label
             break
-    escolha = st.radio(
-        "Escolha a operação",
-        options=list(opcoes.keys()),
-        index=list(opcoes.keys()).index(label_inicial),
-        horizontal=True,
-        key="tipo_operacao_visual",
-    )
+    escolha = st.radio("Escolha a operação", options=list(opcoes.keys()), index=list(opcoes.keys()).index(label_inicial), horizontal=True, key="tipo_operacao_visual")
     novo_tipo = opcoes[escolha]
     st.session_state["tipo_operacao"] = novo_tipo
     st.session_state["tipo_operacao_bling"] = novo_tipo
@@ -324,13 +281,7 @@ def _render_dados_operacao() -> None:
         with st.container(border=True):
             st.markdown("### Dados da operação")
             valor_atual = str(st.session_state.get("deposito_nome", "") or "").strip()
-            novo_valor = st.text_input(
-                "Nome do depósito",
-                value=valor_atual,
-                key="deposito_nome_input",
-                placeholder="Ex.: Depósito Principal",
-                help="Esse valor será levado para a planilha final.",
-            ).strip()
+            novo_valor = st.text_input("Nome do depósito", value=valor_atual, key="deposito_nome_input", placeholder="Ex.: Depósito Principal", help="Esse valor será levado para a planilha final.").strip()
             st.session_state["deposito_nome"] = novo_valor
 
 
@@ -340,32 +291,23 @@ def _render_estoque_inteligente() -> None:
         return
 
     if _tem_estoque_real_detectado():
-        st.success("Estoque real detectado na busca do fornecedor. O fallback manual de Disponível/Baixo não será aplicado.")
+        st.success("Quantidade real de estoque detectada no fornecedor. O fallback manual de Disponível/Baixo não será aplicado para esses itens.")
         return
+
+    if _tem_status_estoque_lido_sem_quantidade():
+        st.warning("O site informou apenas disponibilidade/status, mas não trouxe quantidade real. Use o fallback abaixo somente se quiser converter Disponível/Baixo em quantidade manual.")
 
     if not _deve_mostrar_estoque_inteligente():
         return
 
     with st.container(border=True):
         st.markdown("### Estoque inteligente")
-        st.caption("Aparece somente quando o site/arquivo não trouxe estoque real. Use como fallback para textos como Disponível, Baixo, Esgotado ou Indisponível.")
+        st.caption("Fallback manual: aparece quando o site/arquivo não trouxe quantidade real. Use para textos como Disponível, Baixo, Esgotado ou Indisponível.")
         c1, c2 = st.columns(2)
         with c1:
-            st.session_state["estoque_padrao_disponivel"] = st.number_input(
-                "Estoque para Disponível",
-                min_value=0,
-                value=int(st.session_state.get("estoque_padrao_disponivel", 5) or 5),
-                step=1,
-                key="input_estoque_padrao_disponivel",
-            )
+            st.session_state["estoque_padrao_disponivel"] = st.number_input("Estoque para Disponível", min_value=0, value=int(st.session_state.get("estoque_padrao_disponivel", 5) or 5), step=1, key="input_estoque_padrao_disponivel")
         with c2:
-            st.session_state["estoque_padrao_baixo"] = st.number_input(
-                "Estoque para Baixo",
-                min_value=0,
-                value=int(st.session_state.get("estoque_padrao_baixo", 1) or 1),
-                step=1,
-                key="input_estoque_padrao_baixo",
-            )
+            st.session_state["estoque_padrao_baixo"] = st.number_input("Estoque para Baixo", min_value=0, value=int(st.session_state.get("estoque_padrao_baixo", 1) or 1), step=1, key="input_estoque_padrao_baixo")
 
 
 def _render_origem_arquivo() -> None:
@@ -396,39 +338,25 @@ def _render_modelo() -> None:
 def _render_trava_sem_modelo() -> bool:
     if _modelo_pronto():
         return False
-
     st.info("Anexe primeiro o modelo Bling para liberar o próximo passo.")
-    st.caption(
-        "O sistema precisa saber antes se a saída será Cadastro de Produtos ou Atualização de Estoque, "
-        "e quais colunas existem no modelo oficial. Por isso, planilha do fornecedor e busca por site ficam bloqueadas até o modelo ser anexado."
-    )
+    st.caption("O sistema precisa saber antes se a saída será Cadastro de Produtos ou Atualização de Estoque, e quais colunas existem no modelo oficial. Por isso, planilha do fornecedor e busca por site ficam bloqueadas até o modelo ser anexado.")
     return True
 
 
 def _render_preview_modelo_bling_origem() -> None:
     df_origem = st.session_state.get("df_origem")
     df_modelo = st.session_state.get("df_modelo")
-
     if st.session_state.get("modo_origem") == "Buscar no site do fornecedor":
         return
-
     if st.session_state.get("origem_site_preview_modelo_bling"):
         return
-
     if not _origem_pronta():
         return
-
     if not _modelo_pronto():
         st.info("Origem carregada. Agora anexe o modelo Bling para gerar o preview oficial nas colunas corretas.")
         return
-
     st.markdown("---")
-    df_preview = render_preview_inteligente(
-        df_origem,
-        df_modelo,
-        titulo="Preview da planilha do fornecedor baseado no modelo Bling anexado",
-    )
-
+    df_preview = render_preview_inteligente(df_origem, df_modelo, titulo="Preview da planilha do fornecedor baseado no modelo Bling anexado")
     if safe_df_estrutura(df_preview):
         st.session_state["df_preview_inteligente"] = df_preview.copy()
         st.session_state["df_preview_fornecedor_modelo_bling"] = df_preview.copy()
@@ -495,20 +423,16 @@ def render_origem_dados() -> None:
     _render_operacao()
     _render_dados_operacao()
     _render_modelo()
-
     if _render_trava_sem_modelo():
         st.markdown("---")
         _render_continuar()
         return
-
     modo = st.radio("Como deseja informar a origem?", ["Arquivo do fornecedor", "Buscar no site do fornecedor"], horizontal=True, key="modo_origem")
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
         _render_preview_modelo_bling_origem()
     else:
         _render_origem_site()
-
     _render_estoque_inteligente()
-
     st.markdown("---")
     _render_continuar()
