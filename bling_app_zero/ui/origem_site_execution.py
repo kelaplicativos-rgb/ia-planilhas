@@ -22,6 +22,7 @@ from bling_app_zero.ui.origem_site_config import (
 )
 from bling_app_zero.ui.site_auth_panel import get_site_auth_context
 from bling_app_zero.ui.site_capture_normalizer import normalizar_captura_site_para_bling
+from bling_app_zero.ui.site_sitemap_stock import enrich_stock_from_sitemaps
 
 
 FLASH_MIN_ROWS_TO_SKIP_HEAVY = 8
@@ -414,6 +415,16 @@ def _executar_auto_total_url(url: str, progress_callback: Callable[[int, str, in
     return _juntar_resultados(frames_url)
 
 
+def _revisar_estoque_real_se_possivel(df: pd.DataFrame, urls_origem: list[str], progress_callback: Callable[[int, str, int], None] | None = None, indice_url: int = 1) -> pd.DataFrame:
+    base = _safe_df(df)
+    if base.empty:
+        return pd.DataFrame()
+    try:
+        return enrich_stock_from_sitemaps(base, base_urls=urls_origem, progress_callback=progress_callback, indice_url=indice_url)
+    except Exception:
+        return base
+
+
 def executar_busca(urls, preset: ScraperPreset | None, motor: str, progress_callback: Callable[[int, str, int], None] | None = None) -> pd.DataFrame:
     resultados: list[pd.DataFrame] = []
     urls_lista = [_normalizar_url(url) for url in (urls or []) if str(url or "").strip()]
@@ -458,6 +469,7 @@ def executar_busca(urls, preset: ScraperPreset | None, motor: str, progress_call
 
         if isinstance(df, pd.DataFrame) and not df.empty:
             df["URL origem da busca"] = url
+            df = _revisar_estoque_real_se_possivel(df, [url], progress_callback=progress_callback, indice_url=indice)
             resultados.append(df)
 
     return _juntar_resultados(resultados)
