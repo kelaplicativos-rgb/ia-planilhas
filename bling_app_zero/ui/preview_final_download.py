@@ -88,14 +88,7 @@ def _limpar_titulo_produto(valor: object) -> str:
 def _coluna_descricao_produto(df: pd.DataFrame) -> str:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return ""
-    prioridades = [
-        "Descrição Produto",
-        "Descricao Produto",
-        "Descrição",
-        "Descricao",
-        "Nome",
-        "Produto",
-    ]
+    prioridades = ["Descrição Produto", "Descricao Produto", "Descrição", "Descricao", "Nome", "Produto"]
     mapa = {normalizar_texto(c): str(c) for c in df.columns}
     for nome in prioridades:
         achado = mapa.get(normalizar_texto(nome))
@@ -119,6 +112,17 @@ def _coluna_codigo_produto(df: pd.DataFrame) -> str:
     return ""
 
 
+def _coluna_gtin_produto(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return ""
+    mapa = {normalizar_texto(c): str(c) for c in df.columns}
+    for nome in ["GTIN **", "GTIN", "GTIN/EAN", "EAN"]:
+        achado = mapa.get(normalizar_texto(nome))
+        if achado:
+            return achado
+    return ""
+
+
 def _coluna_preco_produto(df: pd.DataFrame) -> str:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return ""
@@ -128,11 +132,6 @@ def _coluna_preco_produto(df: pd.DataFrame) -> str:
         if achado:
             return achado
     return ""
-
-
-def _tem_texto(valor: object) -> bool:
-    texto = _limpar_texto_celula(valor)
-    return bool(texto and texto.lower() not in {"nan", "none", "null"})
 
 
 def _tem_preco(valor: object) -> bool:
@@ -183,15 +182,29 @@ def _linha_tem_sinal_item(row: pd.Series, desc_col: str, cod_col: str, preco_col
 
     if _descricao_lixo(descricao):
         return False
-
     if _codigo_parece_produto(codigo):
         return True
-
     if _tem_preco(preco) and len(descricao) >= 8:
         return True
-
     palavras_item = re.findall(r"[A-Za-zÀ-ÿ0-9]+", descricao)
     return len(palavras_item) >= 3
+
+
+def _deduplicar_itens_finais(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    base = df.copy().fillna("")
+    antes = len(base)
+    for col in [_coluna_gtin_produto(base), _coluna_codigo_produto(base), _coluna_descricao_produto(base)]:
+        if col and col in base.columns:
+            serie = base[col].astype(str).str.strip()
+            com_valor = base[serie.ne("")].drop_duplicates(subset=[col], keep="first")
+            sem_valor = base[serie.eq("")]
+            base = pd.concat([com_valor, sem_valor], ignore_index=True, sort=False)
+    removidas = antes - len(base)
+    if removidas > 0:
+        log_debug(f"{removidas} linha(s) duplicada(s) removida(s) do preview/download final.", nivel="INFO")
+    return base.reset_index(drop=True).fillna("")
 
 
 def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
@@ -217,20 +230,12 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         if removidas > 0:
             log_debug(f"{removidas} linha(s) lixo removida(s) do preview/download final.", nivel="INFO")
 
+    base = _deduplicar_itens_finais(base)
     return base.fillna("")
 
 
 def _csv_bling_bytes(df: pd.DataFrame) -> bytes:
-    """Gera CSV no padrão de importação do Bling.
-
-    - separador ponto e vírgula;
-    - UTF-8 com BOM para abrir corretamente no Excel;
-    - sem índice artificial;
-    - colunas de vídeo zeradas;
-    - espaços e sujeiras textuais removidos;
-    - linhas de cabeçalho/site removidas;
-    - produtos e serviços válidos preservados.
-    """
+    """Gera CSV no padrão de importação do Bling."""
     base = _limpar_df_para_download(df)
     return base.to_csv(index=False, sep=";").encode("utf-8-sig")
 
@@ -264,7 +269,7 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     download_liberado = bool(validacao_ok)
 
-    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título e sem linhas lixo de site.")
+    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título, sem linhas lixo e sem duplicados.")
 
     st.download_button(
         label="📥 Baixar CSV final",
