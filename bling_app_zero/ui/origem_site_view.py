@@ -137,28 +137,23 @@ def _usar_preview_site_como_base_do_mapeamento(df_preview: pd.DataFrame) -> bool
     return False
 
 
-def _render_acao_preview_modelo_bling(df_preview: pd.DataFrame) -> None:
+def _registrar_preview_site_para_continuar(df_preview: pd.DataFrame) -> None:
+    """Guarda o preview de site para o botão único Continuar da tela principal.
+
+    Não renderiza botão local para evitar duplicidade/confusão no mobile.
+    """
     if not _df_valido(df_preview):
         return
 
-    st.markdown("#### ✅ Continuar para revisão/mapeamento")
-    st.caption(
-        "Use esta planilha de preview como base da próxima etapa. "
-        "Ela já está nas colunas do modelo Bling anexado."
-    )
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        usar_preview = st.button(
-            "✅ Usar este preview e continuar",
-            key="btn_usar_preview_site_modelo_bling",
-            use_container_width=True,
-        )
-    with col2:
-        st.metric("Linhas", len(df_preview))
-
-    if usar_preview:
-        _usar_preview_site_como_base_do_mapeamento(df_preview)
+    df_preview_modelo = _normalizar_preview_modelo_bling(df_preview)
+    st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
+    st.session_state["df_preview_site_modelo_bling"] = df_preview_modelo.copy()
+    st.session_state["df_precificado"] = df_preview_modelo.copy()
+    st.session_state["origem_site_preview_modelo_bling"] = True
+    st.session_state["origem_site_preview_modelo_bling_linhas"] = len(df_preview_modelo)
+    st.session_state["origem_site_preview_modelo_bling_colunas"] = len(df_preview_modelo.columns)
+    st.session_state["origem_site_preview_hash"] = _hash_df_simples(df_preview_modelo)
+    st.session_state.pop("df_final", None)
 
 
 def _formatar_tempo(segundos: float) -> str:
@@ -336,6 +331,6 @@ def render_origem_site_panel() -> None:
                 df_modelo,
                 titulo="Planilha de preview da busca por site baseada no modelo Bling anexado",
             )
-            _render_acao_preview_modelo_bling(df_preview)
+            _registrar_preview_site_para_continuar(df_preview)
         else:
             st.info("Anexe o modelo Bling para gerar a planilha de preview da busca por site nas colunas corretas.")
