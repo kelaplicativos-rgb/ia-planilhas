@@ -257,13 +257,12 @@ def render_origem_precificacao() -> None:
         return
 
     st.info(
-        "A precificação é opcional. Aplique a calculadora ou siga direto para o mapeamento usando a planilha atual."
+        "A precificação é opcional. Deixe a coluna de custo/base em branco para seguir direto sem recalcular preços."
     )
 
     colunas = [str(c) for c in df_base.columns]
-    sugestao = _detectar_coluna_custo(df_base)
-    if st.session_state.get("pricing_coluna_custo", "") not in colunas:
-        st.session_state["pricing_coluna_custo"] = sugestao
+    if "pricing_coluna_custo" not in st.session_state or st.session_state.get("pricing_coluna_custo") not in [""] + colunas:
+        st.session_state["pricing_coluna_custo"] = ""
 
     with st.container(border=True):
         st.markdown("### Base de cálculo")
@@ -274,8 +273,12 @@ def render_origem_precificacao() -> None:
             options=opcoes,
             index=opcoes.index(atual) if atual in opcoes else 0,
             key="pricing_coluna_custo",
+            format_func=lambda valor: "Não aplicar calculadora agora" if str(valor).strip() == "" else str(valor),
         )
-        st.caption(f"Se aplicar a calculadora, o preço será gravado em: {_coluna_preco_destino(df_base)}")
+        if coluna_custo:
+            st.caption(f"Se aplicar a calculadora, o preço será gravado em: {_coluna_preco_destino(df_base)}")
+        else:
+            st.caption("Sem coluna base selecionada: o sistema seguirá usando o preço já capturado/mapeado na próxima etapa.")
 
     with st.container(border=True):
         st.markdown("### Despesas fixas por produto")
@@ -336,10 +339,15 @@ def render_origem_precificacao() -> None:
 
     st.markdown("### Aplicar na planilha")
     if st.button("Aplicar precificação", use_container_width=True, key="btn_aplicar_precificacao"):
-        if not coluna_custo:
-            st.error("Selecione a coluna base de custo/preço para calcular.")
-        elif percentual_total >= 100:
+        if percentual_total >= 100:
             st.error("Não é possível aplicar: a soma dos percentuais precisa ser menor que 100%.")
+        elif not coluna_custo:
+            df_sem_calculo = df_base.copy().fillna("")
+            _preparar_para_mapeamento(df_sem_calculo)
+            st.session_state["pricing_df_preview"] = df_sem_calculo.copy()
+            st.session_state["pricing_aplicada_ok"] = False
+            st.session_state["pricing_pulada_ok"] = True
+            st.info("Calculadora não aplicada. O fluxo seguirá com o preço já existente para o mapeamento final.")
         else:
             df_aplicado = _aplicar_precificacao(df_base, coluna_custo, valores)
             _preparar_para_mapeamento(df_aplicado)
@@ -367,6 +375,6 @@ def render_origem_precificacao() -> None:
             df_final_prec = st.session_state.get("pricing_df_preview")
             if not safe_df_dados(df_final_prec):
                 df_final_prec = df_base.copy()
-                st.session_state["pricing_pulada_ok"] = True
-                st.session_state["pricing_aplicada_ok"] = False
+            st.session_state["pricing_pulada_ok"] = not bool(coluna_custo and st.session_state.get("pricing_aplicada_ok"))
+            st.session_state["pricing_aplicada_ok"] = bool(coluna_custo and st.session_state.get("pricing_aplicada_ok"))
             _avancar_para_mapeamento(df_final_prec)
