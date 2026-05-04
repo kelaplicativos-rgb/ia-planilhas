@@ -8,6 +8,7 @@ import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
 from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
+from bling_app_zero.ui.smart_clip_uploader import render_smart_clip_uploader
 
 
 MODELO_KEYS = {
@@ -42,7 +43,7 @@ def _ler_upload(uploaded: Any, state_key: str, log_label: str) -> pd.DataFrame |
             f"{log_label} lido com sucesso",
             f"linhas={len(df)} colunas={len(df.columns)} tipo={result.file_type}",
         )
-        st.success(f"{log_label} carregado com sucesso ({result.file_type}) | {result.detail}")
+        st.success(f"{log_label} reconhecido com sucesso ({result.file_type}) | {result.detail}")
         st.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
         return df
     except Exception as exc:
@@ -98,8 +99,8 @@ def render_origem_dados() -> None:
 
     st.title("1. Origem + preview")
     st.caption(
-        "Anexe a planilha do fornecedor e, se tiver, o modelo do Bling. "
-        "O mapeamento já fica liberado nesta etapa, sem precisar passar por telas extras."
+        "Anexe o arquivo do fornecedor como se fosse um clipe de mensagem. "
+        "O sistema tenta reconhecer automaticamente Excel, CSV, TXT, HTML, JSON e outros formatos tabulares."
     )
 
     tipo_operacao = _render_operacao()
@@ -118,24 +119,21 @@ def render_origem_dados() -> None:
     col_origem, col_modelo = st.columns(2)
 
     with col_origem:
-        st.subheader("Planilha do fornecedor")
-        uploaded_origem = st.file_uploader(
-            "Envie CSV ou Excel com os produtos/estoque do fornecedor",
-            type=["csv", "xlsx", "xlsm", "xls"],
+        uploaded_origem = render_smart_clip_uploader(
+            label="Arquivo do fornecedor",
             key="upload_origem_fornecedor",
+            help_text="Anexe a tabela do fornecedor. Pode ser Excel, CSV, TXT, TSV, ODS, HTML ou JSON.",
         )
-        df_origem = _ler_upload(uploaded_origem, "df_origem", "Planilha de origem")
+        df_origem = _ler_upload(uploaded_origem, "df_origem", "Arquivo de origem")
         with st.expander("Preview da planilha de origem", expanded=False):
             _render_preview("Origem", df_origem)
 
     with col_modelo:
-        st.subheader("Modelo Bling de referência")
         modelo_key = _modelo_state_key(tipo_operacao)
-        uploaded_modelo = st.file_uploader(
-            "Opcional: envie o modelo de cadastro ou estoque do Bling",
-            type=["csv", "xlsx", "xlsm", "xls"],
+        uploaded_modelo = render_smart_clip_uploader(
+            label="Modelo Bling de referência",
             key=f"upload_modelo_{tipo_operacao}",
-            help="Quando anexado, o mapeamento respeita as colunas reais do modelo escolhido.",
+            help_text="Opcional. Anexe o modelo de cadastro ou estoque do Bling para respeitar as colunas reais.",
         )
         df_modelo = _ler_upload(uploaded_modelo, modelo_key, "Modelo Bling")
         with st.expander("Preview do modelo Bling", expanded=False):
@@ -152,10 +150,10 @@ def render_origem_dados() -> None:
     c3.metric("Operação", "Cadastro" if tipo_operacao == "cadastro" else "Estoque")
 
     if not _pode_mapear(df_origem):
-        st.warning("Envie a planilha de origem para liberar o mapeamento.")
+        st.warning("Anexe o arquivo do fornecedor para liberar o mapeamento.")
         return
 
-    st.success("Planilha pronta para mapeamento. Você já pode revisar as colunas e seguir direto.")
+    st.success("Arquivo pronto para mapeamento. Você já pode revisar as colunas e seguir direto.")
 
     col_a, col_b = st.columns(2)
     with col_a:
