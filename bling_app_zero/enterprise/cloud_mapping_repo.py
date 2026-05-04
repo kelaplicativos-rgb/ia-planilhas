@@ -25,6 +25,8 @@ def get_mapping(signature: str) -> dict[str, str]:
 
 def upsert_mapping(signature: str, mapping: dict[str, str], fornecedor_nome: str = "") -> bool:
     workspace = get_workspace_id()
+
+    # tenta inserir primeiro
     payload: dict[str, Any] = {
         "workspace": workspace,
         "signature": signature,
@@ -33,4 +35,6 @@ def upsert_mapping(signature: str, mapping: dict[str, str], fornecedor_nome: str
     }
 
     ok, _ = insert_row("mapping_memory", payload)
+
+    # fallback: se já existir, apenas ignora (evita erro de duplicidade)
     return bool(ok)
