@@ -12,6 +12,7 @@ from bling_app_zero.ui.app_helpers import (
 from bling_app_zero.ui.preview_final_ai_descricao import render_ai_descricao
 from bling_app_zero.ui.preview_final_bling import render_painel_bling
 from bling_app_zero.ui.preview_final_data import garantir_df_final_canonico, zerar_colunas_video
+from bling_app_zero.ui.preview_final_estoque_inteligente import render_estoque_inteligente_final
 from bling_app_zero.ui.preview_final_sections import (
     render_bloco_fluxo_site,
     render_colunas_detectadas_sync,
@@ -214,6 +215,12 @@ def render_preview_final() -> None:
     st.session_state["df_final"] = df_final
 
     st.success("Preview final gerado sobre o modelo Bling anexado.")
+
+    df_final = render_estoque_inteligente_final(df_final)
+    df_final = _alinhar_ao_modelo_bling(df_final, df_modelo)
+    st.session_state["df_final"] = df_final
+    sincronizar_estado_quando_df_mudar(df_final)
+
     render_preview_dataframe(df_final)
     render_download(df_final, validacao_ok)
     render_painel_bling(df_final, tipo_operacao, deposito_nome, validacao_ok)
