@@ -16,7 +16,6 @@ REQUIRED_IMPORTS = [
 ]
 
 LEGACY_MODULES = [
-    "bling_app_zero.ui.origem_dados",
     "bling_app_zero.ui.origem_precificacao",
     "bling_app_zero.ui.origem_mapeamento",
     "bling_app_zero.ui.preview_final",
