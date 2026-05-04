@@ -17,5 +17,8 @@ def run(point: str, value: Any = None, **ctx: Any) -> Any:
     for target in HOOKS.get(point, []):
         module, name = target.split(":", 1)
         fn = getattr(import_module(module), name)
-        current = fn(current, **ctx)
+        try:
+            current = fn(current, **ctx)
+        except TypeError:
+            current = fn(current)
     return current
