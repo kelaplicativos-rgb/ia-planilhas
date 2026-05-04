@@ -23,6 +23,6 @@ def render_billing_panel():
             else:
                 st.warning("Configure Stripe ou Mercado Pago")
 
-        with st.expander("Ver planos", expanded=False):
-            for p in PLANS.values():
-                st.write(f"{p.name} - R$ {p.monthly_price_brl}")
+        st.markdown("**Planos disponíveis**")
+        for p in PLANS.values():
+            st.caption(f"{p.name} - R$ {p.monthly_price_brl}")
