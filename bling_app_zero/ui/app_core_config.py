@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-ETAPAS_ORDEM = ["origem", "precificacao", "mapeamento", "preview_final"]
+ETAPAS_ORDEM = ["origem", "mapeamento", "preview_final"]
 
 ETAPAS_LABELS = {
-    "origem": "1. Origem",
-    "precificacao": "2. Precificação",
-    "mapeamento": "3. Mapeamento",
-    "preview_final": "4. Preview final",
+    "origem": "1. Origem + preview",
+    "mapeamento": "2. Mapeamento",
+    "preview_final": "3. Exportação",
 }
 
 APP_DEFAULTS = {
