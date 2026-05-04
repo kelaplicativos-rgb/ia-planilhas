@@ -38,8 +38,8 @@ def write_json(name: str, data: Any, workspace_id: str | None = None) -> bool:
         return False
 
 
-def touch_usage(event: str, payload: dict[str, Any] | None = None) -> None:
-    usage = read_json("usage.json", [], [])
+def touch_usage(event: str, payload: dict[str, Any] | None = None, workspace_id: str | None = None) -> None:
+    usage = read_json("usage.json", [], workspace_id)
     if not isinstance(usage, list):
         usage = []
     usage.append({
@@ -47,4 +47,4 @@ def touch_usage(event: str, payload: dict[str, Any] | None = None) -> None:
         "event": event,
         "payload": payload or {},
     })
-    write_json("usage.json", usage[-500:])
+    write_json("usage.json", usage[-500:], workspace_id)
