@@ -4,14 +4,20 @@ from importlib import import_module
 
 
 REQUIRED_IMPORTS = [
+    "bling_app_zero.healthcheck",
+    "bling_app_zero.utils.architecture_guard",
     "bling_app_zero.ui.step_router",
     "bling_app_zero.ui.mod_kernel",
     "bling_app_zero.ui.hook_bus",
     "bling_app_zero.ui.hook_registry",
+    "bling_app_zero.ui.plugins.estoque_final",
     "bling_app_zero.ui.origem.flow",
     "bling_app_zero.ui.precificacao.page",
     "bling_app_zero.ui.mapeamento.page",
     "bling_app_zero.ui.preview.page",
+    "bling_app_zero.ui.preview.align",
+    "bling_app_zero.ui.preview.merge",
+    "bling_app_zero.ui.preview.update",
     "bling_app_zero.ui.preview_final_estoque_inteligente",
 ]
 
