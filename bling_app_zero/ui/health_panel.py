@@ -2,24 +2,26 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.healthcheck import run_healthcheck
+from bling_app_zero.compact_healthcheck import run_compact_healthcheck
 
 
 def render_health_panel() -> None:
     with st.expander("Diagnóstico do sistema", expanded=False):
-        result = run_healthcheck()
+        result = run_compact_healthcheck()
         if result.get("success"):
-            st.success("Núcleo modular carregado com sucesso.")
+            st.success("Fluxo compacto carregado com sucesso.")
         else:
-            st.error("Foram encontrados problemas no núcleo modular.")
+            st.error("Foram encontrados problemas no fluxo compacto.")
 
-        errors = result.get("errors") or {}
+        errors = result.get("core_errors") or {}
         if errors:
             st.json(errors)
         else:
-            st.caption("Rotas, hooks e módulos principais disponíveis.")
+            st.caption("Origem, mapeamento, exportação e uploader inteligente disponíveis.")
 
-        legacy = result.get("legacy_modules_present") or []
-        if legacy:
-            st.caption("Legados controlados ainda presentes para fallback/migração gradual:")
-            st.json(legacy)
+        missing = result.get("reader_engines_missing") or {}
+        if missing:
+            st.warning("Algumas engines opcionais de leitura não estão instaladas neste deploy.")
+            st.json(missing)
+        else:
+            st.caption("Engines de leitura de anexos disponíveis.")
