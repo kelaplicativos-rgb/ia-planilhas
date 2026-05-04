@@ -5,7 +5,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import pandas as pd
 
@@ -106,7 +106,21 @@ def _sample_values(df: pd.DataFrame, column: str, limit: int = 30) -> list[str]:
         return []
 
 
+def _canonical_target(target: str) -> str:
+    normalized = normalize_text(target)
+    all_targets = BLING_CADASTRO_COLUMNS + BLING_ESTOQUE_COLUMNS
+    best = target
+    best_score = 0.0
+    for candidate in all_targets:
+        score = _similarity(normalized, normalize_text(candidate))
+        if score > best_score:
+            best = candidate
+            best_score = score
+    return best if best_score >= 0.72 else target
+
+
 def _content_score(target: str, values: Iterable[str]) -> int:
+    canonical = _canonical_target(target)
     vals = list(values)
     if not vals:
         return 0
@@ -116,20 +130,20 @@ def _content_score(target: str, values: Iterable[str]) -> int:
     money_like = sum(1 for v in vals if re.search(r"\d+[\.,]\d{2}", v))
     gtin_like = sum(1 for v in vals if re.fullmatch(r"\D*\d{8,14}\D*", v.strip()))
 
-    if target in {"Preço unitário", "Preço de custo"}:
+    if canonical in {"Preço unitário", "Preço de custo"}:
         return min(30, money_like * 6 + numeric_count * 2)
-    if target in {"Estoque", "Quantidade"}:
+    if canonical in {"Estoque", "Quantidade"}:
         return min(25, numeric_count * 3)
-    if target == "GTIN/EAN":
+    if canonical == "GTIN/EAN":
         return min(40, gtin_like * 10)
-    if target == "URL imagens externas":
+    if canonical == "URL imagens externas":
         return min(45, url_count * 12)
-    if target == "NCM":
+    if canonical == "NCM":
         return 25 if re.search(r"\b\d{8}\b", joined) else 0
-    if target == "Descrição":
+    if canonical == "Descrição":
         avg_len = sum(len(v) for v in vals) / max(len(vals), 1)
         return 25 if avg_len >= 8 else 5
-    if target == "Descrição complementar":
+    if canonical == "Descrição complementar":
         avg_len = sum(len(v) for v in vals) / max(len(vals), 1)
         return 25 if avg_len >= 30 else 0
     return 0
@@ -137,7 +151,10 @@ def _content_score(target: str, values: Iterable[str]) -> int:
 
 def _score_column(target: str, source_col: str, df: pd.DataFrame) -> tuple[int, str]:
     normalized_col = normalize_text(source_col)
-    aliases = [normalize_text(a) for a in _FIELD_ALIASES.get(target, [target])]
+    canonical = _canonical_target(target)
+    aliases = [normalize_text(a) for a in _FIELD_ALIASES.get(canonical, [target, canonical])]
+    aliases.append(normalize_text(target))
+
     best_alias = ""
     best_name_score = 0
     for alias in aliases:
@@ -147,31 +164,56 @@ def _score_column(target: str, source_col: str, df: pd.DataFrame) -> tuple[int, 
             best_alias = alias
 
     penalty = 0
-    for negative in _NEGATIVE_HINTS.get(target, []):
+    for negative in _NEGATIVE_HINTS.get(canonical, []):
         neg = normalize_text(negative)
         if neg and neg in normalized_col:
             penalty += 35
 
-    content = _content_score(target, _sample_values(df, source_col))
+    content = _content_score(canonical, _sample_values(df, source_col))
     final = max(0, min(100, best_name_score + content - penalty))
-    reason = f"nome≈{best_alias or target}; conteúdo={content}"
+    reason = f"alvo={canonical}; nome≈{best_alias or target}; conteúdo={content}"
     if penalty:
         reason += f"; penalidade={penalty}"
     return final, reason
 
 
-def get_bling_columns(tipo_operacao: str | None = None) -> list[str]:
+def _clean_target_columns(columns: Sequence[object]) -> list[str]:
+    targets: list[str] = []
+    seen: set[str] = set()
+    for col in columns:
+        name = str(col or "").replace("\ufeff", "").strip().strip('"')
+        if not name:
+            continue
+        normalized = normalize_text(name)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        targets.append(name)
+    return targets
+
+
+def get_bling_columns(tipo_operacao: str | None = None, modelo_columns: Sequence[object] | None = None) -> list[str]:
+    from_modelo = _clean_target_columns(modelo_columns or [])
+    if from_modelo:
+        return from_modelo
+
     tipo = normalize_text(tipo_operacao)
     if "estoque" in tipo:
         return BLING_ESTOQUE_COLUMNS.copy()
     return BLING_CADASTRO_COLUMNS.copy()
 
 
-def suggest_mapping(df: pd.DataFrame, tipo_operacao: str | None = None, min_confidence: int = 55, learned_mapping: dict[str, str] | None = None) -> list[MappingSuggestion]:
+def suggest_mapping(
+    df: pd.DataFrame,
+    tipo_operacao: str | None = None,
+    min_confidence: int = 55,
+    learned_mapping: dict[str, str] | None = None,
+    modelo_columns: Sequence[object] | None = None,
+) -> list[MappingSuggestion]:
     if df is None or df.empty:
         return []
 
-    targets = get_bling_columns(tipo_operacao)
+    targets = get_bling_columns(tipo_operacao, modelo_columns=modelo_columns)
     used_sources: set[str] = set()
     suggestions: list[MappingSuggestion] = []
     learned_mapping = learned_mapping or {}
@@ -199,8 +241,14 @@ def suggest_mapping(df: pd.DataFrame, tipo_operacao: str | None = None, min_conf
     return suggestions
 
 
-def build_mapped_dataframe(df: pd.DataFrame, mapping: dict[str, str], tipo_operacao: str | None = None, deposito: str | None = None) -> pd.DataFrame:
-    targets = get_bling_columns(tipo_operacao)
+def build_mapped_dataframe(
+    df: pd.DataFrame,
+    mapping: dict[str, str],
+    tipo_operacao: str | None = None,
+    deposito: str | None = None,
+    modelo_columns: Sequence[object] | None = None,
+) -> pd.DataFrame:
+    targets = get_bling_columns(tipo_operacao, modelo_columns=modelo_columns)
     out = pd.DataFrame(index=df.index)
     for target in targets:
         source = mapping.get(target, "")
@@ -208,6 +256,8 @@ def build_mapped_dataframe(df: pd.DataFrame, mapping: dict[str, str], tipo_opera
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
-    if deposito and "Depósito" in out.columns:
-        out["Depósito"] = deposito
+    if deposito:
+        for col in out.columns:
+            if normalize_text(col) == "deposito":
+                out[col] = deposito
     return out
