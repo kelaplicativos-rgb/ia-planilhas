@@ -9,6 +9,7 @@ from bling_app_zero.ui.step_router import render_step
 from bling_app_zero.ui.workspace_panel import render_workspace_panel
 from bling_app_zero.ui.admin_panel import render_admin_panel
 from bling_app_zero.ui.production_panel import render_production_panel
+from bling_app_zero.ui.billing_panel import render_billing_panel
 
 # ENTERPRISE
 from bling_app_zero.enterprise.auth import login_panel
@@ -35,6 +36,7 @@ def main():
     render_workspace_panel()
     render_admin_panel()
     render_production_panel()
+    render_billing_panel()
 
     etapa = st.session_state.get("wizard_etapa_atual", "origem")
     etapa_max = st.session_state.get("wizard_etapa_maxima", "origem")
