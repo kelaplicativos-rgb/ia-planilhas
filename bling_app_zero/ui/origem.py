@@ -125,7 +125,7 @@ def render_origem_dados() -> None:
             key="upload_origem_fornecedor",
         )
         df_origem = _ler_upload(uploaded_origem, "df_origem", "Planilha de origem")
-        with st.expander("Preview da planilha de origem", expanded=df_origem is not None):
+        with st.expander("Preview da planilha de origem", expanded=False):
             _render_preview("Origem", df_origem)
 
     with col_modelo:
@@ -138,7 +138,7 @@ def render_origem_dados() -> None:
             help="Quando anexado, o mapeamento respeita as colunas reais do modelo escolhido.",
         )
         df_modelo = _ler_upload(uploaded_modelo, modelo_key, "Modelo Bling")
-        with st.expander("Preview do modelo Bling", expanded=df_modelo is not None):
+        with st.expander("Preview do modelo Bling", expanded=False):
             _render_preview("Modelo Bling", df_modelo)
 
     st.divider()
