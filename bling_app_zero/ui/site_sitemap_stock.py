@@ -85,6 +85,14 @@ def _safe_df(df: object) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _clean_text(value: object) -> str:
+    return " ".join(str(value or "").replace("\x00", " ").split()).strip()
+
+
+def _has_real_stock_value(value: object) -> bool:
+    return bool(re.fullmatch(r"\d{1,9}", _clean_text(value)))
+
+
 def _norm_url(url: object) -> str:
     texto = str(url or "").strip()
     if not texto:
@@ -368,8 +376,9 @@ def enrich_stock_from_sitemaps(
     """Reconsulta páginas de produtos detectadas usando sitemap + fornecedor especialista.
 
     Para Mega Center, tenta primeiro o parser específico antigo. Para os demais sites,
-    usa o motor universal de sitemap/HTML. Não inventa quantidade: disponível/comprar
-    vira apenas status, não altera o balanço.
+    usa o motor universal de sitemap/HTML. O estoque inteligente preserva o saldo
+    existente e só altera o balanço quando a página indicar indisponibilidade/zero
+    de forma clara ou quando não houver saldo prévio e existir quantidade real explícita.
     """
     base = _safe_df(df)
     if base.empty:
@@ -425,13 +434,25 @@ def enrich_stock_from_sitemaps(
         if status:
             base.at[idx, "status_estoque_site"] = status
             status_detectados += 1
-        if qty != "":
+
+        saldo_atual = _clean_text(row.get(stock_col, ""))
+        tem_saldo_real = _has_real_stock_value(saldo_atual)
+        status_zero = qty == "0" and any(token in status for token in ("sem_estoque", "zerado", "availability_zero"))
+        status_quantidade_real = qty != "" and any(token in status for token in ("quantidade", "inventory_real"))
+
+        if status_zero:
+            base.at[idx, stock_col] = "0"
+            base.at[idx, "origem_estoque_real"] = f"sitemap_html:{status}"
+            alterados += 1
+            continue
+
+        if status_quantidade_real and not tem_saldo_real:
             base.at[idx, stock_col] = qty
             base.at[idx, "origem_estoque_real"] = f"sitemap_html:{status}"
             alterados += 1
 
     if progress_callback:
-        progress_callback(97, f"SITEMAP ESTOQUE: {alterados} item(ns) com quantidade real/zero explícito; {status_detectados} status lido(s)", indice_url)
+        progress_callback(97, f"SITEMAP ESTOQUE: {alterados} item(ns) ajustado(s) apenas por zero explícito ou quantidade real sem saldo prévio; {status_detectados} status lido(s)", indice_url)
 
     return base.fillna("")
 
