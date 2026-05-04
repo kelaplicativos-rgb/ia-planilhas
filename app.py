@@ -5,7 +5,7 @@ from bling_app_zero.ui.app_core_state import init_state
 from bling_app_zero.ui.app_core_layout import render_header, render_nav
 from bling_app_zero.ui.app_core_flow import set_etapa_segura, sincronizar_fluxo_inicial
 
-from bling_app_zero.ui.origem_dados_sem_estoque import render_origem_dados
+from bling_app_zero.ui.origem.flow import render_origem_dados
 from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
 from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
 from bling_app_zero.ui.preview_final import render_preview_final
@@ -27,15 +27,12 @@ def trocar_etapa(etapa):
 
 
 def main():
-    st.set_page_config(page_title="IA Planilhas → Bling", page_icon="🚀", layout="wide")
-
+    st.set_page_config(page_title="IA Planilhas Bling", page_icon="🚀", layout="wide")
     init_app()
     init_state()
     sincronizar_fluxo_inicial()
-
     etapa = st.session_state.get("wizard_etapa_atual", "origem")
     etapa_max = st.session_state.get("wizard_etapa_maxima", "origem")
-
     render_header()
     render_nav(etapa, etapa_max, trocar_etapa)
     render_etapa(etapa)
