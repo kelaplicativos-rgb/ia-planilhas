@@ -9,6 +9,10 @@ from bling_app_zero.ui.step_router import render_step
 from bling_app_zero.ui.workspace_panel import render_workspace_panel
 from bling_app_zero.ui.admin_panel import render_admin_panel
 
+# ENTERPRISE
+from bling_app_zero.enterprise.auth import login_panel
+from bling_app_zero.enterprise.config import get_enterprise_config
+
 
 def trocar_etapa(etapa):
     set_etapa_segura(etapa, origem="nav")
@@ -20,7 +24,13 @@ def main():
     init_state()
     sincronizar_fluxo_inicial()
 
-    # 🔥 SAAS LAYER
+    cfg = get_enterprise_config()
+
+    if cfg.require_login:
+        ok = login_panel()
+        if not ok:
+            return
+
     render_workspace_panel()
     render_admin_panel()
 
