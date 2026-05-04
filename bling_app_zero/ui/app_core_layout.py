@@ -7,7 +7,7 @@ from .app_core_config import ETAPAS_ORDEM, ETAPAS_LABELS
 
 def render_header():
     st.title("🚀 IA Planilhas → Bling")
-    st.caption("Fluxo limpo: origem → precificação → mapeamento → preview final")
+    st.caption("Fluxo compacto: origem + preview → mapeamento → exportação. As ferramentas entram dentro do processo, sem etapa obrigatória extra.")
 
 
 def render_nav(etapa_atual, etapa_maxima, on_click):
