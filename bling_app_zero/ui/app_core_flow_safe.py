@@ -41,14 +41,23 @@ def query_get() -> str:
     return etapa_ou_vazio(valor)
 
 
+def _tem_origem() -> bool:
+    return safe_df_dados(st.session_state.get("df_origem"))
+
+
+def _tem_mapeado() -> bool:
+    return safe_df_estrutura(st.session_state.get("df_mapeado"))
+
+
 def atualizar_maxima() -> None:
     atual = etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
-    if safe_df_dados(st.session_state.get("df_origem")):
-        atual = maxima(atual, "precificacao")
-    if safe_df_dados(st.session_state.get("df_precificado")) and safe_df_estrutura(st.session_state.get("df_modelo")):
+
+    if _tem_origem():
         atual = maxima(atual, "mapeamento")
-    if safe_df_estrutura(st.session_state.get("df_final")):
+
+    if _tem_mapeado():
         atual = maxima(atual, "preview_final")
+
     st.session_state["wizard_etapa_maxima"] = atual
 
 
@@ -56,12 +65,10 @@ def requisitos_ok(etapa: str) -> bool:
     etapa = etapa_valida(etapa)
     if etapa == "origem":
         return True
-    if etapa == "precificacao":
-        return safe_df_dados(st.session_state.get("df_origem"))
     if etapa == "mapeamento":
-        return safe_df_dados(st.session_state.get("df_precificado")) and safe_df_estrutura(st.session_state.get("df_modelo"))
+        return _tem_origem()
     if etapa == "preview_final":
-        return safe_df_estrutura(st.session_state.get("df_final"))
+        return _tem_mapeado()
     return False
 
 
