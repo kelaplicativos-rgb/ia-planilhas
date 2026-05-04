@@ -1,0 +1,3 @@
+from __future__ import annotations
+
+from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
