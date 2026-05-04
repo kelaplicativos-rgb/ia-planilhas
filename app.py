@@ -22,7 +22,7 @@ def trocar_etapa(etapa):
 
 
 def main():
-    st.set_page_config(page_title="IA Planilhas Bling", page_icon="🚀", layout="wide")
+    st.set_page_config(page_title="IA Planilhas Bling", page_icon="🚀", layout="wide", initial_sidebar_state="collapsed")
     init_app()
     init_state()
     sincronizar_fluxo_inicial()
