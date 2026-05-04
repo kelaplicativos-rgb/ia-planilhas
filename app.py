@@ -5,10 +5,10 @@ from bling_app_zero.ui.app_core_state import init_state
 from bling_app_zero.ui.app_core_layout import render_header, render_nav
 from bling_app_zero.ui.app_core_flow import set_etapa_segura, sincronizar_fluxo_inicial
 
-from bling_app_zero.ui.origem.flow import render_origem_dados
-from bling_app_zero.ui.origem_precificacao import render_origem_precificacao
-from bling_app_zero.ui.origem_mapeamento import render_origem_mapeamento
-from bling_app_zero.ui.preview_final import render_preview_final
+from bling_app_zero.ui.origem import render_origem_dados
+from bling_app_zero.ui.precificacao import render_origem_precificacao
+from bling_app_zero.ui.mapeamento import render_origem_mapeamento
+from bling_app_zero.ui.preview import render_preview_final
 
 
 def render_etapa(etapa):
