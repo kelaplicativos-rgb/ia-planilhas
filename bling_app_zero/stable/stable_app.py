@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
-from bling_app_zero.stable.supplier_upload import render_supplier_upload
+from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import blindar_df_para_bling, dataframe_para_csv_bytes
 
 
@@ -185,7 +185,7 @@ def run_stable_app() -> None:
     df_origem = st.session_state.get("stable_df_origem")
 
     with tab_arquivo:
-        df_uploaded = render_supplier_upload(state_key="stable_df_origem", key_prefix="supplier")
+        df_uploaded = render_supplier_upload_v2(state_key="stable_df_origem", key_prefix="supplier")
         if isinstance(df_uploaded, pd.DataFrame) and not df_uploaded.empty:
             df_origem = df_uploaded
 
