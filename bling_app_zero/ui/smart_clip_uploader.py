@@ -40,12 +40,27 @@ class PastedUpload:
     def read(self) -> bytes:
         return self.getvalue()
 
+    def seek(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def tell(self) -> int:
+        return 0
+
 
 _DEF_PASTE_HINT = "Se o Android deixar o arquivo cinza/não clicável, abra o arquivo, copie o conteúdo e cole aqui."
 
 
+def _render_uploaded_feedback(uploaded: Any) -> None:
+    name = str(getattr(uploaded, "name", "arquivo"))
+    size = int(getattr(uploaded, "size", 0) or 0)
+    size_mb = size / (1024 * 1024) if size else 0
+    st.success(f"Arquivo anexado: {name}")
+    if size:
+        st.caption(f"Tamanho: {size_mb:.2f} MB")
+
+
 def _render_paste_fallback(*, key: str) -> PastedUpload | None:
-    with st.expander("📋 Arquivo não ficou clicável? Colar conteúdo manualmente", expanded=False):
+    with st.expander("📋 Arquivo ainda não clicou? Colar conteúdo manualmente", expanded=False):
         st.caption(_DEF_PASTE_HINT)
         pasted_name = st.text_input(
             "Nome do arquivo colado",
@@ -71,31 +86,39 @@ def render_smart_clip_uploader(
     key: str,
     help_text: str | None = None,
 ) -> Any | None:
-    """Renderiza um anexo estilo clipe com reforço para Android.
+    """Renderiza anexo estilo clipe com dois modos para celular.
 
-    Alguns seletores de arquivo no Android deixam CSV/TXT cinza quando o accept
-    do navegador vem genérico. Por isso usamos uma lista explícita de extensões
-    e também oferecemos fallback por colagem do conteúdo.
+    No Android, alguns gerenciadores deixam CSV cinza quando o navegador envia
+    filtros de extensão/MIME. Por isso o primeiro botão é livre, sem filtro. O
+    segundo botão é um fallback com extensões explícitas para casos em que o
+    navegador exige filtro.
     """
 
     st.markdown(f"#### 📎 {label}")
     st.caption(f"Anexe qualquer arquivo tabular comum: {SUPPORTED_LABEL}.")
 
-    uploaded = st.file_uploader(
-        "📎 Tocar para anexar arquivo",
-        type=SUPPORTED_EXTENSIONS,
-        key=key,
-        help=help_text or "Escolha o arquivo. O sistema tentará reconhecer automaticamente o formato.",
+    uploaded_free = st.file_uploader(
+        "📎 Anexar arquivo — modo livre para Android",
+        type=None,
+        key=f"{key}_free",
+        help=help_text or "Escolha o arquivo. Este modo não filtra extensão e costuma funcionar melhor no Android.",
         label_visibility="visible",
     )
 
-    if uploaded is not None:
-        name = str(getattr(uploaded, "name", "arquivo"))
-        size = int(getattr(uploaded, "size", 0) or 0)
-        size_mb = size / (1024 * 1024) if size else 0
-        st.success(f"Arquivo anexado: {name}")
-        if size:
-            st.caption(f"Tamanho: {size_mb:.2f} MB")
-        return uploaded
+    if uploaded_free is not None:
+        _render_uploaded_feedback(uploaded_free)
+        return uploaded_free
+
+    with st.expander("⚙️ Não apareceu? Tentar modo compatibilidade", expanded=False):
+        uploaded_filtered = st.file_uploader(
+            "📎 Anexar com filtro de compatibilidade",
+            type=SUPPORTED_EXTENSIONS,
+            key=f"{key}_filtered",
+            help="Use este segundo botão se o primeiro não abrir corretamente no seu celular.",
+            label_visibility="visible",
+        )
+        if uploaded_filtered is not None:
+            _render_uploaded_feedback(uploaded_filtered)
+            return uploaded_filtered
 
     return _render_paste_fallback(key=key)
