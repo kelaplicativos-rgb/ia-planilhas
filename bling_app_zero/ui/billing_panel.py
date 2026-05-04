@@ -4,6 +4,7 @@ import streamlit as st
 
 from bling_app_zero.billing.plans import PLANS, get_plan
 from bling_app_zero.billing.usage_control import get_monthly_usage
+from bling_app_zero.billing.payment_service import start_checkout
 
 
 def render_billing_panel():
@@ -17,7 +18,11 @@ def render_billing_panel():
     st.sidebar.write(f"Uso mensal: {get_monthly_usage()}/{plan.monthly_import_limit}")
 
     if st.sidebar.button("Upgrade"):
-        st.sidebar.info("Integre aqui com Stripe / Mercado Pago")
+        url = start_checkout("pro")
+        if url:
+            st.sidebar.success("Abrindo checkout...")
+        else:
+            st.sidebar.warning("Configure Stripe ou Mercado Pago")
 
     with st.sidebar.expander("Ver planos"):
         for p in PLANS.values():
