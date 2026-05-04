@@ -3,6 +3,8 @@ from __future__ import annotations
 import streamlit as st
 import pandas as pd
 
+from bling_app_zero.core.auto_mapper import suggest_mapping, build_mapped_dataframe
+
 
 def _avancar() -> None:
     st.session_state["wizard_etapa_atual"] = "preview_final"
@@ -16,25 +18,62 @@ def _voltar() -> None:
 
 
 def render_origem_mapeamento() -> None:
-    st.title("3. Mapeamento")
+    st.title("3. Mapeamento Inteligente")
 
     df = st.session_state.get("df_origem")
 
-    if df is None:
-        st.warning("Nenhuma base carregada ainda. Usando exemplo temporário.")
-        df = pd.DataFrame({"produto": ["Exemplo A", "Exemplo B"], "preco": [10, 20]})
-        st.session_state["df_origem"] = df
+    if df is None or df.empty:
+        st.error("Nenhuma planilha carregada.")
+        return
 
-    st.dataframe(df.head(), use_container_width=True)
+    st.subheader("Pré-visualização da base")
+    st.dataframe(df.head(20), use_container_width=True)
 
-    st.info("Mapeamento simplificado ativo (modo seguro).")
+    tipo_operacao = st.session_state.get("tipo_operacao", "cadastro")
 
-    st.session_state["df_mapeado"] = df.copy()
+    st.subheader("Sugestão automática (BLINGAUTO)")
+
+    suggestions = suggest_mapping(df, tipo_operacao)
+
+    if not suggestions:
+        st.warning("Nenhum mapeamento automático forte encontrado.")
+
+    mapping: dict[str, str] = {}
+
+    for s in suggestions:
+        emoji = "🟢" if s.confidence >= 85 else "🟡"
+        st.write(f"{emoji} {s.target} → {s.source} ({s.confidence}%)")
+        mapping[s.target] = s.source
+
+    st.divider()
+
+    st.subheader("Ajuste manual (opcional)")
+
+    for target in sorted(set(mapping.keys())):
+        options = [""] + list(df.columns)
+        current = mapping.get(target, "")
+        choice = st.selectbox(
+            f"{target}",
+            options,
+            index=options.index(current) if current in options else 0,
+            key=f"map_{target}",
+        )
+        if choice:
+            mapping[target] = choice
+
+    df_final = build_mapped_dataframe(df, mapping, tipo_operacao)
+
+    st.session_state["df_mapeado"] = df_final
+
+    st.subheader("Preview mapeado")
+    st.dataframe(df_final.head(20), use_container_width=True)
 
     col1, col2 = st.columns(2)
+
     with col1:
         if st.button("⬅️ Voltar", use_container_width=True):
             _voltar()
+
     with col2:
         if st.button("Avançar para preview ➡️", use_container_width=True):
             _avancar()
