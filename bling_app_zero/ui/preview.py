@@ -9,7 +9,7 @@ def _voltar() -> None:
 
 
 def render_preview_final() -> None:
-    st.title("4. Preview Final")
+    st.title("3. Exportação")
 
     df = st.session_state.get("df_mapeado")
 
@@ -17,9 +17,11 @@ def render_preview_final() -> None:
         st.error("Nenhum dado para preview.")
         return
 
-    st.dataframe(df, use_container_width=True)
-
     st.success("Arquivo pronto para exportação (modo seguro)")
+    st.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
+
+    with st.expander("Preview final do arquivo", expanded=False):
+        st.dataframe(df, use_container_width=True)
 
     csv = df.to_csv(index=False, sep=';', encoding='utf-8-sig')
 
