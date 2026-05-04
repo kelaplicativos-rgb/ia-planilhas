@@ -1,71 +1,70 @@
 from __future__ import annotations
 
 import streamlit as st
-import pandas as pd
 
-from bling_app_zero.core.auto_mapper import suggest_mapping, build_mapped_dataframe
+from bling_app_zero.core.auto_mapper import suggest_mapping, build_mapped_dataframe, supplier_signature
 
 
-def _avancar() -> None:
+def _avancar():
     st.session_state["wizard_etapa_atual"] = "preview_final"
-    st.session_state["wizard_etapa_maxima"] = "preview_final"
     st.rerun()
 
 
-def _voltar() -> None:
+def _voltar():
     st.session_state["wizard_etapa_atual"] = "precificacao"
     st.rerun()
 
 
-def render_origem_mapeamento() -> None:
-    st.title("3. Mapeamento Inteligente")
+def render_origem_mapeamento():
+    st.title("3. BLINGAUTO GOD MODE")
 
     df = st.session_state.get("df_origem")
-
     if df is None or df.empty:
-        st.error("Nenhuma planilha carregada.")
+        st.error("Nenhuma planilha carregada")
         return
 
-    st.subheader("Pré-visualização da base")
-    st.dataframe(df.head(20), use_container_width=True)
+    tipo = st.session_state.get("tipo_operacao", "cadastro")
 
-    tipo_operacao = st.session_state.get("tipo_operacao", "cadastro")
+    sig = supplier_signature(df)
+    memoria = st.session_state.setdefault("auto_map_memory", {})
+    aprendido = memoria.get(sig, {})
 
-    st.subheader("Sugestão automática (BLINGAUTO)")
+    st.caption(f"Assinatura fornecedor: {sig}")
 
-    suggestions = suggest_mapping(df, tipo_operacao)
+    sugestoes = suggest_mapping(df, tipo, learned_mapping=aprendido)
 
-    if not suggestions:
-        st.warning("Nenhum mapeamento automático forte encontrado.")
+    mapping = {}
 
-    mapping: dict[str, str] = {}
+    st.subheader("Sugestão automática")
 
-    for s in suggestions:
-        emoji = "🟢" if s.confidence >= 85 else "🟡"
+    for s in sugestoes:
+        emoji = "🧠" if s.confidence == 99 else ("🟢" if s.confidence > 85 else "🟡")
         st.write(f"{emoji} {s.target} → {s.source} ({s.confidence}%)")
         mapping[s.target] = s.source
 
-    st.divider()
+    st.subheader("Correção manual (ensina o sistema)")
 
-    st.subheader("Ajuste manual (opcional)")
-
-    for target in sorted(set(mapping.keys())):
-        options = [""] + list(df.columns)
-        current = mapping.get(target, "")
-        choice = st.selectbox(
-            f"{target}",
-            options,
-            index=options.index(current) if current in options else 0,
+    for target in mapping:
+        escolha = st.selectbox(
+            target,
+            options=[""] + list(df.columns),
+            index=list(df.columns).index(mapping[target]) if mapping[target] in df.columns else 0,
             key=f"map_{target}",
         )
-        if choice:
-            mapping[target] = choice
+        if escolha:
+            mapping[target] = escolha
 
-    df_final = build_mapped_dataframe(df, mapping, tipo_operacao)
+    if st.button("💾 Aprender este padrão", use_container_width=True):
+        memoria[sig] = mapping.copy()
+        st.success("Padrão salvo! Próximas planilhas iguais serão automáticas.")
+
+    deposito = st.session_state.get("deposito_nome")
+
+    df_final = build_mapped_dataframe(df, mapping, tipo, deposito)
 
     st.session_state["df_mapeado"] = df_final
 
-    st.subheader("Preview mapeado")
+    st.subheader("Preview final")
     st.dataframe(df_final.head(20), use_container_width=True)
 
     col1, col2 = st.columns(2)
@@ -75,5 +74,5 @@ def render_origem_mapeamento() -> None:
             _voltar()
 
     with col2:
-        if st.button("Avançar para preview ➡️", use_container_width=True):
+        if st.button("Avançar ➡️", use_container_width=True):
             _avancar()
