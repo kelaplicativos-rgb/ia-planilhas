@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from io import BytesIO
+from io import BytesIO, StringIO
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -66,6 +66,33 @@ def _read_upload(uploaded) -> pd.DataFrame | None:
         return None
     result = read_uploaded_table(uploaded)
     return result.dataframe.fillna("")
+
+
+def _read_pasted_table(raw: str) -> pd.DataFrame:
+    text = str(raw or "").strip()
+    if not text:
+        return pd.DataFrame()
+
+    separators = [";", ",", "\t", "|"]
+    best_df = pd.DataFrame()
+    best_score = -1
+    errors: list[str] = []
+
+    for sep in separators:
+        try:
+            df = pd.read_csv(StringIO(text), sep=sep, dtype=str, keep_default_na=False, engine="python", on_bad_lines="skip")
+            score = len(df.columns) * 1000 + len(df.index)
+            if not df.empty and len(df.columns) > 1 and score > best_score:
+                best_df = df.fillna("")
+                best_score = score
+        except Exception as exc:
+            errors.append(f"{sep}: {exc}")
+
+    if not best_df.empty:
+        best_df.columns = [str(c).replace("\ufeff", "").strip().strip('"') for c in best_df.columns]
+        return best_df.fillna("")
+
+    raise ValueError("Não consegui transformar o texto colado em tabela. Copie o CSV inteiro com cabeçalho.")
 
 
 def _split_urls(raw: str) -> list[str]:
@@ -199,6 +226,23 @@ def run_stable_app() -> None:
                 st.error("Não consegui ler o arquivo anexado.")
                 st.code(str(exc))
 
+        with st.expander("📋 CSV cinza/não selecionável? Cole o conteúdo aqui", expanded=False):
+            st.caption("Abra o CSV no celular, selecione tudo, copie e cole abaixo. Isso ignora o bloqueio do seletor Android.")
+            pasted = st.text_area(
+                "Colar CSV/TXT com cabeçalho",
+                key="stable_pasted_csv",
+                height=180,
+                placeholder="codigo;descricao;preco\n001;Produto Teste;10,90",
+            )
+            if st.button("Usar conteúdo colado", use_container_width=True, disabled=not bool(str(pasted or '').strip())):
+                try:
+                    df_origem = _read_pasted_table(pasted)
+                    st.session_state["stable_df_origem"] = df_origem
+                    st.success(f"Conteúdo colado lido: {len(df_origem)} linhas × {len(df_origem.columns)} colunas")
+                except Exception as exc:
+                    st.error("Não consegui ler o conteúdo colado.")
+                    st.code(str(exc))
+
     with tab_site:
         if tipo != "estoque":
             st.info("Captura por site está liberada neste núcleo para atualização de estoque.")
@@ -229,7 +273,7 @@ def run_stable_app() -> None:
             modelo = st.session_state.get("stable_df_modelo")
 
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
-        st.warning("Anexe um arquivo ou gere uma base por site para continuar.")
+        st.warning("Anexe um arquivo, cole o CSV ou gere uma base por site para continuar.")
         return
 
     if tipo == "estoque" and not deposito:
