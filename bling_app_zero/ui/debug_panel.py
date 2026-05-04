@@ -17,8 +17,7 @@ def add_debug_log(message: str, payload: Any | None = None) -> None:
 
 
 def render_debug_panel() -> None:
-    with st.sidebar:
-        st.markdown("### 🧪 Debug")
+    with st.sidebar.expander("🧪 Debug", expanded=False):
         logs = st.session_state.get("logs", [])
 
         if not logs:
