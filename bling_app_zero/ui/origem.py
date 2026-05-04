@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import traceback
+from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
 from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
+
+
+MODELO_KEYS = {
+    "cadastro": "df_modelo_cadastro",
+    "estoque": "df_modelo_estoque",
+}
 
 
 def _registrar_erro_origem(exc: Exception) -> None:
@@ -17,51 +25,148 @@ def _registrar_erro_origem(exc: Exception) -> None:
         st.code(traceback.format_exc())
 
 
+def _ler_upload(uploaded: Any, state_key: str, log_label: str) -> pd.DataFrame | None:
+    if uploaded is None:
+        return st.session_state.get(state_key)
+
+    try:
+        add_debug_log(log_label, getattr(uploaded, "name", "sem_nome"))
+        result = read_uploaded_table(uploaded)
+        df = result.dataframe
+
+        if df is None or df.empty:
+            raise ValueError("A planilha foi lida, mas não possui linhas válidas.")
+
+        st.session_state[state_key] = df
+        add_debug_log(
+            f"{log_label} lido com sucesso",
+            f"linhas={len(df)} colunas={len(df.columns)} tipo={result.file_type}",
+        )
+        st.success(f"{log_label} carregado com sucesso ({result.file_type}) | {result.detail}")
+        st.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
+        return df
+    except Exception as exc:
+        _registrar_erro_origem(exc)
+        return None
+
+
+def _set_operacao(tipo: str) -> None:
+    st.session_state["tipo_operacao"] = tipo
+    add_debug_log("Fluxo", f"Operação selecionada: {tipo}")
+
+
+def _modelo_state_key(tipo_operacao: str) -> str:
+    return MODELO_KEYS.get(tipo_operacao, "df_modelo_cadastro")
+
+
+def _render_operacao() -> str:
+    st.subheader("O que você quer gerar?")
+    atual = st.session_state.get("tipo_operacao", "cadastro")
+    opcoes = {
+        "cadastro": "Cadastro de produtos",
+        "estoque": "Atualização de estoque",
+    }
+    escolha = st.radio(
+        "Escolha o destino do arquivo final",
+        options=list(opcoes.keys()),
+        format_func=lambda k: opcoes[k],
+        horizontal=True,
+        index=list(opcoes.keys()).index(atual) if atual in opcoes else 0,
+        label_visibility="collapsed",
+    )
+    if escolha != atual:
+        _set_operacao(escolha)
+    else:
+        st.session_state["tipo_operacao"] = escolha
+    return escolha
+
+
+def _render_preview(label: str, df: pd.DataFrame | None) -> None:
+    if df is None or df.empty:
+        st.info(f"{label}: nenhum arquivo carregado ainda.")
+        return
+    st.caption(f"{label}: {len(df)} linhas × {len(df.columns)} colunas")
+    st.dataframe(df.head(30), use_container_width=True)
+
+
+def _pode_mapear(df_origem: pd.DataFrame | None) -> bool:
+    return df_origem is not None and not df_origem.empty
+
+
 def render_origem_dados() -> None:
     render_debug_panel()
 
-    st.title("1. Origem dos dados")
-
-    st.subheader("Upload de planilha")
-    uploaded = st.file_uploader(
-        "Envie seu arquivo CSV ou Excel",
-        type=["csv", "xlsx", "xlsm", "xls"],
+    st.title("1. Origem + preview")
+    st.caption(
+        "Anexe a planilha do fornecedor e, se tiver, o modelo do Bling. "
+        "O mapeamento já fica liberado nesta etapa, sem precisar passar por telas extras."
     )
 
-    if uploaded is not None:
-        try:
-            add_debug_log("Arquivo recebido", getattr(uploaded, "name", "sem_nome"))
+    tipo_operacao = _render_operacao()
 
-            result = read_uploaded_table(uploaded)
-            df = result.dataframe
+    if tipo_operacao == "estoque":
+        deposito = st.text_input(
+            "Nome do depósito",
+            value=str(st.session_state.get("deposito_nome", "")),
+            placeholder="Ex.: Depósito Geral",
+            help="Esse nome será reaproveitado no mapeamento e na exportação de estoque.",
+        ).strip()
+        st.session_state["deposito_nome"] = deposito
 
-            if df is None or df.empty:
-                raise ValueError("A planilha foi lida, mas não possui linhas válidas.")
+    st.divider()
 
-            st.session_state["df_origem"] = df
+    col_origem, col_modelo = st.columns(2)
 
-            add_debug_log("Arquivo lido com sucesso", f"linhas={len(df)} colunas={len(df.columns)}")
+    with col_origem:
+        st.subheader("Planilha do fornecedor")
+        uploaded_origem = st.file_uploader(
+            "Envie CSV ou Excel com os produtos/estoque do fornecedor",
+            type=["csv", "xlsx", "xlsm", "xls"],
+            key="upload_origem_fornecedor",
+        )
+        df_origem = _ler_upload(uploaded_origem, "df_origem", "Planilha de origem")
+        with st.expander("Preview da planilha de origem", expanded=df_origem is not None):
+            _render_preview("Origem", df_origem)
 
-            st.success(f"Arquivo carregado com sucesso ({result.file_type}) | {result.detail}")
-            st.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
-            st.dataframe(df.head(20), use_container_width=True)
+    with col_modelo:
+        st.subheader("Modelo Bling de referência")
+        modelo_key = _modelo_state_key(tipo_operacao)
+        uploaded_modelo = st.file_uploader(
+            "Opcional: envie o modelo de cadastro ou estoque do Bling",
+            type=["csv", "xlsx", "xlsm", "xls"],
+            key=f"upload_modelo_{tipo_operacao}",
+            help="Quando anexado, o mapeamento respeita as colunas reais do modelo escolhido.",
+        )
+        df_modelo = _ler_upload(uploaded_modelo, modelo_key, "Modelo Bling")
+        with st.expander("Preview do modelo Bling", expanded=df_modelo is not None):
+            _render_preview("Modelo Bling", df_modelo)
 
-        except Exception as exc:
-            _registrar_erro_origem(exc)
-            return
+    st.divider()
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📦 Cadastro de produtos", use_container_width=True):
-            add_debug_log("Fluxo", "Cadastro selecionado")
-            st.session_state["tipo_operacao"] = "cadastro"
-            st.session_state["wizard_etapa_atual"] = "precificacao"
-            st.session_state["wizard_etapa_maxima"] = "precificacao"
+    df_origem = st.session_state.get("df_origem")
+    df_modelo = st.session_state.get(_modelo_state_key(tipo_operacao))
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Origem", "OK" if _pode_mapear(df_origem) else "Pendente")
+    c2.metric("Modelo Bling", "Anexado" if df_modelo is not None and not df_modelo.empty else "Opcional")
+    c3.metric("Operação", "Cadastro" if tipo_operacao == "cadastro" else "Estoque")
+
+    if not _pode_mapear(df_origem):
+        st.warning("Envie a planilha de origem para liberar o mapeamento.")
+        return
+
+    st.success("Planilha pronta para mapeamento. Você já pode revisar as colunas e seguir direto.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🧭 Ir direto para o mapeamento", type="primary", use_container_width=True):
+            st.session_state["wizard_etapa_atual"] = "mapeamento"
+            st.session_state["wizard_etapa_maxima"] = "mapeamento"
             st.rerun()
-    with col2:
-        if st.button("📊 Atualização de estoque", use_container_width=True):
-            add_debug_log("Fluxo", "Estoque selecionado")
-            st.session_state["tipo_operacao"] = "estoque"
-            st.session_state["wizard_etapa_atual"] = "precificacao"
-            st.session_state["wizard_etapa_maxima"] = "precificacao"
+    with col_b:
+        if st.button("🧹 Limpar origem e modelos", use_container_width=True):
+            for key in ["df_origem", "df_modelo_cadastro", "df_modelo_estoque", "df_mapeado"]:
+                st.session_state.pop(key, None)
+            st.session_state["wizard_etapa_atual"] = "origem"
+            st.session_state["wizard_etapa_maxima"] = "origem"
             st.rerun()
