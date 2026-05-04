@@ -9,22 +9,20 @@ from bling_app_zero.billing.plan_store import get_current_plan
 
 
 def render_billing_panel():
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💳 Plano")
+    with st.sidebar.expander("💳 Plano", expanded=False):
+        plan_id = get_current_plan()
+        plan = get_plan(plan_id)
 
-    plan_id = get_current_plan()
-    plan = get_plan(plan_id)
+        st.write(f"Plano atual: {plan.name}")
+        st.write(f"Uso mensal: {get_monthly_usage()}/{plan.monthly_import_limit}")
 
-    st.sidebar.write(f"Plano atual: {plan.name}")
-    st.sidebar.write(f"Uso mensal: {get_monthly_usage()}/{plan.monthly_import_limit}")
+        if st.button("Upgrade"):
+            url = start_checkout("pro")
+            if url:
+                st.success("Abrindo checkout...")
+            else:
+                st.warning("Configure Stripe ou Mercado Pago")
 
-    if st.sidebar.button("Upgrade"):
-        url = start_checkout("pro")
-        if url:
-            st.sidebar.success("Abrindo checkout...")
-        else:
-            st.sidebar.warning("Configure Stripe ou Mercado Pago")
-
-    with st.sidebar.expander("Ver planos"):
-        for p in PLANS.values():
-            st.write(f"{p.name} - R$ {p.monthly_price_brl}")
+        with st.expander("Ver planos", expanded=False):
+            for p in PLANS.values():
+                st.write(f"{p.name} - R$ {p.monthly_price_brl}")
