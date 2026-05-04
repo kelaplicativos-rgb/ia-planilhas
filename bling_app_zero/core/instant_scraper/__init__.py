@@ -10,9 +10,12 @@ except Exception:
     _run_scraper = None
 
 try:
-    from .flash_scraper import run_flash_scraper
+    from .flash_stock_runner import run_flash_scraper
 except Exception:
-    run_flash_scraper = None
+    try:
+        from .flash_scraper import run_flash_scraper
+    except Exception:
+        run_flash_scraper = None
 
 
 def run_scraper(url: str, *args, **kwargs) -> pd.DataFrame:
