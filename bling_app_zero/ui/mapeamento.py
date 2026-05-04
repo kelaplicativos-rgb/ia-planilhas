@@ -181,7 +181,8 @@ def render_origem_mapeamento() -> None:
 
         st.session_state["df_mapeado"] = df_final
 
-        st.dataframe(df_final.head(50), use_container_width=True)
+        with st.expander("Preview de estoque mapeado", expanded=False):
+            st.dataframe(df_final.head(50), use_container_width=True)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -236,8 +237,8 @@ def render_origem_mapeamento() -> None:
         else:
             st.warning("Nenhuma sugestão automática forte foi encontrada. O preview será gerado com as colunas do modelo e campos vazios onde não houve correspondência.")
 
-    st.subheader("Preview mapeado")
-    st.dataframe(df_final.head(50), use_container_width=True)
+    with st.expander("Preview mapeado", expanded=False):
+        st.dataframe(df_final.head(50), use_container_width=True)
 
     col1, col2 = st.columns(2)
     with col1:
