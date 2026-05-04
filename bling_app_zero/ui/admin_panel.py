@@ -7,15 +7,13 @@ from bling_app_zero.core.tenant import get_workspace_id
 
 
 def render_admin_panel():
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Admin SaaS")
+    with st.sidebar.expander("📊 Admin SaaS", expanded=False):
+        ws = get_workspace_id()
 
-    ws = get_workspace_id()
+        if st.button("Ver uso"):
+            usage = read_json("usage.json", [], ws)
+            st.write(f"Eventos: {len(usage)}")
 
-    if st.sidebar.button("Ver uso"):
-        usage = read_json("usage.json", [], ws)
-        st.sidebar.write(f"Eventos: {len(usage)}")
-
-    if st.sidebar.button("Ver memória mapeamento"):
-        mem = read_json("auto_map_memory.json", {}, ws)
-        st.sidebar.write(mem)
+        if st.button("Ver memória mapeamento"):
+            mem = read_json("auto_map_memory.json", {}, ws)
+            st.write(mem)
