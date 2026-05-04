@@ -8,6 +8,7 @@ import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
 from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
+from bling_app_zero.ui.site_stock_capture import render_site_stock_capture
 from bling_app_zero.ui.smart_clip_uploader import render_smart_clip_uploader
 
 
@@ -39,6 +40,7 @@ def _ler_upload(uploaded: Any, state_key: str, log_label: str) -> pd.DataFrame |
             raise ValueError("A planilha foi lida, mas não possui linhas válidas.")
 
         st.session_state[state_key] = df
+        st.session_state["tipo_origem"] = "arquivo"
         add_debug_log(
             f"{log_label} lido com sucesso",
             f"linhas={len(df)} colunas={len(df.columns)} tipo={result.file_type}",
@@ -99,12 +101,13 @@ def render_origem_dados() -> None:
 
     st.title("1. Origem + preview")
     st.caption(
-        "Anexe o arquivo do fornecedor como se fosse um clipe de mensagem. "
+        "Anexe o arquivo do fornecedor como se fosse um clipe de mensagem ou gere a base de estoque por site. "
         "O sistema tenta reconhecer automaticamente Excel, CSV, TXT, HTML, JSON e outros formatos tabulares."
     )
 
     tipo_operacao = _render_operacao()
 
+    deposito = ""
     if tipo_operacao == "estoque":
         deposito = st.text_input(
             "Nome do depósito",
@@ -125,6 +128,12 @@ def render_origem_dados() -> None:
             help_text="Anexe a tabela do fornecedor. Pode ser Excel, CSV, TXT, TSV, ODS, HTML ou JSON.",
         )
         df_origem = _ler_upload(uploaded_origem, "df_origem", "Arquivo de origem")
+
+        if tipo_operacao == "estoque":
+            df_site = render_site_stock_capture(deposito=deposito)
+            if isinstance(df_site, pd.DataFrame) and not df_site.empty:
+                df_origem = df_site
+
         with st.expander("Preview da planilha de origem", expanded=False):
             _render_preview("Origem", df_origem)
 
@@ -150,7 +159,14 @@ def render_origem_dados() -> None:
     c3.metric("Operação", "Cadastro" if tipo_operacao == "cadastro" else "Estoque")
 
     if not _pode_mapear(df_origem):
-        st.warning("Anexe o arquivo do fornecedor para liberar o mapeamento.")
+        if tipo_operacao == "estoque":
+            st.warning("Anexe o arquivo do fornecedor ou gere a base por site para liberar o mapeamento.")
+        else:
+            st.warning("Anexe o arquivo do fornecedor para liberar o mapeamento.")
+        return
+
+    if tipo_operacao == "estoque" and not str(st.session_state.get("deposito_nome", "")).strip():
+        st.warning("Informe o nome do depósito para avançar na atualização de estoque.")
         return
 
     st.success("Arquivo pronto para mapeamento. Você já pode revisar as colunas e seguir direto.")
@@ -163,7 +179,7 @@ def render_origem_dados() -> None:
             st.rerun()
     with col_b:
         if st.button("🧹 Limpar origem e modelos", use_container_width=True):
-            for key in ["df_origem", "df_modelo_cadastro", "df_modelo_estoque", "df_mapeado"]:
+            for key in ["df_origem", "df_modelo_cadastro", "df_modelo_estoque", "df_mapeado", "tipo_origem", "site_urls_raw"]:
                 st.session_state.pop(key, None)
             st.session_state["wizard_etapa_atual"] = "origem"
             st.session_state["wizard_etapa_maxima"] = "origem"
