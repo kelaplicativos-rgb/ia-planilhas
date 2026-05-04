@@ -20,5 +20,8 @@ def run(point: str, value: Any = None, **ctx: Any) -> Any:
         try:
             current = fn(current, **ctx)
         except TypeError:
-            current = fn(current)
+            try:
+                current = fn(current)
+            except TypeError:
+                continue
     return current
