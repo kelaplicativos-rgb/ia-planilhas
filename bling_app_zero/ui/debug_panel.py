@@ -23,8 +23,8 @@ def render_debug_panel() -> None:
         if not logs:
             st.caption("Nenhum log registrado ainda.")
         else:
-            with st.expander("Ver logs da sessão", expanded=False):
-                st.code("\n".join(logs[-80:]))
+            st.caption(f"Logs registrados: {len(logs)}")
+            st.code("\n".join(logs[-20:]))
 
             st.download_button(
                 "⬇️ Baixar log debug",
