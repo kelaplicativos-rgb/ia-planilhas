@@ -15,9 +15,7 @@ REQUIRED_IMPORTS = [
     "bling_app_zero.ui.preview_final_estoque_inteligente",
 ]
 
-LEGACY_MODULES = [
-    "bling_app_zero.ui.preview_final",
-]
+LEGACY_MODULES = []
 
 OFFICIAL_MODULES = {
     "origem": "bling_app_zero.ui.origem",
