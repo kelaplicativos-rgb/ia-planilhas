@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -47,71 +48,14 @@ BLING_ESTOQUE_COLUMNS = [
 ]
 
 _FIELD_ALIASES: dict[str, list[str]] = {
-    "Código": [
-        "codigo",
-        "cod",
-        "cod produto",
-        "codigo produto",
-        "sku",
-        "id produto",
-        "referencia",
-        "ref",
-        "modelo",
-        "cod fornecedor",
-    ],
-    "Descrição": [
-        "descricao",
-        "descrição",
-        "produto",
-        "nome",
-        "nome produto",
-        "titulo",
-        "title",
-        "description",
-        "product name",
-    ],
-    "Descrição complementar": [
-        "descricao complementar",
-        "descrição complementar",
-        "descricao completa",
-        "detalhes",
-        "observacao",
-        "observacoes",
-        "complemento",
-        "informacoes",
-    ],
+    "Código": ["codigo", "cod", "cod produto", "codigo produto", "sku", "id produto", "referencia", "ref", "modelo", "cod fornecedor"],
+    "Descrição": ["descricao", "descrição", "produto", "nome", "nome produto", "titulo", "title", "description", "product name"],
+    "Descrição complementar": ["descricao complementar", "descrição complementar", "descricao completa", "detalhes", "observacao", "observacoes", "complemento", "informacoes"],
     "Unidade": ["unidade", "un", "und", "medida", "unit"],
     "NCM": ["ncm", "classificacao fiscal", "classificação fiscal"],
-    "GTIN/EAN": [
-        "gtin",
-        "ean",
-        "codigo barras",
-        "código barras",
-        "codigo de barras",
-        "código de barras",
-        "barcode",
-    ],
-    "Preço unitário": [
-        "preco",
-        "preço",
-        "valor",
-        "valor venda",
-        "preco venda",
-        "preço venda",
-        "preco unitario",
-        "preço unitário",
-        "price",
-        "sale price",
-    ],
-    "Preço de custo": [
-        "custo",
-        "preco custo",
-        "preço custo",
-        "valor custo",
-        "cost",
-        "preco compra",
-        "preço compra",
-    ],
+    "GTIN/EAN": ["gtin", "ean", "codigo barras", "código barras", "codigo de barras", "código de barras", "barcode"],
+    "Preço unitário": ["preco", "preço", "valor", "valor venda", "preco venda", "preço venda", "preco unitario", "preço unitário", "price", "sale price"],
+    "Preço de custo": ["custo", "preco custo", "preço custo", "valor custo", "cost", "preco compra", "preço compra"],
     "Marca": ["marca", "brand", "fabricante", "manufacturer"],
     "Categoria": ["categoria", "category", "departamento", "grupo", "linha"],
     "Peso bruto (Kg)": ["peso bruto", "peso", "weight", "peso kg", "peso bruto kg"],
@@ -119,17 +63,7 @@ _FIELD_ALIASES: dict[str, list[str]] = {
     "Largura do produto": ["largura", "width", "largura produto"],
     "Altura do produto": ["altura", "height", "altura produto"],
     "Profundidade do produto": ["profundidade", "comprimento", "depth", "length"],
-    "URL imagens externas": [
-        "imagem",
-        "imagens",
-        "url imagem",
-        "url imagens",
-        "image",
-        "images",
-        "foto",
-        "fotos",
-        "picture",
-    ],
+    "URL imagens externas": ["imagem", "imagens", "url imagem", "url imagens", "image", "images", "foto", "fotos", "picture"],
     "Estoque": ["estoque", "stock", "saldo", "quantidade", "qtd", "disponivel", "disponível"],
     "Quantidade": ["quantidade", "qtd", "qty", "saldo", "estoque", "stock"],
     "Depósito": ["deposito", "depósito", "almoxarifado", "warehouse", "local estoque"],
@@ -148,6 +82,11 @@ def normalize_text(value: object) -> str:
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def supplier_signature(df: pd.DataFrame) -> str:
+    cols = "|".join(normalize_text(c) for c in df.columns)
+    return hashlib.sha1(cols.encode("utf-8")).hexdigest()[:12]
 
 
 def _similarity(a: str, b: str) -> float:
@@ -171,7 +110,6 @@ def _content_score(target: str, values: Iterable[str]) -> int:
     vals = list(values)
     if not vals:
         return 0
-
     joined = " ".join(vals[:20]).lower()
     numeric_count = sum(1 for v in vals if re.search(r"\d", v))
     url_count = sum(1 for v in vals if "http://" in v.lower() or "https://" in v.lower())
@@ -200,13 +138,10 @@ def _content_score(target: str, values: Iterable[str]) -> int:
 def _score_column(target: str, source_col: str, df: pd.DataFrame) -> tuple[int, str]:
     normalized_col = normalize_text(source_col)
     aliases = [normalize_text(a) for a in _FIELD_ALIASES.get(target, [target])]
-
     best_alias = ""
     best_name_score = 0
-
     for alias in aliases:
-        sim = _similarity(normalized_col, alias)
-        score = int(round(sim * 70))
+        score = int(round(_similarity(normalized_col, alias) * 70))
         if score > best_name_score:
             best_name_score = score
             best_alias = alias
@@ -219,11 +154,9 @@ def _score_column(target: str, source_col: str, df: pd.DataFrame) -> tuple[int, 
 
     content = _content_score(target, _sample_values(df, source_col))
     final = max(0, min(100, best_name_score + content - penalty))
-
     reason = f"nome≈{best_alias or target}; conteúdo={content}"
     if penalty:
         reason += f"; penalidade={penalty}"
-
     return final, reason
 
 
@@ -234,15 +167,22 @@ def get_bling_columns(tipo_operacao: str | None = None) -> list[str]:
     return BLING_CADASTRO_COLUMNS.copy()
 
 
-def suggest_mapping(df: pd.DataFrame, tipo_operacao: str | None = None, min_confidence: int = 55) -> list[MappingSuggestion]:
+def suggest_mapping(df: pd.DataFrame, tipo_operacao: str | None = None, min_confidence: int = 55, learned_mapping: dict[str, str] | None = None) -> list[MappingSuggestion]:
     if df is None or df.empty:
         return []
 
     targets = get_bling_columns(tipo_operacao)
     used_sources: set[str] = set()
     suggestions: list[MappingSuggestion] = []
+    learned_mapping = learned_mapping or {}
 
     for target in targets:
+        learned_source = learned_mapping.get(target)
+        if learned_source and learned_source in df.columns and learned_source not in used_sources:
+            used_sources.add(learned_source)
+            suggestions.append(MappingSuggestion(target, learned_source, 99, "aprendido com revisão anterior"))
+            continue
+
         candidates: list[tuple[int, str, str]] = []
         for source_col in df.columns:
             if source_col in used_sources:
@@ -254,30 +194,20 @@ def suggest_mapping(df: pd.DataFrame, tipo_operacao: str | None = None, min_conf
         if candidates and candidates[0][0] >= min_confidence:
             confidence, source, reason = candidates[0]
             used_sources.add(source)
-            suggestions.append(MappingSuggestion(target=target, source=source, confidence=confidence, reason=reason))
+            suggestions.append(MappingSuggestion(target, source, confidence, reason))
 
     return suggestions
 
 
-def build_mapped_dataframe(df: pd.DataFrame, mapping: dict[str, str], tipo_operacao: str | None = None) -> pd.DataFrame:
+def build_mapped_dataframe(df: pd.DataFrame, mapping: dict[str, str], tipo_operacao: str | None = None, deposito: str | None = None) -> pd.DataFrame:
     targets = get_bling_columns(tipo_operacao)
     out = pd.DataFrame(index=df.index)
-
     for target in targets:
         source = mapping.get(target, "")
         if source and source in df.columns:
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
-
-    if "Depósito" in out.columns and not out["Depósito"].astype(str).str.strip().any():
-        deposito = str(
-            pd.Series(
-                [
-                    # session_state is intentionally not imported here.
-                ]
-            ).to_string(index=False)
-        )
-        del deposito
-
+    if deposito and "Depósito" in out.columns:
+        out["Depósito"] = deposito
     return out
