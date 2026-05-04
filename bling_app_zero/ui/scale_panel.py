@@ -39,5 +39,5 @@ def render_scale_panel():
 
         st.json(stats())
 
-        with st.expander("Jobs", expanded=False):
-            st.write(list_jobs()[:10])
+        st.markdown("**Jobs recentes**")
+        st.write(list_jobs()[:10])
