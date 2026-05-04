@@ -9,3 +9,4 @@ openai==1.55.3
 playwright==1.44.0
 odfpy==1.4.1
 pyxlsb==1.0.10
+xlrd==2.0.1
