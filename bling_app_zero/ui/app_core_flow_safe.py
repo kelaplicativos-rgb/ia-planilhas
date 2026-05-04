@@ -44,6 +44,7 @@ def query_get() -> str:
 def atualizar_maxima() -> None:
     atual = etapa_valida(st.session_state.get("wizard_etapa_maxima", "origem"))
     if safe_df_dados(st.session_state.get("df_origem")):
+        atual = maxima(atual, "hub")
         atual = maxima(atual, "precificacao")
     if safe_df_dados(st.session_state.get("df_precificado")) and safe_df_estrutura(st.session_state.get("df_modelo")):
         atual = maxima(atual, "mapeamento")
@@ -56,6 +57,8 @@ def requisitos_ok(etapa: str) -> bool:
     etapa = etapa_valida(etapa)
     if etapa == "origem":
         return True
+    if etapa == "hub":
+        return safe_df_dados(st.session_state.get("df_origem"))
     if etapa == "precificacao":
         return safe_df_dados(st.session_state.get("df_origem"))
     if etapa == "mapeamento":
