@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-ETAPAS_ORDEM = ["origem", "precificacao", "mapeamento", "preview_final"]
+ETAPAS_ORDEM = ["origem", "hub", "precificacao", "mapeamento", "preview_final"]
 
 ETAPAS_LABELS = {
     "origem": "1. Origem",
-    "precificacao": "2. Precificação",
-    "mapeamento": "3. Mapeamento",
-    "preview_final": "4. Preview final",
+    "hub": "2. Hub",
+    "precificacao": "3. Precificação",
+    "mapeamento": "4. Mapeamento",
+    "preview_final": "5. Preview final",
 }
 
 APP_DEFAULTS = {
@@ -26,4 +27,8 @@ APP_DEFAULTS = {
     "_ultima_etapa_logada_render": "",
     "_flow_lock_preview_final": False,
     "_flow_lock_origem": "",
+    "hub_origem": "",
+    "hub_fornecedor": "",
+    "hub_deposito": "",
+    "hub_preco_calculado_col": "",
 }
