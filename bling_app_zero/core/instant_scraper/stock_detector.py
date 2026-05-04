@@ -53,12 +53,21 @@ def normalize_text(value: Any) -> str:
     return text.translate(table)
 
 
-def parse_stock_text(text: Any, *, positive_default: int | None = 1) -> tuple[str, str]:
-    """Extrai estoque real quando o texto informa quantidade.
+def is_numeric_stock(value: Any) -> bool:
+    text = clean_text(value)
+    return bool(re.fullmatch(r"\d{1,9}", text))
 
-    Retorna (quantidade, origem). Quando há termo zerado, retorna 0.
-    Quando só existe sinal positivo, retorna positive_default (normalmente 1),
-    indicando estoque positivo sem quantidade real.
+
+def parse_stock_text(text: Any, *, positive_default: int | None = None) -> tuple[str, str]:
+    """Extrai estoque apenas quando houver quantidade real ou zero explícito.
+
+    Regra principal do estoque inteligente:
+    - termo de indisponibilidade/zerado pode retornar 0;
+    - quantidade numérica explícita pode retornar a quantidade real;
+    - sinal positivo sem quantidade real nunca inventa saldo.
+
+    Assim o detector não troca um saldo verdadeiro por 1 apenas porque encontrou
+    textos como "em estoque", "comprar" ou "disponível".
     """
     raw = clean_text(text)
     norm = normalize_text(raw)
@@ -86,6 +95,7 @@ def parse_stock_text(text: Any, *, positive_default: int | None = 1) -> tuple[st
 
 
 def parse_stock_from_jsonld(product: dict) -> tuple[str, str]:
+    """Lê JSON-LD sem inventar quantidade para disponibilidade positiva."""
     if not isinstance(product, dict):
         return "", "sem_jsonld"
 
@@ -100,22 +110,25 @@ def parse_stock_from_jsonld(product: dict) -> tuple[str, str]:
 
     if any(term in availability for term in ["outofstock", "soldout", "discontinued"]):
         return "0", "jsonld_availability_zero"
-    if any(term in availability for term in ["instock", "in stock", "available"]):
-        if inventory not in (None, ""):
-            match = re.search(r"\d+", str(inventory))
-            if match:
-                return str(max(int(match.group(0)), 0)), "jsonld_inventory_real"
-        return "1", "jsonld_available_sem_quantidade"
 
     if inventory not in (None, ""):
         match = re.search(r"\d+", str(inventory))
         if match:
             return str(max(int(match.group(0)), 0)), "jsonld_inventory_real"
 
+    if any(term in availability for term in ["instock", "in stock", "available"]):
+        return "", "jsonld_available_sem_quantidade"
+
     return "", "jsonld_sem_estoque"
 
 
 def enrich_dataframe_stock(df: pd.DataFrame) -> pd.DataFrame:
+    """Enriquece estoque preservando saldo verdadeiro já existente.
+
+    O enriquecimento só escreve nas colunas de estoque quando:
+    - o item estiver claramente zerado/indisponível; ou
+    - o texto informar uma quantidade real explícita e não houver saldo real prévio.
+    """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
 
@@ -130,16 +143,29 @@ def enrich_dataframe_stock(df: pd.DataFrame) -> pd.DataFrame:
     for idx, row in base.iterrows():
         atual = clean_text(row.get("estoque", ""))
         quantidade_real = clean_text(row.get("quantidade_real", ""))
-        if atual and atual.isdigit() and not quantidade_real:
-            base.at[idx, "quantidade_real"] = atual
+        saldo_existente = quantidade_real if is_numeric_stock(quantidade_real) else atual
+        tem_saldo_real = is_numeric_stock(saldo_existente)
+
+        if tem_saldo_real and not quantidade_real:
+            base.at[idx, "quantidade_real"] = saldo_existente
             base.at[idx, "estoque_origem"] = base.at[idx, "estoque_origem"] or "coluna_estoque"
-            continue
 
         texto = " | ".join(clean_text(v) for v in row.tolist())
-        qtd, origem = parse_stock_text(texto)
-        if qtd != "":
+        qtd, origem = parse_stock_text(texto, positive_default=None)
+
+        if qtd == "0" and origem == "termo_zero":
+            base.at[idx, "estoque"] = "0"
+            base.at[idx, "quantidade_real"] = "0"
+            base.at[idx, "estoque_origem"] = origem
+            continue
+
+        if qtd != "" and origem == "quantidade_real_texto" and not tem_saldo_real:
             base.at[idx, "estoque"] = qtd
             base.at[idx, "quantidade_real"] = qtd
+            base.at[idx, "estoque_origem"] = origem
+            continue
+
+        if origem == "positivo_sem_quantidade" and not base.at[idx, "estoque_origem"]:
             base.at[idx, "estoque_origem"] = origem
 
     return base.fillna("")
@@ -152,4 +178,4 @@ def extract_stock_from_html(html: str) -> tuple[str, str]:
     for bad in soup(["script", "style", "noscript", "svg"]):
         bad.decompose()
     text = soup.get_text(" ", strip=True)
-    return parse_stock_text(text)
+    return parse_stock_text(text, positive_default=None)
