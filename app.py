@@ -6,6 +6,7 @@ from bling_app_zero.ui.app_core_layout import render_header, render_nav
 from bling_app_zero.ui.app_core_flow import set_etapa_segura, sincronizar_fluxo_inicial
 from bling_app_zero.ui.health_panel import render_health_panel
 from bling_app_zero.ui.step_router import render_step
+from bling_app_zero.ui.workspace_panel import render_workspace_panel
 
 
 def trocar_etapa(etapa):
@@ -17,6 +18,7 @@ def main():
     init_app()
     init_state()
     sincronizar_fluxo_inicial()
+    render_workspace_panel()
     etapa = st.session_state.get("wizard_etapa_atual", "origem")
     etapa_max = st.session_state.get("wizard_etapa_maxima", "origem")
     render_header()
