@@ -79,6 +79,7 @@ def aplicar_estoque_inteligente_final(df_final: pd.DataFrame, disponivel: int, b
     if not qtd_cols:
         st.session_state["estoque_inteligente_alterados"] = 0
         st.session_state["estoque_inteligente_coluna_alvo"] = ""
+        st.session_state["estoque_inteligente_origens"] = []
         return base
 
     alvo = qtd_cols[0]
@@ -110,9 +111,9 @@ def aplicar_estoque_inteligente_final(df_final: pd.DataFrame, disponivel: int, b
         else:
             origem.append("sem_alteracao")
 
-    base["origem_estoque_inteligente_final"] = origem
     st.session_state["estoque_inteligente_alterados"] = alterados
     st.session_state["estoque_inteligente_coluna_alvo"] = alvo
+    st.session_state["estoque_inteligente_origens"] = origem
     return base
 
 
