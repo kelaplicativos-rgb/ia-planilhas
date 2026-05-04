@@ -17,6 +17,13 @@ from bling_app_zero.core.auto_map_memory import (
 from bling_app_zero.core.bling_validator import validar_df_bling
 from bling_app_zero.core.data_cleaner import aplicar_limpeza
 
+# 🔥 NOVO MOTOR DE ESTOQUE
+from bling_app_zero.core.stock_intelligence import (
+    build_stock_dataframe,
+    build_stock_mapping,
+    validate_stock_dataframe,
+)
+
 
 def _avancar() -> None:
     st.session_state["wizard_etapa_atual"] = "preview_final"
@@ -42,6 +49,41 @@ def render_origem_mapeamento() -> None:
         return
 
     tipo_operacao = st.session_state.get("tipo_operacao", "cadastro")
+    deposito = st.session_state.get("deposito_nome")
+
+    # 🔥 MODO ESTOQUE INTELIGENTE
+    if tipo_operacao == "estoque":
+        st.subheader("🧠 Estoque inteligente")
+
+        mapping = build_stock_mapping(df, deposito)
+        df_final = build_stock_dataframe(df, mapping, deposito)
+
+        erros = validate_stock_dataframe(df_final)
+
+        if erros:
+            st.error("⚠️ Problemas detectados no estoque:")
+            for erro in erros:
+                st.write(f"- {erro}")
+        else:
+            st.success("✔️ Estoque validado com sucesso.")
+
+        st.session_state["df_mapeado"] = df_final
+
+        st.subheader("Preview estoque")
+        st.dataframe(df_final.head(20), use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬅️ Voltar", use_container_width=True):
+                _voltar()
+        with col2:
+            if st.button("Avançar ➡️", use_container_width=True):
+                _avancar()
+
+        return
+
+    # 🔵 FLUXO NORMAL (CADASTRO)
+
     fornecedor_id = supplier_signature(df)
 
     memoria = load_memory()
@@ -68,7 +110,7 @@ def render_origem_mapeamento() -> None:
     st.subheader("Auto mapeamento")
 
     if not sugestoes:
-        st.warning("Nenhuma sugestão forte encontrada. Use uma planilha com cabeçalho claro ou ajuste manualmente.")
+        st.warning("Nenhuma sugestão forte encontrada.")
 
     for sugestao in sugestoes:
         emoji = "🧠" if sugestao.confidence == 99 else ("🟢" if sugestao.confidence >= 85 else "🟡")
@@ -89,27 +131,11 @@ def render_origem_mapeamento() -> None:
         if escolha:
             mapping[target] = escolha
 
-    col_salvar, col_esquecer = st.columns(2)
-    with col_salvar:
-        if st.button("💾 Salvar padrão", use_container_width=True):
-            memoria = set_supplier_memory(memoria, fornecedor_id, mapping)
-            if save_memory(memoria):
-                st.success("Padrão salvo. Próximas planilhas iguais serão automáticas.")
-            else:
-                st.warning("Padrão salvo na sessão, mas não foi possível gravar o JSON local.")
-
-    with col_esquecer:
-        if st.button("🗑️ Esquecer padrão", use_container_width=True):
-            memoria = delete_supplier_memory(memoria, fornecedor_id)
-            save_memory(memoria)
-            st.warning("Padrão removido.")
-
-    deposito = st.session_state.get("deposito_nome")
     df_final = build_mapped_dataframe(df, mapping, tipo_operacao, deposito)
 
     erros = validar_df_bling(df_final)
     if erros:
-        st.error("⚠️ Problemas detectados antes do download:")
+        st.error("⚠️ Problemas detectados:")
         for erro in erros:
             st.write(f"- {erro}")
     else:
