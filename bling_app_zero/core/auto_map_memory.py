@@ -4,14 +4,20 @@ import json
 from pathlib import Path
 from typing import Any
 
-MEMORY_PATH = Path(".streamlit") / "data" / "auto_map_memory.json"
+from bling_app_zero.core.tenant import get_workspace_id
+
+
+def _memory_path() -> Path:
+    workspace = get_workspace_id()
+    return Path(".streamlit") / "data" / f"auto_map_memory_{workspace}.json"
 
 
 def load_memory() -> dict[str, Any]:
+    path = _memory_path()
     try:
-        if not MEMORY_PATH.exists():
+        if not path.exists():
             return {}
-        with MEMORY_PATH.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -19,9 +25,10 @@ def load_memory() -> dict[str, Any]:
 
 
 def save_memory(memory: dict[str, Any]) -> bool:
+    path = _memory_path()
     try:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with MEMORY_PATH.open("w", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
             json.dump(memory, f, ensure_ascii=False, indent=2)
         return True
     except Exception:
