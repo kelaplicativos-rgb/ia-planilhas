@@ -56,6 +56,13 @@ def _ensure_valid_df(df: pd.DataFrame, detail: str) -> pd.DataFrame:
     return df
 
 
+def _rewind(uploaded_file: Any) -> None:
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+
 def _read_excel_bytes(data: bytes, suffix: str) -> FileReadResult:
     df = pd.read_excel(BytesIO(data), dtype=str, keep_default_na=False)
     return FileReadResult(
@@ -110,7 +117,24 @@ def _read_json_bytes(data: bytes) -> FileReadResult:
     )
 
 
+def _read_xml_bytes(data: bytes) -> FileReadResult:
+    try:
+        df = pd.read_xml(BytesIO(data), dtype=str)
+    except Exception:
+        text = data.decode("utf-8", errors="ignore")
+        tables = pd.read_html(StringIO(text))
+        if not tables:
+            raise
+        df = max(tables, key=lambda item: len(item.index) * max(len(item.columns), 1))
+    return FileReadResult(
+        dataframe=_ensure_valid_df(df.astype(str), "XML sem tabela válida."),
+        file_type="xml",
+        detail="XML convertido automaticamente em tabela",
+    )
+
+
 def _try_csv(uploaded_file: Any) -> FileReadResult:
+    _rewind(uploaded_file)
     csv_result: CSVReadResult = read_csv_robusto(uploaded_file)
     return FileReadResult(
         dataframe=_ensure_valid_df(csv_result.dataframe, "CSV/TXT sem linhas ou colunas."),
@@ -123,6 +147,7 @@ def read_uploaded_table(uploaded_file: Any) -> FileReadResult:
     name = _get_name(uploaded_file)
     suffix = Path(name).suffix.lower().strip(".")
     data = _get_bytes(uploaded_file)
+    _rewind(uploaded_file)
 
     if not data:
         raise ValueError("Arquivo vazio. Anexe outro arquivo.")
@@ -142,12 +167,15 @@ def read_uploaded_table(uploaded_file: Any) -> FileReadResult:
     if suffix == "json":
         return _read_json_bytes(data)
 
-    # Reconhecimento automático quando a extensão vem ausente, estranha ou genérica.
+    if suffix == "xml":
+        return _read_xml_bytes(data)
+
     attempts: list[tuple[str, Any]] = [
         ("excel", lambda: _read_excel_bytes(data, suffix or "excel")),
         ("csv", lambda: _try_csv(uploaded_file)),
         ("html", lambda: _read_html_bytes(data)),
         ("json", lambda: _read_json_bytes(data)),
+        ("xml", lambda: _read_xml_bytes(data)),
     ]
 
     errors: list[str] = []
@@ -159,6 +187,6 @@ def read_uploaded_table(uploaded_file: Any) -> FileReadResult:
 
     raise ValueError(
         "Não consegui reconhecer esse anexo como tabela. "
-        "Envie um arquivo Excel, CSV, TXT, TSV, ODS, HTML ou JSON. "
+        "Envie um arquivo Excel, CSV, TXT, TSV, ODS, HTML, JSON ou XML. "
         f"Detalhes: {' | '.join(errors[:3])}"
     )
