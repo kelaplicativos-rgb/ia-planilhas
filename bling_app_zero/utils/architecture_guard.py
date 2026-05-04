@@ -15,8 +15,6 @@ class ArchitectureCheckResult:
 CRITICAL_IMPORTS = [
     "bling_app_zero.ui.step_router",
     "bling_app_zero.ui.mod_kernel",
-    "bling_app_zero.ui.hook_bus",
-    "bling_app_zero.ui.hook_registry",
     "bling_app_zero.ui.health_panel",
     "bling_app_zero.ui.origem",
     "bling_app_zero.ui.origem.flow",
@@ -44,6 +42,9 @@ REMOVED_LEGACY_IMPORTS = [
     "bling_app_zero.ui.origem_precificacao",
     "bling_app_zero.ui.origem_mapeamento",
     "bling_app_zero.ui.preview_final",
+    "bling_app_zero.ui.hook_bus",
+    "bling_app_zero.ui.hook_registry",
+    "bling_app_zero.ui.plugins.estoque_final",
 ]
 
 
