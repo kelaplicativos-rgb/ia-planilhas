@@ -85,7 +85,23 @@ def ensure_df_origem_from_best_source() -> Optional[pd.DataFrame]:
     return result.dataframe.copy()
 
 
-def render_origem_preview(title: str = "Preview da origem", max_rows: int = 30) -> Optional[pd.DataFrame]:
+def _preview_height(row_count: int) -> int:
+    """Calcula altura confortável para o preview sem ocupar a tela inteira."""
+    if row_count <= 5:
+        return 210
+    if row_count <= 10:
+        return 290
+    if row_count <= 20:
+        return 390
+    return 460
+
+
+def render_origem_preview(
+    title: str = "Preview da origem",
+    max_rows: int = 30,
+    *,
+    compact: bool = True,
+) -> Optional[pd.DataFrame]:
     """Renderiza o preview da origem de forma segura e padronizada."""
     result = get_origem_preview_dataframe()
 
@@ -101,13 +117,23 @@ def render_origem_preview(title: str = "Preview da origem", max_rows: int = 30) 
     st.session_state["df_preview_origem"] = df.copy()
     st.session_state["origem_preview_key"] = result.key
 
+    preview_df = df.head(max_rows).copy()
+
     if title:
         st.subheader(title)
 
-    st.caption(
-        f"Fonte usada: `{result.key}` • {len(df)} linhas × {len(df.columns)} colunas"
+    info_col, size_col = st.columns([2, 1])
+    with info_col:
+        st.caption(f"Fonte usada: `{result.key}`")
+    with size_col:
+        st.caption(f"{len(df)} linhas × {len(df.columns)} colunas")
+
+    st.dataframe(
+        preview_df,
+        use_container_width=True,
+        hide_index=True,
+        height=_preview_height(len(preview_df)) if compact else None,
     )
-    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
     return df
 
 
