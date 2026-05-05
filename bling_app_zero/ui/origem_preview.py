@@ -10,6 +10,8 @@ Problema resolvido:
   ver preview vazio, preview errado ou cair em erro.
 
 Regra:
+- Para cadastro de produtos via site, exigir modelo de cadastro do Bling antes
+  de abrir o Preview da origem.
 - Sempre escolher o primeiro DataFrame válido em ordem de prioridade.
 - Nunca quebrar a tela se não houver dados.
 - Mostrar claramente qual chave foi usada para montar o preview.
@@ -25,6 +27,10 @@ import streamlit as st
 
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
+from bling_app_zero.ui.modelo_bling_guard import (
+    render_modelo_cadastro_required_message,
+    requires_modelo_cadastro_for_preview,
+)
 
 
 @dataclass(frozen=True)
@@ -84,11 +90,10 @@ def preparar_preview_origem(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_df_origem_from_best_source() -> Optional[pd.DataFrame]:
-    """Garante `df_origem` preenchido com a melhor origem disponível.
+    """Garante `df_origem` preenchido com a melhor origem disponível."""
+    if requires_modelo_cadastro_for_preview():
+        return None
 
-    Isso evita que telas antigas que só leem `df_origem` fiquem vazias quando a
-    captura salvou os dados em outra chave, como `df_capturado_site`.
-    """
     result = get_origem_preview_dataframe()
     if result is None:
         return None
@@ -127,6 +132,10 @@ def render_origem_preview(
     compact: bool = True,
 ) -> Optional[pd.DataFrame]:
     """Renderiza o preview da origem de forma segura e padronizada."""
+    if requires_modelo_cadastro_for_preview():
+        render_modelo_cadastro_required_message()
+        return None
+
     result = get_origem_preview_dataframe()
 
     if result is None:
@@ -172,4 +181,6 @@ def render_origem_preview(
 
 
 def has_origem_preview_data() -> bool:
+    if requires_modelo_cadastro_for_preview():
+        return False
     return get_origem_preview_dataframe() is not None
