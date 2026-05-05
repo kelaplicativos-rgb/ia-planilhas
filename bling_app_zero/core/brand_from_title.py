@@ -31,6 +31,15 @@ KNOWN_BRANDS: dict[str, str] = {
     "H MASTON": "H'Maston",
     "HMASTON": "H'Maston",
     "H'MASTON": "H'Maston",
+    "H’MASTON": "H'Maston",
+    "GOLD": "Gold",
+    "KAIDI": "Kaidi",
+    "LELONG": "Lelong",
+    "KAP": "KAP",
+    "GRASEP": "Grasep",
+    "REVENGER": "Revenger",
+    "DELTA": "Delta",
+    "DELTAG": "DeltaG",
     "MOTOROLA": "Motorola",
     "LG": "LG",
     "SONY": "Sony",
@@ -69,8 +78,7 @@ def infer_brand_from_title(title: object) -> str:
 
     padded = f" {normalized} "
 
-    # Ordena por tamanho para marcas compostas terem prioridade sobre tokens curtos.
-    for token, brand in sorted(KNOWN_BRANDS.items(), key=lambda item: len(item[0]), reverse=True):
+    for token, brand in sorted(KNOWN_BRANDS.items(), key=lambda item: len(_normalize_title(item[0])), reverse=True):
         token_norm = _normalize_title(token)
         if token_norm and f" {token_norm} " in padded:
             return brand
