@@ -11,22 +11,17 @@ Este arquivo existe para impedir quebra quando algum trecho antigo ainda chamar
 """
 
 from importlib import import_module
-from typing import Callable, Iterable, Optional
+from typing import Callable, Optional
 
 import pandas as pd
 import streamlit as st
 
-
-_ORIGEM_KEYS: tuple[str, ...] = (
-    "df_origem",
-    "df_origem_site",
-    "df_origem_upload",
-    "df_origem_xml",
-    "df_capturado_site",
-    "df_preview_origem",
-    "df_saida",
-    "df_final",
+from bling_app_zero.ui.origem_preview import (
+    ORIGEM_PREVIEW_KEYS,
+    get_origem_preview_dataframe,
+    render_origem_preview,
 )
+
 
 _RENDER_MODULES: tuple[str, ...] = (
     "bling_app_zero.ui.mapeamento.page",
@@ -42,33 +37,17 @@ _RENDER_NAMES: tuple[str, ...] = (
 )
 
 
-def _is_valid_dataframe(value: object) -> bool:
-    return isinstance(value, pd.DataFrame) and not value.empty
-
-
-def obter_dataframe_origem(keys: Iterable[str] = _ORIGEM_KEYS) -> Optional[pd.DataFrame]:
+def obter_dataframe_origem(keys: tuple[str, ...] = ORIGEM_PREVIEW_KEYS) -> Optional[pd.DataFrame]:
     """Retorna o primeiro DataFrame de origem válido salvo na sessão."""
-    for key in keys:
-        value = st.session_state.get(key)
-        if _is_valid_dataframe(value):
-            return value.copy()
-    return None
+    result = get_origem_preview_dataframe(keys)
+    if result is None:
+        return None
+    return result.dataframe.copy()
 
 
 def render_preview_origem_mapeamento(max_rows: int = 30) -> Optional[pd.DataFrame]:
     """Renderiza uma prévia segura da origem usada no mapeamento."""
-    df = obter_dataframe_origem()
-
-    if df is None:
-        st.warning(
-            "Nenhum dado de origem foi encontrado para mapear. "
-            "Volte para Origem dos dados e carregue/capture os produtos novamente."
-        )
-        return None
-
-    st.caption(f"Prévia da origem para mapeamento: {len(df)} linhas × {len(df.columns)} colunas")
-    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
-    return df
+    return render_origem_preview(title="Preview da origem", max_rows=max_rows)
 
 
 def _resolver_render_mapeamento() -> Optional[Callable[[], None]]:
