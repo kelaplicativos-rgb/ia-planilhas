@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.site_title_extractor import extract_product_title
 from bling_app_zero.ui.debug_panel import add_debug_log
 
 
@@ -32,18 +33,10 @@ def _codigo_from_url(url: str, index: int) -> str:
     return candidate[:60] or f"SITE-{index:04d}"
 
 
-def _descricao_from_url(url: str, index: int) -> str:
-    parsed = urlparse(url)
-    bits = [b for b in parsed.path.split("/") if b.strip()]
-    candidate = bits[-1] if bits else parsed.netloc
-    candidate = re.sub(r"[-_]+", " ", candidate).strip()
-    return candidate.title() if candidate else f"Produto capturado do site {index}"
-
-
 def build_site_stock_dataframe(urls: list[str], deposito: str, estoque_padrao: int = 0) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for idx, url in enumerate(urls, start=1):
-        descricao_produto = _descricao_from_url(url, idx)
+        descricao_produto = extract_product_title(url, idx)
         rows.append(
             {
                 "Código": _codigo_from_url(url, idx),
@@ -92,7 +85,8 @@ def render_site_stock_capture(*, deposito: str) -> pd.DataFrame | None:
                 st.error("Informe o nome do depósito antes de gerar a base por site.")
                 return None
 
-            df = build_site_stock_dataframe(urls, deposito=str(deposito).strip(), estoque_padrao=int(estoque_padrao))
+            with st.spinner("Capturando título dos produtos..."):
+                df = build_site_stock_dataframe(urls, deposito=str(deposito).strip(), estoque_padrao=int(estoque_padrao))
             st.session_state["df_origem"] = df
             st.session_state["tipo_origem"] = "site"
             st.session_state["tipo_operacao"] = "estoque"
