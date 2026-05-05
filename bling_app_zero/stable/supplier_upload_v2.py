@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
+from bling_app_zero.stable.session_vault import guardar_df, restaurar_df
 
 
 COMPAT_EXTENSIONS = ["csv", "txt", "tsv", "xlsx", "xlsm", "xls", "xlsb", "ods", "html", "json", "xml"]
@@ -54,8 +55,8 @@ def _read_text_table(text: str) -> pd.DataFrame:
 
 def _save(df: pd.DataFrame, state_key: str) -> pd.DataFrame:
     df = _clean_df(df)
-    st.session_state[state_key] = df
-    st.success(f"✅ Planilha carregada: {len(df)} linhas × {len(df.columns)} colunas")
+    df = guardar_df(state_key, df)
+    st.success(f"✅ Planilha carregada e travada: {len(df)} linhas × {len(df.columns)} colunas")
     col1, col2 = st.columns(2)
     col1.metric("Linhas", len(df))
     col2.metric("Colunas", len(df.columns))
@@ -68,7 +69,7 @@ def render_supplier_upload_v2(*, state_key: str = "stable_df_origem", key_prefix
     st.subheader("📎 Planilha fornecedora")
     st.caption("Módulo BLINGFIX: anexo livre, anexo alternativo e colagem de CSV/TXT.")
 
-    current = st.session_state.get(state_key)
+    current = restaurar_df(state_key)
 
     uploaded = st.file_uploader(
         "Anexar planilha",
@@ -111,6 +112,9 @@ def render_supplier_upload_v2(*, state_key: str = "stable_df_origem", key_prefix
             st.code(str(exc))
 
     if isinstance(current, pd.DataFrame) and not current.empty:
-        return _save(current, state_key)
+        st.info(f"🔒 Planilha preservada: {len(current)} linhas × {len(current.columns)} colunas.")
+        with st.expander("Preview da planilha preservada", expanded=False):
+            st.dataframe(current.head(25), use_container_width=True)
+        return current.copy()
 
     return None
