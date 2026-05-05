@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
+from bling_app_zero.stable.image_url_tools import normalize_image_url_columns
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import blindar_df_para_bling, dataframe_para_csv_bytes
 
@@ -93,8 +94,6 @@ def _parse_money_value(value: object) -> float | None:
     if not text or text in {"-", ",", "."}:
         return None
 
-    # Quando existem ponto e vírgula, o último separador é tratado como decimal.
-    # Ex.: 1.234,56 -> 1234.56 | 1,234.56 -> 1234.56
     if "," in text and "." in text:
         if text.rfind(",") > text.rfind("."):
             text = text.replace(".", "").replace(",", ".")
@@ -427,6 +426,7 @@ def run_stable_app() -> None:
     df_export = blindar_df_para_bling(df_mapeado, tipo_operacao_bling=tipo, deposito_nome=deposito)
     if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
         df_export = _apply_calculated_price_to_price_columns(df_export, calculated_price)
+    df_export = normalize_image_url_columns(df_export)
     st.session_state["stable_df_export"] = df_export
 
     with st.expander("Preview final", expanded=False):
