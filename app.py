@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 import streamlit.components.v1 as components
 
-from bling_app_zero.stable.stock_ui_patch import run_stable_app
+from bling_app_zero.stable.stable_app import run_stable_app
 
 
 def install_exit_guard() -> None:
