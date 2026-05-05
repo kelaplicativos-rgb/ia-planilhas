@@ -18,13 +18,38 @@ NEW_SITE_INFO = (
     "Na atualização de estoque, o sistema usa modo flash focado em SKU/código, disponibilidade e quantidade."
 )
 
+ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
+
 
 def _tipo_operacao_atual() -> str:
     return str(st.session_state.get("stable_tipo", "cadastro") or "cadastro").strip().lower()
 
 
+def _inicializar_estoque_padrao_ui() -> None:
+    """Garante que o campo manual nasça com 1000, mas continue editável.
+
+    O app original cria o campo como 0. Aqui fazemos a primeira inicialização em 1000.
+    Depois disso, se o usuário trocar para 50, 300 ou até 0, o valor dele é preservado.
+    """
+    for key in ["stable_estoque_padrao", "stable_estoque_padrao_fallback"]:
+        flag = f"{key}_inicializado_auto_1000"
+        if not st.session_state.get(flag):
+            valor_atual = st.session_state.get(key, None)
+            if valor_atual in (None, "", 0, "0"):
+                st.session_state[key] = ESTOQUE_DISPONIVEL_PADRAO_UI
+            st.session_state[flag] = True
+
+
+def _normalizar_estoque_input(valor: object) -> int:
+    try:
+        return max(0, int(valor))
+    except Exception:
+        return ESTOQUE_DISPONIVEL_PADRAO_UI
+
+
 def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     tipo = _tipo_operacao_atual()
+    estoque_padrao = _normalizar_estoque_input(estoque_padrao)
 
     if tipo == "estoque":
         with st.spinner("Modo flash: buscando SKU/código e disponibilidade de estoque..."):
@@ -57,6 +82,7 @@ def _render_busca_site_independente() -> None:
     if isinstance(origem, pd.DataFrame) and not origem.empty:
         return
 
+    _inicializar_estoque_padrao_ui()
     tipo = _tipo_operacao_atual()
     with st.container(border=True):
         titulo = "### ⚡ Buscar estoque flash por site" if tipo == "estoque" else "### 🌐 Busca por site liberada após anexar o modelo"
@@ -74,7 +100,7 @@ def _render_busca_site_independente() -> None:
         estoque_padrao = st.number_input(
             "Estoque para disponível sem quantidade real",
             min_value=0,
-            value=int(st.session_state.get("stable_estoque_padrao_fallback", 1000) or 1000),
+            value=_normalizar_estoque_input(st.session_state.get("stable_estoque_padrao_fallback", ESTOQUE_DISPONIVEL_PADRAO_UI)),
             step=1,
             key="stable_estoque_padrao_fallback",
             help="Padrão automático: 1000. Se você trocar, o valor digitado substitui o 1000 apenas quando o produto estiver disponível sem quantidade real.",
@@ -88,6 +114,8 @@ def _render_busca_site_independente() -> None:
 
 
 def run_stable_app() -> None:
+    _inicializar_estoque_padrao_ui()
+
     original_button = st.button
     original_info = st.info
     original_site_df = base_app._site_df
@@ -106,11 +134,11 @@ def run_stable_app() -> None:
     def patched_number_input(label: str, *args: Any, **kwargs: Any):
         if str(label) == "Estoque padrão":
             label = "Estoque para disponível sem quantidade real"
+            kwargs["value"] = _normalizar_estoque_input(st.session_state.get("stable_estoque_padrao", ESTOQUE_DISPONIVEL_PADRAO_UI))
             kwargs.setdefault(
                 "help",
                 "Padrão automático: 1000. Se você trocar, o valor digitado substitui o 1000 apenas quando o produto estiver disponível sem quantidade real.",
             )
-            kwargs.setdefault("value", 1000)
         return original_number_input(label, *args, **kwargs)
 
     st.button = patched_button
