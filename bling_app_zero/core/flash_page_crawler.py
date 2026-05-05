@@ -1,37 +1,17 @@
 from __future__ import annotations
 
-"""Flash Amplo página por página em velocidade máxima com checkpoint.
-
-Estratégia oficial:
-1. Descobrir links `/produto/...` primeiro pela varredura normal/listagens.
-2. Usar sitemap por último, apenas para complementar URLs ainda não detectadas.
-3. Entrar em cada página de produto em paralelo.
-4. Salvar cada produto capturado em checkpoint local.
-5. Se a sessão reiniciar, reaproveitar produtos já capturados da mesma busca.
-6. Extrair dados reais da página individual.
-7. Marca é tratada no normalizador apenas pelo título do produto.
-8. Não tornar estoque obrigatório.
-"""
+"""Flash Amplo página por página em velocidade máxima com checkpoint."""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
-from bling_app_zero.core.flash_checkpoint import (
-    append_checkpoint_row,
-    fingerprint_urls,
-    load_checkpoint_rows,
-)
-from bling_app_zero.core.page_by_page_crawler import (
-    discover_product_urls,
-    extract_product_from_page,
-    fetch_html,
-)
+from bling_app_zero.core.flash_checkpoint import append_checkpoint_row, fingerprint_urls, load_checkpoint_rows
+from bling_app_zero.core.page_by_page_crawler import discover_product_urls, extract_product_from_page, fetch_html
 
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
-
 
 DEFAULT_MAX_WORKERS = 12
 DEFAULT_MAX_PRODUCTS = 5000
@@ -45,6 +25,7 @@ def _safe_extract_one(product_url: str) -> dict[str, str]:
         row.setdefault("Link Externo", product_url)
         row.setdefault("URL do Produto", product_url)
         row.setdefault("Fonte captura", "flash_amplo_pagina_produto")
+        row["_url_descoberta_flash"] = product_url
         return row
     except Exception as exc:  # noqa: BLE001
         return {
@@ -52,11 +33,18 @@ def _safe_extract_one(product_url: str) -> dict[str, str]:
             "URL do Produto": product_url,
             "Fonte captura": "flash_amplo_pagina_produto_erro",
             "Erro captura": str(exc),
+            "_url_descoberta_flash": product_url,
         }
 
 
 def _row_url(row: dict[str, object]) -> str:
-    return str(row.get("Link Externo") or row.get("URL do Produto") or "").strip()
+    return str(row.get("_url_descoberta_flash") or row.get("Link Externo") or row.get("URL do Produto") or "").strip()
+
+
+def _clean_internal_keys(row: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(row)
+    cleaned.pop("_url_descoberta_flash", None)
+    return cleaned
 
 
 def crawl_flash_amplo_page_by_page(
@@ -67,7 +55,6 @@ def crawl_flash_amplo_page_by_page(
     progress_callback: ProgressCallback = None,
     use_checkpoint: bool = True,
 ) -> list[dict[str, str]]:
-    """Executa captura Flash Amplo entrando em cada página de produto."""
     seed_list = [str(url or "").strip() for url in seed_urls if str(url or "").strip()]
     effective_max_products = int(max_products or DEFAULT_MAX_PRODUCTS)
     product_urls = discover_product_urls(seed_list, max_products=effective_max_products, use_sitemap=True)
@@ -90,32 +77,37 @@ def crawl_flash_amplo_page_by_page(
     if progress_callback and done_initial > 0:
         progress_callback(done_initial, total, "checkpoint")
 
-    if not pending_urls:
-        return [rows_by_url[url] for url in product_urls if url in rows_by_url]
+    if pending_urls:
+        workers = max(1, min(int(max_workers or DEFAULT_MAX_WORKERS), MAX_WORKERS_HARD_LIMIT, len(pending_urls)))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_safe_extract_one, url): url for url in pending_urls}
+            for offset, future in enumerate(as_completed(futures), start=1):
+                discovered_url = futures[future]
+                try:
+                    row = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    row = {
+                        "Link Externo": discovered_url,
+                        "URL do Produto": discovered_url,
+                        "Fonte captura": "flash_amplo_pagina_produto_erro",
+                        "Erro captura": str(exc),
+                        "_url_descoberta_flash": discovered_url,
+                    }
+                rows_by_url[discovered_url] = row
+                canonical = str(row.get("Link Externo") or row.get("URL do Produto") or "").strip()
+                if canonical:
+                    rows_by_url.setdefault(canonical, row)
+                if use_checkpoint:
+                    append_checkpoint_row(fingerprint, row)
+                if progress_callback:
+                    progress_callback(done_initial + offset, total, discovered_url)
 
-    workers = max(1, min(int(max_workers or DEFAULT_MAX_WORKERS), MAX_WORKERS_HARD_LIMIT, len(pending_urls)))
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_safe_extract_one, url): url for url in pending_urls}
-        for offset, future in enumerate(as_completed(futures), start=1):
-            url = futures[future]
-            try:
-                row = future.result()
-            except Exception as exc:  # noqa: BLE001
-                row = {
-                    "Link Externo": url,
-                    "URL do Produto": url,
-                    "Fonte captura": "flash_amplo_pagina_produto_erro",
-                    "Erro captura": str(exc),
-                }
-            row_url = _row_url(row) or url
-            rows_by_url[row_url] = row
-            if use_checkpoint:
-                append_checkpoint_row(fingerprint, row)
-            if progress_callback:
-                progress_callback(done_initial + offset, total, url)
-
-    return [rows_by_url[url] for url in product_urls if url in rows_by_url]
+    ordered_rows = []
+    for url in product_urls:
+        row = rows_by_url.get(url)
+        if row:
+            ordered_rows.append(_clean_internal_keys(row))
+    return ordered_rows
 
 
 def crawl_flash_amplo_page_by_page_dataframe(
