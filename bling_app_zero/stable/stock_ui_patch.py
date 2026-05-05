@@ -9,6 +9,7 @@ import streamlit as st
 
 from bling_app_zero.stable import stable_app as base_app
 from bling_app_zero.stable import sitefix_patch
+from bling_app_zero.stable.site_cadastro_normalizer import normalize_cadastro_site_dataframe
 from bling_app_zero.stable.site_price_extractor import extract_price_from_url
 
 
@@ -63,6 +64,7 @@ def run_stable_app() -> None:
     original_selectbox = st.selectbox
     original_price = base_app._is_price_target
     original_preco_from_urls = getattr(sitefix_patch, "_preco_from_urls", None)
+    original_product_crawler = getattr(sitefix_patch, "crawl_product_flash_dataframe", None)
 
     def selectbox(label: str, options, *args: Any, **kwargs: Any):
         if _tipo() == "estoque" and _is_deposito_label(label):
@@ -87,9 +89,17 @@ def run_stable_app() -> None:
             return False
         return original_price(target)
 
+    def cadastro_crawler(raw_urls: str):
+        if original_product_crawler is None:
+            return pd.DataFrame()
+        df = original_product_crawler(raw_urls)
+        return normalize_cadastro_site_dataframe(df, raw_urls=raw_urls)
+
     st.selectbox = selectbox
     base_app._is_price_target = is_price
     sitefix_patch._preco_from_urls = _preco_from_urls_fast
+    if original_product_crawler is not None:
+        sitefix_patch.crawl_product_flash_dataframe = cadastro_crawler
     try:
         sitefix_patch.run_stable_app()
     finally:
@@ -97,3 +107,5 @@ def run_stable_app() -> None:
         base_app._is_price_target = original_price
         if original_preco_from_urls is not None:
             sitefix_patch._preco_from_urls = original_preco_from_urls
+        if original_product_crawler is not None:
+            sitefix_patch.crawl_product_flash_dataframe = original_product_crawler
