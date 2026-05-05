@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
+from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restaurar_chaves_df, restaurar_df
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import dataframe_para_csv_bytes
@@ -74,12 +75,20 @@ def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return out[cols].fillna("")
 
 
+def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return _force(pd.DataFrame(), cols)
+    normalized = normalize_product_dataframe(df.copy())
+    cleaned = clean_invalid_preview_mappings(normalized.copy())
+    return _force(cleaned, cols)
+
+
 def _mirror_preview(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     for target in cols:
         src = _safe_source(target, df.columns)
         out[target] = df[src].astype(str).fillna("") if src else ""
-    return clean_invalid_preview_mappings(_force(out, cols))
+    return _normalize_for_final(out, cols)
 
 
 def _urls(raw: str) -> list[str]:
@@ -265,7 +274,7 @@ def run_stable_app() -> None:
             continue
         src = mapping.get(c, "")
         out[c] = df[src].astype(str).fillna("") if src and src in df.columns else ""
-    out = clean_invalid_preview_mappings(_force(out, cols))
+    out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
     with st.expander("Preview final", expanded=False):
