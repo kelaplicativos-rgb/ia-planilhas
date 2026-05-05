@@ -12,6 +12,7 @@ from bling_app_zero.stable.stock_auto import aplicar_estoque_automatico
 
 
 COMPAT_EXTENSIONS = ["csv", "txt", "tsv", "xlsx", "xlsm", "xls", "xlsb", "ods", "html", "json", "xml"]
+ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
 
 
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,6 +22,26 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     out.columns = [str(c).replace("\ufeff", "").strip().strip('"').strip("'") for c in out.columns]
     out = out.loc[:, [str(c).strip() != "" for c in out.columns]]
     return out.dropna(how="all").fillna("")
+
+
+def _normalizar_estoque_disponivel(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except Exception:
+        return ESTOQUE_DISPONIVEL_PADRAO_UI
+
+
+def _obter_estoque_disponivel_usuario() -> int:
+    """Usa o mesmo padrão editável do fluxo por site.
+
+    Se o usuário nunca mexeu, vale 1000. Se ele digitou 50, 300 ou 0 no campo,
+    a planilha também respeita esse valor para linhas marcadas como disponíveis
+    sem número real de estoque.
+    """
+    for key in ["stable_estoque_padrao", "stable_estoque_padrao_fallback"]:
+        if key in st.session_state:
+            return _normalizar_estoque_disponivel(st.session_state.get(key))
+    return ESTOQUE_DISPONIVEL_PADRAO_UI
 
 
 def _read_upload(uploaded: Any) -> pd.DataFrame:
@@ -55,9 +76,16 @@ def _read_text_table(text: str) -> pd.DataFrame:
 
 
 def _save(df: pd.DataFrame, state_key: str) -> pd.DataFrame:
-    df = aplicar_estoque_automatico(_clean_df(df))
+    estoque_disponivel = _obter_estoque_disponivel_usuario()
+    df = aplicar_estoque_automatico(_clean_df(df), override_disponivel=estoque_disponivel)
     df = guardar_df(state_key, df)
-    st.success(f"✅ Planilha carregada, estoque automático aplicado e dados travados: {len(df)} linhas × {len(df.columns)} colunas")
+    st.success(
+        "✅ Planilha carregada, estoque automático aplicado e dados travados: "
+        f"{len(df)} linhas × {len(df.columns)} colunas"
+    )
+    st.caption(
+        f"📦 Regra aplicada: estoque real prevalece; disponível sem número = {estoque_disponivel}; indisponível = 0."
+    )
     col1, col2 = st.columns(2)
     col1.metric("Linhas", len(df))
     col2.metric("Colunas", len(df.columns))
@@ -68,7 +96,10 @@ def _save(df: pd.DataFrame, state_key: str) -> pd.DataFrame:
 
 def render_supplier_upload_v2(*, state_key: str = "stable_df_origem", key_prefix: str = "supplier_v2") -> pd.DataFrame | None:
     st.subheader("📎 Planilha fornecedora")
-    st.caption("Módulo BLINGFIX: anexo livre, anexo alternativo, colagem de CSV/TXT e estoque automático por disponibilidade.")
+    st.caption(
+        "Módulo BLINGFIX: anexo livre, anexo alternativo, colagem de CSV/TXT e estoque automático por disponibilidade. "
+        "Disponível sem estoque real usa 1000 por padrão ou o valor digitado no campo de estoque."
+    )
 
     current = restaurar_df(state_key)
 
@@ -113,9 +144,13 @@ def render_supplier_upload_v2(*, state_key: str = "stable_df_origem", key_prefix
             st.code(str(exc))
 
     if isinstance(current, pd.DataFrame) and not current.empty:
-        current = aplicar_estoque_automatico(current)
+        estoque_disponivel = _obter_estoque_disponivel_usuario()
+        current = aplicar_estoque_automatico(current, override_disponivel=estoque_disponivel)
         current = guardar_df(state_key, current)
         st.info(f"🔒 Planilha preservada com estoque automático: {len(current)} linhas × {len(current.columns)} colunas.")
+        st.caption(
+            f"📦 Regra ativa: estoque real prevalece; disponível sem número = {estoque_disponivel}; indisponível = 0."
+        )
         with st.expander("Preview da planilha preservada", expanded=False):
             st.dataframe(current.head(25), use_container_width=True)
         return current.copy()
