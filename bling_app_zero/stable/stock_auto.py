@@ -74,6 +74,15 @@ def _norm(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _valor_disponivel(override_disponivel: int | None = None) -> int:
+    if override_disponivel is None:
+        return ESTOQUE_DISPONIVEL_PADRAO
+    try:
+        return max(0, int(override_disponivel))
+    except Exception:
+        return ESTOQUE_DISPONIVEL_PADRAO
+
+
 def _parse_int(value: object) -> int | None:
     text = str(value or "").strip()
     if not text:
@@ -89,7 +98,7 @@ def _parse_int(value: object) -> int | None:
         return None
 
 
-def _classificar_disponibilidade(value: object) -> int | None:
+def _classificar_disponibilidade(value: object, override_disponivel: int | None = None) -> int | None:
     text = _norm(value)
     if not text:
         return None
@@ -97,7 +106,7 @@ def _classificar_disponibilidade(value: object) -> int | None:
     if any(_norm(term) in text for term in PALAVRAS_INDISPONIVEL):
         return ESTOQUE_INDISPONIVEL_PADRAO
     if any(_norm(term) in text for term in PALAVRAS_DISPONIVEL):
-        return ESTOQUE_DISPONIVEL_PADRAO
+        return _valor_disponivel(override_disponivel)
     return None
 
 
@@ -113,31 +122,44 @@ def _colunas_por_alias(df: pd.DataFrame, aliases: list[str]) -> list[str]:
     return encontradas
 
 
-def resolver_estoque_linha(row: pd.Series, estoque_cols: list[str], disponibilidade_cols: list[str]) -> tuple[int, str]:
+def resolver_estoque_linha(
+    row: pd.Series,
+    estoque_cols: list[str],
+    disponibilidade_cols: list[str],
+    override_disponivel: int | None = None,
+) -> tuple[int, str]:
+    valor_auto = _valor_disponivel(override_disponivel)
+
     for col in estoque_cols:
         valor = _parse_int(row.get(col, ""))
         if valor is not None:
             return int(valor), "REAL"
 
     for col in disponibilidade_cols:
-        valor = _classificar_disponibilidade(row.get(col, ""))
+        valor = _classificar_disponibilidade(row.get(col, ""), override_disponivel=override_disponivel)
         if valor is not None:
-            return int(valor), "DISPONIBILIDADE_AUTO" if valor > 0 else "INDISPONIVEL_AUTO"
+            origem = f"DISPONIBILIDADE_AUTO_{valor_auto}" if valor > 0 else "INDISPONIVEL_AUTO"
+            return int(valor), origem
 
     texto_linha = " ".join(str(v or "") for v in row.tolist())
-    valor = _classificar_disponibilidade(texto_linha)
+    valor = _classificar_disponibilidade(texto_linha, override_disponivel=override_disponivel)
     if valor is not None:
-        return int(valor), "DISPONIBILIDADE_AUTO" if valor > 0 else "INDISPONIVEL_AUTO"
+        origem = f"DISPONIBILIDADE_AUTO_{valor_auto}" if valor > 0 else "INDISPONIVEL_AUTO"
+        return int(valor), origem
 
     return 0, "NAO_INFORMADO"
 
 
-def aplicar_estoque_automatico(df: pd.DataFrame) -> pd.DataFrame:
+def aplicar_estoque_automatico(
+    df: pd.DataFrame,
+    override_disponivel: int | None = None,
+) -> pd.DataFrame:
     """Preenche Estoque/Quantidade automaticamente para reduzir interação humana.
 
     Regra:
     - se houver número real em coluna de estoque/quantidade, usa esse número;
-    - se houver disponibilidade positiva, usa 1000;
+    - se houver disponibilidade positiva sem número real, usa 1000 por padrão;
+    - se o usuário informar outro valor no campo, usa esse valor no lugar do 1000;
     - se houver indisponibilidade, usa 0;
     - se não houver sinal confiável, usa 0.
     """
@@ -153,19 +175,16 @@ def aplicar_estoque_automatico(df: pd.DataFrame) -> pd.DataFrame:
     valores: list[int] = []
     origens: list[str] = []
     for _, row in out.iterrows():
-        estoque, origem = resolver_estoque_linha(row, estoque_cols, disponibilidade_cols)
+        estoque, origem = resolver_estoque_linha(
+            row,
+            estoque_cols,
+            disponibilidade_cols,
+            override_disponivel=override_disponivel,
+        )
         valores.append(int(estoque))
         origens.append(origem)
 
-    if "Estoque" not in out.columns:
-        out["Estoque"] = valores
-    else:
-        out["Estoque"] = valores
-
-    if "Quantidade" not in out.columns:
-        out["Quantidade"] = valores
-    else:
-        out["Quantidade"] = valores
-
+    out["Estoque"] = valores
+    out["Quantidade"] = valores
     out["Origem do estoque"] = origens
     return out.fillna("")
