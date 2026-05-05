@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -23,7 +25,16 @@ ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
 
 # Fallback usado somente quando nenhum modelo Bling foi anexado.
 # O modelo saldo_estoque.xlsx, quando anexado, sempre prevalece.
-ESTOQUE_SITE_COLUMNS = ["SKU", "Produto", "Valor", "Estoque", "Quantidade"]
+ESTOQUE_SITE_COLUMNS = ["Codigo produto *", "GTIN **", "Descrição Produto", "Balanço (OBRIGATÓRIO)", "Preço unitário (OBRIGATÓRIO)"]
+
+_GENERIC_SITE_TITLES = {
+    "mega center eletrônicos",
+    "mega center eletronicos",
+    "mega center",
+    "produto",
+    "produtos",
+    "loja",
+}
 
 
 def _tipo_operacao_atual() -> str:
@@ -53,6 +64,36 @@ def _serie(df: pd.DataFrame, coluna: str, padrao: object = "") -> pd.Series:
     return pd.Series([padrao] * len(df), index=df.index)
 
 
+def _clean_text(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").replace("\xa0", " ")).strip()
+
+
+def _is_generic_product_name(value: object) -> bool:
+    text = _clean_text(value).lower()
+    if not text:
+        return True
+    text = text.replace("|", " ").replace("-", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text in _GENERIC_SITE_TITLES or text.endswith(" mega center eletrônicos") or text.endswith(" mega center eletronicos")
+
+
+def _nome_produto_from_url(url: object, fallback: object = "") -> str:
+    raw = str(url or "").strip()
+    if raw:
+        parsed = urlparse(raw)
+        parts = [p for p in parsed.path.split("/") if p.strip()]
+        if parts:
+            slug = parts[-1]
+            slug = re.sub(r"\.(html?|php|aspx?)$", "", slug, flags=re.IGNORECASE)
+            slug = re.sub(r"^[0-9]+[-_ ]+", "", slug)
+            slug = re.sub(r"[-_]+", " ", slug)
+            slug = re.sub(r"\s+", " ", slug).strip()
+            if slug:
+                return slug.title()
+    fallback_text = _clean_text(fallback)
+    return fallback_text or "Produto capturado do site"
+
+
 def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
@@ -64,6 +105,15 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     nome = _serie(df, "Descrição")
     if not nome.astype(str).str.strip().any():
         nome = _serie(df, "Produto")
+
+    url_produto = _serie(df, "URL do produto")
+    nome = pd.Series(
+        [
+            _nome_produto_from_url(url, fallback=codigo.iloc[pos]) if _is_generic_product_name(value) else _clean_text(value)
+            for pos, (value, url) in enumerate(zip(nome.tolist(), url_produto.tolist()))
+        ],
+        index=df.index,
+    )
 
     if "Valor" in df.columns:
         valor = df["Valor"]
@@ -90,23 +140,37 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
 
     # Colunas técnicas capturadas do site.
     out["Código"] = codigo
+    out["Codigo"] = codigo
+    out["Codigo produto *"] = codigo
     out["SKU"] = codigo
     out["SKU site"] = codigo
+    out["GTIN"] = codigo
+    out["GTIN **"] = codigo
+    out["GTIN/EAN"] = codigo
     out["Descrição"] = nome
+    out["Descrição Produto"] = nome
     out["Produto"] = nome
     out["Nome"] = nome
     out["Nome do produto"] = nome
     out["Valor"] = valor
+    out["Balanço (OBRIGATÓRIO)"] = valor
+    out["Balanco (OBRIGATORIO)"] = valor
     out["Estoque"] = estoque
     out["Quantidade"] = quantidade
+    out["Preço unitário (OBRIGATÓRIO)"] = "0,00"
+    out["Preço de Custo"] = ""
 
     # Colunas do modelo saldo_estoque.xlsx que não existem no site.
     # Elas ficam vazias, mas disponíveis para o espelho do modelo anexado.
     out["ID"] = ""
+    out["ID Produto"] = ""
     out["Data"] = ""
     out["Depósito"] = ""
     out["Deposito"] = ""
+    out["Deposito (OBRIGATÓRIO)"] = ""
+    out["Observação"] = ""
     out["Observações"] = ""
+    out["Observacao"] = ""
     out["Observacoes"] = ""
 
     if "URL do produto" in df.columns:
