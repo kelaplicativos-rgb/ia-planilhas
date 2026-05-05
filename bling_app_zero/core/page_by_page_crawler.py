@@ -36,6 +36,62 @@ NCM_RE = re.compile(r"\bNCM\b[\s:#\-]*([0-9.]{6,12})", re.IGNORECASE)
 CEST_RE = re.compile(r"\bCEST\b[\s:#\-]*([0-9.]{5,12})", re.IGNORECASE)
 COST_RE = re.compile(r"(?:pre[cç]o\s+de\s+custo|custo)\s*[:\-]?\s*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[,\.]\d{2})", re.IGNORECASE)
 
+DESCRIPTION_SELECTORS = (
+    "#descricao",
+    "#description",
+    ".descricao",
+    ".description",
+    ".product-description",
+    ".produto-descricao",
+    ".product-details",
+    ".product-detail",
+    ".product-tabs",
+    ".tab-content",
+    "[class*='descricao']",
+    "[class*='description']",
+    "[class*='especifica']",
+    "[class*='detalhe']",
+)
+
+PRICE_SELECTORS = (
+    "[itemprop='price']",
+    "[data-price]",
+    "[data-preco]",
+    "[class*='price']",
+    "[class*='preco']",
+    "[class*='valor']",
+    ".product-price",
+    ".produto-preco",
+)
+
+DESCRIPTION_BLOCKLIST = (
+    "mega center eletronicos",
+    "mega center eletrônicos",
+    "todos os direitos reservados",
+    "redes sociais",
+    "facebook",
+    "instagram",
+    "whatsapp",
+    "conecte se conosco",
+    "conecte-se conosco",
+    "atendimento",
+    "formas de pagamento",
+    "política de privacidade",
+    "politica de privacidade",
+    "trocas e devoluções",
+    "trocas e devolucoes",
+    "newsletter",
+    "cadastre seu email",
+    "departamentos",
+    "categorias",
+    "menu",
+    "minha conta",
+    "login",
+    "carrinho",
+    "comprar",
+    "adicionar ao carrinho",
+)
+
 
 @dataclass(frozen=True)
 class ProductPageResult:
@@ -93,13 +149,6 @@ def discover_product_urls(
     max_products: Optional[int] = None,
     use_sitemap: bool = True,
 ) -> list[str]:
-    """Descobre URLs de produto usando sitemap somente como complemento final.
-
-    Ordem obrigatória:
-    1. URLs diretas informadas pelo usuário.
-    2. Links visíveis nas listagens/categorias informadas.
-    3. Sitemap por último, apenas para adicionar URLs ainda não detectadas.
-    """
     discovered: list[str] = []
     seen: set[str] = set()
     seeds = [str(seed or "").strip() for seed in seed_urls if str(seed or "").strip()]
@@ -118,7 +167,6 @@ def discover_product_urls(
         discovered.append(clean_url)
         return bool(max_products and len(discovered) >= max_products)
 
-    # 1) URLs diretas e 2) varredura visível/listagem.
     for seed in seeds:
         if add_url(seed):
             return discovered
@@ -136,7 +184,6 @@ def discover_product_urls(
             if add_url(href):
                 return discovered
 
-    # 3) Sitemap sempre por último, só complementando o que faltou.
     if use_sitemap and (not max_products or len(discovered) < max_products):
         remaining = None if max_products is None else max_products - len(discovered)
         for sitemap_url in discover_product_urls_from_sitemaps(seeds, max_products=remaining or 5000):
@@ -180,6 +227,8 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
 
 def _clean_text(value: object) -> str:
     text = unescape("" if value is None else str(value))
+    text = text.replace("\ufeff", " ").replace("\u200b", " ").replace("\xa0", " ")
+    text = re.sub(r"[\r\n\t]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -188,13 +237,26 @@ def _normalize_price(value: object) -> str:
     text = _clean_text(value)
     if not text:
         return ""
-    match = PRICE_RE.search(text)
-    if not match:
+    matches = PRICE_RE.findall(text)
+    if not matches:
         return ""
-    price = match.group(1)
-    if "," in price:
-        return price.replace(".", "").replace(",", ".")
-    return price
+    candidates: list[float] = []
+    original: dict[float, str] = {}
+    for match in matches:
+        raw = str(match)
+        value_txt = raw.replace(".", "").replace(",", ".") if "," in raw else raw
+        try:
+            number = float(value_txt)
+        except Exception:
+            continue
+        if number <= 0:
+            continue
+        candidates.append(number)
+        original[number] = value_txt
+    if not candidates:
+        return ""
+    chosen = max(candidates)
+    return f"{chosen:.2f}"
 
 
 def _extract_category(soup: BeautifulSoup) -> str:
@@ -212,6 +274,83 @@ def _extract_category(soup: BeautifulSoup) -> str:
         if crumbs:
             break
     return " > ".join(crumbs)
+
+
+def _description_is_noise(text: str) -> bool:
+    low = _clean_text(text).lower()
+    if not low or len(low) < 20:
+        return True
+    if any(block in low for block in DESCRIPTION_BLOCKLIST):
+        return True
+    return False
+
+
+def _clean_description_block(text: str, title: str = "") -> str:
+    text = _clean_text(text)
+    if not text:
+        return ""
+    pieces = re.split(r"(?:\s{2,}|(?<=\.)\s+|\|)", text)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    title_clean = _clean_text(title).lower()
+    for piece in pieces:
+        part = _clean_text(piece).strip(" -•|:;")
+        if not part:
+            continue
+        low = part.lower()
+        if title_clean and low == title_clean:
+            continue
+        if _description_is_noise(part):
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        cleaned.append(part)
+        if len(" ".join(cleaned)) >= 1200:
+            break
+    result = " ".join(cleaned).strip()
+    return result[:2000]
+
+
+def _extract_description_from_page(soup: BeautifulSoup, title: str = "") -> str:
+    candidates: list[str] = []
+    for selector in DESCRIPTION_SELECTORS:
+        for node in soup.select(selector):
+            # remove áreas que normalmente são propaganda/rodapé/navegação dentro do bloco
+            for bad in node.select("script, style, nav, footer, header, form, button, .social, .newsletter, .menu, .breadcrumb"):
+                bad.decompose()
+            text = _clean_description_block(node.get_text(" ", strip=True), title=title)
+            if text:
+                candidates.append(text)
+    if candidates:
+        return max(candidates, key=len)
+    return ""
+
+
+def _extract_price_from_page(soup: BeautifulSoup, full_text: str) -> str:
+    for meta_names in (
+        ("product:price:amount", "og:price:amount", "price", "twitter:data1"),
+    ):
+        price = _normalize_price(_first_meta(soup, *meta_names))
+        if price:
+            return price
+
+    candidates: list[str] = []
+    for selector in PRICE_SELECTORS:
+        for node in soup.select(selector):
+            attr_price = node.get("data-price") or node.get("data-preco") or node.get("content")
+            if attr_price:
+                candidates.append(str(attr_price))
+            txt = node.get_text(" ", strip=True)
+            if txt:
+                candidates.append(txt)
+
+    for candidate in candidates:
+        price = _normalize_price(candidate)
+        if price:
+            return price
+
+    return _normalize_price(full_text)
 
 
 def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
@@ -276,7 +415,7 @@ def _extract_images(soup: BeautifulSoup, page_url: str) -> str:
             continue
         abs_url = normalize_url(url, page_url)
         lower = abs_url.lower()
-        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon")):
+        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "facebook.com/tr")):
             continue
         if abs_url in seen:
             continue
@@ -303,7 +442,6 @@ def _extract_regex_optional(text: str) -> dict[str, str]:
 
 
 def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
-    """Extrai dados somente da página individual do produto."""
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True)
 
@@ -314,29 +452,24 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
         title = soup.title.get_text(" ", strip=True)
     data["Descrição"] = _clean_text(title)
 
-    desc = _first_meta(soup, "description", "og:description", "twitter:description")
+    desc = _extract_description_from_page(soup, title=data.get("Descrição", ""))
+    if not desc:
+        desc = _clean_description_block(_first_meta(soup, "description", "og:description", "twitter:description"), title=data.get("Descrição", ""))
     if desc:
-        data["Descrição complementar"] = _clean_text(desc)
-    else:
-        for selector in ("#descricao", ".descricao", ".description", "[class*='descricao']", "[class*='description']"):
-            node = soup.select_one(selector)
-            if node:
-                desc_text = _clean_text(node.get_text(" ", strip=True))
-                if desc_text and desc_text != data.get("Descrição"):
-                    data["Descrição complementar"] = desc_text
-                    break
+        data["Descrição complementar"] = desc
+        data["Descrição curta"] = desc
 
     category = data.get("Categoria") or _extract_category(soup)
     if category:
         data["Categoria"] = category
+        data["Categoria do produto"] = category
 
     data.update({k: v for k, v in _extract_regex_optional(text).items() if v})
 
-    price = data.get("Preço") or _normalize_price(
-        _first_meta(soup, "product:price:amount", "og:price:amount") or text
-    )
+    price = data.get("Preço") or _extract_price_from_page(soup, text)
     if price:
         data["Preço"] = price
+        data["Preço unitário"] = data.get("Preço unitário") or price
         data["Preço unitário (OBRIGATÓRIO)"] = data.get("Preço unitário (OBRIGATÓRIO)") or price
 
     sku_match = SKU_RE.search(text)
@@ -377,7 +510,6 @@ def crawl_product_pages(
     max_products: Optional[int] = None,
     use_sitemap: bool = True,
 ) -> list[dict[str, str]]:
-    """Descobre e visita cada página de produto, retornando uma linha por página."""
     product_urls = discover_product_urls(seed_urls, max_products=max_products, use_sitemap=use_sitemap)
     rows: list[dict[str, str]] = []
 
