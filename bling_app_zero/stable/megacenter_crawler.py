@@ -4,7 +4,7 @@ import json
 import re
 from collections import deque
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import pandas as pd
@@ -14,8 +14,9 @@ from bs4 import BeautifulSoup
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 TIMEOUT = 18
-MAX_PAGES = 80
-MAX_PRODUCTS = 500
+MAX_PAGES = 120
+MAX_PRODUCTS = 800
+MAX_CART_PROBE = 200
 
 
 @dataclass
@@ -23,6 +24,8 @@ class CrawlConfig:
     estoque_padrao: int = 1
     max_pages: int = MAX_PAGES
     max_products: int = MAX_PRODUCTS
+    simular_carrinho: bool = True
+    max_cart_probe: int = MAX_CART_PROBE
 
 
 def _clean_text(value: object) -> str:
@@ -41,12 +44,21 @@ def _same_domain(url: str, domain: str) -> bool:
     return urlparse(url).netloc.replace("www.", "") == domain.replace("www.", "")
 
 
-def _fetch(url: str) -> str:
-    response = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
-        timeout=TIMEOUT,
+def _new_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        }
     )
+    return session
+
+
+def _fetch(url: str, session: requests.Session | None = None) -> str:
+    sess = session or _new_session()
+    response = sess.get(url, timeout=TIMEOUT)
     response.raise_for_status()
     return response.text
 
@@ -79,6 +91,7 @@ def _discover_links(start_urls: list[str], config: CrawlConfig) -> list[str]:
     visited: set[str] = set()
     product_urls: list[str] = []
     product_seen: set[str] = set()
+    session = _new_session()
 
     while queue and len(visited) < config.max_pages and len(product_urls) < config.max_products:
         url = _normalize_url(queue.popleft())
@@ -87,7 +100,7 @@ def _discover_links(start_urls: list[str], config: CrawlConfig) -> list[str]:
         visited.add(url)
 
         try:
-            html = _fetch(url)
+            html = _fetch(url, session=session)
         except Exception:
             continue
 
@@ -108,25 +121,52 @@ def _discover_links(start_urls: list[str], config: CrawlConfig) -> list[str]:
     return product_urls
 
 
-def _extract_json_ld(soup: BeautifulSoup) -> list[dict]:
-    items: list[dict] = []
+def _safe_json(raw: str) -> Any | None:
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _walk_json(value: Any) -> Iterable[Any]:
+    yield value
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from _walk_json(v)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_json(item)
+
+
+def _extract_json_objects(soup: BeautifulSoup) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         raw = script.string or script.get_text(" ", strip=True)
-        if not raw:
+        payload = _safe_json(raw or "")
+        if payload is not None:
+            for item in _walk_json(payload):
+                if isinstance(item, dict):
+                    objects.append(item)
+
+    next_data = soup.find("script", id="__NEXT_DATA__")
+    if next_data:
+        payload = _safe_json(next_data.string or next_data.get_text(" ", strip=True) or "")
+        if payload is not None:
+            for item in _walk_json(payload):
+                if isinstance(item, dict):
+                    objects.append(item)
+
+    for script in soup.find_all("script"):
+        raw = script.string or script.get_text(" ", strip=False)
+        if not raw or "produto" not in raw.lower() and "product" not in raw.lower():
             continue
-        try:
-            payload = json.loads(raw)
-        except Exception:
-            continue
-        if isinstance(payload, dict):
-            graph = payload.get("@graph")
-            if isinstance(graph, list):
-                items.extend([x for x in graph if isinstance(x, dict)])
-            else:
-                items.append(payload)
-        elif isinstance(payload, list):
-            items.extend([x for x in payload if isinstance(x, dict)])
-    return items
+        for match in re.findall(r"\{[^{}]{20,3000}\}", raw):
+            payload = _safe_json(match)
+            if isinstance(payload, dict):
+                objects.append(payload)
+
+    return objects
 
 
 def _first_meta(soup: BeautifulSoup, names: Iterable[str]) -> str:
@@ -137,33 +177,99 @@ def _first_meta(soup: BeautifulSoup, names: Iterable[str]) -> str:
     return ""
 
 
-def _extract_images(soup: BeautifulSoup, base_url: str) -> str:
+def _json_first(objects: list[dict[str, Any]], keys: Iterable[str]) -> str:
+    normalized = {k.lower() for k in keys}
+    for obj in objects:
+        for key, value in obj.items():
+            if str(key).lower() in normalized and value not in (None, "", [], {}):
+                if isinstance(value, (dict, list)):
+                    continue
+                return _clean_text(value)
+    return ""
+
+
+def _json_first_number(objects: list[dict[str, Any]], keys: Iterable[str]) -> int | None:
+    value = _json_first(objects, keys)
+    if not value:
+        return None
+    found = re.search(r"\d+", value)
+    if not found:
+        return None
+    try:
+        return max(0, int(found.group(0)))
+    except Exception:
+        return None
+
+
+def _json_product_objects(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    products: list[dict[str, Any]] = []
+    for obj in objects:
+        obj_type = str(obj.get("@type") or obj.get("type") or "").lower()
+        keys = {str(k).lower() for k in obj.keys()}
+        if "product" in obj_type or {"name", "sku"}.issubset(keys) or "gtin" in " ".join(keys):
+            products.append(obj)
+    return products or objects
+
+
+def _extract_images(soup: BeautifulSoup, base_url: str, objects: list[dict[str, Any]]) -> str:
     images: list[str] = []
     seen: set[str] = set()
 
-    for item in [_first_meta(soup, ["og:image", "twitter:image"])] :
-        if item:
-            images.append(_absolute(base_url, item))
+    meta_image = _first_meta(soup, ["og:image", "twitter:image"])
+    if meta_image:
+        images.append(_absolute(base_url, meta_image))
+
+    for obj in objects:
+        for key, value in obj.items():
+            if str(key).lower() not in {"image", "images", "imagem", "imagens", "urlimage", "url_image"}:
+                continue
+            if isinstance(value, str):
+                images.append(_absolute(base_url, value))
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        images.append(_absolute(base_url, item))
+                    elif isinstance(item, dict):
+                        candidate = item.get("url") or item.get("src") or item.get("image")
+                        if candidate:
+                            images.append(_absolute(base_url, str(candidate)))
 
     for img in soup.find_all("img"):
-        src = img.get("src") or img.get("data-src") or img.get("data-original")
+        src = img.get("src") or img.get("data-src") or img.get("data-original") or img.get("data-lazy")
         if not src:
             continue
-        url = _absolute(base_url, str(src))
-        low = url.lower()
-        if any(skip in low for skip in ["logo", "sprite", "placeholder", "loading", "whatsapp"]):
-            continue
-        images.append(url)
+        images.append(_absolute(base_url, str(src)))
 
     cleaned: list[str] = []
     for url in images:
+        low = url.lower()
+        if any(
+            skip in low
+            for skip in [
+                "facebook.com/tr",
+                "analytics",
+                "pixel",
+                "logo",
+                "sprite",
+                "placeholder",
+                "loading",
+                "whatsapp",
+                "icon",
+                "favicon",
+            ]
+        ):
+            continue
         if url not in seen:
             seen.add(url)
             cleaned.append(url)
     return "|".join(cleaned[:12])
 
 
-def _extract_code(text: str, url: str) -> str:
+def _extract_code(text: str, url: str, objects: list[dict[str, Any]]) -> str:
+    json_code = _json_first(objects, ["sku", "codigo", "código", "code", "reference", "referencia", "referência", "id"])
+    if json_code:
+        return json_code[:60]
+
     patterns = [
         r"C[ÓO]D\s*[:\-]?\s*([0-9A-Za-z._\-]+)",
         r"SKU\s*[:\-]?\s*([0-9A-Za-z._\-]+)",
@@ -175,11 +281,20 @@ def _extract_code(text: str, url: str) -> str:
             return _clean_text(match.group(1))[:60]
     parts = [p for p in urlparse(url).path.split("/") if p]
     if parts:
+        first = re.match(r"(\d+)", parts[-1])
+        if first:
+            return first.group(1)[:60]
         return re.sub(r"[^A-Za-z0-9_-]+", "-", parts[-1]).strip("-")[:60]
     return ""
 
 
-def _extract_gtin(text: str) -> str:
+def _extract_gtin(text: str, objects: list[dict[str, Any]]) -> str:
+    json_gtin = _json_first(objects, ["gtin", "gtin8", "gtin12", "gtin13", "gtin14", "ean", "barcode", "codigoBarras"])
+    if json_gtin:
+        digits = re.sub(r"\D+", "", json_gtin)
+        if len(digits) in {8, 12, 13, 14}:
+            return digits
+
     candidates = re.findall(r"\b\d{8,14}\b", text)
     for candidate in candidates:
         if len(candidate) in {8, 12, 13, 14}:
@@ -187,17 +302,159 @@ def _extract_gtin(text: str) -> str:
     return ""
 
 
-def _extract_prices(text: str) -> tuple[str, str]:
-    prices = re.findall(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})", text)
-    if not prices:
-        return "", ""
-    normal = [p.strip() for p in prices]
-    preco_custo = normal[0]
-    preco_venda = normal[-1] if len(normal) > 1 else normal[0]
+def _format_money_from_any(value: object) -> str:
+    raw = _clean_text(value)
+    if not raw:
+        return ""
+    if re.search(r"\d+\.\d{1,2}$", raw):
+        try:
+            return f"{float(raw):.2f}".replace(".", ",")
+        except Exception:
+            pass
+    money = re.search(r"([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+\.[0-9]{1,2})", raw)
+    if not money:
+        return ""
+    found = money.group(1)
+    if "." in found and "," not in found:
+        try:
+            return f"{float(found):.2f}".replace(".", ",")
+        except Exception:
+            return found
+    return found
+
+
+def _extract_prices(text: str, objects: list[dict[str, Any]]) -> tuple[str, str]:
+    preco_venda = _format_money_from_any(
+        _json_first(objects, ["price", "salePrice", "sale_price", "preco", "preço", "valor", "valorVenda"])
+    )
+    preco_custo = _format_money_from_any(
+        _json_first(objects, ["oldPrice", "compareAtPrice", "cost", "precoCusto", "preçoCusto", "valorCusto"])
+    )
+
+    prices = re.findall(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+\.[0-9]{1,2})", text)
+    normal = [_format_money_from_any(p) for p in prices if _format_money_from_any(p)]
+
+    if not preco_venda and normal:
+        preco_venda = normal[-1] if len(normal) > 1 else normal[0]
+    if not preco_custo and normal:
+        preco_custo = normal[0]
     return preco_venda, preco_custo
 
 
-def _extract_stock(text: str, html: str, config: CrawlConfig) -> int:
+def _extract_product_id(url: str, html: str, objects: list[dict[str, Any]]) -> str:
+    for source in [_json_first(objects, ["id", "productId", "product_id", "produtoId", "produto_id"]), url]:
+        found = re.search(r"\b(\d{4,})\b", str(source or ""))
+        if found:
+            return found.group(1)
+
+    patterns = [
+        r"product[_-]?id[\"']?\s*[:=]\s*[\"']?(\d+)",
+        r"produto[_-]?id[\"']?\s*[:=]\s*[\"']?(\d+)",
+        r"data-product-id=[\"'](\d+)[\"']",
+        r"data-produto-id=[\"'](\d+)[\"']",
+        r"data-id=[\"'](\d+)[\"']",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _cart_response_allows(response: requests.Response) -> bool:
+    text = response.text.lower()
+    if response.status_code >= 400:
+        return False
+    negative = ["sem estoque", "indispon", "quantidade indispon", "não disponível", "nao dispon", "esgotado", "erro"]
+    return not any(term in text for term in negative)
+
+
+def _try_cart_quantity(session: requests.Session, product_url: str, product_id: str, quantity: int) -> bool | None:
+    if not product_id or quantity <= 0:
+        return None
+
+    base = f"{urlparse(product_url).scheme}://{urlparse(product_url).netloc}"
+    endpoints = [
+        "/carrinho/adicionar",
+        "/carrinho/add",
+        "/cart/add",
+        "/checkout/cart/add",
+        "/api/carrinho/adicionar",
+        "/api/cart/add",
+        "/api/cart",
+    ]
+    id_keys = ["produto_id", "product_id", "id_produto", "id", "sku"]
+    qty_keys = ["quantidade", "quantity", "qtd", "qty"]
+
+    for endpoint in endpoints:
+        url = urljoin(base, endpoint)
+        for id_key in id_keys:
+            for qty_key in qty_keys:
+                payload = {id_key: product_id, qty_key: quantity}
+                try:
+                    response = session.post(url, data=payload, timeout=TIMEOUT, allow_redirects=False)
+                    if response.status_code in {404, 405, 403}:
+                        continue
+                    return _cart_response_allows(response)
+                except Exception:
+                    continue
+    return None
+
+
+def _probe_cart_stock(session: requests.Session, product_url: str, product_id: str, config: CrawlConfig) -> int | None:
+    if not config.simular_carrinho or not product_id:
+        return None
+
+    first = _try_cart_quantity(session, product_url, product_id, 1)
+    if first is False:
+        return 0
+    if first is None:
+        return None
+
+    low = 1
+    high = 2
+    max_probe = max(1, int(config.max_cart_probe or MAX_CART_PROBE))
+
+    while high <= max_probe:
+        ok = _try_cart_quantity(session, product_url, product_id, high)
+        if ok is True:
+            low = high
+            high *= 2
+            continue
+        if ok is False:
+            break
+        return low
+
+    high = min(high, max_probe)
+    while low < high:
+        mid = (low + high + 1) // 2
+        ok = _try_cart_quantity(session, product_url, product_id, mid)
+        if ok is True:
+            low = mid
+        elif ok is False:
+            high = mid - 1
+        else:
+            break
+    return low
+
+
+def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: CrawlConfig) -> int | None:
+    stock_json = _json_first_number(
+        objects,
+        [
+            "stock",
+            "estoque",
+            "quantity",
+            "quantidade",
+            "availableStock",
+            "inventoryQuantity",
+            "saldo",
+            "maxQuantity",
+        ],
+    )
+    if stock_json is not None:
+        return stock_json
+
     low = text.lower()
     if any(term in low for term in ["esgotado", "sem estoque", "indisponível", "indisponivel", "fora de estoque"]):
         return 0
@@ -206,8 +463,11 @@ def _extract_stock(text: str, html: str, config: CrawlConfig) -> int:
         r"estoque[^0-9]{0,30}(\d{1,5})",
         r"quantidade[^0-9]{0,30}(\d{1,5})",
         r"availableStock[^0-9]{0,30}(\d{1,5})",
+        r"inventoryQuantity[^0-9]{0,30}(\d{1,5})",
         r"stock[^0-9]{0,30}(\d{1,5})",
         r"max=[\"'](\d{1,5})[\"']",
+        r"data-stock=[\"'](\d{1,5})[\"']",
+        r"data-estoque=[\"'](\d{1,5})[\"']",
     ]
     haystack = html + "\n" + text
     for pattern in explicit_patterns:
@@ -218,12 +478,16 @@ def _extract_stock(text: str, html: str, config: CrawlConfig) -> int:
             except Exception:
                 pass
 
-    if any(term in low for term in ["em estoque", "adicionar", "comprar"]):
+    if any(term in low for term in ["em estoque", "adicionar", "comprar", "comprar agora"]):
         return max(1, int(config.estoque_padrao or 1))
     return int(config.estoque_padrao or 0)
 
 
-def _extract_category(soup: BeautifulSoup) -> str:
+def _extract_category(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str:
+    json_category = _json_first(objects, ["category", "categoria", "categoryName", "nomeCategoria"])
+    if json_category:
+        return json_category
+
     bits: list[str] = []
     selectors = ["nav a", ".breadcrumb a", "[class*=breadcrumb] a", "[class*=categoria] a"]
     for selector in selectors:
@@ -234,7 +498,11 @@ def _extract_category(soup: BeautifulSoup) -> str:
     return " > ".join(bits[:5])
 
 
-def _extract_description(soup: BeautifulSoup) -> str:
+def _extract_description(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str:
+    json_description = _json_first(objects, ["description", "descricao", "descrição", "shortDescription", "longDescription"])
+    if json_description:
+        return json_description[:2000]
+
     candidates: list[str] = []
     for selector in ["[class*=descricao]", "[class*=description]", "section", "article"]:
         for tag in soup.select(selector):
@@ -246,53 +514,72 @@ def _extract_description(soup: BeautifulSoup) -> str:
     return _first_meta(soup, ["description", "og:description"])[:2000]
 
 
+def _extract_brand(text: str, objects: list[dict[str, Any]]) -> str:
+    brand = _json_first(objects, ["brand", "marca", "manufacturer", "fabricante"])
+    if brand:
+        if brand.startswith("{") or brand.startswith("["):
+            return ""
+        return brand[:120]
+    match = re.search(r"Marca\s*[:\-]\s*([A-Za-z0-9 ._\-]+)", text, flags=re.IGNORECASE)
+    return _clean_text(match.group(1))[:120] if match else ""
+
+
 def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
+    session = _new_session()
     try:
-        html = _fetch(url)
+        html = _fetch(url, session=session)
     except Exception:
         return None
 
     soup = _soup(html)
+    objects_all = _extract_json_objects(soup)
+    objects = _json_product_objects(objects_all)
     text = _clean_text(soup.get_text(" ", strip=True))
-    title = _first_meta(soup, ["og:title", "twitter:title"])
+
+    title = _json_first(objects, ["name", "title", "titulo", "título"])
+    title = title or _first_meta(soup, ["og:title", "twitter:title"])
     h1 = soup.find("h1")
     if h1:
         title = _clean_text(h1.get_text(" ", strip=True)) or title
 
-    json_items = _extract_json_ld(soup)
-    for item in json_items:
-        if str(item.get("@type", "")).lower() == "product":
-            title = _clean_text(item.get("name")) or title
-            if not title:
-                title = _clean_text(item.get("headline"))
+    codigo = _extract_code(text, url, objects)
+    gtin = _extract_gtin(text, objects)
+    preco_venda, preco_custo = _extract_prices(text, objects)
+    product_id = _extract_product_id(url, html, objects)
+    estoque = _extract_stock(text, html, objects, config)
 
-    codigo = _extract_code(text, url)
-    gtin = _extract_gtin(text)
-    preco_venda, preco_custo = _extract_prices(text)
-    estoque = _extract_stock(text, html, config)
-    imagens = _extract_images(soup, url)
-    categoria = _extract_category(soup)
-    descricao_complementar = _extract_description(soup)
+    cart_stock = _probe_cart_stock(session, url, product_id or codigo, config)
+    if cart_stock is not None:
+        estoque = cart_stock
+
+    if estoque is None:
+        estoque = int(config.estoque_padrao or 0)
+
+    imagens = _extract_images(soup, url, objects_all)
+    categoria = _extract_category(soup, objects_all)
+    descricao_complementar = _extract_description(soup, objects)
+    marca = _extract_brand(text, objects_all)
 
     if not title and not codigo:
         return None
 
     return {
-        "Código": codigo or gtin,
-        "Descrição": title or codigo,
+        "Código": codigo or gtin or product_id,
+        "Descrição": title or codigo or product_id,
         "Descrição complementar": descricao_complementar,
         "Unidade": "UN",
         "NCM": "",
         "GTIN/EAN": gtin,
         "Preço unitário": preco_venda,
         "Preço de custo": preco_custo,
-        "Marca": "",
+        "Marca": marca,
         "Categoria": categoria,
         "URL imagens externas": imagens,
-        "Estoque": estoque,
-        "Quantidade": estoque,
+        "Estoque": int(estoque),
+        "Quantidade": int(estoque),
         "URL do produto": url,
-        "Disponibilidade": "Esgotado" if estoque == 0 else "Em estoque",
+        "Disponibilidade": "Esgotado" if int(estoque) == 0 else "Em estoque",
+        "Produto ID site": product_id,
         "Origem": "site",
     }
 
