@@ -32,12 +32,32 @@ def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
     return EST_COLS if tipo == "estoque" else CAD_COLS
 
 
+def _norm(v) -> str:
+    text = str(v or "").strip().lower()
+    text = text.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
+
+
+def _is_deposito_col(col: object) -> bool:
+    return "deposito" in _norm(col)
+
+
+def _is_descricao_col(col: object) -> bool:
+    n = _norm(col)
+    return "descricao" in n or n in {"nome", "produto"}
+
+
+def _is_preco_venda_col(col: object) -> bool:
+    n = _norm(col)
+    return ("preco" in n or "valor" in n) and "custo" not in n and "compra" not in n
+
+
 def _safe_source(target: str, sources) -> str:
     try:
         return choose_safe_source(str(target), [str(c) for c in sources]) or ""
     except Exception:
-        target_norm = str(target or "").strip().lower()
-        exact = [str(c) for c in sources if str(c or "").strip().lower() == target_norm]
+        target_norm = _norm(target)
+        exact = [str(c) for c in sources if _norm(c) == target_norm]
         return exact[0] if len(exact) == 1 else ""
 
 
@@ -77,6 +97,34 @@ def _excel(df: pd.DataFrame) -> bytes:
     return buf.getvalue()
 
 
+def _col_with_data(df: pd.DataFrame, predicate) -> bool:
+    for col in df.columns:
+        if predicate(col) and df[col].astype(str).str.strip().ne("").any():
+            return True
+    return False
+
+
+def _validar_saida(df: pd.DataFrame, tipo: str) -> bool:
+    if not _has_df(df):
+        st.error("A saída está vazia.")
+        return False
+
+    ok = True
+    if tipo == "cadastro":
+        if not _col_with_data(df, _is_descricao_col):
+            st.error("Campo obrigatório sem dados: Descrição/Nome do produto.")
+            ok = False
+        if not _col_with_data(df, _is_preco_venda_col):
+            st.error("Campo obrigatório sem dados: Preço unitário/preço de venda.")
+            ok = False
+    if tipo == "estoque":
+        deposito_cols = [c for c in df.columns if _is_deposito_col(c)]
+        if deposito_cols and not any(df[c].astype(str).str.strip().ne("").any() for c in deposito_cols):
+            st.error("Campo obrigatório sem dados: Depósito.")
+            ok = False
+    return ok
+
+
 def run_stable_app() -> None:
     restaurar_chaves_df(["stable_df_origem", "stable_df_modelo", "stable_df_export"])
     st.title("🚀 IA Planilhas → Bling")
@@ -92,10 +140,16 @@ def run_stable_app() -> None:
     with st.expander("1. Modelo Bling obrigatório para cadastro" if tipo == "cadastro" else "Modelo Bling opcional", expanded=(tipo == "cadastro" and not _has_df(modelo))):
         up_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if up_modelo is not None:
-            modelo_lido = _read_upload(up_modelo)
-            if _has_df(modelo_lido):
-                modelo = guardar_df("stable_df_modelo", modelo_lido)
-                st.success(f"Modelo lido: {len(modelo.columns)} colunas")
+            try:
+                modelo_lido = _read_upload(up_modelo)
+                if _has_df(modelo_lido):
+                    modelo = guardar_df("stable_df_modelo", modelo_lido)
+                    st.success(f"Modelo lido: {len(modelo.columns)} colunas")
+                else:
+                    st.error("O modelo Bling foi lido, mas não possui linhas/colunas válidas.")
+            except Exception as exc:
+                st.error("Não consegui ler o modelo Bling anexado.")
+                st.code(str(exc))
         elif _has_df(modelo):
             st.info(f"🔒 Modelo preservado: {len(modelo.columns)} colunas")
 
@@ -135,13 +189,21 @@ def run_stable_app() -> None:
     st.subheader("Mapeamento manual/conservador")
     sources = [""] + [str(c) for c in df.columns]
     mapping = {}
+    deposito_manual = ""
     for c in cols:
+        if tipo == "estoque" and _is_deposito_col(c):
+            deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
+            mapping[c] = ""
+            continue
         default = _safe_source(c, df.columns)
         idx = sources.index(default) if default in sources else 0
         mapping[c] = st.selectbox(str(c), sources, index=idx, key=f"stable_map_{c}")
 
     out = pd.DataFrame(index=df.index)
     for c in cols:
+        if tipo == "estoque" and _is_deposito_col(c):
+            out[c] = deposito_manual
+            continue
         src = mapping.get(c, "")
         out[c] = df[src].astype(str).fillna("") if src and src in df.columns else ""
     out = clean_invalid_preview_mappings(_force(out, cols))
@@ -150,6 +212,11 @@ def run_stable_app() -> None:
     with st.expander("Preview final", expanded=False):
         st.dataframe(out.head(100), use_container_width=True, hide_index=True)
 
-    st.success(f"Arquivo pronto: {len(out)} linhas × {len(out.columns)} colunas")
-    st.download_button("📥 Baixar CSV para Bling", data=dataframe_para_csv_bytes(out), file_name="bling_saida_final.csv", mime="text/csv", use_container_width=True)
-    st.download_button("📥 Baixar Excel de conferência", data=_excel(out), file_name="bling_saida_final_conferencia.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    saida_ok = _validar_saida(out, tipo)
+    if saida_ok:
+        st.success(f"Arquivo pronto: {len(out)} linhas × {len(out.columns)} colunas")
+    else:
+        st.warning("Corrija o mapeamento obrigatório antes de baixar.")
+
+    st.download_button("📥 Baixar CSV para Bling", data=dataframe_para_csv_bytes(out), file_name="bling_saida_final.csv", mime="text/csv", use_container_width=True, disabled=not saida_ok)
+    st.download_button("📥 Baixar Excel de conferência", data=_excel(out), file_name="bling_saida_final_conferencia.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, disabled=not saida_ok)
