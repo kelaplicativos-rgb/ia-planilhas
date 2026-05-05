@@ -504,14 +504,15 @@ def _extract_real_stock(text: str, html: str, objects: list[dict[str, Any]]) -> 
     return None
 
 
-def _resolve_stock(text: str, html: str, objects: list[dict[str, Any]], availability_label: str, available: bool | None) -> tuple[int, str]:
+def _resolve_stock(text: str, html: str, objects: list[dict[str, Any]], availability_label: str, available: bool | None, config: CrawlConfig) -> tuple[int, str]:
+    valor_auto = max(0, int(config.estoque_padrao or ESTOQUE_DISPONIVEL_AUTO))
     real_stock = _extract_real_stock(text, html, objects)
     if real_stock is not None:
         return int(real_stock), "REAL DO SITE"
     if available is False or availability_label == "Indisponível":
         return 0, "INDISPONÍVEL AUTO"
     if available is True or availability_label == "Disponível":
-        return ESTOQUE_DISPONIVEL_AUTO, "DISPONÍVEL AUTO 1000"
+        return valor_auto, f"DISPONÍVEL AUTO {valor_auto}"
     return 0, "NÃO INFORMADO"
 
 
@@ -579,7 +580,7 @@ def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
     raw_description = _extract_raw_description(soup, objects)
     marca = _extract_brand_from_title(title)
     availability_label, available = _availability_from_text(text, html, objects_all)
-    estoque, origem_estoque = _resolve_stock(text, html, objects, availability_label, available)
+    estoque, origem_estoque = _resolve_stock(text, html, objects, availability_label, available, config)
 
     cart_stock = _probe_cart_stock(session, url, product_id or codigo, config)
     if cart_stock is not None:
@@ -624,7 +625,8 @@ def crawl_site_to_bling_dataframe(raw_urls: str, estoque_padrao: int = ESTOQUE_D
     if not start_urls:
         return pd.DataFrame()
 
-    config = CrawlConfig(estoque_padrao=ESTOQUE_DISPONIVEL_AUTO)
+    valor_auto = ESTOQUE_DISPONIVEL_AUTO if estoque_padrao is None else max(0, int(estoque_padrao or 0))
+    config = CrawlConfig(estoque_padrao=valor_auto)
     product_urls: list[str] = []
     for url in start_urls:
         if _is_product_url(url):
@@ -646,4 +648,4 @@ def crawl_site_to_bling_dataframe(raw_urls: str, estoque_padrao: int = ESTOQUE_D
             rows.append(item)
 
     df = pd.DataFrame(rows).fillna("")
-    return aplicar_estoque_automatico(df) if not df.empty else df
+    return aplicar_estoque_automatico(df, override_disponivel=valor_auto) if not df.empty else df
