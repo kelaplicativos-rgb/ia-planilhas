@@ -9,6 +9,7 @@ import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
 from bling_app_zero.stable.image_url_tools import normalize_image_url_columns
+from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restaurar_chaves_df, restaurar_df
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import blindar_df_para_bling, dataframe_para_csv_bytes
 
@@ -337,9 +338,7 @@ def _map_df(
 
 
 def _reset_all() -> None:
-    for key in list(st.session_state.keys()):
-        if key.startswith("stable_") or key.startswith("supplier_"):
-            st.session_state.pop(key, None)
+    limpar_vault(prefixes=("stable_", "supplier_"))
 
 
 def _download_excel(df: pd.DataFrame) -> bytes:
@@ -363,6 +362,8 @@ def _render_deposito_mapping_field(target_label: str = "Depósito (OBRIGATÓRIO)
 
 
 def run_stable_app() -> None:
+    restaurar_chaves_df(["stable_df_origem", "stable_df_modelo", "stable_df_export"])
+
     st.title("🚀 IA Planilhas → Bling")
     st.caption("Núcleo estável: origem por arquivo ou site → mapeamento → exportação CSV.")
 
@@ -382,12 +383,12 @@ def run_stable_app() -> None:
 
     tab_arquivo, tab_site = st.tabs(["📎 Arquivo", "🌐 Site"])
 
-    df_origem = st.session_state.get("stable_df_origem")
+    df_origem = restaurar_df("stable_df_origem")
 
     with tab_arquivo:
         df_uploaded = render_supplier_upload_v2(state_key="stable_df_origem", key_prefix="supplier")
         if isinstance(df_uploaded, pd.DataFrame) and not df_uploaded.empty:
-            df_origem = df_uploaded
+            df_origem = guardar_df("stable_df_origem", df_uploaded)
 
     with tab_site:
         if tipo != "estoque":
@@ -396,25 +397,25 @@ def run_stable_app() -> None:
         estoque_padrao = st.number_input("Estoque padrão", min_value=0, value=0, step=1, key="stable_estoque_padrao")
         urls = _split_urls(raw_urls)
         if st.button("Gerar base por site", disabled=(tipo != "estoque" or not urls), use_container_width=True):
-            df_origem = _site_df(raw_urls, int(estoque_padrao))
-            st.session_state["stable_df_origem"] = df_origem
-            st.success(f"Base por site criada: {len(df_origem)} produtos")
+            df_origem = guardar_df("stable_df_origem", _site_df(raw_urls, int(estoque_padrao)))
+            st.success(f"Base por site criada e travada: {len(df_origem)} produtos")
 
     st.divider()
 
-    modelo = None
+    modelo = restaurar_df("stable_df_modelo")
     with st.expander("Modelo Bling opcional", expanded=False):
         uploaded_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if uploaded_modelo is not None:
             try:
-                modelo = _read_upload(uploaded_modelo)
-                st.session_state["stable_df_modelo"] = modelo
-                st.success(f"Modelo lido: {len(modelo.columns)} colunas")
+                modelo_lido = _read_upload(uploaded_modelo)
+                if isinstance(modelo_lido, pd.DataFrame) and not modelo_lido.empty:
+                    modelo = guardar_df("stable_df_modelo", modelo_lido)
+                    st.success(f"Modelo lido e travado: {len(modelo.columns)} colunas")
             except Exception as exc:
                 st.error("Não consegui ler o modelo Bling.")
                 st.code(str(exc))
-        else:
-            modelo = st.session_state.get("stable_df_modelo")
+        elif isinstance(modelo, pd.DataFrame) and not modelo.empty:
+            st.info(f"🔒 Modelo Bling preservado: {len(modelo.columns)} colunas.")
 
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         st.warning("Anexe um arquivo, cole o CSV ou gere uma base por site para continuar.")
@@ -465,12 +466,12 @@ def run_stable_app() -> None:
     if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
         df_export = _apply_calculated_price_to_price_columns(df_export, calculated_price)
     df_export = normalize_image_url_columns(df_export)
-    st.session_state["stable_df_export"] = df_export
+    df_export = guardar_df("stable_df_export", df_export)
 
     with st.expander("Preview final", expanded=False):
         st.dataframe(df_export.head(100), use_container_width=True)
 
-    st.success(f"Arquivo pronto: {len(df_export)} linhas × {len(df_export.columns)} colunas")
+    st.success(f"Arquivo pronto e travado: {len(df_export)} linhas × {len(df_export.columns)} colunas")
     st.download_button(
         "📥 Baixar CSV para Bling",
         data=dataframe_para_csv_bytes(df_export),
