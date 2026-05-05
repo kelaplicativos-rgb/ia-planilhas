@@ -8,13 +8,14 @@ import streamlit as st
 from bling_app_zero.stable import stable_app as base_app
 from bling_app_zero.stable.megacenter_crawler import crawl_site_to_bling_dataframe
 from bling_app_zero.stable.session_vault import guardar_df, restaurar_df
+from bling_app_zero.stable.stock_flash_crawler import crawl_stock_flash_dataframe
 
 
 OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualização de estoque."
 NEW_SITE_INFO = (
     "Captura por site real liberada para cadastro e atualização de estoque. "
     "No cadastro, o sistema busca dados completos do produto. "
-    "Na atualização de estoque, o sistema monta uma base enxuta focada em código, disponibilidade e quantidade."
+    "Na atualização de estoque, o sistema usa modo flash focado em SKU/código, disponibilidade e quantidade."
 )
 
 
@@ -22,49 +23,25 @@ def _tipo_operacao_atual() -> str:
     return str(st.session_state.get("stable_tipo", "cadastro") or "cadastro").strip().lower()
 
 
-def _enxugar_df_para_estoque(df: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-
-    base = df.copy().fillna("")
-    colunas_preferidas = [
-        "Código",
-        "Descrição",
-        "GTIN/EAN",
-        "Estoque",
-        "Quantidade",
-        "Disponibilidade",
-        "Origem do estoque",
-        "URL do produto",
-        "Produto ID site",
-        "Origem",
-    ]
-    colunas = [c for c in colunas_preferidas if c in base.columns]
-    if not colunas:
-        return base
-    return base[colunas].copy().fillna("")
-
-
 def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     tipo = _tipo_operacao_atual()
-    mensagem = (
-        "Buscando estoque no site, validando disponibilidade e quantidade..."
-        if tipo == "estoque"
-        else "Buscando produtos no site, entrando nas páginas e capturando dados completos..."
-    )
 
-    with st.spinner(mensagem):
+    if tipo == "estoque":
+        with st.spinner("Modo flash: buscando SKU/código e disponibilidade de estoque..."):
+            df = crawl_stock_flash_dataframe(raw_urls, estoque_disponivel=estoque_padrao)
+        if df is None or df.empty:
+            st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
+            return pd.DataFrame()
+        df = guardar_df("stable_df_origem", df)
+        st.success(f"Busca flash de estoque finalizada e travada: {len(df)} produto(s) encontrado(s).")
+        return df
+
+    with st.spinner("Buscando produtos no site, entrando nas páginas e capturando dados completos..."):
         df = crawl_site_to_bling_dataframe(raw_urls, estoque_padrao=estoque_padrao)
 
     if df is None or df.empty:
         st.warning("Nenhum produto foi capturado. Tente colar links de categorias ou produtos específicos.")
         return pd.DataFrame()
-
-    if tipo == "estoque":
-        df = _enxugar_df_para_estoque(df)
-        df = guardar_df("stable_df_origem", df)
-        st.success(f"Captura de estoque finalizada e travada: {len(df)} produto(s) encontrado(s).")
-        return df
 
     df = guardar_df("stable_df_origem", df)
     st.success(f"Captura completa finalizada e travada: {len(df)} produto(s) encontrado(s).")
@@ -82,10 +59,10 @@ def _render_busca_site_independente() -> None:
 
     tipo = _tipo_operacao_atual()
     with st.container(border=True):
-        titulo = "### 🌐 Buscar estoque por site" if tipo == "estoque" else "### 🌐 Busca por site liberada após anexar o modelo"
+        titulo = "### ⚡ Buscar estoque flash por site" if tipo == "estoque" else "### 🌐 Busca por site liberada após anexar o modelo"
         st.markdown(titulo)
         if tipo == "estoque":
-            st.caption("Modo atualização de estoque: o sistema foca em código, disponibilidade, quantidade e origem do estoque.")
+            st.caption("Modo atualização de estoque: busca rápida só de SKU/código, disponibilidade, quantidade e origem do estoque.")
         else:
             st.caption("O modelo Bling está preservado. Agora cole os links do fornecedor e busque os produtos.")
         raw_urls = st.text_area("Links do fornecedor", key="stable_site_urls_fallback", height=120)
@@ -103,7 +80,7 @@ def _render_busca_site_independente() -> None:
             help="Padrão automático: 1000. Se você trocar, o valor digitado substitui o 1000 apenas quando o produto estiver disponível sem quantidade real.",
         )
         tem_url = bool(str(raw_urls or "").strip())
-        label_botao = "🚀 Buscar estoque por site" if tipo == "estoque" else "🚀 Buscar produtos por site"
+        label_botao = "⚡ Buscar estoque flash" if tipo == "estoque" else "🚀 Buscar produtos por site"
         if st.button(label_botao, disabled=not tem_url, use_container_width=True, key="btn_site_fallback_modelo"):
             df = _crawl_site_df(raw_urls, int(estoque_padrao))
             if isinstance(df, pd.DataFrame) and not df.empty:
