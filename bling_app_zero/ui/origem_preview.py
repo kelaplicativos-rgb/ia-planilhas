@@ -14,6 +14,7 @@ Regra:
 - Nunca quebrar a tela se não houver dados.
 - Mostrar claramente qual chave foi usada para montar o preview.
 - Limpar valores claramente incompatíveis com o destino antes de mostrar.
+- Remover dados falsos de captura, como preço `0,00` quando não for real.
 """
 
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from typing import Iterable, Optional
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 
@@ -72,6 +74,15 @@ def get_origem_preview_dataframe(keys: Iterable[str] = ORIGEM_PREVIEW_KEYS) -> O
     return None
 
 
+def preparar_preview_origem(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica qualidade + blindagem no preview da origem."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    normalized = normalize_product_dataframe(df.copy())
+    cleaned = clean_invalid_preview_mappings(normalized.copy())
+    return cleaned
+
+
 def ensure_df_origem_from_best_source() -> Optional[pd.DataFrame]:
     """Garante `df_origem` preenchido com a melhor origem disponível.
 
@@ -82,7 +93,7 @@ def ensure_df_origem_from_best_source() -> Optional[pd.DataFrame]:
     if result is None:
         return None
 
-    df = clean_invalid_preview_mappings(result.dataframe.copy())
+    df = preparar_preview_origem(result.dataframe.copy())
     st.session_state["df_origem"] = df.copy()
     st.session_state["df_preview_origem"] = df.copy()
     st.session_state["origem_preview_key"] = result.key
@@ -98,6 +109,15 @@ def _preview_height(row_count: int) -> int:
     if row_count <= 20:
         return 390
     return 460
+
+
+def _count_changed_cells(raw_df: pd.DataFrame, cleaned_df: pd.DataFrame) -> int:
+    try:
+        comparable_raw = raw_df.reindex(columns=cleaned_df.columns).fillna("").astype(str)
+        comparable_clean = cleaned_df.fillna("").astype(str)
+        return int((comparable_raw != comparable_clean).to_numpy().sum())
+    except Exception:
+        return 0
 
 
 def render_origem_preview(
@@ -117,8 +137,8 @@ def render_origem_preview(
         return None
 
     raw_df = result.dataframe.copy()
-    df = clean_invalid_preview_mappings(raw_df)
-    removed_cells = int((raw_df.fillna("").astype(str) != df.fillna("").astype(str)).to_numpy().sum())
+    df = preparar_preview_origem(raw_df)
+    removed_cells = _count_changed_cells(raw_df, df)
 
     st.session_state["df_origem"] = df.copy()
     st.session_state["df_preview_origem"] = df.copy()
@@ -139,7 +159,7 @@ def render_origem_preview(
     if removed_cells > 0:
         st.info(
             f"Mapeamento automático conservador: {removed_cells} célula(s) incompatível(is) "
-            "foram deixadas em branco para revisão manual."
+            "ou falsa(s) foram deixadas em branco para revisão manual."
         )
 
     st.dataframe(
