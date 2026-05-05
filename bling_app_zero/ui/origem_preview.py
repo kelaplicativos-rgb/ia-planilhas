@@ -13,6 +13,7 @@ Regra:
 - Sempre escolher o primeiro DataFrame válido em ordem de prioridade.
 - Nunca quebrar a tela se não houver dados.
 - Mostrar claramente qual chave foi usada para montar o preview.
+- Limpar valores claramente incompatíveis com o destino antes de mostrar.
 """
 
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from typing import Iterable, Optional
 
 import pandas as pd
 import streamlit as st
+
+from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 
 @dataclass(frozen=True)
@@ -79,10 +82,11 @@ def ensure_df_origem_from_best_source() -> Optional[pd.DataFrame]:
     if result is None:
         return None
 
-    st.session_state["df_origem"] = result.dataframe.copy()
-    st.session_state["df_preview_origem"] = result.dataframe.copy()
+    df = clean_invalid_preview_mappings(result.dataframe.copy())
+    st.session_state["df_origem"] = df.copy()
+    st.session_state["df_preview_origem"] = df.copy()
     st.session_state["origem_preview_key"] = result.key
-    return result.dataframe.copy()
+    return df.copy()
 
 
 def _preview_height(row_count: int) -> int:
@@ -112,10 +116,14 @@ def render_origem_preview(
         )
         return None
 
-    df = result.dataframe.copy()
+    raw_df = result.dataframe.copy()
+    df = clean_invalid_preview_mappings(raw_df)
+    removed_cells = int((raw_df.fillna("").astype(str) != df.fillna("").astype(str)).to_numpy().sum())
+
     st.session_state["df_origem"] = df.copy()
     st.session_state["df_preview_origem"] = df.copy()
     st.session_state["origem_preview_key"] = result.key
+    st.session_state["origem_preview_cells_cleaned"] = removed_cells
 
     preview_df = df.head(max_rows).copy()
 
@@ -127,6 +135,12 @@ def render_origem_preview(
         st.caption(f"Fonte usada: `{result.key}`")
     with size_col:
         st.caption(f"{len(df)} linhas × {len(df.columns)} colunas")
+
+    if removed_cells > 0:
+        st.info(
+            f"Mapeamento automático conservador: {removed_cells} célula(s) incompatível(is) "
+            "foram deixadas em branco para revisão manual."
+        )
 
     st.dataframe(
         preview_df,
