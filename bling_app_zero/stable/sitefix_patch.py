@@ -15,10 +15,14 @@ OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualizaçã
 NEW_SITE_INFO = (
     "Captura por site em modo flash. "
     "Cadastro busca dados de cadastro sem consultar estoque. "
-    "Atualização de estoque busca somente SKU/código, disponibilidade e quantidade."
+    "Atualização de estoque busca somente SKU/código, nome do produto e quantidade."
 )
 
 ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
+
+# Regra BLINGFIX: no fluxo Atualização de estoque por site, não usar modelo de cadastro.
+# A saída deve ser limpa: SKU/código, nome do produto na Descrição, Depósito e estoque/quantidade.
+ESTOQUE_SITE_COLUMNS = ["Código", "Descrição", "Depósito", "Estoque", "Quantidade"]
 
 
 def _tipo_operacao_atual() -> str:
@@ -42,6 +46,34 @@ def _normalizar_estoque_input(valor: object) -> int:
         return ESTOQUE_DISPONIVEL_PADRAO_UI
 
 
+def _limpar_df_estoque_site(df: pd.DataFrame, deposito: str = "") -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
+
+    out = pd.DataFrame(index=df.index)
+    out["Código"] = df["Código"].astype(str).fillna("") if "Código" in df.columns else ""
+    out["Descrição"] = df["Descrição"].astype(str).fillna("") if "Descrição" in df.columns else ""
+
+    if "Depósito" in df.columns:
+        out["Depósito"] = df["Depósito"].astype(str).fillna("")
+    else:
+        out["Depósito"] = str(deposito or st.session_state.get("stable_deposito_mapeamento", "") or "")
+
+    if "Estoque" in df.columns:
+        out["Estoque"] = df["Estoque"]
+    elif "Quantidade" in df.columns:
+        out["Estoque"] = df["Quantidade"]
+    else:
+        out["Estoque"] = 0
+
+    if "Quantidade" in df.columns:
+        out["Quantidade"] = df["Quantidade"]
+    else:
+        out["Quantidade"] = out["Estoque"]
+
+    return out[ESTOQUE_SITE_COLUMNS].fillna("")
+
+
 def _remover_colunas_estoque_do_cadastro(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
@@ -56,16 +88,25 @@ def _remover_colunas_estoque_do_cadastro(df: pd.DataFrame) -> pd.DataFrame:
     return df[colunas].copy().fillna("")
 
 
+def _target_columns_corrigido(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
+    if str(tipo or "").strip().lower() == "estoque":
+        return ESTOQUE_SITE_COLUMNS.copy()
+    return base_app.CADASTRO_DEFAULT_COLUMNS.copy() if not isinstance(modelo, pd.DataFrame) or modelo.empty else [
+        str(c).strip() for c in modelo.columns if str(c).strip()
+    ]
+
+
 def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     tipo = _tipo_operacao_atual()
     estoque_padrao = _normalizar_estoque_input(estoque_padrao)
 
     if tipo == "estoque":
-        with st.spinner("Modo flash estoque: buscando só SKU/código, disponibilidade e quantidade..."):
+        with st.spinner("Modo flash estoque: buscando só SKU/código, nome do produto e quantidade..."):
             df = crawl_stock_flash_dataframe(raw_urls, estoque_disponivel=estoque_padrao)
         if df is None or df.empty:
             st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
+        df = _limpar_df_estoque_site(df)
         df = guardar_df("stable_df_origem", df)
         st.success(f"Busca flash de estoque finalizada e travada: {len(df)} produto(s) encontrado(s).")
         return df
@@ -89,6 +130,7 @@ def run_stable_app() -> None:
     original_button = st.button
     original_info = st.info
     original_site_df = base_app._site_df
+    original_target_columns = base_app._target_columns
     original_number_input = st.number_input
 
     def patched_button(label: str, *args: Any, **kwargs: Any):
@@ -118,11 +160,12 @@ def run_stable_app() -> None:
     st.info = patched_info
     st.number_input = patched_number_input
     base_app._site_df = _crawl_site_df
+    base_app._target_columns = _target_columns_corrigido
     try:
-        # Renderiza apenas o fluxo original. O fallback extra foi removido para não duplicar a tela.
         base_app.run_stable_app()
     finally:
         st.button = original_button
         st.info = original_info
         st.number_input = original_number_input
         base_app._site_df = original_site_df
+        base_app._target_columns = original_target_columns
