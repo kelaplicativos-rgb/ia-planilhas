@@ -9,6 +9,7 @@ from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restau
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import dataframe_para_csv_bytes
 from bling_app_zero.ui.flash_amplo_execution import executar_flash_amplo_pagina_por_pagina
+from bling_app_zero.ui.mapeamento.conservative_auto import choose_safe_source
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
@@ -31,15 +32,13 @@ def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
     return EST_COLS if tipo == "estoque" else CAD_COLS
 
 
-def _norm(v) -> str:
-    t = str(v or "").strip().lower()
-    return t.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
-
-
 def _safe_source(target: str, sources) -> str:
-    tn = _norm(target)
-    exact = [str(c) for c in sources if _norm(c) == tn]
-    return exact[0] if len(exact) == 1 else ""
+    try:
+        return choose_safe_source(str(target), [str(c) for c in sources]) or ""
+    except Exception:
+        target_norm = str(target or "").strip().lower()
+        exact = [str(c) for c in sources if str(c or "").strip().lower() == target_norm]
+        return exact[0] if len(exact) == 1 else ""
 
 
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -130,7 +129,7 @@ def run_stable_app() -> None:
 
     with st.expander("Preview da origem", expanded=False):
         prev = _mirror_preview(df, cols)
-        st.caption("Espelhado no modelo. Só nome de coluna idêntico é preenchido automaticamente; o resto fica vazio para manual.")
+        st.caption("Espelhado no modelo. Só correspondências conservadoras e sem ambiguidade são preenchidas; o resto fica vazio para manual.")
         st.dataframe(prev.head(80), use_container_width=True, hide_index=True)
 
     st.subheader("Mapeamento manual/conservador")
