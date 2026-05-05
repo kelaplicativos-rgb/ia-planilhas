@@ -70,7 +70,13 @@ def _is_deposito_target(target: object) -> bool:
 
 def _is_price_target(target: object) -> bool:
     name = _norm(target)
-    return "preco unitario" in name or "preco venda" in name or name == "preco" or "preco obrigatorio" in name
+    return (
+        "preco unitario" in name
+        or "preco venda" in name
+        or name == "preco"
+        or "preco obrigatorio" in name
+        or ("preco" in name and "custo" not in name)
+    )
 
 
 def _format_price_br(value: float) -> str:
@@ -159,6 +165,11 @@ def _suggest(target: str, source_columns: list[str]) -> str:
 def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, object]:
     with st.expander("🧮 Precificação", expanded=False):
         st.caption("Calcule o preço de venda e use no campo Preço unitário do mapeamento.")
+        usar_preco_calculado = st.checkbox(
+            "Aplicar preço calculado automaticamente na coluna de preço",
+            value=bool(st.session_state.get("stable_pricing_apply", True)),
+            key="stable_pricing_apply",
+        )
         custo_col = st.selectbox(
             "Coluna de custo/preço base",
             options=sources,
@@ -204,7 +215,22 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
         calculated = calculated.round(2)
         st.session_state["stable_pricing_series"] = calculated
         st.success(f"Preço calculado pronto. Exemplo: R$ {_format_price_br(float(calculated.iloc[0])) if len(calculated) else '0,00'}")
-        return {"enabled": True, "series": calculated}
+        return {"enabled": bool(usar_preco_calculado), "series": calculated}
+
+
+def _apply_calculated_price_to_price_columns(df: pd.DataFrame, calculated_price: pd.Series | None) -> pd.DataFrame:
+    if not isinstance(calculated_price, pd.Series) or calculated_price.empty:
+        return df
+    out = df.copy()
+    formatted = calculated_price.reindex(out.index).fillna(0).map(lambda v: _format_price_br(float(v)))
+    applied_cols: list[str] = []
+    for col in out.columns:
+        if _is_price_target(col):
+            out[col] = formatted
+            applied_cols.append(str(col))
+    if applied_cols:
+        st.caption(f"Preço calculado aplicado em: {', '.join(applied_cols)}")
+    return out
 
 
 def _map_df(
@@ -352,9 +378,14 @@ def run_stable_app() -> None:
         st.warning("Preencha o campo de depósito obrigatório dentro do mapeamento para liberar a exportação.")
         return
 
-    calculated_price = pricing_data.get("series") if isinstance(pricing_data, dict) else None
+    calculated_price = pricing_data.get("series") if isinstance(pricing_data, dict) and pricing_data.get("enabled") else None
     df_mapeado = _map_df(df_origem, targets, mapping, deposito, calculated_price=calculated_price)
+    if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
+        df_mapeado = _apply_calculated_price_to_price_columns(df_mapeado, calculated_price)
+
     df_export = blindar_df_para_bling(df_mapeado, tipo_operacao_bling=tipo, deposito_nome=deposito)
+    if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
+        df_export = _apply_calculated_price_to_price_columns(df_export, calculated_price)
     st.session_state["stable_df_export"] = df_export
 
     with st.expander("Preview final", expanded=False):
