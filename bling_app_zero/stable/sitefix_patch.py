@@ -7,7 +7,7 @@ import streamlit as st
 
 from bling_app_zero.stable import stable_app as base_app
 from bling_app_zero.stable.product_flash_crawler import crawl_product_flash_dataframe
-from bling_app_zero.stable.session_vault import guardar_df, restaurar_df
+from bling_app_zero.stable.session_vault import guardar_df
 from bling_app_zero.stable.stock_flash_crawler import crawl_stock_flash_dataframe
 
 
@@ -83,54 +83,6 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     return df
 
 
-def _render_busca_site_independente() -> None:
-    modelo = restaurar_df("stable_df_modelo")
-    origem = restaurar_df("stable_df_origem")
-    if not isinstance(modelo, pd.DataFrame) or modelo.empty:
-        return
-    if isinstance(origem, pd.DataFrame) and not origem.empty:
-        return
-
-    _inicializar_estoque_padrao_ui()
-    tipo = _tipo_operacao_atual()
-    is_estoque = tipo == "estoque"
-
-    with st.container(border=True):
-        titulo = "### ⚡ Buscar estoque flash por site" if is_estoque else "### ⚡ Buscar cadastro flash por site"
-        st.markdown(titulo)
-        if is_estoque:
-            st.caption("Atualização de estoque: busca rápida só de SKU/código, disponibilidade, quantidade e origem do estoque.")
-        else:
-            st.caption("Cadastro de produtos: busca rápida de dados cadastrais sem consultar estoque/quantidade.")
-
-        raw_urls = st.text_area("Links do fornecedor", key="stable_site_urls_fallback", height=120)
-
-        estoque_padrao = ESTOQUE_DISPONIVEL_PADRAO_UI
-        if is_estoque:
-            st.info(
-                "📦 Estoque automático: se encontrar número real, usa o real. "
-                "Se detectar disponível sem quantidade, usa o valor abaixo. "
-                "Se detectar indisponível/sem estoque, usa 0."
-            )
-            estoque_padrao = st.number_input(
-                "Estoque para disponível sem quantidade real",
-                min_value=0,
-                value=_normalizar_estoque_input(st.session_state.get("stable_estoque_padrao_fallback", ESTOQUE_DISPONIVEL_PADRAO_UI)),
-                step=1,
-                key="stable_estoque_padrao_fallback",
-                help="Padrão automático: 1000. Se você trocar, o valor digitado substitui o 1000 apenas quando o produto estiver disponível sem quantidade real.",
-            )
-        else:
-            st.info("🧾 Cadastro flash: este modo não busca estoque nem quantidade. Use Atualização de estoque para essa operação.")
-
-        tem_url = bool(str(raw_urls or "").strip())
-        label_botao = "⚡ Buscar estoque flash" if is_estoque else "⚡ Buscar cadastro flash"
-        if st.button(label_botao, disabled=not tem_url, use_container_width=True, key="btn_site_fallback_modelo"):
-            df = _crawl_site_df(raw_urls, int(estoque_padrao))
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                st.rerun()
-
-
 def run_stable_app() -> None:
     _inicializar_estoque_padrao_ui()
 
@@ -167,8 +119,8 @@ def run_stable_app() -> None:
     st.number_input = patched_number_input
     base_app._site_df = _crawl_site_df
     try:
+        # Renderiza apenas o fluxo original. O fallback extra foi removido para não duplicar a tela.
         base_app.run_stable_app()
-        _render_busca_site_independente()
     finally:
         st.button = original_button
         st.info = original_info
