@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-"""Descoberta opcional de URLs de produto via sitemap.
+"""Descoberta de URLs de produto via sitemap.
 
-O sitemap complementa a varredura Flash Amplo quando a listagem/categoria não
-mostra todos os links. Ele NÃO inventa dados de produto; apenas alimenta a lista
-de páginas `/produto/...` que depois serão visitadas uma a uma.
+Regra do fluxo:
+- Sitemap serve para enriquecer a descoberta de páginas de produto.
+- O sistema deve entrar em cada sitemap encontrado, inclusive sitemap index,
+  sub-sitemaps e arquivos .xml/.xml.gz.
+- O sitemap NÃO cria dados de produto; ele só alimenta a lista de URLs
+  `/produto/...` que depois serão visitadas página por página.
 """
 
 import gzip
 import re
 import xml.etree.ElementTree as ET
+from collections import deque
 from typing import Iterable
 from urllib.parse import urljoin, urlparse
 
@@ -17,7 +21,8 @@ import requests
 
 
 PRODUCT_URL_RE = re.compile(r"/produto/", re.IGNORECASE)
-SITEMAP_LIMIT = 50
+SITEMAP_HINT_RE = re.compile(r"(?:sitemap|\.xml(?:\.gz)?$)", re.IGNORECASE)
+SITEMAP_LIMIT = 500
 
 
 def _headers() -> dict[str, str]:
@@ -56,7 +61,7 @@ def _xml_locs(xml_text: str) -> list[str]:
     return locs
 
 
-def discover_sitemap_urls(seed_urls: Iterable[str], *, max_sitemaps: int = SITEMAP_LIMIT) -> list[str]:
+def _initial_sitemaps(seed_urls: Iterable[str]) -> list[str]:
     roots: list[str] = []
     seen_roots: set[str] = set()
     for seed in seed_urls:
@@ -65,7 +70,7 @@ def discover_sitemap_urls(seed_urls: Iterable[str], *, max_sitemaps: int = SITEM
             seen_roots.add(root)
             roots.append(root)
 
-    sitemap_urls: list[str] = []
+    result: list[str] = []
     seen: set[str] = set()
     for root in roots:
         for candidate in (
@@ -73,46 +78,75 @@ def discover_sitemap_urls(seed_urls: Iterable[str], *, max_sitemaps: int = SITEM
             urljoin(root, "sitemap_index.xml"),
             urljoin(root, "sitemap-products.xml"),
             urljoin(root, "sitemap_produtos.xml"),
+            urljoin(root, "sitemap-product.xml"),
+            urljoin(root, "sitemap_produto.xml"),
         ):
             if candidate not in seen:
                 seen.add(candidate)
-                sitemap_urls.append(candidate)
+                result.append(candidate)
+    return result
 
-    expanded: list[str] = []
-    seen_expanded: set[str] = set(sitemap_urls)
-    for sitemap in sitemap_urls[:max_sitemaps]:
+
+def _looks_like_sitemap(url: str) -> bool:
+    return bool(SITEMAP_HINT_RE.search(str(url or "")))
+
+
+def _clean_url(url: str) -> str:
+    return str(url or "").strip().split("#", 1)[0].split("?", 1)[0]
+
+
+def discover_sitemap_urls(seed_urls: Iterable[str], *, max_sitemaps: int = SITEMAP_LIMIT) -> list[str]:
+    """Descobre sitemaps recursivamente.
+
+    Usa uma fila: baixa cada sitemap, coleta todos os <loc>, adiciona novos
+    sitemaps encontrados de volta na fila e segue até o limite interno.
+    """
+    queue: deque[str] = deque(_initial_sitemaps(seed_urls))
+    visited: set[str] = set()
+    discovered: list[str] = []
+
+    while queue and len(discovered) < max_sitemaps:
+        sitemap = _clean_url(queue.popleft())
+        if not sitemap or sitemap in visited:
+            continue
+        visited.add(sitemap)
+        discovered.append(sitemap)
+
         try:
             locs = _xml_locs(_download_text(sitemap))
         except Exception:
             continue
+
         for loc in locs:
-            low = loc.lower()
-            if ("sitemap" in low or low.endswith(".xml") or low.endswith(".xml.gz")) and loc not in seen_expanded:
-                seen_expanded.add(loc)
-                expanded.append(loc)
-                if len(sitemap_urls) + len(expanded) >= max_sitemaps:
-                    break
+            clean = _clean_url(loc)
+            if not clean or clean in visited:
+                continue
+            if _looks_like_sitemap(clean) and len(discovered) + len(queue) < max_sitemaps:
+                queue.append(clean)
 
-    return sitemap_urls + expanded
+    return discovered
 
 
-def discover_product_urls_from_sitemaps(seed_urls: Iterable[str], *, max_products: int = 500) -> list[str]:
+def discover_product_urls_from_sitemaps(seed_urls: Iterable[str], *, max_products: int = 5000) -> list[str]:
+    """Entra em cada sitemap descoberto e retorna URLs de produto."""
     product_urls: list[str] = []
-    seen: set[str] = set()
+    seen_products: set[str] = set()
+
     for sitemap_url in discover_sitemap_urls(seed_urls):
         try:
             locs = _xml_locs(_download_text(sitemap_url))
         except Exception:
             continue
+
         for loc in locs:
-            loc = str(loc or "").strip()
-            if not loc or not PRODUCT_URL_RE.search(loc):
+            clean = _clean_url(loc)
+            if not clean or not PRODUCT_URL_RE.search(clean):
                 continue
-            clean = loc.split("#", 1)[0].split("?", 1)[0]
-            if clean in seen:
+            if clean in seen_products:
                 continue
-            seen.add(clean)
+            seen_products.add(clean)
             product_urls.append(clean)
             if len(product_urls) >= max_products:
                 return product_urls
+
     return product_urls
