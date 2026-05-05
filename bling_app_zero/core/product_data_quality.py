@@ -22,27 +22,29 @@ DESC_BAD = (
 
 PRICE_COLUMNS = {"Preço", "Preço unitário", "Preço unitário (OBRIGATÓRIO)", "Preço de custo", "Preço de compra"}
 PRODUCT_URL_ALIASES = ("URL do Produto", "Link Externo", "Url Produto", "URL Produto", "Link do Produto", "Página do Produto", "Pagina do Produto")
-DESCRIPTION_COMPLEMENT_ALIASES = ("Descrição complementar", "Descrição Complementar", "Descricao complementar", "Descricao Complementar", "Descrição curta", "Descricao curta", "Complemento", "Descrição detalhada", "Descricao detalhada")
+DESCRIPTION_COMPLEMENT_ALIASES = ("Descrição complementar", "Descrição Complementar", "Descricao complementar", "Descricao Complementar", "Descrição Curta", "Descrição curta", "Descricao curta", "Complemento", "Descrição detalhada", "Descricao detalhada")
 CATEGORY_ALIASES = ("Categoria", "Categoria do produto", "Categoria Produto", "Departamento")
 IMAGE_ALIASES = ("URL Imagens Externas", "URL imagens externas", "Imagens Externas", "Imagens", "Imagem", "Fotos", "Foto")
 TITLE_ALIASES = ("Descrição", "Descricao", "Nome", "Produto", "Título", "Titulo", "Title")
 
+BLING_CADASTRO_COLUMNS = [
+    "ID", "Código", "Descrição", "Unidade", "NCM", "Origem", "Preço", "Valor IPI fixo", "Observações", "Situação", "Estoque", "Preço de custo", "Cód no fornecedor", "Fornecedor", "Localização", "Estoque maximo", "Estoque minimo", "Peso líquido (Kg)", "Peso bruto (Kg)", "GTIN/EAN", "GTIN/EAN da embalagem", "Largura do Produto", "Altura do Produto", "Profundidade do produto", "Data Validade", "Descrição do Produto no Fornecedor", "Descrição Complementar", "Itens p/ caixa", "Produto Variação", "Tipo Produção", "Classe de enquadramento do IPI", "Código da lista de serviços", "Tipo do item", "Grupo de Tags/Tags", "Tributos", "Código Pai", "Código Integração", "Grupo de produtos", "Marca", "CEST", "Volumes", "Descrição Curta", "Cross-Docking", "URL Imagens Externas", "Link Externo", "Meses Garantia no Fornecedor", "Clonar dados do pai", "Condição do produto", "Frete Grátis", "Número FCI", "Vídeo", "Departamento", "Unidade de medida", "Preço de compra", "Valor base ICMS ST para retenção", "Valor ICMS ST para retenção", "Valor ICMS próprio do substituto", "Categoria do produto", "Informações Adicionais",
+]
+
 DEFAULTS_BY_COLUMN_NAME = {
     "unidade": "UN",
+    "unidade de medida": "UN",
     "situacao": "Ativo",
+    "origem": "0",
+    "itens p caixa": "1",
     "itens por caixa": "1",
-    "itens caixa": "1",
     "tipo do item": "Produto",
     "volumes": "1",
     "condicao do produto": "Novo",
     "frete gratis": "Não",
 }
 
-PREFERRED_ORDER = [
-    "Código", "Cód no fornecedor", "Descrição", "Descrição complementar", "Descrição curta", "Unidade", "Situação", "GTIN/EAN", "GTIN/EAN da embalagem",
-    "Preço", "Preço unitário", "Preço unitário (OBRIGATÓRIO)", "Preço de custo", "Preço de compra", "Marca", "Categoria", "Categoria do produto",
-    "NCM", "CEST", "Itens por caixa", "Tipo do item", "Volumes", "Condição do produto", "Frete grátis", "URL Imagens Externas", "URL imagens externas", "Link Externo", "URL do Produto", "Fonte captura", "Erro captura",
-]
+PREFERRED_ORDER = [col for col in BLING_CADASTRO_COLUMNS]
 
 
 def _text(value: object) -> str:
@@ -141,11 +143,13 @@ def _harmonize_description(cleaned: dict[str, str]) -> None:
     title = _first_value(cleaned, TITLE_ALIASES)
     desc = _clean_description(_first_value(cleaned, DESCRIPTION_COMPLEMENT_ALIASES), title=title)
     if desc:
+        cleaned["Descrição Complementar"] = desc
         cleaned["Descrição complementar"] = desc
-        cleaned["Descrição curta"] = desc
+        cleaned["Descrição Curta"] = desc
     else:
+        cleaned.pop("Descrição Complementar", None)
         cleaned.pop("Descrição complementar", None)
-        cleaned.pop("Descrição curta", None)
+        cleaned.pop("Descrição Curta", None)
 
 
 def _harmonize_category(cleaned: dict[str, str]) -> None:
@@ -153,6 +157,7 @@ def _harmonize_category(cleaned: dict[str, str]) -> None:
     if category:
         cleaned["Categoria"] = category
         cleaned["Categoria do produto"] = category
+        cleaned["Departamento"] = cleaned.get("Departamento") or category
 
 
 def _harmonize_images(cleaned: dict[str, str]) -> None:
@@ -188,12 +193,14 @@ def _harmonize_brand_from_title(cleaned: dict[str, str]) -> None:
 
 def _apply_defaults(cleaned: dict[str, str]) -> None:
     cleaned.setdefault("Unidade", "UN")
+    cleaned.setdefault("Unidade de medida", "UN")
+    cleaned.setdefault("Origem", "0")
     cleaned.setdefault("Situação", "Ativo")
-    cleaned.setdefault("Itens por caixa", "1")
+    cleaned.setdefault("Itens p/ caixa", "1")
     cleaned.setdefault("Tipo do item", "Produto")
     cleaned.setdefault("Volumes", "1")
     cleaned.setdefault("Condição do produto", "Novo")
-    cleaned.setdefault("Frete grátis", "Não")
+    cleaned.setdefault("Frete Grátis", "Não")
 
     for key in list(cleaned.keys()):
         norm_key = _norm(key)
@@ -217,6 +224,8 @@ def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
     if cleaned.get("Preço"):
         cleaned.setdefault("Preço unitário", cleaned["Preço"])
         cleaned.setdefault("Preço unitário (OBRIGATÓRIO)", cleaned["Preço"])
+    if cleaned.get("Preço de custo") and not cleaned.get("Preço de compra"):
+        cleaned["Preço de compra"] = cleaned["Preço de custo"]
 
     if cleaned.get("GTIN/EAN") and not cleaned.get("GTIN/EAN da embalagem"):
         cleaned["GTIN/EAN da embalagem"] = cleaned["GTIN/EAN"]
@@ -227,7 +236,7 @@ def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
         if alias not in {"URL do Produto", "Link Externo"}:
             cleaned.pop(alias, None)
     for alias in DESCRIPTION_COMPLEMENT_ALIASES:
-        if alias not in {"Descrição complementar", "Descrição curta"}:
+        if alias not in {"Descrição Complementar", "Descrição complementar", "Descrição Curta"}:
             cleaned.pop(alias, None)
     for alias in IMAGE_ALIASES:
         if alias not in {"URL Imagens Externas", "URL imagens externas"}:
