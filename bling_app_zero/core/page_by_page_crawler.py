@@ -7,8 +7,9 @@ Regra principal:
     Os dados obrigatórios do produto devem ser extraídos entrando em cada
     página individual `/produto/...`.
 
-Isto evita linhas preenchidas com dados genéricos da categoria ou mapeamentos
-errados vindos de cards/listagens.
+Campos opcionais como NCM, preço de custo, categoria etc. podem vir SIM, desde
+que encontrados de verdade na página/sitemap/dados estruturados. O crawler não
+inventa nem força coluna sem dado real.
 """
 
 import json
@@ -18,8 +19,11 @@ from html import unescape
 from typing import Iterable, Optional
 from urllib.parse import urljoin, urlparse
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+from bling_app_zero.core.site_sitemap import discover_product_urls_from_sitemaps
 
 
 DEFAULT_TIMEOUT = 20
@@ -27,6 +31,9 @@ PRODUCT_PATH_RE = re.compile(r"/produto/[^\s\"'<>#?]+", re.IGNORECASE)
 PRICE_RE = re.compile(r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[,\.]\d{2})")
 GTIN_RE = re.compile(r"\b(\d{8}|\d{12}|\d{13}|\d{14})\b")
 SKU_RE = re.compile(r"(?:SKU|C[ÓO]D(?:IGO)?|REF(?:ER[EÊ]NCIA)?)[\s:#\-]*([A-Z0-9._\-/]+)", re.IGNORECASE)
+NCM_RE = re.compile(r"\bNCM\b[\s:#\-]*([0-9.]{6,12})", re.IGNORECASE)
+CEST_RE = re.compile(r"\bCEST\b[\s:#\-]*([0-9.]{5,12})", re.IGNORECASE)
+COST_RE = re.compile(r"(?:pre[cç]o\s+de\s+custo|custo)\s*[:\-]?\s*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[,\.]\d{2})", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -63,20 +70,36 @@ def is_product_url(url: str) -> bool:
     return bool(parsed.scheme and parsed.netloc and PRODUCT_PATH_RE.search(parsed.path))
 
 
-def discover_product_urls(seed_urls: Iterable[str], *, max_products: Optional[int] = None) -> list[str]:
-    """Descobre URLs de produto a partir de páginas/listagens/URLs diretas."""
+def discover_product_urls(
+    seed_urls: Iterable[str],
+    *,
+    max_products: Optional[int] = None,
+    use_sitemap: bool = True,
+) -> list[str]:
+    """Descobre URLs de produto a partir de páginas/listagens/URLs diretas.
+
+    Primeiro varre links visíveis. Depois, se permitido, usa sitemap como reforço
+    para não perder produtos escondidos/paginados.
+    """
     discovered: list[str] = []
     seen: set[str] = set()
+    seeds = [str(seed or "").strip() for seed in seed_urls if str(seed or "").strip()]
 
-    for seed in seed_urls:
-        seed = str(seed or "").strip()
-        if not seed:
-            continue
+    def add_url(url: str) -> bool:
+        if not is_product_url(url):
+            return False
+        parsed = urlparse(url)
+        clean_url = parsed._replace(query="", fragment="").geturl()
+        if clean_url in seen:
+            return False
+        seen.add(clean_url)
+        discovered.append(clean_url)
+        return bool(max_products and len(discovered) >= max_products)
 
+    for seed in seeds:
+        if add_url(seed):
+            return discovered
         if is_product_url(seed):
-            if seed not in seen:
-                seen.add(seed)
-                discovered.append(seed)
             continue
 
         try:
@@ -87,16 +110,13 @@ def discover_product_urls(seed_urls: Iterable[str], *, max_products: Optional[in
         soup = BeautifulSoup(html, "html.parser")
         for anchor in soup.select("a[href]"):
             href = normalize_url(anchor.get("href", ""), seed)
-            if not is_product_url(href):
-                continue
-            # remove query/hash para deduplicar página real
-            parsed = urlparse(href)
-            clean_url = parsed._replace(query="", fragment="").geturl()
-            if clean_url in seen:
-                continue
-            seen.add(clean_url)
-            discovered.append(clean_url)
-            if max_products and len(discovered) >= max_products:
+            if add_url(href):
+                return discovered
+
+    if use_sitemap and (not max_products or len(discovered) < max_products):
+        remaining = None if max_products is None else max_products - len(discovered)
+        for sitemap_url in discover_product_urls_from_sitemaps(seeds, max_products=remaining or 500):
+            if add_url(sitemap_url):
                 return discovered
 
     return discovered
@@ -153,6 +173,23 @@ def _normalize_price(value: object) -> str:
     return price
 
 
+def _extract_category(soup: BeautifulSoup) -> str:
+    crumbs: list[str] = []
+    for selector in (
+        ".breadcrumb a",
+        "nav.breadcrumb a",
+        "[itemtype*='BreadcrumbList'] [itemprop='name']",
+        "[class*='breadcrumb'] a",
+    ):
+        for node in soup.select(selector):
+            text = _clean_text(node.get_text(" ", strip=True))
+            if text and text.lower() not in {"home", "início", "inicio"} and text not in crumbs:
+                crumbs.append(text)
+        if crumbs:
+            break
+    return " > ".join(crumbs)
+
+
 def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
     data: dict[str, str] = {}
 
@@ -172,6 +209,12 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
         data["GTIN/EAN"] = data.get("GTIN/EAN") or _clean_text(
             obj.get("gtin13") or obj.get("gtin14") or obj.get("gtin12") or obj.get("gtin8")
         )
+        data["Categoria"] = data.get("Categoria") or _clean_text(obj.get("category"))
+
+        # Alguns fornecedores expõem dados fiscais/customizados em propriedades extras.
+        for key, target in (("ncm", "NCM"), ("cest", "CEST"), ("cost", "Preço de custo"), ("costPrice", "Preço de custo")):
+            if obj.get(key):
+                data[target] = data.get(target) or _clean_text(obj.get(key))
 
         image = obj.get("image")
         if isinstance(image, list):
@@ -194,8 +237,12 @@ def _extract_images(soup: BeautifulSoup, page_url: str) -> str:
     seen: set[str] = set()
 
     candidates = []
-    for tag in soup.select("img[src], img[data-src], img[data-original], source[srcset]"):
-        for attr in ("src", "data-src", "data-original", "srcset"):
+    for meta in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
+        if meta.get("content"):
+            candidates.append(str(meta.get("content")))
+
+    for tag in soup.select("img[src], img[data-src], img[data-original], img[data-zoom-image], source[srcset]"):
+        for attr in ("src", "data-src", "data-original", "data-zoom-image", "srcset"):
             value = tag.get(attr)
             if value:
                 candidates.extend(str(value).split(","))
@@ -206,16 +253,30 @@ def _extract_images(soup: BeautifulSoup, page_url: str) -> str:
             continue
         abs_url = normalize_url(url, page_url)
         lower = abs_url.lower()
-        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading")):
+        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon")):
             continue
         if abs_url in seen:
             continue
         seen.add(abs_url)
         images.append(abs_url)
-        if len(images) >= 12:
+        if len(images) >= 20:
             break
 
     return "|".join(images)
+
+
+def _extract_regex_optional(text: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    ncm = NCM_RE.search(text)
+    cest = CEST_RE.search(text)
+    cost = COST_RE.search(text)
+    if ncm:
+        data["NCM"] = re.sub(r"\D+", "", ncm.group(1))
+    if cest:
+        data["CEST"] = re.sub(r"\D+", "", cest.group(1))
+    if cost:
+        data["Preço de custo"] = _normalize_price(cost.group(1))
+    return {k: v for k, v in data.items() if v}
 
 
 def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
@@ -232,13 +293,29 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
 
     desc = _first_meta(soup, "description", "og:description", "twitter:description")
     if desc:
-        data.setdefault("Descrição complementar", _clean_text(desc))
+        data["Descrição complementar"] = _clean_text(desc)
+    else:
+        # Tenta blocos comuns de descrição sem inventar: só usa se existir texto no HTML.
+        for selector in ("#descricao", ".descricao", ".description", "[class*='descricao']", "[class*='description']"):
+            node = soup.select_one(selector)
+            if node:
+                desc_text = _clean_text(node.get_text(" ", strip=True))
+                if desc_text and desc_text != data.get("Descrição"):
+                    data["Descrição complementar"] = desc_text
+                    break
+
+    category = data.get("Categoria") or _extract_category(soup)
+    if category:
+        data["Categoria"] = category
+
+    data.update({k: v for k, v in _extract_regex_optional(text).items() if v})
 
     price = data.get("Preço") or _normalize_price(
         _first_meta(soup, "product:price:amount", "og:price:amount") or text
     )
-    data["Preço"] = price
-    data["Preço unitário (OBRIGATÓRIO)"] = data.get("Preço unitário (OBRIGATÓRIO)") or price
+    if price:
+        data["Preço"] = price
+        data["Preço unitário (OBRIGATÓRIO)"] = data.get("Preço unitário (OBRIGATÓRIO)") or price
 
     sku_match = SKU_RE.search(text)
     if sku_match:
@@ -250,10 +327,12 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
     if not gtin:
         gtin_match = GTIN_RE.search(text)
         gtin = gtin_match.group(1) if gtin_match else ""
-    data["GTIN/EAN"] = gtin
+    if gtin:
+        data["GTIN/EAN"] = gtin
 
     images = data.get("URL Imagens Externas") or _first_meta(soup, "og:image", "twitter:image") or _extract_images(soup, page_url)
-    data["URL Imagens Externas"] = images
+    if images:
+        data["URL Imagens Externas"] = images
 
     canonical = ""
     canonical_tag = soup.find("link", rel=lambda value: value and "canonical" in value)
@@ -264,15 +343,22 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
     data["URL do Produto"] = data["Link Externo"]
     data["Fonte captura"] = "pagina_produto"
 
-    # Não forçar estoque: o usuário pediu para tirar apenas o estoque da obrigatoriedade.
-    data.pop("Estoque", None)
+    # Não forçar estoque: se vier de verdade em algum parser futuro, pode ficar;
+    # aqui não inventamos estoque.
+    if not data.get("Estoque"):
+        data.pop("Estoque", None)
 
     return {key: _clean_text(value) for key, value in data.items() if _clean_text(value)}
 
 
-def crawl_product_pages(seed_urls: Iterable[str], *, max_products: Optional[int] = None) -> list[dict[str, str]]:
+def crawl_product_pages(
+    seed_urls: Iterable[str],
+    *,
+    max_products: Optional[int] = None,
+    use_sitemap: bool = True,
+) -> list[dict[str, str]]:
     """Descobre e visita cada página de produto, retornando uma linha por página."""
-    product_urls = discover_product_urls(seed_urls, max_products=max_products)
+    product_urls = discover_product_urls(seed_urls, max_products=max_products, use_sitemap=use_sitemap)
     rows: list[dict[str, str]] = []
 
     for product_url in product_urls:
@@ -291,5 +377,10 @@ def crawl_product_pages(seed_urls: Iterable[str], *, max_products: Optional[int]
     return rows
 
 
-def crawl_product_pages_dataframe(seed_urls: Iterable[str], *, max_products: Optional[int] = None) -> pd.DataFrame:
-    return pd.DataFrame(crawl_product_pages(seed_urls, max_products=max_products))
+def crawl_product_pages_dataframe(
+    seed_urls: Iterable[str],
+    *,
+    max_products: Optional[int] = None,
+    use_sitemap: bool = True,
+) -> pd.DataFrame:
+    return pd.DataFrame(crawl_product_pages(seed_urls, max_products=max_products, use_sitemap=use_sitemap))
