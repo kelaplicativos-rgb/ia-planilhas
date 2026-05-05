@@ -169,6 +169,14 @@ def _target_columns(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
     return ESTOQUE_DEFAULT_COLUMNS.copy() if tipo == "estoque" else CADASTRO_DEFAULT_COLUMNS.copy()
 
 
+def _force_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for col in columns:
+        if col not in out.columns:
+            out[col] = ""
+    return out[columns].fillna("")
+
+
 def _suggest(target: str, source_columns: list[str]) -> str:
     nt = _norm(target)
     aliases = [_norm(a) for a in ALIAS.get(target, [target])]
@@ -203,7 +211,7 @@ def _preview_origem_no_modelo(df: pd.DataFrame, tipo: str, modelo: pd.DataFrame 
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
-    return out.fillna("")
+    return _force_columns(out, targets)
 
 
 def _suggest_cost_column(sources: list[str]) -> str:
@@ -349,7 +357,7 @@ def _map_df(
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
-    return out.fillna("")
+    return _force_columns(out, targets)
 
 
 def _reset_all() -> None:
@@ -478,11 +486,13 @@ def run_stable_app() -> None:
     df_mapeado = _map_df(df_origem, targets, mapping, deposito, calculated_price=calculated_price)
     if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
         df_mapeado = _apply_calculated_price_to_price_columns(df_mapeado, calculated_price)
+        df_mapeado = _force_columns(df_mapeado, targets)
 
     df_export = blindar_df_para_bling(df_mapeado, tipo_operacao_bling=tipo, deposito_nome=deposito)
     if tipo == "cadastro" and isinstance(calculated_price, pd.Series) and not calculated_price.empty:
         df_export = _apply_calculated_price_to_price_columns(df_export, calculated_price)
     df_export = normalize_image_url_columns(df_export)
+    df_export = _force_columns(df_export, targets)
     df_export = guardar_df("stable_df_export", df_export)
 
     with st.expander("Preview final", expanded=False):
