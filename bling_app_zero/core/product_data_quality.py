@@ -4,7 +4,7 @@ from __future__ import annotations
 
 Objetivo:
 - Não mascarar dado ausente com valores falsos, como preço `0,00`.
-- Enriquecer marca quando ela aparece claramente no nome do produto.
+- Enriquecer marca quando ela aparece claramente no título/nome do produto.
 - Harmonizar aliases importantes como `Link Externo` e `URL do Produto`.
 - Preservar campos opcionais quando vierem de verdade, como NCM, CEST e preço de custo.
 - Limpar/deduplicar imagens externas sem inventar dados.
@@ -15,32 +15,11 @@ from typing import Iterable
 
 import pandas as pd
 
+from bling_app_zero.core.brand_from_title import infer_brand_from_title
+
 
 ZERO_LIKE = {"0", "0,0", "0,00", "0.0", "0.00", "r$ 0,00", "r$0,00"}
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
-
-KNOWN_BRANDS = {
-    "LEHMOX": "Lehmox",
-    "JBL": "JBL",
-    "H MASTON": "H'Maston",
-    "HMASTON": "H'Maston",
-    "INTELBRAS": "Intelbras",
-    "TOSHIBA": "Toshiba",
-    "APPLE": "Apple",
-    "SAMSUNG": "Samsung",
-    "XIAOMI": "Xiaomi",
-    "B-MAX": "B-Max",
-    "B MAX": "B-Max",
-    "CLARO": "Claro",
-    "TIM": "TIM",
-    "VIVO": "Vivo",
-    "MULTILASER": "Multilaser",
-    "ELG": "ELG",
-    "EXBOM": "Exbom",
-    "KNUP": "Knup",
-    "SUMEXR": "Sumexr",
-    "EJ": "EJ",
-}
 
 PRICE_COLUMNS = {
     "Preço",
@@ -49,7 +28,6 @@ PRICE_COLUMNS = {
     "Preço de compra",
 }
 
-# Só removemos se estiverem vazios. Se vierem com dado real, ficam no preview.
 OPTIONAL_EMPTY_COLUMNS = {
     "NCM",
     "CEST",
@@ -95,6 +73,16 @@ IMAGE_ALIASES = (
     "Imagem",
     "Fotos",
     "Foto",
+)
+
+TITLE_ALIASES = (
+    "Descrição",
+    "Descricao",
+    "Nome",
+    "Produto",
+    "Título",
+    "Titulo",
+    "Title",
 )
 
 PREFERRED_ORDER = [
@@ -171,17 +159,6 @@ def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
     return "|".join(result)
 
 
-def infer_brand_from_name(name: object) -> str:
-    text = re.sub(r"[^A-Za-zÀ-ÿ0-9]+", " ", _text(name)).upper().strip()
-    if not text:
-        return ""
-    padded = f" {text} "
-    for token, brand in KNOWN_BRANDS.items():
-        if f" {token} " in padded:
-            return brand
-    return ""
-
-
 def _harmonize_product_url(cleaned: dict[str, str]) -> None:
     url = _first_value(cleaned, PRODUCT_URL_ALIASES)
     if not url:
@@ -194,7 +171,6 @@ def _harmonize_description_complement(cleaned: dict[str, str]) -> None:
     desc = _first_value(cleaned, DESCRIPTION_COMPLEMENT_ALIASES)
     if not desc:
         return
-    # Evita repetir exatamente o nome do produto como descrição complementar.
     if desc == cleaned.get("Descrição"):
         return
     cleaned["Descrição complementar"] = desc
@@ -217,6 +193,15 @@ def _harmonize_images(cleaned: dict[str, str]) -> None:
         cleaned["URL Imagens Externas"] = final
 
 
+def _harmonize_brand_from_title(cleaned: dict[str, str]) -> None:
+    if cleaned.get("Marca"):
+        return
+    title = _first_value(cleaned, TITLE_ALIASES)
+    brand = infer_brand_from_title(title)
+    if brand:
+        cleaned["Marca"] = brand
+
+
 def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
     cleaned: dict[str, str] = {str(k).strip(): _text(v) for k, v in row.items() if _text(v)}
 
@@ -224,28 +209,19 @@ def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
     _harmonize_description_complement(cleaned)
     _harmonize_category(cleaned)
     _harmonize_images(cleaned)
+    _harmonize_brand_from_title(cleaned)
 
-    # Nunca tratar 0,00 como preço capturado real. Se o site não trouxe preço,
-    # deixa vazio para revisão/manual/calculadora.
     for col in PRICE_COLUMNS:
         if _is_zero_like(cleaned.get(col)):
             cleaned.pop(col, None)
 
-    if not cleaned.get("Marca"):
-        brand = infer_brand_from_name(cleaned.get("Descrição"))
-        if brand:
-            cleaned["Marca"] = brand
-
-    # Se GTIN veio, espelha no campo de embalagem.
     if cleaned.get("GTIN/EAN") and not cleaned.get("GTIN/EAN da embalagem"):
         cleaned["GTIN/EAN da embalagem"] = cleaned["GTIN/EAN"]
 
-    # Remove opcionais vazios/falsos para não poluir preview, mas preserva se veio dado real.
     for col in OPTIONAL_EMPTY_COLUMNS:
         if not cleaned.get(col):
             cleaned.pop(col, None)
 
-    # Remove aliases redundantes se já consolidamos no nome canônico.
     for alias in PRODUCT_URL_ALIASES:
         if alias not in {"URL do Produto", "Link Externo"}:
             cleaned.pop(alias, None)
