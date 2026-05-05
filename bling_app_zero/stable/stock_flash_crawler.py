@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -13,9 +14,10 @@ from bs4 import BeautifulSoup
 
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
-TIMEOUT = 10
-MAX_PAGES = 80
+TIMEOUT = 6
+MAX_PAGES = 60
 MAX_PRODUCTS = 1200
+MAX_WORKERS = 16
 ESTOQUE_DISPONIVEL_PADRAO = 1000
 
 
@@ -24,6 +26,7 @@ class StockFlashConfig:
     estoque_disponivel: int = ESTOQUE_DISPONIVEL_PADRAO
     max_pages: int = MAX_PAGES
     max_products: int = MAX_PRODUCTS
+    max_workers: int = MAX_WORKERS
 
 
 def _clean_text(value: object) -> str:
@@ -306,7 +309,8 @@ def _resolve_stock(text: str, html: str, objects: list[dict[str, Any]], estoque_
     return 0, "NÃO INFORMADO", "Não identificado"
 
 
-def _extract_stock_product(url: str, session: requests.Session, config: StockFlashConfig) -> dict[str, object] | None:
+def _extract_stock_product(url: str, config: StockFlashConfig) -> dict[str, object] | None:
+    session = _new_session()
     try:
         html = _fetch(url, session)
     except Exception:
@@ -331,7 +335,7 @@ def _extract_stock_product(url: str, session: requests.Session, config: StockFla
         "Disponibilidade": disponibilidade,
         "Origem do estoque": origem_estoque,
         "URL do produto": url,
-        "Origem": "site_estoque_flash",
+        "Origem": "site_estoque_flash_amplo",
     }
 
 
@@ -350,11 +354,16 @@ def crawl_stock_flash_dataframe(raw_urls: str, estoque_disponivel: int = ESTOQUE
             seen.add(normalized)
             ordered.append(normalized)
 
-    session = _new_session()
     rows: list[dict[str, object]] = []
-    for url in ordered[: config.max_products]:
-        item = _extract_stock_product(url, session, config)
-        if item:
-            rows.append(item)
+    workers = max(1, min(int(config.max_workers or MAX_WORKERS), 32, len(ordered) or 1))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(_extract_stock_product, url, config): url for url in ordered[: config.max_products]}
+        for future in as_completed(future_map):
+            try:
+                item = future.result()
+            except Exception:
+                item = None
+            if item:
+                rows.append(item)
 
     return pd.DataFrame(rows).fillna("")
