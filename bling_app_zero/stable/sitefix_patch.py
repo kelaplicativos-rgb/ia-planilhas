@@ -23,9 +23,13 @@ NEW_SITE_INFO = (
 
 ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
 
-# Fallback usado somente quando nenhum modelo Bling foi anexado.
-# O modelo saldo_estoque.xlsx, quando anexado, sempre prevalece.
-ESTOQUE_SITE_COLUMNS = ["Codigo produto *", "GTIN **", "Descrição Produto", "Balanço (OBRIGATÓRIO)", "Preço unitário (OBRIGATÓRIO)"]
+ESTOQUE_SITE_COLUMNS = [
+    "Codigo produto *",
+    "GTIN **",
+    "Descrição Produto",
+    "Balanço (OBRIGATÓRIO)",
+    "Preço unitário (OBRIGATÓRIO)",
+]
 
 _GENERIC_SITE_TITLES = {
     "mega center eletrônicos",
@@ -138,7 +142,6 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=df.index)
 
-    # Colunas técnicas capturadas do site.
     out["Código"] = codigo
     out["Codigo"] = codigo
     out["Codigo produto *"] = codigo
@@ -160,8 +163,6 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     out["Preço unitário (OBRIGATÓRIO)"] = "0,00"
     out["Preço de Custo"] = ""
 
-    # Colunas do modelo saldo_estoque.xlsx que não existem no site.
-    # Elas ficam vazias, mas disponíveis para o espelho do modelo anexado.
     out["ID"] = ""
     out["ID Produto"] = ""
     out["Data"] = ""
@@ -243,7 +244,6 @@ def run_stable_app() -> None:
     original_info = st.info
     original_site_df = base_app._site_df
     original_target_columns = base_app._target_columns
-    original_is_deposito_target = base_app._is_deposito_target
     original_number_input = st.number_input
 
     def patched_button(label: str, *args: Any, **kwargs: Any):
@@ -255,12 +255,6 @@ def run_stable_app() -> None:
         if str(body) == OLD_SITE_INFO:
             body = NEW_SITE_INFO
         return original_info(body, *args, **kwargs)
-
-    def patched_is_deposito_target(target: object) -> bool:
-        # No modelo saldo_estoque.xlsx o depósito não vem do site e não deve travar a exportação.
-        if _tipo_operacao_atual() == "estoque":
-            return False
-        return original_is_deposito_target(target)
 
     def patched_number_input(label: str, *args: Any, **kwargs: Any):
         tipo = _tipo_operacao_atual()
@@ -280,7 +274,6 @@ def run_stable_app() -> None:
     st.number_input = patched_number_input
     base_app._site_df = _crawl_site_df
     base_app._target_columns = _target_columns_corrigido
-    base_app._is_deposito_target = patched_is_deposito_target
     try:
         base_app.run_stable_app()
     finally:
@@ -289,4 +282,3 @@ def run_stable_app() -> None:
         st.number_input = original_number_input
         base_app._site_df = original_site_df
         base_app._target_columns = original_target_columns
-        base_app._is_deposito_target = original_is_deposito_target
