@@ -179,6 +179,7 @@ def run_stable_app() -> None:
     original_info = st.info
     original_site_df = base_app._site_df
     original_target_columns = base_app._target_columns
+    original_is_deposito_target = base_app._is_deposito_target
     original_number_input = st.number_input
 
     def patched_button(label: str, *args: Any, **kwargs: Any):
@@ -190,6 +191,12 @@ def run_stable_app() -> None:
         if str(body) == OLD_SITE_INFO:
             body = NEW_SITE_INFO
         return original_info(body, *args, **kwargs)
+
+    def patched_is_deposito_target(target: object) -> bool:
+        # No modelo saldo_estoque.xlsx o depósito não vem do site e não deve travar a exportação.
+        if _tipo_operacao_atual() == "estoque":
+            return False
+        return original_is_deposito_target(target)
 
     def patched_number_input(label: str, *args: Any, **kwargs: Any):
         tipo = _tipo_operacao_atual()
@@ -209,6 +216,7 @@ def run_stable_app() -> None:
     st.number_input = patched_number_input
     base_app._site_df = _crawl_site_df
     base_app._target_columns = _target_columns_corrigido
+    base_app._is_deposito_target = patched_is_deposito_target
     try:
         base_app.run_stable_app()
     finally:
@@ -217,3 +225,4 @@ def run_stable_app() -> None:
         st.number_input = original_number_input
         base_app._site_df = original_site_df
         base_app._target_columns = original_target_columns
+        base_app._is_deposito_target = original_is_deposito_target
