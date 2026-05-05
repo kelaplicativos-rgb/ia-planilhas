@@ -18,6 +18,13 @@ MAX_PAGES = 120
 MAX_PRODUCTS = 800
 MAX_CART_PROBE = 200
 
+KNOWN_BRANDS = [
+    "JBL", "Samsung", "Apple", "Xiaomi", "Motorola", "LG", "Sony", "Philips", "Multilaser",
+    "Lenovo", "Dell", "HP", "Asus", "Acer", "Intelbras", "Positivo", "Mondial", "Britânia",
+    "Britania", "Elgin", "Aiwa", "Havit", "Baseus", "Amazfit", "Haylou", "Lenoxx", "Knup",
+    "Exbom", "Inova", "Kaidi", "Tomate", "MXT", "Importado", "B-Max", "Bmax", "Gshield",
+]
+
 
 @dataclass
 class CrawlConfig:
@@ -159,7 +166,7 @@ def _extract_json_objects(soup: BeautifulSoup) -> list[dict[str, Any]]:
 
     for script in soup.find_all("script"):
         raw = script.string or script.get_text(" ", strip=False)
-        if not raw or "produto" not in raw.lower() and "product" not in raw.lower():
+        if not raw or ("produto" not in raw.lower() and "product" not in raw.lower()):
             continue
         for match in re.findall(r"\{[^{}]{20,3000}\}", raw):
             payload = _safe_json(match)
@@ -182,7 +189,12 @@ def _json_first(objects: list[dict[str, Any]], keys: Iterable[str]) -> str:
     for obj in objects:
         for key, value in obj.items():
             if str(key).lower() in normalized and value not in (None, "", [], {}):
-                if isinstance(value, (dict, list)):
+                if isinstance(value, dict):
+                    for sub_key in ("name", "nome", "title", "titulo"):
+                        if value.get(sub_key):
+                            return _clean_text(value.get(sub_key))
+                    continue
+                if isinstance(value, list):
                     continue
                 return _clean_text(value)
     return ""
@@ -407,7 +419,7 @@ def _probe_cart_stock(session: requests.Session, product_url: str, product_id: s
 
     first = _try_cart_quantity(session, product_url, product_id, 1)
     if first is False:
-        return 0
+        return None
     if first is None:
         return None
 
@@ -438,6 +450,25 @@ def _probe_cart_stock(session: requests.Session, product_url: str, product_id: s
     return low
 
 
+def _availability_from_text(text: str, html: str, objects: list[dict[str, Any]]) -> tuple[str, bool | None]:
+    json_availability = _json_first(objects, ["availability", "disponibilidade", "available", "isAvailable"])
+    low_json = json_availability.lower()
+    if any(term in low_json for term in ["instock", "in stock", "dispon", "true", "sim"]):
+        return "Disponível", True
+    if any(term in low_json for term in ["outofstock", "out of stock", "esgot", "indispon", "false", "nao", "não"]):
+        return "Indisponível", False
+
+    page = (html + " " + text).lower()
+    has_buy = any(term in page for term in ["comprar agora", ">comprar<", "adicionar ao carrinho", "adicionar", "colocar no carrinho"])
+    has_unavailable = any(term in page for term in ["esgotado", "sem estoque", "indisponível", "indisponivel", "fora de estoque", "avise-me"])
+
+    if has_buy:
+        return "Disponível", True
+    if has_unavailable:
+        return "Indisponível", False
+    return "Não identificado", None
+
+
 def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: CrawlConfig) -> int | None:
     stock_json = _json_first_number(
         objects,
@@ -454,10 +485,6 @@ def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: 
     )
     if stock_json is not None:
         return stock_json
-
-    low = text.lower()
-    if any(term in low for term in ["esgotado", "sem estoque", "indisponível", "indisponivel", "fora de estoque"]):
-        return 0
 
     explicit_patterns = [
         r"estoque[^0-9]{0,30}(\d{1,5})",
@@ -478,8 +505,11 @@ def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: 
             except Exception:
                 pass
 
-    if any(term in low for term in ["em estoque", "adicionar", "comprar", "comprar agora"]):
+    availability_label, available = _availability_from_text(text, html, objects)
+    if available is True:
         return max(1, int(config.estoque_padrao or 1))
+    if available is False:
+        return 0
     return int(config.estoque_padrao or 0)
 
 
@@ -498,7 +528,7 @@ def _extract_category(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str
     return " > ".join(bits[:5])
 
 
-def _extract_description(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str:
+def _extract_raw_description(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str:
     json_description = _json_first(objects, ["description", "descricao", "descrição", "shortDescription", "longDescription"])
     if json_description:
         return json_description[:2000]
@@ -514,14 +544,59 @@ def _extract_description(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> 
     return _first_meta(soup, ["description", "og:description"])[:2000]
 
 
-def _extract_brand(text: str, objects: list[dict[str, Any]]) -> str:
+def _extract_brand(text: str, objects: list[dict[str, Any]], title: str = "", description: str = "") -> str:
     brand = _json_first(objects, ["brand", "marca", "manufacturer", "fabricante"])
-    if brand:
-        if brand.startswith("{") or brand.startswith("["):
-            return ""
+    if brand and not brand.startswith(("{", "[")):
         return brand[:120]
+
     match = re.search(r"Marca\s*[:\-]\s*([A-Za-z0-9 ._\-]+)", text, flags=re.IGNORECASE)
-    return _clean_text(match.group(1))[:120] if match else ""
+    if match:
+        return _clean_text(match.group(1))[:120]
+
+    haystack = f" {title} {description} {text[:1000]} "
+    for known in KNOWN_BRANDS:
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(known)}(?![A-Za-z0-9])", haystack, flags=re.IGNORECASE):
+            return known.upper() if known.lower() == "jbl" else known
+    return ""
+
+
+def _persuasive_description(title: str, brand: str, raw_description: str, price: str, availability: str) -> str:
+    title = _clean_text(title)
+    brand = _clean_text(brand)
+    raw = _clean_text(raw_description)
+
+    benefits: list[str] = []
+    search_text = f"{title} {raw}".lower()
+    benefit_map = [
+        ("bluetooth", "conexão Bluetooth prática para usar no dia a dia"),
+        ("portátil", "design portátil para levar para qualquer lugar"),
+        ("bateria", "bateria ideal para acompanhar sua rotina"),
+        ("jbl", "qualidade sonora JBL com graves marcantes"),
+        ("som", "som potente para músicas, vídeos e momentos de lazer"),
+        ("à prova", "mais resistência para usar com tranquilidade"),
+        ("prova", "mais resistência para usar com tranquilidade"),
+        ("wifi", "conexão rápida e prática"),
+        ("led", "visual moderno e chamativo"),
+    ]
+    for token, phrase in benefit_map:
+        if token in search_text and phrase not in benefits:
+            benefits.append(phrase)
+        if len(benefits) >= 3:
+            break
+
+    if not benefits:
+        benefits = ["produto prático, moderno e pronto para facilitar sua rotina"]
+
+    brand_part = f" da {brand}" if brand else ""
+    price_part = f" por R$ {price}" if price else ""
+    availability_part = " Disponível para compra." if availability == "Disponível" else ""
+
+    description = (
+        f"{title}{brand_part} é uma ótima escolha para quem busca qualidade, praticidade e bom custo-benefício. "
+        f"Conta com {', '.join(benefits)}. "
+        f"Garanta o seu{price_part} e aproveite uma compra simples, segura e eficiente.{availability_part}"
+    )
+    return description[:650]
 
 
 def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
@@ -546,19 +621,24 @@ def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
     gtin = _extract_gtin(text, objects)
     preco_venda, preco_custo = _extract_prices(text, objects)
     product_id = _extract_product_id(url, html, objects)
+    raw_description = _extract_raw_description(soup, objects)
+    marca = _extract_brand(text, objects_all, title=title, description=raw_description)
+    availability_label, available = _availability_from_text(text, html, objects_all)
     estoque = _extract_stock(text, html, objects, config)
 
     cart_stock = _probe_cart_stock(session, url, product_id or codigo, config)
     if cart_stock is not None:
         estoque = cart_stock
+        availability_label = "Disponível" if cart_stock > 0 else "Indisponível"
 
     if estoque is None:
         estoque = int(config.estoque_padrao or 0)
+    if availability_label == "Não identificado":
+        availability_label = "Disponível" if int(estoque) > 0 else "Indisponível"
 
     imagens = _extract_images(soup, url, objects_all)
     categoria = _extract_category(soup, objects_all)
-    descricao_complementar = _extract_description(soup, objects)
-    marca = _extract_brand(text, objects_all)
+    descricao_complementar = _persuasive_description(title or codigo or product_id, marca, raw_description, preco_venda, availability_label)
 
     if not title and not codigo:
         return None
@@ -578,7 +658,7 @@ def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
         "Estoque": int(estoque),
         "Quantidade": int(estoque),
         "URL do produto": url,
-        "Disponibilidade": "Esgotado" if int(estoque) == 0 else "Em estoque",
+        "Disponibilidade": availability_label,
         "Produto ID site": product_id,
         "Origem": "site",
     }
