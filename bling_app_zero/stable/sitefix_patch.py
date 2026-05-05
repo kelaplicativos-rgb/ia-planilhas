@@ -41,6 +41,18 @@ _GENERIC_SITE_TITLES = {
     "loja",
 }
 
+_URL_ALIASES = [
+    "URL do produto",
+    "Url do produto",
+    "url_produto",
+    "url",
+    "URL",
+    "Link",
+    "link",
+    "Link do produto",
+    "Produto URL",
+]
+
 
 def _tipo_operacao_atual() -> str:
     return str(st.session_state.get("stable_tipo", "cadastro") or "cadastro").strip().lower()
@@ -63,10 +75,39 @@ def _normalizar_estoque_input(valor: object) -> int:
         return ESTOQUE_DISPONIVEL_PADRAO_UI
 
 
+def _split_urls_local(raw: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for item in re.split(r"[\n,;\s]+", str(raw or "")):
+        url = item.strip()
+        if not url:
+            continue
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
 def _serie(df: pd.DataFrame, coluna: str, padrao: object = "") -> pd.Series:
     if isinstance(df, pd.DataFrame) and coluna in df.columns:
         return df[coluna].astype(str).fillna("")
     return pd.Series([padrao] * len(df), index=df.index)
+
+
+def _url_series(df: pd.DataFrame, raw_urls: str = "") -> pd.Series:
+    for coluna in _URL_ALIASES:
+        if isinstance(df, pd.DataFrame) and coluna in df.columns:
+            serie = df[coluna].astype(str).fillna("")
+            if serie.astype(str).str.strip().any():
+                return serie
+
+    urls = _split_urls_local(raw_urls)
+    if urls and len(urls) == len(df):
+        return pd.Series(urls, index=df.index)
+
+    return pd.Series([""] * len(df), index=df.index)
 
 
 def _clean_text(value: object) -> str:
@@ -107,7 +148,7 @@ def _preco_from_urls(urls: pd.Series) -> pd.Series:
     return pd.Series(valores, index=urls.index)
 
 
-def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
+def _limpar_df_estoque_site(df: pd.DataFrame, raw_urls: str = "") -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
 
@@ -119,7 +160,7 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     if not nome.astype(str).str.strip().any():
         nome = _serie(df, "Produto")
 
-    url_produto = _serie(df, "URL do produto")
+    url_produto = _url_series(df, raw_urls=raw_urls)
     nome = pd.Series(
         [
             _nome_produto_from_url(url, fallback=codigo.iloc[pos]) if _is_generic_product_name(value) else _clean_text(value)
@@ -184,9 +225,7 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     out["Observações"] = ""
     out["Observacao"] = ""
     out["Observacoes"] = ""
-
-    if "URL do produto" in df.columns:
-        out["URL do produto"] = df["URL do produto"].astype(str).fillna("")
+    out["URL do produto"] = url_produto
 
     return out.fillna("")
 
@@ -230,7 +269,7 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
         if df is None or df.empty:
             st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
             return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
-        df = _limpar_df_estoque_site(df)
+        df = _limpar_df_estoque_site(df, raw_urls=raw_urls)
         df = guardar_df("stable_df_origem", df)
         st.success(f"Busca flash de estoque finalizada e travada: {len(df)} produto(s) encontrado(s).")
         return df
