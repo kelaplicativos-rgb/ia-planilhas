@@ -13,18 +13,20 @@ incompatíveis em colunas do modelo Bling, por exemplo:
 - GTIN em Código da lista de serviços;
 - link em Tipo do item ou Condição do produto.
 
-A limpeza é conservadora: quando o valor parece incompatível com o destino, fica
-vazio para o usuário preencher manualmente.
+Também resgata o link real da página do produto quando ele apareceu em coluna
+errada e coloca no campo correto (`Link Externo`), porque cada produto precisa
+manter o próprio link de origem página por página.
 """
 
 import re
 import unicodedata
-from typing import Callable
+from typing import Callable, Optional
 
 import pandas as pd
 
 
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+PRODUCT_PAGE_URL_RE = re.compile(r"https?://[^\s|,;\"]+/produto/[^\s|,;\"]+", re.IGNORECASE)
 NUMERIC_RE = re.compile(r"^-?\d+(?:[\.,]\d+)?$")
 INTEGER_RE = re.compile(r"^\d+$")
 GTIN_RE = re.compile(r"^\d{8,14}$")
@@ -51,6 +53,18 @@ def _value(value: object) -> str:
 
 def is_url(value: object) -> bool:
     return bool(URL_RE.search(_value(value)))
+
+
+def extract_product_page_url(value: object) -> str:
+    text = _value(value)
+    if not text:
+        return ""
+    match = PRODUCT_PAGE_URL_RE.search(text)
+    return match.group(0).strip() if match else ""
+
+
+def is_product_page_url(value: object) -> bool:
+    return bool(extract_product_page_url(value))
 
 
 def is_numeric(value: object) -> bool:
@@ -119,7 +133,7 @@ def is_allowed_origin(value: object) -> bool:
     text = normalize_name(value)
     if not text:
         return True
-    return text in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "nao informado", "nacional", "importado"}
+    return text in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "nao informado", "nacional", "importado", "real"}
 
 
 def is_allowed_condition(value: object) -> bool:
@@ -136,6 +150,18 @@ def is_bool_like(value: object) -> bool:
     return text in {"s", "n", "sim", "nao", "true", "false", "1", "0"}
 
 
+def is_product_link_field(column_name: object) -> bool:
+    column = normalize_name(column_name)
+    return column in {
+        "link externo",
+        "url do produto",
+        "link do produto",
+        "pagina do produto",
+        "url produto",
+        "produto url",
+    }
+
+
 # Destinos do modelo Bling que são perigosos: só devem receber valor automático
 # se o valor passar numa validação de tipo bem objetiva.
 COLUMN_VALIDATORS: list[tuple[tuple[str, ...], Callable[[object], bool]]] = [
@@ -149,7 +175,8 @@ COLUMN_VALIDATORS: list[tuple[tuple[str, ...], Callable[[object], bool]]] = [
     (("condicao do produto",), is_allowed_condition),
     (("frete gratis", "clonar dados do pai"), is_bool_like),
     (("url imagens", "imagens externas"), is_url_or_images),
-    (("link externo", "video"), is_url),
+    (("link externo", "url do produto", "link do produto", "pagina do produto"), is_product_page_url),
+    (("video",), is_url),
     (("codigo", "cod no fornecedor", "codigo pai", "codigo integracao"), is_short_code),
 ]
 
@@ -193,6 +220,9 @@ def is_value_allowed_for_column(column_name: object, value: object) -> bool:
 
     column = normalize_name(column_name)
 
+    if is_product_link_field(column_name):
+        return is_product_page_url(text)
+
     if column in ALWAYS_CLEAR_WHEN_URL and is_url(text):
         return False
 
@@ -210,6 +240,48 @@ def is_value_allowed_for_column(column_name: object, value: object) -> bool:
     return True
 
 
+def _find_product_link_column(df: pd.DataFrame) -> Optional[str]:
+    for column in df.columns:
+        if is_product_link_field(column):
+            return str(column)
+    return None
+
+
+def _extract_row_product_url(row: pd.Series) -> str:
+    for value in row.values:
+        product_url = extract_product_page_url(value)
+        if product_url:
+            return product_url
+    return ""
+
+
+def repair_product_links(df: pd.DataFrame) -> pd.DataFrame:
+    """Move/resgata o link da página do produto para `Link Externo`.
+
+    Se a coluna `Link Externo` existir e estiver vazia, procura em qualquer campo
+    da linha por uma URL `/produto/...` e preenche corretamente. Não cria coluna
+    nova para não alterar o modelo do Bling.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    repaired = df.copy()
+    link_column = _find_product_link_column(repaired)
+    if not link_column:
+        return repaired
+
+    for idx, row in repaired.iterrows():
+        current = _value(row.get(link_column, ""))
+        if current and is_product_page_url(current):
+            continue
+
+        product_url = _extract_row_product_url(row)
+        if product_url:
+            repaired.at[idx, link_column] = product_url
+
+    return repaired
+
+
 def clean_invalid_preview_mappings(df: pd.DataFrame) -> pd.DataFrame:
     """Limpa valores claramente incompatíveis com o nome da coluna.
 
@@ -218,11 +290,13 @@ def clean_invalid_preview_mappings(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
-    cleaned = df.copy()
+    cleaned = repair_product_links(df.copy())
 
     for column in cleaned.columns:
         mask_invalid = ~cleaned[column].map(lambda value: is_value_allowed_for_column(column, value))
         if mask_invalid.any():
             cleaned.loc[mask_invalid, column] = ""
 
+    # Segunda passada: se alguma limpeza apagou o link correto, tenta resgatar de novo.
+    cleaned = repair_product_links(cleaned)
     return cleaned
