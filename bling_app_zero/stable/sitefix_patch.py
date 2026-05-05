@@ -10,6 +10,7 @@ import streamlit as st
 from bling_app_zero.stable import stable_app as base_app
 from bling_app_zero.stable.product_flash_crawler import crawl_product_flash_dataframe
 from bling_app_zero.stable.session_vault import guardar_df
+from bling_app_zero.stable.site_price_extractor import extract_price_from_url
 from bling_app_zero.stable.stock_flash_crawler import crawl_stock_flash_dataframe
 
 
@@ -17,7 +18,7 @@ OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualizaçã
 NEW_SITE_INFO = (
     "Captura por site em modo flash. "
     "Cadastro busca dados de cadastro sem consultar estoque. "
-    "Atualização de estoque busca SKU, nome do produto e valor/saldo, "
+    "Atualização de estoque busca SKU, nome do produto, preço e valor/saldo, "
     "mantendo o preview no espelho do modelo Bling anexado."
 )
 
@@ -98,6 +99,14 @@ def _nome_produto_from_url(url: object, fallback: object = "") -> str:
     return fallback_text or "Produto capturado do site"
 
 
+def _preco_from_urls(urls: pd.Series) -> pd.Series:
+    valores: list[str] = []
+    for url in urls.astype(str).fillna("").tolist():
+        preco = extract_price_from_url(url)
+        valores.append(preco if preco else "0,00")
+    return pd.Series(valores, index=urls.index)
+
+
 def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
@@ -118,6 +127,8 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
         ],
         index=df.index,
     )
+
+    preco_unitario = _preco_from_urls(url_produto) if url_produto.astype(str).str.strip().any() else pd.Series(["0,00"] * len(df), index=df.index)
 
     if "Valor" in df.columns:
         valor = df["Valor"]
@@ -160,7 +171,7 @@ def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     out["Balanco (OBRIGATORIO)"] = valor
     out["Estoque"] = estoque
     out["Quantidade"] = quantidade
-    out["Preço unitário (OBRIGATÓRIO)"] = "0,00"
+    out["Preço unitário (OBRIGATÓRIO)"] = preco_unitario
     out["Preço de Custo"] = ""
 
     out["ID"] = ""
@@ -214,7 +225,7 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     estoque_padrao = _normalizar_estoque_input(estoque_padrao)
 
     if tipo == "estoque":
-        with st.spinner("Modo flash estoque: buscando nome do produto, SKU e valor/saldo..."):
+        with st.spinner("Modo flash estoque: buscando nome do produto, SKU, preço e valor/saldo..."):
             df = crawl_stock_flash_dataframe(raw_urls, estoque_disponivel=estoque_padrao)
         if df is None or df.empty:
             st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
