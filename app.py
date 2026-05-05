@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.stable.sitefix_patch import run_stable_app
+from bling_app_zero.stable.stock_ui_patch import run_stable_app
 
 
 def main() -> None:
