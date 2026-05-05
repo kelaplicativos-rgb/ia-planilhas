@@ -3,13 +3,14 @@ from __future__ import annotations
 """Crawler página por página para produtos.
 
 Regra principal:
-    Listagem/categoria serve apenas para descobrir links.
-    Os dados obrigatórios do produto devem ser extraídos entrando em cada
-    página individual `/produto/...`.
+    1. A varredura normal/listagem é sempre a fonte primária para descobrir URLs.
+    2. O sistema entra em cada página individual `/produto/...` para extrair dados.
+    3. Sitemap entra por último, apenas para complementar URLs de produto que a
+       varredura inicial não detectou.
 
 Campos opcionais como NCM, preço de custo, categoria etc. podem vir SIM, desde
-que encontrados de verdade na página/sitemap/dados estruturados. O crawler não
-inventa nem força coluna sem dado real.
+que encontrados de verdade na página/dados estruturados. O crawler não inventa
+nem força coluna sem dado real.
 """
 
 import json
@@ -70,32 +71,54 @@ def is_product_url(url: str) -> bool:
     return bool(parsed.scheme and parsed.netloc and PRODUCT_PATH_RE.search(parsed.path))
 
 
+def _allowed_hosts(seed_urls: list[str]) -> set[str]:
+    hosts: set[str] = set()
+    for seed in seed_urls:
+        parsed = urlparse(seed)
+        if parsed.netloc:
+            hosts.add(parsed.netloc.lower())
+    return hosts
+
+
+def _same_seed_host(url: str, hosts: set[str]) -> bool:
+    if not hosts:
+        return True
+    host = urlparse(url).netloc.lower()
+    return host in hosts
+
+
 def discover_product_urls(
     seed_urls: Iterable[str],
     *,
     max_products: Optional[int] = None,
     use_sitemap: bool = True,
 ) -> list[str]:
-    """Descobre URLs de produto a partir de páginas/listagens/URLs diretas.
+    """Descobre URLs de produto usando sitemap somente como complemento final.
 
-    Primeiro varre links visíveis. Depois, se permitido, usa sitemap como reforço
-    para não perder produtos escondidos/paginados.
+    Ordem obrigatória:
+    1. URLs diretas informadas pelo usuário.
+    2. Links visíveis nas listagens/categorias informadas.
+    3. Sitemap por último, apenas para adicionar URLs ainda não detectadas.
     """
     discovered: list[str] = []
     seen: set[str] = set()
     seeds = [str(seed or "").strip() for seed in seed_urls if str(seed or "").strip()]
+    seed_hosts = _allowed_hosts(seeds)
 
     def add_url(url: str) -> bool:
         if not is_product_url(url):
             return False
         parsed = urlparse(url)
         clean_url = parsed._replace(query="", fragment="").geturl()
+        if not _same_seed_host(clean_url, seed_hosts):
+            return False
         if clean_url in seen:
             return False
         seen.add(clean_url)
         discovered.append(clean_url)
         return bool(max_products and len(discovered) >= max_products)
 
+    # 1) URLs diretas e 2) varredura visível/listagem.
     for seed in seeds:
         if add_url(seed):
             return discovered
@@ -113,9 +136,10 @@ def discover_product_urls(
             if add_url(href):
                 return discovered
 
+    # 3) Sitemap sempre por último, só complementando o que faltou.
     if use_sitemap and (not max_products or len(discovered) < max_products):
         remaining = None if max_products is None else max_products - len(discovered)
-        for sitemap_url in discover_product_urls_from_sitemaps(seeds, max_products=remaining or 500):
+        for sitemap_url in discover_product_urls_from_sitemaps(seeds, max_products=remaining or 5000):
             if add_url(sitemap_url):
                 return discovered
 
@@ -211,7 +235,6 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
         )
         data["Categoria"] = data.get("Categoria") or _clean_text(obj.get("category"))
 
-        # Alguns fornecedores expõem dados fiscais/customizados em propriedades extras.
         for key, target in (("ncm", "NCM"), ("cest", "CEST"), ("cost", "Preço de custo"), ("costPrice", "Preço de custo")):
             if obj.get(key):
                 data[target] = data.get(target) or _clean_text(obj.get(key))
@@ -295,7 +318,6 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
     if desc:
         data["Descrição complementar"] = _clean_text(desc)
     else:
-        # Tenta blocos comuns de descrição sem inventar: só usa se existir texto no HTML.
         for selector in ("#descricao", ".descricao", ".description", "[class*='descricao']", "[class*='description']"):
             node = soup.select_one(selector)
             if node:
@@ -343,8 +365,6 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
     data["URL do Produto"] = data["Link Externo"]
     data["Fonte captura"] = "pagina_produto"
 
-    # Não forçar estoque: se vier de verdade em algum parser futuro, pode ficar;
-    # aqui não inventamos estoque.
     if not data.get("Estoque"):
         data.pop("Estoque", None)
 
