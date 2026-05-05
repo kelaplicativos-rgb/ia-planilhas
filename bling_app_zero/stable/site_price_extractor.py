@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from functools import lru_cache
 
 import requests
 
@@ -11,6 +12,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
+
+_PRICE_SESSION = requests.Session()
+_PRICE_SESSION.headers.update(HEADERS)
 
 
 def _clean(value: object) -> str:
@@ -88,6 +92,9 @@ def extract_price_from_html(page: str) -> str:
         r"content=['\"]([^'\"]+)['\"][^>]+property=['\"]product:price:amount['\"]",
         r"itemprop=['\"]price['\"][^>]+content=['\"]([^'\"]+)['\"]",
         r"content=['\"]([^'\"]+)['\"][^>]+itemprop=['\"]price['\"]",
+        r"data-price=['\"]([^'\"]+)['\"]",
+        r"preco[^0-9]{0,30}R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})",
+        r"price[^0-9]{0,30}([0-9]+(?:\.[0-9]{2})?)",
         r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})",
         r"R\$\s*([0-9]+,[0-9]{2})",
     ]
@@ -101,14 +108,19 @@ def extract_price_from_html(page: str) -> str:
     return ""
 
 
-def extract_price_from_url(url: object) -> str:
-    raw = str(url or "").strip()
-    if not raw:
-        return ""
+@lru_cache(maxsize=2048)
+def _extract_price_from_url_cached(raw: str) -> str:
     try:
-        response = requests.get(raw, headers=HEADERS, timeout=10)
+        response = _PRICE_SESSION.get(raw, timeout=4)
         if not response.ok:
             return ""
         return extract_price_from_html(response.text)
     except Exception:
         return ""
+
+
+def extract_price_from_url(url: object) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    return _extract_price_from_url_cached(raw)
