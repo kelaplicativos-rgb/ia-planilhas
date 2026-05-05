@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from io import BytesIO
+from math import ceil
+from zipfile import ZIP_DEFLATED, ZipFile
+
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +16,7 @@ from bling_app_zero.ui.mapeamento.conservative_auto import choose_safe_source
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 FLASH_MAX_PRODUCTS = 5000
+BLING_MAX_IMPORT_ROWS = 1000
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
 EST_COLS = ["Código", "Descrição", "GTIN/EAN", "Depósito", "Estoque", "Quantidade"]
 
@@ -87,7 +91,8 @@ def _urls(raw: str) -> list[str]:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         if url not in seen:
-            seen.add(url); urls.append(url)
+            seen.add(url)
+            urls.append(url)
     return urls
 
 
@@ -96,6 +101,59 @@ def _excel(df: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="bling")
     return buf.getvalue()
+
+
+def _df_chunks(df: pd.DataFrame, chunk_size: int = BLING_MAX_IMPORT_ROWS) -> list[pd.DataFrame]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    return [df.iloc[start:start + chunk_size].copy() for start in range(0, len(df), chunk_size)]
+
+
+def _zip_csv_parts(df: pd.DataFrame, *, chunk_size: int = BLING_MAX_IMPORT_ROWS) -> bytes:
+    buffer = BytesIO()
+    parts = _df_chunks(df, chunk_size=chunk_size)
+    total_parts = max(len(parts), 1)
+    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
+        for index, part in enumerate(parts, start=1):
+            file_name = f"bling_saida_final_parte_{index:02d}_de_{total_parts:02d}.csv"
+            zip_file.writestr(file_name, dataframe_para_csv_bytes(part))
+    return buffer.getvalue()
+
+
+def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
+    total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
+    if total_linhas > BLING_MAX_IMPORT_ROWS:
+        total_partes = ceil(total_linhas / BLING_MAX_IMPORT_ROWS)
+        st.warning(
+            f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação de cadastro. "
+            f"Seu arquivo tem {total_linhas} linhas e será dividido em {total_partes} partes."
+        )
+        st.download_button(
+            "📦 Baixar CSVs divididos em partes de 1.000 linhas",
+            data=_zip_csv_parts(out),
+            file_name="bling_saida_final_dividido.zip",
+            mime="application/zip",
+            use_container_width=True,
+            disabled=not saida_ok,
+        )
+    else:
+        st.download_button(
+            "📥 Baixar CSV para Bling",
+            data=dataframe_para_csv_bytes(out),
+            file_name="bling_saida_final.csv",
+            mime="text/csv",
+            use_container_width=True,
+            disabled=not saida_ok,
+        )
+
+    st.download_button(
+        "📥 Baixar Excel de conferência",
+        data=_excel(out),
+        file_name="bling_saida_final_conferencia.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        disabled=not saida_ok,
+    )
 
 
 def _col_with_data(df: pd.DataFrame, predicate) -> bool:
@@ -133,7 +191,8 @@ def run_stable_app() -> None:
 
     with st.sidebar:
         if st.button("🧹 Reiniciar fluxo", use_container_width=True):
-            limpar_vault(prefixes=("stable_", "supplier_")); st.rerun()
+            limpar_vault(prefixes=("stable_", "supplier_"))
+            st.rerun()
 
     tipo = st.radio("O que você quer gerar?", ["cadastro", "estoque"], format_func=lambda x: "Cadastro de produtos" if x == "cadastro" else "Atualização de estoque", horizontal=True, key="stable_tipo")
     modelo = restaurar_df("stable_df_modelo")
@@ -218,5 +277,4 @@ def run_stable_app() -> None:
     else:
         st.warning("Corrija o mapeamento obrigatório antes de baixar.")
 
-    st.download_button("📥 Baixar CSV para Bling", data=dataframe_para_csv_bytes(out), file_name="bling_saida_final.csv", mime="text/csv", use_container_width=True, disabled=not saida_ok)
-    st.download_button("📥 Baixar Excel de conferência", data=_excel(out), file_name="bling_saida_final_conferencia.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, disabled=not saida_ok)
+    _render_downloads(out, saida_ok)
