@@ -2,14 +2,16 @@ from __future__ import annotations
 
 """Flash Amplo página por página em velocidade máxima.
 
-Estratégia:
-1. Descobrir links `/produto/...` rapidamente em listagens/categorias.
-2. Entrar em cada página de produto em paralelo.
-3. Extrair dados obrigatórios da página real do produto.
-4. Não tornar estoque obrigatório.
+Estratégia oficial:
+1. Descobrir links `/produto/...` primeiro pela varredura normal/listagens.
+2. Usar sitemap por último, apenas para complementar URLs ainda não detectadas.
+3. Entrar em cada página de produto em paralelo.
+4. Extrair dados reais da página individual.
+5. Marca é tratada no normalizador apenas pelo título do produto.
+6. Não tornar estoque obrigatório.
 
-Este módulo complementa `page_by_page_crawler.py` com execução concorrente para
-manter o modo Flash Amplo rápido sem voltar a depender de cards/listagens.
+Este módulo é o motor rápido do fluxo. Mesmo se uma tela antiga chamar o crawler
+sem informar limite, o padrão interno fica alto para não cortar produtos cedo.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,7 +30,8 @@ ProgressCallback = Optional[Callable[[int, int, str], None]]
 
 
 DEFAULT_MAX_WORKERS = 12
-DEFAULT_MAX_PRODUCTS = 500
+DEFAULT_MAX_PRODUCTS = 5000
+MAX_WORKERS_HARD_LIMIT = 32
 
 
 def _safe_extract_one(product_url: str) -> dict[str, str]:
@@ -56,13 +59,14 @@ def crawl_flash_amplo_page_by_page(
     progress_callback: ProgressCallback = None,
 ) -> list[dict[str, str]]:
     """Executa captura Flash Amplo entrando em cada página de produto."""
-    product_urls = discover_product_urls(seed_urls, max_products=max_products)
+    effective_max_products = int(max_products or DEFAULT_MAX_PRODUCTS)
+    product_urls = discover_product_urls(seed_urls, max_products=effective_max_products, use_sitemap=True)
     total = len(product_urls)
 
     if total == 0:
         return []
 
-    workers = max(1, min(int(max_workers or DEFAULT_MAX_WORKERS), 32, total))
+    workers = max(1, min(int(max_workers or DEFAULT_MAX_WORKERS), MAX_WORKERS_HARD_LIMIT, total))
     rows: list[dict[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -82,7 +86,6 @@ def crawl_flash_amplo_page_by_page(
             if progress_callback:
                 progress_callback(done_count, total, url)
 
-    # Mantém ordem previsível conforme descoberta, mesmo executando em paralelo.
     by_url = {str(row.get("Link Externo") or row.get("URL do Produto") or ""): row for row in rows}
     ordered_rows = [by_url.get(url) for url in product_urls if by_url.get(url)]
     return ordered_rows
