@@ -15,13 +15,13 @@ OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualizaçã
 NEW_SITE_INFO = (
     "Captura por site em modo flash. "
     "Cadastro busca dados de cadastro sem consultar estoque. "
-    "Atualização de estoque busca somente SKU/código, nome do produto e quantidade."
+    "Atualização de estoque busca SKU/código, nome do produto e quantidade, "
+    "mantendo o preview final no mesmo espelho do modelo Bling anexado."
 )
 
 ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
 
-# Regra BLINGFIX: no fluxo Atualização de estoque por site, não usar modelo de cadastro.
-# A saída deve ser limpa: SKU/código, nome do produto na Descrição, Depósito e estoque/quantidade.
+# Colunas mínimas usadas quando nenhum modelo Bling foi anexado.
 ESTOQUE_SITE_COLUMNS = ["Código", "Descrição", "Depósito", "Estoque", "Quantidade"]
 
 
@@ -88,12 +88,19 @@ def _remover_colunas_estoque_do_cadastro(df: pd.DataFrame) -> pd.DataFrame:
     return df[colunas].copy().fillna("")
 
 
+def _colunas_do_modelo(modelo: pd.DataFrame | None) -> list[str]:
+    if isinstance(modelo, pd.DataFrame) and not modelo.empty and len(modelo.columns) > 0:
+        return [str(c).strip() for c in modelo.columns if str(c).strip()]
+    return []
+
+
 def _target_columns_corrigido(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
+    colunas_modelo = _colunas_do_modelo(modelo)
+    if colunas_modelo:
+        return colunas_modelo
     if str(tipo or "").strip().lower() == "estoque":
         return ESTOQUE_SITE_COLUMNS.copy()
-    return base_app.CADASTRO_DEFAULT_COLUMNS.copy() if not isinstance(modelo, pd.DataFrame) or modelo.empty else [
-        str(c).strip() for c in modelo.columns if str(c).strip()
-    ]
+    return base_app.CADASTRO_DEFAULT_COLUMNS.copy()
 
 
 def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
@@ -101,7 +108,7 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     estoque_padrao = _normalizar_estoque_input(estoque_padrao)
 
     if tipo == "estoque":
-        with st.spinner("Modo flash estoque: buscando só SKU/código, nome do produto e quantidade..."):
+        with st.spinner("Modo flash estoque: buscando SKU/código, nome do produto e quantidade..."):
             df = crawl_stock_flash_dataframe(raw_urls, estoque_disponivel=estoque_padrao)
         if df is None or df.empty:
             st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
