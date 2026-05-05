@@ -83,15 +83,44 @@ def _format_price_br(value: float) -> str:
     return f"{float(value):.2f}".replace(".", ",")
 
 
+def _parse_money_value(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    text = text.replace("R$", "").replace(" ", "")
+    text = re.sub(r"[^0-9,.-]", "", text)
+    if not text or text in {"-", ",", "."}:
+        return None
+
+    # Quando existem ponto e vírgula, o último separador é tratado como decimal.
+    # Ex.: 1.234,56 -> 1234.56 | 1,234.56 -> 1234.56
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        parts = text.split(",")
+        if len(parts[-1]) in {1, 2}:
+            text = "".join(parts[:-1]).replace(",", "") + "." + parts[-1]
+        else:
+            text = text.replace(",", "")
+    elif "." in text:
+        parts = text.split(".")
+        if len(parts[-1]) in {1, 2}:
+            text = "".join(parts[:-1]).replace(".", "") + "." + parts[-1]
+        else:
+            text = text.replace(".", "")
+
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
 def _to_number_series(series: pd.Series) -> pd.Series:
-    cleaned = (
-        series.astype(str)
-        .str.replace("R$", "", regex=False)
-        .str.replace(" ", "", regex=False)
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-    )
-    return pd.to_numeric(cleaned, errors="coerce")
+    return series.apply(_parse_money_value).astype(float)
 
 
 def _read_upload(uploaded) -> pd.DataFrame | None:
