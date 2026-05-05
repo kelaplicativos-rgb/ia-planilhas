@@ -40,6 +40,21 @@ def _is_deposito_label(label: object) -> bool:
     return "deposito" in _norm(label)
 
 
+def _is_protected_cadastro_target(label: object) -> bool:
+    n = _norm(label)
+    return n == "id" or n.startswith("id produto") or n == "categoria" or n.startswith("categoria ")
+
+
+def _clear_protected_cadastro_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if _tipo() != "cadastro" or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    out = df.copy()
+    for col in out.columns:
+        if _is_protected_cadastro_target(col):
+            out[col] = ""
+    return out
+
+
 def _safe_price(url: object) -> str:
     try:
         preco = extract_price_from_url(url)
@@ -63,10 +78,16 @@ def _preco_from_urls_fast(urls: pd.Series) -> pd.Series:
 def run_stable_app() -> None:
     original_selectbox = st.selectbox
     original_price = base_app._is_price_target
+    original_suggest = base_app._suggest
+    original_map_df = base_app._map_df
     original_preco_from_urls = getattr(sitefix_patch, "_preco_from_urls", None)
     original_product_crawler = getattr(sitefix_patch, "crawl_product_flash_dataframe", None)
 
     def selectbox(label: str, options, *args: Any, **kwargs: Any):
+        if _tipo() == "cadastro" and _is_protected_cadastro_target(label):
+            st.caption(f"{label}: mantido vazio. O Bling não aceita preencher este campo pela importação.")
+            return ""
+
         if _tipo() == "estoque" and _is_deposito_label(label):
             key = str(kwargs.get("key") or f"stock_deposito_{_norm(label)}")
             return st.text_input(
@@ -89,6 +110,15 @@ def run_stable_app() -> None:
             return False
         return original_price(target)
 
+    def suggest(target: str, source_columns: list[str]) -> str:
+        if _tipo() == "cadastro" and _is_protected_cadastro_target(target):
+            return ""
+        return original_suggest(target, source_columns)
+
+    def map_df(df, targets, mapping, deposito, calculated_price=None):
+        mapped = original_map_df(df, targets, mapping, deposito, calculated_price=calculated_price)
+        return _clear_protected_cadastro_columns(mapped)
+
     def cadastro_crawler(raw_urls: str):
         if original_product_crawler is None:
             return pd.DataFrame()
@@ -97,6 +127,8 @@ def run_stable_app() -> None:
 
     st.selectbox = selectbox
     base_app._is_price_target = is_price
+    base_app._suggest = suggest
+    base_app._map_df = map_df
     sitefix_patch._preco_from_urls = _preco_from_urls_fast
     if original_product_crawler is not None:
         sitefix_patch.crawl_product_flash_dataframe = cadastro_crawler
@@ -105,6 +137,8 @@ def run_stable_app() -> None:
     finally:
         st.selectbox = original_selectbox
         base_app._is_price_target = original_price
+        base_app._suggest = original_suggest
+        base_app._map_df = original_map_df
         if original_preco_from_urls is not None:
             sitefix_patch._preco_from_urls = original_preco_from_urls
         if original_product_crawler is not None:
