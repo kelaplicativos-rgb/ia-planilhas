@@ -191,6 +191,21 @@ def _suggest(target: str, source_columns: list[str]) -> str:
     return best if best_score >= 55 else ""
 
 
+def _preview_origem_no_modelo(df: pd.DataFrame, tipo: str, modelo: pd.DataFrame | None) -> pd.DataFrame:
+    targets = _target_columns(tipo, modelo)
+    out = pd.DataFrame(index=df.index)
+    for target in targets:
+        if _is_deposito_target(target):
+            out[target] = str(st.session_state.get("stable_deposito_mapeamento", "") or "")
+            continue
+        source = _suggest(target, list(df.columns))
+        if source and source in df.columns:
+            out[target] = df[source].astype(str).fillna("")
+        else:
+            out[target] = ""
+    return out.fillna("")
+
+
 def _suggest_cost_column(sources: list[str]) -> str:
     priority_exact = [
         "preco de custo",
@@ -422,7 +437,9 @@ def run_stable_app() -> None:
         return
 
     with st.expander("Preview da origem", expanded=False):
-        st.dataframe(df_origem.head(50), use_container_width=True)
+        df_preview_origem = _preview_origem_no_modelo(df_origem, tipo, modelo)
+        st.caption("Prévia espelhada no modelo Bling anexado. Colunas sem dados capturados ficam vazias.")
+        st.dataframe(df_preview_origem.head(50), use_container_width=True)
 
     targets = _target_columns(tipo, modelo)
     sources = [""] + [str(c) for c in df_origem.columns]
