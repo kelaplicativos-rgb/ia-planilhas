@@ -7,15 +7,13 @@ Regra de produto:
 
 Este módulo corrige casos em que o mapeamento automático joga valores claramente
 incompatíveis em colunas do modelo Bling, por exemplo:
-- URL em Largura/Altura/Profundidade;
-- descrição em campos fiscais;
-- nome de produto em Preço de compra;
+- URL em Largura/Altura/Profundidade/Condição/Tipo/ICMS;
+- descrição em campos fiscais/grupos/preço de compra;
 - GTIN em Código da lista de serviços;
 - link em Tipo do item ou Condição do produto.
 
 Também resgata o link real da página do produto quando ele apareceu em coluna
-errada e coloca no campo correto (`Link Externo`), porque cada produto precisa
-manter o próprio link de origem página por página.
+errada e coloca no campo correto (`Link Externo` e `URL do Produto`).
 """
 
 import re
@@ -104,24 +102,6 @@ def is_short_code(value: object) -> bool:
     return len(text) <= 80
 
 
-def is_text_safe(value: object) -> bool:
-    text = _value(value)
-    if not text:
-        return True
-    return not is_url(text)
-
-
-def is_url_or_images(value: object) -> bool:
-    text = _value(value)
-    if not text:
-        return True
-    # Campo de imagens pode receber múltiplas URLs separadas por |.
-    parts = [part.strip() for part in text.split("|") if part.strip()]
-    if not parts:
-        return True
-    return all(is_url(part) for part in parts)
-
-
 def is_unit(value: object) -> bool:
     text = normalize_name(value).upper()
     if not text:
@@ -133,7 +113,7 @@ def is_allowed_origin(value: object) -> bool:
     text = normalize_name(value)
     if not text:
         return True
-    return text in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "nao informado", "nacional", "importado", "real"}
+    return text in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "nao informado", "nacional", "importado", "real", "nao informado"}
 
 
 def is_allowed_condition(value: object) -> bool:
@@ -162,8 +142,21 @@ def is_product_link_field(column_name: object) -> bool:
     }
 
 
-# Destinos do modelo Bling que são perigosos: só devem receber valor automático
-# se o valor passar numa validação de tipo bem objetiva.
+def is_image_field(column_name: object) -> bool:
+    column = normalize_name(column_name)
+    return "imagem" in column or "imagens" in column or "foto" in column or "fotos" in column
+
+
+def is_url_or_images(value: object) -> bool:
+    text = _value(value)
+    if not text:
+        return True
+    parts = [part.strip() for part in text.split("|") if part.strip()]
+    if not parts:
+        return True
+    return all(is_url(part) for part in parts)
+
+
 COLUMN_VALIDATORS: list[tuple[tuple[str, ...], Callable[[object], bool]]] = [
     (("largura", "altura", "profundidade", "peso", "volumes", "itens p caixa"), is_numeric),
     (("preco", "valor ipi", "preco de custo", "preco de compra"), is_price),
@@ -180,36 +173,54 @@ COLUMN_VALIDATORS: list[tuple[tuple[str, ...], Callable[[object], bool]]] = [
     (("codigo", "cod no fornecedor", "codigo pai", "codigo integracao"), is_short_code),
 ]
 
-# Colunas que nunca devem receber automaticamente nome/URL genéricos sem uma regra objetiva.
-ALWAYS_CLEAR_WHEN_URL = {
+URL_FORBIDDEN_FRAGMENTS = (
+    "largura",
+    "altura",
+    "profundidade",
+    "peso",
     "tipo do item",
     "produto variacao",
-    "classe de enquadramento do ipi",
-    "grupo de tags tags",
-    "grupo de produtos",
-    "valor base icms st para retencao",
-    "valor icms st para retencao",
-    "valor icms proprio do substituto",
-    "informacoes adicionais",
-}
-
-ALWAYS_CLEAR_WHEN_PRODUCT_TEXT = {
-    "classe de enquadramento do ipi",
+    "condicao do produto",
+    "clonar dados do pai",
+    "frete gratis",
+    "origem",
+    "ncm",
+    "cest",
+    "classe de enquadramento",
     "codigo da lista de servicos",
-    "grupo de tags tags",
+    "grupo de tags",
+    "grupo de produtos",
+    "valor base icms",
+    "valor icms st",
+    "valor icms proprio",
+    "preco de compra",
+    "preco de custo",
+    "informacoes adicionais",
+)
+
+PRODUCT_TEXT_FORBIDDEN_FRAGMENTS = (
+    "classe de enquadramento",
+    "codigo da lista de servicos",
+    "grupo de tags",
     "grupo de produtos",
     "preco de compra",
-    "valor base icms st para retencao",
-    "valor icms st para retencao",
-    "valor icms proprio do substituto",
-}
+    "preco de custo",
+    "valor base icms",
+    "valor icms st",
+    "valor icms proprio",
+    "ncm",
+    "cest",
+)
+
+
+def _contains_any(column_norm: str, fragments: tuple[str, ...]) -> bool:
+    return any(fragment in column_norm for fragment in fragments)
 
 
 def _looks_like_product_text(value: object) -> bool:
     text = _value(value)
     if not text or is_url(text):
         return False
-    # Produto costuma ter letras e espaços; campo fiscal/numérico não deveria receber isso.
     return bool(re.search(r"[A-Za-zÀ-ÿ]", text)) and len(text.split()) >= 2
 
 
@@ -223,28 +234,28 @@ def is_value_allowed_for_column(column_name: object, value: object) -> bool:
     if is_product_link_field(column_name):
         return is_product_page_url(text)
 
-    if column in ALWAYS_CLEAR_WHEN_URL and is_url(text):
-        return False
+    if is_image_field(column_name):
+        return is_url_or_images(text)
 
-    if column in ALWAYS_CLEAR_WHEN_PRODUCT_TEXT and _looks_like_product_text(text):
+    # URL de produto só pode ficar em link/url/imagem/video. Nunca em dimensões,
+    # fiscais, condição, grupos ou campos booleanos.
+    if is_url(text):
+        if _contains_any(column, URL_FORBIDDEN_FRAGMENTS):
+            return False
+        return any(word in column for word in ("url", "link", "imagem", "video", "foto"))
+
+    if _looks_like_product_text(text) and _contains_any(column, PRODUCT_TEXT_FORBIDDEN_FRAGMENTS):
         return False
 
     for fragments, validator in COLUMN_VALIDATORS:
         if any(fragment in column for fragment in fragments):
             return validator(text)
 
-    # Regra geral: URL só pode ficar em coluna claramente de URL/link/imagem/vídeo.
-    if is_url(text) and not any(word in column for word in ("url", "link", "imagem", "video")):
-        return False
-
     return True
 
 
-def _find_product_link_column(df: pd.DataFrame) -> Optional[str]:
-    for column in df.columns:
-        if is_product_link_field(column):
-            return str(column)
-    return None
+def _find_product_link_columns(df: pd.DataFrame) -> list[str]:
+    return [str(column) for column in df.columns if is_product_link_field(column)]
 
 
 def _extract_row_product_url(row: pd.Series) -> str:
@@ -256,37 +267,33 @@ def _extract_row_product_url(row: pd.Series) -> str:
 
 
 def repair_product_links(df: pd.DataFrame) -> pd.DataFrame:
-    """Move/resgata o link da página do produto para `Link Externo`.
-
-    Se a coluna `Link Externo` existir e estiver vazia, procura em qualquer campo
-    da linha por uma URL `/produto/...` e preenche corretamente. Não cria coluna
-    nova para não alterar o modelo do Bling.
-    """
+    """Move/resgata o link da página do produto para `Link Externo`/`URL do Produto`."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
     repaired = df.copy()
-    link_column = _find_product_link_column(repaired)
-    if not link_column:
+    link_columns = _find_product_link_columns(repaired)
+    if not link_columns:
         return repaired
 
     for idx, row in repaired.iterrows():
-        current = _value(row.get(link_column, ""))
-        if current and is_product_page_url(current):
-            continue
-
-        product_url = _extract_row_product_url(row)
+        product_url = ""
+        for link_column in link_columns:
+            current = _value(row.get(link_column, ""))
+            if current and is_product_page_url(current):
+                product_url = current
+                break
+        if not product_url:
+            product_url = _extract_row_product_url(row)
         if product_url:
-            repaired.at[idx, link_column] = product_url
+            for link_column in link_columns:
+                repaired.at[idx, link_column] = product_url
 
     return repaired
 
 
 def clean_invalid_preview_mappings(df: pd.DataFrame) -> pd.DataFrame:
-    """Limpa valores claramente incompatíveis com o nome da coluna.
-
-    Retorna uma cópia do DataFrame. Não altera o objeto original.
-    """
+    """Limpa valores claramente incompatíveis com o nome da coluna."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
@@ -297,6 +304,5 @@ def clean_invalid_preview_mappings(df: pd.DataFrame) -> pd.DataFrame:
         if mask_invalid.any():
             cleaned.loc[mask_invalid, column] = ""
 
-    # Segunda passada: se alguma limpeza apagou o link correto, tenta resgatar de novo.
     cleaned = repair_product_links(cleaned)
-    return cleaned
+    return cleaned.fillna("")
