@@ -2,30 +2,44 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.stable import stable_app as base_app
+from bling_app_zero.stable.megacenter_crawler import crawl_site_to_bling_dataframe
 
 
 OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualização de estoque."
-NEW_SITE_INFO = "Captura por site liberada para cadastro e atualização de estoque. Cole links de produtos, categorias ou do fornecedor para criar a base inicial."
+NEW_SITE_INFO = (
+    "Captura por site real liberada para cadastro e atualização de estoque. "
+    "Cole o domínio, categoria ou links de produtos. O sistema procura produtos, entra em cada página "
+    "e tenta capturar descrição, código, preço, imagens e disponibilidade/estoque."
+)
+
+
+def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
+    with st.spinner("Buscando produtos no site, entrando nas páginas e capturando dados..."):
+        df = crawl_site_to_bling_dataframe(raw_urls, estoque_padrao=estoque_padrao)
+    if df is None or df.empty:
+        st.warning("Nenhum produto foi capturado. Tente colar links de categorias ou produtos específicos.")
+        return pd.DataFrame()
+    st.success(f"Captura real finalizada: {len(df)} produto(s) encontrado(s).")
+    return df
 
 
 def run_stable_app() -> None:
-    """Patch BLINGFIX para liberar captura por site também no cadastro.
+    """Patch BLINGFIX para captura real por site.
 
-    O fluxo base ainda desabilitava o botão quando tipo != estoque. Este patch
-    mantém o núcleo estável atual, mas remove essa trava apenas do botão
-    'Gerar base por site' e corrige a mensagem exibida na aba Site.
+    Libera a aba Site para cadastro/estoque e substitui a base simples por um
+    crawler real que descobre links de produtos e visita cada página.
     """
 
     original_button = st.button
     original_info = st.info
+    original_site_df = base_app._site_df
 
     def patched_button(label: str, *args: Any, **kwargs: Any):
         if label == "Gerar base por site":
-            # O próprio fluxo já valida se há base após clicar. Aqui removemos
-            # apenas a trava indevida que bloqueava cadastro de produtos.
             kwargs["disabled"] = False
         return original_button(label, *args, **kwargs)
 
@@ -36,8 +50,10 @@ def run_stable_app() -> None:
 
     st.button = patched_button
     st.info = patched_info
+    base_app._site_df = _crawl_site_df
     try:
         base_app.run_stable_app()
     finally:
         st.button = original_button
         st.info = original_info
+        base_app._site_df = original_site_df
