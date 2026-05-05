@@ -339,18 +339,15 @@ def _extract_prices(text: str, objects: list[dict[str, Any]]) -> tuple[str, str]
     preco_venda = _format_money_from_any(
         _json_first(objects, ["price", "salePrice", "sale_price", "preco", "preço", "valor", "valorVenda"])
     )
-    preco_custo = _format_money_from_any(
-        _json_first(objects, ["oldPrice", "compareAtPrice", "cost", "precoCusto", "preçoCusto", "valorCusto"])
-    )
 
     prices = re.findall(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+\.[0-9]{1,2})", text)
     normal = [_format_money_from_any(p) for p in prices if _format_money_from_any(p)]
 
     if not preco_venda and normal:
         preco_venda = normal[-1] if len(normal) > 1 else normal[0]
-    if not preco_custo and normal:
-        preco_custo = normal[0]
-    return preco_venda, preco_custo
+
+    # Regra solicitada: preço de custo capturado por site deve ficar em branco.
+    return preco_venda, ""
 
 
 def _extract_product_id(url: str, html: str, objects: list[dict[str, Any]]) -> str:
@@ -418,9 +415,7 @@ def _probe_cart_stock(session: requests.Session, product_url: str, product_id: s
         return None
 
     first = _try_cart_quantity(session, product_url, product_id, 1)
-    if first is False:
-        return None
-    if first is None:
+    if first is not True:
         return None
 
     low = 1
@@ -459,7 +454,7 @@ def _availability_from_text(text: str, html: str, objects: list[dict[str, Any]])
         return "Indisponível", False
 
     page = (html + " " + text).lower()
-    has_buy = any(term in page for term in ["comprar agora", ">comprar<", "adicionar ao carrinho", "adicionar", "colocar no carrinho"])
+    has_buy = any(term in page for term in ["comprar agora", ">comprar<", "adicionar ao carrinho", "colocar no carrinho"])
     has_unavailable = any(term in page for term in ["esgotado", "sem estoque", "indisponível", "indisponivel", "fora de estoque", "avise-me"])
 
     if has_buy:
@@ -469,7 +464,7 @@ def _availability_from_text(text: str, html: str, objects: list[dict[str, Any]])
     return "Não identificado", None
 
 
-def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: CrawlConfig) -> int | None:
+def _extract_real_stock(text: str, html: str, objects: list[dict[str, Any]]) -> int | None:
     stock_json = _json_first_number(
         objects,
         [
@@ -504,13 +499,18 @@ def _extract_stock(text: str, html: str, objects: list[dict[str, Any]], config: 
                 return max(0, int(match.group(1)))
             except Exception:
                 pass
+    return None
 
-    availability_label, available = _availability_from_text(text, html, objects)
-    if available is True:
-        return max(1, int(config.estoque_padrao or 1))
-    if available is False:
+
+def _resolve_stock(text: str, html: str, objects: list[dict[str, Any]], availability_label: str, available: bool | None) -> int:
+    real_stock = _extract_real_stock(text, html, objects)
+    if real_stock is not None:
+        return int(real_stock)
+    if available is False or availability_label == "Indisponível":
         return 0
-    return int(config.estoque_padrao or 0)
+    if available is True or availability_label == "Disponível":
+        return 1
+    return 0
 
 
 def _extract_category(soup: BeautifulSoup, objects: list[dict[str, Any]]) -> str:
@@ -544,59 +544,12 @@ def _extract_raw_description(soup: BeautifulSoup, objects: list[dict[str, Any]])
     return _first_meta(soup, ["description", "og:description"])[:2000]
 
 
-def _extract_brand(text: str, objects: list[dict[str, Any]], title: str = "", description: str = "") -> str:
-    brand = _json_first(objects, ["brand", "marca", "manufacturer", "fabricante"])
-    if brand and not brand.startswith(("{", "[")):
-        return brand[:120]
-
-    match = re.search(r"Marca\s*[:\-]\s*([A-Za-z0-9 ._\-]+)", text, flags=re.IGNORECASE)
-    if match:
-        return _clean_text(match.group(1))[:120]
-
-    haystack = f" {title} {description} {text[:1000]} "
+def _extract_brand_from_title(title: str) -> str:
+    haystack = f" {title} "
     for known in KNOWN_BRANDS:
         if re.search(rf"(?<![A-Za-z0-9]){re.escape(known)}(?![A-Za-z0-9])", haystack, flags=re.IGNORECASE):
             return known.upper() if known.lower() == "jbl" else known
     return ""
-
-
-def _persuasive_description(title: str, brand: str, raw_description: str, price: str, availability: str) -> str:
-    title = _clean_text(title)
-    brand = _clean_text(brand)
-    raw = _clean_text(raw_description)
-
-    benefits: list[str] = []
-    search_text = f"{title} {raw}".lower()
-    benefit_map = [
-        ("bluetooth", "conexão Bluetooth prática para usar no dia a dia"),
-        ("portátil", "design portátil para levar para qualquer lugar"),
-        ("bateria", "bateria ideal para acompanhar sua rotina"),
-        ("jbl", "qualidade sonora JBL com graves marcantes"),
-        ("som", "som potente para músicas, vídeos e momentos de lazer"),
-        ("à prova", "mais resistência para usar com tranquilidade"),
-        ("prova", "mais resistência para usar com tranquilidade"),
-        ("wifi", "conexão rápida e prática"),
-        ("led", "visual moderno e chamativo"),
-    ]
-    for token, phrase in benefit_map:
-        if token in search_text and phrase not in benefits:
-            benefits.append(phrase)
-        if len(benefits) >= 3:
-            break
-
-    if not benefits:
-        benefits = ["produto prático, moderno e pronto para facilitar sua rotina"]
-
-    brand_part = f" da {brand}" if brand else ""
-    price_part = f" por R$ {price}" if price else ""
-    availability_part = " Disponível para compra." if availability == "Disponível" else ""
-
-    description = (
-        f"{title}{brand_part} é uma ótima escolha para quem busca qualidade, praticidade e bom custo-benefício. "
-        f"Conta com {', '.join(benefits)}. "
-        f"Garanta o seu{price_part} e aproveite uma compra simples, segura e eficiente.{availability_part}"
-    )
-    return description[:650]
 
 
 def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
@@ -622,23 +575,21 @@ def _extract_product(url: str, config: CrawlConfig) -> dict[str, object] | None:
     preco_venda, preco_custo = _extract_prices(text, objects)
     product_id = _extract_product_id(url, html, objects)
     raw_description = _extract_raw_description(soup, objects)
-    marca = _extract_brand(text, objects_all, title=title, description=raw_description)
+    marca = _extract_brand_from_title(title)
     availability_label, available = _availability_from_text(text, html, objects_all)
-    estoque = _extract_stock(text, html, objects, config)
+    estoque = _resolve_stock(text, html, objects, availability_label, available)
 
     cart_stock = _probe_cart_stock(session, url, product_id or codigo, config)
     if cart_stock is not None:
         estoque = cart_stock
         availability_label = "Disponível" if cart_stock > 0 else "Indisponível"
 
-    if estoque is None:
-        estoque = int(config.estoque_padrao or 0)
     if availability_label == "Não identificado":
         availability_label = "Disponível" if int(estoque) > 0 else "Indisponível"
 
     imagens = _extract_images(soup, url, objects_all)
     categoria = _extract_category(soup, objects_all)
-    descricao_complementar = _persuasive_description(title or codigo or product_id, marca, raw_description, preco_venda, availability_label)
+    descricao_complementar = raw_description
 
     if not title and not codigo:
         return None
