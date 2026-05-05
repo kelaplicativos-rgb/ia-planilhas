@@ -84,7 +84,7 @@ def _split_urls(raw: str) -> list[str]:
     return urls
 
 
-def _site_df(raw_urls: str, deposito: str, estoque_padrao: int) -> pd.DataFrame:
+def _site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     rows = []
     for idx, url in enumerate(_split_urls(raw_urls), start=1):
         parsed = urlparse(url)
@@ -96,7 +96,6 @@ def _site_df(raw_urls: str, deposito: str, estoque_padrao: int) -> pd.DataFrame:
             "Código": code[:60],
             "Descrição": desc,
             "URL do produto": url,
-            "Depósito": deposito,
             "Estoque": int(estoque_padrao),
             "Quantidade": int(estoque_padrao),
         })
@@ -134,14 +133,14 @@ def _suggest(target: str, source_columns: list[str]) -> str:
 def _map_df(df: pd.DataFrame, targets: list[str], mapping: dict[str, str], deposito: str) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     for target in targets:
+        if _norm(target) == "deposito":
+            out[target] = deposito
+            continue
         source = mapping.get(target, "")
         if source and source in df.columns:
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
-    for col in out.columns:
-        if _norm(col) == "deposito" and deposito:
-            out[col] = deposito
     return out.fillna("")
 
 
@@ -156,6 +155,19 @@ def _download_excel(df: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="bling")
     return buffer.getvalue()
+
+
+def _render_deposito_mapping_field() -> str:
+    deposito = st.text_input(
+        "Depósito (OBRIGATÓRIO)",
+        value=str(st.session_state.get("stable_deposito_mapeamento", "")),
+        key="stable_deposito_mapeamento",
+        placeholder="Ex.: Geral",
+        help="Digite aqui o depósito. O valor será aplicado em todas as linhas da coluna Depósito.",
+    ).strip()
+    if deposito:
+        st.caption(f"Será aplicado na coluna Depósito: {deposito}")
+    return deposito
 
 
 def run_stable_app() -> None:
@@ -176,10 +188,6 @@ def run_stable_app() -> None:
         key="stable_tipo",
     )
 
-    deposito = ""
-    if tipo == "estoque":
-        deposito = st.text_input("Nome do depósito", key="stable_deposito", placeholder="Ex.: Depósito Geral").strip()
-
     tab_arquivo, tab_site = st.tabs(["📎 Arquivo", "🌐 Site"])
 
     df_origem = st.session_state.get("stable_df_origem")
@@ -195,12 +203,10 @@ def run_stable_app() -> None:
         raw_urls = st.text_area("Links do fornecedor", key="stable_site_urls", height=120)
         estoque_padrao = st.number_input("Estoque padrão", min_value=0, value=0, step=1, key="stable_estoque_padrao")
         urls = _split_urls(raw_urls)
-        if st.button("Gerar base por site", disabled=(tipo != "estoque" or not urls or not deposito), use_container_width=True):
-            df_origem = _site_df(raw_urls, deposito, int(estoque_padrao))
+        if st.button("Gerar base por site", disabled=(tipo != "estoque" or not urls), use_container_width=True):
+            df_origem = _site_df(raw_urls, int(estoque_padrao))
             st.session_state["stable_df_origem"] = df_origem
             st.success(f"Base por site criada: {len(df_origem)} produtos")
-        if tipo == "estoque" and urls and not deposito:
-            st.warning("Informe o depósito para gerar a base por site.")
 
     st.divider()
 
@@ -222,10 +228,6 @@ def run_stable_app() -> None:
         st.warning("Anexe um arquivo, cole o CSV ou gere uma base por site para continuar.")
         return
 
-    if tipo == "estoque" and not deposito:
-        st.warning("Informe o depósito para continuar na atualização de estoque.")
-        return
-
     with st.expander("Preview da origem", expanded=False):
         st.dataframe(df_origem.head(50), use_container_width=True)
 
@@ -236,10 +238,19 @@ def run_stable_app() -> None:
     st.caption("A sugestão automática já vem preenchida, mas você pode corrigir antes de exportar.")
 
     mapping: dict[str, str] = {}
+    deposito = ""
     for target in targets:
+        if tipo == "estoque" and _norm(target) == "deposito":
+            deposito = _render_deposito_mapping_field()
+            mapping[target] = ""
+            continue
         suggestion = _suggest(target, list(df_origem.columns))
         idx = sources.index(suggestion) if suggestion in sources else 0
         mapping[target] = st.selectbox(target, sources, index=idx, key=f"stable_map_{target}")
+
+    if tipo == "estoque" and not deposito:
+        st.warning("Preencha o campo Depósito (OBRIGATÓRIO) dentro do mapeamento para liberar a exportação.")
+        return
 
     df_mapeado = _map_df(df_origem, targets, mapping, deposito)
     df_export = blindar_df_para_bling(df_mapeado, tipo_operacao_bling=tipo, deposito_nome=deposito)
