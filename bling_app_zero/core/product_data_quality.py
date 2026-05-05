@@ -5,6 +5,7 @@ from __future__ import annotations
 Objetivo:
 - Não mascarar dado ausente com valores falsos, como preço `0,00`.
 - Enriquecer marca quando ela aparece claramente no título/nome do produto.
+- Nunca manter nome da loja/fornecedor como marca do produto.
 - Harmonizar aliases importantes como `Link Externo` e `URL do Produto`.
 - Preservar campos opcionais quando vierem de verdade, como NCM, CEST e preço de custo.
 - Limpar/deduplicar imagens externas sem inventar dados.
@@ -20,6 +21,26 @@ from bling_app_zero.core.brand_from_title import infer_brand_from_title
 
 ZERO_LIKE = {"0", "0,0", "0,00", "0.0", "0.00", "r$ 0,00", "r$0,00"}
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+STORE_BRAND_VALUES = {
+    "mega center eletronicos",
+    "mega center eletrônicos",
+    "megacenter eletronicos",
+    "megacenter eletrônicos",
+    "kel aplicativos",
+    "stoqui",
+}
+TRACKING_IMAGE_FRAGMENTS = (
+    "facebook.com/tr",
+    "facebook.com",
+    "pixel",
+    "analytics",
+    "google-analytics",
+    "gtag",
+    "doubleclick",
+    "tracking",
+    "track",
+    "noscript",
+)
 
 PRICE_COLUMNS = {
     "Preço",
@@ -119,6 +140,12 @@ def _text(value: object) -> str:
     return str(value).strip()
 
 
+def _norm(value: object) -> str:
+    text = _text(value).lower()
+    text = text.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", text)).strip()
+
+
 def _first_value(row: dict[str, str], aliases: Iterable[str]) -> str:
     for key in aliases:
         value = _text(row.get(key))
@@ -135,6 +162,11 @@ def _is_url(value: object) -> bool:
     return bool(URL_RE.search(_text(value)))
 
 
+def _is_tracking_image(url: str) -> bool:
+    low = str(url or "").lower()
+    return any(fragment in low for fragment in TRACKING_IMAGE_FRAGMENTS)
+
+
 def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
     text = _text(value)
     if not text:
@@ -149,6 +181,8 @@ def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
             continue
         lower = url.lower()
         if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon")):
+            continue
+        if _is_tracking_image(url):
             continue
         if url in seen:
             continue
@@ -191,15 +225,26 @@ def _harmonize_images(cleaned: dict[str, str]) -> None:
     final = _normalize_pipe_urls("|".join(images))
     if final:
         cleaned["URL Imagens Externas"] = final
+    elif "URL Imagens Externas" in cleaned:
+        cleaned.pop("URL Imagens Externas", None)
+
+
+def _is_store_brand(value: object) -> bool:
+    return _norm(value) in STORE_BRAND_VALUES
 
 
 def _harmonize_brand_from_title(cleaned: dict[str, str]) -> None:
-    if cleaned.get("Marca"):
-        return
     title = _first_value(cleaned, TITLE_ALIASES)
-    brand = infer_brand_from_title(title)
-    if brand:
-        cleaned["Marca"] = brand
+    title_brand = infer_brand_from_title(title)
+
+    current_brand = cleaned.get("Marca", "")
+    if current_brand and not _is_store_brand(current_brand):
+        return
+
+    if title_brand:
+        cleaned["Marca"] = title_brand
+    elif _is_store_brand(current_brand):
+        cleaned.pop("Marca", None)
 
 
 def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
