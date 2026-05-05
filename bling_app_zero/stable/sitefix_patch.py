@@ -7,6 +7,7 @@ import streamlit as st
 
 from bling_app_zero.stable import stable_app as base_app
 from bling_app_zero.stable.megacenter_crawler import crawl_site_to_bling_dataframe
+from bling_app_zero.stable.session_vault import guardar_df
 
 
 OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualização de estoque."
@@ -23,17 +24,12 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     if df is None or df.empty:
         st.warning("Nenhum produto foi capturado. Tente colar links de categorias ou produtos específicos.")
         return pd.DataFrame()
-    st.success(f"Captura real finalizada: {len(df)} produto(s) encontrado(s).")
+    df = guardar_df("stable_df_origem", df)
+    st.success(f"Captura real finalizada e travada: {len(df)} produto(s) encontrado(s).")
     return df
 
 
 def run_stable_app() -> None:
-    """Patch BLINGFIX para captura real por site.
-
-    Libera a aba Site para cadastro/estoque e substitui a base simples por um
-    crawler real que descobre links de produtos e visita cada página.
-    """
-
     original_button = st.button
     original_info = st.info
     original_site_df = base_app._site_df
