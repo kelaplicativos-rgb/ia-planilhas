@@ -3,15 +3,17 @@ from __future__ import annotations
 """Executor de UI para o Flash Amplo página por página.
 
 Use este módulo no botão/fluxo do modo Flash Amplo. Ele executa a captura rápida
-paralela, salva os DataFrames nas chaves esperadas pelo app e retorna o resultado.
+paralela, normaliza dados reais, salva os DataFrames nas chaves esperadas pelo
+app e retorna o resultado.
 """
 
-from typing import Iterable, Optional
+from typing import Iterable
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.instant_scraper import run_flash_amplo_page_mode
+from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 
@@ -32,12 +34,21 @@ def _normalize_urls(urls: Iterable[str] | str) -> list[str]:
     return normalized
 
 
-def salvar_resultado_flash_amplo(df: pd.DataFrame) -> pd.DataFrame:
-    """Salva o resultado nas chaves usadas pelo fluxo de origem/mapeamento."""
+def preparar_dataframe_flash_amplo(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica normalização e blindagem no resultado do Flash Amplo."""
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
+    if df.empty:
+        return df.copy()
 
-    cleaned = clean_invalid_preview_mappings(df.copy()) if not df.empty else df.copy()
+    normalized = normalize_product_dataframe(df.copy())
+    cleaned = clean_invalid_preview_mappings(normalized.copy())
+    return cleaned
+
+
+def salvar_resultado_flash_amplo(df: pd.DataFrame) -> pd.DataFrame:
+    """Salva o resultado nas chaves usadas pelo fluxo de origem/mapeamento."""
+    cleaned = preparar_dataframe_flash_amplo(df)
 
     st.session_state["df_origem"] = cleaned.copy()
     st.session_state["df_origem_site"] = cleaned.copy()
