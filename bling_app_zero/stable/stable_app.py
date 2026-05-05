@@ -47,7 +47,7 @@ ALIAS = {
     "NCM": ["ncm"],
     "GTIN/EAN": ["gtin", "ean", "codigo de barras", "código de barras", "barcode", "barra", "barras"],
     "Preço unitário": ["preco", "preço", "valor", "preco venda", "preço venda", "preco unitario", "preço unitário"],
-    "Preço de custo": ["custo", "preco custo", "preço custo", "valor custo"],
+    "Preço de custo": ["custo", "preco custo", "preço custo", "valor custo", "cost"],
     "Marca": ["marca", "brand", "fabricante"],
     "Categoria": ["categoria", "grupo", "departamento"],
     "URL imagens externas": ["imagem", "imagens", "foto", "fotos", "url imagem", "image"],
@@ -190,20 +190,56 @@ def _suggest(target: str, source_columns: list[str]) -> str:
     return best if best_score >= 55 else ""
 
 
+def _suggest_cost_column(sources: list[str]) -> str:
+    priority_exact = [
+        "preco de custo",
+        "preco custo",
+        "valor custo",
+        "custo unitario",
+        "custo",
+        "cost",
+    ]
+    priority_contains = [
+        "preco de custo",
+        "preco custo",
+        "valor custo",
+        "custo unitario",
+        "custo",
+        "cost",
+    ]
+
+    for source in sources:
+        normalized = _norm(source)
+        if normalized in priority_exact:
+            return source
+
+    for source in sources:
+        normalized = _norm(source)
+        if any(token in normalized for token in priority_contains):
+            return source
+
+    return ""
+
+
 def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, object]:
     with st.expander("🧮 Precificação", expanded=False):
-        st.caption("Fórmula: Preço = (Custo + Valor fixo) / (1 - ((Lucro % + Taxas %) / 100)).")
+        st.caption("Fórmula: Preço = (Custo + Valor fixo) / (1 - ((Margem % + Taxas %) / 100)).")
         usar_preco_calculado = st.checkbox(
             "Aplicar preço calculado automaticamente na coluna de preço",
             value=bool(st.session_state.get("stable_pricing_apply", True)),
             key="stable_pricing_apply",
         )
+
+        default_cost_col = _suggest_cost_column(sources)
+        current_cost_col = str(st.session_state.get("stable_pricing_cost_col", default_cost_col) or default_cost_col)
+        cost_index = sources.index(current_cost_col) if current_cost_col in sources else 0
+
         custo_col = st.selectbox(
             "Coluna de custo/preço base",
             options=sources,
-            index=0,
+            index=cost_index,
             key="stable_pricing_cost_col",
-            help="Escolha a coluna do fornecedor usada como custo. Se deixar vazio, uso o custo manual.",
+            help="Pré-seleciona automaticamente colunas como custo, preço de custo, valor custo ou cost.",
         )
         custo_manual = st.number_input(
             "Custo manual fallback",
@@ -213,11 +249,11 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
             format="%.2f",
             key="stable_pricing_manual_cost",
         )
-        lucro_percentual = st.number_input(
-            "Lucro desejado (%)",
+        margem_percentual = st.number_input(
+            "Margem desejada (%)",
             min_value=0.0,
             max_value=99.99,
-            value=float(st.session_state.get("stable_pricing_profit", 30.0) or 30.0),
+            value=float(st.session_state.get("stable_pricing_profit", 50.0) or 50.0),
             step=0.01,
             format="%.2f",
             key="stable_pricing_profit",
@@ -245,9 +281,9 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
         else:
             base = pd.Series([float(custo_manual)] * len(df), index=df.index)
 
-        total_percentual = float(lucro_percentual) + float(taxas_percentual)
+        total_percentual = float(margem_percentual) + float(taxas_percentual)
         if total_percentual >= 95:
-            st.error("Lucro + taxas está muito alto. Use menos de 95% para evitar preço explosivo.")
+            st.error("Margem + taxas está muito alto. Use menos de 95% para evitar preço explosivo.")
             calculated = pd.Series([0.0] * len(df), index=df.index)
         else:
             divisor = 1 - (total_percentual / 100.0)
@@ -255,6 +291,8 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
 
         st.session_state["stable_pricing_series"] = calculated
         st.success(f"Preço calculado pronto. Exemplo: R$ {_format_price_br(float(calculated.iloc[0])) if len(calculated) else '0,00'}")
+        if default_cost_col:
+            st.caption(f"Coluna de custo detectada automaticamente: {default_cost_col}")
         return {"enabled": bool(usar_preco_calculado), "series": calculated}
 
 
