@@ -23,18 +23,6 @@ CADASTRO_SITE_COLUMNS = [
     "URL do produto",
 ]
 
-_REMOVE_FROM_CADASTRO = {
-    "estoque",
-    "quantidade",
-    "disponibilidade",
-    "origem do estoque",
-    "sku site",
-    "balanco obrigatorio",
-    "balanço obrigatório",
-    "balanco",
-    "balanço",
-}
-
 _GENERIC_NAMES = {
     "mega center eletrônicos",
     "mega center eletronicos",
@@ -43,6 +31,57 @@ _GENERIC_NAMES = {
     "produtos",
     "loja",
 }
+
+_BRANDS = [
+    "H'Maston",
+    "H Maston",
+    "HMaston",
+    "Kap",
+    "Gold",
+    "JBL",
+    "Samsung",
+    "Apple",
+    "iPhone",
+    "Xiaomi",
+    "Redmi",
+    "Motorola",
+    "LG",
+    "Lenovo",
+    "HP",
+    "Dell",
+    "Asus",
+    "Acer",
+    "Intelbras",
+    "Multilaser",
+    "Elgin",
+    "Mondial",
+    "Philco",
+    "Britania",
+    "Kingston",
+    "Sandisk",
+    "Seagate",
+    "Western Digital",
+    "TP-Link",
+    "D-Link",
+    "Logitech",
+    "Razer",
+    "Redragon",
+    "Exbom",
+    "Vinik",
+    "Baseus",
+    "Anker",
+    "Ugreen",
+    "Hoco",
+    "Kaidi",
+    "Inova",
+    "Geonav",
+    "Aquario",
+    "Hayom",
+    "Knup",
+    "C3Tech",
+    "Fortrek",
+    "Goldentec",
+]
 
 
 def _norm(value: object) -> str:
@@ -79,13 +118,6 @@ def _serie(df: pd.DataFrame, aliases: list[str], default: object = "") -> pd.Ser
     return pd.Series([default] * len(df), index=df.index)
 
 
-def _url_from_row(value: object, fallback: object = "") -> str:
-    raw = _clean(value)
-    if raw:
-        return raw
-    return _clean(fallback)
-
-
 def _name_from_url(url: object, fallback: object = "") -> str:
     raw = _clean(url)
     if raw:
@@ -119,6 +151,21 @@ def _is_generic_name(value: object) -> bool:
     if not text:
         return True
     return text in {_norm(x) for x in _GENERIC_NAMES} or text.endswith("mega center eletronicos")
+
+
+def _brand_from_title(title: object) -> str:
+    normalized_title = _norm(title)
+    if not normalized_title:
+        return ""
+    for brand in _BRANDS:
+        normalized_brand = _norm(brand)
+        if re.search(rf"(^|\s){re.escape(normalized_brand)}($|\s)", normalized_title):
+            if normalized_brand in {"iphone", "redmi"}:
+                return "Apple" if normalized_brand == "iphone" else "Xiaomi"
+            if normalized_brand == "h maston" or normalized_brand == "hmaston":
+                return "H'Maston"
+            return brand
+    return ""
 
 
 def _fallback_price(urls: pd.Series, current: pd.Series) -> pd.Series:
@@ -157,43 +204,23 @@ def normalize_cadastro_site_dataframe(df: pd.DataFrame, raw_urls: str = "") -> p
         index=df.index,
     )
 
-    descricao_complementar = _serie(
-        df,
-        [
-            "Descrição complementar",
-            "Descricao complementar",
-            "Detalhes",
-            "Descrição longa",
-            "Descricao longa",
-            "Complemento",
-            "Informações",
-            "Informacoes",
-        ],
-    )
-
     preco = _serie(df, ["Preço unitário", "Preco unitario", "Preço", "Preco", "Valor", "price", "Preço venda", "Preco venda"])
     preco = _fallback_price(urls, preco)
 
-    imagens = _serie(df, ["URL imagens externas", "Imagens", "Imagem", "Fotos", "Foto", "image", "images"])
+    imagens = _serie(df, ["URL imagens externas", "URL Imagens Externas", "Imagens", "Imagem", "Fotos", "Foto", "image", "images"])
     imagens = imagens.astype(str).str.replace(",", "|", regex=False).str.replace(";", "|", regex=False)
 
     out["Código"] = codigo
     out["Descrição"] = nome
-    out["Descrição complementar"] = descricao_complementar
+    out["Descrição complementar"] = ""
     out["Unidade"] = _serie(df, ["Unidade", "UN", "UND"], default="UN")
     out["NCM"] = _serie(df, ["NCM"])
     out["GTIN/EAN"] = _serie(df, ["GTIN/EAN", "GTIN", "EAN", "Código de barras", "Codigo de barras", "Barcode"])
     out["Preço unitário"] = preco
-    out["Preço de custo"] = _serie(df, ["Preço de custo", "Preco de custo", "Custo", "Valor custo"])
-    out["Marca"] = _serie(df, ["Marca", "Brand", "Fabricante"])
+    out["Preço de custo"] = ""
+    out["Marca"] = nome.map(_brand_from_title)
     out["Categoria"] = _serie(df, ["Categoria", "Grupo", "Departamento", "Breadcrumb"])
     out["URL imagens externas"] = imagens
     out["URL do produto"] = urls
 
-    for col in df.columns:
-        if _norm(col) in _REMOVE_FROM_CADASTRO:
-            continue
-        if str(col) not in out.columns:
-            out[str(col)] = df[col].astype(str).fillna("")
-
-    return out.fillna("")
+    return out[CADASTRO_SITE_COLUMNS].fillna("")
