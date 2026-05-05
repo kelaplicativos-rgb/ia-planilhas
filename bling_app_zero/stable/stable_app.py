@@ -12,6 +12,8 @@ from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import blindar_df_para_bling, dataframe_para_csv_bytes
 
 
+CALCULATED_PRICE_OPTION = "🧮 Preço calculado pela precificação"
+
 CADASTRO_DEFAULT_COLUMNS = [
     "Código",
     "Descrição",
@@ -64,6 +66,26 @@ def _norm(value: object) -> str:
 
 def _is_deposito_target(target: object) -> bool:
     return "deposito" in _norm(target)
+
+
+def _is_price_target(target: object) -> bool:
+    name = _norm(target)
+    return "preco unitario" in name or "preco venda" in name or name == "preco" or "preco obrigatorio" in name
+
+
+def _format_price_br(value: float) -> str:
+    return f"{float(value):.2f}".replace(".", ",")
+
+
+def _to_number_series(series: pd.Series) -> pd.Series:
+    cleaned = (
+        series.astype(str)
+        .str.replace("R$", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
+    return pd.to_numeric(cleaned, errors="coerce")
 
 
 def _read_upload(uploaded) -> pd.DataFrame | None:
@@ -134,14 +156,76 @@ def _suggest(target: str, source_columns: list[str]) -> str:
     return best if best_score >= 55 else ""
 
 
-def _map_df(df: pd.DataFrame, targets: list[str], mapping: dict[str, str], deposito: str) -> pd.DataFrame:
+def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, object]:
+    with st.expander("🧮 Precificação", expanded=False):
+        st.caption("Calcule o preço de venda e use no campo Preço unitário do mapeamento.")
+        custo_col = st.selectbox(
+            "Coluna de custo/preço base",
+            options=sources,
+            index=0,
+            key="stable_pricing_cost_col",
+            help="Escolha a coluna do fornecedor usada como custo. Se deixar vazio, uso o custo manual.",
+        )
+        custo_manual = st.number_input(
+            "Custo manual fallback",
+            min_value=0.0,
+            value=float(st.session_state.get("stable_pricing_manual_cost", 0.0) or 0.0),
+            step=1.0,
+            key="stable_pricing_manual_cost",
+        )
+        lucro_percentual = st.number_input(
+            "Lucro desejado (%)",
+            min_value=0.0,
+            value=float(st.session_state.get("stable_pricing_profit", 30.0) or 30.0),
+            step=1.0,
+            key="stable_pricing_profit",
+        )
+        taxas_percentual = st.number_input(
+            "Taxas/despesas (%)",
+            min_value=0.0,
+            value=float(st.session_state.get("stable_pricing_fees", 0.0) or 0.0),
+            step=1.0,
+            key="stable_pricing_fees",
+        )
+        valor_fixo = st.number_input(
+            "Valor fixo adicional por produto",
+            min_value=0.0,
+            value=float(st.session_state.get("stable_pricing_fixed", 0.0) or 0.0),
+            step=0.5,
+            key="stable_pricing_fixed",
+        )
+
+        if custo_col and custo_col in df.columns:
+            base = _to_number_series(df[custo_col]).fillna(float(custo_manual))
+        else:
+            base = pd.Series([float(custo_manual)] * len(df), index=df.index)
+
+        calculated = (base * (1 + (float(lucro_percentual) + float(taxas_percentual)) / 100.0)) + float(valor_fixo)
+        calculated = calculated.round(2)
+        st.session_state["stable_pricing_series"] = calculated
+        st.success(f"Preço calculado pronto. Exemplo: R$ {_format_price_br(float(calculated.iloc[0])) if len(calculated) else '0,00'}")
+        return {"enabled": True, "series": calculated}
+
+
+def _map_df(
+    df: pd.DataFrame,
+    targets: list[str],
+    mapping: dict[str, str],
+    deposito: str,
+    calculated_price: pd.Series | None = None,
+) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     for target in targets:
         if _is_deposito_target(target):
             out[target] = deposito
             continue
         source = mapping.get(target, "")
-        if source and source in df.columns:
+        if source == CALCULATED_PRICE_OPTION:
+            if isinstance(calculated_price, pd.Series) and not calculated_price.empty:
+                out[target] = calculated_price.reindex(df.index).fillna(0).map(lambda v: _format_price_br(float(v)))
+            else:
+                out[target] = ""
+        elif source and source in df.columns:
             out[target] = df[source].astype(str).fillna("")
         else:
             out[target] = ""
@@ -241,6 +325,11 @@ def run_stable_app() -> None:
     st.subheader("Mapeamento")
     st.caption("A sugestão automática já vem preenchida, mas você pode corrigir antes de exportar.")
 
+    has_price_target = any(_is_price_target(t) for t in targets)
+    pricing_data = {"enabled": False, "series": None}
+    if has_price_target:
+        pricing_data = _render_pricing_tool(df_origem, sources)
+
     mapping: dict[str, str] = {}
     deposito = ""
     for target in targets:
@@ -248,15 +337,23 @@ def run_stable_app() -> None:
             deposito = _render_deposito_mapping_field(str(target))
             mapping[target] = ""
             continue
-        suggestion = _suggest(target, list(df_origem.columns))
-        idx = sources.index(suggestion) if suggestion in sources else 0
-        mapping[target] = st.selectbox(target, sources, index=idx, key=f"stable_map_{target}")
+
+        extra_sources = sources.copy()
+        if _is_price_target(target):
+            extra_sources = [CALCULATED_PRICE_OPTION] + extra_sources
+            default_source = CALCULATED_PRICE_OPTION
+        else:
+            default_source = _suggest(target, list(df_origem.columns))
+
+        idx = extra_sources.index(default_source) if default_source in extra_sources else 0
+        mapping[target] = st.selectbox(target, extra_sources, index=idx, key=f"stable_map_{target}")
 
     if tipo == "estoque" and not deposito:
         st.warning("Preencha o campo de depósito obrigatório dentro do mapeamento para liberar a exportação.")
         return
 
-    df_mapeado = _map_df(df_origem, targets, mapping, deposito)
+    calculated_price = pricing_data.get("series") if isinstance(pricing_data, dict) else None
+    df_mapeado = _map_df(df_origem, targets, mapping, deposito, calculated_price=calculated_price)
     df_export = blindar_df_para_bling(df_mapeado, tipo_operacao_bling=tipo, deposito_nome=deposito)
     st.session_state["stable_df_export"] = df_export
 
