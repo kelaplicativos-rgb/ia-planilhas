@@ -164,7 +164,7 @@ def _suggest(target: str, source_columns: list[str]) -> str:
 
 def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, object]:
     with st.expander("🧮 Precificação", expanded=False):
-        st.caption("Calcule o preço de venda e use no campo Preço unitário do mapeamento.")
+        st.caption("Fórmula: Preço = (Custo + Valor fixo) / (1 - ((Lucro % + Taxas %) / 100)).")
         usar_preco_calculado = st.checkbox(
             "Aplicar preço calculado automaticamente na coluna de preço",
             value=bool(st.session_state.get("stable_pricing_apply", True)),
@@ -182,20 +182,25 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
             min_value=0.0,
             value=float(st.session_state.get("stable_pricing_manual_cost", 0.0) or 0.0),
             step=1.0,
+            format="%.2f",
             key="stable_pricing_manual_cost",
         )
         lucro_percentual = st.number_input(
             "Lucro desejado (%)",
             min_value=0.0,
+            max_value=99.99,
             value=float(st.session_state.get("stable_pricing_profit", 30.0) or 30.0),
-            step=1.0,
+            step=0.01,
+            format="%.2f",
             key="stable_pricing_profit",
         )
         taxas_percentual = st.number_input(
             "Taxas/despesas (%)",
             min_value=0.0,
+            max_value=99.99,
             value=float(st.session_state.get("stable_pricing_fees", 0.0) or 0.0),
-            step=1.0,
+            step=0.01,
+            format="%.2f",
             key="stable_pricing_fees",
         )
         valor_fixo = st.number_input(
@@ -203,6 +208,7 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
             min_value=0.0,
             value=float(st.session_state.get("stable_pricing_fixed", 0.0) or 0.0),
             step=0.5,
+            format="%.2f",
             key="stable_pricing_fixed",
         )
 
@@ -211,8 +217,14 @@ def _render_pricing_tool(df: pd.DataFrame, sources: list[str]) -> dict[str, obje
         else:
             base = pd.Series([float(custo_manual)] * len(df), index=df.index)
 
-        calculated = (base * (1 + (float(lucro_percentual) + float(taxas_percentual)) / 100.0)) + float(valor_fixo)
-        calculated = calculated.round(2)
+        total_percentual = float(lucro_percentual) + float(taxas_percentual)
+        if total_percentual >= 95:
+            st.error("Lucro + taxas está muito alto. Use menos de 95% para evitar preço explosivo.")
+            calculated = pd.Series([0.0] * len(df), index=df.index)
+        else:
+            divisor = 1 - (total_percentual / 100.0)
+            calculated = ((base + float(valor_fixo)) / divisor).round(2)
+
         st.session_state["stable_pricing_series"] = calculated
         st.success(f"Preço calculado pronto. Exemplo: R$ {_format_price_br(float(calculated.iloc[0])) if len(calculated) else '0,00'}")
         return {"enabled": bool(usar_preco_calculado), "series": calculated}
