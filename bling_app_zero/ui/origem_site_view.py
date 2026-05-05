@@ -8,7 +8,11 @@ import streamlit as st
 from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.origem_site_config import MOTORES_SITE, PRESETS
 from bling_app_zero.ui.origem_site_execution import executar_busca
-from bling_app_zero.ui.origem_site_state import limpar_busca_site, guardar_resultado
+from bling_app_zero.ui.origem_site_state import (
+    limpar_busca_site,
+    guardar_resultado,
+    restaurar_resultado_site_travado,
+)
 from bling_app_zero.ui.origem_site_utils import extrair_urls, url_valida
 from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
@@ -30,13 +34,17 @@ def _obter_df_atual_site() -> pd.DataFrame | None:
     df_origem = st.session_state.get("df_origem")
 
     if isinstance(df_preview, pd.DataFrame) and not df_preview.empty:
-        return df_preview
+        return df_preview.copy()
 
     if isinstance(df_saida, pd.DataFrame) and not df_saida.empty:
-        return df_saida
+        return df_saida.copy()
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
-        return df_origem
+        return df_origem.copy()
+
+    restaurado = restaurar_resultado_site_travado()
+    if isinstance(restaurado, pd.DataFrame) and not restaurado.empty:
+        return restaurado.copy()
 
     return None
 
@@ -46,10 +54,14 @@ def _obter_df_bruto_site() -> pd.DataFrame | None:
     df_origem = st.session_state.get("df_origem")
 
     if isinstance(df_saida, pd.DataFrame) and not df_saida.empty:
-        return df_saida
+        return df_saida.copy()
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
-        return df_origem
+        return df_origem.copy()
+
+    restaurado = restaurar_resultado_site_travado()
+    if isinstance(restaurado, pd.DataFrame) and not restaurado.empty:
+        return restaurado.copy()
 
     return None
 
@@ -279,8 +291,18 @@ def _criar_monitor_progresso(total_urls: int):
 
 
 def render_origem_site_panel() -> None:
+    # Blindagem: antes de desenhar a tela, tenta restaurar a última captura por site.
+    restaurar_resultado_site_travado()
+
     with st.container(border=True):
         st.markdown("#### 🚀 Captura por site (ULTRA automático)")
+
+        total_travado = int(st.session_state.get("origem_site_total_produtos") or 0)
+        if st.session_state.get("origem_site_resultado_travado") and total_travado > 0:
+            st.success(
+                f"🔒 Captura por site travada: {total_travado} produtos preservados. "
+                "Você pode atualizar o navegador sem perder esta busca."
+            )
 
         urls_texto = st.text_area("URLs", height=100)
         urls = extrair_urls(urls_texto)
