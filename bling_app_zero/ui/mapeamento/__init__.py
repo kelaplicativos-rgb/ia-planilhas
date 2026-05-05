@@ -20,8 +20,9 @@ quebrar o app.
 from importlib import import_module
 from typing import Callable, Optional
 
-import pandas as pd
 import streamlit as st
+
+from bling_app_zero.ui.origem_preview import render_origem_preview
 
 
 _RENDER_NAMES: tuple[str, ...] = (
@@ -30,17 +31,6 @@ _RENDER_NAMES: tuple[str, ...] = (
     "render_page",
     "render",
     "main",
-)
-
-_ORIGEM_KEYS: tuple[str, ...] = (
-    "df_origem",
-    "df_origem_site",
-    "df_origem_upload",
-    "df_origem_xml",
-    "df_capturado_site",
-    "df_preview_origem",
-    "df_saida",
-    "df_final",
 )
 
 
@@ -59,17 +49,7 @@ def _resolver_page_render() -> Optional[Callable[[], None]]:
 
 
 def _preview_origem_fallback(max_rows: int = 30) -> None:
-    for key in _ORIGEM_KEYS:
-        value = st.session_state.get(key)
-        if isinstance(value, pd.DataFrame) and not value.empty:
-            st.caption(f"Prévia da origem preservada: {len(value)} linhas × {len(value.columns)} colunas")
-            st.dataframe(value.head(max_rows), use_container_width=True, hide_index=True)
-            return
-
-    st.warning(
-        "Nenhum dado de origem foi encontrado para mapear. "
-        "Volte para Origem dos dados e carregue/capture os produtos novamente."
-    )
+    render_origem_preview(title="Preview da origem", max_rows=max_rows)
 
 
 def render_mapeamento() -> None:
