@@ -12,6 +12,7 @@ from bling_app_zero.ui.flash_amplo_execution import executar_flash_amplo_pagina_
 from bling_app_zero.ui.mapeamento.conservative_auto import choose_safe_source
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
+FLASH_MAX_PRODUCTS = 5000
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
 EST_COLS = ["Código", "Descrição", "GTIN/EAN", "Depósito", "Estoque", "Quantidade"]
 
@@ -170,10 +171,9 @@ def run_stable_app() -> None:
 
     with tab_site:
         raw = st.text_area("Links do fornecedor", key="stable_site_urls", height=120)
-        limit = st.number_input("Limite de produtos", min_value=1, max_value=5000, value=500, step=50)
         links = _urls(raw)
         if st.button("Gerar base por site", disabled=not links, use_container_width=True):
-            df = executar_flash_amplo_pagina_por_pagina(links, max_products=int(limit), max_workers=12, show_progress=True)
+            df = executar_flash_amplo_pagina_por_pagina(links, max_products=FLASH_MAX_PRODUCTS, max_workers=12, show_progress=True)
             if _has_df(df):
                 df = guardar_df("stable_df_origem", df)
 
