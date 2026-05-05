@@ -15,14 +15,15 @@ OLD_SITE_INFO = "Captura por site está liberada neste núcleo para atualizaçã
 NEW_SITE_INFO = (
     "Captura por site em modo flash. "
     "Cadastro busca dados de cadastro sem consultar estoque. "
-    "Atualização de estoque busca SKU/código, nome do produto e quantidade, "
-    "mantendo o preview final no mesmo espelho do modelo Bling anexado."
+    "Atualização de estoque busca SKU, nome do produto e valor/saldo, "
+    "mantendo o preview no espelho do modelo Bling anexado."
 )
 
 ESTOQUE_DISPONIVEL_PADRAO_UI = 1000
 
-# Colunas mínimas usadas quando nenhum modelo Bling foi anexado.
-ESTOQUE_SITE_COLUMNS = ["Código", "Descrição", "Depósito", "Estoque", "Quantidade"]
+# Fallback usado somente quando nenhum modelo Bling foi anexado.
+# O modelo saldo_estoque.xlsx, quando anexado, sempre prevalece.
+ESTOQUE_SITE_COLUMNS = ["SKU", "Produto", "Valor", "Estoque", "Quantidade"]
 
 
 def _tipo_operacao_atual() -> str:
@@ -46,32 +47,72 @@ def _normalizar_estoque_input(valor: object) -> int:
         return ESTOQUE_DISPONIVEL_PADRAO_UI
 
 
-def _limpar_df_estoque_site(df: pd.DataFrame, deposito: str = "") -> pd.DataFrame:
+def _serie(df: pd.DataFrame, coluna: str, padrao: object = "") -> pd.Series:
+    if isinstance(df, pd.DataFrame) and coluna in df.columns:
+        return df[coluna].astype(str).fillna("")
+    return pd.Series([padrao] * len(df), index=df.index)
+
+
+def _limpar_df_estoque_site(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=ESTOQUE_SITE_COLUMNS)
 
-    out = pd.DataFrame(index=df.index)
-    out["Código"] = df["Código"].astype(str).fillna("") if "Código" in df.columns else ""
-    out["Descrição"] = df["Descrição"].astype(str).fillna("") if "Descrição" in df.columns else ""
+    codigo = _serie(df, "Código")
+    if not codigo.astype(str).str.strip().any():
+        codigo = _serie(df, "SKU site")
 
-    if "Depósito" in df.columns:
-        out["Depósito"] = df["Depósito"].astype(str).fillna("")
+    nome = _serie(df, "Descrição")
+    if not nome.astype(str).str.strip().any():
+        nome = _serie(df, "Produto")
+
+    if "Valor" in df.columns:
+        valor = df["Valor"]
+    elif "Estoque" in df.columns:
+        valor = df["Estoque"]
+    elif "Quantidade" in df.columns:
+        valor = df["Quantidade"]
     else:
-        out["Depósito"] = str(deposito or st.session_state.get("stable_deposito_mapeamento", "") or "")
+        valor = pd.Series([0] * len(df), index=df.index)
 
     if "Estoque" in df.columns:
-        out["Estoque"] = df["Estoque"]
+        estoque = df["Estoque"]
     elif "Quantidade" in df.columns:
-        out["Estoque"] = df["Quantidade"]
+        estoque = df["Quantidade"]
     else:
-        out["Estoque"] = 0
+        estoque = valor
 
     if "Quantidade" in df.columns:
-        out["Quantidade"] = df["Quantidade"]
+        quantidade = df["Quantidade"]
     else:
-        out["Quantidade"] = out["Estoque"]
+        quantidade = estoque
 
-    return out[ESTOQUE_SITE_COLUMNS].fillna("")
+    out = pd.DataFrame(index=df.index)
+
+    # Colunas técnicas capturadas do site.
+    out["Código"] = codigo
+    out["SKU"] = codigo
+    out["SKU site"] = codigo
+    out["Descrição"] = nome
+    out["Produto"] = nome
+    out["Nome"] = nome
+    out["Nome do produto"] = nome
+    out["Valor"] = valor
+    out["Estoque"] = estoque
+    out["Quantidade"] = quantidade
+
+    # Colunas do modelo saldo_estoque.xlsx que não existem no site.
+    # Elas ficam vazias, mas disponíveis para o espelho do modelo anexado.
+    out["ID"] = ""
+    out["Data"] = ""
+    out["Depósito"] = ""
+    out["Deposito"] = ""
+    out["Observações"] = ""
+    out["Observacoes"] = ""
+
+    if "URL do produto" in df.columns:
+        out["URL do produto"] = df["URL do produto"].astype(str).fillna("")
+
+    return out.fillna("")
 
 
 def _remover_colunas_estoque_do_cadastro(df: pd.DataFrame) -> pd.DataFrame:
@@ -108,7 +149,7 @@ def _crawl_site_df(raw_urls: str, estoque_padrao: int) -> pd.DataFrame:
     estoque_padrao = _normalizar_estoque_input(estoque_padrao)
 
     if tipo == "estoque":
-        with st.spinner("Modo flash estoque: buscando SKU/código, nome do produto e quantidade..."):
+        with st.spinner("Modo flash estoque: buscando nome do produto, SKU e valor/saldo..."):
             df = crawl_stock_flash_dataframe(raw_urls, estoque_disponivel=estoque_padrao)
         if df is None or df.empty:
             st.warning("Nenhum estoque foi capturado. Tente colar links de categorias ou produtos específicos.")
@@ -155,7 +196,7 @@ def run_stable_app() -> None:
         if str(label) == "Estoque padrão":
             if tipo != "estoque":
                 return ESTOQUE_DISPONIVEL_PADRAO_UI
-            label = "Estoque para disponível sem quantidade real"
+            label = "Valor/saldo para disponível sem quantidade real"
             kwargs["value"] = _normalizar_estoque_input(st.session_state.get("stable_estoque_padrao", ESTOQUE_DISPONIVEL_PADRAO_UI))
             kwargs.setdefault(
                 "help",
