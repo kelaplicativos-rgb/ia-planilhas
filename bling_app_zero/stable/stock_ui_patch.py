@@ -32,11 +32,25 @@ def _unique(options: Any) -> list[Any]:
     return out or [""]
 
 
+def _is_deposito_label(label: object) -> bool:
+    return "deposito" in _norm(label)
+
+
 def run_stable_app() -> None:
     original_selectbox = st.selectbox
     original_price = base_app._is_price_target
 
     def selectbox(label: str, options, *args: Any, **kwargs: Any):
+        if _tipo() == "estoque" and _is_deposito_label(label):
+            key = str(kwargs.get("key") or f"stock_deposito_{_norm(label)}")
+            return st.text_input(
+                str(label),
+                value=str(st.session_state.get(key, "")),
+                key=key,
+                placeholder="Ex.: Geral",
+                help="Digite o depósito manualmente. O site não informa esse campo.",
+            ).strip()
+
         old = list(options or [])
         new = _unique(old)
         idx = int(kwargs.get("index", 0) or 0)
