@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-"""Flash Amplo página por página em velocidade máxima com checkpoint."""
+"""Flash Amplo página por página em velocidade máxima com checkpoint.
+
+Regra oficial:
+- Quem determina a quantidade de produtos é somente a varredura Flash Amplo/listagem.
+- Sitemap NÃO adiciona produtos à captura.
+- Sitemap pode existir como fonte auxiliar/enriquecedora em módulos específicos,
+  mas não interfere na quantidade de linhas capturadas.
+"""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterable, Optional
@@ -57,7 +64,10 @@ def crawl_flash_amplo_page_by_page(
 ) -> list[dict[str, str]]:
     seed_list = [str(url or "").strip() for url in seed_urls if str(url or "").strip()]
     effective_max_products = int(max_products or DEFAULT_MAX_PRODUCTS)
-    product_urls = discover_product_urls(seed_list, max_products=effective_max_products, use_sitemap=True)
+
+    # Importante: sitemap desligado aqui de propósito.
+    # A quantidade de produtos deve vir apenas da varredura/listagem Flash Amplo.
+    product_urls = discover_product_urls(seed_list, max_products=effective_max_products, use_sitemap=False)
     total = len(product_urls)
 
     if total == 0:
