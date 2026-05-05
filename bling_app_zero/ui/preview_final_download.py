@@ -6,7 +6,9 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.app_helpers import log_debug, normalizar_texto
+from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 from bling_app_zero.ui.preview_final_data import remover_colunas_artificiais, zerar_colunas_video
 from bling_app_zero.utils.gtin import contar_gtins_invalidos_df, contar_gtins_suspeitos_df
 
@@ -207,6 +209,23 @@ def _deduplicar_itens_finais(df: pd.DataFrame) -> pd.DataFrame:
     return base.reset_index(drop=True).fillna("")
 
 
+def _blindar_mapeamento_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica a mesma blindagem do preview no DataFrame final padrão Bling."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    antes = df.copy().fillna("").astype(str)
+    base = normalize_product_dataframe(df.copy())
+    base = clean_invalid_preview_mappings(base).fillna("")
+    try:
+        comparavel = antes.reindex(columns=base.columns).fillna("").astype(str)
+        alteradas = int((comparavel != base.astype(str)).to_numpy().sum())
+    except Exception:
+        alteradas = 0
+    if alteradas > 0:
+        log_debug(f"{alteradas} célula(s) com mapeamento incompatível corrigida(s) antes do preview/download final.", nivel="INFO")
+    return base
+
+
 def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -214,6 +233,7 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     base = df.copy().fillna("")
     base = remover_colunas_artificiais(base)
     base = zerar_colunas_video(base).fillna("")
+    base = _blindar_mapeamento_final(base).fillna("")
 
     for coluna in base.columns:
         base[coluna] = base[coluna].map(_limpar_texto_celula)
@@ -300,4 +320,3 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
             st.rerun()
     else:
         st.info("Ajuste a validação principal antes de liberar o download e o envio.")
-
