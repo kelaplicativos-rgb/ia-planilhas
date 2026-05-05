@@ -62,6 +62,10 @@ def _norm(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _is_deposito_target(target: object) -> bool:
+    return "deposito" in _norm(target)
+
+
 def _read_upload(uploaded) -> pd.DataFrame | None:
     if uploaded is None:
         return None
@@ -133,7 +137,7 @@ def _suggest(target: str, source_columns: list[str]) -> str:
 def _map_df(df: pd.DataFrame, targets: list[str], mapping: dict[str, str], deposito: str) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     for target in targets:
-        if _norm(target) == "deposito":
+        if _is_deposito_target(target):
             out[target] = deposito
             continue
         source = mapping.get(target, "")
@@ -157,16 +161,16 @@ def _download_excel(df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
-def _render_deposito_mapping_field() -> str:
+def _render_deposito_mapping_field(target_label: str = "Depósito (OBRIGATÓRIO)") -> str:
     deposito = st.text_input(
-        "Depósito (OBRIGATÓRIO)",
+        target_label,
         value=str(st.session_state.get("stable_deposito_mapeamento", "")),
         key="stable_deposito_mapeamento",
         placeholder="Ex.: Geral",
-        help="Digite aqui o depósito. O valor será aplicado em todas as linhas da coluna Depósito.",
+        help="Digite aqui o depósito. O valor será aplicado em todas as linhas da coluna de depósito.",
     ).strip()
     if deposito:
-        st.caption(f"Será aplicado na coluna Depósito: {deposito}")
+        st.caption(f"Será aplicado na coluna de depósito: {deposito}")
     return deposito
 
 
@@ -240,8 +244,8 @@ def run_stable_app() -> None:
     mapping: dict[str, str] = {}
     deposito = ""
     for target in targets:
-        if tipo == "estoque" and _norm(target) == "deposito":
-            deposito = _render_deposito_mapping_field()
+        if tipo == "estoque" and _is_deposito_target(target):
+            deposito = _render_deposito_mapping_field(str(target))
             mapping[target] = ""
             continue
         suggestion = _suggest(target, list(df_origem.columns))
@@ -249,7 +253,7 @@ def run_stable_app() -> None:
         mapping[target] = st.selectbox(target, sources, index=idx, key=f"stable_map_{target}")
 
     if tipo == "estoque" and not deposito:
-        st.warning("Preencha o campo Depósito (OBRIGATÓRIO) dentro do mapeamento para liberar a exportação.")
+        st.warning("Preencha o campo de depósito obrigatório dentro do mapeamento para liberar a exportação.")
         return
 
     df_mapeado = _map_df(df_origem, targets, mapping, deposito)
