@@ -43,12 +43,11 @@ def _descricao_from_url(url: str, index: int) -> str:
 def build_site_stock_dataframe(urls: list[str], deposito: str, estoque_padrao: int = 0) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for idx, url in enumerate(urls, start=1):
-        titulo_produto = _descricao_from_url(url, idx)
+        descricao_produto = _descricao_from_url(url, idx)
         rows.append(
             {
-                "Título do produto": titulo_produto,
                 "Código": _codigo_from_url(url, idx),
-                "Descrição": titulo_produto,
+                "Descrição": descricao_produto,
                 "URL do produto": url,
                 "Depósito": deposito,
                 "Estoque": int(estoque_padrao),
