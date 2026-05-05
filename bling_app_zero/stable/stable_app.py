@@ -169,6 +169,25 @@ def _target_columns(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
     return ESTOQUE_DEFAULT_COLUMNS.copy() if tipo == "estoque" else CADASTRO_DEFAULT_COLUMNS.copy()
 
 
+def _has_modelo_bling(modelo: pd.DataFrame | None) -> bool:
+    return isinstance(modelo, pd.DataFrame) and not modelo.empty and len(modelo.columns) > 0
+
+
+def _bloquear_cadastro_sem_modelo(tipo: str, modelo: pd.DataFrame | None) -> bool:
+    return tipo == "cadastro" and not _has_modelo_bling(modelo)
+
+
+def _render_modelo_obrigatorio() -> None:
+    st.warning(
+        "Antes do Preview da origem, anexe o modelo Bling de cadastro. "
+        "O preview é o reflexo do modelo, então não deve aparecer antes dele."
+    )
+    st.info(
+        "Fluxo correto: 1) anexar/capturar dados do fornecedor → 2) anexar modelo Bling de cadastro → "
+        "3) abrir Preview da origem → 4) mapeamento."
+    )
+
+
 def _force_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
     for col in columns:
@@ -426,7 +445,9 @@ def run_stable_app() -> None:
     st.divider()
 
     modelo = restaurar_df("stable_df_modelo")
-    with st.expander("Modelo Bling opcional", expanded=False):
+    modelo_obrigatorio = tipo == "cadastro"
+    titulo_modelo = "Modelo Bling obrigatório para cadastro" if modelo_obrigatorio else "Modelo Bling opcional"
+    with st.expander(titulo_modelo, expanded=(modelo_obrigatorio and not _has_modelo_bling(modelo))):
         uploaded_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if uploaded_modelo is not None:
             try:
@@ -439,9 +460,15 @@ def run_stable_app() -> None:
                 st.code(str(exc))
         elif isinstance(modelo, pd.DataFrame) and not modelo.empty:
             st.info(f"🔒 Modelo Bling preservado: {len(modelo.columns)} colunas.")
+        elif modelo_obrigatorio:
+            st.caption("Obrigatório antes do Preview da origem no fluxo de cadastro.")
 
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         st.warning("Anexe um arquivo, cole o CSV ou gere uma base por site para continuar.")
+        return
+
+    if _bloquear_cadastro_sem_modelo(tipo, modelo):
+        _render_modelo_obrigatorio()
         return
 
     with st.expander("Preview da origem", expanded=False):
