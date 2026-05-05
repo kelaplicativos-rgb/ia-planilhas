@@ -2,9 +2,13 @@ from __future__ import annotations
 
 """Executor de UI para o Flash Amplo página por página.
 
-Use este módulo no botão/fluxo do modo Flash Amplo. Ele executa a captura rápida
-paralela, normaliza dados reais, salva os DataFrames nas chaves esperadas pelo
-app e retorna o resultado.
+Executa a captura rápida paralela, normaliza dados reais, salva os DataFrames
+nas chaves esperadas pelo app e retorna o resultado.
+
+Regra:
+- Nenhum limite manual exposto na tela.
+- Limite interno alto herdado do motor Flash Amplo.
+- Sitemap entra por último apenas para completar URLs não detectadas.
 """
 
 from typing import Iterable
@@ -12,6 +16,7 @@ from typing import Iterable
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.flash_page_crawler import DEFAULT_MAX_PRODUCTS, DEFAULT_MAX_WORKERS
 from bling_app_zero.core.instant_scraper import run_flash_amplo_page_mode
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
@@ -63,14 +68,14 @@ def salvar_resultado_flash_amplo(df: pd.DataFrame) -> pd.DataFrame:
 def executar_flash_amplo_pagina_por_pagina(
     urls: Iterable[str] | str,
     *,
-    max_products: int = 500,
-    max_workers: int = 12,
+    max_products: int = DEFAULT_MAX_PRODUCTS,
+    max_workers: int = DEFAULT_MAX_WORKERS,
     show_progress: bool = True,
 ) -> pd.DataFrame:
     """Executa Flash Amplo com entrada em cada página de produto.
 
-    A listagem/categoria apenas descobre links. A linha final vem da página real
-    de cada produto.
+    A listagem/categoria descobre links primeiro. Sitemap complementa por último.
+    A linha final vem da página real de cada produto.
     """
     seed_urls = _normalize_urls(urls)
     if not seed_urls:
@@ -107,6 +112,5 @@ def executar_flash_amplo_pagina_por_pagina(
     return cleaned
 
 
-# Aliases para facilitar integração nas telas atuais.
 executar_flash_amplo = executar_flash_amplo_pagina_por_pagina
 run_flash_amplo_ui = executar_flash_amplo_pagina_por_pagina
