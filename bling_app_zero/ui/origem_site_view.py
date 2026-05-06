@@ -6,6 +6,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.product_image_extractor import normalize_image_urls
 from bling_app_zero.ui.origem_site_config import MOTORES_SITE, PRESETS
 from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import (
@@ -84,36 +85,21 @@ def _coluna_eh_imagem(nome: object) -> bool:
 
 
 def _normalizar_urls(valor: object) -> str:
+    """Normaliza imagens capturadas antes do mapeamento.
+
+    A versão anterior usava um regex genérico de URL e deixava passar trechos como:
+    `https://megacentereletronicos.com.br/produto/image":"https:/...jpg`.
+    Agora a limpeza usa o normalizador central, que só aceita URL real de arquivo
+    de imagem e devolve tudo separado por `|`.
+    """
     texto = str(valor or "").strip().replace("\\/", "/")
     if not texto:
         return ""
-
-    candidatos = URL_RE.findall(texto)
-    if not candidatos:
-        candidatos = [parte.strip().strip('"\'[]{}()') for parte in re.split(r"[|,\n\r\t]+", texto)]
-
-    urls: list[str] = []
-    vistos: set[str] = set()
-    for url in candidatos:
-        limpa = str(url or "").strip().strip('"\'[]{}()')
-        if limpa.startswith("www."):
-            limpa = "https://" + limpa
-        low = limpa.lower()
-        if not limpa.startswith(("http://", "https://")):
-            continue
-        if any(bad in low for bad in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "pixel", "analytics", "base64")):
-            continue
-        if limpa in vistos:
-            continue
-        vistos.add(limpa)
-        urls.append(limpa)
-        if len(urls) >= 20:
-            break
-    return "|".join(urls)
+    return normalize_image_urls(texto, max_images=20)
 
 
 def _consolidar_coluna_imagens(df: pd.DataFrame) -> pd.DataFrame:
-    """Mantém todos os dados brutos e só cria/normaliza uma coluna padrão de imagens."""
+    """Mantém todos os dados brutos e cria/normaliza uma coluna padrão de imagens limpa."""
     if not _df_valido(df):
         return pd.DataFrame()
 
@@ -143,7 +129,11 @@ def _consolidar_coluna_imagens(df: pd.DataFrame) -> pd.DataFrame:
     if "URL Imagens Externas" not in base.columns:
         base["URL Imagens Externas"] = valores_finais
     else:
-        base["URL Imagens Externas"] = [atual or novo for atual, novo in zip(base["URL Imagens Externas"].astype(str).tolist(), valores_finais)]
+        atuais = base["URL Imagens Externas"].astype(str).tolist()
+        base["URL Imagens Externas"] = [
+            _normalizar_urls(atual) or novo
+            for atual, novo in zip(atuais, valores_finais)
+        ]
 
     return base.fillna("")
 
