@@ -233,6 +233,66 @@ def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
     return matches[0] if len(matches) == 1 else ""
 
 
+def _is_image_url_good(url: str) -> bool:
+    u = str(url or "").strip().strip('"').strip("'")
+    low = u.lower()
+    if not u.startswith(("http://", "https://")):
+        return False
+    if "{" in u or "}" in u or "\\" in u or "original" in low or "thumbnail" in low:
+        return False
+    if "/produto/" in low and "storage/" not in low and "product_images" not in low:
+        return False
+    if "rs:fit" in low:
+        for tiny in ("120:120", "256:256", "400:400", "50:50"):
+            if tiny in low:
+                return False
+    if any(bad in low for bad in ("logo", "sprite", "placeholder", "sem-imagem", "no-image", "favicon")):
+        return False
+    if not any(ext in low for ext in (".jpg", ".jpeg", ".png", ".webp")):
+        return False
+    return True
+
+
+def _clean_image_urls_value(value: object) -> str:
+    raw = str(value or "").replace("\r", "|").replace("\n", "|").replace(";", "|").replace(",http", "|http")
+    parts = [p.strip() for p in raw.split("|") if p.strip()]
+    good: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if "http" not in part:
+            continue
+        start = part.find("http")
+        url = part[start:].strip().strip('"').strip("'")
+        for sep in ['" ', "' ", " }", "}", "\\"]:
+            if sep in url:
+                url = url.split(sep)[0].strip()
+        if not _is_image_url_good(url):
+            continue
+        key = url.split("?")[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        good.append(url)
+        if len(good) >= 8:
+            break
+    return "|".join(good)
+
+
+def _limpar_imagens_lixo_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df, 0
+    out = df.copy().fillna("")
+    total = 0
+    for col in out.columns:
+        if not _is_imagem_col(col):
+            continue
+        antes = out[col].astype(str).fillna("")
+        depois = antes.map(_clean_image_urls_value)
+        total += int((antes.str.strip() != depois.astype(str).str.strip()).sum())
+        out[col] = depois
+    return out.fillna(""), total
+
+
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
     for c in cols:
@@ -245,8 +305,10 @@ def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _force(pd.DataFrame(), cols)
     cleaned = clean_invalid_preview_mappings(df.copy().fillna(""))
+    cleaned, removidos_img = _limpar_imagens_lixo_automatico(cleaned)
     cleaned, removidos_gtin = _limpar_gtins_invalidos_automatico(cleaned)
     cleaned, removidos_ncm = _limpar_ncms_invalidos_automatico(cleaned)
+    st.session_state["stable_imagens_lixo_removidas"] = removidos_img
     st.session_state["stable_gtins_invalidos_removidos"] = removidos_gtin
     st.session_state["stable_ncms_invalidos_removidos"] = removidos_ncm
     return _force(cleaned, cols)
@@ -315,7 +377,8 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool =
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
     total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
-    out_limpo, _ = _limpar_gtins_invalidos_automatico(out)
+    out_limpo, _ = _limpar_imagens_lixo_automatico(out)
+    out_limpo, _ = _limpar_gtins_invalidos_automatico(out_limpo)
     out_limpo, _ = _limpar_ncms_invalidos_automatico(out_limpo)
     out = out_limpo
     if total_linhas > BLING_MAX_IMPORT_ROWS:
@@ -446,8 +509,11 @@ def run_stable_app() -> None:
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
+    removidos_img = int(st.session_state.get("stable_imagens_lixo_removidas", 0) or 0)
     removidos_gtin = int(st.session_state.get("stable_gtins_invalidos_removidos", 0) or 0)
     removidos_ncm = int(st.session_state.get("stable_ncms_invalidos_removidos", 0) or 0)
+    if removidos_img:
+        st.info(f"Imagens lixo removidas automaticamente: {removidos_img}. Foram mantidas apenas URLs reais de imagem de produto.")
     if removidos_gtin:
         st.info(f"GTINs inválidos limpos automaticamente: {removidos_gtin}. Campos inválidos foram deixados em branco para o Bling aceitar.")
     if removidos_ncm:
