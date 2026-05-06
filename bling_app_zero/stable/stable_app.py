@@ -212,7 +212,8 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool =
         return
     valor = _first_non_empty_value(df, selected_col) or "sem valor preenchido na coluna selecionada"
     selo = "Mapeamento automático 100% exato" if auto_100 else "Coluna da origem"
-    st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>" f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>{escape(selo)}: {escape(str(selected_col))}</div>" f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>" "</div>", unsafe_allow_html=True)
+    cor_selo = "#2563eb" if auto_100 else "#b91c1c"
+    st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>" f"<div style='color:{cor_selo};font-size:0.86rem;font-weight:700;'>{escape(selo)}: {escape(str(selected_col))}</div>" f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>" "</div>", unsafe_allow_html=True)
 
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
