@@ -149,12 +149,12 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
 
     valor = _first_non_empty_value(df, selected_col)
     if not valor:
-        valor = "sem valor preenchido na primeira informação capturada"
+        valor = "sem valor preenchido na coluna selecionada"
 
     st.markdown(
         "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
         f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
-        f"<div style='color:#b91c1c;font-size:0.84rem;'>Primeira informação: {escape(str(valor))}</div>"
+        f"<div style='color:#b91c1c;font-size:0.84rem;'>{escape(str(valor))}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -289,7 +289,7 @@ def run_stable_app() -> None:
     _show_line_metrics(df, restaurar_df("stable_df_export"))
 
     st.subheader("Mapeamento manual")
-    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece, em vermelho, a coluna escolhida e a primeira informação real capturada para ajudar no mapeamento.")
+    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece, em vermelho, a coluna escolhida e uma amostra real capturada para ajudar no mapeamento.")
 
     sources = [""] + [str(c) for c in df.columns]
     mapping = {}
