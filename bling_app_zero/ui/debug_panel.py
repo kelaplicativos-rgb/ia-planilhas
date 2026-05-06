@@ -11,6 +11,7 @@ import streamlit as st
 
 LOG_KEY = "logs"
 DEBUG_ENABLED_KEY = "debug_panel_enabled"
+DEBUG_INLINE_ENABLED_KEY = "debug_panel_inline_enabled"
 
 
 def add_debug_log(message: Any, payload: Any | None = None, *, origem: str = "APP") -> None:
@@ -63,6 +64,42 @@ def _session_summary() -> str:
     return "\n".join(linhas)
 
 
+def _render_debug_content(prefix: str) -> None:
+    logs_text = _logs_text()
+    st.caption(f"Logs registrados: {len(st.session_state.get(LOG_KEY, []))}")
+
+    col_down, col_note = st.columns([1, 1])
+    with col_down:
+        st.download_button(
+            "📥 Baixar log debug",
+            data=logs_text.encode("utf-8-sig"),
+            file_name=f"debug_ia_planilhas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key=f"{prefix}_download_debug_log",
+        )
+    with col_note:
+        if st.button("🧹 Limpar log", use_container_width=True, key=f"{prefix}_clear_debug_log"):
+            st.session_state[LOG_KEY] = []
+            add_debug_log("Log limpo pelo usuário.", origem="DEBUG")
+            st.rerun()
+
+    with st.expander("📋 Log interno", expanded=True):
+        if logs_text.strip():
+            st.code(logs_text[-20000:], language="text")
+        else:
+            st.info("Nenhum log interno registrado ainda.")
+
+    with st.expander("🧠 Estado da sessão", expanded=False):
+        st.code(_session_summary(), language="text")
+
+    with st.expander("➕ Adicionar anotação manual", expanded=False):
+        nota = st.text_input("Anotação", key=f"{prefix}_debug_manual_note")
+        if st.button("Adicionar ao log", use_container_width=True, key=f"{prefix}_btn_add_manual_debug_note"):
+            add_debug_log(nota, origem="MANUAL")
+            st.rerun()
+
+
 def render_debug_panel() -> None:
     """Renderiza o botão/painel de debug na sidebar."""
     if LOG_KEY not in st.session_state:
@@ -72,43 +109,29 @@ def render_debug_panel() -> None:
         st.divider()
         st.caption("🧪 Debug")
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("🐞 Log", use_container_width=True, key="btn_toggle_debug_log"):
-                st.session_state[DEBUG_ENABLED_KEY] = not bool(st.session_state.get(DEBUG_ENABLED_KEY, False))
-        with col_b:
-            if st.button("🧹", use_container_width=True, key="btn_clear_debug_log", help="Limpar log"):
-                st.session_state[LOG_KEY] = []
-                add_debug_log("Log limpo pelo usuário.", origem="DEBUG")
-                st.rerun()
+        if st.button("🐞 Abrir/fechar log", use_container_width=True, key="btn_toggle_debug_log"):
+            st.session_state[DEBUG_ENABLED_KEY] = not bool(st.session_state.get(DEBUG_ENABLED_KEY, False))
 
         if not bool(st.session_state.get(DEBUG_ENABLED_KEY, False)):
-            st.caption("Clique em 🐞 Log para abrir o painel.")
+            st.caption("Clique em 🐞 para abrir o painel.")
             return
 
-        logs_text = _logs_text()
-        st.caption(f"Logs registrados: {len(st.session_state.get(LOG_KEY, []))}")
+        _render_debug_content("sidebar")
 
-        st.download_button(
-            "📥 Baixar log debug",
-            data=logs_text.encode("utf-8-sig"),
-            file_name=f"debug_ia_planilhas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True,
-            key="download_debug_log",
-        )
 
-        with st.expander("📋 Log interno", expanded=True):
-            if logs_text.strip():
-                st.code(logs_text[-20000:], language="text")
-            else:
-                st.info("Nenhum log interno registrado ainda.")
+def render_debug_panel_inline() -> None:
+    """Renderiza um botão de debug visível no corpo da página."""
+    if LOG_KEY not in st.session_state:
+        st.session_state[LOG_KEY] = []
 
-        with st.expander("🧠 Estado da sessão", expanded=False):
-            st.code(_session_summary(), language="text")
+    with st.container():
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            st.caption("🧪 Debug ativo no sistema — se esta faixa apareceu, o deploy já está usando o código novo.")
+        with col_b:
+            if st.button("🐞 Abrir log debug", use_container_width=True, key="btn_toggle_inline_debug_log"):
+                st.session_state[DEBUG_INLINE_ENABLED_KEY] = not bool(st.session_state.get(DEBUG_INLINE_ENABLED_KEY, False))
 
-        with st.expander("➕ Adicionar anotação manual", expanded=False):
-            nota = st.text_input("Anotação", key="debug_manual_note")
-            if st.button("Adicionar ao log", use_container_width=True, key="btn_add_manual_debug_note"):
-                add_debug_log(nota, origem="MANUAL")
-                st.rerun()
+    if bool(st.session_state.get(DEBUG_INLINE_ENABLED_KEY, False)):
+        with st.expander("🐞 Painel de debug", expanded=True):
+            _render_debug_content("inline")
