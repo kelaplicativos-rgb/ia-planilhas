@@ -124,7 +124,7 @@ def _zip_csv_parts(df: pd.DataFrame, *, chunk_size: int = BLING_MAX_IMPORT_ROWS)
     total_parts = max(len(parts), 1)
     with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
         for index, part in enumerate(parts, start=1):
-            file_name = f"bling_saida_final_parte_{index:02d}_de_{total_parts:02d}.csv"
+            file_name = f"bling_saida_final_{len(df)}_linhas_parte_{index:02d}_de_{total_parts:02d}.csv"
             zip_file.writestr(file_name, dataframe_para_csv_bytes(part))
     return buffer.getvalue()
 
@@ -140,25 +140,25 @@ def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
         st.download_button(
             "📦 Baixar CSVs divididos em partes de 1.000 linhas",
             data=_zip_csv_parts(out),
-            file_name="bling_saida_final_dividido.zip",
+            file_name=f"bling_saida_final_{total_linhas}_linhas_dividido.zip",
             mime="application/zip",
             use_container_width=True,
             disabled=not saida_ok,
         )
     else:
         st.download_button(
-            "📥 Baixar CSV para Bling",
+            f"📥 Baixar CSV para Bling ({total_linhas} linhas)",
             data=dataframe_para_csv_bytes(out),
-            file_name="bling_saida_final.csv",
+            file_name=f"bling_saida_final_{total_linhas}_linhas.csv",
             mime="text/csv",
             use_container_width=True,
             disabled=not saida_ok,
         )
 
     st.download_button(
-        "📥 Baixar Excel de conferência",
+        f"📥 Baixar Excel de conferência ({total_linhas} linhas)",
         data=_excel(out),
-        file_name="bling_saida_final_conferencia.xlsx",
+        file_name=f"bling_saida_final_{total_linhas}_linhas_conferencia.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         disabled=not saida_ok,
@@ -191,6 +191,13 @@ def _validar_saida(df: pd.DataFrame, tipo: str) -> bool:
             st.error("Campo obrigatório sem dados: Depósito.")
             ok = False
     return ok
+
+
+def _show_line_metrics(df_origem: pd.DataFrame, df_preview: pd.DataFrame | None = None, df_final: pd.DataFrame | None = None) -> None:
+    cols = st.columns(3)
+    cols[0].metric("Linhas capturadas na origem", len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0)
+    cols[1].metric("Linhas no preview da origem", len(df_preview) if isinstance(df_preview, pd.DataFrame) else 0)
+    cols[2].metric("Linhas no preview final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
 
 
 def run_stable_app() -> None:
@@ -249,10 +256,15 @@ def run_stable_app() -> None:
         st.warning("Anexe/capture a origem para continuar.")
         return
 
+    prev = _mirror_preview(df, cols)
+    _show_line_metrics(df, prev, restaurar_df("stable_df_export"))
+
     with st.expander("Preview da origem", expanded=False):
-        prev = _mirror_preview(df, cols)
-        st.caption("Espelhado no modelo. Só correspondências conservadoras e sem ambiguidade são preenchidas; o resto fica vazio para manual.")
-        st.dataframe(prev.head(80), use_container_width=True, hide_index=True)
+        st.caption(
+            f"Espelhado no modelo. Total real: {len(prev)} linhas. "
+            "A tabela abaixo mostra todas as linhas capturadas, não apenas as 80 primeiras."
+        )
+        st.dataframe(prev, use_container_width=True, hide_index=True)
 
     st.subheader("Mapeamento manual/conservador")
     sources = [""] + [str(c) for c in df.columns]
@@ -277,8 +289,11 @@ def run_stable_app() -> None:
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
+    _show_line_metrics(df, prev, out)
+
     with st.expander("Preview final", expanded=False):
-        st.dataframe(out.head(100), use_container_width=True, hide_index=True)
+        st.caption(f"Total real do arquivo final: {len(out)} linhas.")
+        st.dataframe(out, use_container_width=True, hide_index=True)
 
     saida_ok = _validar_saida(out, tipo)
     if saida_ok:
