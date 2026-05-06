@@ -15,6 +15,7 @@ from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import dataframe_para_csv_bytes
 from bling_app_zero.ui.flash_amplo_execution import executar_flash_amplo_pagina_por_pagina
 from bling_app_zero.ui.mapeamento.conservative_auto import choose_safe_source
+from bling_app_zero.ui.mapeamento.source_columns import normalizar_nome_coluna
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
 FLASH_MAX_PRODUCTS = 5000
@@ -40,9 +41,7 @@ def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
 
 
 def _norm(v) -> str:
-    text = str(v or "").strip().lower()
-    text = text.translate(str.maketrans("áàãâéêíóôúç", "aaaaeeioouc"))
-    return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
+    return normalizar_nome_coluna(v)
 
 
 def _is_deposito_col(col: object) -> bool:
@@ -56,12 +55,12 @@ def _is_departamento_col(col: object) -> bool:
 
 def _is_imagem_col(col: object) -> bool:
     n = _norm(col)
-    return "imagem" in n or "imagens" in n or ("url" in n and "externa" in n)
+    return "imagem" in n or "image" in n or ("url" in n and "foto" in n)
 
 
 def _is_imagem_target(col: object) -> bool:
     n = _norm(col)
-    return "imagem" in n or "imagens" in n
+    return "imagem" in n or "image" in n
 
 
 def _is_descricao_col(col: object) -> bool:
@@ -89,19 +88,36 @@ def _dedupe_source_columns(columns) -> list[str]:
     return saida
 
 
-def _source_options_for_target(target: str, df: pd.DataFrame) -> list[str]:
-    cols = _dedupe_source_columns(df.columns if _has_df(df) else [])
+def _is_model_or_final_column(col: object, model_cols: list[str]) -> bool:
+    n = _norm(col)
+    model_norms = {_norm(c) for c in model_cols}
+    if not n:
+        return True
+    if n in model_norms:
+        return True
+    blocked_fragments = (
+        "obrigatorio",
+        "obrigatoria",
+        "gtin ean da embalagem",
+        "frete gratis",
+        "url imagens externas",
+        "preco unitario",
+        "categoria do produto",
+        "descricao complementar",
+        "link externo",
+        "url do produto",
+        "deposito",
+    )
+    return any(fragment in n for fragment in blocked_fragments)
+
+
+def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[str]) -> list[str]:
+    raw_cols = _dedupe_source_columns(df.columns if _has_df(df) else [])
+    cols = [c for c in raw_cols if not _is_model_or_final_column(c, model_cols)]
+
     if _is_imagem_target(target):
-        candidatos = [c for c in cols if _is_imagem_col(c)]
-        preferidos = sorted(
-            candidatos,
-            key=lambda c: (
-                0 if _norm(c) in {"url imagens externas", "url imagens externas", "url_imagens_externas"} else
-                1 if "url" in _norm(c) and "imagem" in _norm(c) else
-                2
-            ),
-        )
-        return [""] + preferidos
+        cols = [c for c in cols if _is_imagem_col(c)]
+
     return [""] + cols
 
 
@@ -172,8 +188,7 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
     if not _has_df(df) or col not in df.columns:
         return ""
     try:
-        serie = df[col].astype(str).fillna("")
-        for valor in serie:
+        for valor in df[col].astype(str).fillna(""):
             texto = str(valor or "").strip()
             if texto:
                 return texto[:350]
@@ -183,7 +198,6 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
 
 
 def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
-    """Mostra, logo abaixo do select, a coluna escolhida e uma amostra real capturada."""
     if not selected_col:
         st.markdown(
             "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>"
@@ -192,11 +206,7 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
             unsafe_allow_html=True,
         )
         return
-
-    valor = _first_non_empty_value(df, selected_col)
-    if not valor:
-        valor = "sem valor preenchido na coluna selecionada"
-
+    valor = _first_non_empty_value(df, selected_col) or "sem valor preenchido na coluna selecionada"
     st.markdown(
         "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
         f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
@@ -210,50 +220,21 @@ def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
     total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
     if total_linhas > BLING_MAX_IMPORT_ROWS:
         total_partes = ceil(total_linhas / BLING_MAX_IMPORT_ROWS)
-        st.warning(
-            f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação de cadastro. "
-            f"Seu arquivo tem {total_linhas} linhas e será dividido em {total_partes} partes."
-        )
-        st.download_button(
-            "📦 Baixar CSVs divididos em partes de 1.000 linhas",
-            data=_zip_csv_parts(out),
-            file_name=f"bling_saida_final_{total_linhas}_linhas_dividido.zip",
-            mime="application/zip",
-            use_container_width=True,
-            disabled=not saida_ok,
-        )
+        st.warning(f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação. Seu arquivo será dividido em {total_partes} partes.")
+        st.download_button("📦 Baixar CSVs divididos", data=_zip_csv_parts(out), file_name=f"bling_saida_final_{total_linhas}_linhas_dividido.zip", mime="application/zip", use_container_width=True, disabled=not saida_ok)
     else:
-        st.download_button(
-            f"📥 Baixar CSV para Bling ({total_linhas} linhas)",
-            data=dataframe_para_csv_bytes(out),
-            file_name=f"bling_saida_final_{total_linhas}_linhas.csv",
-            mime="text/csv",
-            use_container_width=True,
-            disabled=not saida_ok,
-        )
-
-    st.download_button(
-        f"📥 Baixar Excel de conferência ({total_linhas} linhas)",
-        data=_excel(out),
-        file_name=f"bling_saida_final_{total_linhas}_linhas_conferencia.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        disabled=not saida_ok,
-    )
+        st.download_button(f"📥 Baixar CSV para Bling ({total_linhas} linhas)", data=dataframe_para_csv_bytes(out), file_name=f"bling_saida_final_{total_linhas}_linhas.csv", mime="text/csv", use_container_width=True, disabled=not saida_ok)
+    st.download_button(f"📥 Baixar Excel de conferência ({total_linhas} linhas)", data=_excel(out), file_name=f"bling_saida_final_{total_linhas}_linhas_conferencia.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, disabled=not saida_ok)
 
 
 def _col_with_data(df: pd.DataFrame, predicate) -> bool:
-    for col in df.columns:
-        if predicate(col) and df[col].astype(str).str.strip().ne("").any():
-            return True
-    return False
+    return any(predicate(col) and df[col].astype(str).str.strip().ne("").any() for col in df.columns)
 
 
 def _validar_saida(df: pd.DataFrame, tipo: str) -> bool:
     if not _has_df(df):
         st.error("A saída está vazia.")
         return False
-
     ok = True
     if tipo == "cadastro":
         if not _col_with_data(df, _is_descricao_col):
@@ -333,14 +314,13 @@ def run_stable_app() -> None:
         return
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
-
     st.subheader("Mapeamento manual")
-    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece o nome da coluna e, em verde, uma amostra real capturada para não confundir com o rótulo.")
+    st.caption("Escolha apenas colunas reais da origem/captura. Colunas do modelo Bling e colunas finais não aparecem como origem.")
 
     mapping = {}
     deposito_manual = ""
     for c in cols:
-        options = _source_options_for_target(str(c), df)
+        options = _source_options_for_target(str(c), df, cols)
         if tipo == "estoque" and _is_deposito_col(c):
             deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
             mapping[c] = ""
@@ -370,7 +350,6 @@ def run_stable_app() -> None:
     out = guardar_df("stable_df_export", out)
 
     _show_line_metrics(df, out)
-
     with st.expander("Preview final", expanded=False):
         st.caption(f"Total real do arquivo final: {len(out)} linhas.")
         st.dataframe(out, use_container_width=True, hide_index=True)
@@ -380,5 +359,4 @@ def run_stable_app() -> None:
         st.success(f"Arquivo pronto: {len(out)} linhas × {len(out.columns)} colunas")
     else:
         st.warning("Corrija o mapeamento obrigatório antes de baixar.")
-
     _render_downloads(out, saida_ok)
