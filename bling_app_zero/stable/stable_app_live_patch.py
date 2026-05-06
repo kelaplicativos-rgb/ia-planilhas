@@ -17,7 +17,7 @@ import streamlit as st
 
 from bling_app_zero.stable import stable_app as base
 
-MAPPING_UI_VERSION = "2026-05-06-blue-preview-v4"
+MAPPING_UI_VERSION = "2026-05-06-blue-preview-v5"
 
 base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
 
@@ -66,7 +66,6 @@ def _selectbox_mapping_live(campo: str, options: list[str], default_value: str) 
     ordem = int(getattr(base, "_live_mapping_counter", 0) or 0)
     base._live_mapping_counter = ordem + 1
 
-    # limpa somente chaves antigas que prendiam o widget em estado obsoleto
     st.session_state.pop(f"stable_map_{campo}", None)
 
     key = f"stable_map_live_{MAPPING_UI_VERSION}_{ordem}_{_norm_key(campo)}"
@@ -74,8 +73,8 @@ def _selectbox_mapping_live(campo: str, options: list[str], default_value: str) 
         st.session_state.pop(key, None)
 
     index = options.index(default_value) if default_value in options else 0
-    st.selectbox(campo, options, index=index, key=key)
-    return str(st.session_state.get(key, "") or "").strip()
+    selected = st.selectbox(campo, options, index=index, key=key)
+    return str(selected or "").strip()
 
 
 def run_stable_app() -> None:
