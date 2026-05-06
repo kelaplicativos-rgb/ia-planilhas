@@ -8,20 +8,24 @@ Regras aplicadas:
 - Imagens são buscadas no HTML inteiro da página do produto, incluindo galeria,
   data attributes, srcset, JSON-LD e scripts.
 - Imagens grandes/originais/zoom são priorizadas antes de miniaturas.
+- A saída final de `URL Imagens Externas` sempre fica separada por `|`.
 """
 
 import json
 import re
 from html import unescape
 from typing import Iterable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.product_image_extractor import normalize_image_urls
+
 
 PRODUCT_CODE_RE = re.compile(r"/produto/(\d+)(?:[-_/]|$)", re.IGNORECASE)
-IMAGE_URL_RE = re.compile(r"https?:\\?/\\?/[^\s'\"<>]+?\.(?:jpg|jpeg|png|webp)(?:[^\s'\"<>]*)?", re.IGNORECASE)
-REL_IMAGE_RE = re.compile(r"(?:/|\.\./)[^\s'\"<>]+?\.(?:jpg|jpeg|png|webp)(?:[^\s'\"<>]*)?", re.IGNORECASE)
+IMAGE_URL_RE = re.compile(r"https?:\\?/\\?/[^\s'\"<>]+?\.(?:jpg|jpeg|png|webp|avif)(?:[^\s'\"<>]*)?", re.IGNORECASE)
+REL_IMAGE_RE = re.compile(r"(?:/|\.\./)[^\s'\"<>]+?\.(?:jpg|jpeg|png|webp|avif)(?:[^\s'\"<>]*)?", re.IGNORECASE)
+IMAGE_EXT_CUT_RE = re.compile(r"^(.*?\.(?:jpg|jpeg|png|webp|avif))(?:$|[?#].*)", re.IGNORECASE)
 
 BAD_IMAGE_FRAGMENTS = (
     "logo",
@@ -66,15 +70,37 @@ def supplier_code_from_product_url(url: object) -> str:
     return match.group(1) if match else ""
 
 
+def _cut_after_image_extension(url: str) -> str:
+    text = str(url or "").strip()
+    match = IMAGE_EXT_CUT_RE.match(text)
+    if match:
+        return match.group(1)
+    return text
+
+
 def _clean_url(raw: object, base_url: str) -> str:
     text = unescape(str(raw or "").strip().strip('"\''))
     if not text:
         return ""
     text = text.replace("\\/", "/")
     text = text.split(" ", 1)[0].strip()
+
+    for separator in ("|", "@png", "@jpg", "@jpeg", "@webp", "@avif"):
+        if separator in text.lower():
+            text = re.split(re.escape(separator), text, flags=re.IGNORECASE)[0]
+            break
+
+    text = _cut_after_image_extension(text)
     if text.startswith("//"):
         text = "https:" + text
-    return urljoin(base_url, text)
+
+    absolute = urljoin(base_url, text)
+    absolute = _cut_after_image_extension(absolute)
+    try:
+        parts = urlsplit(absolute)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    except Exception:
+        return absolute
 
 
 def _is_valid_product_image(url: str) -> bool:
@@ -83,7 +109,7 @@ def _is_valid_product_image(url: str) -> bool:
         return False
     if any(fragment in low for fragment in BAD_IMAGE_FRAGMENTS):
         return False
-    if re.search(r"\.(jpg|jpeg|png|webp)(?:$|[?#])", low):
+    if re.search(r"\.(jpg|jpeg|png|webp|avif)(?:$|[?#])", low):
         return True
     return any(token in low for token in GOOD_GALLERY_HINTS)
 
@@ -138,7 +164,7 @@ def _image_score(url: str) -> int:
         if token in low:
             score += points
 
-    if re.search(r"\.(webp|jpg|jpeg|png)(?:$|[?#])", low):
+    if re.search(r"\.(webp|jpg|jpeg|png|avif)(?:$|[?#])", low):
         score += 20
     return score
 
@@ -147,9 +173,10 @@ def _add_candidate(candidates: list[str], seen: set[str], raw: object, base_url:
     url = _clean_url(raw, base_url)
     if not url or not _is_valid_product_image(url):
         return
-    if url in seen:
+    key = url.lower()
+    if key in seen:
         return
-    seen.add(url)
+    seen.add(key)
     candidates.append(url)
 
 
@@ -182,7 +209,6 @@ def extract_all_product_images(html: str, page_url: str, *, max_items: int = 20)
     candidates: list[str] = []
     seen: set[str] = set()
 
-    # 1) Meta e tags visíveis/galeria.
     selectors = (
         "meta[property='og:image']",
         "meta[property='og:image:secure_url']",
@@ -222,24 +248,24 @@ def extract_all_product_images(html: str, page_url: str, *, max_items: int = 20)
                 else:
                     _add_candidate(candidates, seen, value, page_url)
 
-            # Varre todos os data-* genéricos porque muitas lojas escondem a
-            # imagem grande em atributos personalizados.
             for attr_name, attr_value in tag.attrs.items():
                 if not str(attr_name).lower().startswith("data-"):
                     continue
                 if isinstance(attr_value, list):
                     attr_value = " ".join(str(v) for v in attr_value)
-                for match in IMAGE_URL_RE.findall(str(attr_value)):
+                raw_attr = unescape(str(attr_value)).replace("\\/", "/")
+                raw_attr = re.sub(r"@(png|jpg|jpeg|webp|avif)", " ", raw_attr, flags=re.IGNORECASE)
+                for match in IMAGE_URL_RE.findall(raw_attr):
                     _add_candidate(candidates, seen, match, page_url)
-                for match in REL_IMAGE_RE.findall(str(attr_value)):
+                for match in REL_IMAGE_RE.findall(raw_attr):
                     _add_candidate(candidates, seen, match, page_url)
 
-    # 2) JSON-LD e scripts com URLs de imagem.
     for script in soup.select("script"):
         raw = script.string or script.get_text(" ", strip=True)
         if not raw:
             continue
         raw_unescaped = unescape(raw).replace("\\/", "/")
+        raw_unescaped = re.sub(r"@(png|jpg|jpeg|webp|avif)", " ", raw_unescaped, flags=re.IGNORECASE)
         for match in IMAGE_URL_RE.findall(raw_unescaped):
             _add_candidate(candidates, seen, match, page_url)
         for match in REL_IMAGE_RE.findall(raw_unescaped):
@@ -253,7 +279,7 @@ def extract_all_product_images(html: str, page_url: str, *, max_items: int = 20)
                 _add_candidate(candidates, seen, image, page_url)
 
     candidates.sort(key=_image_score, reverse=True)
-    return "|".join(candidates[:max_items])
+    return normalize_image_urls("|".join(candidates[:max_items]), page_url=page_url, max_images=max_items)
 
 
 def install_mega_product_patch() -> None:
@@ -274,14 +300,17 @@ def install_mega_product_patch() -> None:
         if not isinstance(data, dict):
             data = {}
 
-        supplier_code = supplier_code_from_product_url(data.get("Link Externo") or page_url)
+        product_url = data.get("Link Externo") or page_url
+        supplier_code = supplier_code_from_product_url(product_url)
         if supplier_code:
             data["Código"] = supplier_code
             data["Cód no fornecedor"] = supplier_code
 
-        images = extract_all_product_images(html or "", data.get("Link Externo") or page_url)
+        images = extract_all_product_images(html or "", product_url)
         if images:
             data["URL Imagens Externas"] = images
+        elif data.get("URL Imagens Externas"):
+            data["URL Imagens Externas"] = normalize_image_urls(data.get("URL Imagens Externas"), page_url=product_url)
 
         return data
 
