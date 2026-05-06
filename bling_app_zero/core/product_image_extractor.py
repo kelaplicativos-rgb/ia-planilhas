@@ -10,7 +10,7 @@ import json
 import re
 from html import unescape
 from typing import Iterable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -19,6 +19,7 @@ IMAGE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 IMAGE_EXT_RE = re.compile(r"\.(jpg|jpeg|png|webp|avif)(?:$|[?#])", re.IGNORECASE)
+IMAGE_EXT_CUT_RE = re.compile(r"^(.*?\.(?:jpg|jpeg|png|webp|avif))(?:$|[?#].*)", re.IGNORECASE)
 BAD_IMAGE_FRAGMENTS = (
     "logo",
     "sprite",
@@ -51,7 +52,6 @@ GOOD_IMAGE_HINTS = (
     "cdn",
     "media",
     "catalog",
-    "produto",
     "files",
 )
 IMAGE_ATTRS = (
@@ -83,16 +83,45 @@ IMAGE_SELECTORS = (
 
 
 def _clean_raw(value: object) -> str:
-    return unescape(str(value or "")).strip().replace("\\/", "/")
+    raw = unescape(str(value or "")).strip().replace("\\/", "/")
+    raw = raw.replace("&quot;", '"').replace("&#34;", '"').replace("&#39;", "'")
+    return raw
+
+
+def _cut_after_image_extension(url: str) -> str:
+    """Corta lixo grudado depois da extensão real da imagem.
+
+    Corrige casos vindos de scripts da Mega Center como:
+    `...foto.jpg@pnghttps://...`, `...foto.jpg@webp`, `...foto.jpg|https://...`.
+    """
+    text = str(url or "").strip()
+    match = IMAGE_EXT_CUT_RE.match(text)
+    if match:
+        return match.group(1)
+    return text
 
 
 def _absolute_url(value: object, page_url: str) -> str:
     raw = _clean_raw(value).strip().strip('"\'[]{}()')
     if not raw:
         return ""
+
+    for separator in ("|", "@png", "@jpg", "@jpeg", "@webp", "@avif"):
+        if separator in raw.lower():
+            raw = re.split(re.escape(separator), raw, flags=re.IGNORECASE)[0]
+            break
+
+    raw = _cut_after_image_extension(raw)
     if raw.startswith("//"):
         raw = "https:" + raw
-    return urljoin(page_url, raw)
+    absolute = urljoin(page_url, raw)
+    absolute = _cut_after_image_extension(absolute)
+
+    try:
+        parts = urlsplit(absolute)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    except Exception:
+        return absolute
 
 
 def _add_candidate(candidates: list[str], value: object) -> None:
@@ -100,7 +129,9 @@ def _add_candidate(candidates: list[str], value: object) -> None:
     if not raw:
         return
 
-    # srcset: pega cada URL antes do tamanho/resolução.
+    raw = raw.replace("|", " ")
+    raw = re.sub(r"@(png|jpg|jpeg|webp|avif)", " ", raw, flags=re.IGNORECASE)
+
     if "," in raw:
         for part in raw.split(","):
             token = part.strip().split(" ")[0]
@@ -156,6 +187,31 @@ def _is_valid_image(url: str) -> bool:
     return any(hint in lower for hint in GOOD_IMAGE_HINTS)
 
 
+def normalize_image_urls(value: object, page_url: str = "", max_images: int = 20) -> str:
+    """Normaliza qualquer valor de imagens para o padrão Bling separado por `|`."""
+    candidates: list[str] = []
+    raw = _clean_raw(value)
+    if raw:
+        for part in re.split(r"\s*\|\s*|\s+", raw):
+            _add_candidate(candidates, part)
+        _add_candidate(candidates, raw)
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        url = _absolute_url(item, page_url)
+        if not _is_valid_image(url):
+            continue
+        key = url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(url)
+        if len(result) >= max_images:
+            break
+    return "|".join(result)
+
+
 def extract_product_images_from_html(page_url: str, html: str, extra_candidates: Iterable[object] | None = None, max_images: int = 20) -> str:
     """Retorna URLs de imagens separadas por `|`.
 
@@ -178,7 +234,6 @@ def extract_product_images_from_html(page_url: str, html: str, extra_candidates:
                 if value:
                     _add_candidate(candidates, value)
 
-    # Fallback bruto para galerias escondidas em scripts/estado JS.
     for script in soup.select("script"):
         text = script.string or script.get_text(" ", strip=True)
         if text and any(token in text.lower() for token in ("jpg", "jpeg", "png", "webp", "avif", "image", "imagem", "gallery", "galeria")):
@@ -190,9 +245,10 @@ def extract_product_images_from_html(page_url: str, html: str, extra_candidates:
         absolute = _absolute_url(raw, page_url)
         if not _is_valid_image(absolute):
             continue
-        if absolute in seen:
+        key = absolute.lower()
+        if key in seen:
             continue
-        seen.add(absolute)
+        seen.add(key)
         result.append(absolute)
         if len(result) >= max_images:
             break
