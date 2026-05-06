@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
+from bling_app_zero.core.product_image_extractor import normalize_image_urls
 from bling_app_zero.ui.app_helpers import log_debug, normalizar_texto
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 from bling_app_zero.ui.preview_final_data import remover_colunas_artificiais, zerar_colunas_video
@@ -136,6 +137,63 @@ def _coluna_preco_produto(df: pd.DataFrame) -> str:
     return ""
 
 
+def _coluna_imagens_externas(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return ""
+    mapa = {normalizar_texto(c): str(c) for c in df.columns}
+    prioridades = [
+        "URL Imagens Externas",
+        "Url Imagens Externas",
+        "URLs Imagens Externas",
+        "Imagem Externa",
+        "Imagens Externas",
+        "URL Imagem",
+        "Imagem",
+        "Imagens",
+    ]
+    for nome in prioridades:
+        achado = mapa.get(normalizar_texto(nome))
+        if achado:
+            return achado
+    for col in df.columns:
+        n = normalizar_texto(col)
+        if ("imagem" in n or "image" in n or "foto" in n) and ("url" in n or "extern" in n or "foto" in n):
+            return str(col)
+    return ""
+
+
+def _normalizar_coluna_imagens_externas(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    base = df.copy().fillna("")
+    col = _coluna_imagens_externas(base)
+    if not col or col not in base.columns:
+        return base
+
+    alteradas = 0
+    vazias = 0
+    for idx, valor in base[col].items():
+        antes = str(valor or "")
+        depois = normalize_image_urls(antes, max_images=20)
+        if antes and not depois:
+            vazias += 1
+        if depois != antes:
+            alteradas += 1
+        base.at[idx, col] = depois
+
+    if alteradas > 0:
+        log_debug(
+            f"{alteradas} linha(s) tiveram URL Imagens Externas normalizadas para o padrão Bling com separador |.",
+            nivel="INFO",
+        )
+    if vazias > 0:
+        log_debug(
+            f"{vazias} linha(s) ficaram sem imagens porque continham URLs inválidas ou contaminadas.",
+            nivel="WARN",
+        )
+    return base
+
+
 def _tem_preco(valor: object) -> bool:
     texto = _limpar_texto_celula(valor)
     if not texto:
@@ -238,6 +296,8 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     for coluna in base.columns:
         base[coluna] = base[coluna].map(_limpar_texto_celula)
 
+    base = _normalizar_coluna_imagens_externas(base).fillna("")
+
     desc_col = _coluna_descricao_produto(base)
     cod_col = _coluna_codigo_produto(base)
     preco_col = _coluna_preco_produto(base)
@@ -289,7 +349,7 @@ def render_download(df_final: pd.DataFrame, validacao_ok: bool) -> None:
 
     download_liberado = bool(validacao_ok)
 
-    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título, sem linhas lixo e sem duplicados.")
+    st.caption("CSV padrão Bling: separador ;, UTF-8-SIG, sem coluna de índice, sem espaços no título, sem linhas lixo, sem duplicados e com imagens externas separadas por |.")
 
     st.download_button(
         label="📥 Baixar CSV final",
