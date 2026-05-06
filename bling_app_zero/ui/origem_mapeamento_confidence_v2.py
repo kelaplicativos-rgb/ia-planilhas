@@ -3,6 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.mapeamento.mapping_engine import (
+    analyze_mapping,
+    log_mapping_analysis,
+    render_mapping_feedback,
+)
 from bling_app_zero.ui.mapeamento.source_columns import escolher_df_origem_captura, opcoes_origem_mapeamento
 from bling_app_zero.ui.mapeamento_sample_hint import render_amostra_vermelha
 from bling_app_zero.ui.origem_mapeamento_helpers import (
@@ -37,7 +42,13 @@ def _status_basico(df_base: pd.DataFrame, coluna_modelo: str, coluna_origem: str
         return "ERRO", "Coluna nao encontrada na origem."
     if _eh_coluna_video(coluna_origem):
         return "ERRO", "Origem de video bloqueada."
-    return "OK", f"Origem: {coluna_origem}"
+
+    analise = analyze_mapping(df_base, coluna_modelo, coluna_origem)
+    if analise.status == "valid":
+        return "OK", f"Correlação real: {int(analise.confidence * 100)}%"
+    if analise.status == "warning":
+        return "ATENÇÃO", f"Correlação incerta: {int(analise.confidence * 100)}%"
+    return "ERRO", f"Correlação inválida: {int(analise.confidence * 100)}%"
 
 
 def _render_resumo(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueados: set[str]) -> None:
@@ -45,16 +56,28 @@ def _render_resumo(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
     preenchidos = 0
     pendentes = 0
     automaticos = 0
+    invalidos = 0
+    alertas = 0
+
     for coluna in [str(c) for c in df_modelo.columns.tolist()]:
+        origem = str(mapping.get(coluna, "") or "").strip()
         if coluna in bloqueados:
             automaticos += 1
-        elif str(mapping.get(coluna, "") or "").strip():
-            preenchidos += 1
+        elif origem:
+            analise = analyze_mapping(df_origem, coluna, origem)
+            if analise.status == "invalid":
+                invalidos += 1
+            elif analise.status == "warning":
+                alertas += 1
+            else:
+                preenchidos += 1
         else:
             pendentes += 1
+
     st.caption(
         f"Origem/captura: {len(df_origem.columns)} colunas | Modelo: {total} | "
-        f"Preenchidos: {preenchidos} | Pendentes: {pendentes} | Automaticos: {automaticos}"
+        f"Válidos: {preenchidos} | Alertas: {alertas} | Inválidos: {invalidos} | "
+        f"Pendentes: {pendentes} | Automáticos: {automaticos}"
     )
 
 
@@ -72,8 +95,14 @@ def _ordenar_colunas(df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueado
     return [coluna for _, _, coluna in itens]
 
 
+def _render_feedback_correlacao(df_origem: pd.DataFrame, coluna_modelo: str, coluna_origem: str) -> None:
+    analise = analyze_mapping(df_origem, coluna_modelo, coluna_origem)
+    log_mapping_analysis(analise)
+    render_mapping_feedback(analise)
+
+
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.caption("Ajuste manual. O seletor mostra somente as colunas da origem/captura.")
+    st.caption("Ajuste manual. O seletor mostra somente as colunas da origem/captura e valida a correlação por nome + conteúdo real.")
 
     if not isinstance(df_base, pd.DataFrame) or df_base.empty or not isinstance(df_modelo, pd.DataFrame):
         st.warning("Base ou modelo invalido para mapeamento.")
@@ -116,21 +145,22 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         status, detalhe = _status_basico(df_origem, coluna_modelo, valor_atual)
         _badge(f"{status} {coluna_modelo}", detalhe)
 
-        if valor_atual:
-            render_amostra_vermelha(df_origem, valor_atual, prefixo="1a linha")
-
         novo_valor = st.selectbox(
             f"{coluna_modelo}",
             options=opcoes_origem,
             index=opcoes_origem.index(valor_atual) if valor_atual in opcoes_origem else 0,
             key=f"map_{coluna_modelo}",
-            help="Escolha somente uma coluna real da origem/captura. Campos do modelo Bling nao aparecem aqui.",
+            help="Escolha somente uma coluna real da origem/captura. A correlação agora valida também o conteúdo da coluna.",
         )
 
         novo_valor = str(novo_valor or "").strip()
-        if novo_valor and novo_valor != valor_atual:
-            render_amostra_vermelha(df_origem, novo_valor, prefixo="Selecionado")
         mapping_atual[coluna_modelo] = "" if _eh_coluna_video(novo_valor) else novo_valor
+
+        if novo_valor:
+            _render_feedback_correlacao(df_origem, coluna_modelo, novo_valor)
+            render_amostra_vermelha(df_origem, novo_valor, prefixo="Selecionado")
+        else:
+            _render_feedback_correlacao(df_origem, coluna_modelo, "")
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
         if _eh_coluna_video(coluna_modelo):
