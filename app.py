@@ -5,6 +5,7 @@ import traceback
 import streamlit as st
 
 from bling_app_zero.core.high_quality_image_patch import install_high_quality_image_patch
+from bling_app_zero.core.mapping_dropdown_patch import install_mapping_dropdown_patch
 from bling_app_zero.core.mega_product_patch import install_mega_product_patch
 from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
 
@@ -41,6 +42,12 @@ def main() -> None:
         add_debug_log("High quality image patch instalado.", origem="PATCH")
     except Exception as exc:
         add_debug_log(f"Falha ao instalar High quality image patch: {exc}", origem="PATCH", nivel="ERRO")
+
+    try:
+        install_mapping_dropdown_patch()
+        add_debug_log("Mapping dropdown patch instalado.", origem="PATCH")
+    except Exception as exc:
+        add_debug_log(f"Falha ao instalar Mapping dropdown patch: {exc}", origem="PATCH", nivel="ERRO")
 
     _run_stable_app_safe()
 
