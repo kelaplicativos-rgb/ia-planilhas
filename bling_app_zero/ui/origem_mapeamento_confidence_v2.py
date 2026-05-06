@@ -1,17 +1,9 @@
 from __future__ import annotations
 
-"""Revisão manual do mapeamento com amostra compacta da origem.
-
-Mostra, abaixo de cada campo do modelo, a primeira linha da coluna selecionada em
-vermelho pequeno para facilitar a conferência no celular.
-"""
-
-import html as html_lib
-
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.mapeamento.source_columns import opcoes_origem_mapeamento
+from bling_app_zero.ui.mapeamento.source_columns import escolher_df_origem_captura, opcoes_origem_mapeamento
 from bling_app_zero.ui.mapeamento_sample_hint import render_amostra_vermelha
 from bling_app_zero.ui.origem_mapeamento_helpers import (
     _aplicar_mapping,
@@ -30,48 +22,25 @@ def _bloqueados_sem_preco(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
     return bloqueados
 
 
-def _badge(titulo: str, subtitulo: str = "", cor: str = "#0F172A", fundo: str = "#F8FAFC", borda: str = "#CBD5E1") -> None:
-    subtitulo_html = ""
+def _badge(titulo: str, subtitulo: str = "") -> None:
+    st.markdown(f"**{titulo}**")
     if subtitulo:
-        subtitulo_html = f"<div style='font-size:12px; opacity:.86; margin-top:2px'>{html_lib.escape(subtitulo)}</div>"
-    st.markdown(
-        f"""
-        <div style="background:{fundo}; border:1px solid {borda}; border-left:5px solid {borda};
-                    color:{cor}; border-radius:10px; padding:9px 11px; margin:8px 0 6px 0;">
-            <div style="font-weight:700; font-size:14px;">{html_lib.escape(titulo)}</div>
-            {subtitulo_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        st.caption(subtitulo)
 
 
-def _primeira_amostra(df_base: pd.DataFrame, coluna: str) -> str:
-    if not isinstance(df_base, pd.DataFrame) or coluna not in df_base.columns:
-        return ""
-    try:
-        for valor in df_base[coluna].fillna("").astype(str).tolist():
-            texto = " ".join(str(valor or "").replace("\n", " ").replace("\r", " ").split()).strip()
-            if texto:
-                return texto[:117] + "..." if len(texto) > 120 else texto
-    except Exception:
-        return ""
-    return ""
-
-
-def _status_basico(df_base: pd.DataFrame, coluna_modelo: str, coluna_origem: str) -> tuple[str, str, str, str, str]:
+def _status_basico(df_base: pd.DataFrame, coluna_modelo: str, coluna_origem: str) -> tuple[str, str]:
     if _eh_coluna_video(coluna_modelo):
-        return "🚫", "Campo de vídeo bloqueado", "Vídeo fica vazio para evitar propaganda.", "#334155", "#94A3B8"
+        return "OFF", "Campo de video bloqueado."
     if not coluna_origem:
-        return "🔴", "Sem coluna de origem", "Escolha uma coluna real da origem para este campo.", "#991B1B", "#EF4444"
+        return "PENDENTE", "Escolha uma coluna real da origem."
     if coluna_origem not in df_base.columns:
-        return "🔴", "Coluna não encontrada", "Selecione outra coluna.", "#991B1B", "#EF4444"
+        return "ERRO", "Coluna nao encontrada na origem."
     if _eh_coluna_video(coluna_origem):
-        return "🔴", "Origem de vídeo bloqueada", "Escolha outra coluna.", "#991B1B", "#EF4444"
-    return "🟢", "Coluna selecionada", f"Origem: {coluna_origem}", "#065F46", "#10B981"
+        return "ERRO", "Origem de video bloqueada."
+    return "OK", f"Origem: {coluna_origem}"
 
 
-def _render_resumo(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueados: set[str]) -> None:
+def _render_resumo(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueados: set[str]) -> None:
     total = len(df_modelo.columns)
     preenchidos = 0
     pendentes = 0
@@ -83,12 +52,9 @@ def _render_resumo(df_base: pd.DataFrame, df_modelo: pd.DataFrame, mapping: dict
             preenchidos += 1
         else:
             pendentes += 1
-    _badge(
-        "🧭 Mapa visual do mapeamento",
-        f"Total: {total} • Preenchidos: {preenchidos} • Pendentes: {pendentes} • Automáticos: {automaticos}",
-        cor="#0F172A",
-        fundo="#F8FAFC",
-        borda="#CBD5E1",
+    st.caption(
+        f"Origem/captura: {len(df_origem.columns)} colunas | Modelo: {total} | "
+        f"Preenchidos: {preenchidos} | Pendentes: {pendentes} | Automaticos: {automaticos}"
     )
 
 
@@ -107,14 +73,18 @@ def _ordenar_colunas(df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueado
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.caption("Ajuste manual. O seletor mostra somente colunas reais da origem/captura.")
+    st.caption("Ajuste manual. O seletor mostra somente as colunas da origem/captura.")
 
     if not isinstance(df_base, pd.DataFrame) or df_base.empty or not isinstance(df_modelo, pd.DataFrame):
-        st.warning("Base ou modelo inválido para mapeamento.")
+        st.warning("Base ou modelo invalido para mapeamento.")
         return
 
+    df_origem = escolher_df_origem_captura(st.session_state)
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        df_origem = df_base
+
     opcoes_origem = opcoes_origem_mapeamento(
-        df_base,
+        df_origem,
         df_modelo,
         incluir_vazio=True,
         bloquear_video=True,
@@ -126,17 +96,16 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         mapping_atual = {}
     mapping_atual = mapping_atual.copy()
 
-    _render_resumo(df_base, df_modelo, mapping_atual, bloqueados)
+    _render_resumo(df_origem, df_modelo, mapping_atual, bloqueados)
 
     for coluna_modelo in _ordenar_colunas(df_modelo, mapping_atual, bloqueados):
         if coluna_modelo in bloqueados:
+            motivo = "campo automatico"
             if _eh_coluna_video(coluna_modelo):
-                _badge(f"🚫 {coluna_modelo}", "Bloqueado automaticamente: vídeo fica vazio.", cor="#334155", borda="#94A3B8")
-            else:
-                motivo = "campo automático"
-                if coluna_modelo == _coluna_deposito_modelo(df_modelo) and operacao == "estoque":
-                    motivo = "depósito fixo da operação"
-                _badge(f"🤖 {coluna_modelo}", motivo, cor="#1E3A8A", fundo="#EFF6FF", borda="#3B82F6")
+                motivo = "video fica vazio"
+            elif coluna_modelo == _coluna_deposito_modelo(df_modelo) and operacao == "estoque":
+                motivo = "deposito fixo da operacao"
+            _badge(f"AUTO {coluna_modelo}", motivo)
             mapping_atual[coluna_modelo] = ""
             continue
 
@@ -144,23 +113,23 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         if valor_atual not in opcoes_origem or _eh_coluna_video(valor_atual):
             valor_atual = ""
 
-        emoji, titulo, subtitulo, cor, borda = _status_basico(df_base, coluna_modelo, valor_atual)
-        _badge(f"{emoji} {coluna_modelo}", subtitulo or titulo, cor=cor, fundo="#FEF2F2" if emoji == "🔴" else "#ECFDF5", borda=borda)
+        status, detalhe = _status_basico(df_origem, coluna_modelo, valor_atual)
+        _badge(f"{status} {coluna_modelo}", detalhe)
 
         if valor_atual:
-            render_amostra_vermelha(df_base, valor_atual, prefixo="1ª linha")
+            render_amostra_vermelha(df_origem, valor_atual, prefixo="1a linha")
 
         novo_valor = st.selectbox(
             f"{coluna_modelo}",
             options=opcoes_origem,
             index=opcoes_origem.index(valor_atual) if valor_atual in opcoes_origem else 0,
             key=f"map_{coluna_modelo}",
-            help="Escolha somente uma coluna real da origem/captura. Campos do modelo Bling não aparecem aqui.",
+            help="Escolha somente uma coluna real da origem/captura. Campos do modelo Bling nao aparecem aqui.",
         )
 
         novo_valor = str(novo_valor or "").strip()
         if novo_valor and novo_valor != valor_atual:
-            render_amostra_vermelha(df_base, novo_valor, prefixo="Selecionado")
+            render_amostra_vermelha(df_origem, novo_valor, prefixo="Selecionado")
         mapping_atual[coluna_modelo] = "" if _eh_coluna_video(novo_valor) else novo_valor
 
     for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
