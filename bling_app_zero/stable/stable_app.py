@@ -293,6 +293,18 @@ def _limpar_imagens_lixo_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int
     return out.fillna(""), total
 
 
+def _blindar_df_capturado_site(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    df_limpo, removidos_img = _limpar_imagens_lixo_automatico(df)
+    df_limpo, removidos_gtin = _limpar_gtins_invalidos_automatico(df_limpo)
+    df_limpo, removidos_ncm = _limpar_ncms_invalidos_automatico(df_limpo)
+    st.session_state["stable_imagens_lixo_removidas"] = removidos_img
+    st.session_state["stable_gtins_invalidos_removidos"] = removidos_gtin
+    st.session_state["stable_ncms_invalidos_removidos"] = removidos_ncm
+    return df_limpo
+
+
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
     for c in cols:
@@ -305,12 +317,7 @@ def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _force(pd.DataFrame(), cols)
     cleaned = clean_invalid_preview_mappings(df.copy().fillna(""))
-    cleaned, removidos_img = _limpar_imagens_lixo_automatico(cleaned)
-    cleaned, removidos_gtin = _limpar_gtins_invalidos_automatico(cleaned)
-    cleaned, removidos_ncm = _limpar_ncms_invalidos_automatico(cleaned)
-    st.session_state["stable_imagens_lixo_removidas"] = removidos_img
-    st.session_state["stable_gtins_invalidos_removidos"] = removidos_gtin
-    st.session_state["stable_ncms_invalidos_removidos"] = removidos_ncm
+    cleaned = _blindar_df_capturado_site(cleaned)
     return _force(cleaned, cols)
 
 
@@ -377,10 +384,7 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool =
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
     total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
-    out_limpo, _ = _limpar_imagens_lixo_automatico(out)
-    out_limpo, _ = _limpar_gtins_invalidos_automatico(out_limpo)
-    out_limpo, _ = _limpar_ncms_invalidos_automatico(out_limpo)
-    out = out_limpo
+    out = _blindar_df_capturado_site(out)
     if total_linhas > BLING_MAX_IMPORT_ROWS:
         total_partes = ceil(total_linhas / BLING_MAX_IMPORT_ROWS)
         st.warning(f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação. Seu arquivo será dividido em {total_partes} partes.")
@@ -460,15 +464,18 @@ def run_stable_app() -> None:
     with tab_file:
         df_up = render_supplier_upload_v2(state_key="stable_df_origem", key_prefix="supplier")
         if _has_df(df_up):
-            df = guardar_df("stable_df_origem", df_up)
+            df = guardar_df("stable_df_origem", _blindar_df_capturado_site(df_up))
 
     with tab_site:
         raw = st.text_area("Links do fornecedor", key="stable_site_urls", height=120)
         links = _urls(raw)
         if st.button("Gerar base por site", disabled=not links, use_container_width=True):
+            limpar_vault(prefixes=("stable_df_origem", "stable_df_export"))
+            st.session_state.pop("stable_df_origem", None)
+            st.session_state.pop("stable_df_export", None)
             df = executar_flash_amplo_pagina_por_pagina(links, max_products=FLASH_MAX_PRODUCTS, max_workers=12, show_progress=True)
             if _has_df(df):
-                df = guardar_df("stable_df_origem", df)
+                df = guardar_df("stable_df_origem", _blindar_df_capturado_site(df))
 
     if not _has_df(df):
         st.warning("Anexe/capture a origem para continuar.")
