@@ -293,16 +293,46 @@ def _limpar_imagens_lixo_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int
     return out.fillna(""), total
 
 
+def _limpar_textos_lixo_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df, 0
+    out = df.copy().fillna("")
+    total = 0
+    for col in out.columns:
+        if _is_imagem_col(col):
+            continue
+        antes = out[col].astype(str).fillna("")
+        depois = antes.str.replace(r"\s+", " ", regex=True).str.strip()
+        depois = depois.map(lambda v: "" if ("{\"" in str(v) or "\\\"" in str(v) or str(v).lower().startswith("nan")) else v)
+        total += int((antes.str.strip() != depois.astype(str).str.strip()).sum())
+        out[col] = depois
+    return out.fillna(""), total
+
+
 def _blindar_df_capturado_site(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
-    df_limpo, removidos_img = _limpar_imagens_lixo_automatico(df)
+    df_limpo, removidos_texto = _limpar_textos_lixo_automatico(df)
+    df_limpo, removidos_img = _limpar_imagens_lixo_automatico(df_limpo)
     df_limpo, removidos_gtin = _limpar_gtins_invalidos_automatico(df_limpo)
     df_limpo, removidos_ncm = _limpar_ncms_invalidos_automatico(df_limpo)
+    st.session_state["stable_textos_lixo_removidos"] = removidos_texto
     st.session_state["stable_imagens_lixo_removidas"] = removidos_img
     st.session_state["stable_gtins_invalidos_removidos"] = removidos_gtin
     st.session_state["stable_ncms_invalidos_removidos"] = removidos_ncm
     return df_limpo
+
+
+def _limpar_estado_dados_antigos() -> None:
+    limpar_vault(prefixes=("stable_df_origem", "stable_df_export", "supplier_"))
+    for key in list(st.session_state.keys()):
+        if key.startswith("stable_map_") or key.startswith("supplier_"):
+            st.session_state.pop(key, None)
+    for key in (
+        "stable_df_origem", "stable_df_export", "stable_textos_lixo_removidos",
+        "stable_imagens_lixo_removidas", "stable_gtins_invalidos_removidos", "stable_ncms_invalidos_removidos",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -464,22 +494,25 @@ def run_stable_app() -> None:
     with tab_file:
         df_up = render_supplier_upload_v2(state_key="stable_df_origem", key_prefix="supplier")
         if _has_df(df_up):
+            _limpar_estado_dados_antigos()
             df = guardar_df("stable_df_origem", _blindar_df_capturado_site(df_up))
 
     with tab_site:
         raw = st.text_area("Links do fornecedor", key="stable_site_urls", height=120)
         links = _urls(raw)
         if st.button("Gerar base por site", disabled=not links, use_container_width=True):
-            limpar_vault(prefixes=("stable_df_origem", "stable_df_export"))
-            st.session_state.pop("stable_df_origem", None)
-            st.session_state.pop("stable_df_export", None)
+            _limpar_estado_dados_antigos()
             df = executar_flash_amplo_pagina_por_pagina(links, max_products=FLASH_MAX_PRODUCTS, max_workers=12, show_progress=True)
             if _has_df(df):
                 df = guardar_df("stable_df_origem", _blindar_df_capturado_site(df))
+            st.rerun()
 
     if not _has_df(df):
         st.warning("Anexe/capture a origem para continuar.")
         return
+
+    df = _blindar_df_capturado_site(df)
+    guardar_df("stable_df_origem", df)
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
@@ -500,7 +533,10 @@ def run_stable_app() -> None:
         if auto_100:
             auto_100_count += 1
 
-        selecionada = st.selectbox(str(c), options, index=idx, key=f"stable_map_{c}")
+        key = f"stable_map_{c}"
+        if key in st.session_state and st.session_state[key] not in options:
+            st.session_state.pop(key, None)
+        selecionada = st.selectbox(str(c), options, index=idx, key=key)
         mapping[c] = selecionada
         _render_source_preview(df, selecionada, auto_100=bool(auto_100 and selecionada == auto_100))
 
@@ -516,9 +552,12 @@ def run_stable_app() -> None:
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
+    removidos_texto = int(st.session_state.get("stable_textos_lixo_removidos", 0) or 0)
     removidos_img = int(st.session_state.get("stable_imagens_lixo_removidas", 0) or 0)
     removidos_gtin = int(st.session_state.get("stable_gtins_invalidos_removidos", 0) or 0)
     removidos_ncm = int(st.session_state.get("stable_ncms_invalidos_removidos", 0) or 0)
+    if removidos_texto:
+        st.info(f"Dados antigos/lixo textual limpos automaticamente: {removidos_texto}.")
     if removidos_img:
         st.info(f"Imagens lixo removidas automaticamente: {removidos_img}. Foram mantidas apenas URLs reais de imagem de produto.")
     if removidos_gtin:
