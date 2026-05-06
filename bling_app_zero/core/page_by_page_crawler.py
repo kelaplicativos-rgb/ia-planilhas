@@ -4,9 +4,9 @@ from __future__ import annotations
 
 Regra principal:
     1. A varredura normal/listagem é sempre a fonte primária para descobrir URLs.
-    2. O sistema entra em cada página individual `/produto/...` para extrair dados.
-    3. Sitemap entra por último, apenas para complementar URLs de produto que a
-       varredura inicial não detectou.
+    2. A listagem deve percorrer paginação, não apenas a primeira página.
+    3. O sistema entra em cada página individual `/produto/...` para extrair dados.
+    4. Sitemap não deve determinar quantidade de produtos do Flash Amplo.
 
 Campos opcionais como NCM, preço de custo, categoria etc. podem vir SIM, desde
 que encontrados de verdade na página/dados estruturados. O crawler não inventa
@@ -15,16 +15,15 @@ nem força coluna sem dado real.
 
 import json
 import re
+from collections import deque
 from dataclasses import dataclass
 from html import unescape
 from typing import Iterable, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-
-from bling_app_zero.core.site_sitemap import discover_product_urls_from_sitemaps
 
 
 DEFAULT_TIMEOUT = 20
@@ -35,6 +34,8 @@ SKU_RE = re.compile(r"(?:SKU|C[ÓO]D(?:IGO)?|REF(?:ER[EÊ]NCIA)?)[\s:#\-]*([A-Z0
 NCM_RE = re.compile(r"\bNCM\b[\s:#\-]*([0-9.]{6,12})", re.IGNORECASE)
 CEST_RE = re.compile(r"\bCEST\b[\s:#\-]*([0-9.]{5,12})", re.IGNORECASE)
 COST_RE = re.compile(r"(?:pre[cç]o\s+de\s+custo|custo)\s*[:\-]?\s*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[,\.]\d{2})", re.IGNORECASE)
+PAGINATION_HINT_RE = re.compile(r"(?:^|\b)(proxima|próxima|next|seguinte|avancar|avançar|mais|page|pagina|página|pag)(?:\b|$)", re.IGNORECASE)
+PAGE_PARAM_NAMES = ("page", "pagina", "p", "pg")
 
 DESCRIPTION_SELECTORS = (
     "#descricao",
@@ -122,6 +123,11 @@ def normalize_url(url: str, base_url: str) -> str:
     return urljoin(base_url, unescape(str(url or "")).strip())
 
 
+def _strip_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    return parsed._replace(fragment="").geturl()
+
+
 def is_product_url(url: str) -> bool:
     parsed = urlparse(str(url or ""))
     return bool(parsed.scheme and parsed.netloc and PRODUCT_PATH_RE.search(parsed.path))
@@ -143,16 +149,101 @@ def _same_seed_host(url: str, hosts: set[str]) -> bool:
     return host in hosts
 
 
+def _same_listing_area(url: str, seed_hosts: set[str]) -> bool:
+    parsed = urlparse(str(url or ""))
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    if not _same_seed_host(url, seed_hosts):
+        return False
+    if is_product_url(url):
+        return False
+    low = url.lower()
+    if any(block in low for block in ("/login", "/conta", "/account", "/checkout", "/carrinho", "/cart", "whatsapp", "facebook", "instagram")):
+        return False
+    return True
+
+
+def _url_with_page_param(base_url: str, page: int, param_name: str) -> str:
+    parsed = urlparse(base_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query[param_name] = str(page)
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _synthetic_next_pages(current_url: str, page_number: int) -> list[str]:
+    next_page = page_number + 1
+    parsed = urlparse(current_url)
+    results: list[str] = []
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_keys = {k.lower() for k in query}
+    if any(name in query_keys for name in PAGE_PARAM_NAMES):
+        for name in PAGE_PARAM_NAMES:
+            for key in list(query.keys()):
+                if key.lower() == name:
+                    results.append(_url_with_page_param(current_url, next_page, key))
+    else:
+        for name in ("page", "pagina"):
+            results.append(_url_with_page_param(current_url, next_page, name))
+
+    path = parsed.path.rstrip("/")
+    if not re.search(r"/page/\d+$", path, flags=re.IGNORECASE):
+        results.append(urlunparse(parsed._replace(path=f"{path}/page/{next_page}", query="")))
+    else:
+        results.append(urlunparse(parsed._replace(path=re.sub(r"/page/\d+$", f"/page/{next_page}", path, flags=re.IGNORECASE), query="")))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in results:
+        clean = _strip_url(url)
+        if clean and clean not in seen:
+            seen.add(clean)
+            deduped.append(clean)
+    return deduped
+
+
+def _extract_next_listing_urls(soup: BeautifulSoup, current_url: str, seed_hosts: set[str]) -> list[str]:
+    next_urls: list[str] = []
+    seen: set[str] = set()
+
+    selectors = (
+        "a[rel='next']",
+        ".pagination a[href]",
+        "[class*='pagination'] a[href]",
+        "[class*='paginacao'] a[href]",
+        "a[href*='page=']",
+        "a[href*='pagina=']",
+        "a[href*='?p=']",
+        "a[href*='/page/']",
+    )
+    for selector in selectors:
+        for anchor in soup.select(selector):
+            href = normalize_url(anchor.get("href", ""), current_url)
+            label = " ".join(filter(None, [anchor.get_text(" ", strip=True), str(anchor.get("aria-label") or ""), str(anchor.get("title") or ""), " ".join(anchor.get("class") or [])]))
+            href_low = href.lower()
+            looks_page = any(token in href_low for token in ("page=", "pagina=", "?p=", "&p=", "/page/")) or bool(PAGINATION_HINT_RE.search(label))
+            if not looks_page:
+                continue
+            clean = _strip_url(href)
+            if clean and clean not in seen and _same_listing_area(clean, seed_hosts):
+                seen.add(clean)
+                next_urls.append(clean)
+    return next_urls
+
+
 def discover_product_urls(
     seed_urls: Iterable[str],
     *,
     max_products: Optional[int] = None,
-    use_sitemap: bool = True,
+    use_sitemap: bool = False,
 ) -> list[str]:
     discovered: list[str] = []
-    seen: set[str] = set()
+    seen_products: set[str] = set()
     seeds = [str(seed or "").strip() for seed in seed_urls if str(seed or "").strip()]
     seed_hosts = _allowed_hosts(seeds)
+    page_queue: deque[tuple[str, int]] = deque()
+    seen_pages: set[str] = set()
+    pages_without_new_products = 0
 
     def add_url(url: str) -> bool:
         if not is_product_url(url):
@@ -161,34 +252,55 @@ def discover_product_urls(
         clean_url = parsed._replace(query="", fragment="").geturl()
         if not _same_seed_host(clean_url, seed_hosts):
             return False
-        if clean_url in seen:
+        if clean_url in seen_products:
             return False
-        seen.add(clean_url)
+        seen_products.add(clean_url)
         discovered.append(clean_url)
         return bool(max_products and len(discovered) >= max_products)
 
     for seed in seeds:
-        if add_url(seed):
+        seed_clean = _strip_url(seed)
+        if add_url(seed_clean):
             return discovered
-        if is_product_url(seed):
-            continue
+        if not is_product_url(seed_clean) and _same_listing_area(seed_clean, seed_hosts) and seed_clean not in seen_pages:
+            seen_pages.add(seed_clean)
+            page_queue.append((seed_clean, 1))
+
+    while page_queue:
+        page_url, page_number = page_queue.popleft()
+        before_count = len(discovered)
 
         try:
-            html = fetch_html(seed)
+            html = fetch_html(page_url)
         except Exception:
             continue
 
         soup = BeautifulSoup(html, "html.parser")
         for anchor in soup.select("a[href]"):
-            href = normalize_url(anchor.get("href", ""), seed)
+            href = normalize_url(anchor.get("href", ""), page_url)
             if add_url(href):
                 return discovered
 
-    if use_sitemap and (not max_products or len(discovered) < max_products):
-        remaining = None if max_products is None else max_products - len(discovered)
-        for sitemap_url in discover_product_urls_from_sitemaps(seeds, max_products=remaining or 5000):
-            if add_url(sitemap_url):
-                return discovered
+        added_here = len(discovered) - before_count
+        if added_here <= 0:
+            pages_without_new_products += 1
+        else:
+            pages_without_new_products = 0
+
+        # Links reais de paginação encontrados no HTML.
+        for next_url in _extract_next_listing_urls(soup, page_url, seed_hosts):
+            if next_url not in seen_pages:
+                seen_pages.add(next_url)
+                page_queue.append((next_url, page_number + 1))
+
+        # Tentativas sintéticas comuns de paginação. Não é limite de páginas;
+        # apenas para descobrir a próxima URL quando o site não expõe rel=next.
+        # A parada acontece quando várias páginas seguidas não trazem produto novo.
+        if pages_without_new_products < 3:
+            for synthetic_url in _synthetic_next_pages(page_url, page_number):
+                if synthetic_url not in seen_pages and _same_listing_area(synthetic_url, seed_hosts):
+                    seen_pages.add(synthetic_url)
+                    page_queue.append((synthetic_url, page_number + 1))
 
     return discovered
 
@@ -241,7 +353,6 @@ def _normalize_price(value: object) -> str:
     if not matches:
         return ""
     candidates: list[float] = []
-    original: dict[float, str] = {}
     for match in matches:
         raw = str(match)
         value_txt = raw.replace(".", "").replace(",", ".") if "," in raw else raw
@@ -252,7 +363,6 @@ def _normalize_price(value: object) -> str:
         if number <= 0:
             continue
         candidates.append(number)
-        original[number] = value_txt
     if not candidates:
         return ""
     chosen = max(candidates)
@@ -316,7 +426,6 @@ def _extract_description_from_page(soup: BeautifulSoup, title: str = "") -> str:
     candidates: list[str] = []
     for selector in DESCRIPTION_SELECTORS:
         for node in soup.select(selector):
-            # remove áreas que normalmente são propaganda/rodapé/navegação dentro do bloco
             for bad in node.select("script, style, nav, footer, header, form, button, .social, .newsletter, .menu, .breadcrumb"):
                 bad.decompose()
             text = _clean_description_block(node.get_text(" ", strip=True), title=title)
@@ -328,9 +437,7 @@ def _extract_description_from_page(soup: BeautifulSoup, title: str = "") -> str:
 
 
 def _extract_price_from_page(soup: BeautifulSoup, full_text: str) -> str:
-    for meta_names in (
-        ("product:price:amount", "og:price:amount", "price", "twitter:data1"),
-    ):
+    for meta_names in (("product:price:amount", "og:price:amount", "price", "twitter:data1"),):
         price = _normalize_price(_first_meta(soup, *meta_names))
         if price:
             return price
@@ -364,14 +471,10 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
             continue
 
         data["Descrição"] = data.get("Descrição") or _clean_text(obj.get("name"))
-        data["Marca"] = data.get("Marca") or _clean_text(
-            obj.get("brand", {}).get("name") if isinstance(obj.get("brand"), dict) else obj.get("brand")
-        )
+        data["Marca"] = data.get("Marca") or _clean_text(obj.get("brand", {}).get("name") if isinstance(obj.get("brand"), dict) else obj.get("brand"))
         data["Código"] = data.get("Código") or _clean_text(obj.get("sku") or obj.get("mpn"))
         data["Cód no fornecedor"] = data.get("Cód no fornecedor") or _clean_text(obj.get("sku") or obj.get("mpn"))
-        data["GTIN/EAN"] = data.get("GTIN/EAN") or _clean_text(
-            obj.get("gtin13") or obj.get("gtin14") or obj.get("gtin12") or obj.get("gtin8")
-        )
+        data["GTIN/EAN"] = data.get("GTIN/EAN") or _clean_text(obj.get("gtin13") or obj.get("gtin14") or obj.get("gtin12") or obj.get("gtin8"))
         data["Categoria"] = data.get("Categoria") or _clean_text(obj.get("category"))
 
         for key, target in (("ncm", "NCM"), ("cest", "CEST"), ("cost", "Preço de custo"), ("costPrice", "Preço de custo")):
@@ -508,7 +611,7 @@ def crawl_product_pages(
     seed_urls: Iterable[str],
     *,
     max_products: Optional[int] = None,
-    use_sitemap: bool = True,
+    use_sitemap: bool = False,
 ) -> list[dict[str, str]]:
     product_urls = discover_product_urls(seed_urls, max_products=max_products, use_sitemap=use_sitemap)
     rows: list[dict[str, str]] = []
@@ -533,6 +636,6 @@ def crawl_product_pages_dataframe(
     seed_urls: Iterable[str],
     *,
     max_products: Optional[int] = None,
-    use_sitemap: bool = True,
+    use_sitemap: bool = False,
 ) -> pd.DataFrame:
     return pd.DataFrame(crawl_product_pages(seed_urls, max_products=max_products, use_sitemap=use_sitemap))
