@@ -14,7 +14,7 @@ from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restau
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import dataframe_para_csv_bytes
 from bling_app_zero.ui.flash_amplo_execution import executar_flash_amplo_pagina_por_pagina
-from bling_app_zero.ui.mapeamento.mapping_engine import analyze_mapping, log_mapping_analysis
+from bling_app_zero.ui.mapeamento.mapping_engine import analyze_mapping
 from bling_app_zero.ui.mapeamento.source_columns import normalizar_nome_coluna
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
@@ -23,6 +23,7 @@ BLING_MAX_IMPORT_ROWS = 1000
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
 EST_COLS = ["Código", "Descrição", "GTIN/EAN", "Depósito", "Estoque", "Quantidade"]
 GS1_PREFIXOS_INVALIDOS_BLOQUEADOS = {"665", "684", "782", "852"}
+MAPPING_UI_VERSION = "2026-05-06-real-preview-v3"
 
 
 def _read_upload(file) -> pd.DataFrame | None:
@@ -408,36 +409,18 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
 
 def _render_source_preview(df: pd.DataFrame, target: str, selected_col: str, auto_100: bool = False) -> None:
     if not selected_col:
-        st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>⚠️ Sem certeza. Faça este campo manualmente.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>⚠️ Selecione a coluna correta.</div>", unsafe_allow_html=True)
         return
 
     analise = analyze_mapping(df, target, selected_col)
-    log_mapping_analysis(analise)
-    valor = analise.sample_value or _first_non_empty_value(df, selected_col) or "sem valor preenchido na coluna selecionada"
-    pct = int(round(analise.confidence * 100))
-
-    if analise.status == "valid" and auto_100:
-        selo = f"✅ Mapeamento automático validado {pct}%"
-        cor_selo = "#047857"
-        cor_valor = "#047857"
-    elif analise.status == "valid":
-        selo = f"✅ Correlação válida {pct}%"
-        cor_selo = "#047857"
-        cor_valor = "#047857"
-    elif analise.status == "warning":
-        selo = f"⚠️ Correlação incerta {pct}%"
-        cor_selo = "#b45309"
-        cor_valor = "#b45309"
-    else:
-        selo = f"❌ Correlação inválida {pct}%"
-        cor_selo = "#b91c1c"
-        cor_valor = "#b91c1c"
-
-    detalhe = f"{selo}: {selected_col} | Tipo provável: {analise.detected_type} | {analise.reason}"
+    valor = _first_non_empty_value(df, selected_col) or analise.sample_value or "sem valor preenchido"
+    cor = "#047857" if analise.status == "valid" else ("#b45309" if analise.status == "warning" else "#b91c1c")
+    icone = "✅" if analise.status == "valid" else ("⚠️" if analise.status == "warning" else "❌")
+    texto = f"{icone} {selected_col}"
     st.markdown(
-        "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
-        f"<div style='color:{cor_selo};font-size:0.86rem;font-weight:700;'>{escape(detalhe)}</div>"
-        f"<div style='color:{cor_valor};font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>"
+        "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.25;'>"
+        f"<div style='color:{cor};font-size:0.86rem;font-weight:700;'>{escape(texto)}</div>"
+        f"<div style='color:{cor};font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -485,12 +468,23 @@ def _show_line_metrics(df_origem: pd.DataFrame, df_final: pd.DataFrame | None = 
     cols[1].metric("Linhas no preview final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
 
 
+def _selectbox_mapping(campo: str, options: list[str], default_value: str) -> str:
+    old_key = f"stable_map_{campo}"
+    st.session_state.pop(old_key, None)
+    key = f"stable_map_{MAPPING_UI_VERSION}_{_norm(campo).replace(' ', '_')}"
+    if key in st.session_state and st.session_state[key] not in options:
+        st.session_state.pop(key, None)
+    index = options.index(default_value) if default_value in options else 0
+    return str(st.selectbox(str(campo), options, index=index, key=key) or "").strip()
+
+
 def run_stable_app() -> None:
     restaurar_chaves_df(["stable_df_origem", "stable_df_modelo", "stable_df_export"])
     st.title("🚀 IA Planilhas → Bling")
     st.caption("Fluxo corrigido: Modelo Bling → Origem/site → Mapeamento manual → Preview final → CSV.")
 
     with st.sidebar:
+        st.caption(f"Mapping UI: {MAPPING_UI_VERSION}")
         if st.button("🧹 Reiniciar fluxo", use_container_width=True):
             limpar_vault(prefixes=("stable_", "supplier_"))
             st.rerun()
@@ -560,18 +554,14 @@ def run_stable_app() -> None:
             continue
 
         auto_100 = _auto_map_100(str(c), options, df)
-        idx = options.index(auto_100) if auto_100 in options else 0
         if auto_100:
             auto_100_count += 1
 
-        key = f"stable_map_{c}"
-        if key in st.session_state and st.session_state[key] not in options:
-            st.session_state.pop(key, None)
-        selecionada = st.selectbox(str(c), options, index=idx, key=key)
+        selecionada = _selectbox_mapping(str(c), options, auto_100)
         mapping[c] = selecionada
         _render_source_preview(df, str(c), selecionada, auto_100=bool(auto_100 and selecionada == auto_100))
 
-    st.caption(f"Mapeamentos automáticos validados: {auto_100_count}. O restante fica como alerta ou vazio para revisão manual.")
+    st.caption(f"Mapeamentos automáticos validados: {auto_100_count}. O restante fica vazio ou com alerta para revisão manual.")
 
     out = pd.DataFrame(index=df.index)
     for c in cols:
