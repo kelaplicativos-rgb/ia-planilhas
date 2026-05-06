@@ -114,6 +114,22 @@ def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[s
     return [""] + cols
 
 
+def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
+    """Mapeia automaticamente somente quando a certeza é literal/exata.
+
+    Não usa semântica, aproximação, IA ou chute. Se houver zero ou mais de uma opção
+    exata, retorna vazio para o usuário mapear manualmente.
+    """
+    target_norm = _norm(target)
+    if not target_norm:
+        return ""
+
+    matches = [opt for opt in options if opt and _norm(opt) == target_norm and _column_has_data(df, opt)]
+    if len(matches) == 1:
+        return matches[0]
+    return ""
+
+
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
     for c in cols:
@@ -180,19 +196,20 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
     return ""
 
 
-def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
+def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool = False) -> None:
     if not selected_col:
         st.markdown(
             "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>"
-            "⚠️ Nenhuma coluna da origem selecionada para este campo."
+            "⚠️ Sem certeza 100%. Faça este campo manualmente."
             "</div>",
             unsafe_allow_html=True,
         )
         return
     valor = _first_non_empty_value(df, selected_col) or "sem valor preenchido na coluna selecionada"
+    selo = "Mapeamento automático 100% exato" if auto_100 else "Coluna da origem"
     st.markdown(
         "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
-        f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
+        f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>{escape(selo)}: {escape(str(selected_col))}</div>"
         f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>"
         "</div>",
         unsafe_allow_html=True,
@@ -298,9 +315,10 @@ def run_stable_app() -> None:
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
-    st.caption("Escolha manualmente as colunas reais da origem/captura. Nenhum campo vem preenchido automaticamente.")
+    st.caption("Automático só quando for 100% exato. Sem certeza, o campo fica vazio para ajuste manual.")
 
     mapping = {}
+    auto_100_count = 0
     deposito_manual = ""
     for c in cols:
         options = _source_options_for_target(str(c), df, cols)
@@ -308,9 +326,17 @@ def run_stable_app() -> None:
             deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
             mapping[c] = ""
             continue
-        selecionada = st.selectbox(str(c), options, index=0, key=f"stable_map_{c}")
+
+        auto_100 = _auto_map_100(str(c), options, df)
+        idx = options.index(auto_100) if auto_100 in options else 0
+        if auto_100:
+            auto_100_count += 1
+
+        selecionada = st.selectbox(str(c), options, index=idx, key=f"stable_map_{c}")
         mapping[c] = selecionada
-        _render_source_preview(df, selecionada)
+        _render_source_preview(df, selecionada, auto_100=bool(auto_100 and selecionada == auto_100))
+
+    st.caption(f"Mapeamentos automáticos 100% exatos: {auto_100_count}. O restante ficou vazio para revisão manual.")
 
     out = pd.DataFrame(index=df.index)
     for c in cols:
