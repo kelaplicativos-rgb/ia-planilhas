@@ -49,6 +49,11 @@ def _is_deposito_col(col: object) -> bool:
     return "deposito" in _norm(col)
 
 
+def _is_departamento_col(col: object) -> bool:
+    n = _norm(col)
+    return n in {"departamento", "apartamento"} or "departamento" in n or "apartamento" in n
+
+
 def _is_descricao_col(col: object) -> bool:
     n = _norm(col)
     return "descricao" in n or n in {"nome", "produto"}
@@ -299,6 +304,11 @@ def run_stable_app() -> None:
             deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
             mapping[c] = ""
             continue
+        if _is_departamento_col(c):
+            st.text_input(str(c), value="Unissex", disabled=True, key=f"stable_departamento_{c}")
+            st.caption("Preenchido automaticamente com padrão Unissex.")
+            mapping[c] = "__UNISSEX__"
+            continue
         default = _safe_source(c, df.columns)
         idx = sources.index(default) if default in sources else 0
         selecionada = st.selectbox(str(c), sources, index=idx, key=f"stable_map_{c}")
@@ -309,6 +319,9 @@ def run_stable_app() -> None:
     for c in cols:
         if tipo == "estoque" and _is_deposito_col(c):
             out[c] = deposito_manual
+            continue
+        if _is_departamento_col(c):
+            out[c] = "Unissex"
             continue
         src = mapping.get(c, "")
         out[c] = df[src].astype(str).fillna("") if src and src in df.columns else ""
