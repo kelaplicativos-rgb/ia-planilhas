@@ -70,6 +70,11 @@ def _norm(v) -> str:
     return normalizar_nome_coluna(v)
 
 
+def _is_tipo_item_col(col: object) -> bool:
+    n = _norm(col)
+    return n in {"tipo do item", "tipo item", "tipo de item"}
+
+
 def _is_deposito_col(col: object) -> bool:
     return "deposito" in _norm(col)
 
@@ -133,6 +138,8 @@ def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[s
 
 
 def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
+    if _is_tipo_item_col(target):
+        return ""
     target_norm = _norm(target)
     if not target_norm:
         return ""
