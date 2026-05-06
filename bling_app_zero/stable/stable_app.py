@@ -21,6 +21,7 @@ FLASH_MAX_PRODUCTS = 5000
 BLING_MAX_IMPORT_ROWS = 1000
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
 EST_COLS = ["Código", "Descrição", "GTIN/EAN", "Depósito", "Estoque", "Quantidade"]
+GS1_PREFIXOS_INVALIDOS_BLOQUEADOS = {"665", "684", "782", "852"}
 
 
 def _read_upload(file) -> pd.DataFrame | None:
@@ -68,6 +69,49 @@ def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
 
 def _norm(v) -> str:
     return normalizar_nome_coluna(v)
+
+
+def _is_gtin_col(col: object) -> bool:
+    n = _norm(col)
+    return "gtin" in n or "ean" in n or "codigo de barras" in n or "cod barras" in n
+
+
+def _gtin_check_digit_ok(digits: str) -> bool:
+    if len(digits) not in {8, 12, 13, 14} or not digits.isdigit():
+        return False
+    total = 0
+    for idx, char in enumerate(digits[:-1][::-1]):
+        total += int(char) * (3 if idx % 2 == 0 else 1)
+    expected = (10 - (total % 10)) % 10
+    return int(digits[-1]) == expected
+
+
+def _clean_gtin_value(value: object) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not digits:
+        return ""
+    if len(digits) not in {8, 12, 13, 14}:
+        return ""
+    if len(digits) >= 3 and digits[:3] in GS1_PREFIXOS_INVALIDOS_BLOQUEADOS:
+        return ""
+    if not _gtin_check_digit_ok(digits):
+        return ""
+    return digits
+
+
+def _limpar_gtins_invalidos_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df, 0
+    out = df.copy().fillna("")
+    total = 0
+    for col in out.columns:
+        if not _is_gtin_col(col):
+            continue
+        antes = out[col].astype(str).fillna("")
+        depois = antes.map(_clean_gtin_value)
+        total += int((antes.str.strip() != depois.astype(str).str.strip()).sum())
+        out[col] = depois
+    return out.fillna(""), total
 
 
 def _is_tipo_item_col(col: object) -> bool:
@@ -168,6 +212,8 @@ def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _force(pd.DataFrame(), cols)
     cleaned = clean_invalid_preview_mappings(df.copy().fillna(""))
+    cleaned, removidos = _limpar_gtins_invalidos_automatico(cleaned)
+    st.session_state["stable_gtins_invalidos_removidos"] = removidos
     return _force(cleaned, cols)
 
 
@@ -234,6 +280,9 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool =
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
     total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
+    out_limpo, removidos_download = _limpar_gtins_invalidos_automatico(out)
+    if removidos_download:
+        out = out_limpo
     if total_linhas > BLING_MAX_IMPORT_ROWS:
         total_partes = ceil(total_linhas / BLING_MAX_IMPORT_ROWS)
         st.warning(f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação. Seu arquivo será dividido em {total_partes} partes.")
@@ -361,6 +410,10 @@ def run_stable_app() -> None:
         out[c] = df[src].astype(str).fillna("") if src and src in df.columns else ""
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
+
+    removidos = int(st.session_state.get("stable_gtins_invalidos_removidos", 0) or 0)
+    if removidos:
+        st.info(f"GTINs inválidos limpos automaticamente: {removidos}. Campos inválidos foram deixados em branco para o Bling aceitar.")
 
     _show_line_metrics(df, out)
     with st.expander("Preview final", expanded=False):
