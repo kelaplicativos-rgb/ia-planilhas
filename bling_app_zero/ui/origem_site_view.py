@@ -20,6 +20,7 @@ CHAVES_PREVIEW_SITE = [
     "df_preview_inteligente",
     "df_auto_mapa",
     "df_preview_site_modelo_bling",
+    "df_preview_origem",
     "origem_site_preview_modelo_bling",
     "origem_site_preview_modelo_bling_linhas",
     "origem_site_preview_modelo_bling_colunas",
@@ -53,7 +54,7 @@ def _limpar_preview_site() -> None:
 
 
 def _obter_df_bruto_site() -> pd.DataFrame | None:
-    for chave in ("df_origem", "df_saida", "df_origem_site", "df_capturado_site", "df_preview_origem"):
+    for chave in ("df_origem", "df_saida", "df_origem_site", "df_capturado_site"):
         df = st.session_state.get(chave)
         if isinstance(df, pd.DataFrame) and not df.empty:
             return df.copy()
@@ -147,50 +148,42 @@ def _consolidar_coluna_imagens(df: pd.DataFrame) -> pd.DataFrame:
     return base.fillna("")
 
 
-def _registrar_preview_bruto_para_continuar(df_bruto: pd.DataFrame) -> None:
+def _registrar_dados_brutos_para_mapeamento(df_bruto: pd.DataFrame) -> None:
     if not _df_valido(df_bruto):
         return
 
-    df_preview = _consolidar_coluna_imagens(df_bruto)
-    st.session_state["df_origem"] = df_preview.copy()
-    st.session_state["df_saida"] = df_preview.copy()
-    st.session_state["df_preview_inteligente"] = df_preview.copy()
-    st.session_state["df_preview_origem"] = df_preview.copy()
-    st.session_state["df_precificado"] = df_preview.copy()
+    df_map = _consolidar_coluna_imagens(df_bruto)
+    st.session_state["df_origem"] = df_map.copy()
+    st.session_state["df_saida"] = df_map.copy()
+    st.session_state["df_precificado"] = df_map.copy()
     st.session_state["origem_site_preview_modelo_bling"] = False
-    st.session_state["origem_site_preview_hash"] = _hash_df_simples(df_preview)
+    st.session_state["origem_site_preview_hash"] = _hash_df_simples(df_map)
+
+    # Remove qualquer sobra do preview antigo da origem/modelo.
+    st.session_state.pop("df_preview_origem", None)
+    st.session_state.pop("df_preview_inteligente", None)
     st.session_state.pop("df_preview_site_modelo_bling", None)
     st.session_state.pop("df_auto_mapa", None)
     st.session_state.pop("df_final", None)
 
 
-def _render_preview_bruto_site(df_bruto: pd.DataFrame) -> None:
+def _render_status_captura_sem_preview(df_bruto: pd.DataFrame) -> None:
+    """Mostra só status compacto; não renderiza preview/tabela da origem."""
     if not _df_valido(df_bruto):
         return
 
-    df_preview = _consolidar_coluna_imagens(df_bruto)
-    _registrar_preview_bruto_para_continuar(df_preview)
+    df_map = _consolidar_coluna_imagens(df_bruto)
+    _registrar_dados_brutos_para_mapeamento(df_map)
 
-    st.markdown("#### 📦 Preview bruto da captura por site")
-    st.caption(
-        "Esta tabela mostra tudo que o robô conseguiu extrair, sem forçar as colunas do modelo Bling. "
-        "O mapeamento correto será feito na próxima etapa."
-    )
-
-    colunas_imagem = [col for col in df_preview.columns if _coluna_eh_imagem(col)]
     total_com_imagem = 0
-    if "URL Imagens Externas" in df_preview.columns:
-        total_com_imagem = int(df_preview["URL Imagens Externas"].astype(str).str.strip().ne("").sum())
+    if "URL Imagens Externas" in df_map.columns:
+        total_com_imagem = int(df_map["URL Imagens Externas"].astype(str).str.strip().ne("").sum())
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Produtos", len(df_preview))
-    c2.metric("Colunas extraídas", len(df_preview.columns))
-    c3.metric("Com imagem", total_com_imagem)
-
-    if colunas_imagem:
-        st.caption("Colunas de imagem detectadas: " + ", ".join([str(c) for c in colunas_imagem]))
-
-    st.dataframe(df_preview.head(50), use_container_width=True)
+    st.success(
+        f"✅ Captura pronta para mapeamento: {len(df_map)} produtos, "
+        f"{len(df_map.columns)} colunas extraídas, {total_com_imagem} com imagem."
+    )
+    st.caption("O preview da origem foi removido. A conferência acontece no mapeamento, com a 1ª linha em vermelho abaixo de cada campo.")
 
 
 def _formatar_tempo(segundos: float) -> str:
@@ -309,7 +302,7 @@ def _criar_monitor_progresso(total_urls: int):
             col1.metric("⏱️ Tempo total", _formatar_tempo(decorrido))
             col2.metric("📦 Linhas", int(total_linhas))
             col3.metric("✅ Etapas", f"{total_passos}/{total_passos}")
-        etapa_atual.markdown("**✅ Resultado bruto preservado. O mapeamento será feito na próxima etapa.**")
+        etapa_atual.markdown("**✅ Resultado preservado. Siga para o mapeamento para revisar campo por campo.**")
         pulso.caption(f"Finalizado às {time.strftime('%H:%M:%S')}.")
 
     return atualizar, finalizar
@@ -319,8 +312,8 @@ def render_origem_site_panel() -> None:
     restaurar_resultado_site_travado()
 
     with st.container(border=True):
-        st.markdown("#### 🚀 Captura por site (dados brutos)")
-        st.caption("O robô extrai todos os campos possíveis. Não forçamos mais a captura no modelo Bling nesta tela.")
+        st.markdown("#### 🚀 Captura por site")
+        st.caption("O robô extrai os dados e envia direto para o mapeamento. O preview da origem foi removido.")
 
         total_travado = int(st.session_state.get("origem_site_total_produtos") or 0)
         if st.session_state.get("origem_site_resultado_travado") and total_travado > 0:
@@ -364,11 +357,11 @@ def render_origem_site_panel() -> None:
 
             df_bruto = _consolidar_coluna_imagens(df)
             guardar_resultado(df_bruto, urls, None, "AUTO_TOTAL")
-            _registrar_preview_bruto_para_continuar(df_bruto)
+            _registrar_dados_brutos_para_mapeamento(df_bruto)
             finalizar_progresso(len(df_bruto))
-            st.success(f"{len(df_bruto)} produtos encontrados. Dados brutos preservados para mapeamento.")
+            st.success(f"{len(df_bruto)} produtos encontrados. Siga para o mapeamento para revisar os campos.")
             st.rerun()
 
     df_bruto = _obter_df_bruto_site()
     if df_bruto is not None:
-        _render_preview_bruto_site(df_bruto)
+        _render_status_captura_sem_preview(df_bruto)
