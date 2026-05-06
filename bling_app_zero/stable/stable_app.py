@@ -32,8 +32,12 @@ def _has_df(df) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
 
 
+def _has_model_columns(df) -> bool:
+    return isinstance(df, pd.DataFrame) and len([c for c in df.columns if str(c).strip()]) > 0
+
+
 def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
-    if _has_df(modelo):
+    if _has_model_columns(modelo):
         return [str(c).strip() for c in modelo.columns if str(c).strip()]
     return EST_COLS if tipo == "estoque" else CAD_COLS
 
@@ -115,15 +119,9 @@ def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[s
 
 
 def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
-    """Mapeia automaticamente somente quando a certeza é literal/exata.
-
-    Não usa semântica, aproximação, IA ou chute. Se houver zero ou mais de uma opção
-    exata, retorna vazio para o usuário mapear manualmente.
-    """
     target_norm = _norm(target)
     if not target_norm:
         return ""
-
     matches = [opt for opt in options if opt and _norm(opt) == target_norm and _column_has_data(df, opt)]
     if len(matches) == 1:
         return matches[0]
@@ -198,22 +196,11 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
 
 def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool = False) -> None:
     if not selected_col:
-        st.markdown(
-            "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>"
-            "⚠️ Sem certeza 100%. Faça este campo manualmente."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>⚠️ Sem certeza 100%. Faça este campo manualmente.</div>", unsafe_allow_html=True)
         return
     valor = _first_non_empty_value(df, selected_col) or "sem valor preenchido na coluna selecionada"
     selo = "Mapeamento automático 100% exato" if auto_100 else "Coluna da origem"
-    st.markdown(
-        "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
-        f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>{escape(selo)}: {escape(str(selected_col))}</div>"
-        f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>" f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>{escape(selo)}: {escape(str(selected_col))}</div>" f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>" "</div>", unsafe_allow_html=True)
 
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
@@ -270,23 +257,24 @@ def run_stable_app() -> None:
     tipo = st.radio("O que você quer gerar?", ["cadastro", "estoque"], format_func=lambda x: "Cadastro de produtos" if x == "cadastro" else "Atualização de estoque", horizontal=True, key="stable_tipo")
     modelo = restaurar_df("stable_df_modelo")
 
-    with st.expander("1. Modelo Bling obrigatório para cadastro" if tipo == "cadastro" else "Modelo Bling opcional", expanded=(tipo == "cadastro" and not _has_df(modelo))):
+    with st.expander("1. Modelo Bling obrigatório para cadastro" if tipo == "cadastro" else "Modelo Bling opcional", expanded=(tipo == "cadastro" and not _has_model_columns(modelo))):
         up_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if up_modelo is not None:
             try:
                 modelo_lido = _read_upload(up_modelo)
-                if _has_df(modelo_lido):
+                if _has_model_columns(modelo_lido):
                     modelo = guardar_df("stable_df_modelo", modelo_lido)
                     st.success(f"Modelo lido: {len(modelo.columns)} colunas")
+                    st.caption("Modelo aceito mesmo sem linhas preenchidas, pois o Bling usa a estrutura das colunas.")
                 else:
-                    st.error("O modelo Bling foi lido, mas não possui linhas/colunas válidas.")
+                    st.error("O modelo Bling foi lido, mas não possui colunas válidas.")
             except Exception as exc:
                 st.error("Não consegui ler o modelo Bling anexado.")
                 st.code(str(exc))
-        elif _has_df(modelo):
+        elif _has_model_columns(modelo):
             st.info(f"🔒 Modelo preservado: {len(modelo.columns)} colunas")
 
-    if tipo == "cadastro" and not _has_df(modelo):
+    if tipo == "cadastro" and not _has_model_columns(modelo):
         st.warning("Anexe primeiro a planilha modelo Bling de cadastro.")
         st.info("Sem o modelo, o app não gera base, preview nem mapeamento para evitar coluna errada.")
         return
