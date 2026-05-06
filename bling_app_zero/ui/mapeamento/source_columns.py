@@ -13,6 +13,8 @@ from bling_app_zero.ui.mapeamento.columns_guard import (
     normalizar_coluna,
 )
 
+normalizar_nome_coluna = normalizar_coluna
+
 
 _CHAVES_ORIGEM_PREFERIDAS = (
     "df_origem_site",
@@ -58,7 +60,6 @@ def escolher_df_origem_captura(session_state) -> pd.DataFrame:
 
         score = len(df.columns)
 
-        # Prioriza fortemente capturas reais do site/upload.
         if "site" in chave:
             score += 100
         elif "upload" in chave:
@@ -106,7 +107,6 @@ def opcoes_origem_mapeamento(
         video_checker=video_checker,
     )
 
-    # Blindagem final anti-duplicidade visual.
     vistas: set[str] = set()
     finais: list[str] = []
 
