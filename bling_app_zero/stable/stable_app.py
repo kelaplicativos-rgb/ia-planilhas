@@ -9,12 +9,10 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.file_reader import read_uploaded_table
-from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restaurar_chaves_df, restaurar_df
 from bling_app_zero.stable.supplier_upload_v2 import render_supplier_upload_v2
 from bling_app_zero.ui.app_helpers import dataframe_para_csv_bytes
 from bling_app_zero.ui.flash_amplo_execution import executar_flash_amplo_pagina_por_pagina
-from bling_app_zero.ui.mapeamento.conservative_auto import choose_safe_source
 from bling_app_zero.ui.mapeamento.source_columns import normalizar_nome_coluna
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
@@ -46,11 +44,6 @@ def _norm(v) -> str:
 
 def _is_deposito_col(col: object) -> bool:
     return "deposito" in _norm(col)
-
-
-def _is_departamento_col(col: object) -> bool:
-    n = _norm(col)
-    return n in {"departamento", "apartamento"} or "departamento" in n or "apartamento" in n
 
 
 def _is_imagem_col(col: object) -> bool:
@@ -116,20 +109,9 @@ def _is_blocked_bling_only_column(col: object) -> bool:
 def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[str]) -> list[str]:
     raw_cols = _dedupe_source_columns(df.columns if _has_df(df) else [])
     cols = [c for c in raw_cols if not _is_blocked_bling_only_column(c) and _column_has_data(df, c)]
-
     if _is_imagem_target(target):
         cols = [c for c in cols if _is_imagem_col(c)]
-
     return [""] + cols
-
-
-def _safe_source(target: str, sources) -> str:
-    try:
-        return choose_safe_source(str(target), [str(c) for c in sources]) or ""
-    except Exception:
-        target_norm = _norm(target)
-        exact = [str(c) for c in sources if _norm(c) == target_norm]
-        return exact[0] if len(exact) == 1 else ""
 
 
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -143,8 +125,7 @@ def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _force(pd.DataFrame(), cols)
-    normalized = normalize_product_dataframe(df.copy())
-    cleaned = clean_invalid_preview_mappings(normalized.copy())
+    cleaned = clean_invalid_preview_mappings(df.copy().fillna(""))
     return _force(cleaned, cols)
 
 
@@ -317,7 +298,7 @@ def run_stable_app() -> None:
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
-    st.caption("Escolha colunas reais capturadas com dados. Campos técnicos/obrigatórios do modelo Bling não entram como origem.")
+    st.caption("Escolha manualmente as colunas reais da origem/captura. Nenhum campo vem preenchido automaticamente.")
 
     mapping = {}
     deposito_manual = ""
@@ -327,14 +308,7 @@ def run_stable_app() -> None:
             deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
             mapping[c] = ""
             continue
-        if _is_departamento_col(c):
-            st.text_input(str(c), value="Unissex", disabled=True, key=f"stable_departamento_{c}")
-            st.caption("Preenchido automaticamente com padrão Unissex.")
-            mapping[c] = "__UNISSEX__"
-            continue
-        default = _safe_source(c, options)
-        idx = options.index(default) if default in options else 0
-        selecionada = st.selectbox(str(c), options, index=idx, key=f"stable_map_{c}")
+        selecionada = st.selectbox(str(c), options, index=0, key=f"stable_map_{c}")
         mapping[c] = selecionada
         _render_source_preview(df, selecionada)
 
@@ -342,9 +316,6 @@ def run_stable_app() -> None:
     for c in cols:
         if tipo == "estoque" and _is_deposito_col(c):
             out[c] = deposito_manual
-            continue
-        if _is_departamento_col(c):
-            out[c] = "Unissex"
             continue
         src = mapping.get(c, "")
         out[c] = df[src].astype(str).fillna("") if src and src in df.columns else ""
