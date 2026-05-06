@@ -64,7 +64,7 @@ def _session_summary() -> str:
     return "\n".join(linhas)
 
 
-def _render_debug_content(prefix: str) -> None:
+def _render_debug_content(prefix: str, *, use_expanders: bool = True) -> None:
     logs_text = _logs_text()
     st.caption(f"Logs registrados: {len(st.session_state.get(LOG_KEY, []))}")
 
@@ -84,20 +84,37 @@ def _render_debug_content(prefix: str) -> None:
             add_debug_log("Log limpo pelo usuário.", origem="DEBUG")
             st.rerun()
 
-    with st.expander("📋 Log interno", expanded=True):
-        if logs_text.strip():
-            st.code(logs_text[-20000:], language="text")
-        else:
-            st.info("Nenhum log interno registrado ainda.")
+    if use_expanders:
+        with st.expander("📋 Log interno", expanded=True):
+            if logs_text.strip():
+                st.code(logs_text[-20000:], language="text")
+            else:
+                st.info("Nenhum log interno registrado ainda.")
 
-    with st.expander("🧠 Estado da sessão", expanded=False):
-        st.code(_session_summary(), language="text")
+        with st.expander("🧠 Estado da sessão", expanded=False):
+            st.code(_session_summary(), language="text")
 
-    with st.expander("➕ Adicionar anotação manual", expanded=False):
-        nota = st.text_input("Anotação", key=f"{prefix}_debug_manual_note")
-        if st.button("Adicionar ao log", use_container_width=True, key=f"{prefix}_btn_add_manual_debug_note"):
-            add_debug_log(nota, origem="MANUAL")
-            st.rerun()
+        with st.expander("➕ Adicionar anotação manual", expanded=False):
+            nota = st.text_input("Anotação", key=f"{prefix}_debug_manual_note")
+            if st.button("Adicionar ao log", use_container_width=True, key=f"{prefix}_btn_add_manual_debug_note"):
+                add_debug_log(nota, origem="MANUAL")
+                st.rerun()
+        return
+
+    st.markdown("**📋 Log interno**")
+    if logs_text.strip():
+        st.code(logs_text[-20000:], language="text")
+    else:
+        st.info("Nenhum log interno registrado ainda.")
+
+    st.markdown("**🧠 Estado da sessão**")
+    st.code(_session_summary(), language="text")
+
+    st.markdown("**➕ Adicionar anotação manual**")
+    nota = st.text_input("Anotação", key=f"{prefix}_debug_manual_note")
+    if st.button("Adicionar ao log", use_container_width=True, key=f"{prefix}_btn_add_manual_debug_note"):
+        add_debug_log(nota, origem="MANUAL")
+        st.rerun()
 
 
 def render_debug_panel() -> None:
@@ -116,7 +133,7 @@ def render_debug_panel() -> None:
             st.caption("Clique em 🐞 para abrir o painel.")
             return
 
-        _render_debug_content("sidebar")
+        _render_debug_content("sidebar", use_expanders=True)
 
 
 def render_debug_panel_inline() -> None:
@@ -133,5 +150,5 @@ def render_debug_panel_inline() -> None:
                 st.session_state[DEBUG_INLINE_ENABLED_KEY] = not bool(st.session_state.get(DEBUG_INLINE_ENABLED_KEY, False))
 
     if bool(st.session_state.get(DEBUG_INLINE_ENABLED_KEY, False)):
-        with st.expander("🐞 Painel de debug", expanded=True):
-            _render_debug_content("inline")
+        st.markdown("### 🐞 Painel de debug")
+        _render_debug_content("inline", use_expanders=False)
