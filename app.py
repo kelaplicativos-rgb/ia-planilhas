@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.high_quality_image_patch import install_high_quality_image_patch
 from bling_app_zero.stable.stable_app import run_stable_app
 
 
@@ -12,6 +13,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+    install_high_quality_image_patch()
     run_stable_app()
 
 
