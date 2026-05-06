@@ -145,11 +145,10 @@ def _coluna_imagens_externas(df: pd.DataFrame) -> str:
         "URL Imagens Externas",
         "Url Imagens Externas",
         "URLs Imagens Externas",
+        "URL Imagem Externa",
         "Imagem Externa",
         "Imagens Externas",
         "URL Imagem",
-        "Imagem",
-        "Imagens",
     ]
     for nome in prioridades:
         achado = mapa.get(normalizar_texto(nome))
@@ -157,7 +156,9 @@ def _coluna_imagens_externas(df: pd.DataFrame) -> str:
             return achado
     for col in df.columns:
         n = normalizar_texto(col)
-        if ("imagem" in n or "image" in n or "foto" in n) and ("url" in n or "extern" in n or "foto" in n):
+        tem_imagem = "imagem" in n or "image" in n or "foto" in n
+        tem_url_externa = "url" in n or "extern" in n
+        if tem_imagem and tem_url_externa:
             return str(col)
     return ""
 
