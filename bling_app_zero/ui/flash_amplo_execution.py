@@ -10,6 +10,7 @@ Regra:
 - Limite interno alto herdado do motor Flash Amplo.
 - Sitemap entra por último apenas para completar URLs não detectadas.
 - Se imagens vierem vazias, faz backfill usando Link Externo antes do mapeamento.
+- Descrições capturadas passam por limpeza de rodapé/endereço/atendimento.
 """
 
 from typing import Iterable
@@ -20,6 +21,7 @@ import streamlit as st
 from bling_app_zero.core.flash_page_crawler import DEFAULT_MAX_PRODUCTS, DEFAULT_MAX_WORKERS
 from bling_app_zero.core.instant_scraper import run_flash_amplo_page_mode
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
+from bling_app_zero.core.product_description_cleaner import clean_product_descriptions_dataframe
 from bling_app_zero.core.product_image_backfill import backfill_images_by_product_url
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 
@@ -42,15 +44,17 @@ def _normalize_urls(urls: Iterable[str] | str) -> list[str]:
 
 
 def preparar_dataframe_flash_amplo(df: pd.DataFrame) -> pd.DataFrame:
-    """Aplica normalização, backfill de imagens e blindagem no resultado."""
+    """Aplica normalização, limpeza de descrição, backfill de imagens e blindagem."""
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
     if df.empty:
         return df.copy()
 
     normalized = normalize_product_dataframe(df.copy())
-    with_images = backfill_images_by_product_url(normalized.copy())
+    cleaned_desc = clean_product_descriptions_dataframe(normalized.copy())
+    with_images = backfill_images_by_product_url(cleaned_desc.copy())
     cleaned = clean_invalid_preview_mappings(with_images.copy())
+    cleaned = clean_product_descriptions_dataframe(cleaned.copy())
     cleaned = backfill_images_by_product_url(cleaned.copy())
     return cleaned
 
