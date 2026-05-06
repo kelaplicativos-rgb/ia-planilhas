@@ -54,6 +54,16 @@ def _is_departamento_col(col: object) -> bool:
     return n in {"departamento", "apartamento"} or "departamento" in n or "apartamento" in n
 
 
+def _is_imagem_col(col: object) -> bool:
+    n = _norm(col)
+    return "imagem" in n or "imagens" in n or ("url" in n and "externa" in n)
+
+
+def _is_imagem_target(col: object) -> bool:
+    n = _norm(col)
+    return "imagem" in n or "imagens" in n
+
+
 def _is_descricao_col(col: object) -> bool:
     n = _norm(col)
     return "descricao" in n or n in {"nome", "produto"}
@@ -62,6 +72,37 @@ def _is_descricao_col(col: object) -> bool:
 def _is_preco_venda_col(col: object) -> bool:
     n = _norm(col)
     return ("preco" in n or "valor" in n) and "custo" not in n and "compra" not in n
+
+
+def _dedupe_source_columns(columns) -> list[str]:
+    saida: list[str] = []
+    vistos: set[str] = set()
+    for col in columns:
+        nome = str(col).strip()
+        if not nome:
+            continue
+        chave = _norm(nome).replace(" ", "_")
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        saida.append(nome)
+    return saida
+
+
+def _source_options_for_target(target: str, df: pd.DataFrame) -> list[str]:
+    cols = _dedupe_source_columns(df.columns if _has_df(df) else [])
+    if _is_imagem_target(target):
+        candidatos = [c for c in cols if _is_imagem_col(c)]
+        preferidos = sorted(
+            candidatos,
+            key=lambda c: (
+                0 if _norm(c) in {"url imagens externas", "url imagens externas", "url_imagens_externas"} else
+                1 if "url" in _norm(c) and "imagem" in _norm(c) else
+                2
+            ),
+        )
+        return [""] + preferidos
+    return [""] + cols
 
 
 def _safe_source(target: str, sources) -> str:
@@ -296,10 +337,10 @@ def run_stable_app() -> None:
     st.subheader("Mapeamento manual")
     st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece o nome da coluna e, em verde, uma amostra real capturada para não confundir com o rótulo.")
 
-    sources = [""] + [str(c) for c in df.columns]
     mapping = {}
     deposito_manual = ""
     for c in cols:
+        options = _source_options_for_target(str(c), df)
         if tipo == "estoque" and _is_deposito_col(c):
             deposito_manual = st.text_input(str(c), value=str(st.session_state.get("stable_deposito_mapeamento", "")), key="stable_deposito_mapeamento", placeholder="Ex.: Geral").strip()
             mapping[c] = ""
@@ -309,9 +350,9 @@ def run_stable_app() -> None:
             st.caption("Preenchido automaticamente com padrão Unissex.")
             mapping[c] = "__UNISSEX__"
             continue
-        default = _safe_source(c, df.columns)
-        idx = sources.index(default) if default in sources else 0
-        selecionada = st.selectbox(str(c), sources, index=idx, key=f"stable_map_{c}")
+        default = _safe_source(c, options)
+        idx = options.index(default) if default in options else 0
+        selecionada = st.selectbox(str(c), options, index=idx, key=f"stable_map_{c}")
         mapping[c] = selecionada
         _render_source_preview(df, selecionada)
 
