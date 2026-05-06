@@ -5,6 +5,7 @@ import traceback
 import streamlit as st
 
 from bling_app_zero.core.high_quality_image_patch import install_high_quality_image_patch
+from bling_app_zero.core.image_url_guard_patch import install_image_url_guard_patch
 from bling_app_zero.core.mapping_dropdown_patch import install_mapping_dropdown_patch
 from bling_app_zero.core.mega_product_patch import install_mega_product_patch
 from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
@@ -30,6 +31,12 @@ def main() -> None:
 
     add_debug_log("Aplicação iniciada/renderizada.", origem="APP")
     render_debug_panel()
+
+    try:
+        install_image_url_guard_patch()
+        add_debug_log("Image URL guard patch instalado.", origem="PATCH")
+    except Exception as exc:
+        add_debug_log(f"Falha ao instalar Image URL guard patch: {exc}", origem="PATCH", nivel="ERRO")
 
     try:
         install_mega_product_patch()
