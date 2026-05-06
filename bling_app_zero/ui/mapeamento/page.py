@@ -8,8 +8,9 @@ import streamlit as st
 from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.app_helpers import ir_para_etapa, safe_df_dados, safe_df_estrutura, voltar_etapa_anterior
 from bling_app_zero.ui.gtin_panel import render_gtin_panel
+from bling_app_zero.ui.mapeamento_image_guard import aplicar_imagens_no_final, garantir_mapping_imagens
 from bling_app_zero.ui.origem_mapeamento_actions import _render_botoes_fluxo, _render_resumo_agente, _render_sugestao_agente
-from bling_app_zero.ui.origem_mapeamento_confidence import _render_revisao_manual
+from bling_app_zero.ui.origem_mapeamento_confidence_v2 import _render_revisao_manual
 from bling_app_zero.ui.origem_mapeamento_helpers import (
     _aplicar_mapping,
     _detectar_operacao,
@@ -110,6 +111,20 @@ def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataF
     st.session_state["df_final"] = corrigido
     st.session_state["df_saida"] = corrigido.copy()
     st.session_state["_preco_unitario_corrigido_mapping"] = {"destino": destino, "origem": origem_preco, "linhas": int(len(corrigido))}
+
+
+def _garantir_imagens_no_mapeamento(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
+    mapping_atual = st.session_state.get("mapping_manual", {})
+    if not isinstance(mapping_atual, dict):
+        mapping_atual = {}
+    mapping_corrigido = garantir_mapping_imagens(df_base, df_modelo, mapping_atual)
+    st.session_state["mapping_manual"] = mapping_corrigido
+
+    df_final = st.session_state.get("df_final")
+    if safe_df_estrutura(df_final):
+        corrigido = aplicar_imagens_no_final(df_base, df_modelo, df_final)
+        st.session_state["df_final"] = corrigido
+        st.session_state["df_saida"] = corrigido.copy()
 
 
 def _colunas_descricao_curta_modelo(df_modelo: pd.DataFrame) -> list[str]:
@@ -263,6 +278,7 @@ def _render_regra_obrigatoria_descricao_curta(df_base: pd.DataFrame, df_modelo: 
     if alterou or not safe_df_estrutura(st.session_state.get("df_final")):
         st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
         _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
+        _garantir_imagens_no_mapeamento(df_base, df_modelo)
 
     if faltando:
         st.warning("Confirme a coluna de Descrição curta antes de seguir. Campo pendente: " + ", ".join(faltando))
@@ -294,7 +310,9 @@ def render_origem_mapeamento() -> None:
 
     _sincronizar_deposito_nome()
     _inicializar_mapping(df_base, df_modelo)
+    _garantir_imagens_no_mapeamento(df_base, df_modelo)
     _executar_ia_autonoma(df_base, df_modelo, operacao)
+    _garantir_imagens_no_mapeamento(df_base, df_modelo)
     _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
     _render_status_base(df_base, df_modelo)
@@ -309,10 +327,13 @@ def render_origem_mapeamento() -> None:
 
     with st.expander("Revisão manual opcional", expanded=not descricao_curta_ok):
         _render_revisao_manual(df_base, df_modelo, operacao)
+        _garantir_imagens_no_mapeamento(df_base, df_modelo)
         _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
     df_preview = st.session_state.get("df_final")
     if safe_df_estrutura(df_preview):
+        _garantir_imagens_no_mapeamento(df_base, df_modelo)
+        df_preview = st.session_state.get("df_final")
         _preview_mapping(df_preview)
         st.markdown("### Tratamento de GTIN")
         st.caption("Faça aqui a limpeza ou geração de GTIN antes de seguir para o preview final.")
