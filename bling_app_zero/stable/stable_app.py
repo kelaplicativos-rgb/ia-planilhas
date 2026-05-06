@@ -41,7 +41,7 @@ def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
 
 def _norm(v) -> str:
     text = str(v or "").strip().lower()
-    text = text.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
+    text = text.translate(str.maketrans("áàãâéêíóôúç", "aaaaeeioouc"))
     return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
 
 
@@ -159,7 +159,7 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
     st.markdown(
         "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
         f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
-        f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>💚 {escape(str(valor))}</div>"
+        f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>{escape(str(valor))}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
