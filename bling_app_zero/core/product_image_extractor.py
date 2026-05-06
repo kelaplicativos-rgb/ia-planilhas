@@ -18,6 +18,10 @@ IMAGE_URL_RE = re.compile(
     r"(?:https?:)?//[^\s\"'<>\\]+|[^\s\"'<>\\]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>\\]*)?",
     re.IGNORECASE,
 )
+IMAGE_FIELD_URL_RE = re.compile(
+    r"(?:image|images|src|url|thumbnail|thumbnailUrl|contentUrl)\s*[\"']?\s*[:=]\s*[\"']?(https?:/{1,2}[^\s\"'<>]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>]*)?)",
+    re.IGNORECASE,
+)
 IMAGE_EXT_RE = re.compile(r"\.(jpg|jpeg|png|webp|avif)(?:$|[?#])", re.IGNORECASE)
 IMAGE_EXT_CUT_RE = re.compile(r"^(.*?\.(?:jpg|jpeg|png|webp|avif))(?:$|[?#].*)", re.IGNORECASE)
 BAD_IMAGE_FRAGMENTS = (
@@ -40,6 +44,8 @@ BAD_IMAGE_FRAGMENTS = (
     "banner",
     "icone",
     "/icon",
+    'image":"',
+    "image':'",
 )
 GOOD_IMAGE_HINTS = (
     "image",
@@ -88,6 +94,12 @@ def _clean_raw(value: object) -> str:
     return raw
 
 
+def _fix_scheme_slashes(url: str) -> str:
+    text = str(url or "").strip()
+    text = re.sub(r"^(https?):/+(?!/)", r"\1://", text, flags=re.IGNORECASE)
+    return text
+
+
 def _cut_after_image_extension(url: str) -> str:
     """Corta lixo grudado depois da extensão real da imagem.
 
@@ -101,8 +113,26 @@ def _cut_after_image_extension(url: str) -> str:
     return text
 
 
+def _embedded_field_url(raw: str) -> str:
+    """Recupera URL real dentro de trechos JSON colados no caminho.
+
+    Exemplo real da Mega Center:
+    `https://megacentereletronicos.com.br/produto/image":"https:/cdn/foto.jpg`
+    deve virar:
+    `https://cdn/foto.jpg`.
+    """
+    text = _clean_raw(raw)
+    matches = IMAGE_FIELD_URL_RE.findall(text)
+    if matches:
+        return _fix_scheme_slashes(matches[-1])
+    marker_match = re.search(r"(?:image|src|url)[\"']?\s*[:=]\s*[\"']?(https?:/{1,2}.+)$", text, re.IGNORECASE)
+    if marker_match:
+        return _fix_scheme_slashes(marker_match.group(1))
+    return text
+
+
 def _absolute_url(value: object, page_url: str) -> str:
-    raw = _clean_raw(value).strip().strip('"\'[]{}()')
+    raw = _embedded_field_url(_clean_raw(value).strip().strip('"\'[]{}()'))
     if not raw:
         return ""
 
@@ -111,11 +141,11 @@ def _absolute_url(value: object, page_url: str) -> str:
             raw = re.split(re.escape(separator), raw, flags=re.IGNORECASE)[0]
             break
 
-    raw = _cut_after_image_extension(raw)
+    raw = _fix_scheme_slashes(_cut_after_image_extension(raw))
     if raw.startswith("//"):
         raw = "https:" + raw
     absolute = urljoin(page_url, raw)
-    absolute = _cut_after_image_extension(absolute)
+    absolute = _fix_scheme_slashes(_cut_after_image_extension(absolute))
 
     try:
         parts = urlsplit(absolute)
@@ -128,6 +158,9 @@ def _add_candidate(candidates: list[str], value: object) -> None:
     raw = _clean_raw(value)
     if not raw:
         return
+
+    for embedded in IMAGE_FIELD_URL_RE.findall(raw):
+        candidates.append(_fix_scheme_slashes(embedded))
 
     raw = raw.replace("|", " ")
     raw = re.sub(r"@(png|jpg|jpeg|webp|avif)", " ", raw, flags=re.IGNORECASE)
@@ -182,6 +215,8 @@ def _is_valid_image(url: str) -> bool:
         return False
     if any(fragment in lower for fragment in BAD_IMAGE_FRAGMENTS):
         return False
+    if lower.count("http://") + lower.count("https://") > 1:
+        return False
     if IMAGE_EXT_RE.search(lower):
         return True
     return any(hint in lower for hint in GOOD_IMAGE_HINTS)
@@ -192,6 +227,8 @@ def normalize_image_urls(value: object, page_url: str = "", max_images: int = 20
     candidates: list[str] = []
     raw = _clean_raw(value)
     if raw:
+        for embedded in IMAGE_FIELD_URL_RE.findall(raw):
+            candidates.append(_fix_scheme_slashes(embedded))
         for part in re.split(r"\s*\|\s*|\s+", raw):
             _add_candidate(candidates, part)
         _add_candidate(candidates, raw)
