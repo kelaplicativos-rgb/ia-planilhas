@@ -55,7 +55,7 @@ def _is_departamento_col(col: object) -> bool:
 
 def _is_imagem_col(col: object) -> bool:
     n = _norm(col)
-    return "imagem" in n or "image" in n or ("url" in n and "foto" in n)
+    return "imagem" in n or "image" in n or ("url" in n and ("foto" in n or "externa" in n))
 
 
 def _is_imagem_target(col: object) -> bool:
@@ -88,32 +88,34 @@ def _dedupe_source_columns(columns) -> list[str]:
     return saida
 
 
-def _is_model_or_final_column(col: object, model_cols: list[str]) -> bool:
+def _column_has_data(df: pd.DataFrame, col: str) -> bool:
+    if not _has_df(df) or col not in df.columns:
+        return False
+    try:
+        return bool(df[col].astype(str).str.strip().ne("").any())
+    except Exception:
+        return False
+
+
+def _is_blocked_bling_only_column(col: object) -> bool:
     n = _norm(col)
-    model_norms = {_norm(c) for c in model_cols}
-    if not n:
-        return True
-    if n in model_norms:
-        return True
-    blocked_fragments = (
-        "obrigatorio",
-        "obrigatoria",
+    blocked_exact = {
         "gtin ean da embalagem",
         "frete gratis",
-        "url imagens externas",
-        "preco unitario",
+        "preco unitario obrigatorio",
+        "preco unitario obrigatorio obrigatorio",
         "categoria do produto",
-        "descricao complementar",
-        "link externo",
-        "url do produto",
-        "deposito",
-    )
-    return any(fragment in n for fragment in blocked_fragments)
+    }
+    if n in blocked_exact:
+        return True
+    if "obrigatorio" in n or "obrigatoria" in n:
+        return True
+    return False
 
 
 def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[str]) -> list[str]:
     raw_cols = _dedupe_source_columns(df.columns if _has_df(df) else [])
-    cols = [c for c in raw_cols if not _is_model_or_final_column(c, model_cols)]
+    cols = [c for c in raw_cols if not _is_blocked_bling_only_column(c) and _column_has_data(df, c)]
 
     if _is_imagem_target(target):
         cols = [c for c in cols if _is_imagem_col(c)]
@@ -315,7 +317,7 @@ def run_stable_app() -> None:
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
-    st.caption("Escolha apenas colunas reais da origem/captura. Colunas do modelo Bling e colunas finais não aparecem como origem.")
+    st.caption("Escolha colunas reais capturadas com dados. Campos técnicos/obrigatórios do modelo Bling não entram como origem.")
 
     mapping = {}
     deposito_manual = ""
