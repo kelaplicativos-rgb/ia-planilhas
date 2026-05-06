@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from bs4 import BeautifulSoup
 
 IMAGE_URL_RE = re.compile(
-    r"(?:https?:)?//[^\s\"'<>\\]+|[^\s\"'<>\\]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>\\]*)?",
+    r"(?:https?:)?//[^\s\"'<>\\]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>\\]*)?|[^\s\"'<>\\]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>\\]*)?",
     re.IGNORECASE,
 )
 IMAGE_FIELD_URL_RE = re.compile(
@@ -45,15 +45,18 @@ BAD_IMAGE_FRAGMENTS = (
     "banner",
     "icone",
     "/icon",
+    "/produto/image",
+    "/product/image",
+    "megacentereletronicos.com.br/produto/image",
 )
 GOOD_IMAGE_HINTS = (
-    "image",
-    "imagem",
-    "foto",
-    "photos",
-    "product",
-    "produto",
+    "image_studio",
+    "product_images",
+    "produto_imagens",
+    "imagem_produto",
+    "foto_produto",
     "upload",
+    "uploads",
     "cdn",
     "media",
     "catalog",
@@ -201,13 +204,17 @@ def _is_valid_image(url: str) -> bool:
         return False
     if FIELD_MARKER_RE.search(lower):
         return False
-    if IMAGE_EXT_RE.search(lower):
-        return True
-    return any(hint in lower for hint in GOOD_IMAGE_HINTS)
+    if not IMAGE_EXT_RE.search(lower):
+        return False
+    return True
 
 
 def normalize_image_urls(value: object, page_url: str = "", max_images: int = 20) -> str:
-    """Normaliza qualquer valor de imagens para o padrão Bling separado por `|`."""
+    """Normaliza qualquer valor de imagens para o padrão Bling separado por `|`.
+
+    Só mantém URLs reais de arquivo de imagem. Links de página de produto, mesmo
+    quando vêm colados com `image":"...`, são descartados.
+    """
     candidates: list[str] = []
     raw = _clean_raw(value)
     if raw:
@@ -234,7 +241,7 @@ def normalize_image_urls(value: object, page_url: str = "", max_images: int = 20
 
 
 def extract_product_images_from_html(page_url: str, html: str, extra_candidates: Iterable[object] | None = None, max_images: int = 20) -> str:
-    """Retorna URLs de imagens separadas por `|`."""
+    """Retorna URLs reais de imagens separadas por `|`."""
     soup = BeautifulSoup(html or "", "html.parser")
     candidates: list[str] = []
 
