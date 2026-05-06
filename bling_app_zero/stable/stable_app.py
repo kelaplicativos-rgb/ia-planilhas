@@ -7,6 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import streamlit as st
+from openpyxl import load_workbook
 
 from bling_app_zero.core.file_reader import read_uploaded_table
 from bling_app_zero.stable.session_vault import guardar_df, limpar_vault, restaurar_chaves_df, restaurar_df
@@ -26,6 +27,29 @@ def _read_upload(file) -> pd.DataFrame | None:
     if file is None:
         return None
     return read_uploaded_table(file).dataframe.fillna("")
+
+
+def _read_bling_model_upload(file) -> pd.DataFrame | None:
+    if file is None:
+        return None
+    try:
+        df = _read_upload(file)
+        if _has_model_columns(df):
+            return df
+    except Exception:
+        pass
+    try:
+        file.seek(0)
+        raw = file.read()
+        wb = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                cols = [str(v).strip() for v in row if str(v or "").strip()]
+                if len(cols) >= 2:
+                    return pd.DataFrame(columns=cols)
+    except Exception:
+        return None
+    return None
 
 
 def _has_df(df) -> bool:
@@ -96,18 +120,8 @@ def _column_has_data(df: pd.DataFrame, col: str) -> bool:
 
 def _is_blocked_bling_only_column(col: object) -> bool:
     n = _norm(col)
-    blocked_exact = {
-        "gtin ean da embalagem",
-        "frete gratis",
-        "preco unitario obrigatorio",
-        "preco unitario obrigatorio obrigatorio",
-        "categoria do produto",
-    }
-    if n in blocked_exact:
-        return True
-    if "obrigatorio" in n or "obrigatoria" in n:
-        return True
-    return False
+    blocked_exact = {"gtin ean da embalagem", "frete gratis", "preco unitario obrigatorio", "preco unitario obrigatorio obrigatorio", "categoria do produto"}
+    return n in blocked_exact or "obrigatorio" in n or "obrigatoria" in n
 
 
 def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[str]) -> list[str]:
@@ -123,9 +137,7 @@ def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
     if not target_norm:
         return ""
     matches = [opt for opt in options if opt and _norm(opt) == target_norm and _column_has_data(df, opt)]
-    if len(matches) == 1:
-        return matches[0]
-    return ""
+    return matches[0] if len(matches) == 1 else ""
 
 
 def _force(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -260,17 +272,14 @@ def run_stable_app() -> None:
     with st.expander("1. Modelo Bling obrigatório para cadastro" if tipo == "cadastro" else "Modelo Bling opcional", expanded=(tipo == "cadastro" and not _has_model_columns(modelo))):
         up_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if up_modelo is not None:
-            try:
-                modelo_lido = _read_upload(up_modelo)
-                if _has_model_columns(modelo_lido):
-                    modelo = guardar_df("stable_df_modelo", modelo_lido)
-                    st.success(f"Modelo lido: {len(modelo.columns)} colunas")
-                    st.caption("Modelo aceito mesmo sem linhas preenchidas, pois o Bling usa a estrutura das colunas.")
-                else:
-                    st.error("O modelo Bling foi lido, mas não possui colunas válidas.")
-            except Exception as exc:
+            modelo_lido = _read_bling_model_upload(up_modelo)
+            if _has_model_columns(modelo_lido):
+                modelo = guardar_df("stable_df_modelo", modelo_lido)
+                st.success(f"Modelo lido: {len(modelo.columns)} colunas")
+                st.caption("Modelo aceito mesmo sem linhas preenchidas, pois o Bling usa a estrutura das colunas.")
+            else:
                 st.error("Não consegui ler o modelo Bling anexado.")
-                st.code(str(exc))
+                st.code("O arquivo foi reconhecido, mas não encontrei uma linha de cabeçalhos válida. Envie o modelo .xlsx exportado pelo Bling ou uma planilha com os nomes das colunas na primeira linha útil.")
         elif _has_model_columns(modelo):
             st.info(f"🔒 Modelo preservado: {len(modelo.columns)} colunas")
 
