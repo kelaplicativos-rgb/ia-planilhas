@@ -6,7 +6,6 @@ import time
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.app_core_flow import set_etapa_segura
 from bling_app_zero.ui.origem_site_config import MOTORES_SITE, PRESETS
 from bling_app_zero.ui.origem_site_execution import executar_busca
 from bling_app_zero.ui.origem_site_state import (
@@ -15,10 +14,9 @@ from bling_app_zero.ui.origem_site_state import (
     restaurar_resultado_site_travado,
 )
 from bling_app_zero.ui.origem_site_utils import extrair_urls, url_valida
-from bling_app_zero.ui.origem_auto_map_preview import render_preview_inteligente
 
 
-CHAVES_PREVIEW_SITE_MODELO_BLING = [
+CHAVES_PREVIEW_SITE = [
     "df_preview_inteligente",
     "df_auto_mapa",
     "df_preview_site_modelo_bling",
@@ -28,47 +26,8 @@ CHAVES_PREVIEW_SITE_MODELO_BLING = [
     "origem_site_preview_hash",
 ]
 
-IMAGEM_DESTINO_PADRAO = "URL Imagens Externas"
-IMAGEM_COLUNA_RE = re.compile(r"(url\s*)?(imagem|imagens|image|images|foto|fotos|img|gallery|galeria)", re.IGNORECASE)
 URL_RE = re.compile(r"https?://[^\s\"'<>|,;]+|www\.[^\s\"'<>|,;]+", re.IGNORECASE)
-
-
-def _obter_df_atual_site() -> pd.DataFrame | None:
-    df_preview = st.session_state.get("df_preview_site_modelo_bling")
-    df_saida = st.session_state.get("df_saida")
-    df_origem = st.session_state.get("df_origem")
-
-    if isinstance(df_preview, pd.DataFrame) and not df_preview.empty:
-        return df_preview.copy()
-
-    if isinstance(df_saida, pd.DataFrame) and not df_saida.empty:
-        return df_saida.copy()
-
-    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
-        return df_origem.copy()
-
-    restaurado = restaurar_resultado_site_travado()
-    if isinstance(restaurado, pd.DataFrame) and not restaurado.empty:
-        return restaurado.copy()
-
-    return None
-
-
-def _obter_df_bruto_site() -> pd.DataFrame | None:
-    df_saida = st.session_state.get("df_saida")
-    df_origem = st.session_state.get("df_origem")
-
-    if isinstance(df_saida, pd.DataFrame) and not df_saida.empty:
-        return df_saida.copy()
-
-    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
-        return df_origem.copy()
-
-    restaurado = restaurar_resultado_site_travado()
-    if isinstance(restaurado, pd.DataFrame) and not restaurado.empty:
-        return restaurado.copy()
-
-    return None
+IMAGEM_COLUNA_RE = re.compile(r"(url\s*)?(imagem|imagens|image|images|foto|fotos|img|gallery|galeria|thumbnail)", re.IGNORECASE)
 
 
 def _df_valido(df: object) -> bool:
@@ -88,9 +47,22 @@ def _hash_df_simples(df: pd.DataFrame) -> str:
         return ""
 
 
-def _limpar_preview_site_modelo_bling() -> None:
-    for chave in CHAVES_PREVIEW_SITE_MODELO_BLING:
+def _limpar_preview_site() -> None:
+    for chave in CHAVES_PREVIEW_SITE:
         st.session_state.pop(chave, None)
+
+
+def _obter_df_bruto_site() -> pd.DataFrame | None:
+    for chave in ("df_origem", "df_saida", "df_origem_site", "df_capturado_site", "df_preview_origem"):
+        df = st.session_state.get(chave)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df.copy()
+
+    restaurado = restaurar_resultado_site_travado()
+    if isinstance(restaurado, pd.DataFrame) and not restaurado.empty:
+        return restaurado.copy()
+
+    return None
 
 
 def _normalizar_nome_coluna(nome: object) -> str:
@@ -107,35 +79,28 @@ def _coluna_eh_imagem(nome: object) -> bool:
         "image_urls",
         "image_url",
         "main_image",
-        "thumbnail",
     }
 
 
-def _normalizar_urls_imagens(valor: object) -> str:
-    texto = str(valor or "").strip()
+def _normalizar_urls(valor: object) -> str:
+    texto = str(valor or "").strip().replace("\\/", "/")
     if not texto:
         return ""
 
-    texto = texto.replace("\\/", "/")
-    candidatos: list[str] = []
-    for match in URL_RE.findall(texto):
-        candidatos.append(match)
+    candidatos = URL_RE.findall(texto)
     if not candidatos:
-        for parte in re.split(r"[|,\n\r\t]+", texto):
-            parte = parte.strip().strip('"\'[]{}()')
-            if parte.startswith(("http://", "https://", "www.")):
-                candidatos.append(parte)
+        candidatos = [parte.strip().strip('"\'[]{}()') for parte in re.split(r"[|,\n\r\t]+", texto)]
 
     urls: list[str] = []
     vistos: set[str] = set()
     for url in candidatos:
-        limpa = url.strip().strip('"\'[]{}()')
+        limpa = str(url or "").strip().strip('"\'[]{}()')
         if limpa.startswith("www."):
             limpa = "https://" + limpa
         low = limpa.lower()
         if not limpa.startswith(("http://", "https://")):
             continue
-        if any(bloqueio in low for bloqueio in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "pixel", "analytics", "base64")):
+        if any(bad in low for bad in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "pixel", "analytics", "base64")):
             continue
         if limpa in vistos:
             continue
@@ -146,147 +111,86 @@ def _normalizar_urls_imagens(valor: object) -> str:
     return "|".join(urls)
 
 
-def _serie_imagens_do_bruto(df_bruto: pd.DataFrame | None) -> pd.Series | None:
-    if not isinstance(df_bruto, pd.DataFrame) or df_bruto.empty:
-        return None
+def _consolidar_coluna_imagens(df: pd.DataFrame) -> pd.DataFrame:
+    """Mantém todos os dados brutos e só cria/normaliza uma coluna padrão de imagens."""
+    if not _df_valido(df):
+        return pd.DataFrame()
 
-    colunas_imagem = [col for col in df_bruto.columns if _coluna_eh_imagem(col)]
+    base = df.copy().fillna("")
+    base.columns = [str(c).strip() for c in base.columns]
+    colunas_imagem = [col for col in base.columns if _coluna_eh_imagem(col)]
+
     if not colunas_imagem:
-        return None
+        return base
 
-    valores: list[str] = []
-    for _, row in df_bruto.reset_index(drop=True).iterrows():
+    valores_finais: list[str] = []
+    for _, row in base.iterrows():
         urls_linha: list[str] = []
         for coluna in colunas_imagem:
-            normalizado = _normalizar_urls_imagens(row.get(coluna, ""))
+            normalizado = _normalizar_urls(row.get(coluna, ""))
             if normalizado:
                 urls_linha.extend([u for u in normalizado.split("|") if u.strip()])
+
         vistos: set[str] = set()
         unicos: list[str] = []
         for url in urls_linha:
             if url not in vistos:
                 vistos.add(url)
                 unicos.append(url)
-        valores.append("|".join(unicos))
+        valores_finais.append("|".join(unicos))
 
-    serie = pd.Series(valores, index=range(len(valores)), dtype="object")
-    if not serie.astype(str).str.strip().replace("", pd.NA).dropna().empty:
-        return serie
-    return None
-
-
-def _destinos_imagem_preview(df_preview: pd.DataFrame) -> list[str]:
-    destinos = [col for col in df_preview.columns if _coluna_eh_imagem(col)]
-    if IMAGEM_DESTINO_PADRAO in df_preview.columns and IMAGEM_DESTINO_PADRAO not in destinos:
-        destinos.insert(0, IMAGEM_DESTINO_PADRAO)
-    return destinos
-
-
-def _blindar_imagens_no_preview(df_preview: pd.DataFrame, df_bruto: pd.DataFrame | None) -> pd.DataFrame:
-    """Garante que imagens capturadas no bruto não desapareçam no preview do modelo Bling."""
-    if not isinstance(df_preview, pd.DataFrame) or df_preview.empty:
-        return df_preview
-
-    serie_imagens = _serie_imagens_do_bruto(df_bruto)
-    if serie_imagens is None:
-        return df_preview
-
-    base = df_preview.copy().fillna("")
-    destinos = _destinos_imagem_preview(base)
-    if not destinos:
-        base[IMAGEM_DESTINO_PADRAO] = ""
-        destinos = [IMAGEM_DESTINO_PADRAO]
-
-    for destino in destinos:
-        valores_destino: list[str] = []
-        for idx in range(len(base)):
-            atual = _normalizar_urls_imagens(base.iloc[idx].get(destino, "")) if destino in base.columns else ""
-            bruto = _normalizar_urls_imagens(serie_imagens.iloc[idx]) if idx < len(serie_imagens) else ""
-            valores_destino.append(atual or bruto)
-        base[destino] = valores_destino
+    if "URL Imagens Externas" not in base.columns:
+        base["URL Imagens Externas"] = valores_finais
+    else:
+        base["URL Imagens Externas"] = [atual or novo for atual, novo in zip(base["URL Imagens Externas"].astype(str).tolist(), valores_finais)]
 
     return base.fillna("")
 
 
-def _normalizar_preview_modelo_bling(df_preview: pd.DataFrame) -> pd.DataFrame:
-    base = df_preview.copy().fillna("")
-    base.columns = [str(c).strip() for c in base.columns]
-
-    deposito_nome = str(st.session_state.get("deposito_nome", "") or "").strip()
-    operacao = str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").strip().lower()
-
-    if operacao == "estoque" and deposito_nome:
-        for coluna in base.columns:
-            nome = str(coluna).strip().lower()
-            if "deposito" in nome or "depósito" in nome:
-                base[coluna] = deposito_nome
-
-    for coluna in base.columns:
-        nome = str(coluna).strip().lower()
-        if "video" in nome or "vídeo" in nome or "youtube" in nome:
-            base[coluna] = ""
-
-    return base.fillna("")
-
-
-def _usar_preview_site_como_base_do_mapeamento(df_preview: pd.DataFrame) -> bool:
-    if not _df_valido(df_preview):
-        st.error("Preview da busca por site inválido. Gere a captura novamente antes de continuar.")
-        return False
-
-    df_modelo = st.session_state.get("df_modelo")
-    if not isinstance(df_modelo, pd.DataFrame) or len(df_modelo.columns) == 0:
-        st.error("Anexe o modelo Bling antes de usar o preview da busca por site.")
-        return False
-
-    df_bruto = _obter_df_bruto_site()
-    df_preview_modelo = _blindar_imagens_no_preview(_normalizar_preview_modelo_bling(df_preview), df_bruto)
-    hash_preview = _hash_df_simples(df_preview_modelo)
-
-    st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
-    st.session_state["df_preview_site_modelo_bling"] = df_preview_modelo.copy()
-    st.session_state["df_precificado"] = df_preview_modelo.copy()
-    st.session_state["origem_site_preview_modelo_bling"] = True
-    st.session_state["origem_site_preview_modelo_bling_linhas"] = len(df_preview_modelo)
-    st.session_state["origem_site_preview_modelo_bling_colunas"] = len(df_preview_modelo.columns)
-    st.session_state["origem_site_preview_hash"] = hash_preview
-    st.session_state["mapping_hash_base"] = hash_preview
-    st.session_state["mapping_hash_modelo"] = _hash_df_simples(df_modelo)
-    st.session_state["mapping_manual"] = {str(col): str(col) for col in df_preview_modelo.columns.tolist()}
-    st.session_state["mapping_sugerido"] = {}
-    st.session_state["agent_ui_package"] = {
-        "status": "preview_site_modelo_bling",
-        "mensagem": "Preview da busca por site montado em cima do modelo Bling anexado.",
-    }
-    st.session_state["_ia_auto_mapping_executado"] = True
-
-    st.session_state.pop("df_final", None)
-
-    if set_etapa_segura("mapeamento", origem="origem_site_preview_modelo_bling"):
-        st.rerun()
-        return True
-
-    st.error("Não foi possível avançar para o mapeamento. Confira se o modelo do Bling foi carregado corretamente.")
-    return False
-
-
-def _registrar_preview_site_para_continuar(df_preview: pd.DataFrame, df_bruto: pd.DataFrame | None = None) -> None:
-    """Guarda o preview de site para o botão único Continuar da tela principal.
-
-    Não renderiza botão local para evitar duplicidade/confusão no mobile.
-    """
-    if not _df_valido(df_preview):
+def _registrar_preview_bruto_para_continuar(df_bruto: pd.DataFrame) -> None:
+    if not _df_valido(df_bruto):
         return
 
-    df_preview_modelo = _blindar_imagens_no_preview(_normalizar_preview_modelo_bling(df_preview), df_bruto)
-    st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
-    st.session_state["df_preview_site_modelo_bling"] = df_preview_modelo.copy()
-    st.session_state["df_precificado"] = df_preview_modelo.copy()
-    st.session_state["origem_site_preview_modelo_bling"] = True
-    st.session_state["origem_site_preview_modelo_bling_linhas"] = len(df_preview_modelo)
-    st.session_state["origem_site_preview_modelo_bling_colunas"] = len(df_preview_modelo.columns)
-    st.session_state["origem_site_preview_hash"] = _hash_df_simples(df_preview_modelo)
+    df_preview = _consolidar_coluna_imagens(df_bruto)
+    st.session_state["df_origem"] = df_preview.copy()
+    st.session_state["df_saida"] = df_preview.copy()
+    st.session_state["df_preview_inteligente"] = df_preview.copy()
+    st.session_state["df_preview_origem"] = df_preview.copy()
+    st.session_state["df_precificado"] = df_preview.copy()
+    st.session_state["origem_site_preview_modelo_bling"] = False
+    st.session_state["origem_site_preview_hash"] = _hash_df_simples(df_preview)
+    st.session_state.pop("df_preview_site_modelo_bling", None)
+    st.session_state.pop("df_auto_mapa", None)
     st.session_state.pop("df_final", None)
+
+
+def _render_preview_bruto_site(df_bruto: pd.DataFrame) -> None:
+    if not _df_valido(df_bruto):
+        return
+
+    df_preview = _consolidar_coluna_imagens(df_bruto)
+    _registrar_preview_bruto_para_continuar(df_preview)
+
+    st.markdown("#### 📦 Preview bruto da captura por site")
+    st.caption(
+        "Esta tabela mostra tudo que o robô conseguiu extrair, sem forçar as colunas do modelo Bling. "
+        "O mapeamento correto será feito na próxima etapa."
+    )
+
+    colunas_imagem = [col for col in df_preview.columns if _coluna_eh_imagem(col)]
+    total_com_imagem = 0
+    if "URL Imagens Externas" in df_preview.columns:
+        total_com_imagem = int(df_preview["URL Imagens Externas"].astype(str).str.strip().ne("").sum())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Produtos", len(df_preview))
+    c2.metric("Colunas extraídas", len(df_preview.columns))
+    c3.metric("Com imagem", total_com_imagem)
+
+    if colunas_imagem:
+        st.caption("Colunas de imagem detectadas: " + ", ".join([str(c) for c in colunas_imagem]))
+
+    st.dataframe(df_preview.head(50), use_container_width=True)
 
 
 def _formatar_tempo(segundos: float) -> str:
@@ -405,18 +309,18 @@ def _criar_monitor_progresso(total_urls: int):
             col1.metric("⏱️ Tempo total", _formatar_tempo(decorrido))
             col2.metric("📦 Linhas", int(total_linhas))
             col3.metric("✅ Etapas", f"{total_passos}/{total_passos}")
-        etapa_atual.markdown("**✅ Resultado consolidado e pronto para gerar preview baseado no modelo Bling.**")
+        etapa_atual.markdown("**✅ Resultado bruto preservado. O mapeamento será feito na próxima etapa.**")
         pulso.caption(f"Finalizado às {time.strftime('%H:%M:%S')}.")
 
     return atualizar, finalizar
 
 
 def render_origem_site_panel() -> None:
-    # Blindagem: antes de desenhar a tela, tenta restaurar a última captura por site.
     restaurar_resultado_site_travado()
 
     with st.container(border=True):
-        st.markdown("#### 🚀 Captura por site (ULTRA automático)")
+        st.markdown("#### 🚀 Captura por site (dados brutos)")
+        st.caption("O robô extrai todos os campos possíveis. Não forçamos mais a captura no modelo Bling nesta tela.")
 
         total_travado = int(st.session_state.get("origem_site_total_produtos") or 0)
         if st.session_state.get("origem_site_resultado_travado") and total_travado > 0:
@@ -436,7 +340,7 @@ def render_origem_site_panel() -> None:
 
         if limpar:
             limpar_busca_site()
-            _limpar_preview_site_modelo_bling()
+            _limpar_preview_site()
             st.session_state.pop("df_final", None)
             st.rerun()
 
@@ -458,22 +362,13 @@ def render_origem_site_panel() -> None:
                 st.warning("Nada encontrado")
                 return
 
-            guardar_resultado(df, urls, None, "AUTO_TOTAL")
-            _limpar_preview_site_modelo_bling()
-            st.session_state.pop("df_final", None)
-            finalizar_progresso(len(df))
-            st.success(f"{len(df)} produtos encontrados (ULTRA automático)")
+            df_bruto = _consolidar_coluna_imagens(df)
+            guardar_resultado(df_bruto, urls, None, "AUTO_TOTAL")
+            _registrar_preview_bruto_para_continuar(df_bruto)
+            finalizar_progresso(len(df_bruto))
+            st.success(f"{len(df_bruto)} produtos encontrados. Dados brutos preservados para mapeamento.")
             st.rerun()
 
     df_bruto = _obter_df_bruto_site()
     if df_bruto is not None:
-        df_modelo = st.session_state.get("df_modelo")
-        if isinstance(df_modelo, pd.DataFrame) and not df_modelo.empty:
-            df_preview = render_preview_inteligente(
-                df_bruto,
-                df_modelo,
-                titulo="Planilha de preview da busca por site baseada no modelo Bling anexado",
-            )
-            _registrar_preview_site_para_continuar(df_preview, df_bruto=df_bruto)
-        else:
-            st.info("Anexe o modelo Bling para gerar a planilha de preview da busca por site nas colunas corretas.")
+        _render_preview_bruto_site(df_bruto)
