@@ -142,7 +142,7 @@ def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
 
 
 def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
-    """Mostra, logo abaixo do select, a coluna escolhida e o primeiro valor real capturado."""
+    """Mostra, logo abaixo do select, a coluna escolhida e uma amostra real capturada."""
     if not selected_col:
         st.markdown(
             "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>"
@@ -159,7 +159,7 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
     st.markdown(
         "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
         f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
-        f"<div style='color:#b91c1c;font-size:0.84rem;'>{escape(str(valor))}</div>"
+        f"<div style='color:#047857;font-size:0.84rem;font-weight:700;'>💚 {escape(str(valor))}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -294,7 +294,7 @@ def run_stable_app() -> None:
     _show_line_metrics(df, restaurar_df("stable_df_export"))
 
     st.subheader("Mapeamento manual")
-    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece, em vermelho, a coluna escolhida e uma amostra real capturada para ajudar no mapeamento.")
+    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece o nome da coluna e, em verde, uma amostra real capturada para não confundir com o rótulo.")
 
     sources = [""] + [str(c) for c in df.columns]
     mapping = {}
