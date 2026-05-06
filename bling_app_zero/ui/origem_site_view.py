@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 import pandas as pd
@@ -26,6 +27,10 @@ CHAVES_PREVIEW_SITE_MODELO_BLING = [
     "origem_site_preview_modelo_bling_colunas",
     "origem_site_preview_hash",
 ]
+
+IMAGEM_DESTINO_PADRAO = "URL Imagens Externas"
+IMAGEM_COLUNA_RE = re.compile(r"(url\s*)?(imagem|imagens|image|images|foto|fotos|img|gallery|galeria)", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s\"'<>|,;]+|www\.[^\s\"'<>|,;]+", re.IGNORECASE)
 
 
 def _obter_df_atual_site() -> pd.DataFrame | None:
@@ -88,6 +93,121 @@ def _limpar_preview_site_modelo_bling() -> None:
         st.session_state.pop(chave, None)
 
 
+def _normalizar_nome_coluna(nome: object) -> str:
+    return str(nome or "").strip().lower().replace("í", "i").replace("é", "e").replace("á", "a").replace("ã", "a").replace("ç", "c")
+
+
+def _coluna_eh_imagem(nome: object) -> bool:
+    normalizado = _normalizar_nome_coluna(nome)
+    if "video" in normalizado or "youtube" in normalizado:
+        return False
+    return bool(IMAGEM_COLUNA_RE.search(normalizado)) or normalizado in {
+        "url imagens externas",
+        "url_imagens_externas",
+        "image_urls",
+        "image_url",
+        "main_image",
+        "thumbnail",
+    }
+
+
+def _normalizar_urls_imagens(valor: object) -> str:
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+
+    texto = texto.replace("\\/", "/")
+    candidatos: list[str] = []
+    for match in URL_RE.findall(texto):
+        candidatos.append(match)
+    if not candidatos:
+        for parte in re.split(r"[|,\n\r\t]+", texto):
+            parte = parte.strip().strip('"\'[]{}()')
+            if parte.startswith(("http://", "https://", "www.")):
+                candidatos.append(parte)
+
+    urls: list[str] = []
+    vistos: set[str] = set()
+    for url in candidatos:
+        limpa = url.strip().strip('"\'[]{}()')
+        if limpa.startswith("www."):
+            limpa = "https://" + limpa
+        low = limpa.lower()
+        if not limpa.startswith(("http://", "https://")):
+            continue
+        if any(bloqueio in low for bloqueio in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "pixel", "analytics", "base64")):
+            continue
+        if limpa in vistos:
+            continue
+        vistos.add(limpa)
+        urls.append(limpa)
+        if len(urls) >= 20:
+            break
+    return "|".join(urls)
+
+
+def _serie_imagens_do_bruto(df_bruto: pd.DataFrame | None) -> pd.Series | None:
+    if not isinstance(df_bruto, pd.DataFrame) or df_bruto.empty:
+        return None
+
+    colunas_imagem = [col for col in df_bruto.columns if _coluna_eh_imagem(col)]
+    if not colunas_imagem:
+        return None
+
+    valores: list[str] = []
+    for _, row in df_bruto.reset_index(drop=True).iterrows():
+        urls_linha: list[str] = []
+        for coluna in colunas_imagem:
+            normalizado = _normalizar_urls_imagens(row.get(coluna, ""))
+            if normalizado:
+                urls_linha.extend([u for u in normalizado.split("|") if u.strip()])
+        vistos: set[str] = set()
+        unicos: list[str] = []
+        for url in urls_linha:
+            if url not in vistos:
+                vistos.add(url)
+                unicos.append(url)
+        valores.append("|".join(unicos))
+
+    serie = pd.Series(valores, index=range(len(valores)), dtype="object")
+    if not serie.astype(str).str.strip().replace("", pd.NA).dropna().empty:
+        return serie
+    return None
+
+
+def _destinos_imagem_preview(df_preview: pd.DataFrame) -> list[str]:
+    destinos = [col for col in df_preview.columns if _coluna_eh_imagem(col)]
+    if IMAGEM_DESTINO_PADRAO in df_preview.columns and IMAGEM_DESTINO_PADRAO not in destinos:
+        destinos.insert(0, IMAGEM_DESTINO_PADRAO)
+    return destinos
+
+
+def _blindar_imagens_no_preview(df_preview: pd.DataFrame, df_bruto: pd.DataFrame | None) -> pd.DataFrame:
+    """Garante que imagens capturadas no bruto não desapareçam no preview do modelo Bling."""
+    if not isinstance(df_preview, pd.DataFrame) or df_preview.empty:
+        return df_preview
+
+    serie_imagens = _serie_imagens_do_bruto(df_bruto)
+    if serie_imagens is None:
+        return df_preview
+
+    base = df_preview.copy().fillna("")
+    destinos = _destinos_imagem_preview(base)
+    if not destinos:
+        base[IMAGEM_DESTINO_PADRAO] = ""
+        destinos = [IMAGEM_DESTINO_PADRAO]
+
+    for destino in destinos:
+        valores_destino: list[str] = []
+        for idx in range(len(base)):
+            atual = _normalizar_urls_imagens(base.iloc[idx].get(destino, "")) if destino in base.columns else ""
+            bruto = _normalizar_urls_imagens(serie_imagens.iloc[idx]) if idx < len(serie_imagens) else ""
+            valores_destino.append(atual or bruto)
+        base[destino] = valores_destino
+
+    return base.fillna("")
+
+
 def _normalizar_preview_modelo_bling(df_preview: pd.DataFrame) -> pd.DataFrame:
     base = df_preview.copy().fillna("")
     base.columns = [str(c).strip() for c in base.columns]
@@ -119,7 +239,8 @@ def _usar_preview_site_como_base_do_mapeamento(df_preview: pd.DataFrame) -> bool
         st.error("Anexe o modelo Bling antes de usar o preview da busca por site.")
         return False
 
-    df_preview_modelo = _normalizar_preview_modelo_bling(df_preview)
+    df_bruto = _obter_df_bruto_site()
+    df_preview_modelo = _blindar_imagens_no_preview(_normalizar_preview_modelo_bling(df_preview), df_bruto)
     hash_preview = _hash_df_simples(df_preview_modelo)
 
     st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
@@ -149,7 +270,7 @@ def _usar_preview_site_como_base_do_mapeamento(df_preview: pd.DataFrame) -> bool
     return False
 
 
-def _registrar_preview_site_para_continuar(df_preview: pd.DataFrame) -> None:
+def _registrar_preview_site_para_continuar(df_preview: pd.DataFrame, df_bruto: pd.DataFrame | None = None) -> None:
     """Guarda o preview de site para o botão único Continuar da tela principal.
 
     Não renderiza botão local para evitar duplicidade/confusão no mobile.
@@ -157,7 +278,7 @@ def _registrar_preview_site_para_continuar(df_preview: pd.DataFrame) -> None:
     if not _df_valido(df_preview):
         return
 
-    df_preview_modelo = _normalizar_preview_modelo_bling(df_preview)
+    df_preview_modelo = _blindar_imagens_no_preview(_normalizar_preview_modelo_bling(df_preview), df_bruto)
     st.session_state["df_preview_inteligente"] = df_preview_modelo.copy()
     st.session_state["df_preview_site_modelo_bling"] = df_preview_modelo.copy()
     st.session_state["df_precificado"] = df_preview_modelo.copy()
@@ -353,6 +474,6 @@ def render_origem_site_panel() -> None:
                 df_modelo,
                 titulo="Planilha de preview da busca por site baseada no modelo Bling anexado",
             )
-            _registrar_preview_site_para_continuar(df_preview)
+            _registrar_preview_site_para_continuar(df_preview, df_bruto=df_bruto)
         else:
             st.info("Anexe o modelo Bling para gerar a planilha de preview da busca por site nas colunas corretas.")
