@@ -5,11 +5,7 @@ import streamlit as st
 from bling_app_zero.core.high_quality_image_patch import install_high_quality_image_patch
 from bling_app_zero.core.mega_product_patch import install_mega_product_patch
 from bling_app_zero.stable.stable_app import run_stable_app
-from bling_app_zero.ui.debug_panel import (
-    add_debug_log,
-    render_debug_panel,
-    render_debug_panel_inline,
-)
+from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
 
 
 def main() -> None:
@@ -17,12 +13,11 @@ def main() -> None:
         page_title="IA Planilhas Bling",
         page_icon="🚀",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
 
     add_debug_log("Aplicação iniciada/renderizada.", origem="APP")
     render_debug_panel()
-    render_debug_panel_inline()
 
     install_mega_product_patch()
     add_debug_log("Mega product patch instalado.", origem="PATCH")
