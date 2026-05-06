@@ -2,11 +2,11 @@ from __future__ import annotations
 
 """Flash Amplo página por página em velocidade máxima com checkpoint.
 
-Nova regra oficial:
-- listagem/categoria continua sendo a fonte principal;
-- sitemap entra como COMPLEMENTO para não parar na primeira página;
-- toda página `/produto/...` deve retornar `URL Imagens Externas`;
-- imagens passam por blindagem centralizada.
+Regra atual:
+- descoberta de produtos por página infinity controlada;
+- não para na primeira página;
+- abre cada `/produto/...`;
+- imagens passam pelo extrator seguro, sem aceitar URL de produto como imagem.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,8 +15,9 @@ from typing import Callable, Iterable, Optional
 import pandas as pd
 
 from bling_app_zero.core.flash_checkpoint import append_checkpoint_row, fingerprint_urls, load_checkpoint_rows
-from bling_app_zero.core.page_by_page_crawler import discover_product_urls, extract_product_from_page, fetch_html
-from bling_app_zero.core.product_image_extractor import extract_product_images_from_html
+from bling_app_zero.core.page_by_page_crawler import extract_product_from_page, fetch_html
+from bling_app_zero.core.product_image_extractor_safe import extract_safe_product_images
+from bling_app_zero.core.product_url_discovery_infinity import discover_product_urls_infinity
 
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
@@ -31,10 +32,10 @@ def _safe_extract_one(product_url: str) -> dict[str, str]:
         html = fetch_html(product_url)
         row = extract_product_from_page(product_url, html)
 
-        imagens = extract_product_images_from_html(product_url, html)
+        imagens = extract_safe_product_images(product_url, html)
         if imagens:
             row["URL Imagens Externas"] = imagens
-            row.setdefault("Imagens", imagens)
+            row["Imagens"] = imagens
 
         row.setdefault("Link Externo", product_url)
         row.setdefault("URL do Produto", product_url)
@@ -72,8 +73,7 @@ def crawl_flash_amplo_page_by_page(
     seed_list = [str(url or "").strip() for url in seed_urls if str(url or "").strip()]
     effective_max_products = int(max_products or DEFAULT_MAX_PRODUCTS)
 
-    # Agora o sitemap volta como complemento para não travar na primeira página.
-    product_urls = discover_product_urls(seed_list, max_products=effective_max_products, use_sitemap=True)
+    product_urls = discover_product_urls_infinity(seed_list, max_products=effective_max_products)
     total = len(product_urls)
 
     if total == 0:
