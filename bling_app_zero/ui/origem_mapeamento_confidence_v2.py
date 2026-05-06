@@ -11,6 +11,7 @@ import html as html_lib
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.mapeamento.source_columns import opcoes_origem_mapeamento
 from bling_app_zero.ui.mapeamento_sample_hint import render_amostra_vermelha
 from bling_app_zero.ui.origem_mapeamento_helpers import (
     _aplicar_mapping,
@@ -62,7 +63,7 @@ def _status_basico(df_base: pd.DataFrame, coluna_modelo: str, coluna_origem: str
     if _eh_coluna_video(coluna_modelo):
         return "🚫", "Campo de vídeo bloqueado", "Vídeo fica vazio para evitar propaganda.", "#334155", "#94A3B8"
     if not coluna_origem:
-        return "🔴", "Sem coluna de origem", "Escolha uma coluna para este campo.", "#991B1B", "#EF4444"
+        return "🔴", "Sem coluna de origem", "Escolha uma coluna real da origem para este campo.", "#991B1B", "#EF4444"
     if coluna_origem not in df_base.columns:
         return "🔴", "Coluna não encontrada", "Selecione outra coluna.", "#991B1B", "#EF4444"
     if _eh_coluna_video(coluna_origem):
@@ -106,13 +107,19 @@ def _ordenar_colunas(df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueado
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.caption("Ajuste manual. A linha vermelha mostra a primeira amostra real da coluna selecionada.")
+    st.caption("Ajuste manual. O seletor mostra somente colunas reais da origem/captura.")
 
     if not isinstance(df_base, pd.DataFrame) or df_base.empty or not isinstance(df_modelo, pd.DataFrame):
         st.warning("Base ou modelo inválido para mapeamento.")
         return
 
-    opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist() if not _eh_coluna_video(c)]
+    opcoes_origem = opcoes_origem_mapeamento(
+        df_base,
+        df_modelo,
+        incluir_vazio=True,
+        bloquear_video=True,
+        video_checker=_eh_coluna_video,
+    )
     bloqueados = _bloqueados_sem_preco(df_modelo, operacao)
     mapping_atual = st.session_state.get("mapping_manual", {})
     if not isinstance(mapping_atual, dict):
@@ -148,7 +155,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             options=opcoes_origem,
             index=opcoes_origem.index(valor_atual) if valor_atual in opcoes_origem else 0,
             key=f"map_{coluna_modelo}",
-            help="Escolha a coluna da origem. A amostra aparece em vermelho acima do campo.",
+            help="Escolha somente uma coluna real da origem/captura. Campos do modelo Bling não aparecem aqui.",
         )
 
         novo_valor = str(novo_valor or "").strip()
