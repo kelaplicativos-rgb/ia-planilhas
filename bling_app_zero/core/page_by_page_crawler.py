@@ -65,6 +65,25 @@ PRICE_SELECTORS = (
     ".produto-preco",
 )
 
+IMAGE_SELECTORS = (
+    "meta[property='og:image']",
+    "meta[property='og:image:secure_url']",
+    "meta[name='twitter:image']",
+    "[itemprop='image']",
+    "img[src]",
+    "img[data-src]",
+    "img[data-original]",
+    "img[data-zoom-image]",
+    "img[data-large_image]",
+    "img[data-lazy]",
+    "img[data-lazy-src]",
+    "source[srcset]",
+    "a[href*='.jpg']",
+    "a[href*='.jpeg']",
+    "a[href*='.png']",
+    "a[href*='.webp']",
+)
+
 DESCRIPTION_BLOCKLIST = (
     "mega center eletronicos",
     "mega center eletrônicos",
@@ -91,6 +110,22 @@ DESCRIPTION_BLOCKLIST = (
     "carrinho",
     "comprar",
     "adicionar ao carrinho",
+)
+
+BAD_IMAGE_FRAGMENTS = (
+    "logo",
+    "sprite",
+    "placeholder",
+    "blank",
+    "loading",
+    "favicon",
+    "facebook.com/tr",
+    "pixel",
+    "analytics",
+    "doubleclick",
+    "whatsapp",
+    "instagram",
+    "svg+xml",
 )
 
 
@@ -287,15 +322,11 @@ def discover_product_urls(
         else:
             pages_without_new_products = 0
 
-        # Links reais de paginação encontrados no HTML.
         for next_url in _extract_next_listing_urls(soup, page_url, seed_hosts):
             if next_url not in seen_pages:
                 seen_pages.add(next_url)
                 page_queue.append((next_url, page_number + 1))
 
-        # Tentativas sintéticas comuns de paginação. Não é limite de páginas;
-        # apenas para descobrir a próxima URL quando o site não expõe rel=next.
-        # A parada acontece quando várias páginas seguidas não trazem produto novo.
         if pages_without_new_products < 3:
             for synthetic_url in _synthetic_next_pages(page_url, page_number):
                 if synthetic_url not in seen_pages and _same_listing_area(synthetic_url, seed_hosts):
@@ -497,29 +528,49 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> dict[str, str]:
     return data
 
 
-def _extract_images(soup: BeautifulSoup, page_url: str) -> str:
+def _image_candidates_from_json_ld(data: dict[str, str]) -> list[str]:
+    value = data.get("URL Imagens Externas") or ""
+    if not value:
+        return []
+    return [part.strip() for part in re.split(r"[|,\n\r\t]+", value) if part.strip()]
+
+
+def _extract_images(soup: BeautifulSoup, page_url: str, extra_candidates: Optional[Iterable[str]] = None) -> str:
     images: list[str] = []
     seen: set[str] = set()
+    candidates: list[str] = []
 
-    candidates = []
-    for meta in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
-        if meta.get("content"):
-            candidates.append(str(meta.get("content")))
+    if extra_candidates:
+        candidates.extend([str(item) for item in extra_candidates if str(item or "").strip()])
 
-    for tag in soup.select("img[src], img[data-src], img[data-original], img[data-zoom-image], source[srcset]"):
-        for attr in ("src", "data-src", "data-original", "data-zoom-image", "srcset"):
-            value = tag.get(attr)
-            if value:
-                candidates.extend(str(value).split(","))
+    for selector in IMAGE_SELECTORS:
+        for tag in soup.select(selector):
+            for attr in ("content", "src", "data-src", "data-original", "data-zoom-image", "data-large_image", "data-lazy", "data-lazy-src", "srcset", "href"):
+                value = tag.get(attr)
+                if not value:
+                    continue
+                text = str(value)
+                if attr == "srcset":
+                    candidates.extend([part.strip().split(" ")[0] for part in text.split(",") if part.strip()])
+                else:
+                    candidates.append(text)
 
     for raw in candidates:
-        url = raw.strip().split(" ")[0]
+        url = str(raw or "").strip().strip('"\'')
         if not url:
             continue
-        abs_url = normalize_url(url, page_url)
+        if url.startswith("//"):
+            url = "https:" + url
+        abs_url = normalize_url(url.split(" ")[0], page_url)
         lower = abs_url.lower()
-        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon", "facebook.com/tr")):
+        if not lower.startswith(("http://", "https://")):
             continue
+        if any(block in lower for block in BAD_IMAGE_FRAGMENTS):
+            continue
+        if not re.search(r"\.(jpg|jpeg|png|webp)(?:$|[?#])", lower):
+            # Permite CDN sem extensão apenas quando o caminho parece imagem de produto.
+            if not any(token in lower for token in ("image", "imagem", "foto", "product", "produto", "upload")):
+                continue
         if abs_url in seen:
             continue
         seen.add(abs_url)
@@ -588,9 +639,11 @@ def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
     if gtin:
         data["GTIN/EAN"] = gtin
 
-    images = data.get("URL Imagens Externas") or _first_meta(soup, "og:image", "twitter:image") or _extract_images(soup, page_url)
+    images = _extract_images(soup, page_url, extra_candidates=_image_candidates_from_json_ld(data))
     if images:
         data["URL Imagens Externas"] = images
+    else:
+        data.pop("URL Imagens Externas", None)
 
     canonical = ""
     canonical_tag = soup.find("link", rel=lambda value: value and "canonical" in value)
