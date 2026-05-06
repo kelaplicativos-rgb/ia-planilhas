@@ -75,6 +75,15 @@ def _is_tipo_item_col(col: object) -> bool:
     return n in {"tipo do item", "tipo item", "tipo de item"}
 
 
+def _is_unidade_medida_col(col: object) -> bool:
+    n = _norm(col)
+    return n in {"unidade", "unidade de medida", "unidade medida", "unid", "un"}
+
+
+def _is_auto_map_blocked_target(col: object) -> bool:
+    return _is_tipo_item_col(col) or _is_unidade_medida_col(col)
+
+
 def _is_deposito_col(col: object) -> bool:
     return "deposito" in _norm(col)
 
@@ -138,7 +147,7 @@ def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[s
 
 
 def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
-    if _is_tipo_item_col(target):
+    if _is_auto_map_blocked_target(target):
         return ""
     target_norm = _norm(target)
     if not target_norm:
