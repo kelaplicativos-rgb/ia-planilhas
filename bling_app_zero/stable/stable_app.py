@@ -71,6 +71,35 @@ def _norm(v) -> str:
     return normalizar_nome_coluna(v)
 
 
+def _digits(value: object) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _is_ncm_col(col: object) -> bool:
+    n = _norm(col)
+    return n == "ncm" or "classificacao fiscal" in n or "class fiscal" in n or "codigo ncm" in n
+
+
+def _clean_ncm_value(value: object) -> str:
+    digits = _digits(value)
+    return digits if len(digits) == 8 else ""
+
+
+def _limpar_ncms_invalidos_automatico(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df, 0
+    out = df.copy().fillna("")
+    total = 0
+    for col in out.columns:
+        if not _is_ncm_col(col):
+            continue
+        antes = out[col].astype(str).fillna("")
+        depois = antes.map(_clean_ncm_value)
+        total += int((antes.str.strip() != depois.astype(str).str.strip()).sum())
+        out[col] = depois
+    return out.fillna(""), total
+
+
 def _is_gtin_col(col: object) -> bool:
     n = _norm(col)
     return "gtin" in n or "ean" in n or "codigo de barras" in n or "cod barras" in n
@@ -87,7 +116,7 @@ def _gtin_check_digit_ok(digits: str) -> bool:
 
 
 def _clean_gtin_value(value: object) -> str:
-    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    digits = _digits(value)
     if not digits:
         return ""
     if len(digits) not in {8, 12, 13, 14}:
@@ -187,6 +216,8 @@ def _source_options_for_target(target: str, df: pd.DataFrame, model_cols: list[s
     cols = [c for c in raw_cols if not _is_blocked_bling_only_column(c) and _column_has_data(df, c)]
     if _is_imagem_target(target):
         cols = [c for c in cols if _is_imagem_col(c)]
+    if _is_ncm_col(target):
+        cols = [c for c in cols if _is_ncm_col(c)]
     return [""] + cols
 
 
@@ -197,6 +228,8 @@ def _auto_map_100(target: str, options: list[str], df: pd.DataFrame) -> str:
     if not target_norm:
         return ""
     matches = [opt for opt in options if opt and _norm(opt) == target_norm and _column_has_data(df, opt)]
+    if _is_ncm_col(target):
+        matches = [opt for opt in matches if opt and _is_ncm_col(opt)]
     return matches[0] if len(matches) == 1 else ""
 
 
@@ -212,8 +245,10 @@ def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _force(pd.DataFrame(), cols)
     cleaned = clean_invalid_preview_mappings(df.copy().fillna(""))
-    cleaned, removidos = _limpar_gtins_invalidos_automatico(cleaned)
-    st.session_state["stable_gtins_invalidos_removidos"] = removidos
+    cleaned, removidos_gtin = _limpar_gtins_invalidos_automatico(cleaned)
+    cleaned, removidos_ncm = _limpar_ncms_invalidos_automatico(cleaned)
+    st.session_state["stable_gtins_invalidos_removidos"] = removidos_gtin
+    st.session_state["stable_ncms_invalidos_removidos"] = removidos_ncm
     return _force(cleaned, cols)
 
 
@@ -280,9 +315,9 @@ def _render_source_preview(df: pd.DataFrame, selected_col: str, auto_100: bool =
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
     total_linhas = len(out) if isinstance(out, pd.DataFrame) else 0
-    out_limpo, removidos_download = _limpar_gtins_invalidos_automatico(out)
-    if removidos_download:
-        out = out_limpo
+    out_limpo, _ = _limpar_gtins_invalidos_automatico(out)
+    out_limpo, _ = _limpar_ncms_invalidos_automatico(out_limpo)
+    out = out_limpo
     if total_linhas > BLING_MAX_IMPORT_ROWS:
         total_partes = ceil(total_linhas / BLING_MAX_IMPORT_ROWS)
         st.warning(f"O Bling aceita no máximo {BLING_MAX_IMPORT_ROWS} linhas por importação. Seu arquivo será dividido em {total_partes} partes.")
@@ -378,7 +413,7 @@ def run_stable_app() -> None:
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
-    st.caption("Automático só quando for 100% exato. Sem certeza, o campo fica vazio para ajuste manual.")
+    st.caption("NCM só é preenchido quando existir coluna NCM/Classificação fiscal explícita na origem. Sem certeza, fica vazio.")
 
     mapping = {}
     auto_100_count = 0
@@ -411,9 +446,12 @@ def run_stable_app() -> None:
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
-    removidos = int(st.session_state.get("stable_gtins_invalidos_removidos", 0) or 0)
-    if removidos:
-        st.info(f"GTINs inválidos limpos automaticamente: {removidos}. Campos inválidos foram deixados em branco para o Bling aceitar.")
+    removidos_gtin = int(st.session_state.get("stable_gtins_invalidos_removidos", 0) or 0)
+    removidos_ncm = int(st.session_state.get("stable_ncms_invalidos_removidos", 0) or 0)
+    if removidos_gtin:
+        st.info(f"GTINs inválidos limpos automaticamente: {removidos_gtin}. Campos inválidos foram deixados em branco para o Bling aceitar.")
+    if removidos_ncm:
+        st.info(f"NCMs inválidos limpos automaticamente: {removidos_ncm}. NCM sem 8 dígitos foi deixado em branco.")
 
     _show_line_metrics(df, out)
     with st.expander("Preview final", expanded=False):
