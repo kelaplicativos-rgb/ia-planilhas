@@ -11,7 +11,7 @@ from bling_app_zero.ui.debug_panel import add_debug_log, render_debug_panel
 
 def _run_stable_app_safe() -> None:
     try:
-        from bling_app_zero.stable.stable_app import run_stable_app
+        from bling_app_zero.stable.stable_app_live_patch import run_stable_app
         run_stable_app()
     except Exception as exc:
         add_debug_log(f"Falha crítica na execução do app: {exc}", origem="APP", nivel="ERRO")
