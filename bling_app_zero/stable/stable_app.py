@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from io import BytesIO
 from math import ceil
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -83,14 +84,6 @@ def _normalize_for_final(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return _force(cleaned, cols)
 
 
-def _mirror_preview(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    out = pd.DataFrame(index=df.index)
-    for target in cols:
-        src = _safe_source(target, df.columns)
-        out[target] = df[src].astype(str).fillna("") if src else ""
-    return _normalize_for_final(out, cols)
-
-
 def _urls(raw: str) -> list[str]:
     seen, urls = set(), []
     for part in str(raw or "").replace("\r", "\n").replace(";", "\n").split("\n"):
@@ -127,6 +120,44 @@ def _zip_csv_parts(df: pd.DataFrame, *, chunk_size: int = BLING_MAX_IMPORT_ROWS)
             file_name = f"bling_saida_final_{len(df)}_linhas_parte_{index:02d}_de_{total_parts:02d}.csv"
             zip_file.writestr(file_name, dataframe_para_csv_bytes(part))
     return buffer.getvalue()
+
+
+def _first_non_empty_value(df: pd.DataFrame, col: str) -> str:
+    if not _has_df(df) or col not in df.columns:
+        return ""
+    try:
+        serie = df[col].astype(str).fillna("")
+        for valor in serie:
+            texto = str(valor or "").strip()
+            if texto:
+                return texto[:350]
+    except Exception:
+        return ""
+    return ""
+
+
+def _render_source_preview(df: pd.DataFrame, selected_col: str) -> None:
+    """Mostra, logo abaixo do select, a coluna escolhida e o primeiro valor real capturado."""
+    if not selected_col:
+        st.markdown(
+            "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;color:#b91c1c;font-size:0.88rem;'>"
+            "⚠️ Nenhuma coluna da origem selecionada para este campo."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    valor = _first_non_empty_value(df, selected_col)
+    if not valor:
+        valor = "sem valor preenchido na primeira informação capturada"
+
+    st.markdown(
+        "<div style='margin-top:-0.65rem;margin-bottom:0.75rem;line-height:1.35;'>"
+        f"<div style='color:#b91c1c;font-size:0.86rem;font-weight:700;'>Coluna da origem: {escape(str(selected_col))}</div>"
+        f"<div style='color:#b91c1c;font-size:0.84rem;'>Primeira informação: {escape(str(valor))}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_downloads(out: pd.DataFrame, saida_ok: bool) -> None:
@@ -193,17 +224,16 @@ def _validar_saida(df: pd.DataFrame, tipo: str) -> bool:
     return ok
 
 
-def _show_line_metrics(df_origem: pd.DataFrame, df_preview: pd.DataFrame | None = None, df_final: pd.DataFrame | None = None) -> None:
-    cols = st.columns(3)
+def _show_line_metrics(df_origem: pd.DataFrame, df_final: pd.DataFrame | None = None) -> None:
+    cols = st.columns(2)
     cols[0].metric("Linhas capturadas na origem", len(df_origem) if isinstance(df_origem, pd.DataFrame) else 0)
-    cols[1].metric("Linhas no preview da origem", len(df_preview) if isinstance(df_preview, pd.DataFrame) else 0)
-    cols[2].metric("Linhas no preview final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
+    cols[1].metric("Linhas no preview final", len(df_final) if isinstance(df_final, pd.DataFrame) else 0)
 
 
 def run_stable_app() -> None:
     restaurar_chaves_df(["stable_df_origem", "stable_df_modelo", "stable_df_export"])
     st.title("🚀 IA Planilhas → Bling")
-    st.caption("Fluxo corrigido: Modelo Bling → Origem/site → Preview → Mapeamento manual/conservador → CSV.")
+    st.caption("Fluxo corrigido: Modelo Bling → Origem/site → Mapeamento manual → Preview final → CSV.")
 
     with st.sidebar:
         if st.button("🧹 Reiniciar fluxo", use_container_width=True):
@@ -256,17 +286,11 @@ def run_stable_app() -> None:
         st.warning("Anexe/capture a origem para continuar.")
         return
 
-    prev = _mirror_preview(df, cols)
-    _show_line_metrics(df, prev, restaurar_df("stable_df_export"))
+    _show_line_metrics(df, restaurar_df("stable_df_export"))
 
-    with st.expander("Preview da origem", expanded=False):
-        st.caption(
-            f"Espelhado no modelo. Total real: {len(prev)} linhas. "
-            "A tabela abaixo mostra todas as linhas capturadas, não apenas as 80 primeiras."
-        )
-        st.dataframe(prev, use_container_width=True, hide_index=True)
+    st.subheader("Mapeamento manual")
+    st.caption("Escolha uma coluna da origem. Abaixo de cada campo aparece, em vermelho, a coluna escolhida e a primeira informação real capturada para ajudar no mapeamento.")
 
-    st.subheader("Mapeamento manual/conservador")
     sources = [""] + [str(c) for c in df.columns]
     mapping = {}
     deposito_manual = ""
@@ -277,7 +301,9 @@ def run_stable_app() -> None:
             continue
         default = _safe_source(c, df.columns)
         idx = sources.index(default) if default in sources else 0
-        mapping[c] = st.selectbox(str(c), sources, index=idx, key=f"stable_map_{c}")
+        selecionada = st.selectbox(str(c), sources, index=idx, key=f"stable_map_{c}")
+        mapping[c] = selecionada
+        _render_source_preview(df, selecionada)
 
     out = pd.DataFrame(index=df.index)
     for c in cols:
@@ -289,7 +315,7 @@ def run_stable_app() -> None:
     out = _normalize_for_final(out, cols)
     out = guardar_df("stable_df_export", out)
 
-    _show_line_metrics(df, prev, out)
+    _show_line_metrics(df, out)
 
     with st.expander("Preview final", expanded=False):
         st.caption(f"Total real do arquivo final: {len(out)} linhas.")
