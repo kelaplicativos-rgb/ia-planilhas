@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Extração única e robusta de imagens de páginas de produto.
 
-Este módulo é o único responsável por transformar HTML + dados estruturados em
-`URL Imagens Externas` no padrão do Bling, usando `|` como separador.
+Este módulo transforma HTML + dados estruturados em `URL Imagens Externas`
+no padrão do Bling, usando `|` como separador.
 """
 
 import json
@@ -19,11 +19,12 @@ IMAGE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 IMAGE_FIELD_URL_RE = re.compile(
-    r"(?:image|images|src|url|thumbnail|thumbnailUrl|contentUrl)\s*[\"']?\s*[:=]\s*[\"']?(https?:/{1,2}[^\s\"'<>]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>]*)?)",
+    r"(?:image|images|src|url|thumbnail|thumbnailUrl|contentUrl)\s*[\"']?\s*[:=]\s*[\[\{\s]*[\"']?(https?:/{1,2}[^\s\"'<>]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>]*)?)",
     re.IGNORECASE,
 )
 IMAGE_EXT_RE = re.compile(r"\.(jpg|jpeg|png|webp|avif)(?:$|[?#])", re.IGNORECASE)
 IMAGE_EXT_CUT_RE = re.compile(r"^(.*?\.(?:jpg|jpeg|png|webp|avif))(?:$|[?#].*)", re.IGNORECASE)
+FIELD_MARKER_RE = re.compile(r"(?:image|images|src|url)[\"']?\s*[:=]", re.IGNORECASE)
 BAD_IMAGE_FRAGMENTS = (
     "logo",
     "sprite",
@@ -44,8 +45,6 @@ BAD_IMAGE_FRAGMENTS = (
     "banner",
     "icone",
     "/icon",
-    'image":"',
-    "image':'",
 )
 GOOD_IMAGE_HINTS = (
     "image",
@@ -95,37 +94,25 @@ def _clean_raw(value: object) -> str:
 
 
 def _fix_scheme_slashes(url: str) -> str:
-    text = str(url or "").strip()
-    text = re.sub(r"^(https?):/+(?!/)", r"\1://", text, flags=re.IGNORECASE)
-    return text
+    return re.sub(r"^(https?):/+(?!/)", r"\1://", str(url or "").strip(), flags=re.IGNORECASE)
 
 
 def _cut_after_image_extension(url: str) -> str:
-    """Corta lixo grudado depois da extensão real da imagem.
-
-    Corrige casos vindos de scripts da Mega Center como:
-    `...foto.jpg@pnghttps://...`, `...foto.jpg@webp`, `...foto.jpg|https://...`.
-    """
     text = str(url or "").strip()
     match = IMAGE_EXT_CUT_RE.match(text)
-    if match:
-        return match.group(1)
-    return text
+    return match.group(1) if match else text
 
 
 def _embedded_field_url(raw: str) -> str:
-    """Recupera URL real dentro de trechos JSON colados no caminho.
-
-    Exemplo real da Mega Center:
-    `https://megacentereletronicos.com.br/produto/image":"https:/cdn/foto.jpg`
-    deve virar:
-    `https://cdn/foto.jpg`.
-    """
     text = _clean_raw(raw)
     matches = IMAGE_FIELD_URL_RE.findall(text)
     if matches:
         return _fix_scheme_slashes(matches[-1])
-    marker_match = re.search(r"(?:image|src|url)[\"']?\s*[:=]\s*[\"']?(https?:/{1,2}.+)$", text, re.IGNORECASE)
+    marker_match = re.search(
+        r"(?:image|images|src|url)[\"']?\s*[:=]\s*[\[\{\s]*[\"']?(https?:/{1,2}.+)$",
+        text,
+        re.IGNORECASE,
+    )
     if marker_match:
         return _fix_scheme_slashes(marker_match.group(1))
     return text
@@ -165,15 +152,10 @@ def _add_candidate(candidates: list[str], value: object) -> None:
     raw = raw.replace("|", " ")
     raw = re.sub(r"@(png|jpg|jpeg|webp|avif)", " ", raw, flags=re.IGNORECASE)
 
-    if "," in raw:
-        for part in raw.split(","):
-            token = part.strip().split(" ")[0]
-            if token:
-                candidates.append(token)
-
-    token = raw.strip().split(" ")[0]
-    if token:
-        candidates.append(token)
+    for part in re.split(r"\s+|,", raw):
+        token = part.strip().split(" ")[0]
+        if token:
+            candidates.append(token)
 
     for match in IMAGE_URL_RE.findall(raw):
         candidates.append(match)
@@ -217,6 +199,8 @@ def _is_valid_image(url: str) -> bool:
         return False
     if lower.count("http://") + lower.count("https://") > 1:
         return False
+    if FIELD_MARKER_RE.search(lower):
+        return False
     if IMAGE_EXT_RE.search(lower):
         return True
     return any(hint in lower for hint in GOOD_IMAGE_HINTS)
@@ -250,10 +234,7 @@ def normalize_image_urls(value: object, page_url: str = "", max_images: int = 20
 
 
 def extract_product_images_from_html(page_url: str, html: str, extra_candidates: Iterable[object] | None = None, max_images: int = 20) -> str:
-    """Retorna URLs de imagens separadas por `|`.
-
-    A função varre JSON-LD, metatags, tags img/source/a, atributos lazy e scripts.
-    """
+    """Retorna URLs de imagens separadas por `|`."""
     soup = BeautifulSoup(html or "", "html.parser")
     candidates: list[str] = []
 
