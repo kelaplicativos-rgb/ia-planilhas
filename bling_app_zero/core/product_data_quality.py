@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Qualidade dos dados capturados por página de produto."""
 
+import ast
 import re
 from typing import Iterable
 
@@ -11,6 +12,7 @@ from bling_app_zero.core.brand_from_title import infer_brand_from_title
 
 ZERO_LIKE = {"0", "0,0", "0,00", "0.0", "0.00", "r$ 0,00", "r$0,00"}
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+EXTRACT_URL_RE = re.compile(r"(?:https?://|www\.)[^\s\"'<>]+", re.IGNORECASE)
 STORE_BRAND_VALUES = {"mega center eletronicos", "mega center eletrônicos", "megacenter eletronicos", "megacenter eletrônicos", "kel aplicativos", "stoqui"}
 TRACKING_IMAGE_FRAGMENTS = ("facebook.com/tr", "facebook.com", "pixel", "analytics", "google-analytics", "gtag", "doubleclick", "tracking", "track", "noscript")
 DESC_BAD = (
@@ -24,7 +26,34 @@ PRICE_COLUMNS = {"Preço", "Preço unitário", "Preço unitário (OBRIGATÓRIO)"
 PRODUCT_URL_ALIASES = ("URL do Produto", "Link Externo", "Url Produto", "URL Produto", "Link do Produto", "Página do Produto", "Pagina do Produto")
 DESCRIPTION_COMPLEMENT_ALIASES = ("Descrição complementar", "Descrição Complementar", "Descricao complementar", "Descricao Complementar", "Descrição Curta", "Descrição curta", "Descricao curta", "Complemento", "Descrição detalhada", "Descricao detalhada")
 CATEGORY_ALIASES = ("Categoria", "Categoria do produto", "Categoria Produto", "Departamento")
-IMAGE_ALIASES = ("URL Imagens Externas", "URL imagens externas", "Imagens Externas", "Imagens", "Imagem", "Fotos", "Foto")
+IMAGE_ALIASES = (
+    "URL Imagens Externas",
+    "URL imagens externas",
+    "Imagens Externas",
+    "Imagens",
+    "Imagem",
+    "Fotos",
+    "Foto",
+    "image_urls",
+    "image urls",
+    "image_url",
+    "image url",
+    "images",
+    "image",
+    "imgs",
+    "img",
+    "main_image",
+    "main image",
+    "thumbnail",
+    "thumbnails",
+    "gallery",
+    "galeria",
+    "url_imagem",
+    "url imagens",
+    "url_imagens",
+    "imagem principal",
+    "foto principal",
+)
 TITLE_ALIASES = ("Descrição", "Descricao", "Nome", "Produto", "Título", "Titulo", "Title")
 
 BLING_CADASTRO_COLUMNS = [
@@ -50,6 +79,8 @@ PREFERRED_ORDER = [col for col in BLING_CADASTRO_COLUMNS]
 def _text(value: object) -> str:
     if value is None:
         return ""
+    if isinstance(value, (list, tuple, set)):
+        return "|".join(_text(item) for item in value if _text(item))
     if pd.isna(value):
         return ""
     return str(value).strip()
@@ -62,10 +93,14 @@ def _norm(value: object) -> str:
 
 
 def _first_value(row: dict[str, str], aliases: Iterable[str]) -> str:
+    aliases_norm = {_norm(alias) for alias in aliases}
     for key in aliases:
         value = _text(row.get(key))
         if value:
             return value
+    for key, value in row.items():
+        if _norm(key) in aliases_norm and _text(value):
+            return _text(value)
     return ""
 
 
@@ -82,14 +117,55 @@ def _is_tracking_image(url: str) -> bool:
     return any(fragment in low for fragment in TRACKING_IMAGE_FRAGMENTS)
 
 
-def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
+def _candidate_parts_from_value(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_candidate_parts_from_value(item))
+        return parts
+
     text = _text(value)
     if not text:
+        return []
+
+    stripped = text.strip()
+    if stripped.startswith(("[", "{")) and stripped.endswith(("]", "}")):
+        try:
+            parsed = ast.literal_eval(stripped)
+            if parsed is not value:
+                parsed_parts = _candidate_parts_from_value(parsed)
+                if parsed_parts:
+                    return parsed_parts
+        except Exception:
+            pass
+
+    found = EXTRACT_URL_RE.findall(text)
+    if found:
+        return found
+
+    return re.split(r"[|,\n\r\t]+", text)
+
+
+def _clean_url_candidate(value: object) -> str:
+    url = _text(value).strip().strip('"\'[]{}()')
+    url = re.sub(r"[\]\[\}\{\)\(\"']+$", "", url).strip()
+    url = re.sub(r"[.,;:]+$", "", url).strip()
+    if url.startswith("www."):
+        url = "https://" + url
+    return url
+
+
+def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
+    parts = _candidate_parts_from_value(value)
+    if not parts:
         return ""
+
     result: list[str] = []
     seen: set[str] = set()
-    for part in re.split(r"[|,\n\r\t]+", text):
-        url = part.strip().strip('"\'')
+    for part in parts:
+        url = _clean_url_candidate(part)
         if not url or not _is_url(url):
             continue
         lower = url.lower()
@@ -160,16 +236,31 @@ def _harmonize_category(cleaned: dict[str, str]) -> None:
         cleaned["Departamento"] = cleaned.get("Departamento") or category
 
 
+def _column_looks_like_image_source(column_name: object) -> bool:
+    norm = _norm(column_name)
+    tokens = {"imagem", "imagens", "image", "images", "img", "foto", "fotos", "gallery", "galeria", "thumbnail"}
+    return any(token in norm.split() or token in norm for token in tokens)
+
+
 def _harmonize_images(cleaned: dict[str, str]) -> None:
-    images = []
+    images: list[str] = []
+
     for alias in IMAGE_ALIASES:
-        value = _normalize_pipe_urls(cleaned.get(alias))
+        value = _normalize_pipe_urls(_first_value(cleaned, [alias]))
         if value:
             images.append(value)
+
+    for key, value in list(cleaned.items()):
+        if _column_looks_like_image_source(key):
+            normalized = _normalize_pipe_urls(value)
+            if normalized:
+                images.append(normalized)
+
     final = _normalize_pipe_urls("|".join(images))
     if final:
         cleaned["URL Imagens Externas"] = final
         cleaned["URL imagens externas"] = final
+        cleaned["Imagens"] = final
     else:
         cleaned.pop("URL Imagens Externas", None)
         cleaned.pop("URL imagens externas", None)
@@ -239,7 +330,7 @@ def normalize_product_row(row: dict[str, object]) -> dict[str, str]:
         if alias not in {"Descrição Complementar", "Descrição complementar", "Descrição Curta"}:
             cleaned.pop(alias, None)
     for alias in IMAGE_ALIASES:
-        if alias not in {"URL Imagens Externas", "URL imagens externas"}:
+        if alias not in {"URL Imagens Externas", "URL imagens externas", "Imagens"}:
             cleaned.pop(alias, None)
 
     return cleaned
