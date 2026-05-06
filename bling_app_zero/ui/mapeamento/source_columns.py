@@ -1,24 +1,43 @@
 from __future__ import annotations
 
-"""Filtro das colunas reais da origem usadas no mapeamento.
+"""Colunas reais da origem/captura para o mapeamento.
 
-O seletor manual deve mostrar somente colunas vindas da planilha/captura do
-fornecedor. Colunas do modelo Bling, colunas finais calculadas e campos internos
-não podem aparecer como origem, porque isso gera duplicidade como:
-Preço / Preço unitário / Preço unitário (OBRIGATÓRIO).
+Regra: o dropdown do mapeamento deve refletir a planilha/captura do site,
+nunca as colunas do modelo Bling nem o dataframe final já mapeado.
 """
 
 import re
-from collections.abc import Iterable
 
 import pandas as pd
 
 
-_COLUNAS_INTERNAS_EXATAS = {
+_CHAVES_ORIGEM_PREFERIDAS = (
+    "df_origem_site",
+    "df_site",
+    "df_captura_site",
+    "df_capturado_site",
+    "df_produtos_site",
+    "df_origem_upload",
+    "df_upload",
+    "df_origem_xml",
+    "df_origem_pdf",
+    "df_origem",
+    "df_dados",
+)
+
+_CHAVES_PROIBIDAS_COMO_ORIGEM = {
     "df_final",
     "df_saida",
-    "mapping_manual",
-    "modelo_bling",
+    "df_modelo",
+    "df_modelo_cadastro",
+    "df_modelo_estoque",
+}
+
+_COLUNAS_INTERNAS_EXATAS = {
+    "df final",
+    "df saida",
+    "mapping manual",
+    "modelo bling",
     "modelo cadastro",
     "modelo estoque",
 }
@@ -26,14 +45,12 @@ _COLUNAS_INTERNAS_EXATAS = {
 _FRAGMENTOS_DESTINO_OU_INTERNO = (
     "obrigatorio",
     "obrigatoria",
-    "modelo bling",
     "campo bling",
     "campo destino",
     "destino bling",
     "coluna destino",
     "mapeamento",
     "calculado automaticamente",
-    "preco unitario obrigatorio",
 )
 
 
@@ -43,16 +60,27 @@ def normalizar_nome_coluna(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", " ", texto).strip()
 
 
+def _safe_df(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+
+
+def escolher_df_origem_captura(session_state) -> pd.DataFrame:
+    """Busca a base real capturada/enviada pelo usuário, sem usar saída final."""
+    for chave in _CHAVES_ORIGEM_PREFERIDAS:
+        df = session_state.get(chave)
+        if _safe_df(df):
+            return df.copy()
+    return pd.DataFrame()
+
+
 def _nomes_modelo(df_modelo: pd.DataFrame | None) -> set[str]:
     if not isinstance(df_modelo, pd.DataFrame):
         return set()
     return {normalizar_nome_coluna(c) for c in df_modelo.columns.tolist() if str(c).strip()}
 
 
-def _parece_coluna_destino_ou_interna(coluna: object, nomes_modelo: set[str]) -> bool:
-    original = str(coluna or "").strip()
-    nome = normalizar_nome_coluna(original)
-
+def _parece_destino_ou_interna(coluna: object, nomes_modelo: set[str]) -> bool:
+    nome = normalizar_nome_coluna(coluna)
     if not nome:
         return True
     if nome in _COLUNAS_INTERNAS_EXATAS:
@@ -60,14 +88,27 @@ def _parece_coluna_destino_ou_interna(coluna: object, nomes_modelo: set[str]) ->
     if any(fragmento in nome for fragmento in _FRAGMENTOS_DESTINO_OU_INTERNO):
         return True
 
-    # Remove do seletor qualquer coluna que seja literalmente uma coluna do modelo Bling.
-    # Exceção: se a origem tem nomes simples e comuns, como Preço, Nome, Código, eles podem ser reais.
-    nomes_simples_permitidos = {
-        "preco", "preco unitario", "valor", "price", "nome", "produto", "descricao", "codigo", "sku", "gtin", "ean", "estoque", "quantidade",
+    # Quando a coluna é exatamente uma coluna do modelo Bling, ela não deve aparecer
+    # como origem, exceto nomes simples que fornecedores/capturas usam de verdade.
+    simples_permitidos = {
+        "preco",
+        "preco unitario",
+        "valor",
+        "price",
+        "nome",
+        "produto",
+        "descricao",
+        "codigo",
+        "sku",
+        "gtin",
+        "ean",
+        "estoque",
+        "quantidade",
+        "marca",
+        "categoria",
     }
-    if nome in nomes_modelo and nome not in nomes_simples_permitidos:
+    if nome in nomes_modelo and nome not in simples_permitidos:
         return True
-
     return False
 
 
@@ -78,7 +119,6 @@ def colunas_reais_da_origem(
     bloquear_video: bool = True,
     video_checker=None,
 ) -> list[str]:
-    """Retorna somente colunas reais da origem para dropdown de mapeamento."""
     if not isinstance(df_base, pd.DataFrame):
         return []
 
@@ -93,7 +133,7 @@ def colunas_reais_da_origem(
             continue
         if bloquear_video and callable(video_checker) and video_checker(col):
             continue
-        if _parece_coluna_destino_ou_interna(col, nomes_modelo):
+        if _parece_destino_ou_interna(col, nomes_modelo):
             continue
         vistos.add(chave)
         resultado.append(col)
