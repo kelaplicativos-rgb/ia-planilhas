@@ -22,17 +22,111 @@ from bling_app_zero.ui.origem_mapeamento_helpers import (
 
 
 def _bloqueados_sem_preco(df_modelo: pd.DataFrame, operacao: str) -> set[str]:
-    """Mantém bloqueios realmente automáticos, mas libera preço para revisão manual.
-
-    Antes o campo de preço ficava bloqueado como automático. Isso impedia escolher
-    manualmente a coluna correta quando o usuário pulava a calculadora ou quando o
-    preço vinha direto da captura do site.
-    """
+    """Mantém bloqueios realmente automáticos, mas libera preço para revisão manual."""
     bloqueados = set(_campos_bloqueados_automaticos(df_modelo, operacao))
     coluna_preco = _coluna_preco_prioritaria(df_modelo, operacao)
     if coluna_preco in bloqueados:
         bloqueados.remove(coluna_preco)
     return bloqueados
+
+
+def _eh_destino_imagens_externas(coluna_modelo: str) -> bool:
+    nome = _normalizar_texto_busca(coluna_modelo)
+    return bool(
+        nome
+        and ("imagem" in nome or "image" in nome or "foto" in nome)
+        and ("url" in nome or "extern" in nome or _destino_modelo_semantico(coluna_modelo) == "url_imagens")
+    )
+
+
+def _score_opcao_imagem_externa(coluna_origem: str) -> int:
+    """Prioriza a coluna real do Bling e evita escolher a coluna genérica `Imagens`."""
+    nome = _normalizar_texto_busca(coluna_origem)
+    if not nome:
+        return -999
+
+    if nome == "url imagens externas":
+        return 1000
+    if nome in {"url imagem externa", "urls imagens externas", "url imagens externa"}:
+        return 950
+    if "url" in nome and "imagem" in nome and "extern" in nome:
+        return 920
+    if "url" in nome and ("imagem" in nome or "image" in nome or "foto" in nome):
+        return 850
+    if "extern" in nome and ("imagem" in nome or "image" in nome or "foto" in nome):
+        return 760
+    if nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}:
+        return 100
+    if "imagem" in nome or "image" in nome or "foto" in nome:
+        return 200
+    return 0
+
+
+def _melhor_coluna_imagem_externa(df_base: pd.DataFrame) -> str:
+    if not isinstance(df_base, pd.DataFrame) or df_base.empty:
+        return ""
+    candidatos: list[tuple[int, str]] = []
+    for coluna in [str(c) for c in df_base.columns.tolist() if not _eh_coluna_video(c)]:
+        score = _score_opcao_imagem_externa(coluna)
+        if score > 0:
+            candidatos.append((score, coluna))
+    if not candidatos:
+        return ""
+    candidatos.sort(key=lambda item: (-item[0], item[1].lower()))
+    return candidatos[0][1]
+
+
+def _corrigir_mapping_imagens_externas(
+    df_base: pd.DataFrame,
+    df_modelo: pd.DataFrame,
+    mapping_atual: dict[str, str],
+) -> dict[str, str]:
+    """Força `URL Imagens Externas` a usar a melhor coluna equivalente da origem.
+
+    Isso evita a dúvida vista no mobile, onde aparecem `Imagens`, `URL imagens externas`
+    e `URL Imagens Externas`. A correta é sempre a coluna mais específica com URL + Imagens + Externas.
+    """
+    if not isinstance(mapping_atual, dict):
+        mapping_atual = {}
+    corrigido = dict(mapping_atual)
+    melhor = _melhor_coluna_imagem_externa(df_base)
+    if not melhor:
+        return corrigido
+
+    for coluna_modelo in [str(c) for c in df_modelo.columns.tolist()]:
+        if not _eh_destino_imagens_externas(coluna_modelo):
+            continue
+        atual = str(corrigido.get(coluna_modelo, "") or "").strip()
+        if atual != melhor:
+            corrigido[coluna_modelo] = melhor
+            log_debug(
+                f"Mapeamento de imagens ajustado automaticamente: {coluna_modelo} -> {melhor}",
+                nivel="INFO",
+            )
+    return corrigido
+
+
+def _ordenar_opcoes_para_coluna(
+    coluna_modelo: str,
+    opcoes_coluna: list[str],
+    valor_atual: str,
+) -> list[str]:
+    if not _eh_destino_imagens_externas(coluna_modelo):
+        return opcoes_coluna
+
+    vazias = [opcao for opcao in opcoes_coluna if not str(opcao).strip()]
+    demais = [opcao for opcao in opcoes_coluna if str(opcao).strip()]
+    demais.sort(key=lambda opcao: (-_score_opcao_imagem_externa(opcao), str(opcao).lower()))
+
+    saida: list[str] = []
+    for opcao in vazias + demais:
+        if opcao not in saida:
+            saida.append(opcao)
+
+    if valor_atual and valor_atual in saida:
+        saida.remove(valor_atual)
+        saida.insert(1 if saida and saida[0] == "" else 0, valor_atual)
+    return saida
 
 
 def _montar_badge_html(
@@ -112,6 +206,31 @@ def _detalhe_confianca_mapeamento(
             "cor_borda": "#EF4444",
             "cor_texto": "#991B1B",
         }
+
+    if _eh_destino_imagens_externas(coluna_modelo):
+        score_imagem = _score_opcao_imagem_externa(coluna_origem)
+        if score_imagem >= 850:
+            return {
+                "status": "ok",
+                "emoji": "🟢",
+                "titulo": f"{coluna_modelo} confirmado automaticamente",
+                "subtitulo": f"Origem correta: {coluna_origem} • imagens externas separadas por |",
+                "pct": 95,
+                "cor_fundo": "#ECFDF5",
+                "cor_borda": "#10B981",
+                "cor_texto": "#065F46",
+            }
+        if score_imagem > 0:
+            return {
+                "status": "revisar",
+                "emoji": "🟡",
+                "titulo": f"{coluna_modelo} com coluna genérica de imagem",
+                "subtitulo": f"Origem atual: {coluna_origem} • prefira URL Imagens Externas quando existir",
+                "pct": 55,
+                "cor_fundo": "#FFFBEB",
+                "cor_borda": "#F59E0B",
+                "cor_texto": "#92400E",
+            }
 
     destino = _destino_modelo_semantico(coluna_modelo)
     nome_modelo_n = normalizar_texto(coluna_modelo)
@@ -288,6 +407,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
     opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist() if not _eh_coluna_video(c)]
     bloqueados = _bloqueados_sem_preco(df_modelo, operacao)
     mapping_atual = st.session_state.get("mapping_manual", {}).copy()
+    mapping_atual = _corrigir_mapping_imagens_externas(df_base, df_modelo, mapping_atual)
 
     _render_resumo_confianca_mapeamento(
         df_base=df_base,
@@ -389,6 +509,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         if valor_atual and valor_atual not in opcoes_coluna and not _eh_coluna_video(valor_atual):
             opcoes_coluna.append(valor_atual)
 
+        opcoes_coluna = _ordenar_opcoes_para_coluna(coluna_modelo, opcoes_coluna, valor_atual)
         index_atual = opcoes_coluna.index(valor_atual) if valor_atual in opcoes_coluna else 0
 
         novo_valor = st.selectbox(
@@ -408,5 +529,6 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         if _eh_coluna_video(coluna_modelo):
             mapping_atual[coluna_modelo] = ""
 
+    mapping_atual = _corrigir_mapping_imagens_externas(df_base, df_modelo, mapping_atual)
     st.session_state["mapping_manual"] = mapping_atual
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
