@@ -6,8 +6,8 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.image_url_guard_patch import strict_image_urls_pipe
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
-from bling_app_zero.core.product_image_extractor import normalize_image_urls
 from bling_app_zero.ui.app_helpers import log_debug, normalizar_texto
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
 from bling_app_zero.ui.preview_final_data import remover_colunas_artificiais, zerar_colunas_video
@@ -175,7 +175,7 @@ def _normalizar_coluna_imagens_externas(df: pd.DataFrame) -> pd.DataFrame:
     vazias = 0
     for idx, valor in base[col].items():
         antes = str(valor or "")
-        depois = normalize_image_urls(antes, max_images=20)
+        depois = strict_image_urls_pipe(antes, max_images=20)
         if antes and not depois:
             vazias += 1
         if depois != antes:
@@ -184,7 +184,7 @@ def _normalizar_coluna_imagens_externas(df: pd.DataFrame) -> pd.DataFrame:
 
     if alteradas > 0:
         log_debug(
-            f"{alteradas} linha(s) tiveram URL Imagens Externas normalizadas para o padrão Bling com separador |.",
+            f"{alteradas} linha(s) tiveram URL Imagens Externas normalizadas com guard estrito para o padrão Bling com separador |.",
             nivel="INFO",
         )
     if vazias > 0:
