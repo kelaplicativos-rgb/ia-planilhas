@@ -17,6 +17,7 @@ Regra:
 - Mostrar claramente qual chave foi usada para montar o preview.
 - Limpar valores claramente incompatíveis com o destino antes de mostrar.
 - Remover dados falsos de captura, como preço `0,00` quando não for real.
+- Mostrar amostras vermelhas da primeira linha para facilitar o mapeamento.
 """
 
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from bling_app_zero.ui.modelo_bling_guard import (
     render_modelo_cadastro_required_message,
     requires_modelo_cadastro_for_preview,
 )
+from bling_app_zero.ui.origem_preview_hints import render_preview_origem_amostras_vermelhas
 
 
 @dataclass(frozen=True)
@@ -40,29 +42,22 @@ class OrigemPreviewResult:
 
 
 ORIGEM_PREVIEW_KEYS: tuple[str, ...] = (
-    # Origem principal do fluxo atual.
     "df_origem",
-    # Captura por site / scraper.
     "df_origem_site",
     "df_capturado_site",
     "df_site",
     "site_df",
-    # Upload de planilha.
     "df_origem_upload",
     "df_upload",
     "uploaded_df",
-    # XML.
     "df_origem_xml",
     "df_xml",
-    # Estoque / atualização.
     "df_estoque",
     "df_stock",
     "df_saida_estoque",
-    # Prévia e saídas intermediárias.
     "df_preview_origem",
     "df_preview",
     "df_saida",
-    # Último fallback: final, só para não deixar o usuário cego.
     "df_final",
 )
 
@@ -170,6 +165,8 @@ def render_origem_preview(
             f"Mapeamento automático conservador: {removed_cells} célula(s) incompatível(is) "
             "ou falsa(s) foram deixadas em branco para revisão manual."
         )
+
+    render_preview_origem_amostras_vermelhas(preview_df)
 
     st.dataframe(
         preview_df,
