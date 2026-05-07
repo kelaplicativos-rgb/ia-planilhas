@@ -16,6 +16,14 @@ from bling_app_zero.ui.home_shared import (
 from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 
+def _choose_site_model_df(upload) -> pd.DataFrame | None:
+    if isinstance(upload.model_df, pd.DataFrame):
+        return upload.model_df
+    if isinstance(upload.source_df, pd.DataFrame):
+        return upload.source_df
+    return None
+
+
 def render_site_panel() -> None:
     st.info('Crawler inteligente independente será carregado somente ao clicar em buscar.')
     st.caption('Tecnologia ativa: FLASH AMPLO + extração orientada por contrato de colunas.')
@@ -32,7 +40,7 @@ def render_site_panel() -> None:
         accepted_types=['xlsx', 'xls', 'csv'],
     )
 
-    df_modelo = upload.model_df or upload.source_df
+    df_modelo = _choose_site_model_df(upload)
     requested_columns = None
     if isinstance(df_modelo, pd.DataFrame):
         requested_columns = [str(c) for c in df_modelo.columns]
