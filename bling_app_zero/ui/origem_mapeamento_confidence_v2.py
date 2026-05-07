@@ -56,6 +56,39 @@ CAMPOS_MODELO_AUTO_VAZIO = {
     "comprimento embalagem",
 }
 
+CAMPOS_ESTOQUE_DESTINO_PERMITIDOS = {
+    "codigo",
+    "código",
+    "sku",
+    "gtin",
+    "ean",
+    "codigo produto",
+    "código produto",
+    "codigo do produto",
+    "código do produto",
+    "cod produto",
+    "cod no fornecedor",
+    "referencia",
+    "referência",
+    "produto",
+    "descricao",
+    "descrição",
+    "nome",
+    "nome do produto",
+    "quantidade",
+    "qtd",
+    "saldo",
+    "estoque",
+    "deposito",
+    "depósito",
+    "deposito estoque",
+    "depósito estoque",
+    "preco unitario",
+    "preço unitário",
+    "preco unitario obrigatorio",
+    "preço unitário obrigatório",
+}
+
 
 def _norm(valor: object) -> str:
     texto = str(valor or "").strip().lower()
@@ -83,7 +116,7 @@ def _campo_modelo_auto_vazio(coluna_modelo: object) -> bool:
         return True
     if "video" in nome or "youtube" in nome:
         return True
-    if "descricao complementar" in nome or "descrição complementar" in nome:
+    if "descricao complementar" in nome:
         return True
     if "gtin ean da embalagem" in nome or "gtin/ean da embalagem" in nome:
         return True
@@ -91,7 +124,7 @@ def _campo_modelo_auto_vazio(coluna_modelo: object) -> bool:
         return True
     if "cross docking" in nome or "cross-docking" in nome:
         return True
-    if "condicao do produto" in nome or "condição do produto" in nome:
+    if "condicao do produto" in nome:
         return True
     return False
 
@@ -106,7 +139,7 @@ def _destino_modelo(coluna_modelo: object) -> str:
         return "gtin"
     if "ncm" in nome:
         return "ncm"
-    if _tem(nome, ("preco", "preço", "valor")):
+    if _tem(nome, ("preco", "valor")):
         return "preco"
     if _tem(nome, ("marca", "brand", "fabricante")):
         return "marca"
@@ -114,13 +147,13 @@ def _destino_modelo(coluna_modelo: object) -> str:
         return "categoria"
     if _tem(nome, ("quantidade", "estoque", "saldo", "qtd")):
         return "quantidade"
-    if _tem(nome, ("codigo", "código", "sku", "referencia", "referência", "cod no fornecedor")):
+    if _tem(nome, ("codigo", "sku", "referencia", "cod no fornecedor")):
         return "codigo"
-    if _tem(nome, ("descricao curta", "descrição curta", "resumo")):
+    if _tem(nome, ("descricao curta", "resumo")):
         return "descricao_curta"
-    if _tem(nome, ("descricao", "descrição", "nome", "produto", "titulo", "título")):
+    if _tem(nome, ("descricao", "nome", "produto", "titulo")):
         return "descricao"
-    if _tem(nome, ("url produto", "url do produto", "link externo", "link produto", "pagina produto", "página produto")):
+    if _tem(nome, ("url produto", "url do produto", "link externo", "link produto", "pagina produto")):
         return "link_produto"
     return ""
 
@@ -128,10 +161,10 @@ def _destino_modelo(coluna_modelo: object) -> str:
 def _eh_url_produto(coluna: object) -> bool:
     nome = _norm(coluna)
     return bool(
-        ("url" in nome or "link" in nome or "pagina" in nome or "página" in nome)
+        ("url" in nome or "link" in nome or "pagina" in nome)
         and "produto" in nome
         and not _tem(nome, ("imagem", "image", "foto"))
-    ) or nome in {"link externo", "url do produto", "url produto", "link produto", "pagina do produto", "página do produto"}
+    ) or nome in {"link externo", "url do produto", "url produto", "link produto", "pagina do produto"}
 
 
 def _eh_coluna_imagem(coluna: object) -> bool:
@@ -147,6 +180,23 @@ def _eh_coluna_imagem(coluna: object) -> bool:
     if "extern" in nome and _tem(nome, ("imagem", "image", "foto")):
         return True
     return nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}
+
+
+def _destino_estoque_permitido(coluna_modelo: object) -> bool:
+    nome = _norm(coluna_modelo)
+    if not nome:
+        return False
+    if nome in {_norm(v) for v in CAMPOS_ESTOQUE_DESTINO_PERMITIDOS}:
+        return True
+    destino = _destino_modelo(coluna_modelo)
+    return destino in {"codigo", "gtin", "descricao", "quantidade", "preco"} or "deposito" in nome
+
+
+def _modelo_estoque_rigido(df_modelo: pd.DataFrame, operacao: str) -> pd.DataFrame:
+    if operacao != "estoque" or not isinstance(df_modelo, pd.DataFrame) or df_modelo.empty:
+        return df_modelo
+    colunas = [str(c).strip() for c in df_modelo.columns.tolist() if _destino_estoque_permitido(c)]
+    return df_modelo.loc[:, colunas].copy() if colunas else df_modelo
 
 
 def _opcao_compativel(coluna_modelo: object, coluna_origem: object) -> bool:
@@ -173,7 +223,7 @@ def _opcao_compativel(coluna_modelo: object, coluna_origem: object) -> bool:
     if destino == "ncm":
         return "ncm" in nome
     if destino == "preco":
-        return _tem(nome, ("preco", "preço", "valor", "custo", "price"))
+        return _tem(nome, ("preco", "valor", "custo", "price"))
     if destino == "marca":
         return _tem(nome, ("marca", "brand", "fabricante"))
     if destino == "categoria":
@@ -181,11 +231,11 @@ def _opcao_compativel(coluna_modelo: object, coluna_origem: object) -> bool:
     if destino == "quantidade":
         return _tem(nome, ("quantidade", "estoque", "saldo", "qtd", "stock"))
     if destino == "codigo":
-        return _tem(nome, ("codigo", "código", "sku", "referencia", "referência", "cod"))
+        return _tem(nome, ("codigo", "sku", "referencia", "cod"))
     if destino in {"descricao", "descricao_curta"}:
         if _eh_coluna_imagem(coluna_origem) or _eh_url_produto(coluna_origem):
             return False
-        return _tem(nome, ("descricao", "descrição", "nome", "produto", "titulo", "título", "resumo"))
+        return _tem(nome, ("descricao", "nome", "produto", "titulo", "resumo"))
 
     return True
 
@@ -195,7 +245,13 @@ def _score_opcao(coluna_modelo: object, coluna_origem: object) -> int:
     nome = _norm(coluna_origem)
     score = 0
 
-    if destino == "imagens":
+    if destino == "quantidade":
+        prioridades = {"quantidade": 1000, "qtd": 950, "estoque": 900, "saldo": 850, "stock": 800}
+        if nome in prioridades:
+            return prioridades[nome]
+        if _tem(nome, ("quantidade", "qtd", "estoque", "saldo", "stock")):
+            score += 700
+    elif destino == "imagens":
         if nome == "url imagens externas":
             return 1000
         if "url" in nome and "imagem" in nome and "extern" in nome:
@@ -204,19 +260,17 @@ def _score_opcao(coluna_modelo: object, coluna_origem: object) -> int:
             return 850
         if _eh_coluna_imagem(coluna_origem):
             return 300
-    elif destino == "preco" and _tem(nome, ("preco", "preço", "valor", "custo")):
+    elif destino == "preco" and _tem(nome, ("preco", "valor", "custo")):
         score += 500
     elif destino == "gtin" and _tem(nome, ("gtin", "ean", "barra")):
         score += 500
-    elif destino == "codigo" and _tem(nome, ("codigo", "código", "sku", "referencia", "referência", "cod")):
+    elif destino == "codigo" and _tem(nome, ("codigo", "sku", "referencia", "cod")):
         score += 500
-    elif destino in {"descricao", "descricao_curta"} and _tem(nome, ("descricao", "descrição", "nome", "produto", "titulo", "título", "resumo")):
+    elif destino in {"descricao", "descricao_curta"} and _tem(nome, ("descricao", "nome", "produto", "titulo", "resumo")):
         score += 500
     elif destino == "marca" and _tem(nome, ("marca", "brand", "fabricante")):
         score += 500
     elif destino == "categoria" and _tem(nome, ("categoria", "category", "departamento", "segmento")):
-        score += 500
-    elif destino == "quantidade" and _tem(nome, ("quantidade", "estoque", "saldo", "qtd", "stock")):
         score += 500
 
     if _norm(coluna_modelo) == nome:
@@ -305,14 +359,13 @@ def _render_resumo(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
             pendentes += 1
 
     st.caption(
-        f"Origem/captura: {len(df_origem.columns)} colunas | Modelo: {total} | "
+        f"Origem/captura: {len(df_origem.columns)} colunas | Modelo ativo: {total} | "
         f"Válidos: {preenchidos} | Alertas: {alertas} | Inválidos: {invalidos} | "
         f"Pendentes: {pendentes} | Automáticos/predefinidos: {automaticos}"
     )
 
 
 def _ordenar_colunas(df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueados: set[str]) -> list[str]:
-    """Ordena a revisão manual: vazios sobem, preenchidos/predefinidos descem."""
     itens: list[tuple[int, str, str]] = []
     for posicao_original, coluna in enumerate([str(c) for c in df_modelo.columns.tolist()]):
         valor_mapeado = str(mapping.get(coluna, "") or "").strip()
@@ -346,6 +399,8 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
         st.warning("Base ou modelo invalido para mapeamento.")
         return
 
+    df_modelo = _modelo_estoque_rigido(df_modelo, operacao)
+
     df_origem = escolher_df_origem_captura(st.session_state)
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         df_origem = df_base
@@ -361,11 +416,21 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
     mapping_atual = st.session_state.get("mapping_manual", {})
     if not isinstance(mapping_atual, dict):
         mapping_atual = {}
-    mapping_atual = mapping_atual.copy()
+    colunas_modelo = [str(c) for c in df_modelo.columns.tolist()]
+    mapping_atual = {str(k): v for k, v in mapping_atual.items() if str(k) in colunas_modelo}
+
+    if operacao == "estoque":
+        st.info(
+            "Modo estoque rígido ativo: os campos de destino são somente do modelo de Atualização de estoque. "
+            "Colunas capturadas do site, como Estoque ou Quantidade, aparecem apenas como origem para preencher o campo do Bling."
+        )
 
     _render_resumo(df_origem, df_modelo, mapping_atual, bloqueados)
 
     for coluna_modelo in _ordenar_colunas(df_modelo, mapping_atual, bloqueados):
+        if operacao == "estoque" and not _destino_estoque_permitido(coluna_modelo):
+            continue
+
         if coluna_modelo in bloqueados:
             valor_default = default_for_column(coluna_modelo)
             motivo = "campo mantido vazio automaticamente"
@@ -387,6 +452,8 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             mapping_atual[coluna_modelo] = ""
 
         status, detalhe = _status_basico(df_origem, coluna_modelo, valor_atual)
+        if operacao == "estoque" and _destino_modelo(coluna_modelo) == "quantidade":
+            detalhe = detalhe + " | Campo Bling: Quantidade | Coluna capturada: Quantidade/Estoque/Saldo/Qtd."
         _badge(f"{status} {coluna_modelo}", detalhe)
 
         novo_valor = st.selectbox(
@@ -394,7 +461,7 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
             options=opcoes_origem,
             index=opcoes_origem.index(valor_atual) if valor_atual in opcoes_origem else 0,
             key=f"map_{coluna_modelo}",
-            help="Escolha somente uma coluna real e compatível com este campo.",
+            help="Escolha somente uma coluna real da captura/origem compatível com este campo do modelo ativo.",
         )
 
         novo_valor = str(novo_valor or "").strip()
@@ -412,3 +479,4 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
 
     st.session_state["mapping_manual"] = mapping_atual
     st.session_state["df_final"] = _aplicar_mapping(df_base, df_modelo, mapping_atual)
+    st.session_state["df_saida"] = st.session_state["df_final"].copy()
