@@ -7,6 +7,7 @@ import pandas as pd
 from bling_app_zero.core.instant_scraper import run_flash_amplo_page_mode
 from bling_app_zero.core.site_engines.field_resolver import build_model_limited_dataframe, requested_field_profile
 from bling_app_zero.core.site_engines.model_columns import get_requested_columns
+from bling_app_zero.ui.debug_panel import add_debug_log
 
 ProgressCallback = Callable[..., None]
 
@@ -50,13 +51,26 @@ def executar_site_cadastro_engine(
 ) -> pd.DataFrame:
     requested_columns = get_requested_columns(model_df)
     if not requested_columns:
+        add_debug_log("Cadastro engine bloqueado: modelo sem colunas.", origem="CADASTRO_ENGINE")
         return pd.DataFrame()
 
     seed_urls = _normalize_urls(urls)
     if not seed_urls:
+        add_debug_log("Cadastro engine bloqueado: nenhuma URL válida.", origem="CADASTRO_ENGINE")
         return pd.DataFrame(columns=requested_columns)
 
     requested_fields = requested_field_profile(requested_columns, operation="cadastro")
+    add_debug_log(
+        "Cadastro engine iniciado.",
+        payload={
+            "urls": len(seed_urls),
+            "colunas_modelo": requested_columns,
+            "campos_extraidos": sorted(requested_fields),
+            "max_products": max_products,
+            "max_workers": max_workers,
+        },
+        origem="CADASTRO_ENGINE",
+    )
 
     if progress_callback:
         campos = ", ".join(sorted(requested_fields)) or "somente campos manuais"
@@ -71,6 +85,7 @@ def executar_site_cadastro_engine(
     )
 
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+        add_debug_log("Cadastro engine finalizado sem linhas capturadas.", origem="CADASTRO_ENGINE")
         return pd.DataFrame(columns=requested_columns)
 
     if progress_callback:
@@ -81,6 +96,12 @@ def executar_site_cadastro_engine(
         requested_columns,
         operation="cadastro",
         deposito_nome="",
+    )
+
+    add_debug_log(
+        "Cadastro engine finalizado.",
+        payload={"linhas_brutas": len(raw_df), "linhas_finais": len(limited), "colunas_finais": list(limited.columns)},
+        origem="CADASTRO_ENGINE",
     )
 
     if progress_callback:
