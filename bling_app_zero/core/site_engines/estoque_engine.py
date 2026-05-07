@@ -4,7 +4,7 @@ from typing import Callable, Iterable
 
 import pandas as pd
 
-from bling_app_zero.core.instant_scraper import run_flash_amplo_page_mode
+from bling_app_zero.core.site_engines.estoque_fast_crawler import crawl_estoque_fast_dataframe
 from bling_app_zero.core.site_engines.field_resolver import build_model_limited_dataframe, requested_field_profile
 from bling_app_zero.core.site_engines.model_columns import get_requested_columns
 
@@ -34,7 +34,7 @@ def _adapt_progress(callback: ProgressCallback | None) -> Callable[[int, int, st
     def _inner(done: int, total: int, url: str) -> None:
         total_safe = max(1, int(total or 1))
         percent = min(94, max(2, int((int(done or 0) / total_safe) * 90)))
-        callback(percent, f"Estoque: {done}/{total_safe} páginas lidas", int(done or 0))
+        callback(percent, f"Estoque exclusivo: {done}/{total_safe} páginas lidas", int(done or 0))
 
     return _inner
 
@@ -61,9 +61,9 @@ def executar_site_estoque_engine(
 
     if progress_callback:
         campos = ", ".join(sorted(requested_fields)) or "somente campos manuais"
-        progress_callback(1, f"Estoque: buscando somente: {campos}", 1)
+        progress_callback(1, f"Estoque exclusivo: buscando somente: {campos}", 1)
 
-    raw_df = run_flash_amplo_page_mode(
+    raw_df = crawl_estoque_fast_dataframe(
         seed_urls,
         max_products=max_products,
         max_workers=max_workers,
@@ -75,7 +75,7 @@ def executar_site_estoque_engine(
         return pd.DataFrame(columns=requested_columns)
 
     if progress_callback:
-        progress_callback(96, "Estoque: preenchendo exatamente o modelo", len(raw_df))
+        progress_callback(96, "Estoque exclusivo: preenchendo exatamente o modelo", len(raw_df))
 
     limited = build_model_limited_dataframe(
         raw_df,
@@ -85,6 +85,6 @@ def executar_site_estoque_engine(
     )
 
     if progress_callback:
-        progress_callback(100, "Estoque: finalizado", len(limited))
+        progress_callback(100, "Estoque exclusivo: finalizado", len(limited))
 
     return limited.fillna("")
