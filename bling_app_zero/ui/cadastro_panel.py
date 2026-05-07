@@ -91,8 +91,8 @@ def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> No
         return
     safe_text = html.escape(text)
     st.markdown(
-        f"<div style='font-size:12px; color:#118a32; margin-top:-10px; margin-bottom:10px;'>"
-        f"Primeira linha: {safe_text}"
+        f"<div style='font-size:14px; color:#0b2f6b; margin-top:-8px; margin-bottom:12px; font-weight:500;'>"
+        f"{safe_text}"
         f"</div>",
         unsafe_allow_html=True,
     )
