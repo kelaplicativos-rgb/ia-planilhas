@@ -47,7 +47,6 @@ jobs:
               'bling_app_zero.pipelines.site_pipeline',
               'bling_app_zero.engines.cadastro_engine',
               'bling_app_zero.engines.estoque_engine',
-              'bling_app_zero.engines.site_engine',
               'bling_app_zero.engines.site_cadastro_engine',
               'bling_app_zero.engines.site_estoque_engine',
               'bling_app_zero.engines.flash_amplo_engine',
@@ -88,4 +87,4 @@ jobs:
           print('OK Flash Amplo smoke test')
           PY
 
-# BLINGPERF CI trigger: 2026-05-07 rodada 2
+# BLINGPERF CI trigger: remover site_engine
