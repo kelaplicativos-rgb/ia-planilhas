@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Patch do seletor de mapeamento.
 
-Objetivo: no passo de correlação das colunas, mostrar apenas colunas que fazem
-parte da captura/varredura do site. Colunas vazias, colunas artificiais e campos
-estruturais do modelo Bling não devem aparecer como opção de origem porque só
-atrapalham o mapeamento manual.
+No passo de correlação das colunas, cada campo do modelo Bling deve enxergar
+somente colunas úteis capturadas na varredura. Colunas estruturais do Bling,
+campos vazios, URLs de produto e opções incompatíveis com o destino ficam fora
+do selectbox para reduzir erro manual.
 """
 
 import re
@@ -45,6 +45,41 @@ COLUNAS_MODELO_BLING_PARA_OCULTAR = {
     "link do vídeo",
     "url video",
     "url vídeo",
+    "observacoes",
+    "observações",
+    "tags",
+    "garantia",
+    "origem",
+    "cest",
+    "cfop",
+    "ipi",
+    "icms",
+}
+
+COLUNAS_LIXO_GERAL = {
+    "url do produto",
+    "url produto",
+    "link do produto",
+    "link produto",
+    "pagina do produto",
+    "página do produto",
+    "link externo",
+    "url externa",
+    "url",
+    "imagens",
+    "imagem",
+    "image",
+    "images",
+    "foto",
+    "fotos",
+    "cross docking",
+    "cross-docking",
+    "clonar dados do pai",
+    "unidade de medida",
+    "gtin ean da embalagem",
+    "gtin/ean da embalagem",
+    "descricao complementar",
+    "descrição complementar",
 }
 
 VALORES_PADRAO_NAO_CAPTURADOS = {
@@ -66,16 +101,6 @@ VALORES_PADRAO_NAO_CAPTURADOS = {
     "0,00",
 }
 
-COLUNAS_URL_PRODUTO_NAO_SAO_IMAGEM = {
-    "url do produto",
-    "url produto",
-    "link do produto",
-    "link produto",
-    "pagina do produto",
-    "página do produto",
-    "link externo",
-}
-
 
 def _normalizar_nome(valor: object) -> str:
     texto = str(valor or "").strip().lower()
@@ -89,40 +114,86 @@ def _normalizar_chave(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", _normalizar_nome(valor))
 
 
+def _tem_algum(nome: str, termos: list[str] | tuple[str, ...] | set[str]) -> bool:
+    return any(t in nome for t in termos)
+
+
 def _eh_coluna_url_produto(nome_coluna: object) -> bool:
     nome = _normalizar_nome(nome_coluna)
-    if nome in {_normalizar_nome(v) for v in COLUNAS_URL_PRODUTO_NAO_SAO_IMAGEM}:
-        return True
     return bool(
-        ("url" in nome or "link" in nome or "pagina" in nome or "página" in nome)
-        and "produto" in nome
-        and "imagem" not in nome
-        and "image" not in nome
-        and "foto" not in nome
+        nome in {_normalizar_nome(v) for v in {
+            "url do produto",
+            "url produto",
+            "link do produto",
+            "link produto",
+            "pagina do produto",
+            "página do produto",
+            "link externo",
+            "url externa",
+        }}
+        or (
+            ("url" in nome or "link" in nome or "pagina" in nome or "página" in nome)
+            and "produto" in nome
+            and not _tem_algum(nome, ("imagem", "image", "foto"))
+        )
     )
+
+
+def _eh_coluna_imagem_generica(nome_coluna: object) -> bool:
+    nome = _normalizar_nome(nome_coluna)
+    return nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}
 
 
 def _eh_opcao_valida_para_imagens(nome_coluna: object) -> bool:
     nome = _normalizar_nome(nome_coluna)
-    if not nome:
+    if not nome or _eh_coluna_url_produto(nome_coluna):
         return False
-    if _eh_coluna_url_produto(nome_coluna):
-        return False
-    if "video" in nome or "youtube" in nome:
+    if _tem_algum(nome, ("video", "youtube")):
         return False
     if nome == "url imagens externas":
         return True
-    if "url" in nome and "imagem" in nome:
+    if "url" in nome and _tem_algum(nome, ("imagem", "image", "foto")):
         return True
-    if "url" in nome and "image" in nome:
+    if "extern" in nome and _tem_algum(nome, ("imagem", "image", "foto")):
         return True
-    if "url" in nome and "foto" in nome:
-        return True
-    if "extern" in nome and ("imagem" in nome or "image" in nome or "foto" in nome):
-        return True
-    if nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}:
+    if _eh_coluna_imagem_generica(nome_coluna):
         return True
     return False
+
+
+def _destino_modelo(coluna_modelo: object, conf_module=None) -> str:
+    nome = _normalizar_nome(coluna_modelo)
+
+    if conf_module is not None and hasattr(conf_module, "_eh_destino_imagens_externas"):
+        try:
+            if conf_module._eh_destino_imagens_externas(str(coluna_modelo)):
+                return "imagens"
+        except Exception:
+            pass
+
+    if _tem_algum(nome, ("imagem", "image", "foto")):
+        return "imagens"
+    if _tem_algum(nome, ("gtin", "ean", "barra")):
+        return "gtin"
+    if "ncm" in nome:
+        return "ncm"
+    if _tem_algum(nome, ("preco", "preço", "valor")):
+        return "preco"
+    if _tem_algum(nome, ("marca", "brand", "fabricante")):
+        return "marca"
+    if _tem_algum(nome, ("categoria", "category", "departamento", "segmento")):
+        return "categoria"
+    if _tem_algum(nome, ("quantidade", "estoque", "saldo", "qtd")):
+        return "quantidade"
+    if _tem_algum(nome, ("codigo", "código", "sku", "referencia", "referência", "cod no fornecedor")):
+        return "codigo"
+    if _tem_algum(nome, ("descricao curta", "descrição curta", "resumo")):
+        return "descricao_curta"
+    if _tem_algum(nome, ("descricao", "descrição", "nome", "produto", "titulo", "título")):
+        return "descricao"
+    if _tem_algum(nome, ("url produto", "url do produto", "link externo", "link produto", "pagina produto")):
+        return "link_produto"
+    return ""
 
 
 def _eh_coluna_interna(nome_coluna: object) -> bool:
@@ -132,7 +203,7 @@ def _eh_coluna_interna(nome_coluna: object) -> bool:
         return True
     if nome.startswith("_") and nome not in {"_preco_calculado"}:
         return True
-    if "video" in nome_n or "youtube" in nome_n:
+    if _tem_algum(nome_n, ("video", "youtube")):
         return True
     return False
 
@@ -162,8 +233,7 @@ def _serie_tem_dado_capturado(serie: pd.Series) -> bool:
     if valores.empty:
         return False
 
-    amostra = valores.head(25).tolist()
-    for valor in amostra:
+    for valor in valores.head(25).tolist():
         valor_n = _normalizar_nome(valor)
         if valor_n not in VALORES_PADRAO_NAO_CAPTURADOS:
             return True
@@ -178,30 +248,27 @@ def _score_coluna_origem(nome_coluna: object, serie: pd.Series | None = None) ->
         score += 500
     elif "url" in nome and "imagem" in nome and "extern" in nome:
         score += 450
-    elif "url" in nome and ("imagem" in nome or "image" in nome or "foto" in nome):
+    elif "url" in nome and _tem_algum(nome, ("imagem", "image", "foto")):
         score += 350
-    elif nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}:
+    elif _eh_coluna_imagem_generica(nome_coluna):
         score += 60
 
-    if any(t in nome for t in ["descricao", "descrição", "produto", "nome"]):
+    if _tem_algum(nome, ("descricao", "descrição", "produto", "nome", "titulo", "título")):
         score += 120
-    if any(t in nome for t in ["preco", "preço", "valor"]):
+    if _tem_algum(nome, ("preco", "preço", "valor", "custo")):
         score += 110
-    if any(t in nome for t in ["codigo", "código", "sku", "referencia", "referência"]):
+    if _tem_algum(nome, ("codigo", "código", "sku", "referencia", "referência", "cod")):
         score += 100
-    if any(t in nome for t in ["gtin", "ean", "barra"]):
+    if _tem_algum(nome, ("gtin", "ean", "barra")):
         score += 95
-    if any(t in nome for t in ["marca", "brand"]):
+    if _tem_algum(nome, ("marca", "brand", "fabricante")):
         score += 80
-    if any(t in nome for t in ["categoria", "category"]):
+    if _tem_algum(nome, ("categoria", "category", "departamento")):
         score += 75
-    if any(t in nome for t in ["estoque", "quantidade", "saldo"]):
+    if _tem_algum(nome, ("estoque", "quantidade", "saldo", "qtd")):
         score += 70
-    if any(t in nome for t in ["link externo", "url produto", "pagina", "página"]):
-        score += 65
-
     if _eh_coluna_url_produto(nome_coluna):
-        score -= 200
+        score -= 250
 
     if serie is not None and _serie_tem_dado_capturado(serie):
         score += 30
@@ -227,9 +294,7 @@ def _deduplicar_colunas(colunas: list[str], df_base: pd.DataFrame) -> list[str]:
         if atual is None or score > atual[0]:
             melhores[chave] = (score, coluna)
 
-    itens = []
-    for chave, (score, coluna) in melhores.items():
-        itens.append((ordem.get(chave, 9999), -score, coluna))
+    itens = [(ordem.get(chave, 9999), -score, coluna) for chave, (score, coluna) in melhores.items()]
     itens.sort(key=lambda item: (item[0], item[1], item[2].lower()))
     return [coluna for _, _, coluna in itens]
 
@@ -244,13 +309,12 @@ def _colunas_origem_capturadas(df_base: pd.DataFrame) -> list[str]:
             continue
         if coluna not in df_base.columns:
             continue
+        if _eh_coluna_modelo_bling_para_ocultar(coluna):
+            continue
 
         serie = df_base[coluna]
         tem_dados = _serie_tem_dado_capturado(serie)
         score = _score_coluna_origem(coluna, serie)
-
-        if _eh_coluna_modelo_bling_para_ocultar(coluna):
-            continue
 
         if not tem_dados and score < 300:
             continue
@@ -260,13 +324,47 @@ def _colunas_origem_capturadas(df_base: pd.DataFrame) -> list[str]:
     return _deduplicar_colunas(colunas, df_base)
 
 
-def _filtrar_opcoes_por_destino(coluna_modelo: str, opcoes: list[str], conf_module) -> list[str]:
-    if not hasattr(conf_module, "_eh_destino_imagens_externas"):
-        return opcoes
-    if not conf_module._eh_destino_imagens_externas(coluna_modelo):
-        return opcoes
+def _opcao_compativel_destino(coluna_modelo: str, opcao: str, conf_module=None) -> bool:
+    if not str(opcao).strip():
+        return True
 
-    filtradas = [opcao for opcao in opcoes if not str(opcao).strip() or _eh_opcao_valida_para_imagens(opcao)]
+    destino = _destino_modelo(coluna_modelo, conf_module)
+    nome = _normalizar_nome(opcao)
+
+    if _eh_coluna_modelo_bling_para_ocultar(opcao):
+        return False
+
+    if destino == "imagens":
+        return _eh_opcao_valida_para_imagens(opcao)
+    if destino == "link_produto":
+        return _eh_coluna_url_produto(opcao)
+    if _eh_coluna_url_produto(opcao):
+        return False
+
+    if destino == "gtin":
+        return _tem_algum(nome, ("gtin", "ean", "barra")) and "embalagem" not in nome
+    if destino == "ncm":
+        return "ncm" in nome
+    if destino == "preco":
+        return _tem_algum(nome, ("preco", "preço", "valor", "custo"))
+    if destino == "marca":
+        return _tem_algum(nome, ("marca", "brand", "fabricante"))
+    if destino == "categoria":
+        return _tem_algum(nome, ("categoria", "category", "departamento", "segmento"))
+    if destino == "quantidade":
+        return _tem_algum(nome, ("quantidade", "estoque", "saldo", "qtd", "stock"))
+    if destino == "codigo":
+        return _tem_algum(nome, ("codigo", "código", "sku", "referencia", "referência", "cod"))
+    if destino in {"descricao", "descricao_curta"}:
+        if _eh_opcao_valida_para_imagens(opcao) or _eh_coluna_url_produto(opcao):
+            return False
+        return _tem_algum(nome, ("descricao", "descrição", "nome", "produto", "titulo", "título", "resumo"))
+
+    return _normalizar_nome(opcao) not in {_normalizar_nome(v) for v in COLUNAS_LIXO_GERAL}
+
+
+def _filtrar_opcoes_por_destino(coluna_modelo: str, opcoes: list[str], conf_module) -> list[str]:
+    filtradas = [opcao for opcao in opcoes if _opcao_compativel_destino(coluna_modelo, opcao, conf_module)]
     return filtradas if filtradas else [""]
 
 
@@ -275,7 +373,7 @@ def _ordenar_opcoes(coluna_modelo: str, opcoes: list[str], conf_module) -> list[
     vazias = [opcao for opcao in opcoes if not str(opcao).strip()]
     demais = [opcao for opcao in opcoes if str(opcao).strip()]
 
-    if hasattr(conf_module, "_eh_destino_imagens_externas") and conf_module._eh_destino_imagens_externas(coluna_modelo):
+    if _destino_modelo(coluna_modelo, conf_module) == "imagens" and hasattr(conf_module, "_score_opcao_imagem_externa"):
         demais.sort(key=lambda opcao: (-conf_module._score_opcao_imagem_externa(opcao), str(opcao).lower()))
     else:
         demais.sort(key=lambda opcao: (-_score_coluna_origem(opcao), str(opcao).lower()))
@@ -288,7 +386,6 @@ def _ordenar_opcoes(coluna_modelo: str, opcoes: list[str], conf_module) -> list[
 
 
 def install_mapping_dropdown_patch() -> None:
-    """Instala patch no render manual do mapeamento."""
     try:
         from bling_app_zero.ui import origem_mapeamento_confidence as conf
         from bling_app_zero.ui.app_helpers import log_debug
@@ -305,9 +402,7 @@ def install_mapping_dropdown_patch() -> None:
         opcoes_origem = [""] + colunas_capturadas
 
         if colunas_capturadas:
-            st.caption(
-                f"🔎 Opções filtradas: mostrando apenas {len(colunas_capturadas)} coluna(s) capturada(s) na varredura do site."
-            )
+            st.caption(f"🔎 Opções filtradas: mostrando apenas {len(colunas_capturadas)} coluna(s) útil(eis) da captura.")
         else:
             opcoes_origem = [""] + [str(c) for c in df_base.columns.tolist() if not conf._eh_coluna_video(c)]
             st.warning("Não consegui identificar colunas capturadas com segurança. Mostrando opções disponíveis.")
@@ -317,19 +412,8 @@ def install_mapping_dropdown_patch() -> None:
         if hasattr(conf, "_corrigir_mapping_imagens_externas"):
             mapping_atual = conf._corrigir_mapping_imagens_externas(df_base, df_modelo, mapping_atual)
 
-        conf._render_resumo_confianca_mapeamento(
-            df_base=df_base,
-            df_modelo=df_modelo,
-            mapping_atual=mapping_atual,
-            operacao=operacao,
-        )
-
-        colunas_ordenadas = conf._ordenar_colunas_para_revisao(
-            df_base=df_base,
-            df_modelo=df_modelo,
-            mapping_atual=mapping_atual,
-            operacao=operacao,
-        )
+        conf._render_resumo_confianca_mapeamento(df_base=df_base, df_modelo=df_modelo, mapping_atual=mapping_atual, operacao=operacao)
+        colunas_ordenadas = conf._ordenar_colunas_para_revisao(df_base=df_base, df_modelo=df_modelo, mapping_atual=mapping_atual, operacao=operacao)
 
         for coluna_modelo in colunas_ordenadas:
             if coluna_modelo in bloqueados:
@@ -345,12 +429,7 @@ def install_mapping_dropdown_patch() -> None:
                         ),
                         unsafe_allow_html=True,
                     )
-                    st.text_input(
-                        f"🚫 {coluna_modelo}",
-                        value="Bloqueado automaticamente (vídeo fica vazio)",
-                        disabled=True,
-                        key=f"map_lock_video_{coluna_modelo}",
-                    )
+                    st.text_input(f"🚫 {coluna_modelo}", value="Bloqueado automaticamente (vídeo fica vazio)", disabled=True, key=f"map_lock_video_{coluna_modelo}")
                     mapping_atual[coluna_modelo] = ""
                     continue
 
@@ -369,31 +448,18 @@ def install_mapping_dropdown_patch() -> None:
                     ),
                     unsafe_allow_html=True,
                 )
-                st.text_input(
-                    f"🤖 {coluna_modelo}",
-                    value=f"Preenchido automaticamente ({', '.join(motivo)})",
-                    disabled=True,
-                    key=f"map_lock_{coluna_modelo}",
-                )
+                st.text_input(f"🤖 {coluna_modelo}", value=f"Preenchido automaticamente ({', '.join(motivo)})", disabled=True, key=f"map_lock_{coluna_modelo}")
                 mapping_atual[coluna_modelo] = ""
                 continue
 
-            usados_em_outros = {
-                str(v).strip()
-                for k, v in mapping_atual.items()
-                if str(k) != coluna_modelo and str(v).strip()
-            }
+            usados_em_outros = {str(v).strip() for k, v in mapping_atual.items() if str(k) != coluna_modelo and str(v).strip()}
 
             valor_atual = str(mapping_atual.get(coluna_modelo, "") or "").strip()
             if conf._eh_coluna_video(valor_atual):
                 valor_atual = ""
                 mapping_atual[coluna_modelo] = ""
 
-            detalhe = conf._detalhe_confianca_mapeamento(
-                df_base=df_base,
-                coluna_modelo=coluna_modelo,
-                coluna_origem=valor_atual,
-            )
+            detalhe = conf._detalhe_confianca_mapeamento(df_base=df_base, coluna_modelo=coluna_modelo, coluna_origem=valor_atual)
 
             st.markdown(
                 conf._montar_badge_html(
@@ -412,14 +478,8 @@ def install_mapping_dropdown_patch() -> None:
                 if opcao == valor_atual or opcao not in usados_em_outros:
                     opcoes_coluna.append(opcao)
 
-            opcoes_coluna = _filtrar_opcoes_por_destino(coluna_modelo, opcoes_coluna, conf)
-
             if valor_atual and valor_atual in df_base.columns and valor_atual not in opcoes_coluna and not conf._eh_coluna_video(valor_atual):
-                if valor_atual in colunas_capturadas and (
-                    not hasattr(conf, "_eh_destino_imagens_externas")
-                    or not conf._eh_destino_imagens_externas(coluna_modelo)
-                    or _eh_opcao_valida_para_imagens(valor_atual)
-                ):
+                if valor_atual in colunas_capturadas and _opcao_compativel_destino(coluna_modelo, valor_atual, conf):
                     opcoes_coluna.append(valor_atual)
 
             opcoes_coluna = _ordenar_opcoes(coluna_modelo, opcoes_coluna, conf)
@@ -451,6 +511,6 @@ def install_mapping_dropdown_patch() -> None:
     conf._render_revisao_manual = patched_render_revisao_manual
     conf._dropdown_site_patch_instalado = True
     try:
-        log_debug("Patch do seletor de mapeamento por site instalado.", nivel="INFO")
+        log_debug("Patch do seletor de mapeamento por site instalado com filtro por destino.", nivel="INFO")
     except Exception:
         pass
