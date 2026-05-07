@@ -43,7 +43,7 @@ def _limpar(chaves: list[str]) -> None:
 
 def _limpar_origem() -> None:
     _limpar([
-        "df_origem", "df_saida", "df_preview_inteligente", "df_auto_mapa",
+        "df_origem", "df_origem_upload", "df_upload", "df_saida", "df_preview_inteligente", "df_auto_mapa",
         "df_preview_fornecedor_modelo_bling", "df_preview_site_modelo_bling",
         "df_precificado", "df_final", "origem_site_preview_modelo_bling",
         "origem_fornecedor_preview_modelo_bling", "origem_upload_nome",
@@ -53,13 +53,13 @@ def _limpar_origem() -> None:
 
 def _limpar_modelo() -> None:
     _limpar([
-        "df_modelo", "df_origem", "df_saida", "df_preview_inteligente",
-        "df_auto_mapa", "df_preview_fornecedor_modelo_bling",
-        "df_preview_site_modelo_bling", "df_precificado", "df_final",
-        "origem_site_preview_modelo_bling", "origem_fornecedor_preview_modelo_bling",
-        "modelo_upload_nome", "modelo_upload_bytes", "modelo_upload_tipo",
-        "modelo_upload_ext", "mapping_manual", "mapping_sugerido",
-        "agent_ui_package", "_ia_auto_mapping_executado",
+        "df_modelo", "df_modelo_cadastro", "df_modelo_estoque", "df_origem", "df_origem_upload", "df_upload",
+        "df_saida", "df_preview_inteligente", "df_auto_mapa", "df_preview_fornecedor_modelo_bling",
+        "df_preview_site_modelo_bling", "df_precificado", "df_final", "origem_site_preview_modelo_bling",
+        "origem_fornecedor_preview_modelo_bling", "modelo_upload_nome", "modelo_upload_bytes",
+        "modelo_upload_tipo", "modelo_upload_ext", "mapping_manual", "mapping_sugerido",
+        "agent_ui_package", "_ia_auto_mapping_executado", "modelo_bling_reconhecido",
+        "modelo_bling_tipo_reconhecido", "modelo_bling_nome_reconhecido",
     ])
 
 
@@ -111,6 +111,41 @@ def _parse_xml_nfe(upload) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _norm_nome(valor: object) -> str:
+    texto = str(valor or "").strip().lower()
+    texto = texto.translate(str.maketrans("áàãâéêíóôõúç", "aaaaeeiooouc"))
+    import re
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _reconhecer_tipo_modelo(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return ""
+    nomes = {_norm_nome(c) for c in df.columns.tolist()}
+    texto = " | ".join(sorted(nomes))
+
+    score_estoque = 0
+    score_cadastro = 0
+
+    for termo in ("deposito", "saldo", "balanco", "quantidade", "estoque", "preco unitario obrigatorio"):
+        if termo in texto:
+            score_estoque += 2
+    for termo in ("descricao curta", "descricao complementar", "url imagens externas", "categoria", "marca", "ncm", "peso bruto", "peso liquido"):
+        if termo in texto:
+            score_cadastro += 2
+
+    if score_estoque > score_cadastro:
+        return "estoque"
+    if score_cadastro > score_estoque:
+        return "cadastro"
+    return str(st.session_state.get("tipo_operacao", "cadastro") or "cadastro").lower()
+
+
+def _label_tipo_modelo(tipo: str) -> str:
+    return "Atualização de estoque" if tipo == "estoque" else "Cadastro de produtos"
+
+
 def _preview(df: pd.DataFrame, titulo: str) -> None:
     with st.expander(titulo, expanded=False):
         if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
@@ -146,9 +181,23 @@ def _processar_modelo(upload) -> None:
     if not safe_df_estrutura(df):
         st.error("O modelo precisa ter pelo menos os cabeçalhos/colunas.")
         return
+
+    tipo_modelo = _reconhecer_tipo_modelo(df)
     st.session_state["df_modelo"] = df
+    if tipo_modelo == "estoque":
+        st.session_state["df_modelo_estoque"] = df.copy()
+        st.session_state["tipo_operacao"] = "estoque"
+        st.session_state["tipo_operacao_bling"] = "estoque"
+    else:
+        st.session_state["df_modelo_cadastro"] = df.copy()
+        st.session_state["tipo_operacao"] = "cadastro"
+        st.session_state["tipo_operacao_bling"] = "cadastro"
+
+    st.session_state["modelo_bling_reconhecido"] = True
+    st.session_state["modelo_bling_tipo_reconhecido"] = tipo_modelo
+    st.session_state["modelo_bling_nome_reconhecido"] = str(upload.name)
     _guardar_upload("modelo_upload", upload, "tabular")
-    st.success(f"Modelo carregado: {upload.name}")
+    st.success(f"Modelo Bling reconhecido como: {_label_tipo_modelo(tipo_modelo)}")
     _preview(df, "Estrutura do modelo Bling anexado")
 
 
@@ -172,18 +221,30 @@ def _processar_origem(upload) -> None:
         st.error("Não foi possível extrair dados da origem.")
         return
     st.session_state["df_origem"] = df
+    st.session_state["df_origem_upload"] = df.copy()
+    st.session_state["df_upload"] = df.copy()
     _guardar_upload("origem_upload", upload, "xml" if ext == ".xml" else "tabular")
     st.success(f"Origem carregada: {upload.name}")
     _preview(df, "Preview bruto da origem")
 
 
-def _render_operacao() -> None:
-    atual = st.session_state.get("tipo_operacao", "cadastro")
-    opcoes = {"Cadastro de Produtos": "cadastro", "Atualização de Estoque": "estoque"}
-    inicial = next((label for label, valor in opcoes.items() if valor == atual), "Cadastro de Produtos")
-    escolha = st.radio("Escolha a operação", list(opcoes.keys()), index=list(opcoes.keys()).index(inicial), horizontal=True, key="tipo_operacao_visual")
-    st.session_state["tipo_operacao"] = opcoes[escolha]
-    st.session_state["tipo_operacao_bling"] = opcoes[escolha]
+def _render_modelo() -> None:
+    with st.container(border=True):
+        st.markdown("### 1. Anexar modelo Bling")
+        st.caption("Este é sempre o primeiro passo. O sistema reconhece se o modelo anexado é Cadastro de produtos ou Atualização de estoque e libera a origem correta em seguida.")
+        upload = st.file_uploader("Selecionar modelo Bling", type=["csv", "xlsx", "xls"], key="upload_modelo")
+        if upload:
+            _processar_modelo(upload)
+
+
+def _render_modelo_reconhecido() -> bool:
+    if not _modelo_pronto():
+        st.info("Anexe primeiro o modelo Bling para liberar o próximo passo.")
+        return False
+    tipo = str(st.session_state.get("modelo_bling_tipo_reconhecido") or st.session_state.get("tipo_operacao") or "cadastro").lower()
+    nome = str(st.session_state.get("modelo_bling_nome_reconhecido") or st.session_state.get("modelo_upload_nome") or "Modelo anexado")
+    st.success(f"Modelo reconhecido: {_label_tipo_modelo(tipo)} — {nome}")
+    return True
 
 
 def _render_deposito() -> None:
@@ -195,18 +256,10 @@ def _render_deposito() -> None:
         st.session_state["deposito_nome"] = st.text_input("Nome do depósito", value=valor, key="deposito_nome_input", placeholder="Ex.: Depósito Principal").strip()
 
 
-def _render_modelo() -> None:
-    with st.container(border=True):
-        st.markdown("### Modelo do Bling")
-        st.caption("Envie primeiro o modelo oficial de cadastro ou estoque.")
-        upload = st.file_uploader("Selecionar modelo", type=["csv", "xlsx", "xls"], key="upload_modelo")
-        if upload:
-            _processar_modelo(upload)
-
-
 def _render_origem_arquivo() -> None:
     with st.container(border=True):
-        st.markdown("### Arquivo do fornecedor")
+        st.markdown("### 2. Anexar planilha/XML da origem")
+        st.caption("Aqui entra a planilha do fornecedor/XML que será correlacionada com o modelo Bling reconhecido acima.")
         upload = st.file_uploader("Selecionar arquivo de origem", type=["csv", "xlsx", "xls", "xml"], key="upload_origem")
         if upload is not None:
             _processar_origem(upload)
@@ -218,7 +271,7 @@ def _render_preview_modelo() -> None:
     if st.session_state.get("origem_site_preview_modelo_bling") or not _origem_pronta() or not _modelo_pronto():
         return
     st.markdown("---")
-    df_preview = render_preview_inteligente(st.session_state.get("df_origem"), st.session_state.get("df_modelo"), titulo="Preview da planilha do fornecedor baseado no modelo Bling anexado")
+    df_preview = render_preview_inteligente(st.session_state.get("df_origem"), st.session_state.get("df_modelo"), titulo="Preview da origem baseado no modelo Bling reconhecido")
     if safe_df_estrutura(df_preview):
         st.session_state["df_preview_inteligente"] = df_preview.copy()
         st.session_state["df_preview_fornecedor_modelo_bling"] = df_preview.copy()
@@ -249,18 +302,19 @@ def _render_continuar() -> None:
     if not _modelo_pronto():
         st.info("Envie o modelo Bling válido para liberar a origem dos dados.")
         return
-    if not _origem_pronta():
-        st.info("Agora carregue a planilha do fornecedor ou faça a busca por site.")
+    if not _origem_pronta() and st.session_state.get("modo_origem") != "Buscar no site do fornecedor":
+        st.info("Agora carregue a planilha do fornecedor/XML ou faça a busca por site.")
         return
-    if not _preview_pronto():
+    if st.session_state.get("modo_origem") != "Buscar no site do fornecedor" and not _preview_pronto():
         st.info("Aguarde o sistema montar o preview nas colunas do modelo Bling.")
         return
     if not _validar_continuar():
         return
     if st.button("Continuar ➜", key="btn_continuar_origem", use_container_width=True):
-        df_preview = st.session_state.get("df_preview_inteligente").copy()
-        st.session_state["df_precificado"] = df_preview
-        st.session_state["df_saida"] = df_preview
+        df_preview = st.session_state.get("df_preview_inteligente")
+        if isinstance(df_preview, pd.DataFrame):
+            st.session_state["df_precificado"] = df_preview.copy()
+            st.session_state["df_saida"] = df_preview.copy()
         st.session_state.pop("df_final", None)
         if set_etapa_segura("precificacao", origem="origem_dados_modular"):
             st.rerun()
@@ -269,14 +323,15 @@ def _render_continuar() -> None:
 
 def render_origem_dados() -> None:
     st.subheader("1. Origem dos dados")
-    _render_operacao()
-    _render_deposito()
     _render_modelo()
-    if not _modelo_pronto():
-        st.info("Anexe primeiro o modelo Bling para liberar o próximo passo.")
+    if not _render_modelo_reconhecido():
         st.markdown("---")
         _render_continuar()
         return
+
+    _render_deposito()
+    tipo = str(st.session_state.get("tipo_operacao", "cadastro")).lower()
+    st.markdown(f"### 2. Origem para {_label_tipo_modelo(tipo)}")
     modo = st.radio("Como deseja informar a origem?", ["Arquivo do fornecedor", "Buscar no site do fornecedor"], horizontal=True, key="modo_origem")
     if modo == "Arquivo do fornecedor":
         _render_origem_arquivo()
