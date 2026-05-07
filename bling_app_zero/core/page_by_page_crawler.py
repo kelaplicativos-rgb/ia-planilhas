@@ -45,7 +45,6 @@ def is_product_url(url: str) -> bool:
 
 
 def discover_product_urls(seed_urls: Iterable[str], *, max_products: Optional[int] = None, use_sitemap: bool = False) -> list[str]:
-    """Compatibilidade pública: agora usa descoberta ALL/infinity controlada."""
     return discover_product_urls_infinity(seed_urls, max_products=max_products)
 
 
@@ -100,78 +99,126 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
-def _extract_from_json_ld(soup: BeautifulSoup) -> tuple[dict[str, str], list[object]]:
+def _requested_set(requested_fields: Iterable[str] | None) -> set[str]:
+    return {str(item or "").strip().lower() for item in (requested_fields or []) if str(item or "").strip()}
+
+
+def _wants(fields: set[str], *names: str) -> bool:
+    return not fields or any(name in fields for name in names)
+
+
+def _extract_from_json_ld(soup: BeautifulSoup, requested_fields: Iterable[str] | None = None) -> tuple[dict[str, str], list[object]]:
+    fields = _requested_set(requested_fields)
     data: dict[str, str] = {}
     images: list[object] = []
     for obj in _json_ld_products(soup):
-        data["Descrição"] = data.get("Descrição") or _clean_text(obj.get("name"))
-        brand = obj.get("brand", {}).get("name") if isinstance(obj.get("brand"), dict) else obj.get("brand")
-        data["Marca"] = data.get("Marca") or _clean_text(brand)
-        data["Código"] = data.get("Código") or _clean_text(obj.get("sku") or obj.get("mpn"))
-        data["Cód no fornecedor"] = data.get("Cód no fornecedor") or _clean_text(obj.get("sku") or obj.get("mpn"))
-        data["GTIN/EAN"] = data.get("GTIN/EAN") or _clean_text(obj.get("gtin13") or obj.get("gtin14") or obj.get("gtin12") or obj.get("gtin8"))
-        data["Categoria"] = data.get("Categoria") or _clean_text(obj.get("category"))
-        image = obj.get("image")
-        if isinstance(image, list):
-            images.extend(image)
-        elif image:
-            images.append(image)
-        offers = obj.get("offers")
-        if isinstance(offers, list):
-            offers = offers[0] if offers else {}
-        if isinstance(offers, dict):
-            data["Preço"] = data.get("Preço") or _normalize_price(offers.get("price"))
+        if _wants(fields, "nome", "descricao"):
+            data["Descrição"] = data.get("Descrição") or _clean_text(obj.get("name"))
+        if _wants(fields, "marca"):
+            brand = obj.get("brand", {}).get("name") if isinstance(obj.get("brand"), dict) else obj.get("brand")
+            data["Marca"] = data.get("Marca") or _clean_text(brand)
+        if _wants(fields, "sku"):
+            data["Código"] = data.get("Código") or _clean_text(obj.get("sku") or obj.get("mpn"))
+            data["Cód no fornecedor"] = data.get("Cód no fornecedor") or _clean_text(obj.get("sku") or obj.get("mpn"))
+        if _wants(fields, "gtin"):
+            data["GTIN/EAN"] = data.get("GTIN/EAN") or _clean_text(obj.get("gtin13") or obj.get("gtin14") or obj.get("gtin12") or obj.get("gtin8"))
+        if _wants(fields, "categoria"):
+            data["Categoria"] = data.get("Categoria") or _clean_text(obj.get("category"))
+        if _wants(fields, "imagens"):
+            image = obj.get("image")
+            if isinstance(image, list):
+                images.extend(image)
+            elif image:
+                images.append(image)
+        if _wants(fields, "preco"):
+            offers = obj.get("offers")
+            if isinstance(offers, list):
+                offers = offers[0] if offers else {}
+            if isinstance(offers, dict):
+                data["Preço"] = data.get("Preço") or _normalize_price(offers.get("price"))
     return data, images
 
 
-def extract_product_from_page(page_url: str, html: str) -> dict[str, str]:
+def extract_product_from_page(page_url: str, html: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
+    fields = _requested_set(requested_fields)
     soup = BeautifulSoup(html, "html.parser")
-    full_text = soup.get_text(" ", strip=True)
-    data, json_images = _extract_from_json_ld(soup)
+    data, json_images = _extract_from_json_ld(soup, fields)
 
-    title = data.get("Descrição") or _first_meta(soup, "og:title", "twitter:title")
-    if not title and soup.title:
-        title = soup.title.get_text(" ", strip=True)
-    data["Descrição"] = _clean_text(title)
+    need_full_text = _wants(fields, "preco", "gtin", "estoque")
+    full_text = soup.get_text(" ", strip=True) if need_full_text else ""
 
-    desc = _first_meta(soup, "description", "og:description", "twitter:description")
-    if desc:
-        data["Descrição complementar"] = _clean_text(desc)
-        data["Descrição curta"] = _clean_text(desc)
+    if _wants(fields, "nome", "descricao"):
+        title = data.get("Descrição") or _first_meta(soup, "og:title", "twitter:title")
+        if not title and soup.title:
+            title = soup.title.get_text(" ", strip=True)
+        if title:
+            data["Descrição"] = _clean_text(title)
 
-    price = data.get("Preço") or _normalize_price(_first_meta(soup, "product:price:amount", "og:price:amount", "price")) or _normalize_price(full_text)
-    if price:
-        data["Preço"] = price
-        data["Preço unitário"] = price
-        data["Preço unitário (OBRIGATÓRIO)"] = price
+    if _wants(fields, "descricao_complementar"):
+        desc = _first_meta(soup, "description", "og:description", "twitter:description")
+        if desc:
+            data["Descrição complementar"] = _clean_text(desc)
+            data["Descrição curta"] = _clean_text(desc)
 
-    gtin = data.get("GTIN/EAN") or ""
-    if not gtin:
-        match = GTIN_RE.search(full_text)
-        gtin = match.group(1) if match else ""
-    if gtin:
-        data["GTIN/EAN"] = gtin
+    if _wants(fields, "preco"):
+        price = data.get("Preço") or _normalize_price(_first_meta(soup, "product:price:amount", "og:price:amount", "price")) or _normalize_price(full_text)
+        if price:
+            data["Preço"] = price
+            data["Preço unitário"] = price
+            data["Preço unitário (OBRIGATÓRIO)"] = price
 
-    images = extract_safe_product_images(page_url, html, extra_candidates=json_images)
-    if images:
-        data["URL Imagens Externas"] = images
-        data["Imagens"] = images
+    if _wants(fields, "gtin"):
+        gtin = data.get("GTIN/EAN") or ""
+        if not gtin:
+            match = GTIN_RE.search(full_text)
+            gtin = match.group(1) if match else ""
+        if gtin:
+            data["GTIN/EAN"] = gtin
 
-    data["Link Externo"] = page_url
-    data["URL do Produto"] = page_url
+    if _wants(fields, "estoque"):
+        lower_text = full_text.lower()
+        if any(term in lower_text for term in ("sem estoque", "indisponivel", "indisponível", "esgotado", "fora de estoque")):
+            data["Estoque"] = "0"
+        elif any(term in lower_text for term in ("em estoque", "disponivel", "disponível", "comprar", "adicionar ao carrinho")):
+            data["Estoque"] = "1"
+
+    if _wants(fields, "imagens"):
+        images = extract_safe_product_images(page_url, html, extra_candidates=json_images)
+        if images:
+            data["URL Imagens Externas"] = images
+            data["Imagens"] = images
+
+    if _wants(fields, "url"):
+        data["Link Externo"] = page_url
+        data["URL do Produto"] = page_url
+
+    data.setdefault("Link Externo", page_url)
+    data.setdefault("URL do Produto", page_url)
     data["Fonte captura"] = "pagina_produto"
     return {k: _clean_text(v) for k, v in data.items() if _clean_text(v)}
 
 
-def crawl_product_pages(seed_urls: Iterable[str], *, max_products: Optional[int] = None, use_sitemap: bool = False) -> list[dict[str, str]]:
+def crawl_product_pages(
+    seed_urls: Iterable[str],
+    *,
+    max_products: Optional[int] = None,
+    use_sitemap: bool = False,
+    requested_fields: Iterable[str] | None = None,
+) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for product_url in discover_product_urls(seed_urls, max_products=max_products, use_sitemap=use_sitemap):
         try:
-            rows.append(extract_product_from_page(product_url, fetch_html(product_url)))
+            rows.append(extract_product_from_page(product_url, fetch_html(product_url), requested_fields=requested_fields))
         except Exception as exc:
             rows.append({"Link Externo": product_url, "URL do Produto": product_url, "Fonte captura": "pagina_produto_erro", "Erro captura": str(exc)})
     return rows
 
 
-def crawl_product_pages_dataframe(seed_urls: Iterable[str], *, max_products: Optional[int] = None, use_sitemap: bool = False) -> pd.DataFrame:
-    return pd.DataFrame(crawl_product_pages(seed_urls, max_products=max_products, use_sitemap=use_sitemap))
+def crawl_product_pages_dataframe(
+    seed_urls: Iterable[str],
+    *,
+    max_products: Optional[int] = None,
+    use_sitemap: bool = False,
+    requested_fields: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    return pd.DataFrame(crawl_product_pages(seed_urls, max_products=max_products, use_sitemap=use_sitemap, requested_fields=requested_fields))
