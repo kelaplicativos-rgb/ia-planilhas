@@ -28,6 +28,10 @@ def _safe_get(url: str) -> str:
         return ''
 
 
+def _make_soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html or '', 'html.parser')
+
+
 def _text(soup: BeautifulSoup) -> str:
     return clean_cell(soup.get_text(' ', strip=True))
 
@@ -93,21 +97,26 @@ def _sku(page_text: str) -> str:
 
 def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> dict[str, str]:
     html = _safe_get(url)
-    soup = BeautifulSoup(html, 'lxml') if html else BeautifulSoup('', 'lxml')
+    soup = _make_soup(html)
     page_text = _text(soup)
+    images = _images(soup)
+    sku = _sku(page_text)
+    title = _title(soup)
+    price = _price(soup, page_text)
+    stock = _stock(page_text)
 
     base = {
         'URL': url,
-        'Código': _sku(page_text),
-        'SKU': _sku(page_text),
-        'Descrição': _title(soup),
-        'Nome': _title(soup),
-        'Preço': _price(soup, page_text),
-        'Preço unitário (OBRIGATÓRIO)': _price(soup, page_text),
-        'Estoque': _stock(page_text),
-        'Balanço (OBRIGATÓRIO)': _stock(page_text),
-        'URL Imagens': _images(soup),
-        'Imagens': _images(soup),
+        'Código': sku,
+        'SKU': sku,
+        'Descrição': title,
+        'Nome': title,
+        'Preço': price,
+        'Preço unitário (OBRIGATÓRIO)': price,
+        'Estoque': stock,
+        'Balanço (OBRIGATÓRIO)': stock,
+        'URL Imagens': images,
+        'Imagens': images,
     }
 
     if requested_columns:
