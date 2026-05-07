@@ -174,7 +174,7 @@ def render_estoque() -> None:
 
 def render_site() -> None:
     st.info('Crawler inteligente independente carregado.')
-    st.caption('Tecnologia ativa: extração orientada por contrato de colunas. A planilha manda no que será buscado.')
+    st.caption('Tecnologia ativa: ALL PRODUCTS MODE + extração orientada por contrato de colunas.')
 
     modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
     operation = 'cadastro' if modo == 'Cadastro completo' else 'estoque'
@@ -198,10 +198,22 @@ def render_site() -> None:
     if operation == 'estoque':
         deposito = st.text_input('Nome do depósito para estoque por site', value='Não definido')
 
-    raw_urls = st.text_area('Links dos produtos/sites', height=180, key='urls_site')
+    raw_urls = st.text_area('URL inicial, categoria, home ou links de produtos', height=180, key='urls_site')
 
-    if st.button('Buscar somente colunas solicitadas e gerar Bling', use_container_width=True):
-        df_site = run_site_pipeline(raw_urls, requested_columns=requested_columns)
+    all_products = st.checkbox('ALL PRODUCTS MODE: varrer site/categoria e buscar todos os produtos encontrados', value=True)
+    col_limit_a, col_limit_b = st.columns(2)
+    max_pages = int(col_limit_a.number_input('Limite de páginas varridas', min_value=10, max_value=3000, value=250, step=50))
+    max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=10000, value=1000, step=100))
+
+    if st.button('Buscar ALL PRODUCTS e gerar Bling', use_container_width=True):
+        with st.spinner('Varrendo site, descobrindo produtos e extraindo somente as colunas solicitadas...'):
+            df_site = run_site_pipeline(
+                raw_urls,
+                requested_columns=requested_columns,
+                all_products=all_products,
+                max_pages=max_pages,
+                max_products=max_products,
+            )
         st.session_state['df_site_bruto'] = df_site
 
         if operation == 'estoque':
