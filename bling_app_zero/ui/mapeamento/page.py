@@ -113,6 +113,75 @@ def _garantir_preco_unitario_no_final(df_base: pd.DataFrame, df_modelo: pd.DataF
     st.session_state["_preco_unitario_corrigido_mapping"] = {"destino": destino, "origem": origem_preco, "linhas": int(len(corrigido))}
 
 
+def _normalizar_df_modelo_ativo(df_modelo: pd.DataFrame) -> pd.DataFrame:
+    """Remove colunas duplicadas do modelo ativo sem misturar cadastro e estoque."""
+    if not isinstance(df_modelo, pd.DataFrame) or df_modelo.empty:
+        return pd.DataFrame()
+
+    modelo = df_modelo.copy()
+    modelo.columns = [str(c).strip() for c in modelo.columns]
+    modelo = modelo.loc[:, [bool(str(c).strip()) for c in modelo.columns]]
+    modelo = modelo.loc[:, ~pd.Index(modelo.columns).duplicated(keep="first")]
+    return modelo.copy()
+
+
+def _obter_df_modelo_operacao_ativa(operacao: str) -> pd.DataFrame:
+    """
+    Garante que o seletor de destino use somente o modelo da operação atual.
+
+    Cadastro de produtos usa df_modelo_cadastro.
+    Atualização de estoque usa df_modelo_estoque.
+    O fallback df_modelo só é usado se o modelo específico ainda não existir.
+    """
+    chave_modelo = "df_modelo_estoque" if operacao == "estoque" else "df_modelo_cadastro"
+    df_modelo = st.session_state.get(chave_modelo)
+
+    if safe_df_estrutura(df_modelo):
+        modelo = _normalizar_df_modelo_ativo(df_modelo)
+    else:
+        modelo = _normalizar_df_modelo_ativo(_obter_df_modelo())
+
+    if safe_df_estrutura(modelo):
+        st.session_state["df_modelo"] = modelo.copy()
+        st.session_state["_modelo_mapeamento_operacao"] = operacao
+        st.session_state["_modelo_mapeamento_chave"] = chave_modelo
+
+    return modelo
+
+
+def _blindar_mapping_para_modelo_ativo(df_modelo: pd.DataFrame, operacao: str) -> None:
+    """Remove do rascunho campos que não pertencem ao modelo ativo atual."""
+    colunas_ativas = [str(c) for c in df_modelo.columns.tolist()] if safe_df_estrutura(df_modelo) else []
+    colunas_set = set(colunas_ativas)
+
+    operacao_anterior = st.session_state.get("_ultima_operacao_mapeamento")
+    modelo_anterior = st.session_state.get("_ultimo_modelo_mapeamento_colunas")
+    assinatura_modelo = "|".join(colunas_ativas)
+
+    mapping_atual = st.session_state.get("mapping_manual", {})
+    if not isinstance(mapping_atual, dict):
+        mapping_atual = {}
+
+    if operacao_anterior and operacao_anterior != operacao:
+        mapping_atual = {col: "" for col in colunas_ativas}
+        st.session_state["mapping_sugerido"] = {}
+        st.session_state["agent_ui_package"] = {}
+        st.session_state["df_final"] = None
+        st.session_state["_ia_auto_mapping_executado"] = False
+    else:
+        mapping_atual = {str(k): v for k, v in mapping_atual.items() if str(k) in colunas_set}
+        for coluna in colunas_ativas:
+            mapping_atual.setdefault(coluna, "")
+
+        if modelo_anterior and modelo_anterior != assinatura_modelo:
+            st.session_state["df_final"] = None
+            st.session_state["_ia_auto_mapping_executado"] = False
+
+    st.session_state["mapping_manual"] = mapping_atual
+    st.session_state["_ultima_operacao_mapeamento"] = operacao
+    st.session_state["_ultimo_modelo_mapeamento_colunas"] = assinatura_modelo
+
+
 def _garantir_imagens_no_mapeamento(df_base: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     mapping_atual = st.session_state.get("mapping_manual", {})
     if not isinstance(mapping_atual, dict):
@@ -293,8 +362,8 @@ def render_origem_mapeamento() -> None:
     st.subheader("3. Mapeamento com IA")
 
     df_base = _obter_df_base()
-    df_modelo = _obter_df_modelo()
     operacao = _detectar_operacao()
+    df_modelo = _obter_df_modelo_operacao_ativa(operacao)
 
     if not safe_df_dados(df_base):
         st.warning("Conclua a precificação antes de seguir para o mapeamento.")
@@ -309,13 +378,20 @@ def render_origem_mapeamento() -> None:
         return
 
     _sincronizar_deposito_nome()
+    _blindar_mapping_para_modelo_ativo(df_modelo, operacao)
     _inicializar_mapping(df_base, df_modelo)
+    _blindar_mapping_para_modelo_ativo(df_modelo, operacao)
     _garantir_imagens_no_mapeamento(df_base, df_modelo)
     _executar_ia_autonoma(df_base, df_modelo, operacao)
+    _blindar_mapping_para_modelo_ativo(df_modelo, operacao)
     _garantir_imagens_no_mapeamento(df_base, df_modelo)
     _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
     _render_status_base(df_base, df_modelo)
+    st.caption(
+        f"Operação ativa: {'Atualização de estoque' if operacao == 'estoque' else 'Cadastro de produtos'} | "
+        f"Modelo em uso no mapeamento: {len(df_modelo.columns)} colunas"
+    )
     _render_sugestao_agente(df_base, df_modelo)
     _render_resumo_agente()
 
@@ -327,6 +403,7 @@ def render_origem_mapeamento() -> None:
 
     with st.expander("Revisão manual opcional", expanded=not descricao_curta_ok):
         _render_revisao_manual(df_base, df_modelo, operacao)
+        _blindar_mapping_para_modelo_ativo(df_modelo, operacao)
         _garantir_imagens_no_mapeamento(df_base, df_modelo)
         _garantir_preco_unitario_no_final(df_base, df_modelo, operacao)
 
