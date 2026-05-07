@@ -20,11 +20,11 @@ KIND_SYNONYMS = {
     'id_produto': ['id produto', 'id', 'identificador'],
     'codigo': ['codigo produto', 'codigo', 'cod produto', 'sku', 'referencia', 'ref'],
     'gtin': ['gtin', 'ean', 'codigo de barras', 'barcode'],
-    'descricao': ['descricao produto', 'descricao', 'nome produto', 'produto', 'titulo', 'nome'],
+    'descricao': ['descricao produto', 'descricao', 'nome produto', 'titulo', 'nome', 'produto'],
     'deposito': ['deposito', 'almoxarifado', 'local estoque'],
     'estoque': ['balanco', 'estoque', 'quantidade', 'saldo', 'qtd'],
-    'preco_unitario': ['preco unitario', 'preco venda', 'preco', 'valor venda', 'valor'],
-    'preco_custo': ['preco de custo', 'custo', 'valor custo'],
+    'preco_custo': ['preco de custo', 'preco custo', 'valor custo', 'custo'],
+    'preco_unitario': ['preco unitario', 'preco de venda', 'preco venda', 'valor unitario', 'valor venda', 'preco', 'valor'],
     'observacao': ['observacao', 'obs', 'comentario'],
     'data': ['data', 'dt'],
     'url': ['url', 'link', 'pagina'],
@@ -36,16 +36,41 @@ KIND_SYNONYMS = {
 }
 
 
-def infer_kind(column_name: str) -> str:
-    key = normalize_key(column_name).replace(' obrigatorio', '').replace(' obrigatoria', '')
+def _clean_column_key(column_name: str) -> str:
+    key = normalize_key(column_name)
+    key = key.replace(' obrigatorio', '').replace(' obrigatoria', '')
     key = key.replace('*', '').strip()
+    return key
+
+
+def infer_kind(column_name: str) -> str:
+    """Detecta o tipo da coluna priorizando nomes mais específicos."""
+    key = _clean_column_key(column_name)
+    if not key:
+        return 'custom'
+
+    best_kind = 'custom'
+    best_score = 0
 
     for kind, synonyms in KIND_SYNONYMS.items():
         for synonym in synonyms:
             syn = normalize_key(synonym)
-            if key == syn or syn in key or key in syn:
-                return kind
-    return 'custom'
+            if not syn:
+                continue
+
+            score = 0
+            if key == syn:
+                score = 1000 + len(syn)
+            elif syn in key:
+                score = 500 + len(syn)
+            elif key in syn:
+                score = 300 + len(key)
+
+            if score > best_score:
+                best_score = score
+                best_kind = kind
+
+    return best_kind
 
 
 def build_contract(columns: Iterable[str]) -> list[RequestedField]:
