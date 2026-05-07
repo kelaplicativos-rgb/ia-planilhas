@@ -7,6 +7,7 @@ import pandas as pd
 from bling_app_zero.core.site_engines.estoque_fast_crawler import crawl_estoque_fast_dataframe
 from bling_app_zero.core.site_engines.field_resolver import build_model_limited_dataframe, requested_field_profile
 from bling_app_zero.core.site_engines.model_columns import get_requested_columns
+from bling_app_zero.ui.debug_panel import add_debug_log
 
 ProgressCallback = Callable[..., None]
 
@@ -51,13 +52,27 @@ def executar_site_estoque_engine(
 ) -> pd.DataFrame:
     requested_columns = get_requested_columns(model_df)
     if not requested_columns:
+        add_debug_log("Estoque engine bloqueado: modelo sem colunas.", origem="ESTOQUE_ENGINE")
         return pd.DataFrame()
 
     seed_urls = _normalize_urls(urls)
     if not seed_urls:
+        add_debug_log("Estoque engine bloqueado: nenhuma URL válida.", origem="ESTOQUE_ENGINE")
         return pd.DataFrame(columns=requested_columns)
 
     requested_fields = requested_field_profile(requested_columns, operation="estoque")
+    add_debug_log(
+        "Estoque engine exclusivo iniciado.",
+        payload={
+            "urls": len(seed_urls),
+            "colunas_modelo": requested_columns,
+            "campos_extraidos": sorted(requested_fields),
+            "crawler": "estoque_fast_crawler",
+            "max_products": max_products,
+            "max_workers": max_workers,
+        },
+        origem="ESTOQUE_ENGINE",
+    )
 
     if progress_callback:
         campos = ", ".join(sorted(requested_fields)) or "somente campos manuais"
@@ -72,6 +87,7 @@ def executar_site_estoque_engine(
     )
 
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+        add_debug_log("Estoque engine exclusivo finalizado sem linhas capturadas.", origem="ESTOQUE_ENGINE")
         return pd.DataFrame(columns=requested_columns)
 
     if progress_callback:
@@ -82,6 +98,12 @@ def executar_site_estoque_engine(
         requested_columns,
         operation="estoque",
         deposito_nome=deposito_nome,
+    )
+
+    add_debug_log(
+        "Estoque engine exclusivo finalizado.",
+        payload={"linhas_brutas": len(raw_df), "linhas_finais": len(limited), "colunas_finais": list(limited.columns)},
+        origem="ESTOQUE_ENGINE",
     )
 
     if progress_callback:
