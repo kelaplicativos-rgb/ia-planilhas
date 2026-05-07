@@ -1,19 +1,5 @@
 from __future__ import annotations
 
-"""Adaptador do modo Flash Amplo para captura página por página.
-
-Ponte entre o fluxo Instant/Flash e o motor rápido paralelo em
-`bling_app_zero.core.flash_page_crawler`.
-
-Regra obrigatória:
-- categoria/listagem descobre links primeiro;
-- sitemap entra por último, apenas para complementar o que faltou;
-- dados do produto vêm entrando em cada página `/produto/...`;
-- estoque não é obrigatório;
-- cada linha mantém `Link Externo`/`URL do Produto` da página real;
-- limite interno alto para não cortar a captura cedo.
-"""
-
 from typing import Callable, Iterable, Optional
 
 import pandas as pd
@@ -25,7 +11,6 @@ from bling_app_zero.core.flash_page_crawler import (
     crawl_flash_amplo_page_by_page_dataframe,
 )
 
-
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 
 
@@ -35,13 +20,14 @@ def run_flash_amplo_page_mode(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
+    requested_fields: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    """Executa o Flash Amplo correto: rápido e página por página."""
     return crawl_flash_amplo_page_by_page_dataframe(
         urls,
         max_products=max_products,
         max_workers=max_workers,
         progress_callback=progress_callback,
+        requested_fields=requested_fields,
     )
 
 
@@ -51,13 +37,14 @@ def run_flash_amplo(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
+    requested_fields: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    """Alias compatível para telas/fluxos que chamarem `run_flash_amplo`."""
     return run_flash_amplo_page_mode(
         urls,
         max_products=max_products,
         max_workers=max_workers,
         progress_callback=progress_callback,
+        requested_fields=requested_fields,
     )
 
 
@@ -67,13 +54,14 @@ def flash_amplo_dataframe(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
+    requested_fields: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    """Alias objetivo para retorno em DataFrame."""
     return run_flash_amplo_page_mode(
         urls,
         max_products=max_products,
         max_workers=max_workers,
         progress_callback=progress_callback,
+        requested_fields=requested_fields,
     )
 
 
@@ -83,11 +71,12 @@ def flash_amplo_rows(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
+    requested_fields: Iterable[str] | None = None,
 ) -> list[dict[str, str]]:
-    """Retorna linhas em lista de dicts para fluxos antigos."""
     return crawl_flash_amplo_page_by_page(
         urls,
         max_products=max_products,
         max_workers=max_workers,
         progress_callback=progress_callback,
+        requested_fields=requested_fields,
     )
