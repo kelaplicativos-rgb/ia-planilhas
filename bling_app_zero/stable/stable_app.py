@@ -23,13 +23,21 @@ BLING_MAX_IMPORT_ROWS = 1000
 CAD_COLS = ["Código", "Descrição", "Descrição complementar", "Unidade", "GTIN/EAN", "Preço unitário", "Marca", "Categoria", "URL imagens externas", "Link Externo", "URL do Produto"]
 EST_COLS = ["Código", "Descrição", "GTIN/EAN", "Depósito", "Estoque", "Quantidade"]
 GS1_PREFIXOS_INVALIDOS_BLOQUEADOS = {"665", "684", "782", "852"}
-MAPPING_UI_VERSION = "2026-05-06-real-preview-v3"
+MAPPING_UI_VERSION = "2026-05-07-auto-model-v1"
 
 
 def _read_upload(file) -> pd.DataFrame | None:
     if file is None:
         return None
     return read_uploaded_table(file).dataframe.fillna("")
+
+
+def _has_df(df) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+
+
+def _has_model_columns(df) -> bool:
+    return isinstance(df, pd.DataFrame) and len([c for c in df.columns if str(c).strip()]) > 0
 
 
 def _read_bling_model_upload(file) -> pd.DataFrame | None:
@@ -55,22 +63,30 @@ def _read_bling_model_upload(file) -> pd.DataFrame | None:
     return None
 
 
-def _has_df(df) -> bool:
-    return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
+def _norm(v) -> str:
+    return normalizar_nome_coluna(v)
 
 
-def _has_model_columns(df) -> bool:
-    return isinstance(df, pd.DataFrame) and len([c for c in df.columns if str(c).strip()]) > 0
+def _detect_tipo_by_model(modelo: pd.DataFrame | None) -> str:
+    if not _has_model_columns(modelo):
+        return "cadastro"
+    nomes = {_norm(c) for c in modelo.columns if str(c).strip()}
+    texto = " | ".join(sorted(nomes))
+    estoque_score = 0
+    cadastro_score = 0
+    for termo in ("deposito", "estoque", "quantidade", "saldo", "balanco"):
+        if termo in texto:
+            estoque_score += 2
+    for termo in ("descricao complementar", "url imagens externas", "categoria", "marca", "ncm", "peso bruto", "peso liquido", "unidade"):
+        if termo in texto:
+            cadastro_score += 2
+    return "estoque" if estoque_score > cadastro_score else "cadastro"
 
 
 def _cols(tipo: str, modelo: pd.DataFrame | None) -> list[str]:
     if _has_model_columns(modelo):
         return [str(c).strip() for c in modelo.columns if str(c).strip()]
     return EST_COLS if tipo == "estoque" else CAD_COLS
-
-
-def _norm(v) -> str:
-    return normalizar_nome_coluna(v)
 
 
 def _digits(value: object) -> str:
@@ -489,29 +505,33 @@ def run_stable_app() -> None:
             limpar_vault(prefixes=("stable_", "supplier_"))
             st.rerun()
 
-    tipo = st.radio("O que você quer gerar?", ["cadastro", "estoque"], format_func=lambda x: "Cadastro de produtos" if x == "cadastro" else "Atualização de estoque", horizontal=True, key="stable_tipo")
     modelo = restaurar_df("stable_df_modelo")
 
-    with st.expander("1. Modelo Bling obrigatório para cadastro" if tipo == "cadastro" else "Modelo Bling opcional", expanded=(tipo == "cadastro" and not _has_model_columns(modelo))):
+    with st.expander("1. Anexar modelo Bling", expanded=not _has_model_columns(modelo)):
         up_modelo = st.file_uploader("Anexar modelo Bling", type=None, key="stable_upload_modelo")
         if up_modelo is not None:
             modelo_lido = _read_bling_model_upload(up_modelo)
             if _has_model_columns(modelo_lido):
                 modelo = guardar_df("stable_df_modelo", modelo_lido)
-                st.success(f"Modelo lido: {len(modelo.columns)} colunas")
-                st.caption("Modelo aceito mesmo sem linhas preenchidas, pois o Bling usa a estrutura das colunas.")
+                tipo_detectado = _detect_tipo_by_model(modelo)
+                st.session_state["stable_tipo"] = tipo_detectado
+                st.success(f"Modelo reconhecido automaticamente: {'Atualização de estoque' if tipo_detectado == 'estoque' else 'Cadastro de produtos'}")
+                st.caption(f"Modelo lido: {len(modelo.columns)} colunas. O sistema usa essa estrutura como destino.")
             else:
                 st.error("Não consegui ler o modelo Bling anexado.")
                 st.code("O arquivo foi reconhecido, mas não encontrei uma linha de cabeçalhos válida. Envie o modelo .xlsx exportado pelo Bling ou uma planilha com os nomes das colunas na primeira linha útil.")
         elif _has_model_columns(modelo):
-            st.info(f"🔒 Modelo preservado: {len(modelo.columns)} colunas")
+            tipo_detectado = _detect_tipo_by_model(modelo)
+            st.session_state["stable_tipo"] = tipo_detectado
+            st.info(f"🔒 Modelo preservado e reconhecido como {'Atualização de estoque' if tipo_detectado == 'estoque' else 'Cadastro de produtos'}: {len(modelo.columns)} colunas")
 
-    if tipo == "cadastro" and not _has_model_columns(modelo):
-        st.warning("Anexe primeiro a planilha modelo Bling de cadastro.")
-        st.info("Sem o modelo, o app não gera base, preview nem mapeamento para evitar coluna errada.")
+    if not _has_model_columns(modelo):
+        st.warning("Anexe primeiro a planilha modelo Bling. Depois disso o sistema reconhece sozinho se é cadastro ou estoque.")
         return
 
+    tipo = str(st.session_state.get("stable_tipo") or _detect_tipo_by_model(modelo))
     cols = _cols(tipo, modelo)
+    st.success(f"Operação reconhecida: {'Atualização de estoque' if tipo == 'estoque' else 'Cadastro de produtos'}")
     st.divider()
     df = restaurar_df("stable_df_origem")
     tab_file, tab_site = st.tabs(["📎 Arquivo", "🌐 Site"])
@@ -541,7 +561,7 @@ def run_stable_app() -> None:
 
     _show_line_metrics(df, restaurar_df("stable_df_export"))
     st.subheader("Mapeamento manual")
-    st.caption("NCM só é preenchido quando existir coluna NCM/Classificação fiscal explícita na origem. Sem certeza, fica vazio.")
+    st.caption("As opções de preenchimento vêm somente do preview da origem/captura. O modelo Bling fica como destino.")
 
     mapping = {}
     auto_100_count = 0
