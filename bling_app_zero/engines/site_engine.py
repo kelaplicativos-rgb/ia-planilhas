@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
+from collections import deque
 from datetime import date
 from typing import Iterable
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
@@ -16,10 +19,39 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (compatible; IA-Planilhas-Bling/3.0; +https://github.com/kelaplicativos-rgb/ia-planilhas)'
 }
 
+PRODUCT_HINTS = [
+    '/produto', '/produtos', '/product', '/products', '/p/', '/item', '/loja/produto',
+    'produto-', 'product-', 'sku=', 'variant=', 'ref=', 'cod=', 'codigo=',
+]
+
+BLOCKED_HINTS = [
+    'facebook', 'instagram', 'whatsapp', 'youtube', 'mailto:', 'tel:', '#',
+    '/login', '/conta', '/account', '/carrinho', '/cart', '/checkout', '/politica',
+    '/privacy', '/termos', '/blog', '/noticia', '/news', '/institucional',
+]
+
 
 def split_urls(raw: str) -> list[str]:
     lines = re.split(r'[\n,;]+', str(raw or ''))
     return [line.strip() for line in lines if line.strip().startswith(('http://', 'https://'))]
+
+
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(str(url or '').strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ''
+    path = re.sub(r'/+', '/', parsed.path or '/')
+    clean = parsed._replace(path=path, fragment='')
+    return urlunparse(clean).rstrip('/')
+
+
+def _same_domain(url: str, base_domain: str) -> bool:
+    host = urlparse(url).netloc.lower().replace('www.', '')
+    return host == base_domain or host.endswith('.' + base_domain)
+
+
+def _base_domain(url: str) -> str:
+    return urlparse(url).netloc.lower().replace('www.', '')
 
 
 def _safe_get(url: str) -> str:
@@ -53,6 +85,12 @@ def _price(soup: BeautifulSoup, page_text: str) -> str:
     meta = soup.find('meta', property='product:price:amount')
     if meta and meta.get('content'):
         return clean_cell(meta.get('content'))
+    for selector in ['[itemprop=price]', '.price', '.preco', '.valor', '.product-price']:
+        node = soup.select_one(selector)
+        if node:
+            found = re.search(r'([0-9\.]+,[0-9]{2})', node.get_text(' ', strip=True))
+            if found:
+                return found.group(1)
     match = re.search(r'R\$\s*([0-9\.]+,[0-9]{2})', page_text)
     return match.group(1) if match else ''
 
@@ -64,14 +102,14 @@ def _images(soup: BeautifulSoup) -> str:
         if 'image' in prop and meta.get('content'):
             urls.append(str(meta.get('content')))
     for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-lazy')
+        src = img.get('src') or img.get('data-src') or img.get('data-lazy') or img.get('data-original')
         if src:
             urls.append(str(src))
     cleaned: list[str] = []
     for raw_url in urls:
         image_url = raw_url.strip()
         low = image_url.lower()
-        if not image_url or any(bad in low for bad in ['logo', 'sprite', 'placeholder', 'whatsapp', 'facebook']):
+        if not image_url or any(bad in low for bad in ['logo', 'sprite', 'placeholder', 'whatsapp', 'facebook', 'icon']):
             continue
         if image_url not in cleaned:
             cleaned.append(image_url)
@@ -138,6 +176,175 @@ def _category(soup: BeautifulSoup, page_text: str) -> str:
     return ''
 
 
+def _jsonld_product_score(soup: BeautifulSoup) -> int:
+    score = 0
+    for script in soup.find_all('script', type='application/ld+json'):
+        raw = script.string or script.get_text() or ''
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            text = json.dumps(item, ensure_ascii=False).lower()
+            if 'product' in text:
+                score += 70
+            if 'offers' in text:
+                score += 20
+    return score
+
+
+def _is_product_like(url: str, html: str = '') -> bool:
+    low_url = url.lower()
+    score = 0
+    if any(hint in low_url for hint in PRODUCT_HINTS):
+        score += 45
+    soup = _make_soup(html) if html else None
+    if soup:
+        text = normalize_key(_page_text(soup))
+        if 'og:type' in html.lower() and 'product' in html.lower():
+            score += 30
+        score += _jsonld_product_score(soup)
+        if any(term in text for term in ['comprar', 'adicionar ao carrinho', 'preco', 'sku', 'referencia']):
+            score += 35
+    return score >= 45
+
+
+def _is_allowed_link(url: str, base_domain: str) -> bool:
+    low = url.lower()
+    if not url.startswith(('http://', 'https://')):
+        return False
+    if not _same_domain(url, base_domain):
+        return False
+    if any(bad in low for bad in BLOCKED_HINTS):
+        return False
+    if re.search(r'\.(jpg|jpeg|png|webp|gif|pdf|zip|rar|css|js|svg)(\?|$)', low):
+        return False
+    return True
+
+
+def _extract_links(url: str, soup: BeautifulSoup, base_domain: str) -> list[str]:
+    found: list[str] = []
+    for node in soup.find_all('a', href=True):
+        absolute = _normalize_url(urljoin(url, str(node.get('href'))))
+        if absolute and _is_allowed_link(absolute, base_domain) and absolute not in found:
+            found.append(absolute)
+    for node in soup.find_all(['link', 'area'], href=True):
+        absolute = _normalize_url(urljoin(url, str(node.get('href'))))
+        if absolute and _is_allowed_link(absolute, base_domain) and absolute not in found:
+            found.append(absolute)
+    return found
+
+
+def _sitemap_candidates(start_url: str) -> list[str]:
+    parsed = urlparse(start_url)
+    root = f'{parsed.scheme}://{parsed.netloc}'
+    return [
+        f'{root}/sitemap.xml',
+        f'{root}/sitemap_index.xml',
+        f'{root}/sitemap-products.xml',
+        f'{root}/product-sitemap.xml',
+        f'{root}/products_sitemap.xml',
+    ]
+
+
+def _parse_sitemap_urlset(xml_text: str) -> list[str]:
+    urls = re.findall(r'<loc>\s*([^<]+?)\s*</loc>', xml_text, flags=re.I)
+    return [_normalize_url(url) for url in urls if _normalize_url(url)]
+
+
+def _discover_from_sitemaps(start_url: str, max_products: int) -> list[str]:
+    base_domain = _base_domain(start_url)
+    queue = deque(_sitemap_candidates(start_url))
+    seen: set[str] = set()
+    products: list[str] = []
+
+    while queue and len(products) < max_products:
+        sitemap_url = queue.popleft()
+        if sitemap_url in seen:
+            continue
+        seen.add(sitemap_url)
+        xml = _safe_get(sitemap_url)
+        if not xml:
+            continue
+        for loc in _parse_sitemap_urlset(xml):
+            if not _is_allowed_link(loc, base_domain):
+                continue
+            low = loc.lower()
+            if 'sitemap' in low and loc not in seen:
+                queue.append(loc)
+                continue
+            if _is_product_like(loc) and loc not in products:
+                products.append(loc)
+                if len(products) >= max_products:
+                    break
+    return products
+
+
+def _pagination_links(url: str, base_domain: str, page: int) -> list[str]:
+    candidates = []
+    for token in [f'?page={page}', f'&page={page}', f'?pagina={page}', f'&pagina={page}', f'/page/{page}', f'?p={page}']:
+        if '?' in token or '&' in token:
+            sep = '&' if '?' in url else '?'
+            param = token[1:] if token.startswith(('?', '&')) else token
+            candidates.append(_normalize_url(url + sep + param))
+        else:
+            candidates.append(_normalize_url(url.rstrip('/') + token))
+    return [item for item in candidates if item and _is_allowed_link(item, base_domain)]
+
+
+def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_products: int = 1000) -> list[str]:
+    discovered: list[str] = []
+    visited: set[str] = set()
+    queue: deque[str] = deque()
+
+    for raw in start_urls:
+        start = _normalize_url(raw)
+        if not start:
+            continue
+        queue.append(start)
+        for product_url in _discover_from_sitemaps(start, max_products=max_products):
+            if product_url not in discovered:
+                discovered.append(product_url)
+            if len(discovered) >= max_products:
+                return discovered
+
+    while queue and len(visited) < max_pages and len(discovered) < max_products:
+        url = queue.popleft()
+        url = _normalize_url(url)
+        if not url or url in visited:
+            continue
+        visited.add(url)
+        base_domain = _base_domain(url)
+        html = _safe_get(url)
+        if not html:
+            continue
+        soup = _make_soup(html)
+
+        if _is_product_like(url, html) and url not in discovered:
+            discovered.append(url)
+            if len(discovered) >= max_products:
+                break
+
+        links = _extract_links(url, soup, base_domain)
+        product_first = sorted(links, key=lambda item: 0 if _is_product_like(item) else 1)
+        for link in product_first:
+            if link in visited:
+                continue
+            if _is_product_like(link) and link not in discovered:
+                discovered.append(link)
+                if len(discovered) >= max_products:
+                    break
+            if len(visited) + len(queue) < max_pages:
+                queue.append(link)
+        for page in range(2, 8):
+            for paged in _pagination_links(url, base_domain, page):
+                if paged not in visited and len(visited) + len(queue) < max_pages:
+                    queue.append(paged)
+
+    return discovered
+
+
 def _build_cache(url: str, contract: list[RequestedField], soup: BeautifulSoup, page_text: str) -> dict[str, str]:
     kinds = kinds_from_contract(contract)
     cache: dict[str, str] = {'url': url}
@@ -187,7 +394,6 @@ def _value_for_field(field: RequestedField, cache: dict[str, str]) -> str:
 
 def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> dict[str, str]:
     contract = build_contract(requested_columns or [])
-
     html = _safe_get(url)
     soup = _make_soup(html)
     page_text = _page_text(soup)
@@ -228,3 +434,9 @@ def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> 
 def scrape_urls(urls: list[str], requested_columns: Iterable[str] | None = None) -> pd.DataFrame:
     rows = [scrape_product(url, requested_columns=requested_columns) for url in urls]
     return pd.DataFrame(rows).fillna('')
+
+
+def scrape_all_products(start_urls: list[str], requested_columns: Iterable[str] | None = None, max_pages: int = 250, max_products: int = 1000) -> tuple[pd.DataFrame, list[str]]:
+    product_urls = discover_product_urls(start_urls=start_urls, max_pages=max_pages, max_products=max_products)
+    rows = [scrape_product(url, requested_columns=requested_columns) for url in product_urls]
+    return pd.DataFrame(rows).fillna(''), product_urls
