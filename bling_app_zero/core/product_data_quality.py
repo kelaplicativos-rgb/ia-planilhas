@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import pandas as pd
 
 from bling_app_zero.core.brand_from_title import infer_brand_from_title
+from bling_app_zero.core.image_quality_validator import filter_product_image_urls
 
 ZERO_LIKE = {"0", "0,0", "0,00", "0.0", "0.00", "r$ 0,00", "r$0,00"}
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
@@ -173,13 +174,12 @@ def _strip_tracking_query(url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(safe_query, doseq=True), ""))
 
 
-def _normalize_pipe_urls(value: object, *, max_items: int = 12) -> str:
+def _normalize_pipe_urls(value: object, *, max_items: int = 12, product_title: object = "", context: object = "") -> str:
     parts = _candidate_parts_from_value(value)
     if not parts:
         return ""
 
-    result: list[str] = []
-    seen: set[str] = set()
+    cleaned_parts: list[str] = []
     for part in parts:
         url = _clean_url_candidate(part)
         if not url or not _is_url(url):
@@ -187,14 +187,16 @@ def _normalize_pipe_urls(value: object, *, max_items: int = 12) -> str:
         url = _strip_tracking_query(url)
         if not _looks_like_real_product_image(url):
             continue
-        dedupe_key = urlsplit(url.lower())._replace(query="", fragment="").geturl()
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        result.append(url)
-        if len(result) >= max_items:
-            break
-    return "|".join(result)
+        cleaned_parts.append(url)
+
+    return filter_product_image_urls(
+        cleaned_parts,
+        product_title=product_title,
+        context=context,
+        max_images=max_items,
+        require_remote=False,
+        require_product_match=False,
+    )
 
 
 def _clean_description(value: object, title: str = "") -> str:
@@ -261,19 +263,25 @@ def _column_looks_like_image_source(column_name: object) -> bool:
 
 def _harmonize_images(cleaned: dict[str, str]) -> None:
     images: list[str] = []
+    title = _first_value(cleaned, TITLE_ALIASES)
+    context = " ".join(
+        _first_value(cleaned, aliases)
+        for aliases in (CATEGORY_ALIASES, DESCRIPTION_COMPLEMENT_ALIASES, PRODUCT_URL_ALIASES)
+        if _first_value(cleaned, aliases)
+    )
 
     for alias in IMAGE_ALIASES:
-        value = _normalize_pipe_urls(_first_value(cleaned, [alias]))
+        value = _normalize_pipe_urls(_first_value(cleaned, [alias]), product_title=title, context=context)
         if value:
             images.append(value)
 
     for key, value in list(cleaned.items()):
         if _column_looks_like_image_source(key):
-            normalized = _normalize_pipe_urls(value)
+            normalized = _normalize_pipe_urls(value, product_title=title, context=context)
             if normalized:
                 images.append(normalized)
 
-    final = _normalize_pipe_urls("|".join(images))
+    final = _normalize_pipe_urls("|".join(images), product_title=title, context=context)
     cleaned.pop("URL Imagens Externas", None)
     cleaned.pop("URL imagens externas", None)
     cleaned.pop("Imagens", None)
