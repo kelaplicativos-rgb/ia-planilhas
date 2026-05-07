@@ -2,13 +2,12 @@ from __future__ import annotations
 
 """Patch vivo para o fluxo stable.
 
-Além dos ajustes de preview/mapeamento, este patch substitui a captura antiga do
-Flash Amplo direto pelo roteador novo de motores independentes:
-- cadastro -> cadastro_engine;
-- estoque -> estoque_engine + motor especialista de valor real + feed/XML.
-
-Também adiciona Preview de origem nascendo fechado logo antes do mapeamento e
-sincroniza colunas equivalentes de estoque priorizando o valor real capturado.
+Este patch força a captura por site a passar pelo roteador novo de motores.
+Mesmo que o stable antigo chame o nome legado `executar_flash_amplo_pagina_por_pagina`,
+a função interceptada executa apenas:
+- cadastro_engine.py para cadastro;
+- estoque_engine.py para atualização de estoque;
+- stock_lookup_engine.py / stock_value_engine.py / stock_feed_engine.py para valor real de estoque.
 """
 
 from html import escape
@@ -22,7 +21,7 @@ from bling_app_zero.core.site_engines.stock_columns_guard import synchronize_sto
 from bling_app_zero.stable import stable_app as base
 from bling_app_zero.ui.debug_panel import add_debug_log
 
-MAPPING_UI_VERSION = "2026-05-07-stock-real-priority-v3"
+MAPPING_UI_VERSION = "2026-05-07-stock-new-engines-only-v4"
 
 _ORIGINAL_SOURCE_OPTIONS = base._source_options_for_target
 _ORIGINAL_SHOW_LINE_METRICS = base._show_line_metrics
@@ -259,7 +258,7 @@ def _executar_site_por_motores_stable(
             status.caption(str(message or "Processando captura por site..."))
 
     add_debug_log(
-        "Captura stable por site roteada para motores independentes.",
+        "Nome legado interceptado: executando somente motores novos de site.",
         payload={"tipo": tipo, "colunas_modelo": list(modelo.columns), "max_products": max_products, "max_workers": max_workers},
         origem="STABLE_SITE",
     )
