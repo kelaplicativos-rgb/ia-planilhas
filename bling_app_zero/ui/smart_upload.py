@@ -8,9 +8,9 @@ import streamlit as st
 
 from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
 
-SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf']
+SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'txt']
 MODEL_HINTS = ['modelo', 'bling', 'cadastro', 'estoque', 'layout', 'importacao', 'importação']
-SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf']
+SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export']
 
 
 @dataclass
@@ -20,6 +20,7 @@ class SmartUploadResult:
     model_file: Any | None = None
     model_df: pd.DataFrame | None = None
     attachments: list[Any] | None = None
+    ignored_files: list[Any] | None = None
 
 
 def _file_name(file: Any) -> str:
@@ -31,11 +32,28 @@ def _file_ext(file: Any) -> str:
     return name.rsplit('.', 1)[-1] if '.' in name else ''
 
 
+def _normalize_types(accepted_types: list[str] | None) -> list[str]:
+    values = accepted_types or SUPPORTED_TYPES
+    return [str(value).lower().lstrip('.') for value in values]
+
+
+def _split_supported_files(files: list[Any], accepted_types: list[str] | None) -> tuple[list[Any], list[Any]]:
+    allowed = set(_normalize_types(accepted_types))
+    supported: list[Any] = []
+    ignored: list[Any] = []
+    for file in files:
+        if _file_ext(file) in allowed:
+            supported.append(file)
+        else:
+            ignored.append(file)
+    return supported, ignored
+
+
 def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
         return read_upload_fast(file)
     except Exception as exc:
-        st.warning(f'Não consegui ler { _file_name(file) }: {exc}')
+        st.warning(f'Não consegui ler {_file_name(file)}: {exc}')
         return None
 
 
@@ -79,10 +97,10 @@ def _score_source(file: Any, df: pd.DataFrame | None, operation: str) -> int:
     return score
 
 
-def _classify(files: list[Any], operation: str, allow_model: bool) -> SmartUploadResult:
+def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files: list[Any] | None = None) -> SmartUploadResult:
     loaded: list[tuple[Any, pd.DataFrame | None]] = [(file, _safe_read(file)) for file in files]
     if not loaded:
-        return SmartUploadResult(attachments=[])
+        return SmartUploadResult(attachments=files, ignored_files=ignored_files or [])
 
     source_file = None
     source_df = None
@@ -104,6 +122,7 @@ def _classify(files: list[Any], operation: str, allow_model: bool) -> SmartUploa
         model_file=model_file if model_file is not source_file else None,
         model_df=model_df if model_file is not source_file else None,
         attachments=files,
+        ignored_files=ignored_files or [],
     )
 
 
@@ -116,25 +135,38 @@ def render_smart_upload_box(
     accepted_types: list[str] | None = None,
 ) -> SmartUploadResult:
     st.markdown(f'#### {title}')
-    st.caption('Anexe aqui como no WhatsApp: pode soltar a origem e o modelo juntos. O sistema reconhece automaticamente.')
+    st.caption('Anexe aqui como no WhatsApp: todos os arquivos ficam clicáveis. Depois o sistema valida e reconhece origem/modelo automaticamente.')
 
     files = st.file_uploader(
-        '📎 Anexar planilhas, XML ou PDF',
-        type=accepted_types or SUPPORTED_TYPES,
+        '📎 Anexar arquivos',
+        type=None,
         accept_multiple_files=True,
         key=key,
-        help='Pode anexar mais de um arquivo de uma vez. O sistema identifica origem e modelo pelo nome e pelas colunas.',
+        help='Sem bloqueio no seletor do celular: selecione o arquivo e o sistema valida depois.',
     )
 
     if not files:
         st.info('Nenhum arquivo anexado ainda. Clique no clipe ou arraste os arquivos para cá.')
-        return SmartUploadResult(attachments=[])
+        return SmartUploadResult(attachments=[], ignored_files=[])
 
-    result = _classify(list(files), operation=operation, allow_model=allow_model)
+    selected_files = list(files)
+    supported_files, ignored_files = _split_supported_files(selected_files, accepted_types)
 
-    st.success(f'{len(files)} arquivo(s) anexado(s).')
-    cards = st.columns(min(len(files), 3))
-    for index, file in enumerate(files):
+    if ignored_files:
+        st.warning(
+            'Arquivo(s) ignorado(s) por tipo não suportado neste fluxo: '
+            + ', '.join(_file_name(file) for file in ignored_files)
+        )
+
+    if not supported_files:
+        st.error('Os arquivos foram selecionados, mas nenhum deles é compatível com este fluxo.')
+        return SmartUploadResult(attachments=[], ignored_files=ignored_files)
+
+    result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
+
+    st.success(f'{len(supported_files)} arquivo(s) anexado(s) e aceito(s).')
+    cards = st.columns(min(len(supported_files), 3))
+    for index, file in enumerate(supported_files):
         with cards[index % len(cards)]:
             role = 'Origem'
             if result.model_file is file:
