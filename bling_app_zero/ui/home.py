@@ -300,6 +300,7 @@ def render_site() -> None:
                 all_products=all_products,
                 max_pages=max_pages,
                 max_products=max_products,
+                operation=operation,
             )
         st.session_state['df_site_bruto'] = df_site
 
