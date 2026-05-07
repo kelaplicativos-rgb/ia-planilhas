@@ -16,6 +16,16 @@ from bling_app_zero.utils.gtin import contar_gtins_invalidos_df, contar_gtins_su
 
 FORNECEDOR_PADRAO = "Não definido"
 
+# Sugestões conservadoras para reduzir avisos do Bling quando o NCM vier vazio.
+# Não substitui revisão fiscal/contábil. Só preenche quando a classificação fiscal está vazia.
+NCM_SUGESTOES_POR_TERMO: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("mouse",), "84716053"),
+    (("teclado",), "84716052"),
+    (("controle gamer",), "95045000"),
+    (("joystick",), "95045000"),
+    (("gamepad",), "95045000"),
+)
+
 LINHAS_LIXO_DESCRICAO = {
     "mega center eletronicos",
     "mega center eletrônicos",
@@ -73,7 +83,7 @@ def _valor_vazio_ou_indefinido(valor: object) -> bool:
     if not texto:
         return True
     texto_norm = _norm_lixo(texto)
-    return texto_norm in {"nan", "none", "null", "na", "n a", "indefinido", "sem fornecedor"}
+    return texto_norm in {"nan", "none", "null", "na", "n a", "indefinido", "sem fornecedor", "sem ncm", "sem classificacao fiscal"}
 
 
 def _colunas_fornecedor(df: pd.DataFrame) -> list[str]:
@@ -83,6 +93,17 @@ def _colunas_fornecedor(df: pd.DataFrame) -> list[str]:
     for col in df.columns:
         n = normalizar_texto(col)
         if "fornecedor" in n or "supplier" in n:
+            colunas.append(str(col))
+    return colunas
+
+
+def _colunas_ncm(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    colunas: list[str] = []
+    for col in df.columns:
+        n = normalizar_texto(col)
+        if "ncm" in n or "classificacao fiscal" in n or "classificação fiscal" in n:
             colunas.append(str(col))
     return colunas
 
@@ -150,6 +171,46 @@ def _coluna_descricao_produto(df: pd.DataFrame) -> str:
         if "descricao" in n or "descrição" in n or "produto" in n or "nome" in n:
             return str(col)
     return ""
+
+
+def _ncm_sugerido_para_descricao(descricao: object) -> str:
+    texto = _norm_lixo(descricao)
+    if not texto:
+        return ""
+    for termos, ncm in NCM_SUGESTOES_POR_TERMO:
+        if all(_norm_lixo(termo) in texto for termo in termos):
+            return ncm
+    return ""
+
+
+def _preencher_ncm_sugerido(df: pd.DataFrame) -> pd.DataFrame:
+    """Preenche NCM vazio apenas para produtos com regra conservadora conhecida."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    base = df.copy().fillna("")
+    desc_col = _coluna_descricao_produto(base)
+    ncm_cols = _colunas_ncm(base)
+    if not desc_col or desc_col not in base.columns or not ncm_cols:
+        return base
+
+    total_preenchido = 0
+    for idx, row in base.iterrows():
+        sugestao = _ncm_sugerido_para_descricao(row.get(desc_col, ""))
+        if not sugestao:
+            continue
+        for col in ncm_cols:
+            if _valor_vazio_ou_indefinido(row.get(col, "")):
+                base.at[idx, col] = sugestao
+                total_preenchido += 1
+
+    if total_preenchido > 0:
+        log_debug(
+            f"{total_preenchido} NCM(s) vazio(s) preenchido(s) por sugestão local conservadora. Revise com contador quando necessário.",
+            nivel="INFO",
+        )
+
+    return base.fillna("")
 
 
 def _coluna_codigo_produto(df: pd.DataFrame) -> str:
@@ -346,6 +407,7 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         base[coluna] = base[coluna].map(_limpar_texto_celula)
 
     base = _preencher_fornecedor_padrao(base).fillna("")
+    base = _preencher_ncm_sugerido(base).fillna("")
     base = _normalizar_coluna_imagens_externas(base).fillna("")
 
     desc_col = _coluna_descricao_produto(base)
