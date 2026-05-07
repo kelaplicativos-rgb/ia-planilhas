@@ -32,6 +32,15 @@ PRODUCT_CODE_COLUMN_TERMS = [
     'referência',
 ]
 
+PRODUCT_NAME_COLUMN_TERMS = [
+    'descricao',
+    'descrição',
+    'nome',
+    'produto',
+    'titulo',
+    'título',
+]
+
 
 def _looks_like_image_column(column: object) -> bool:
     key = str(column or '').strip().lower()
@@ -45,6 +54,11 @@ def _looks_like_product_code_column(column: object) -> bool:
     if looks_like_gtin_column(column):
         return False
     return key in {normalize_key(term) for term in PRODUCT_CODE_COLUMN_TERMS}
+
+
+def _looks_like_product_name_column(column: object) -> bool:
+    key = normalize_key(column)
+    return key in {normalize_key(term) for term in PRODUCT_NAME_COLUMN_TERMS}
 
 
 def normalize_image_urls(value: object) -> str:
@@ -70,7 +84,39 @@ def normalize_image_urls(value: object) -> str:
     return '|'.join(parts)
 
 
-def _blank_duplicate_product_codes(out: pd.DataFrame) -> pd.DataFrame:
+def _safe_code_text(value: object) -> str:
+    text = clean_cell(value)
+    text = re.sub(r'\s+', '', text)
+    text = re.sub(r'[^A-Za-z0-9._-]+', '', text)
+    return text[:60]
+
+
+def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
+    name_columns = [column for column in out.columns if _looks_like_product_name_column(column)]
+    for column in name_columns:
+        value = clean_cell(out.at[row_index, column]) if row_index in out.index else ''
+        key = normalize_key(value)
+        if key:
+            base = re.sub(r'[^a-z0-9]+', '', key)[:24]
+            if base:
+                return f'auto{base}{row_index + 1}'[:60]
+    return f'auto{row_index + 1}'
+
+
+def _make_unique_code(base_code: str, row_index: int, seen: set[str]) -> str:
+    base = _safe_code_text(base_code) or f'auto{row_index + 1}'
+    candidate = base[:60]
+    counter = 2
+
+    while normalize_key(candidate) in seen:
+        suffix = f'-{counter}'
+        candidate = f'{base[:60 - len(suffix)]}{suffix}'
+        counter += 1
+
+    return candidate
+
+
+def _ensure_unique_product_codes(out: pd.DataFrame) -> pd.DataFrame:
     if out is None or out.empty:
         return out
 
@@ -79,17 +125,15 @@ def _blank_duplicate_product_codes(out: pd.DataFrame) -> pd.DataFrame:
         seen: set[str] = set()
         cleaned_values: list[str] = []
 
-        for value in out[column].tolist():
-            text = clean_cell(value)
-            key = normalize_key(text)
-            if not key:
-                cleaned_values.append('')
-                continue
-            if key in seen:
-                cleaned_values.append('')
-                continue
-            seen.add(key)
-            cleaned_values.append(text)
+        for position, row_index in enumerate(out.index):
+            original = clean_cell(out.at[row_index, column])
+            base_code = _safe_code_text(original)
+            if not base_code:
+                base_code = _fallback_code_from_row(out, position)
+
+            unique_code = _make_unique_code(base_code, position, seen)
+            seen.add(normalize_key(unique_code))
+            cleaned_values.append(unique_code)
 
         out[column] = cleaned_values
 
@@ -110,7 +154,7 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out[col] = out[col].apply(clean_cell)
 
-    out = _blank_duplicate_product_codes(out)
+    out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
 
