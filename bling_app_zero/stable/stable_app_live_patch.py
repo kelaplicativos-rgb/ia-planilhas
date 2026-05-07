@@ -7,7 +7,8 @@ Flash Amplo direto pelo roteador novo de motores independentes:
 - cadastro -> cadastro_engine;
 - estoque -> estoque_engine + motor especialista de valor real + feed/XML.
 
-Também adiciona Preview de origem nascendo fechado logo antes do mapeamento.
+Também adiciona Preview de origem nascendo fechado logo antes do mapeamento e
+sincroniza colunas equivalentes de estoque priorizando o valor real capturado.
 """
 
 from html import escape
@@ -17,13 +18,15 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.site_engines import executar_motor_site_por_operacao
+from bling_app_zero.core.site_engines.stock_columns_guard import synchronize_stock_columns
 from bling_app_zero.stable import stable_app as base
 from bling_app_zero.ui.debug_panel import add_debug_log
 
-MAPPING_UI_VERSION = "2026-05-07-site-engines-origin-preview-v2"
+MAPPING_UI_VERSION = "2026-05-07-stock-real-priority-v3"
 
 _ORIGINAL_SOURCE_OPTIONS = base._source_options_for_target
 _ORIGINAL_SHOW_LINE_METRICS = base._show_line_metrics
+_ORIGINAL_NORMALIZE_FOR_FINAL = base._normalize_for_final
 base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
 
 
@@ -179,10 +182,26 @@ def _show_line_metrics_with_origin_preview(df_origem: pd.DataFrame, df_final: pd
     _ORIGINAL_SHOW_LINE_METRICS(df_origem, df_final)
 
 
+def _normalize_for_final_with_stock_sync(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    out = _ORIGINAL_NORMALIZE_FOR_FINAL(df, cols)
+    try:
+        tipo = str(st.session_state.get("stable_tipo") or "")
+        if tipo == "estoque":
+            out = synchronize_stock_columns(out, cols)
+    except Exception:
+        pass
+    return out.fillna("") if isinstance(out, pd.DataFrame) else out
+
+
 def _salvar_origem_site_stable(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
     cleaned = df.copy().fillna("")
+    try:
+        if _stable_tipo(_stable_modelo()) == "estoque":
+            cleaned = synchronize_stock_columns(cleaned, list(cleaned.columns))
+    except Exception:
+        pass
 
     st.session_state["df_origem"] = cleaned.copy()
     st.session_state["df_origem_site"] = cleaned.copy()
@@ -202,7 +221,7 @@ def _salvar_origem_site_stable(df: pd.DataFrame) -> pd.DataFrame:
         pass
 
     add_debug_log(
-        "Captura stable por site salva como origem.",
+        "Captura stable por site salva como origem com estoque sincronizado.",
         payload={"linhas": len(cleaned), "colunas": list(cleaned.columns)},
         origem="STABLE_SITE",
     )
@@ -277,6 +296,7 @@ def run_stable_app() -> None:
     base._selectbox_mapping = _selectbox_mapping_live
     base._source_options_for_target = _source_options_allow_id
     base._show_line_metrics = _show_line_metrics_with_origin_preview
+    base._normalize_for_final = _normalize_for_final_with_stock_sync
     base.executar_flash_amplo_pagina_por_pagina = _executar_site_por_motores_stable
     base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
     base.run_stable_app()
