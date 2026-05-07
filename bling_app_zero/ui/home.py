@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+from io import BytesIO
+from typing import Any, Callable
+
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
-from bling_app_zero.core.pricing import apply_pricing
 from bling_app_zero.core.validators import validate_final_df
-from bling_app_zero.engines.estoque_engine import requested_columns_from_model
-from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline as run_cadastro_pipeline
-from bling_app_zero.pipelines.estoque_pipeline import run_pipeline as run_estoque_pipeline
-from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
 
 
 OPERACOES = {
@@ -20,12 +18,84 @@ OPERACOES = {
     'Busca Inteligente por Site': 'site',
 }
 
+PREVIEW_ROWS = 50
+
+
+class _NamedBytesIO(BytesIO):
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data)
+        self.name = name
+
+
+@st.cache_data(show_spinner=False)
+def _read_uploaded_file_cached(file_name: str, file_bytes: bytes) -> pd.DataFrame:
+    buffer = _NamedBytesIO(file_bytes, file_name)
+    return read_uploaded_file(buffer)
+
+
+def _read_upload_fast(uploaded_file: Any | None) -> pd.DataFrame | None:
+    if uploaded_file is None:
+        return None
+    file_name = getattr(uploaded_file, 'name', 'arquivo')
+    file_bytes = uploaded_file.getvalue()
+    return _read_uploaded_file_cached(file_name, file_bytes).copy()
+
+
+@st.cache_resource(show_spinner=False)
+def _load_apply_pricing() -> Callable:
+    from bling_app_zero.core.pricing import apply_pricing
+
+    return apply_pricing
+
+
+@st.cache_resource(show_spinner=False)
+def _load_cadastro_pipeline() -> Callable:
+    from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline
+
+    return run_pipeline
+
+
+@st.cache_resource(show_spinner=False)
+def _load_estoque_pipeline() -> Callable:
+    from bling_app_zero.pipelines.estoque_pipeline import run_pipeline
+
+    return run_pipeline
+
+
+@st.cache_resource(show_spinner=False)
+def _load_site_pipeline() -> Callable:
+    from bling_app_zero.pipelines.site_pipeline import run_pipeline
+
+    return run_pipeline
+
+
+@st.cache_resource(show_spinner=False)
+def _load_requested_columns_from_model() -> Callable:
+    from bling_app_zero.engines.estoque_engine import requested_columns_from_model
+
+    return requested_columns_from_model
+
+
+def _df_signature(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return 'empty'
+    columns = '|'.join(map(str, df.columns))
+    shape = f'{len(df)}x{len(df.columns)}'
+    sample = pd.util.hash_pandas_object(df.head(200).astype(str), index=True).sum()
+    return f'{shape}:{columns}:{sample}'
+
+
+@st.cache_data(show_spinner=False)
+def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str) -> bytes:
+    _ = signature
+    return to_bling_csv_bytes(df)
+
 
 def _show_contract(columns: list[str]) -> None:
     if not columns:
         return
     contract = build_contract(columns)
-    with st.expander('Contrato de colunas solicitado pela planilha', expanded=True):
+    with st.expander('Contrato de colunas solicitado pela planilha', expanded=False):
         st.caption('O crawler usa este contrato para buscar somente estes campos. Campo não encontrado fica vazio.')
         st.dataframe(
             pd.DataFrame([
@@ -37,6 +107,7 @@ def _show_contract(columns: list[str]) -> None:
                 for field in contract
             ]),
             use_container_width=True,
+            height=260,
         )
 
 
@@ -50,10 +121,11 @@ def _show_mapping(mapping: dict[str, str]) -> None:
                 for key, value in mapping.items()
             ]),
             use_container_width=True,
+            height=260,
         )
 
 
-def _download(df: pd.DataFrame, operation: str) -> None:
+def _download(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
         st.warning('Ainda não há dados finais para baixar.')
         return
@@ -64,22 +136,32 @@ def _download(df: pd.DataFrame, operation: str) -> None:
             for error in errors:
                 st.warning(error)
 
+    signature = _df_signature(df)
+    csv_bytes = _csv_bytes_cached(df.copy(), operation, signature)
+
     st.download_button(
         '⬇️ Baixar CSV final para o Bling',
-        data=to_bling_csv_bytes(df),
+        data=csv_bytes,
         file_name=filename_for_operation(operation),
-        mime='text/csv',
+        mime='text/csv; charset=utf-8',
         use_container_width=True,
+        key=f'download_{key}_{signature}',
     )
 
 
-def _preview(title: str, df: pd.DataFrame) -> None:
+def _preview(title: str, df: pd.DataFrame | None) -> None:
     st.markdown(f'#### {title}')
     if df is None or df.empty:
         st.info('Sem dados para exibir ainda.')
+        return
+
+    total_rows = len(df)
+    total_cols = len(df.columns)
+    st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
+    if total_rows > PREVIEW_ROWS:
+        st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
     else:
-        st.dataframe(df.head(100), use_container_width=True)
-        st.caption(f'{len(df)} linha(s) × {len(df.columns)} coluna(s)')
+        st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
 
 
 def render_home() -> None:
@@ -99,7 +181,7 @@ def render_home() -> None:
 
 
 def render_cadastro() -> None:
-    st.success('Motor independente de CADASTRO carregado.')
+    st.success('Motor independente de CADASTRO será carregado somente quando gerar.')
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -110,10 +192,11 @@ def render_cadastro() -> None:
     usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
 
     if origem:
-        df_origem = read_uploaded_file(origem)
+        df_origem = _read_upload_fast(origem)
         _preview('Preview da origem', df_origem)
 
-        if usar_preco and not df_origem.empty:
+        if usar_preco and df_origem is not None and not df_origem.empty:
+            apply_pricing = _load_apply_pricing()
             colunas = [str(c) for c in df_origem.columns]
             coluna_custo = st.selectbox('Coluna de custo/preço base', colunas)
             c1, c2, c3, c4 = st.columns(4)
@@ -125,7 +208,8 @@ def render_cadastro() -> None:
             _preview('Origem com preço calculado', df_origem)
 
         if st.button('Gerar cadastro Bling', use_container_width=True):
-            df_modelo = read_uploaded_file(modelo) if modelo else None
+            run_cadastro_pipeline = _load_cadastro_pipeline()
+            df_modelo = _read_upload_fast(modelo) if modelo else None
             df_final, mapping = run_cadastro_pipeline(df_origem, df_modelo)
             st.session_state['df_final_cadastro'] = df_final
             st.session_state['mapping_cadastro'] = mapping
@@ -135,11 +219,11 @@ def render_cadastro() -> None:
     if isinstance(df_final, pd.DataFrame):
         _show_mapping(mapping)
         _preview('Preview final do cadastro', df_final)
-        _download(df_final, 'cadastro')
+        _download(df_final, 'cadastro', 'cadastro')
 
 
 def render_estoque() -> None:
-    st.warning('Motor independente de ESTOQUE carregado.')
+    st.warning('Motor independente de ESTOQUE será carregado somente quando gerar.')
     st.caption('Este fluxo usa somente as colunas pedidas pelo modelo de estoque. Se não encontrar um campo, ele fica vazio.')
 
     col_a, col_b = st.columns(2)
@@ -151,15 +235,16 @@ def render_estoque() -> None:
     deposito = st.text_input('Nome do depósito', value='Não definido')
 
     if modelo:
-        df_modelo_preview = read_uploaded_file(modelo)
+        df_modelo_preview = _read_upload_fast(modelo)
         _show_contract([str(c) for c in df_modelo_preview.columns])
 
     if origem:
-        df_origem = read_uploaded_file(origem)
-        df_modelo = read_uploaded_file(modelo) if modelo else None
+        df_origem = _read_upload_fast(origem)
+        df_modelo = _read_upload_fast(modelo) if modelo else None
         _preview('Preview da origem de estoque', df_origem)
 
         if st.button('Gerar atualização de estoque', use_container_width=True):
+            run_estoque_pipeline = _load_estoque_pipeline()
             df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
             st.session_state['df_final_estoque'] = df_final
             st.session_state['mapping_estoque'] = mapping
@@ -169,11 +254,11 @@ def render_estoque() -> None:
     if isinstance(df_final, pd.DataFrame):
         _show_mapping(mapping)
         _preview('Preview final do estoque', df_final)
-        _download(df_final, 'estoque')
+        _download(df_final, 'estoque', 'estoque')
 
 
 def render_site() -> None:
-    st.info('Crawler inteligente independente carregado.')
+    st.info('Crawler inteligente independente será carregado somente ao clicar em buscar.')
     st.caption('Tecnologia ativa: ALL PRODUCTS MODE + extração orientada por contrato de colunas.')
 
     modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
@@ -188,10 +273,11 @@ def render_site() -> None:
     requested_columns = None
     df_modelo = None
     if modelo:
-        df_modelo = read_uploaded_file(modelo)
+        df_modelo = _read_upload_fast(modelo)
         requested_columns = [str(c) for c in df_modelo.columns]
         _show_contract(requested_columns)
         if operation == 'estoque':
+            requested_columns_from_model = _load_requested_columns_from_model()
             requested_columns = requested_columns_from_model(df_modelo)
 
     deposito = ''
@@ -206,6 +292,7 @@ def render_site() -> None:
     max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=10000, value=1000, step=100))
 
     if st.button('Buscar ALL PRODUCTS e gerar Bling', use_container_width=True):
+        run_site_pipeline = _load_site_pipeline()
         with st.spinner('Varrendo site, descobrindo produtos e extraindo somente as colunas solicitadas...'):
             df_site = run_site_pipeline(
                 raw_urls,
@@ -217,8 +304,10 @@ def render_site() -> None:
         st.session_state['df_site_bruto'] = df_site
 
         if operation == 'estoque':
+            run_estoque_pipeline = _load_estoque_pipeline()
             df_final, mapping = run_estoque_pipeline(df_site, df_modelo, deposito=deposito)
         else:
+            run_cadastro_pipeline = _load_cadastro_pipeline()
             df_final, mapping = run_cadastro_pipeline(df_site, df_modelo)
 
         st.session_state['df_site_final'] = df_final
@@ -235,4 +324,4 @@ def render_site() -> None:
     if isinstance(df_final, pd.DataFrame):
         _show_mapping(mapping)
         _preview('Preview final Bling gerado pelo site', df_final)
-        _download(df_final, operation_state)
+        _download(df_final, operation_state, 'site')
