@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bling_app_zero.engines.site_engine import scrape_all_products, scrape_urls, split_urls
+from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode
+from bling_app_zero.engines.site_engine import scrape_urls, split_urls
 
 
 DEFAULT_CADASTRO_SITE_COLUMNS = [
@@ -41,12 +42,12 @@ def run_site_cadastro_engine(
     columns = _effective_columns(requested_columns)
 
     if all_products:
-        df, _product_urls = scrape_all_products(
-            start_urls=urls,
+        return run_flash_amplo_page_mode(
+            raw_urls=raw_urls,
             requested_columns=columns,
             max_pages=max_pages,
             max_products=max_products,
-        )
-        return df.fillna('')
+            keep_only_requested_columns=False,
+        ).fillna('')
 
     return scrape_urls(urls, requested_columns=columns).fillna('')
