@@ -62,8 +62,6 @@ def requested_field_profile(requested_columns: Iterable[str], *, operation: str)
         kind = requested_field_kind(column, operation)
         if kind and kind != "deposito":
             fields.add(kind)
-    if fields:
-        fields.add("url")
     return fields
 
 
