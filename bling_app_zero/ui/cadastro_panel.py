@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -73,6 +75,29 @@ def _default_index(options: list[str], value: str) -> int:
         return 0
 
 
+def _first_row_preview(df_source: pd.DataFrame, selected_column: str) -> str:
+    if not selected_column or selected_column not in df_source.columns or df_source.empty:
+        return ''
+    value = df_source[selected_column].iloc[0]
+    text = str(value if value is not None else '').strip()
+    if len(text) > 180:
+        text = text[:180] + '...'
+    return text
+
+
+def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> None:
+    text = _first_row_preview(df_source, selected_column)
+    if not text:
+        return
+    safe_text = html.escape(text)
+    st.markdown(
+        f"<div style='font-size:12px; color:#118a32; margin-top:-10px; margin-bottom:10px;'>"
+        f"Primeira linha: {safe_text}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
     model = _cadastro_model(df_modelo)
     source_columns = [str(column) for column in df_source.columns]
@@ -106,6 +131,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             key=f'{mapping_key}_{target}',
             help=f'Campo de destino no Bling: {target}',
         )
+        _show_first_row_preview(df_source, selected)
         edited_mapping[target] = selected
 
     st.session_state[mapping_key] = edited_mapping
@@ -159,6 +185,7 @@ def render_cadastro_panel() -> None:
                 index=_best_cost_column(colunas),
                 key=f'cadastro_coluna_custo_{origem_signature}',
             )
+            _show_first_row_preview(df_origem, coluna_custo)
 
             if desconto_detectado > 0:
                 st.info(f'Desconto/comissão detectado e aplicado como padrão: {desconto_detectado:.2f}%')
