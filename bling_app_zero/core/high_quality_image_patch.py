@@ -2,13 +2,12 @@ from __future__ import annotations
 
 """Patch leve para priorizar imagens de alta qualidade no cadastro Bling.
 
-A saída do Bling usa links separados por `|`. Este módulo reordena os links
-para deixar primeiro as imagens maiores/originais e empurrar miniaturas para o
-fim, sem alterar a quantidade de produtos.
+A saída do Bling usa links separados por `|`. Este módulo apenas reordena os
+links já aprovados pela validação central. Ele não baixa imagens e não faz
+validação remota, para não pesar o Streamlit Cloud.
 """
 
 import re
-from typing import Iterable
 
 
 def _score_image_url(url: str) -> int:
@@ -61,7 +60,7 @@ def _score_image_url(url: str) -> int:
         if token in low:
             score += points
 
-    if re.search(r"\.(webp|jpg|jpeg|png)(?:$|[?#])", low):
+    if re.search(r"\.(webp|jpg|jpeg|png|avif)(?:$|[?#])", low):
         score += 20
 
     return score
@@ -72,55 +71,41 @@ def reorder_high_quality_images(value: object, *, max_items: int = 20) -> str:
     if not text:
         return ""
 
-    bad_fragments = (
-        "logo",
-        "sprite",
-        "placeholder",
-        "blank",
-        "loading",
-        "favicon",
-        "facebook.com/tr",
-        "pixel",
-        "analytics",
-        "doubleclick",
-        "tracking",
-        "whatsapp",
-        "instagram",
-    )
-
     urls: list[str] = []
     seen: set[str] = set()
     for part in re.split(r"[|,\n\r\t]+", text):
         url = part.strip().strip('"\'')
         if not url or not url.lower().startswith(("http://", "https://")):
             continue
-        low = url.lower()
-        if any(fragment in low for fragment in bad_fragments):
+        key = re.sub(r"[?#].*$", "", url.lower())
+        if key in seen:
             continue
-        if url in seen:
-            continue
-        seen.add(url)
+        seen.add(key)
         urls.append(url)
 
     urls.sort(key=_score_image_url, reverse=True)
-    return "|".join(urls[:max_items])
+    return "|".join(urls[: max(1, int(max_items or 20))])
 
 
 def install_high_quality_image_patch() -> None:
-    """Aplica patch na normalização final de URLs de imagem."""
+    """Aplica patch compatível com a normalização central de imagens."""
     try:
         from bling_app_zero.core import product_data_quality as quality
     except Exception:
         return
 
-    original = getattr(quality, "_normalize_pipe_urls", None)
+    if getattr(quality, "_high_quality_image_patch_installed", False):
+        return
 
-    def patched(value: object, *, max_items: int = 20) -> str:
-        result = reorder_high_quality_images(value, max_items=max_items)
-        if result:
-            return result
-        if callable(original):
-            return original(value, max_items=max_items)
-        return ""
+    original = getattr(quality, "_normalize_pipe_urls", None)
+    if not callable(original):
+        return
+
+    def patched(value: object, *, max_items: int = 20, product_title: object = "", context: object = "", **kwargs: object) -> str:
+        # Primeiro usa a validação central, que remove lixo e pontua compatibilidade.
+        result = original(value, max_items=max_items, product_title=product_title, context=context, **kwargs)
+        # Depois apenas reordena por qualidade aparente sem fazer rede/download.
+        return reorder_high_quality_images(result, max_items=max_items)
 
     quality._normalize_pipe_urls = patched
+    quality._high_quality_image_patch_installed = True
