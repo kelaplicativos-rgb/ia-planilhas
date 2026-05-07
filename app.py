@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-import traceback
-
 import streamlit as st
+
+APP_VERSION = "3.0.1-cleanup"
 
 
 def main() -> None:
     st.set_page_config(
         page_title="IA Planilhas Bling",
-        page_icon="🚀",
+        page_icon="🧹",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
 
-    try:
-        from bling_app_zero.rebuild.app_rebuild import run_rebuild_app
-        run_rebuild_app()
-    except Exception as exc:
-        st.error("O app encontrou um erro interno no rebuild.")
-        st.code("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    st.title("IA Planilhas Bling")
+    st.caption(f"Versão {APP_VERSION}")
+    st.warning(
+        "Sistema em limpeza técnica. O fluxo experimental foi removido para evitar geração de planilhas incorretas."
+    )
+    st.info(
+        "Próximo passo seguro: reconstruir apenas sobre arquivos validados, sem módulos soltos, sem patches em runtime e sem motores misturados."
+    )
 
 
 if __name__ == "__main__":
