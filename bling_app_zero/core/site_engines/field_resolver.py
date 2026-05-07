@@ -6,6 +6,7 @@ from typing import Iterable
 import pandas as pd
 
 from bling_app_zero.core.site_engines.model_columns import first_existing_value, normalize_key
+from bling_app_zero.core.site_engines.stock_columns_guard import synchronize_stock_columns
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "nome": ("Produto", "Nome", "Nome do produto", "Descrição", "Descricao", "Título", "Titulo", "name", "title"),
@@ -95,7 +96,14 @@ def _normalize_stock(value: object) -> str:
         return "0"
     match = re.search(r"\d+(?:[\.,]\d+)?", text)
     if match:
-        return match.group(0).replace(",", ".")
+        number = match.group(0).replace(",", ".")
+        try:
+            numeric = float(number)
+        except Exception:
+            return number
+        if numeric.is_integer():
+            return str(int(numeric))
+        return str(numeric).rstrip("0").rstrip(".")
     if any(term in text for term in ("em estoque", "disponivel", "disponível", "comprar")):
         return "1"
     return ""
@@ -113,4 +121,8 @@ def build_model_limited_dataframe(raw_df: pd.DataFrame, requested_columns: Itera
         for column in requested:
             item[column] = resolve_value_for_column(row, column, operation=operation, deposito_nome=deposito_nome)
         rows.append(item)
-    return pd.DataFrame(rows, columns=requested).fillna("")
+
+    output = pd.DataFrame(rows, columns=requested).fillna("")
+    if normalize_key(operation) == "estoque":
+        output = synchronize_stock_columns(output, requested)
+    return output.fillna("")
