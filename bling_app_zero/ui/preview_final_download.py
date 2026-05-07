@@ -14,6 +14,8 @@ from bling_app_zero.ui.preview_final_data import remover_colunas_artificiais, ze
 from bling_app_zero.utils.gtin import contar_gtins_invalidos_df, contar_gtins_suspeitos_df
 
 
+FORNECEDOR_PADRAO = "Não definido"
+
 LINHAS_LIXO_DESCRICAO = {
     "mega center eletronicos",
     "mega center eletrônicos",
@@ -64,6 +66,52 @@ def _limpar_texto_celula(valor: object) -> str:
     texto = re.sub(r"[\r\n\t]+", " ", texto)
     texto = re.sub(r"\s{2,}", " ", texto)
     return texto.strip()
+
+
+def _valor_vazio_ou_indefinido(valor: object) -> bool:
+    texto = _limpar_texto_celula(valor)
+    if not texto:
+        return True
+    texto_norm = _norm_lixo(texto)
+    return texto_norm in {"nan", "none", "null", "na", "n a", "indefinido", "sem fornecedor"}
+
+
+def _colunas_fornecedor(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    colunas: list[str] = []
+    for col in df.columns:
+        n = normalizar_texto(col)
+        if "fornecedor" in n or "supplier" in n:
+            colunas.append(str(col))
+    return colunas
+
+
+def _preencher_fornecedor_padrao(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante fornecedor padrão no preview/download final padrão Bling."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    base = df.copy().fillna("")
+    colunas = _colunas_fornecedor(base)
+    if not colunas:
+        return base
+
+    total_preenchido = 0
+    for col in colunas:
+        mascara = base[col].map(_valor_vazio_ou_indefinido)
+        qtd = int(mascara.sum())
+        if qtd > 0:
+            base.loc[mascara, col] = FORNECEDOR_PADRAO
+            total_preenchido += qtd
+
+    if total_preenchido > 0:
+        log_debug(
+            f"{total_preenchido} fornecedor(es) vazio(s) preenchido(s) automaticamente como '{FORNECEDOR_PADRAO}'.",
+            nivel="INFO",
+        )
+
+    return base.fillna("")
 
 
 def _limpar_titulo_produto(valor: object) -> str:
@@ -297,6 +345,7 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
     for coluna in base.columns:
         base[coluna] = base[coluna].map(_limpar_texto_celula)
 
+    base = _preencher_fornecedor_padrao(base).fillna("")
     base = _normalizar_coluna_imagens_externas(base).fillna("")
 
     desc_col = _coluna_descricao_produto(base)
