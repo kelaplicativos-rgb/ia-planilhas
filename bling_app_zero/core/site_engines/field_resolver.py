@@ -6,7 +6,7 @@ from typing import Iterable
 import pandas as pd
 
 from bling_app_zero.core.site_engines.model_columns import first_existing_value, normalize_key
-from bling_app_zero.core.site_engines.stock_columns_guard import normalize_stock_value, synchronize_stock_columns
+from bling_app_zero.core.site_engines.stock_columns_guard import synchronize_stock_columns
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "nome": ("Produto", "Nome", "Nome do produto", "Descrição", "Descricao", "Título", "Titulo", "name", "title"),
@@ -84,7 +84,7 @@ def resolve_value_for_column(row: pd.Series, column_name: str, *, operation: str
     if kind == "imagens":
         return str(value or "").replace(",", "|").replace(";", "|").strip(" |")
     if kind == "estoque":
-        return normalize_stock_value(value)
+        return str(value or "").strip()
     return str(value or "").strip()
 
 
