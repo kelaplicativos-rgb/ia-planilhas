@@ -11,8 +11,7 @@ from bs4 import BeautifulSoup
 
 from bling_app_zero.core.page_by_page_crawler import fetch_html
 from bling_app_zero.core.product_url_discovery_infinity import discover_product_urls_infinity
-from bling_app_zero.core.site_engines.stock_feed_engine import find_stock_in_domain_feeds
-from bling_app_zero.core.site_engines.stock_value_engine import extract_real_stock_value
+from bling_app_zero.core.site_engines.stock_lookup_engine import resolve_real_stock_for_product_url
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 
@@ -64,7 +63,7 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
-def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: str) -> None:
+def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: str, reason: str = "", feed_url: str = "") -> None:
     if not quantity:
         return
     row["Estoque"] = quantity
@@ -72,6 +71,10 @@ def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: st
     row["Saldo"] = quantity
     row["Fonte estoque"] = source
     row["Confianca estoque"] = confidence
+    if reason:
+        row["Motivo estoque"] = reason
+    if feed_url:
+        row["Fonte estoque feed"] = feed_url
 
 
 def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
@@ -123,21 +126,22 @@ def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None
             row["GTIN/EAN"] = gtin
 
     if "estoque" in fields:
-        stock_result = extract_real_stock_value(html, page_url=product_url)
-        if stock_result.quantity and stock_result.confidence == "alta":
-            _apply_stock(row, stock_result.quantity, stock_result.source, stock_result.confidence)
-        else:
-            feed_result = find_stock_in_domain_feeds(
-                product_url,
-                sku=sku,
-                gtin=gtin,
-                name=product_name,
+        stock_result = resolve_real_stock_for_product_url(
+            product_url=product_url,
+            html=html,
+            sku=sku,
+            gtin=gtin,
+            name=product_name,
+        )
+        if stock_result.quantity:
+            _apply_stock(
+                row,
+                stock_result.quantity,
+                stock_result.source,
+                stock_result.confidence,
+                reason=stock_result.reason,
+                feed_url=stock_result.feed_url,
             )
-            if feed_result.quantity:
-                _apply_stock(row, feed_result.quantity, feed_result.source, feed_result.confidence)
-                row["Fonte estoque feed"] = feed_result.feed_url
-            elif stock_result.quantity:
-                _apply_stock(row, stock_result.quantity, stock_result.source, stock_result.confidence)
 
     if "url" in fields:
         row["Link Externo"] = product_url
