@@ -24,6 +24,7 @@ DEFAULTS_BY_NORMALIZED_COLUMN: dict[str, str] = {
     "volumes": "1",
     "condicao do produto": "Novo",
     "frete gratis": "Não",
+    "fornecedor": "Não definido",
 }
 
 EMPTY_LIKE_VALUES = {
