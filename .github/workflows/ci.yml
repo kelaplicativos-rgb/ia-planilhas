@@ -43,6 +43,7 @@ jobs:
               'app',
               'bling_app_zero.ui.home',
               'bling_app_zero.ui.home_shared',
+              'bling_app_zero.ui.smart_upload',
               'bling_app_zero.ui.cadastro_panel',
               'bling_app_zero.ui.estoque_panel',
               'bling_app_zero.ui.site_panel',
@@ -91,4 +92,15 @@ jobs:
           print('OK Flash Amplo smoke test')
           PY
 
-# BLINGMODULAR CI trigger: home panel split
+      - name: Smart upload helper smoke test
+        run: |
+          python - <<'PY'
+          from bling_app_zero.ui.smart_upload import SmartUploadResult
+
+          result = SmartUploadResult()
+          assert result.source_file is None
+          assert result.model_file is None
+          print('OK Smart Upload smoke test')
+          PY
+
+# BLINGUPLOAD CI trigger: smart upload
