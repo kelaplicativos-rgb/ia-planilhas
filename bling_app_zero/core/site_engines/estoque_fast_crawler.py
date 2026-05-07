@@ -63,7 +63,15 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
-def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: str, reason: str = "", feed_url: str = "") -> None:
+def _apply_stock(
+    row: dict[str, str],
+    quantity: str,
+    source: str,
+    confidence: str,
+    reason: str = "",
+    feed_url: str = "",
+    lookup_path: str = "",
+) -> None:
     if not quantity:
         return
     row["Estoque"] = quantity
@@ -75,6 +83,8 @@ def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: st
         row["Motivo estoque"] = reason
     if feed_url:
         row["Fonte estoque feed"] = feed_url
+    if lookup_path:
+        row["Caminho busca estoque"] = lookup_path
 
 
 def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
@@ -141,6 +151,7 @@ def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None
                 stock_result.confidence,
                 reason=stock_result.reason,
                 feed_url=stock_result.feed_url,
+                lookup_path=stock_result.lookup_path,
             )
 
     if "url" in fields:
