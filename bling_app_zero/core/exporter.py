@@ -1,11 +1,52 @@
 from __future__ import annotations
 
+import re
 from io import BytesIO
 
 import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell
+
+IMAGE_COLUMN_TERMS = [
+    'imagem',
+    'imagens',
+    'image',
+    'images',
+    'foto',
+    'fotos',
+    'url imagem',
+    'url imagens',
+    'url imagens externas',
+]
+
+
+def _looks_like_image_column(column: object) -> bool:
+    key = str(column or '').strip().lower()
+    return any(term in key for term in IMAGE_COLUMN_TERMS)
+
+
+def normalize_image_urls(value: object) -> str:
+    text = clean_cell(value)
+    if not text:
+        return ''
+
+    raw_parts = re.split(r'\s*\|\s*|\s*[\n\r,;]+\s*', text)
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    for raw in raw_parts:
+        item = clean_cell(raw).strip().strip('"\'[]()')
+        if not item:
+            continue
+        if not item.lower().startswith(('http://', 'https://')):
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        parts.append(item)
+
+    return '|'.join(parts)
 
 
 def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
@@ -17,6 +58,8 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         if looks_like_gtin_column(col):
             out[col] = out[col].apply(clean_gtin)
+        elif _looks_like_image_column(col):
+            out[col] = out[col].apply(normalize_image_urls)
         else:
             out[col] = out[col].apply(clean_cell)
 
