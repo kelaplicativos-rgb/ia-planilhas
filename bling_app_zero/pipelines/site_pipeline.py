@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bling_app_zero.engines.site_engine import scrape_all_products, scrape_urls, split_urls
+from bling_app_zero.engines.site_cadastro_engine import run_site_cadastro_engine
+from bling_app_zero.engines.site_estoque_engine import run_site_estoque_engine
+
+
+VALID_OPERATIONS = {'cadastro', 'estoque'}
+
+
+def _normalize_operation(operation: str | None) -> str:
+    value = str(operation or 'cadastro').strip().lower()
+    return value if value in VALID_OPERATIONS else 'cadastro'
 
 
 def run_pipeline(
@@ -11,18 +20,23 @@ def run_pipeline(
     all_products: bool = False,
     max_pages: int = 250,
     max_products: int = 1000,
+    operation: str = 'cadastro',
 ) -> pd.DataFrame:
-    urls = split_urls(raw_urls)
-    if not urls:
-        return pd.DataFrame()
+    selected_operation = _normalize_operation(operation)
 
-    if all_products:
-        df, _product_urls = scrape_all_products(
-            start_urls=urls,
+    if selected_operation == 'estoque':
+        return run_site_estoque_engine(
+            raw_urls=raw_urls,
             requested_columns=requested_columns,
+            all_products=all_products,
             max_pages=max_pages,
             max_products=max_products,
         )
-        return df
 
-    return scrape_urls(urls, requested_columns=requested_columns)
+    return run_site_cadastro_engine(
+        raw_urls=raw_urls,
+        requested_columns=requested_columns,
+        all_products=all_products,
+        max_pages=max_pages,
+        max_products=max_products,
+    )
