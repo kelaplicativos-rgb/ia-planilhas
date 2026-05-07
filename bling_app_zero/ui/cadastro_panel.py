@@ -98,6 +98,12 @@ def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> No
     )
 
 
+def _force_price_suggestion(target: str, source_columns: list[str], suggested: str) -> str:
+    if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
+        return 'Preço de venda'
+    return suggested
+
+
 def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
     model = _cadastro_model(df_modelo)
     source_columns = [str(column) for column in df_source.columns]
@@ -108,7 +114,10 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     mapping_key = f'cadastro_manual_mapping_{signature}'
 
     if mapping_key not in st.session_state:
-        st.session_state[mapping_key] = auto_map_columns(df_source, model)
+        auto_mapping = auto_map_columns(df_source, model)
+        for target, selected in list(auto_mapping.items()):
+            auto_mapping[target] = _force_price_suggestion(target, source_columns, selected)
+        st.session_state[mapping_key] = auto_mapping
 
     st.markdown('#### 2. Correlacionar colunas')
     st.caption('Confira as sugestões e ajuste manualmente antes de gerar o preview final.')
@@ -121,20 +130,25 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
 
     for target in target_columns:
         suggested = current_mapping.get(target, '')
-        if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
-            suggested = 'Preço de venda'
+        widget_key = f'{mapping_key}_{target}'
+        if widget_key in st.session_state:
+            suggested = st.session_state.get(widget_key, suggested)
 
         selected = st.selectbox(
             target,
             options,
             index=_default_index(options, suggested),
-            key=f'{mapping_key}_{target}',
+            key=widget_key,
             help=f'Campo de destino no Bling: {target}',
         )
         _show_first_row_preview(df_source, selected)
         edited_mapping[target] = selected
 
     st.session_state[mapping_key] = edited_mapping
+
+    df_preview_manual = sanitize_for_bling(apply_mapping(df_source, model, edited_mapping))
+    st.session_state['df_final_cadastro'] = df_preview_manual
+    st.session_state['mapping_cadastro'] = edited_mapping
 
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
@@ -143,15 +157,18 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Gerar preview final do cadastro', use_container_width=True):
-            df_final = apply_mapping(df_source, model, edited_mapping)
-            st.session_state['df_final_cadastro'] = sanitize_for_bling(df_final)
+        if st.button('Atualizar preview final do cadastro', use_container_width=True):
+            st.session_state['df_final_cadastro'] = df_preview_manual
             st.session_state['mapping_cadastro'] = edited_mapping
+            st.rerun()
     with col_b:
         if st.button('Limpar correlação deste cadastro', use_container_width=True):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
+            for key in list(st.session_state.keys()):
+                if str(key).startswith(f'{mapping_key}_'):
+                    st.session_state.pop(key, None)
             st.rerun()
 
 
