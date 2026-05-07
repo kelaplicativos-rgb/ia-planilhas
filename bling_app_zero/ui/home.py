@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.pricing import apply_pricing
@@ -18,6 +19,25 @@ OPERACOES = {
     'Atualização de Estoque': 'estoque',
     'Busca Inteligente por Site': 'site',
 }
+
+
+def _show_contract(columns: list[str]) -> None:
+    if not columns:
+        return
+    contract = build_contract(columns)
+    with st.expander('Contrato de colunas solicitado pela planilha', expanded=True):
+        st.caption('O crawler usa este contrato para buscar somente estes campos. Campo não encontrado fica vazio.')
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    'Coluna solicitada': field.original,
+                    'Tipo detectado': field.kind,
+                    'Obrigatório': 'Sim' if field.required else 'Não',
+                }
+                for field in contract
+            ]),
+            use_container_width=True,
+        )
 
 
 def _show_mapping(mapping: dict[str, str]) -> None:
@@ -130,6 +150,10 @@ def render_estoque() -> None:
 
     deposito = st.text_input('Nome do depósito', value='Não definido')
 
+    if modelo:
+        df_modelo_preview = read_uploaded_file(modelo)
+        _show_contract([str(c) for c in df_modelo_preview.columns])
+
     if origem:
         df_origem = read_uploaded_file(origem)
         df_modelo = read_uploaded_file(modelo) if modelo else None
@@ -150,6 +174,7 @@ def render_estoque() -> None:
 
 def render_site() -> None:
     st.info('Crawler inteligente independente carregado.')
+    st.caption('Tecnologia ativa: extração orientada por contrato de colunas. A planilha manda no que será buscado.')
 
     modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
     operation = 'cadastro' if modo == 'Cadastro completo' else 'estoque'
@@ -164,9 +189,10 @@ def render_site() -> None:
     df_modelo = None
     if modelo:
         df_modelo = read_uploaded_file(modelo)
+        requested_columns = [str(c) for c in df_modelo.columns]
+        _show_contract(requested_columns)
         if operation == 'estoque':
             requested_columns = requested_columns_from_model(df_modelo)
-            st.caption('Colunas solicitadas pelo modelo: ' + ', '.join(requested_columns))
 
     deposito = ''
     if operation == 'estoque':
@@ -174,7 +200,7 @@ def render_site() -> None:
 
     raw_urls = st.text_area('Links dos produtos/sites', height=180, key='urls_site')
 
-    if st.button('Buscar produtos no site e gerar Bling', use_container_width=True):
+    if st.button('Buscar somente colunas solicitadas e gerar Bling', use_container_width=True):
         df_site = run_site_pipeline(raw_urls, requested_columns=requested_columns)
         st.session_state['df_site_bruto'] = df_site
 
@@ -189,7 +215,7 @@ def render_site() -> None:
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame):
-        _preview('Captura bruta do site', df_site_bruto)
+        _preview('Captura do site baseada apenas no contrato', df_site_bruto)
 
     df_final = st.session_state.get('df_site_final')
     mapping = st.session_state.get('mapping_site', {})
