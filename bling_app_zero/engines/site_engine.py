@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Iterable
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.column_contract import RequestedField, build_contract, kinds_from_contract
+from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 HEADERS = {
@@ -32,7 +35,7 @@ def _make_soup(html: str) -> BeautifulSoup:
     return BeautifulSoup(html or '', 'html.parser')
 
 
-def _text(soup: BeautifulSoup) -> str:
+def _page_text(soup: BeautifulSoup) -> str:
     return clean_cell(soup.get_text(' ', strip=True))
 
 
@@ -65,13 +68,13 @@ def _images(soup: BeautifulSoup) -> str:
         if src:
             urls.append(str(src))
     cleaned: list[str] = []
-    for url in urls:
-        u = url.strip()
-        low = u.lower()
-        if not u or any(bad in low for bad in ['logo', 'sprite', 'placeholder', 'whatsapp', 'facebook']):
+    for raw_url in urls:
+        image_url = raw_url.strip()
+        low = image_url.lower()
+        if not image_url or any(bad in low for bad in ['logo', 'sprite', 'placeholder', 'whatsapp', 'facebook']):
             continue
-        if u not in cleaned:
-            cleaned.append(u)
+        if image_url not in cleaned:
+            cleaned.append(image_url)
         if len(cleaned) >= 12:
             break
     return '|'.join(cleaned)
@@ -87,7 +90,10 @@ def _stock(page_text: str) -> str:
 
 
 def _sku(page_text: str) -> str:
-    patterns = [r'(?:SKU|COD|CÓD|REF|REFERÊNCIA)[:\s#-]+([A-Za-z0-9._/-]+)']
+    patterns = [
+        r'(?:SKU|COD|CÓD|REF|REFERÊNCIA)[:\s#-]+([A-Za-z0-9._/-]+)',
+        r'(?:Código|Codigo)[:\s#-]+([A-Za-z0-9._/-]+)',
+    ]
     for pattern in patterns:
         match = re.search(pattern, page_text, flags=re.I)
         if match:
@@ -95,20 +101,117 @@ def _sku(page_text: str) -> str:
     return ''
 
 
+def _gtin(page_text: str) -> str:
+    patterns = [
+        r'(?:GTIN|EAN|Código de barras|Codigo de barras|Barcode)[:\s#-]+([0-9 .-]{8,20})',
+        r'\b(\d{8}|\d{12}|\d{13}|\d{14})\b',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, page_text, flags=re.I)
+        if match:
+            value = clean_gtin(match.group(1))
+            if value:
+                return value
+    return ''
+
+
+def _brand(soup: BeautifulSoup, page_text: str) -> str:
+    meta = soup.find('meta', property='product:brand') or soup.find('meta', attrs={'name': 'brand'})
+    if meta and meta.get('content'):
+        return clean_cell(meta.get('content'))
+    match = re.search(r'(?:Marca|Brand)[:\s-]+([A-Za-z0-9 Á-ú._/-]{2,40})', page_text, flags=re.I)
+    return clean_cell(match.group(1)) if match else ''
+
+
+def _category(soup: BeautifulSoup, page_text: str) -> str:
+    crumbs: list[str] = []
+    for selector in ['breadcrumb', 'breadcrumbs']:
+        for item in soup.find_all(class_=lambda value: value and selector in str(value).lower()):
+            text = clean_cell(item.get_text(' > ', strip=True))
+            if text:
+                crumbs.append(text)
+    if crumbs:
+        return crumbs[0]
+    meta = soup.find('meta', property='product:category')
+    if meta and meta.get('content'):
+        return clean_cell(meta.get('content'))
+    return ''
+
+
+def _build_cache(url: str, contract: list[RequestedField], soup: BeautifulSoup, page_text: str) -> dict[str, str]:
+    kinds = kinds_from_contract(contract)
+    cache: dict[str, str] = {'url': url}
+
+    if {'codigo', 'id_produto', 'nome_apoio'} & kinds:
+        cache['codigo'] = _sku(page_text)
+        cache['id_produto'] = _sku(page_text)
+
+    if {'descricao', 'nome_apoio'} & kinds:
+        cache['descricao'] = _title(soup)
+        cache['nome_apoio'] = cache['descricao']
+
+    if {'preco_unitario', 'preco_custo'} & kinds:
+        price = _price(soup, page_text)
+        cache['preco_unitario'] = price
+        cache['preco_custo'] = price
+
+    if 'estoque' in kinds:
+        cache['estoque'] = _stock(page_text)
+
+    if 'gtin' in kinds:
+        cache['gtin'] = _gtin(page_text)
+
+    if 'imagem' in kinds:
+        cache['imagem'] = _images(soup)
+
+    if 'marca' in kinds:
+        cache['marca'] = _brand(soup, page_text)
+
+    if 'categoria' in kinds:
+        cache['categoria'] = _category(soup, page_text)
+
+    if 'data' in kinds:
+        cache['data'] = date.today().isoformat()
+
+    if 'observacao' in kinds:
+        cache['observacao'] = ''
+
+    return cache
+
+
+def _value_for_field(field: RequestedField, cache: dict[str, str]) -> str:
+    if field.kind == 'custom':
+        return ''
+    return cache.get(field.kind, '')
+
+
 def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> dict[str, str]:
+    contract = build_contract(requested_columns or [])
+
     html = _safe_get(url)
     soup = _make_soup(html)
-    page_text = _text(soup)
-    images = _images(soup)
-    sku = _sku(page_text)
+    page_text = _page_text(soup)
+
+    if contract:
+        cache = _build_cache(url=url, contract=contract, soup=soup, page_text=page_text)
+        row = {field.original: _value_for_field(field, cache) for field in contract}
+        if 'URL' not in row and not any(normalize_key(col) == 'url' for col in row):
+            row['URL'] = url
+        if not any(normalize_key(col) in {'nome apoio', 'descricao produto', 'descricao', 'nome'} for col in row):
+            row['Nome apoio'] = cache.get('nome_apoio') or _title(soup)
+        return row
+
     title = _title(soup)
     price = _price(soup, page_text)
     stock = _stock(page_text)
+    sku = _sku(page_text)
+    images = _images(soup)
 
-    base = {
+    return {
         'URL': url,
         'Código': sku,
         'SKU': sku,
+        'GTIN': _gtin(page_text),
         'Descrição': title,
         'Nome': title,
         'Preço': price,
@@ -117,27 +220,9 @@ def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> 
         'Balanço (OBRIGATÓRIO)': stock,
         'URL Imagens': images,
         'Imagens': images,
+        'Marca': _brand(soup, page_text),
+        'Categoria': _category(soup, page_text),
     }
-
-    if requested_columns:
-        result: dict[str, str] = {}
-        for column in requested_columns:
-            col = str(column)
-            key = normalize_key(col)
-            value = ''
-            for base_col, base_value in base.items():
-                base_key = normalize_key(base_col)
-                if key == base_key or key in base_key or base_key in key:
-                    value = base_value
-                    break
-            result[col] = value
-        if 'URL' not in result:
-            result['URL'] = url
-        if 'Nome apoio' not in result and 'Descrição' not in result and 'Nome' not in result:
-            result['Nome apoio'] = base.get('Nome', '')
-        return result
-
-    return base
 
 
 def scrape_urls(urls: list[str], requested_columns: Iterable[str] | None = None) -> pd.DataFrame:
