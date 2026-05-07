@@ -378,14 +378,12 @@ def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_produ
     if not normalized_starts:
         return []
 
-    # Regra principal: primeiro captura pelo site real, links internos e paginação.
     discovered = _discover_from_site_navigation(
         start_urls=normalized_starts,
         max_pages=max_pages,
         max_products=max_products,
     )
 
-    # Regra complementar: sitemaps e XML entram só depois, para completar lacunas.
     if len(discovered) < max_products:
         discovered = _discover_from_xml_complement(
             start_urls=normalized_starts,
@@ -451,12 +449,7 @@ def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> 
 
     if contract:
         cache = _build_cache(url=url, contract=contract, soup=soup, page_text=page_text)
-        row = {field.original: _value_for_field(field, cache) for field in contract}
-        if 'URL' not in row and not any(normalize_key(col) == 'url' for col in row):
-            row['URL'] = url
-        if not any(normalize_key(col) in {'nome apoio', 'descricao produto', 'descricao', 'nome'} for col in row):
-            row['Nome apoio'] = cache.get('nome_apoio') or _title(soup)
-        return row
+        return {field.original: _value_for_field(field, cache) for field in contract}
 
     title = _title(soup)
     price = _price(soup, page_text)
@@ -482,12 +475,23 @@ def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> 
     }
 
 
+def _order_strict_columns(df: pd.DataFrame, requested_columns: Iterable[str] | None = None) -> pd.DataFrame:
+    if not requested_columns:
+        return df.fillna('')
+    columns = [str(column) for column in requested_columns if str(column).strip()]
+    out = df.copy().fillna('')
+    for column in columns:
+        if column not in out.columns:
+            out[column] = ''
+    return out[columns].fillna('')
+
+
 def scrape_urls(urls: list[str], requested_columns: Iterable[str] | None = None) -> pd.DataFrame:
     rows = [scrape_product(url, requested_columns=requested_columns) for url in urls]
-    return pd.DataFrame(rows).fillna('')
+    return _order_strict_columns(pd.DataFrame(rows), requested_columns=requested_columns)
 
 
 def scrape_all_products(start_urls: list[str], requested_columns: Iterable[str] | None = None, max_pages: int = 250, max_products: int = 1000) -> tuple[pd.DataFrame, list[str]]:
     product_urls = discover_product_urls(start_urls=start_urls, max_pages=max_pages, max_products=max_products)
     rows = [scrape_product(url, requested_columns=requested_columns) for url in product_urls]
-    return pd.DataFrame(rows).fillna(''), product_urls
+    return _order_strict_columns(pd.DataFrame(rows), requested_columns=requested_columns), product_urls
