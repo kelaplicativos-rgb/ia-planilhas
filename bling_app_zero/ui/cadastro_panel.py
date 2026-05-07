@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.ui.home_shared import (
     download_final,
     load_apply_pricing,
@@ -54,12 +55,28 @@ def render_cadastro_panel() -> None:
             apply_pricing = load_apply_pricing()
             colunas = [str(c) for c in df_origem.columns]
             coluna_custo = st.selectbox('Coluna de custo/preço base', colunas)
-            c1, c2, c3, c4 = st.columns(4)
-            margem = c1.number_input('Lucro %', min_value=0.0, value=30.0, step=1.0)
+
+            desconto_detectado = detect_discount_percent(df_origem)
+            if desconto_detectado > 0:
+                st.info(f'Desconto/comissão detectado na planilha: {desconto_detectado:.2f}%')
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            margem = c1.number_input('Lucro desejado %', min_value=0.0, value=30.0, step=1.0)
             imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0)
             taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0)
-            fixo = c4.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0)
-            df_origem = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo)
+            desconto = c4.number_input('Desconto/Comissão %', min_value=0.0, value=float(desconto_detectado), step=1.0)
+            fixo = c5.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0)
+
+            df_origem = apply_pricing(
+                df_origem,
+                coluna_custo,
+                'Preço de venda',
+                margem,
+                imposto,
+                taxa,
+                fixo,
+                desconto,
+            )
             df_origem = _apply_calculated_price_aliases(df_origem, 'Preço de venda')
             st.session_state['cadastro_preco_calculado_ativo'] = True
             preview_df('Origem com preço calculado', df_origem)
