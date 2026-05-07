@@ -10,10 +10,10 @@ from bling_app_zero.ui.home_shared import (
     load_requested_columns_from_model,
     load_site_pipeline,
     preview_df,
-    read_upload_fast,
     show_contract,
     show_mapping,
 )
+from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 
 def render_site_panel() -> None:
@@ -23,22 +23,23 @@ def render_site_panel() -> None:
     modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
     operation = 'cadastro' if modo == 'Cadastro completo' else 'estoque'
 
-    modelo = st.file_uploader(
-        'Modelo Bling para refletir no resultado final (opcional no cadastro, recomendado no estoque)',
-        type=['xlsx', 'xls', 'csv'],
-        key='modelo_site_bling',
+    upload = render_smart_upload_box(
+        title='📎 Modelo Bling do site',
+        operation=operation,
+        key='smart_upload_site_modelo',
+        allow_model=True,
+        required_model=operation == 'estoque',
+        accepted_types=['xlsx', 'xls', 'csv'],
     )
 
+    df_modelo = upload.model_df or upload.source_df
     requested_columns = None
-    df_modelo = None
-    if modelo:
-        df_modelo = read_upload_fast(modelo)
-        if isinstance(df_modelo, pd.DataFrame):
-            requested_columns = [str(c) for c in df_modelo.columns]
-            show_contract(requested_columns)
-            if operation == 'estoque':
-                requested_columns_from_model = load_requested_columns_from_model()
-                requested_columns = requested_columns_from_model(df_modelo)
+    if isinstance(df_modelo, pd.DataFrame):
+        requested_columns = [str(c) for c in df_modelo.columns]
+        show_contract(requested_columns)
+        if operation == 'estoque':
+            requested_columns_from_model = load_requested_columns_from_model()
+            requested_columns = requested_columns_from_model(df_modelo)
 
     deposito = ''
     if operation == 'estoque':
