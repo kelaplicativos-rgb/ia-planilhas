@@ -6,7 +6,7 @@ Regra atual:
 - descoberta de produtos por página infinity controlada;
 - não para na primeira página;
 - abre cada `/produto/...`;
-- imagens passam pelo extrator seguro, sem aceitar URL de produto como imagem.
+- quando receber requested_fields, só extrai o que o modelo pediu.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,15 +27,17 @@ DEFAULT_MAX_PRODUCTS = 5000
 MAX_WORKERS_HARD_LIMIT = 32
 
 
-def _safe_extract_one(product_url: str) -> dict[str, str]:
+def _safe_extract_one(product_url: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
     try:
         html = fetch_html(product_url)
-        row = extract_product_from_page(product_url, html)
+        row = extract_product_from_page(product_url, html, requested_fields=requested_fields)
 
-        imagens = extract_safe_product_images(product_url, html)
-        if imagens:
-            row["URL Imagens Externas"] = imagens
-            row["Imagens"] = imagens
+        field_set = {str(item or "").strip().lower() for item in (requested_fields or []) if str(item or "").strip()}
+        if not field_set or "imagens" in field_set:
+            imagens = extract_safe_product_images(product_url, html)
+            if imagens:
+                row["URL Imagens Externas"] = imagens
+                row["Imagens"] = imagens
 
         row.setdefault("Link Externo", product_url)
         row.setdefault("URL do Produto", product_url)
@@ -69,6 +71,7 @@ def crawl_flash_amplo_page_by_page(
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
     use_checkpoint: bool = True,
+    requested_fields: Iterable[str] | None = None,
 ) -> list[dict[str, str]]:
     seed_list = [str(url or "").strip() for url in seed_urls if str(url or "").strip()]
     effective_max_products = int(max_products or DEFAULT_MAX_PRODUCTS)
@@ -79,7 +82,8 @@ def crawl_flash_amplo_page_by_page(
     if total == 0:
         return []
 
-    fingerprint = fingerprint_urls(seed_list, max_products=effective_max_products)
+    field_suffix = "|".join(sorted(str(item or "").strip().lower() for item in (requested_fields or []) if str(item or "").strip()))
+    fingerprint = fingerprint_urls(seed_list + ([field_suffix] if field_suffix else []), max_products=effective_max_products)
     checkpoint_rows = load_checkpoint_rows(fingerprint) if use_checkpoint else []
     rows_by_url: dict[str, dict[str, str]] = {}
     for row in checkpoint_rows:
@@ -96,7 +100,7 @@ def crawl_flash_amplo_page_by_page(
     if pending_urls:
         workers = max(1, min(int(max_workers or DEFAULT_MAX_WORKERS), MAX_WORKERS_HARD_LIMIT, len(pending_urls)))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(_safe_extract_one, url): url for url in pending_urls}
+            futures = {executor.submit(_safe_extract_one, url, requested_fields): url for url in pending_urls}
             for offset, future in enumerate(as_completed(futures), start=1):
                 discovered_url = futures[future]
                 try:
@@ -133,6 +137,7 @@ def crawl_flash_amplo_page_by_page_dataframe(
     max_workers: int = DEFAULT_MAX_WORKERS,
     progress_callback: ProgressCallback = None,
     use_checkpoint: bool = True,
+    requested_fields: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     rows = crawl_flash_amplo_page_by_page(
         seed_urls,
@@ -140,5 +145,6 @@ def crawl_flash_amplo_page_by_page_dataframe(
         max_workers=max_workers,
         progress_callback=progress_callback,
         use_checkpoint=use_checkpoint,
+        requested_fields=requested_fields,
     )
     return pd.DataFrame(rows)
