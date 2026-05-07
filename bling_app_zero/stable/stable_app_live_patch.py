@@ -2,23 +2,23 @@ from __future__ import annotations
 
 """Patch vivo para o fluxo stable.
 
-Objetivo: deixar o preview do mapeamento simples e real:
-- abaixo do select aparece somente o conteúdo real da primeira linha da coluna selecionada;
-- não aparece título da coluna no preview;
-- não aparece porcentagem, confiança ou texto fake;
-- usa on_change para sincronizar o preview com o selectbox imediatamente;
-- usa keys versionadas para escapar do session_state antigo do Streamlit.
+Além dos ajustes de preview/mapeamento, este patch substitui a captura antiga do
+Flash Amplo direto pelo roteador novo de motores independentes:
+- cadastro -> cadastro_engine;
+- estoque -> estoque_engine + motor especialista de valor real + feed/XML.
 """
 
 from html import escape
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.site_engines import executar_motor_site_por_operacao
 from bling_app_zero.stable import stable_app as base
+from bling_app_zero.ui.debug_panel import add_debug_log
 
-MAPPING_UI_VERSION = "2026-05-06-live-select-preview-v7"
+MAPPING_UI_VERSION = "2026-05-07-site-engines-live-v1"
 
 _ORIGINAL_SOURCE_OPTIONS = base._source_options_for_target
 base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
@@ -135,10 +135,126 @@ def _source_options_allow_id(target: str, df: pd.DataFrame, model_cols: list[str
     return final
 
 
+def _stable_modelo() -> pd.DataFrame | None:
+    try:
+        modelo = base.restaurar_df("stable_df_modelo")
+        return modelo if isinstance(modelo, pd.DataFrame) else None
+    except Exception:
+        return None
+
+
+def _stable_tipo(modelo: pd.DataFrame | None) -> str:
+    try:
+        return str(st.session_state.get("stable_tipo") or base._detect_tipo_by_model(modelo) or "cadastro")
+    except Exception:
+        return str(st.session_state.get("stable_tipo") or "cadastro")
+
+
+def _deposito_nome() -> str:
+    return str(
+        st.session_state.get("stable_deposito_mapeamento")
+        or st.session_state.get("deposito_nome")
+        or st.session_state.get("deposito_nome_input")
+        or ""
+    ).strip()
+
+
+def _salvar_origem_site_stable(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+    cleaned = df.copy().fillna("")
+
+    st.session_state["df_origem"] = cleaned.copy()
+    st.session_state["df_origem_site"] = cleaned.copy()
+    st.session_state["df_capturado_site"] = cleaned.copy()
+    st.session_state["df_saida"] = cleaned.copy()
+    st.session_state["df_precificado"] = cleaned.copy()
+    st.session_state["df_preview_inteligente"] = cleaned.copy()
+    st.session_state["stable_df_origem"] = cleaned.copy()
+    st.session_state["stable_site_engine_capture_ok"] = bool(not cleaned.empty)
+    st.session_state["stable_site_engine_rows"] = int(len(cleaned))
+    st.session_state.pop("stable_df_export", None)
+    st.session_state.pop("df_final", None)
+
+    try:
+        base.guardar_df("stable_df_origem", cleaned)
+    except Exception:
+        pass
+
+    add_debug_log(
+        "Captura stable por site salva como origem.",
+        payload={"linhas": len(cleaned), "colunas": list(cleaned.columns)},
+        origem="STABLE_SITE",
+    )
+    return cleaned
+
+
+def _executar_site_por_motores_stable(
+    urls: Iterable[str] | str,
+    *,
+    max_products: int = 5000,
+    max_workers: int = 12,
+    show_progress: bool = True,
+) -> pd.DataFrame:
+    modelo = _stable_modelo()
+    tipo = _stable_tipo(modelo)
+
+    if modelo is None or len(modelo.columns) == 0:
+        st.error("Anexe primeiro o modelo Bling para o sistema saber quais campos buscar no site.")
+        add_debug_log("Captura stable bloqueada: modelo ausente.", origem="STABLE_SITE")
+        return pd.DataFrame()
+
+    progress_bar = st.progress(0) if show_progress else None
+    status = st.empty() if show_progress else None
+
+    def progress_callback(percent: int, message: str, done: int = 0) -> None:
+        if not show_progress:
+            return
+        try:
+            progress_value = max(0.0, min(1.0, float(percent or 0) / 100.0))
+        except Exception:
+            progress_value = 0.0
+        if progress_bar is not None:
+            progress_bar.progress(progress_value)
+        if status is not None:
+            status.caption(str(message or "Processando captura por site..."))
+
+    add_debug_log(
+        "Captura stable por site roteada para motores independentes.",
+        payload={"tipo": tipo, "colunas_modelo": list(modelo.columns), "max_products": max_products, "max_workers": max_workers},
+        origem="STABLE_SITE",
+    )
+
+    df = executar_motor_site_por_operacao(
+        urls,
+        model_df=modelo,
+        operation=tipo,
+        deposito_nome=_deposito_nome(),
+        progress_callback=progress_callback,
+        max_products=max_products,
+        max_workers=max_workers,
+        show_progress=show_progress,
+    )
+
+    cleaned = _salvar_origem_site_stable(df)
+
+    if show_progress:
+        if progress_bar is not None:
+            progress_bar.progress(1.0)
+        if status is not None:
+            if cleaned.empty:
+                status.warning("Captura por site finalizada, mas nenhuma linha foi encontrada.")
+            else:
+                status.success(f"Captura por site concluída: {len(cleaned)} linha(s) prontas para mapeamento.")
+
+    return cleaned
+
+
 def run_stable_app() -> None:
     base._live_mapping_counter = 0
     base._render_source_preview = _render_source_preview_real
     base._selectbox_mapping = _selectbox_mapping_live
     base._source_options_for_target = _source_options_allow_id
+    base.executar_flash_amplo_pagina_por_pagina = _executar_site_por_motores_stable
     base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
     base.run_stable_app()
