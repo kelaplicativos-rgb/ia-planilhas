@@ -135,18 +135,18 @@ def render_smart_upload_box(
     accepted_types: list[str] | None = None,
 ) -> SmartUploadResult:
     st.markdown(f'#### {title}')
-    st.caption('Anexe aqui como no WhatsApp: todos os arquivos ficam clicáveis. Depois o sistema valida e reconhece origem/modelo automaticamente.')
+    st.caption('Selecione os arquivos. O sistema identifica automaticamente a origem e o modelo quando possível.')
 
     files = st.file_uploader(
         '📎 Anexar arquivos',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Sem bloqueio no seletor do celular: selecione o arquivo e o sistema valida depois.',
+        help='Selecione os arquivos; a validação acontece depois do anexo.',
     )
 
     if not files:
-        st.info('Nenhum arquivo anexado ainda. Clique no clipe ou arraste os arquivos para cá.')
+        st.info('Nenhum arquivo anexado ainda.')
         return SmartUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
