@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 
 from bling_app_zero.core.page_by_page_crawler import fetch_html
 from bling_app_zero.core.product_url_discovery_infinity import discover_product_urls_infinity
+from bling_app_zero.core.site_engines.stock_feed_engine import find_stock_in_domain_feeds
 from bling_app_zero.core.site_engines.stock_value_engine import extract_real_stock_value
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
@@ -63,6 +64,16 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
+def _apply_stock(row: dict[str, str], quantity: str, source: str, confidence: str) -> None:
+    if not quantity:
+        return
+    row["Estoque"] = quantity
+    row["Quantidade"] = quantity
+    row["Saldo"] = quantity
+    row["Fonte estoque"] = source
+    row["Confianca estoque"] = confidence
+
+
 def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
     fields = _requested_set(requested_fields)
     html = fetch_html(product_url)
@@ -72,17 +83,20 @@ def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None
     needs_text = bool(fields.intersection({"nome", "descricao", "sku", "gtin"}))
     full_text = soup.get_text(" ", strip=True) if needs_text else ""
     row: dict[str, str] = {}
+    product_name = ""
+    sku = ""
+    gtin = ""
 
     if fields.intersection({"nome", "descricao"}):
-        name = _clean_text(product.get("name")) if isinstance(product, dict) else ""
-        if not name:
-            name = _first_meta(soup, "og:title", "twitter:title")
-        if not name and soup.title:
-            name = soup.title.get_text(" ", strip=True)
-        if name:
-            row["Produto"] = _clean_text(name)
-            row["Nome"] = _clean_text(name)
-            row["Descrição"] = _clean_text(name)
+        product_name = _clean_text(product.get("name")) if isinstance(product, dict) else ""
+        if not product_name:
+            product_name = _first_meta(soup, "og:title", "twitter:title")
+        if not product_name and soup.title:
+            product_name = soup.title.get_text(" ", strip=True)
+        if product_name:
+            row["Produto"] = _clean_text(product_name)
+            row["Nome"] = _clean_text(product_name)
+            row["Descrição"] = _clean_text(product_name)
 
     if "sku" in fields:
         sku = _clean_text(product.get("sku") or product.get("mpn")) if isinstance(product, dict) else ""
@@ -110,12 +124,20 @@ def _extract_one(product_url: str, requested_fields: Iterable[str] | None = None
 
     if "estoque" in fields:
         stock_result = extract_real_stock_value(html, page_url=product_url)
-        if stock_result.quantity:
-            row["Estoque"] = stock_result.quantity
-            row["Quantidade"] = stock_result.quantity
-            row["Saldo"] = stock_result.quantity
-            row["Fonte estoque"] = stock_result.source
-            row["Confianca estoque"] = stock_result.confidence
+        if stock_result.quantity and stock_result.confidence == "alta":
+            _apply_stock(row, stock_result.quantity, stock_result.source, stock_result.confidence)
+        else:
+            feed_result = find_stock_in_domain_feeds(
+                product_url,
+                sku=sku,
+                gtin=gtin,
+                name=product_name,
+            )
+            if feed_result.quantity:
+                _apply_stock(row, feed_result.quantity, feed_result.source, feed_result.confidence)
+                row["Fonte estoque feed"] = feed_result.feed_url
+            elif stock_result.quantity:
+                _apply_stock(row, stock_result.quantity, stock_result.source, stock_result.confidence)
 
     if "url" in fields:
         row["Link Externo"] = product_url
