@@ -12,6 +12,25 @@ from bling_app_zero.ui.home_shared import (
 )
 from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
+PRICE_TARGET_ALIASES = [
+    'Preço de venda',
+    'Preço unitário (OBRIGATÓRIO)',
+    'Preço unitário',
+    'Preço',
+    'Valor',
+]
+
+
+def _apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty or calculated_column not in df.columns:
+        return df
+
+    out = df.copy().fillna('')
+    calculated_values = out[calculated_column]
+    for column in PRICE_TARGET_ALIASES:
+        out[column] = calculated_values
+    return out
+
 
 def render_cadastro_panel() -> None:
     st.success('Motor independente de CADASTRO será carregado somente quando gerar.')
@@ -28,7 +47,6 @@ def render_cadastro_panel() -> None:
     df_origem = upload.source_df
     df_modelo = upload.model_df
 
-    usar_preco = False
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
         usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
 
@@ -42,7 +60,11 @@ def render_cadastro_panel() -> None:
             taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0)
             fixo = c4.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0)
             df_origem = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo)
+            df_origem = _apply_calculated_price_aliases(df_origem, 'Preço de venda')
+            st.session_state['cadastro_preco_calculado_ativo'] = True
             preview_df('Origem com preço calculado', df_origem)
+        else:
+            st.session_state['cadastro_preco_calculado_ativo'] = False
 
         if st.button('Gerar cadastro Bling', use_container_width=True):
             run_cadastro_pipeline = load_cadastro_pipeline()
