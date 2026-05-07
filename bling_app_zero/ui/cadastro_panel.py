@@ -8,35 +8,31 @@ from bling_app_zero.ui.home_shared import (
     load_apply_pricing,
     load_cadastro_pipeline,
     preview_df,
-    read_upload_fast,
     show_mapping,
 )
+from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 
 def render_cadastro_panel() -> None:
     st.success('Motor independente de CADASTRO será carregado somente quando gerar.')
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        origem = st.file_uploader(
-            'Origem dos produtos: planilha, XML ou PDF',
-            type=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
-            key='upload_cadastro',
-        )
-    with col_b:
-        modelo = st.file_uploader(
-            'Modelo de cadastro do Bling (opcional)',
-            type=['xlsx', 'xls', 'csv'],
-            key='modelo_cadastro',
-        )
+    upload = render_smart_upload_box(
+        title='📎 Anexos do cadastro',
+        operation='cadastro',
+        key='smart_upload_cadastro',
+        allow_model=True,
+        required_model=False,
+        accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
+    )
 
-    usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
+    df_origem = upload.source_df
+    df_modelo = upload.model_df
 
-    if origem:
-        df_origem = read_upload_fast(origem)
-        preview_df('Preview da origem', df_origem)
+    usar_preco = False
+    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
+        usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
 
-        if usar_preco and df_origem is not None and not df_origem.empty:
+        if usar_preco:
             apply_pricing = load_apply_pricing()
             colunas = [str(c) for c in df_origem.columns]
             coluna_custo = st.selectbox('Coluna de custo/preço base', colunas)
@@ -50,10 +46,11 @@ def render_cadastro_panel() -> None:
 
         if st.button('Gerar cadastro Bling', use_container_width=True):
             run_cadastro_pipeline = load_cadastro_pipeline()
-            df_modelo = read_upload_fast(modelo) if modelo else None
             df_final, mapping = run_cadastro_pipeline(df_origem, df_modelo)
             st.session_state['df_final_cadastro'] = df_final
             st.session_state['mapping_cadastro'] = mapping
+    elif upload.attachments:
+        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o cadastro.')
 
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro', {})
