@@ -4,6 +4,10 @@ from __future__ import annotations
 
 Regra: o dropdown do mapeamento deve refletir a planilha/captura do site,
 nunca as colunas do modelo Bling nem o dataframe final já mapeado.
+
+No fluxo com modelo anexado pelo usuário, a planilha de referência pode ser
+cadastro ou estoque. Ela deve servir como estrutura de destino, mas as opções
+de preenchimento precisam vir da captura real que está em operação no momento.
 """
 
 import pandas as pd
@@ -37,6 +41,29 @@ _CHAVES_PROIBIDAS_COMO_ORIGEM = {
     "df_modelo",
     "df_modelo_cadastro",
     "df_modelo_estoque",
+    "df_modelo_unido",
+    "df_modelo_unidos",
+    "df_preview_modelo",
+}
+
+_SINAIS_CAPTURA_SITE = {
+    "url do produto",
+    "url produto",
+    "link produto",
+    "fonte captura",
+    "fonte de captura",
+    "imagens",
+    "imagem",
+    "url imagens externas",
+    "estoque",
+    "quantidade",
+    "preco unitario",
+    "preco",
+    "gtin",
+    "sku",
+    "codigo",
+    "nome",
+    "produto",
 }
 
 
@@ -44,11 +71,36 @@ def _safe_df(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0
 
 
-def escolher_df_origem_captura(session_state) -> pd.DataFrame:
-    """Busca a base real capturada/enviada pelo usuário, sem usar saída final."""
+def _score_df_origem(chave: str, df: pd.DataFrame, operacao: str = "") -> int:
+    colunas_norm = {normalizar_coluna(c) for c in df.columns.tolist()}
+    score = len(df.columns)
+
+    if "site" in chave or "captura" in chave or "capturado" in chave:
+        score += 200
+    elif "upload" in chave or "origem" in chave or "dados" in chave:
+        score += 120
+    elif "xml" in chave:
+        score += 80
+
+    if "modelo" in chave or "final" in chave or "saida" in chave:
+        score -= 1000
+
+    score += sum(30 for sinal in _SINAIS_CAPTURA_SITE if normalizar_coluna(sinal) in colunas_norm)
+
+    if operacao == "estoque":
+        if {"quantidade", "estoque", "saldo", "qtd"} & colunas_norm:
+            score += 120
+        if {"url do produto", "fonte captura", "imagens", "preco unitario"} & colunas_norm:
+            score += 60
+
+    return score
+
+
+def escolher_df_origem_captura(session_state, operacao: str = "") -> pd.DataFrame:
+    """Busca a base real capturada/enviada pelo usuário, sem usar saída/modelo."""
 
     melhor_df = pd.DataFrame()
-    melhor_score = -1
+    melhor_score = -10_000
 
     for chave in _CHAVES_ORIGEM_PREFERIDAS:
         if chave in _CHAVES_PROIBIDAS_COMO_ORIGEM:
@@ -58,15 +110,7 @@ def escolher_df_origem_captura(session_state) -> pd.DataFrame:
         if not _safe_df(df):
             continue
 
-        score = len(df.columns)
-
-        if "site" in chave:
-            score += 100
-        elif "upload" in chave:
-            score += 80
-        elif "xml" in chave:
-            score += 60
-
+        score = _score_df_origem(chave, df, operacao)
         if score > melhor_score:
             melhor_df = df.copy()
             melhor_score = score
