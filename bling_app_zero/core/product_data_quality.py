@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 from typing import Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
 
@@ -13,8 +14,22 @@ from bling_app_zero.core.brand_from_title import infer_brand_from_title
 ZERO_LIKE = {"0", "0,0", "0,00", "0.0", "0.00", "r$ 0,00", "r$0,00"}
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 EXTRACT_URL_RE = re.compile(r"(?:https?://|www\.)[^\s\"'<>]+", re.IGNORECASE)
+IMAGE_EXTENSION_RE = re.compile(r"\.(?:jpg|jpeg|png|webp|avif)(?:$|[?#])", re.IGNORECASE)
 STORE_BRAND_VALUES = {"mega center eletronicos", "mega center eletrônicos", "megacenter eletronicos", "megacenter eletrônicos", "kel aplicativos", "stoqui"}
-TRACKING_IMAGE_FRAGMENTS = ("facebook.com/tr", "facebook.com", "pixel", "analytics", "google-analytics", "gtag", "doubleclick", "tracking", "track", "noscript")
+TRACKING_IMAGE_FRAGMENTS = (
+    "facebook.com/tr", "facebook.com", "pixel", "analytics", "google-analytics", "googletagmanager", "gtag", "doubleclick",
+    "tracking", "track", "noscript", "stats.g.doubleclick", "googleadservices", "googleads", "adsystem", "hotjar", "clarity",
+)
+BAD_IMAGE_FRAGMENTS = (
+    "logo", "sprite", "placeholder", "blank", "loading", "favicon", "icon", "icone", "payment", "pagamento", "banner",
+    "whatsapp", "instagram", "facebook", "youtube", "tiktok", "linkedin", "twitter", "x-twitter", "visa", "mastercard", "boleto",
+    "pix", "ssl", "security", "seguro", "captcha", "avatar", "user", "store", "loja", "rodape", "footer", "header", "menu",
+)
+BAD_IMAGE_EXTENSIONS = (".svg", ".gif", ".ico", ".css", ".js", ".json", ".xml", ".txt", ".php")
+DROP_QUERY_PARAMS = {
+    "fbclid", "gclid", "gbraid", "wbraid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "mc_cid", "mc_eid", "igshid", "ref", "source", "campaign",
+}
 DESC_BAD = (
     "mega center eletronicos", "mega center eletrônicos", "todos os direitos reservados", "redes sociais", "facebook", "instagram", "whatsapp",
     "conecte se conosco", "conecte-se conosco", "atendimento", "formas de pagamento", "política de privacidade", "politica de privacidade",
@@ -27,32 +42,9 @@ PRODUCT_URL_ALIASES = ("URL do Produto", "Link Externo", "Url Produto", "URL Pro
 DESCRIPTION_COMPLEMENT_ALIASES = ("Descrição complementar", "Descrição Complementar", "Descricao complementar", "Descricao Complementar", "Descrição Curta", "Descrição curta", "Descricao curta", "Complemento", "Descrição detalhada", "Descricao detalhada")
 CATEGORY_ALIASES = ("Categoria", "Categoria do produto", "Categoria Produto", "Departamento")
 IMAGE_ALIASES = (
-    "URL Imagens Externas",
-    "URL imagens externas",
-    "Imagens Externas",
-    "Imagens",
-    "Imagem",
-    "Fotos",
-    "Foto",
-    "image_urls",
-    "image urls",
-    "image_url",
-    "image url",
-    "images",
-    "image",
-    "imgs",
-    "img",
-    "main_image",
-    "main image",
-    "thumbnail",
-    "thumbnails",
-    "gallery",
-    "galeria",
-    "url_imagem",
-    "url imagens",
-    "url_imagens",
-    "imagem principal",
-    "foto principal",
+    "URL Imagens Externas", "URL imagens externas", "Imagens Externas", "Imagens", "Imagem", "Fotos", "Foto", "image_urls",
+    "image urls", "image_url", "image url", "images", "image", "imgs", "img", "main_image", "main image", "thumbnail",
+    "thumbnails", "gallery", "galeria", "url_imagem", "url imagens", "url_imagens", "imagem principal", "foto principal",
 )
 TITLE_ALIASES = ("Descrição", "Descricao", "Nome", "Produto", "Título", "Titulo", "Title")
 
@@ -61,16 +53,8 @@ BLING_CADASTRO_COLUMNS = [
 ]
 
 DEFAULTS_BY_COLUMN_NAME = {
-    "unidade": "UN",
-    "unidade de medida": "UN",
-    "situacao": "Ativo",
-    "origem": "0",
-    "itens p caixa": "1",
-    "itens por caixa": "1",
-    "tipo do item": "Produto",
-    "volumes": "1",
-    "condicao do produto": "Novo",
-    "frete gratis": "Não",
+    "unidade": "UN", "unidade de medida": "UN", "situacao": "Ativo", "origem": "0", "itens p caixa": "1", "itens por caixa": "1",
+    "tipo do item": "Produto", "volumes": "1", "condicao do produto": "Novo", "frete gratis": "Não",
 }
 
 PREFERRED_ORDER = [col for col in BLING_CADASTRO_COLUMNS]
@@ -81,8 +65,11 @@ def _text(value: object) -> str:
         return ""
     if isinstance(value, (list, tuple, set)):
         return "|".join(_text(item) for item in value if _text(item))
-    if pd.isna(value):
-        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
     return str(value).strip()
 
 
@@ -152,12 +139,41 @@ def _clean_url_candidate(value: object) -> str:
     url = _text(value).strip().strip('"\'[]{}()')
     url = re.sub(r"[\]\[\}\{\)\(\"']+$", "", url).strip()
     url = re.sub(r"[.,;:]+$", "", url).strip()
+    if url.startswith("//"):
+        url = "https:" + url
     if url.startswith("www."):
         url = "https://" + url
     return url
 
 
-def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
+def _looks_like_real_product_image(url: str) -> bool:
+    low = url.lower()
+    if not low.startswith(("http://", "https://")):
+        return False
+    if _is_tracking_image(low):
+        return False
+    parsed = urlsplit(url)
+    path = parsed.path.lower()
+    if not parsed.netloc or not parsed.path:
+        return False
+    if any(path.endswith(ext) for ext in BAD_IMAGE_EXTENSIONS):
+        return False
+    if any(fragment in low for fragment in BAD_IMAGE_FRAGMENTS):
+        return False
+    if re.search(r"(?:^|[-_/])(?:1x1|2x2|pixel|spacer|transparent)(?:[-_.?/]|$)", low):
+        return False
+    if IMAGE_EXTENSION_RE.search(low):
+        return True
+    return any(token in low for token in ("/produto/", "/product/", "/products/", "/produtos/", "/cdn/shop/", "/uploads/", "/media/", "/catalog/", "/fotos/", "/images/", "/img/"))
+
+
+def _strip_tracking_query(url: str) -> str:
+    parsed = urlsplit(url)
+    safe_query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in DROP_QUERY_PARAMS]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(safe_query, doseq=True), ""))
+
+
+def _normalize_pipe_urls(value: object, *, max_items: int = 12) -> str:
     parts = _candidate_parts_from_value(value)
     if not parts:
         return ""
@@ -168,12 +184,13 @@ def _normalize_pipe_urls(value: object, *, max_items: int = 20) -> str:
         url = _clean_url_candidate(part)
         if not url or not _is_url(url):
             continue
-        lower = url.lower()
-        if any(block in lower for block in ("logo", "sprite", "placeholder", "blank", "loading", "favicon")) or _is_tracking_image(url):
+        url = _strip_tracking_query(url)
+        if not _looks_like_real_product_image(url):
             continue
-        if url in seen:
+        dedupe_key = urlsplit(url.lower())._replace(query="", fragment="").geturl()
+        if dedupe_key in seen:
             continue
-        seen.add(url)
+        seen.add(dedupe_key)
         result.append(url)
         if len(result) >= max_items:
             break
@@ -257,13 +274,13 @@ def _harmonize_images(cleaned: dict[str, str]) -> None:
                 images.append(normalized)
 
     final = _normalize_pipe_urls("|".join(images))
+    cleaned.pop("URL Imagens Externas", None)
+    cleaned.pop("URL imagens externas", None)
+    cleaned.pop("Imagens", None)
     if final:
         cleaned["URL Imagens Externas"] = final
         cleaned["URL imagens externas"] = final
         cleaned["Imagens"] = final
-    else:
-        cleaned.pop("URL Imagens Externas", None)
-        cleaned.pop("URL imagens externas", None)
 
 
 def _is_store_brand(value: object) -> bool:
