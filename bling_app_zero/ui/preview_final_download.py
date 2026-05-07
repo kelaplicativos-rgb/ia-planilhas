@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.image_url_guard_patch import strict_image_urls_pipe
+from bling_app_zero.core.ncm_suggestions import localizar_colunas_ncm, preencher_ncm_sugerido
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
 from bling_app_zero.ui.app_helpers import log_debug, normalizar_texto
 from bling_app_zero.ui.mapeamento.value_guard import clean_invalid_preview_mappings
@@ -15,16 +16,6 @@ from bling_app_zero.utils.gtin import contar_gtins_invalidos_df, contar_gtins_su
 
 
 FORNECEDOR_PADRAO = "Não definido"
-
-# Sugestões conservadoras para reduzir avisos do Bling quando o NCM vier vazio.
-# Não substitui revisão fiscal/contábil. Só preenche quando a classificação fiscal está vazia.
-NCM_SUGESTOES_POR_TERMO: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("mouse",), "84716053"),
-    (("teclado",), "84716052"),
-    (("controle gamer",), "95045000"),
-    (("joystick",), "95045000"),
-    (("gamepad",), "95045000"),
-)
 
 LINHAS_LIXO_DESCRICAO = {
     "mega center eletronicos",
@@ -83,7 +74,7 @@ def _valor_vazio_ou_indefinido(valor: object) -> bool:
     if not texto:
         return True
     texto_norm = _norm_lixo(texto)
-    return texto_norm in {"nan", "none", "null", "na", "n a", "indefinido", "sem fornecedor", "sem ncm", "sem classificacao fiscal"}
+    return texto_norm in {"nan", "none", "null", "na", "n a", "indefinido", "sem fornecedor"}
 
 
 def _colunas_fornecedor(df: pd.DataFrame) -> list[str]:
@@ -93,17 +84,6 @@ def _colunas_fornecedor(df: pd.DataFrame) -> list[str]:
     for col in df.columns:
         n = normalizar_texto(col)
         if "fornecedor" in n or "supplier" in n:
-            colunas.append(str(col))
-    return colunas
-
-
-def _colunas_ncm(df: pd.DataFrame) -> list[str]:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return []
-    colunas: list[str] = []
-    for col in df.columns:
-        n = normalizar_texto(col)
-        if "ncm" in n or "classificacao fiscal" in n or "classificação fiscal" in n:
             colunas.append(str(col))
     return colunas
 
@@ -173,44 +153,14 @@ def _coluna_descricao_produto(df: pd.DataFrame) -> str:
     return ""
 
 
-def _ncm_sugerido_para_descricao(descricao: object) -> str:
-    texto = _norm_lixo(descricao)
-    if not texto:
-        return ""
-    for termos, ncm in NCM_SUGESTOES_POR_TERMO:
-        if all(_norm_lixo(termo) in texto for termo in termos):
-            return ncm
-    return ""
-
-
 def _preencher_ncm_sugerido(df: pd.DataFrame) -> pd.DataFrame:
-    """Preenche NCM vazio apenas para produtos com regra conservadora conhecida."""
+    """Preenche NCM vazio usando o módulo centralizado de sugestões."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
-    base = df.copy().fillna("")
-    desc_col = _coluna_descricao_produto(base)
-    ncm_cols = _colunas_ncm(base)
-    if not desc_col or desc_col not in base.columns or not ncm_cols:
-        return base
-
-    total_preenchido = 0
-    for idx, row in base.iterrows():
-        sugestao = _ncm_sugerido_para_descricao(row.get(desc_col, ""))
-        if not sugestao:
-            continue
-        for col in ncm_cols:
-            if _valor_vazio_ou_indefinido(row.get(col, "")):
-                base.at[idx, col] = sugestao
-                total_preenchido += 1
-
-    if total_preenchido > 0:
-        log_debug(
-            f"{total_preenchido} NCM(s) vazio(s) preenchido(s) por sugestão local conservadora. Revise com contador quando necessário.",
-            nivel="INFO",
-        )
-
-    return base.fillna("")
+    desc_col = _coluna_descricao_produto(df)
+    ncm_cols = localizar_colunas_ncm(df.columns, normalizar_texto)
+    return preencher_ncm_sugerido(df, desc_col, ncm_cols, logger=log_debug)
 
 
 def _coluna_codigo_produto(df: pd.DataFrame) -> str:
