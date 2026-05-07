@@ -42,6 +42,10 @@ jobs:
           modules = [
               'app',
               'bling_app_zero.ui.home',
+              'bling_app_zero.ui.home_shared',
+              'bling_app_zero.ui.cadastro_panel',
+              'bling_app_zero.ui.estoque_panel',
+              'bling_app_zero.ui.site_panel',
               'bling_app_zero.pipelines.cadastro_pipeline',
               'bling_app_zero.pipelines.estoque_pipeline',
               'bling_app_zero.pipelines.site_pipeline',
@@ -87,4 +91,4 @@ jobs:
           print('OK Flash Amplo smoke test')
           PY
 
-# BLINGPERF CI trigger: remover site_engine
+# BLINGMODULAR CI trigger: home panel split
