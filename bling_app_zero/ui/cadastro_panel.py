@@ -3,12 +3,14 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.exporter import sanitize_for_bling
+from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
 from bling_app_zero.core.pricing import detect_discount_percent
+from bling_app_zero.engines.cadastro_engine import default_model
 from bling_app_zero.ui.home_shared import (
     df_signature,
     download_final,
     load_apply_pricing,
-    load_cadastro_pipeline,
     preview_df,
     show_mapping,
 )
@@ -56,6 +58,75 @@ def _sync_detected_discount(df_origem: pd.DataFrame, signature: str) -> float:
         st.session_state['cadastro_desconto_comissao'] = detected
 
     return detected
+
+
+def _cadastro_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
+    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns):
+        return df_modelo
+    return default_model()
+
+
+def _default_index(options: list[str], value: str) -> int:
+    try:
+        return options.index(value)
+    except ValueError:
+        return 0
+
+
+def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
+    model = _cadastro_model(df_modelo)
+    source_columns = [str(column) for column in df_source.columns]
+    target_columns = [str(column) for column in model.columns]
+    options = [''] + source_columns
+
+    signature = df_signature(df_source) + ':' + '|'.join(target_columns)
+    mapping_key = f'cadastro_manual_mapping_{signature}'
+
+    if mapping_key not in st.session_state:
+        st.session_state[mapping_key] = auto_map_columns(df_source, model)
+
+    st.markdown('#### 2. Correlacionar colunas')
+    st.caption('Confira as sugestões e ajuste manualmente antes de gerar o preview final.')
+
+    with st.expander('Prévia da origem usada no mapeamento', expanded=False):
+        preview_df('Origem para correlacionar', df_source)
+
+    current_mapping = dict(st.session_state.get(mapping_key, {}))
+    edited_mapping: dict[str, str] = {}
+
+    for target in target_columns:
+        suggested = current_mapping.get(target, '')
+        if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
+            suggested = 'Preço de venda'
+
+        selected = st.selectbox(
+            target,
+            options,
+            index=_default_index(options, suggested),
+            key=f'{mapping_key}_{target}',
+            help=f'Campo de destino no Bling: {target}',
+        )
+        edited_mapping[target] = selected
+
+    st.session_state[mapping_key] = edited_mapping
+
+    used_values = [value for value in edited_mapping.values() if value]
+    duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
+    if duplicated:
+        st.warning('Atenção: a mesma coluna de origem foi usada mais de uma vez: ' + ', '.join(duplicated))
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Gerar preview final do cadastro', use_container_width=True):
+            df_final = apply_mapping(df_source, model, edited_mapping)
+            st.session_state['df_final_cadastro'] = sanitize_for_bling(df_final)
+            st.session_state['mapping_cadastro'] = edited_mapping
+    with col_b:
+        if st.button('Limpar correlação deste cadastro', use_container_width=True):
+            st.session_state.pop(mapping_key, None)
+            st.session_state.pop('df_final_cadastro', None)
+            st.session_state.pop('mapping_cadastro', None)
+            st.rerun()
 
 
 def render_cadastro_panel() -> None:
@@ -146,12 +217,8 @@ def render_cadastro_panel() -> None:
             st.session_state['cadastro_preco_calculado_ativo'] = False
             st.session_state.pop('df_origem_cadastro_precificada', None)
 
-        if st.button('Gerar cadastro Bling', use_container_width=True):
-            run_cadastro_pipeline = load_cadastro_pipeline()
-            df_para_gerar = st.session_state.get('df_origem_cadastro_precificada', df_origem)
-            df_final, mapping = run_cadastro_pipeline(df_para_gerar, df_modelo)
-            st.session_state['df_final_cadastro'] = df_final
-            st.session_state['mapping_cadastro'] = mapping
+        df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_origem)
+        _render_manual_mapping(df_para_mapear, df_modelo)
     elif upload.attachments:
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o cadastro.')
 
