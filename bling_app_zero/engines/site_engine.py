@@ -30,6 +30,11 @@ BLOCKED_HINTS = [
     '/privacy', '/termos', '/blog', '/noticia', '/news', '/institucional',
 ]
 
+XML_FEED_HINTS = [
+    '/feed', '/feeds', '/xml', '/produto.xml', '/produtos.xml', '/products.xml',
+    '/google.xml', '/merchant.xml', '/facebook.xml', '/catalog.xml', '/catalogo.xml',
+]
+
 
 def split_urls(raw: str) -> list[str]:
     lines = re.split(r'[\n,;]+', str(raw or ''))
@@ -52,6 +57,11 @@ def _same_domain(url: str, base_domain: str) -> bool:
 
 def _base_domain(url: str) -> str:
     return urlparse(url).netloc.lower().replace('www.', '')
+
+
+def _root_url(url: str) -> str:
+    parsed = urlparse(url)
+    return f'{parsed.scheme}://{parsed.netloc}'
 
 
 def _safe_get(url: str) -> str:
@@ -236,51 +246,6 @@ def _extract_links(url: str, soup: BeautifulSoup, base_domain: str) -> list[str]
     return found
 
 
-def _sitemap_candidates(start_url: str) -> list[str]:
-    parsed = urlparse(start_url)
-    root = f'{parsed.scheme}://{parsed.netloc}'
-    return [
-        f'{root}/sitemap.xml',
-        f'{root}/sitemap_index.xml',
-        f'{root}/sitemap-products.xml',
-        f'{root}/product-sitemap.xml',
-        f'{root}/products_sitemap.xml',
-    ]
-
-
-def _parse_sitemap_urlset(xml_text: str) -> list[str]:
-    urls = re.findall(r'<loc>\s*([^<]+?)\s*</loc>', xml_text, flags=re.I)
-    return [_normalize_url(url) for url in urls if _normalize_url(url)]
-
-
-def _discover_from_sitemaps(start_url: str, max_products: int) -> list[str]:
-    base_domain = _base_domain(start_url)
-    queue = deque(_sitemap_candidates(start_url))
-    seen: set[str] = set()
-    products: list[str] = []
-
-    while queue and len(products) < max_products:
-        sitemap_url = queue.popleft()
-        if sitemap_url in seen:
-            continue
-        seen.add(sitemap_url)
-        xml = _safe_get(sitemap_url)
-        if not xml:
-            continue
-        for loc in _parse_sitemap_urlset(xml):
-            if not _is_allowed_link(loc, base_domain):
-                continue
-            low = loc.lower()
-            if 'sitemap' in low and loc not in seen:
-                queue.append(loc)
-                continue
-            if _is_product_like(loc) and loc not in products:
-                products.append(loc)
-                if len(products) >= max_products:
-                    break
-    return products
-
-
 def _pagination_links(url: str, base_domain: str, page: int) -> list[str]:
     candidates = []
     for token in [f'?page={page}', f'&page={page}', f'?pagina={page}', f'&pagina={page}', f'/page/{page}', f'?p={page}']:
@@ -293,25 +258,86 @@ def _pagination_links(url: str, base_domain: str, page: int) -> list[str]:
     return [item for item in candidates if item and _is_allowed_link(item, base_domain)]
 
 
-def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_products: int = 1000) -> list[str]:
+def _xml_candidates(start_url: str) -> list[str]:
+    root = _root_url(start_url)
+    candidates = [
+        f'{root}/sitemap.xml',
+        f'{root}/sitemap_index.xml',
+        f'{root}/sitemap-products.xml',
+        f'{root}/product-sitemap.xml',
+        f'{root}/products_sitemap.xml',
+        f'{root}/produtos.xml',
+        f'{root}/products.xml',
+        f'{root}/google.xml',
+        f'{root}/merchant.xml',
+        f'{root}/facebook.xml',
+        f'{root}/catalog.xml',
+        f'{root}/catalogo.xml',
+        f'{root}/feed.xml',
+    ]
+
+    robots = _safe_get(f'{root}/robots.txt')
+    for match in re.findall(r'(?im)^\s*Sitemap:\s*(\S+)\s*$', robots or ''):
+        normalized = _normalize_url(match)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    return candidates
+
+
+def _parse_xml_urls(xml_text: str) -> list[str]:
+    urls = re.findall(r'<loc>\s*([^<]+?)\s*</loc>', xml_text, flags=re.I)
+    urls += re.findall(r'<g:link>\s*([^<]+?)\s*</g:link>', xml_text, flags=re.I)
+    urls += re.findall(r'<link>\s*([^<]+?)\s*</link>', xml_text, flags=re.I)
+    return [_normalize_url(url) for url in urls if _normalize_url(url)]
+
+
+def _discover_from_xml_complement(start_urls: list[str], already_found: list[str], max_products: int) -> list[str]:
+    products = list(already_found)
+    seen_xml: set[str] = set()
+    queue: deque[str] = deque()
+
+    for start in start_urls:
+        for candidate in _xml_candidates(start):
+            queue.append(candidate)
+
+    while queue and len(products) < max_products:
+        xml_url = queue.popleft()
+        xml_url = _normalize_url(xml_url)
+        if not xml_url or xml_url in seen_xml:
+            continue
+        seen_xml.add(xml_url)
+        base_domain = _base_domain(xml_url)
+        xml = _safe_get(xml_url)
+        if not xml:
+            continue
+
+        for loc in _parse_xml_urls(xml):
+            if not _is_allowed_link(loc, base_domain):
+                continue
+            low = loc.lower()
+            if ('sitemap' in low or low.endswith('.xml') or any(hint in low for hint in XML_FEED_HINTS)) and loc not in seen_xml:
+                queue.append(loc)
+                continue
+            if _is_product_like(loc) and loc not in products:
+                products.append(loc)
+                if len(products) >= max_products:
+                    break
+    return products
+
+
+def _discover_from_site_navigation(start_urls: list[str], max_pages: int, max_products: int) -> list[str]:
     discovered: list[str] = []
     visited: set[str] = set()
     queue: deque[str] = deque()
 
     for raw in start_urls:
         start = _normalize_url(raw)
-        if not start:
-            continue
-        queue.append(start)
-        for product_url in _discover_from_sitemaps(start, max_products=max_products):
-            if product_url not in discovered:
-                discovered.append(product_url)
-            if len(discovered) >= max_products:
-                return discovered
+        if start:
+            queue.append(start)
 
     while queue and len(visited) < max_pages and len(discovered) < max_products:
-        url = queue.popleft()
-        url = _normalize_url(url)
+        url = _normalize_url(queue.popleft())
         if not url or url in visited:
             continue
         visited.add(url)
@@ -337,10 +363,35 @@ def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_produ
                     break
             if len(visited) + len(queue) < max_pages:
                 queue.append(link)
+
         for page in range(2, 8):
             for paged in _pagination_links(url, base_domain, page):
                 if paged not in visited and len(visited) + len(queue) < max_pages:
                     queue.append(paged)
+
+    return discovered
+
+
+def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_products: int = 1000) -> list[str]:
+    normalized_starts = [_normalize_url(url) for url in start_urls]
+    normalized_starts = [url for url in normalized_starts if url]
+    if not normalized_starts:
+        return []
+
+    # Regra principal: primeiro captura pelo site real, links internos e paginação.
+    discovered = _discover_from_site_navigation(
+        start_urls=normalized_starts,
+        max_pages=max_pages,
+        max_products=max_products,
+    )
+
+    # Regra complementar: sitemaps e XML entram só depois, para completar lacunas.
+    if len(discovered) < max_products:
+        discovered = _discover_from_xml_complement(
+            start_urls=normalized_starts,
+            already_found=discovered,
+            max_products=max_products,
+        )
 
     return discovered
 
