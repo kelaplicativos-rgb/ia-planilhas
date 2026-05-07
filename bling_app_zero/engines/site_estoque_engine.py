@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode
-from bling_app_zero.engines.site_engine import scrape_urls, split_urls
+from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode, scrape_urls, split_urls
 
 
 DEFAULT_ESTOQUE_SITE_COLUMNS = [
