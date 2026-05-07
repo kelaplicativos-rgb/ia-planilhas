@@ -6,6 +6,7 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.default_field_values import fill_default_field_values
 from bling_app_zero.core.image_url_guard_patch import strict_image_urls_pipe
 from bling_app_zero.core.ncm_suggestions import localizar_colunas_ncm, preencher_ncm_sugerido
 from bling_app_zero.core.product_data_quality import normalize_product_dataframe
@@ -357,6 +358,7 @@ def _limpar_df_para_download(df: pd.DataFrame) -> pd.DataFrame:
         base[coluna] = base[coluna].map(_limpar_texto_celula)
 
     base = _preencher_fornecedor_padrao(base).fillna("")
+    base = fill_default_field_values(base, logger=log_debug).fillna("")
     base = _preencher_ncm_sugerido(base).fillna("")
     base = _normalizar_coluna_imagens_externas(base).fillna("")
 
