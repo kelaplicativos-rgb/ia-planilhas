@@ -66,6 +66,16 @@ VALORES_PADRAO_NAO_CAPTURADOS = {
     "0,00",
 }
 
+COLUNAS_URL_PRODUTO_NAO_SAO_IMAGEM = {
+    "url do produto",
+    "url produto",
+    "link do produto",
+    "link produto",
+    "pagina do produto",
+    "página do produto",
+    "link externo",
+}
+
 
 def _normalizar_nome(valor: object) -> str:
     texto = str(valor or "").strip().lower()
@@ -77,6 +87,42 @@ def _normalizar_nome(valor: object) -> str:
 
 def _normalizar_chave(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", _normalizar_nome(valor))
+
+
+def _eh_coluna_url_produto(nome_coluna: object) -> bool:
+    nome = _normalizar_nome(nome_coluna)
+    if nome in {_normalizar_nome(v) for v in COLUNAS_URL_PRODUTO_NAO_SAO_IMAGEM}:
+        return True
+    return bool(
+        ("url" in nome or "link" in nome or "pagina" in nome or "página" in nome)
+        and "produto" in nome
+        and "imagem" not in nome
+        and "image" not in nome
+        and "foto" not in nome
+    )
+
+
+def _eh_opcao_valida_para_imagens(nome_coluna: object) -> bool:
+    nome = _normalizar_nome(nome_coluna)
+    if not nome:
+        return False
+    if _eh_coluna_url_produto(nome_coluna):
+        return False
+    if "video" in nome or "youtube" in nome:
+        return False
+    if nome == "url imagens externas":
+        return True
+    if "url" in nome and "imagem" in nome:
+        return True
+    if "url" in nome and "image" in nome:
+        return True
+    if "url" in nome and "foto" in nome:
+        return True
+    if "extern" in nome and ("imagem" in nome or "image" in nome or "foto" in nome):
+        return True
+    if nome in {"imagens", "imagem", "images", "image", "foto", "fotos"}:
+        return True
+    return False
 
 
 def _eh_coluna_interna(nome_coluna: object) -> bool:
@@ -154,6 +200,9 @@ def _score_coluna_origem(nome_coluna: object, serie: pd.Series | None = None) ->
     if any(t in nome for t in ["link externo", "url produto", "pagina", "página"]):
         score += 65
 
+    if _eh_coluna_url_produto(nome_coluna):
+        score -= 200
+
     if serie is not None and _serie_tem_dado_capturado(serie):
         score += 30
 
@@ -200,9 +249,6 @@ def _colunas_origem_capturadas(df_base: pd.DataFrame) -> list[str]:
         tem_dados = _serie_tem_dado_capturado(serie)
         score = _score_coluna_origem(coluna, serie)
 
-        # Campos estruturais do modelo Bling só entram se forem dados capturados
-        # de verdade e tiverem semântica útil. Na prática, isso remove as colunas
-        # que aparecem só porque vieram do modelo e não da varredura do site.
         if _eh_coluna_modelo_bling_para_ocultar(coluna):
             continue
 
@@ -214,7 +260,18 @@ def _colunas_origem_capturadas(df_base: pd.DataFrame) -> list[str]:
     return _deduplicar_colunas(colunas, df_base)
 
 
+def _filtrar_opcoes_por_destino(coluna_modelo: str, opcoes: list[str], conf_module) -> list[str]:
+    if not hasattr(conf_module, "_eh_destino_imagens_externas"):
+        return opcoes
+    if not conf_module._eh_destino_imagens_externas(coluna_modelo):
+        return opcoes
+
+    filtradas = [opcao for opcao in opcoes if not str(opcao).strip() or _eh_opcao_valida_para_imagens(opcao)]
+    return filtradas if filtradas else [""]
+
+
 def _ordenar_opcoes(coluna_modelo: str, opcoes: list[str], conf_module) -> list[str]:
+    opcoes = _filtrar_opcoes_por_destino(coluna_modelo, opcoes, conf_module)
     vazias = [opcao for opcao in opcoes if not str(opcao).strip()]
     demais = [opcao for opcao in opcoes if str(opcao).strip()]
 
@@ -355,8 +412,14 @@ def install_mapping_dropdown_patch() -> None:
                 if opcao == valor_atual or opcao not in usados_em_outros:
                     opcoes_coluna.append(opcao)
 
+            opcoes_coluna = _filtrar_opcoes_por_destino(coluna_modelo, opcoes_coluna, conf)
+
             if valor_atual and valor_atual in df_base.columns and valor_atual not in opcoes_coluna and not conf._eh_coluna_video(valor_atual):
-                if valor_atual in colunas_capturadas:
+                if valor_atual in colunas_capturadas and (
+                    not hasattr(conf, "_eh_destino_imagens_externas")
+                    or not conf._eh_destino_imagens_externas(coluna_modelo)
+                    or _eh_opcao_valida_para_imagens(valor_atual)
+                ):
                     opcoes_coluna.append(valor_atual)
 
             opcoes_coluna = _ordenar_opcoes(coluna_modelo, opcoes_coluna, conf)
