@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-"""Blindagem de colunas equivalentes de estoque.
+"""Guarda final das colunas equivalentes de estoque.
 
-Objetivo do sistema de atualização de estoque:
-- o valor disponível capturado do estoque é soberano;
-- colunas de destino do Bling como Balanço/Estoque/Quantidade não podem ficar
-  divergentes na mesma linha;
-- quando houver colunas de origem real como Estoque ou Quantidade, elas vencem
-  sobre Balanço, porque Balanço é o destino do Bling.
+Este módulo NÃO busca estoque e NÃO cria fallback de disponibilidade.
+Ele só sincroniza valores já capturados pelos módulos novos:
+- stock_value_engine.py
+- stock_feed_engine.py
+- estoque_fast_crawler.py
+
+Regra soberana:
+Estoque/Quantidade/Qtd capturados vencem Balanço/Saldo de destino.
 """
 
 import re
@@ -32,46 +34,42 @@ def is_stock_column(column: object) -> bool:
 
 def is_balance_column(column: object) -> bool:
     key = normalize_key(column)
-    return "balanco" in key or key in {"saldo"}
+    return "balanco" in key or key == "saldo"
 
 
 def is_real_quantity_column(column: object) -> bool:
     key = normalize_key(column)
-    return any(term in key for term in ("estoque", "quantidade", "qtd")) and "origem" not in key and "fonte" not in key and "confianca" not in key
+    if any(term in key for term in ("origem", "fonte", "confianca")):
+        return False
+    return any(term in key for term in ("estoque", "quantidade", "qtd"))
 
 
 def is_stock_origin_column(column: object) -> bool:
     key = normalize_key(column)
-    return any(term in key for term in ("origem do estoque", "origem estoque", "fonte estoque", "confianca estoque", "confianca do estoque"))
+    return any(term in key for term in ("origem estoque", "origem do estoque", "fonte estoque", "confianca estoque", "confianca do estoque"))
 
 
-def _to_number(value: object) -> float | None:
+def normalize_stock_value(value: object) -> str:
     text = str(value or "").strip()
     if not text:
-        return None
+        return ""
     key = normalize_key(text)
     if key in {"nan", "none", "null", "nat"}:
-        return None
+        return ""
     if any(term in key for term in ("sem estoque", "indisponivel", "esgotado", "fora de estoque")):
-        return 0.0
+        return "0"
     match = re.search(r"-?\d+(?:[\.,]\d+)?", text)
     if not match:
-        return None
+        return ""
     try:
         number = float(match.group(0).replace(",", "."))
     except Exception:
-        return None
-    if number < 0:
-        return None
-    return number
-
-
-def _format_number(value: float | None) -> str:
-    if value is None:
         return ""
-    if float(value).is_integer():
-        return str(int(value))
-    return str(value).rstrip("0").rstrip(".")
+    if number < 0:
+        return ""
+    if number.is_integer():
+        return str(int(number))
+    return str(number).rstrip("0").rstrip(".")
 
 
 def _has_real_origin(row: pd.Series) -> bool:
@@ -79,41 +77,38 @@ def _has_real_origin(row: pd.Series) -> bool:
         if not is_stock_origin_column(col):
             continue
         value = normalize_key(row.get(col, ""))
-        if value and value not in {"fallback", "fallback disponivel sem quantidade", "baixa", "nao encontrado"}:
-            return True
+        if not value:
+            continue
+        if value in {"fallback", "fallback disponivel sem quantidade", "baixa", "nao encontrado", "nenhuma"}:
+            continue
+        return True
     return False
 
 
 def _canonical_stock_value(row: pd.Series, stock_cols: list[str]) -> str:
-    real_quantity_cols = [col for col in stock_cols if is_real_quantity_column(col)]
+    real_cols = [col for col in stock_cols if is_real_quantity_column(col)]
     balance_cols = [col for col in stock_cols if is_balance_column(col)]
 
-    # 1) Se há origem real declarada, prioriza Estoque/Quantidade mesmo quando
-    # o valor é 0. Isso corrige Balanço=1 vs Estoque=0/Quantidade=0.
     if _has_real_origin(row):
-        for col in real_quantity_cols:
-            number = _to_number(row.get(col, ""))
-            if number is not None:
-                return _format_number(number)
+        for col in real_cols:
+            value = normalize_stock_value(row.get(col, ""))
+            if value != "":
+                return value
 
-    # 2) Mesmo sem coluna de origem, Estoque/Quantidade são colunas de captura.
-    # Se elas existem, elas vencem o Balanço de destino.
-    for col in real_quantity_cols:
-        number = _to_number(row.get(col, ""))
-        if number is not None:
-            return _format_number(number)
+    for col in real_cols:
+        value = normalize_stock_value(row.get(col, ""))
+        if value != "":
+            return value
 
-    # 3) Sem valor capturado, usa Balanço/Saldo se for o único valor disponível.
     for col in balance_cols:
-        number = _to_number(row.get(col, ""))
-        if number is not None:
-            return _format_number(number)
+        value = normalize_stock_value(row.get(col, ""))
+        if value != "":
+            return value
 
-    # 4) Último recurso: qualquer coluna equivalente.
     for col in stock_cols:
-        number = _to_number(row.get(col, ""))
-        if number is not None:
-            return _format_number(number)
+        value = normalize_stock_value(row.get(col, ""))
+        if value != "":
+            return value
     return ""
 
 
@@ -159,5 +154,6 @@ __all__ = [
     "is_stock_origin_column",
     "keep_requested_and_sync_stock",
     "normalize_key",
+    "normalize_stock_value",
     "synchronize_stock_columns",
 ]
