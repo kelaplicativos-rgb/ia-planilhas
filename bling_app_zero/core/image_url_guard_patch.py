@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from html import unescape
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from bling_app_zero.core.image_quality_validator import filter_product_image_urls
 
 IMAGE_FILE_RE = re.compile(
     r"https?:/{1,2}[^\s\"'<>|,;]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>|,;]*)?",
@@ -12,71 +13,6 @@ IMAGE_FIELD_RE = re.compile(
     r"(?:image|images|src|url|thumbnail|thumbnailUrl|contentUrl)\s*[\"']?\s*[:=]\s*[\[\{\s]*[\"']?(https?:/{1,2}[^\s\"'<>|,;]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>|,;]*)?)",
     re.IGNORECASE,
 )
-IMAGE_EXT_RE = re.compile(r"\.(?:jpg|jpeg|png|webp|avif)(?:$|[?#])", re.IGNORECASE)
-BAD_IMAGE_URL_PARTS = (
-    "/produto/image",
-    "/product/image",
-    "logo",
-    "sprite",
-    "placeholder",
-    "favicon",
-    "analytics",
-    "pixel",
-    "doubleclick",
-    "facebook.com/tr",
-    "facebook.com",
-    "instagram",
-    "whatsapp",
-    "youtube",
-    "tiktok",
-    "linkedin",
-    "twitter",
-    "googletagmanager",
-    "google-analytics",
-    "googleadservices",
-    "googleads",
-    "adsystem",
-    "hotjar",
-    "clarity",
-    "tracking",
-    "track",
-    "noscript",
-    "banner",
-    "payment",
-    "pagamento",
-    "boleto",
-    "pix",
-    "visa",
-    "mastercard",
-    "ssl",
-    "security",
-    "seguro",
-    "captcha",
-    "avatar",
-    "footer",
-    "header",
-    "menu",
-    "base64,",
-    "svg+xml",
-)
-DROP_QUERY_PARAMS = {
-    "fbclid",
-    "gclid",
-    "gbraid",
-    "wbraid",
-    "utm_source",
-    "utm_medium",
-    "utm_campaign",
-    "utm_term",
-    "utm_content",
-    "utm_id",
-    "mc_cid",
-    "mc_eid",
-    "igshid",
-    "ref",
-    "source",
-    "campaign",
-}
 
 
 def _fix_scheme(url: str) -> str:
@@ -87,30 +23,14 @@ def _clean_raw(value: object) -> str:
     return unescape(str(value or "")).strip().replace("\\/", "/")
 
 
-def _strip_tracking_query(url: str) -> str:
-    parsed = urlsplit(url)
-    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in DROP_QUERY_PARAMS]
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
-
-
-def _valid_image_file_url(url: str) -> bool:
-    low = str(url or "").lower().strip()
-    if not low.startswith(("http://", "https://")):
-        return False
-    if not IMAGE_EXT_RE.search(low):
-        return False
-    if low.count("http://") + low.count("https://") > 1:
-        return False
-    if any(part in low for part in BAD_IMAGE_URL_PARTS):
-        return False
-    if re.search(r"(?:^|[-_/])(?:1x1|2x2|pixel|spacer|transparent)(?:[-_.?/]|$)", low):
-        return False
-    if re.search(r"(?:image|images|src|url)[\"']?\s*[:=]", low, flags=re.IGNORECASE):
-        return False
-    return True
-
-
-def strict_image_urls_pipe(value: object, *, max_images: int = 20) -> str:
+def strict_image_urls_pipe(
+    value: object,
+    *,
+    max_images: int = 20,
+    product_title: object = "",
+    context: object = "",
+    validate_remote: bool = False,
+) -> str:
     raw = _clean_raw(value)
     if not raw:
         return ""
@@ -123,22 +43,17 @@ def strict_image_urls_pipe(value: object, *, max_images: int = 20) -> str:
     for match in IMAGE_FILE_RE.findall(raw):
         candidates.append(_fix_scheme(match))
 
-    output: list[str] = []
-    seen: set[str] = set()
-    for url in candidates:
-        clean = _fix_scheme(str(url or "").strip().strip('"\'[]{}()'))
-        clean = _strip_tracking_query(clean)
-        if not _valid_image_file_url(clean):
-            continue
-        parsed = urlsplit(clean.lower())
-        key = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-        if key in seen:
-            continue
-        seen.add(key)
-        output.append(clean)
-        if len(output) >= max_images:
-            break
-    return "|".join(output)
+    if not candidates:
+        candidates = re.split(r"[|,\n\r\t]+", raw)
+
+    return filter_product_image_urls(
+        candidates,
+        product_title=product_title,
+        context=context,
+        max_images=max_images,
+        require_remote=validate_remote,
+        require_product_match=False,
+    )
 
 
 def install_image_url_guard_patch() -> None:
@@ -156,6 +71,6 @@ def install_image_url_guard_patch() -> None:
 
     try:
         from bling_app_zero.ui.app_helpers import log_debug
-        log_debug("Guard global de URL Imagens Externas instalado.", nivel="INFO")
+        log_debug("Guard global de URL Imagens Externas instalado com validação de qualidade.", nivel="INFO")
     except Exception:
         pass
