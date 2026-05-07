@@ -7,48 +7,20 @@ import pandas as pd
 
 from bling_app_zero.core.site_engines.model_columns import first_existing_value, normalize_key
 
-
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "nome": (
-        "Produto", "Nome", "Nome do produto", "Descrição", "Descricao", "Título", "Titulo", "name", "title",
-    ),
-    "descricao": (
-        "Descrição", "Descricao", "Descrição curta", "Descricao curta", "Nome", "Produto", "title", "name",
-    ),
-    "descricao_complementar": (
-        "Descrição complementar", "Descricao complementar", "Complemento", "Descrição longa", "Descricao longa", "description",
-    ),
-    "preco": (
-        "Preço", "Preco", "Preço unitário", "Preco unitario", "Preço unitário (OBRIGATÓRIO)",
-        "Preco unitario (OBRIGATORIO)", "price", "Preço de venda", "Preco de venda",
-    ),
-    "custo": (
-        "Preço de custo", "Preco de custo", "Custo", "Valor de custo", "cost",
-    ),
-    "sku": (
-        "Código", "Codigo", "SKU", "Referência", "Referencia", "Código do produto", "Codigo do produto", "código interno", "codigo interno",
-    ),
-    "gtin": (
-        "GTIN", "EAN", "Código de barras", "Codigo de barras", "gtin", "ean", "barcode",
-    ),
-    "marca": (
-        "Marca", "Fabricante", "brand", "manufacturer",
-    ),
-    "categoria": (
-        "Categoria", "Categorias", "Categoria do produto", "category", "breadcrumb",
-    ),
-    "imagens": (
-        "URL Imagens Externas", "URL imagens externas", "Imagens", "Imagem", "image_urls", "image_url", "main_image",
-    ),
-    "url": (
-        "Link Externo", "URL", "Url", "Link", "Produto URL", "product_url", "source_url",
-    ),
-    "estoque": (
-        "Estoque", "Quantidade", "Saldo", "Balanço", "Balanco", "Qtd", "quantity", "stock",
-    ),
-    "deposito": (
-        "Depósito", "Deposito", "Nome do depósito", "Nome do deposito", "warehouse",
-    ),
+    "nome": ("Produto", "Nome", "Nome do produto", "Descrição", "Descricao", "Título", "Titulo", "name", "title"),
+    "descricao": ("Descrição", "Descricao", "Descrição curta", "Descricao curta", "Nome", "Produto", "title", "name"),
+    "descricao_complementar": ("Descrição complementar", "Descricao complementar", "Complemento", "Descrição longa", "Descricao longa", "description"),
+    "preco": ("Preço", "Preco", "Preço unitário", "Preco unitario", "Preço unitário (OBRIGATÓRIO)", "Preco unitario (OBRIGATORIO)", "price", "Preço de venda", "Preco de venda"),
+    "custo": ("Preço de custo", "Preco de custo", "Custo", "Valor de custo", "cost"),
+    "sku": ("Código", "Codigo", "SKU", "Referência", "Referencia", "Código do produto", "Codigo do produto", "código interno", "codigo interno"),
+    "gtin": ("GTIN", "EAN", "Código de barras", "Codigo de barras", "gtin", "ean", "barcode"),
+    "marca": ("Marca", "Fabricante", "brand", "manufacturer"),
+    "categoria": ("Categoria", "Categorias", "Categoria do produto", "category", "breadcrumb"),
+    "imagens": ("URL Imagens Externas", "URL imagens externas", "Imagens", "Imagem", "image_urls", "image_url", "main_image"),
+    "url": ("Link Externo", "URL", "Url", "Link", "Produto URL", "product_url", "source_url"),
+    "estoque": ("Estoque", "Quantidade", "Saldo", "Balanço", "Balanco", "Qtd", "quantity", "stock"),
+    "deposito": ("Depósito", "Deposito", "Nome do depósito", "Nome do deposito", "warehouse"),
     "ncm": ("NCM", "ncm"),
 }
 
@@ -84,27 +56,30 @@ def requested_field_kind(column_name: object, operation: str = "cadastro") -> st
     return ""
 
 
+def requested_field_profile(requested_columns: Iterable[str], *, operation: str) -> set[str]:
+    fields: set[str] = set()
+    for column in requested_columns:
+        kind = requested_field_kind(column, operation)
+        if kind and kind != "deposito":
+            fields.add(kind)
+    if fields:
+        fields.add("url")
+    return fields
+
+
 def _clean_gtin(value: object) -> str:
     digits = re.sub(r"\D+", "", str(value or ""))
     return digits if len(digits) in {8, 12, 13, 14} else ""
 
 
-def resolve_value_for_column(
-    row: pd.Series,
-    column_name: str,
-    *,
-    operation: str,
-    deposito_nome: str = "",
-) -> str:
+def resolve_value_for_column(row: pd.Series, column_name: str, *, operation: str, deposito_nome: str = "") -> str:
     kind = requested_field_kind(column_name, operation)
     if not kind:
         return ""
-
     if kind == "deposito":
         return str(deposito_nome or "").strip()
 
     value = first_existing_value(row, _FIELD_ALIASES.get(kind, (column_name,)))
-
     if kind == "gtin":
         return _clean_gtin(value)
     if kind == "imagens":
@@ -128,13 +103,7 @@ def _normalize_stock(value: object) -> str:
     return ""
 
 
-def build_model_limited_dataframe(
-    raw_df: pd.DataFrame,
-    requested_columns: Iterable[str],
-    *,
-    operation: str,
-    deposito_nome: str = "",
-) -> pd.DataFrame:
+def build_model_limited_dataframe(raw_df: pd.DataFrame, requested_columns: Iterable[str], *, operation: str, deposito_nome: str = "") -> pd.DataFrame:
     requested = [str(col or "").strip() for col in requested_columns if str(col or "").strip()]
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
         return pd.DataFrame(columns=requested)
@@ -144,11 +113,6 @@ def build_model_limited_dataframe(
     for _, row in base.iterrows():
         item: dict[str, str] = {}
         for column in requested:
-            item[column] = resolve_value_for_column(
-                row,
-                column,
-                operation=operation,
-                deposito_nome=deposito_nome,
-            )
+            item[column] = resolve_value_for_column(row, column, operation=operation, deposito_nome=deposito_nome)
         rows.append(item)
     return pd.DataFrame(rows, columns=requested).fillna("")
