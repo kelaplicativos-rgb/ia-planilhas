@@ -16,24 +16,14 @@ from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (compatible; IA-Planilhas-Bling/3.1; +https://github.com/kelaplicativos-rgb/ia-planilhas)'
+    'User-Agent': 'Mozilla/5.0 (compatible; IA-Planilhas-Bling/3.2; +https://github.com/kelaplicativos-rgb/ia-planilhas)'
 }
 
-PRODUCT_HINTS = [
-    '/produto', '/produtos', '/product', '/products', '/p/', '/item', '/loja/produto',
-    'produto-', 'product-', 'sku=', 'variant=', 'ref=', 'cod=', 'codigo=',
-]
-
-BLOCKED_HINTS = [
-    'facebook', 'instagram', 'whatsapp', 'youtube', 'mailto:', 'tel:', '#',
-    '/login', '/conta', '/account', '/carrinho', '/cart', '/checkout', '/politica',
-    '/privacy', '/termos', '/blog', '/noticia', '/news', '/institucional',
-]
-
-XML_FEED_HINTS = [
-    '/feed', '/feeds', '/xml', '/produto.xml', '/produtos.xml', '/products.xml',
-    '/google.xml', '/merchant.xml', '/facebook.xml', '/catalog.xml', '/catalogo.xml',
-]
+PRODUCT_HINTS = ['/produto', '/produtos', '/product', '/products', '/p/', '/item', '/loja/produto', 'produto-', 'product-', 'sku=', 'variant=', 'ref=', 'cod=', 'codigo=']
+BLOCKED_HINTS = ['facebook', 'instagram', 'whatsapp', 'youtube', 'mailto:', 'tel:', '#', '/login', '/conta', '/account', '/carrinho', '/cart', '/checkout', '/politica', '/privacy', '/termos', '/blog', '/noticia', '/news', '/institucional']
+XML_FEED_HINTS = ['/feed', '/feeds', '/xml', '/produto.xml', '/produtos.xml', '/products.xml', '/google.xml', '/merchant.xml', '/facebook.xml', '/catalog.xml', '/catalogo.xml']
+OUT_STOCK_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'avise-me', 'sob consulta']
+IN_STOCK_TERMS = ['em estoque', 'disponivel', 'disponível', 'comprar', 'adicionar ao carrinho', 'in stock', 'available']
 
 
 def split_urls(raw: str) -> list[str]:
@@ -128,20 +118,119 @@ def _images(soup: BeautifulSoup, page_text: str = '') -> str:
     return '|'.join(cleaned)
 
 
+def _digits(value: object) -> str:
+    digits = re.sub(r'\D+', '', str(value or ''))
+    return str(int(digits)) if digits else ''
+
+
+def _stock_from_jsonld(soup: BeautifulSoup) -> tuple[str, int]:
+    for script in soup.find_all('script', type='application/ld+json'):
+        raw = script.string or script.get_text() or ''
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        queue = data if isinstance(data, list) else [data]
+        while queue:
+            item = queue.pop(0)
+            if isinstance(item, list):
+                queue.extend(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            offers = item.get('offers')
+            offers_list = offers if isinstance(offers, list) else [offers]
+            for offer in offers_list:
+                if not isinstance(offer, dict):
+                    continue
+                qty = _digits(offer.get('inventoryLevel') or offer.get('quantity') or offer.get('stock'))
+                if qty:
+                    return qty, 95
+                availability = normalize_key(offer.get('availability', ''))
+                if 'outofstock' in availability:
+                    return '0', 90
+                if 'instock' in availability:
+                    return '1', 75
+            for value in item.values():
+                if isinstance(value, (dict, list)):
+                    queue.append(value)
+    return '', 0
+
+
+def _stock_from_meta(soup: BeautifulSoup) -> tuple[str, int]:
+    for meta in soup.find_all('meta'):
+        key = normalize_key(meta.get('property') or meta.get('name') or '')
+        value = clean_cell(meta.get('content') or '')
+        value_key = normalize_key(value)
+        if any(token in key for token in ['stock', 'estoque', 'availability', 'disponibilidade']):
+            qty = _digits(value)
+            if qty:
+                return qty, 90
+            if any(normalize_key(term) in value_key for term in OUT_STOCK_TERMS):
+                return '0', 85
+            if any(normalize_key(term) in value_key for term in IN_STOCK_TERMS):
+                return '1', 70
+    return '', 0
+
+
+def _stock_from_dom(soup: BeautifulSoup) -> tuple[str, int]:
+    attrs = ['data-stock', 'data-estoque', 'data-quantity', 'data-qty', 'data-saldo']
+    for node in soup.find_all(True):
+        for attr in attrs:
+            if attr in node.attrs:
+                qty = _digits(node.attrs.get(attr))
+                if qty:
+                    return qty, 92
+    return '', 0
+
+
+def _stock_from_scripts(soup: BeautifulSoup) -> tuple[str, int]:
+    for script in soup.find_all('script'):
+        raw = script.string or script.get_text() or ''
+        if not raw or not any(token in raw.lower() for token in ['stock', 'estoque', 'inventory', 'quantity', 'saldo']):
+            continue
+        match = re.search(r'["\'](?:stock|estoque|inventory|quantity|saldo|qty)["\']\s*:\s*["\']?(\d{1,6})', raw, flags=re.I)
+        if match:
+            return _digits(match.group(1)), 88
+    return '', 0
+
+
+def _stock_from_text(page_text: str) -> tuple[str, int]:
+    for pattern in [
+        r'(?:estoque|saldo|quantidade|qtd)\s*[:\-]?\s*(\d{1,6})',
+        r'(?:restam|resta|apenas)\s*(\d{1,6})',
+        r'(\d{1,6})\s*(?:unidades|unidade|un\b|peças|pecas)',
+    ]:
+        match = re.search(pattern, page_text, flags=re.I)
+        if match:
+            qty = _digits(match.group(1))
+            if qty:
+                return qty, 80
+    normalized = normalize_key(page_text)
+    if any(normalize_key(term) in normalized for term in OUT_STOCK_TERMS):
+        return '0', 78
+    if any(normalize_key(term) in normalized for term in IN_STOCK_TERMS):
+        return '1', 55
+    return '', 0
+
+
 def _stock(soup: BeautifulSoup, page_text: str) -> str:
-    key = normalize_key(page_text)
-    if any(term in key for term in ['sem estoque', 'indisponivel', 'esgotado', 'fora de estoque']):
-        return '0'
-    if any(term in key for term in ['comprar', 'adicionar ao carrinho', 'em estoque', 'disponivel']):
-        return '1'
-    return ''
+    candidates = [
+        _stock_from_jsonld(soup),
+        _stock_from_meta(soup),
+        _stock_from_dom(soup),
+        _stock_from_scripts(soup),
+        _stock_from_text(page_text),
+    ]
+    candidates = [item for item in candidates if item[0] != '']
+    if not candidates:
+        return ''
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    return candidates[0][0]
 
 
 def _sku(soup: BeautifulSoup, page_text: str) -> str:
-    patterns = [
-        r'(?:SKU|COD|CÓD|REF|REFERÊNCIA)[:\s#-]+([A-Za-z0-9._/-]+)',
-        r'(?:Código|Codigo)[:\s#-]+([A-Za-z0-9._/-]+)',
-    ]
+    patterns = [r'(?:SKU|COD|CÓD|REF|REFERÊNCIA)[:\s#-]+([A-Za-z0-9._/-]+)', r'(?:Código|Codigo)[:\s#-]+([A-Za-z0-9._/-]+)']
     for pattern in patterns:
         match = re.search(pattern, page_text, flags=re.I)
         if match:
@@ -150,11 +239,7 @@ def _sku(soup: BeautifulSoup, page_text: str) -> str:
 
 
 def _gtin(soup: BeautifulSoup, page_text: str) -> str:
-    patterns = [
-        r'(?:GTIN|EAN|Código de barras|Codigo de barras|Barcode)[:\s#-]+([0-9 .-]{8,20})',
-        r'\b(\d{8}|\d{12}|\d{13}|\d{14})\b',
-    ]
-    for pattern in patterns:
+    for pattern in [r'(?:GTIN|EAN|Código de barras|Codigo de barras|Barcode)[:\s#-]+([0-9 .-]{8,20})', r'\b(\d{8}|\d{12}|\d{13}|\d{14})\b']:
         match = re.search(pattern, page_text, flags=re.I)
         if match:
             value = clean_gtin(match.group(1))
@@ -256,12 +341,7 @@ def _pagination_links(url: str, base_domain: str, page: int) -> list[str]:
 
 def _xml_candidates(start_url: str) -> list[str]:
     root = _root_url(start_url)
-    candidates = [
-        f'{root}/sitemap.xml', f'{root}/sitemap_index.xml', f'{root}/sitemap-products.xml',
-        f'{root}/product-sitemap.xml', f'{root}/products_sitemap.xml', f'{root}/produtos.xml',
-        f'{root}/products.xml', f'{root}/google.xml', f'{root}/merchant.xml', f'{root}/facebook.xml',
-        f'{root}/catalog.xml', f'{root}/catalogo.xml', f'{root}/feed.xml',
-    ]
+    candidates = [f'{root}/sitemap.xml', f'{root}/sitemap_index.xml', f'{root}/sitemap-products.xml', f'{root}/product-sitemap.xml', f'{root}/products_sitemap.xml', f'{root}/produtos.xml', f'{root}/products.xml', f'{root}/google.xml', f'{root}/merchant.xml', f'{root}/facebook.xml', f'{root}/catalog.xml', f'{root}/catalogo.xml', f'{root}/feed.xml']
     robots = _safe_get(f'{root}/robots.txt')
     for match in re.findall(r'(?im)^\s*Sitemap:\s*(\S+)\s*$', robots or ''):
         normalized = _normalize_url(match)
@@ -283,7 +363,6 @@ def _discover_from_xml_complement(start_urls: list[str], already_found: list[str
     queue: deque[str] = deque()
     for start in start_urls:
         queue.extend(_xml_candidates(start))
-
     while queue and len(products) < max_products:
         xml_url = _normalize_url(queue.popleft())
         if not xml_url or xml_url in seen_xml:
@@ -311,7 +390,6 @@ def _discover_from_site_navigation(start_urls: list[str], max_pages: int, max_pr
     discovered: list[str] = []
     visited: set[str] = set()
     queue: deque[str] = deque(_normalize_url(url) for url in start_urls if _normalize_url(url))
-
     while queue and len(visited) < max_pages and len(discovered) < max_products:
         url = _normalize_url(queue.popleft())
         if not url or url in visited:
@@ -322,12 +400,10 @@ def _discover_from_site_navigation(start_urls: list[str], max_pages: int, max_pr
         if not html:
             continue
         soup = _make_soup(html)
-
         if _is_product_like(url, html) and url not in discovered:
             discovered.append(url)
             if len(discovered) >= max_products:
                 break
-
         links = _extract_links(url, soup, base_domain)
         product_first = sorted(links, key=lambda item: 0 if _is_product_like(item) else 1)
         for link in product_first:
@@ -339,7 +415,6 @@ def _discover_from_site_navigation(start_urls: list[str], max_pages: int, max_pr
                     break
             if len(visited) + len(queue) < max_pages:
                 queue.append(link)
-
         for page in range(2, 8):
             for paged in _pagination_links(url, base_domain, page):
                 if paged not in visited and len(visited) + len(queue) < max_pages:
@@ -352,7 +427,6 @@ def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_produ
     normalized_starts = [url for url in normalized_starts if url]
     if not normalized_starts:
         return []
-
     discovered = _discover_from_site_navigation(normalized_starts, max_pages=max_pages, max_products=max_products)
     if len(discovered) < max_products:
         discovered = _discover_from_xml_complement(normalized_starts, already_found=discovered, max_products=max_products)
@@ -395,32 +469,14 @@ def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> 
     html = _safe_get(url)
     soup = _make_soup(html)
     page_text = _page_text(soup)
-
     if contract:
         return _extract_by_contract(url=url, contract=contract, soup=soup, page_text=page_text)
-
     title = _title(soup, page_text)
     price = _price(soup, page_text)
     stock = _stock(soup, page_text)
     sku = _sku(soup, page_text)
     images = _images(soup, page_text)
-
-    return {
-        'URL': url,
-        'Código': sku,
-        'SKU': sku,
-        'GTIN': _gtin(soup, page_text),
-        'Descrição': title,
-        'Nome': title,
-        'Preço': price,
-        'Preço unitário (OBRIGATÓRIO)': price,
-        'Estoque': stock,
-        'Balanço (OBRIGATÓRIO)': stock,
-        'URL Imagens': images,
-        'Imagens': images,
-        'Marca': _brand(soup, page_text),
-        'Categoria': _category(soup, page_text),
-    }
+    return {'URL': url, 'Código': sku, 'SKU': sku, 'GTIN': _gtin(soup, page_text), 'Descrição': title, 'Nome': title, 'Preço': price, 'Preço unitário (OBRIGATÓRIO)': price, 'Estoque': stock, 'Balanço (OBRIGATÓRIO)': stock, 'URL Imagens': images, 'Imagens': images, 'Marca': _brand(soup, page_text), 'Categoria': _category(soup, page_text)}
 
 
 def scrape_urls(urls: list[str], requested_columns: Iterable[str] | None = None) -> pd.DataFrame:
@@ -428,12 +484,7 @@ def scrape_urls(urls: list[str], requested_columns: Iterable[str] | None = None)
     return pd.DataFrame(rows).fillna('')
 
 
-def scrape_all_products(
-    start_urls: list[str],
-    requested_columns: Iterable[str] | None = None,
-    max_pages: int = 250,
-    max_products: int = 1000,
-) -> tuple[pd.DataFrame, list[str]]:
+def scrape_all_products(start_urls: list[str], requested_columns: Iterable[str] | None = None, max_pages: int = 250, max_products: int = 1000) -> tuple[pd.DataFrame, list[str]]:
     product_urls = discover_product_urls(start_urls=start_urls, max_pages=max_pages, max_products=max_products)
     rows = [scrape_product(url, requested_columns=requested_columns) for url in product_urls]
     return pd.DataFrame(rows).fillna(''), product_urls
