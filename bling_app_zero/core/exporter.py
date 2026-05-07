@@ -6,7 +6,7 @@ from io import BytesIO
 import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
-from bling_app_zero.core.text import clean_cell
+from bling_app_zero.core.text import clean_cell, normalize_key
 
 IMAGE_COLUMN_TERMS = [
     'imagem',
@@ -20,10 +20,31 @@ IMAGE_COLUMN_TERMS = [
     'url imagens externas',
 ]
 
+PRODUCT_CODE_COLUMN_TERMS = [
+    'codigo',
+    'código',
+    'codigo produto',
+    'código produto',
+    'codigo do produto',
+    'código do produto',
+    'sku',
+    'referencia',
+    'referência',
+]
+
 
 def _looks_like_image_column(column: object) -> bool:
     key = str(column or '').strip().lower()
     return any(term in key for term in IMAGE_COLUMN_TERMS)
+
+
+def _looks_like_product_code_column(column: object) -> bool:
+    key = normalize_key(column)
+    if not key:
+        return False
+    if looks_like_gtin_column(column):
+        return False
+    return key in {normalize_key(term) for term in PRODUCT_CODE_COLUMN_TERMS}
 
 
 def normalize_image_urls(value: object) -> str:
@@ -49,6 +70,32 @@ def normalize_image_urls(value: object) -> str:
     return '|'.join(parts)
 
 
+def _blank_duplicate_product_codes(out: pd.DataFrame) -> pd.DataFrame:
+    if out is None or out.empty:
+        return out
+
+    code_columns = [column for column in out.columns if _looks_like_product_code_column(column)]
+    for column in code_columns:
+        seen: set[str] = set()
+        cleaned_values: list[str] = []
+
+        for value in out[column].tolist():
+            text = clean_cell(value)
+            key = normalize_key(text)
+            if not key:
+                cleaned_values.append('')
+                continue
+            if key in seen:
+                cleaned_values.append('')
+                continue
+            seen.add(key)
+            cleaned_values.append(text)
+
+        out[column] = cleaned_values
+
+    return out
+
+
 def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -63,6 +110,7 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out[col] = out[col].apply(clean_cell)
 
+    out = _blank_duplicate_product_codes(out)
     return out.fillna('')
 
 
