@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from html import unescape
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 IMAGE_FILE_RE = re.compile(
     r"https?:/{1,2}[^\s\"'<>|,;]+?\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\s\"'<>|,;]*)?",
@@ -23,9 +24,59 @@ BAD_IMAGE_URL_PARTS = (
     "pixel",
     "doubleclick",
     "facebook.com/tr",
+    "facebook.com",
+    "instagram",
+    "whatsapp",
+    "youtube",
+    "tiktok",
+    "linkedin",
+    "twitter",
+    "googletagmanager",
+    "google-analytics",
+    "googleadservices",
+    "googleads",
+    "adsystem",
+    "hotjar",
+    "clarity",
+    "tracking",
+    "track",
+    "noscript",
+    "banner",
+    "payment",
+    "pagamento",
+    "boleto",
+    "pix",
+    "visa",
+    "mastercard",
+    "ssl",
+    "security",
+    "seguro",
+    "captcha",
+    "avatar",
+    "footer",
+    "header",
+    "menu",
     "base64,",
     "svg+xml",
 )
+DROP_QUERY_PARAMS = {
+    "fbclid",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "mc_cid",
+    "mc_eid",
+    "igshid",
+    "ref",
+    "source",
+    "campaign",
+}
 
 
 def _fix_scheme(url: str) -> str:
@@ -34,6 +85,12 @@ def _fix_scheme(url: str) -> str:
 
 def _clean_raw(value: object) -> str:
     return unescape(str(value or "")).strip().replace("\\/", "/")
+
+
+def _strip_tracking_query(url: str) -> str:
+    parsed = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in DROP_QUERY_PARAMS]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
 
 
 def _valid_image_file_url(url: str) -> bool:
@@ -45,6 +102,8 @@ def _valid_image_file_url(url: str) -> bool:
     if low.count("http://") + low.count("https://") > 1:
         return False
     if any(part in low for part in BAD_IMAGE_URL_PARTS):
+        return False
+    if re.search(r"(?:^|[-_/])(?:1x1|2x2|pixel|spacer|transparent)(?:[-_.?/]|$)", low):
         return False
     if re.search(r"(?:image|images|src|url)[\"']?\s*[:=]", low, flags=re.IGNORECASE):
         return False
@@ -68,9 +127,11 @@ def strict_image_urls_pipe(value: object, *, max_images: int = 20) -> str:
     seen: set[str] = set()
     for url in candidates:
         clean = _fix_scheme(str(url or "").strip().strip('"\'[]{}()'))
+        clean = _strip_tracking_query(clean)
         if not _valid_image_file_url(clean):
             continue
-        key = clean.lower()
+        parsed = urlsplit(clean.lower())
+        key = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
         if key in seen:
             continue
         seen.add(key)
