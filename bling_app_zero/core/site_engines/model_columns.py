@@ -6,7 +6,6 @@ from typing import Iterable
 
 import pandas as pd
 
-
 _EMPTY_VALUES = {"", "nan", "none", "null", "nat"}
 
 
@@ -59,11 +58,22 @@ def detect_operation_from_model(model_df: pd.DataFrame | None, fallback: str = "
     for term in ("deposito", "saldo", "balanco", "quantidade", "estoque"):
         if term in text:
             score_estoque += 3
-    for term in ("descricao curta", "descricao complementar", "url imagens externas", "imagens", "categoria", "marca", "ncm", "peso bruto", "peso liquido"):
+    for term in (
+        "descricao",
+        "descricao curta",
+        "descricao complementar",
+        "preco unitario obrigatorio",
+        "preco unitario",
+        "url imagens externas",
+        "imagens",
+        "categoria",
+        "marca",
+        "ncm",
+        "peso bruto",
+        "peso liquido",
+    ):
         if term in text:
-            score_cadastro += 3
-    if "preco unitario obrigatorio" in text and score_cadastro == 0:
-        score_estoque += 1
+            score_cadastro += 2
 
     if score_estoque > score_cadastro:
         return "estoque"
