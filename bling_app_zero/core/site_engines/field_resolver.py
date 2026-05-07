@@ -6,7 +6,7 @@ from typing import Iterable
 import pandas as pd
 
 from bling_app_zero.core.site_engines.model_columns import first_existing_value, normalize_key
-from bling_app_zero.core.site_engines.stock_columns_guard import synchronize_stock_columns
+from bling_app_zero.core.site_engines.stock_columns_guard import normalize_stock_value, synchronize_stock_columns
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "nome": ("Produto", "Nome", "Nome do produto", "Descrição", "Descricao", "Título", "Titulo", "name", "title"),
@@ -84,29 +84,8 @@ def resolve_value_for_column(row: pd.Series, column_name: str, *, operation: str
     if kind == "imagens":
         return str(value or "").replace(",", "|").replace(";", "|").strip(" |")
     if kind == "estoque":
-        return _normalize_stock(value)
+        return normalize_stock_value(value)
     return str(value or "").strip()
-
-
-def _normalize_stock(value: object) -> str:
-    text = str(value or "").strip().lower()
-    if not text:
-        return ""
-    if any(term in text for term in ("sem estoque", "indisponivel", "indisponível", "esgotado", "fora de estoque")):
-        return "0"
-    match = re.search(r"\d+(?:[\.,]\d+)?", text)
-    if match:
-        number = match.group(0).replace(",", ".")
-        try:
-            numeric = float(number)
-        except Exception:
-            return number
-        if numeric.is_integer():
-            return str(int(numeric))
-        return str(numeric).rstrip("0").rstrip(".")
-    if any(term in text for term in ("em estoque", "disponivel", "disponível", "comprar")):
-        return "1"
-    return ""
 
 
 def build_model_limited_dataframe(raw_df: pd.DataFrame, requested_columns: Iterable[str], *, operation: str, deposito_nome: str = "") -> pd.DataFrame:
