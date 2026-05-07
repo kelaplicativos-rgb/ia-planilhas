@@ -59,12 +59,17 @@ _NEGATIVE_HINTS: dict[str, tuple[str, ...]] = {
     "descricao": ("complementar", "completo", "html", "detalhe", "observacao", "observação"),
     "descricao curta": ("complementar", "completo", "html", "detalhe", "observacao", "observação"),
     "descricao complementar": ("curta", "titulo", "título", "nome"),
-    "preco unitario": ("custo", "compra"),
-    "preco de custo": ("venda", "unitario", "unitário"),
+    "preco unitario": ("custo", "compra", "fornecedor"),
+    "preco de custo": ("venda", "unitario", "unitário", "promocional", "final"),
     "url imagens externas": ("video", "vídeo", "youtube", "banner", "logo"),
     "video": ("imagem", "image", "foto"),
 }
 
+_COST_NAME_HINTS = ("custo", "compra", "fornecedor", "cost")
+_SALE_PRICE_NAME_HINTS = ("preco", "preço", "valor", "venda", "unitario", "unitário", "price")
+_COMPLEMENT_NAME_HINTS = ("complement", "completa", "detalhe", "informacao", "informação", "observacao", "observação")
+_IMAGE_NAME_HINTS = ("imagem", "imagens", "image", "images", "foto", "fotos", "gallery", "galeria")
+_VIDEO_NAME_HINTS = ("video", "vídeo", "youtube")
 _REQUIRED_TARGET_HINTS = ("descricao", "descrição", "preco", "preço", "quantidade", "estoque")
 
 
@@ -198,15 +203,50 @@ def _negative_penalty(canonical: str, source_col: object) -> int:
     return penalty
 
 
+def _strict_domain_penalty(canonical: str, source_col: object) -> tuple[int, str]:
+    src = normalize_text(source_col)
+    penalty = 0
+    reasons: list[str] = []
+
+    if canonical == "preco de custo" and not any(hint in src for hint in _COST_NAME_HINTS):
+        penalty += 45
+        reasons.append("custo exige nome com custo/compra/fornecedor")
+
+    if canonical == "preco unitario" and any(hint in src for hint in _COST_NAME_HINTS):
+        penalty += 45
+        reasons.append("preço de venda não deve usar custo/compra")
+
+    if canonical == "descricao complementar" and not any(hint in src for hint in _COMPLEMENT_NAME_HINTS):
+        penalty += 35
+        reasons.append("descrição complementar exige pista de complemento/detalhe")
+
+    if canonical in {"descricao", "descricao curta"} and any(hint in src for hint in _COMPLEMENT_NAME_HINTS):
+        penalty += 35
+        reasons.append("descrição principal não deve usar complemento/detalhe")
+
+    if canonical == "url imagens externas" and any(hint in src for hint in _VIDEO_NAME_HINTS):
+        penalty += 50
+        reasons.append("imagem não deve usar coluna de vídeo")
+
+    if canonical == "video" and any(hint in src for hint in _IMAGE_NAME_HINTS):
+        penalty += 50
+        reasons.append("vídeo não deve usar coluna de imagem")
+
+    return penalty, "; ".join(reasons)
+
+
 def _score_pair(target: str, source_col: str, df: pd.DataFrame) -> tuple[int, str]:
     canonical = _canonical_target(target)
     name_points, alias = _name_score(canonical, source_col)
     content_points, content_reason = _content_score(canonical, _sample_values(df, source_col))
     penalty = _negative_penalty(canonical, source_col)
-    score = max(0, min(100, name_points + content_points - penalty))
+    strict_penalty, strict_reason = _strict_domain_penalty(canonical, source_col)
+    score = max(0, min(100, name_points + content_points - penalty - strict_penalty))
     reason = f"{canonical}; nome≈{alias or '-'}={name_points}; conteúdo={content_points} ({content_reason})"
     if penalty:
         reason += f"; penalidade={penalty}"
+    if strict_penalty:
+        reason += f"; trava={strict_penalty} ({strict_reason})"
     return score, reason
 
 
@@ -272,11 +312,15 @@ def correlate_model_fields(
 
 def mapping_from_correlations(correlations: Sequence[FieldCorrelation], *, only_auto: bool = True) -> dict[str, str]:
     mapping: dict[str, str] = {}
+    used_sources: set[str] = set()
     for item in correlations:
         if not item.source:
             continue
         if only_auto and item.status != "auto_aprovado":
             continue
+        if item.source in used_sources:
+            continue
+        used_sources.add(item.source)
         mapping[item.target] = item.source
     return mapping
 
