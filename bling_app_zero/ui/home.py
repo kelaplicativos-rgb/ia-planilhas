@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.pricing import apply_pricing
+from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.engines.estoque_engine import requested_columns_from_model
 from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline as run_cadastro_pipeline
 from bling_app_zero.pipelines.estoque_pipeline import run_pipeline as run_estoque_pipeline
@@ -36,6 +37,13 @@ def _download(df: pd.DataFrame, operation: str) -> None:
     if df is None or df.empty:
         st.warning('Ainda não há dados finais para baixar.')
         return
+
+    errors = validate_final_df(df, operation)
+    if errors:
+        with st.expander('Avisos da validação final', expanded=True):
+            for error in errors:
+                st.warning(error)
+
     st.download_button(
         '⬇️ Baixar CSV final para o Bling',
         data=to_bling_csv_bytes(df),
@@ -144,23 +152,49 @@ def render_site() -> None:
     st.info('Crawler inteligente independente carregado.')
 
     modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
-    modelo = None
-    requested_columns = None
+    operation = 'cadastro' if modo == 'Cadastro completo' else 'estoque'
 
-    if modo == 'Estoque orientado pelo modelo':
-        modelo = st.file_uploader('Modelo de estoque do Bling', type=['xlsx', 'xls', 'csv'], key='modelo_site_estoque')
-        if modelo:
-            df_modelo = read_uploaded_file(modelo)
+    modelo = st.file_uploader(
+        'Modelo Bling para refletir no resultado final (opcional no cadastro, recomendado no estoque)',
+        type=['xlsx', 'xls', 'csv'],
+        key='modelo_site_bling',
+    )
+
+    requested_columns = None
+    df_modelo = None
+    if modelo:
+        df_modelo = read_uploaded_file(modelo)
+        if operation == 'estoque':
             requested_columns = requested_columns_from_model(df_modelo)
             st.caption('Colunas solicitadas pelo modelo: ' + ', '.join(requested_columns))
 
+    deposito = ''
+    if operation == 'estoque':
+        deposito = st.text_input('Nome do depósito para estoque por site', value='Não definido')
+
     raw_urls = st.text_area('Links dos produtos/sites', height=180, key='urls_site')
 
-    if st.button('Buscar produtos no site', use_container_width=True):
+    if st.button('Buscar produtos no site e gerar Bling', use_container_width=True):
         df_site = run_site_pipeline(raw_urls, requested_columns=requested_columns)
-        st.session_state['df_site'] = df_site
+        st.session_state['df_site_bruto'] = df_site
 
-    df_site = st.session_state.get('df_site')
-    if isinstance(df_site, pd.DataFrame):
-        _preview('Resultado da busca por site', df_site)
-        _download(df_site, 'cadastro' if modo == 'Cadastro completo' else 'estoque')
+        if operation == 'estoque':
+            df_final, mapping = run_estoque_pipeline(df_site, df_modelo, deposito=deposito)
+        else:
+            df_final, mapping = run_cadastro_pipeline(df_site, df_modelo)
+
+        st.session_state['df_site_final'] = df_final
+        st.session_state['mapping_site'] = mapping
+        st.session_state['operation_site'] = operation
+
+    df_site_bruto = st.session_state.get('df_site_bruto')
+    if isinstance(df_site_bruto, pd.DataFrame):
+        _preview('Captura bruta do site', df_site_bruto)
+
+    df_final = st.session_state.get('df_site_final')
+    mapping = st.session_state.get('mapping_site', {})
+    operation_state = st.session_state.get('operation_site', operation)
+    if isinstance(df_final, pd.DataFrame):
+        _show_mapping(mapping)
+        _preview('Preview final Bling gerado pelo site', df_final)
+        _download(df_final, operation_state)
