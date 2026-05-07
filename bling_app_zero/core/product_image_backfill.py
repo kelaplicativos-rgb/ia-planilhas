@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-"""Backfill de URLs de imagens por página do produto.
-
-Quando a captura/mapeamento vier sem `URL Imagens Externas`, este módulo usa
-`Link Externo`/`URL do Produto` para abrir a página real e preencher a imagem.
-"""
+"""Backfill de URLs de imagens por página do produto."""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
@@ -18,6 +14,7 @@ from bling_app_zero.core.product_image_extractor_safe import extract_safe_produc
 IMAGE_COL = "URL Imagens Externas"
 IMAGE_ALIAS_COL = "Imagens"
 LINK_COLUMNS = ("Link Externo", "URL do Produto", "url", "URL", "link", "product_url")
+TITLE_COLUMNS = ("Descrição", "Descricao", "Descrição Produto", "Descricao Produto", "Nome", "Produto", "Título", "Titulo", "Title", "name")
 
 
 def _first_existing_column(df: pd.DataFrame, names: Iterable[str]) -> str:
@@ -41,19 +38,21 @@ def _needs_image(row: pd.Series) -> bool:
     return not _has_value(row.get(IMAGE_COL, ""))
 
 
-def _safe_fetch_images(url: str) -> str:
+def _safe_fetch_images(url: str, product_title: str = "", validate_remote: bool = False) -> str:
     try:
         html = fetch_html(url)
-        return extract_safe_product_images(url, html)
+        return extract_safe_product_images(url, html, product_title=product_title, validate_remote=validate_remote)
     except Exception:
         return ""
 
 
-def backfill_images_by_product_url(df: pd.DataFrame, *, max_workers: int = 10) -> pd.DataFrame:
-    """Preenche `URL Imagens Externas` usando o link da página do produto.
-
-    A função não remove nenhum dado existente. Só preenche linhas vazias.
-    """
+def backfill_images_by_product_url(
+    df: pd.DataFrame,
+    *,
+    max_workers: int = 10,
+    validate_remote: bool = False,
+) -> pd.DataFrame:
+    """Preenche `URL Imagens Externas` usando o link da página do produto."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
 
@@ -64,23 +63,28 @@ def backfill_images_by_product_url(df: pd.DataFrame, *, max_workers: int = 10) -
         out[IMAGE_ALIAS_COL] = ""
 
     link_col = _first_existing_column(out, LINK_COLUMNS)
+    title_col = _first_existing_column(out, TITLE_COLUMNS)
     if not link_col:
         return out
 
-    pending: dict[int, str] = {}
+    pending: dict[int, tuple[str, str]] = {}
     for idx, row in out.iterrows():
         if not _needs_image(row):
             continue
         url = str(row.get(link_col, "") or "").strip()
         if url.startswith(("http://", "https://")):
-            pending[int(idx)] = url
+            title = str(row.get(title_col, "") or "").strip() if title_col else ""
+            pending[int(idx)] = (url, title)
 
     if not pending:
         return out
 
-    workers = max(1, min(int(max_workers or 10), 16, len(pending)))
+    workers = max(1, min(int(max_workers or 10), 12, len(pending)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_safe_fetch_images, url): idx for idx, url in pending.items()}
+        futures = {
+            executor.submit(_safe_fetch_images, url, title, validate_remote): idx
+            for idx, (url, title) in pending.items()
+        }
         for future in as_completed(futures):
             idx = futures[future]
             try:
