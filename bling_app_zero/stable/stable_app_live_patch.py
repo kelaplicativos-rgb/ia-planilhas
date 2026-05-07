@@ -6,6 +6,8 @@ Além dos ajustes de preview/mapeamento, este patch substitui a captura antiga d
 Flash Amplo direto pelo roteador novo de motores independentes:
 - cadastro -> cadastro_engine;
 - estoque -> estoque_engine + motor especialista de valor real + feed/XML.
+
+Também adiciona Preview de origem nascendo fechado logo antes do mapeamento.
 """
 
 from html import escape
@@ -18,9 +20,10 @@ from bling_app_zero.core.site_engines import executar_motor_site_por_operacao
 from bling_app_zero.stable import stable_app as base
 from bling_app_zero.ui.debug_panel import add_debug_log
 
-MAPPING_UI_VERSION = "2026-05-07-site-engines-live-v1"
+MAPPING_UI_VERSION = "2026-05-07-site-engines-origin-preview-v2"
 
 _ORIGINAL_SOURCE_OPTIONS = base._source_options_for_target
+_ORIGINAL_SHOW_LINE_METRICS = base._show_line_metrics
 base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
 
 
@@ -159,6 +162,23 @@ def _deposito_nome() -> str:
     ).strip()
 
 
+def _render_preview_origem_fechado(df: pd.DataFrame) -> None:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return
+    if bool(getattr(base, "_origin_preview_rendered_current_run", False)):
+        return
+    base._origin_preview_rendered_current_run = True
+
+    with st.expander("👁️ Preview de origem", expanded=False):
+        st.caption(f"Origem capturada: {len(df)} linhas × {len(df.columns)} colunas. Este preview nasce fechado para não ocupar a tela.")
+        st.dataframe(df.fillna(""), use_container_width=True, hide_index=True)
+
+
+def _show_line_metrics_with_origin_preview(df_origem: pd.DataFrame, df_final: pd.DataFrame | None = None) -> None:
+    _render_preview_origem_fechado(df_origem)
+    _ORIGINAL_SHOW_LINE_METRICS(df_origem, df_final)
+
+
 def _salvar_origem_site_stable(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame()
@@ -252,9 +272,11 @@ def _executar_site_por_motores_stable(
 
 def run_stable_app() -> None:
     base._live_mapping_counter = 0
+    base._origin_preview_rendered_current_run = False
     base._render_source_preview = _render_source_preview_real
     base._selectbox_mapping = _selectbox_mapping_live
     base._source_options_for_target = _source_options_allow_id
+    base._show_line_metrics = _show_line_metrics_with_origin_preview
     base.executar_flash_amplo_pagina_por_pagina = _executar_site_por_motores_stable
     base.MAPPING_UI_VERSION = MAPPING_UI_VERSION
     base.run_stable_app()
