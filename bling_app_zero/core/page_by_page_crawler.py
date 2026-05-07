@@ -99,12 +99,16 @@ def _first_meta(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
-def _requested_set(requested_fields: Iterable[str] | None) -> set[str]:
-    return {str(item or "").strip().lower() for item in (requested_fields or []) if str(item or "").strip()}
+def _requested_set(requested_fields: Iterable[str] | None) -> set[str] | None:
+    if requested_fields is None:
+        return None
+    return {str(item or "").strip().lower() for item in requested_fields if str(item or "").strip()}
 
 
-def _wants(fields: set[str], *names: str) -> bool:
-    return not fields or any(name in fields for name in names)
+def _wants(fields: set[str] | None, *names: str) -> bool:
+    if fields is None:
+        return True
+    return any(name in fields for name in names)
 
 
 def _extract_from_json_ld(soup: BeautifulSoup, requested_fields: Iterable[str] | None = None) -> tuple[dict[str, str], list[object]]:
@@ -142,7 +146,7 @@ def _extract_from_json_ld(soup: BeautifulSoup, requested_fields: Iterable[str] |
 def extract_product_from_page(page_url: str, html: str, requested_fields: Iterable[str] | None = None) -> dict[str, str]:
     fields = _requested_set(requested_fields)
     soup = BeautifulSoup(html, "html.parser")
-    data, json_images = _extract_from_json_ld(soup, fields)
+    data, json_images = _extract_from_json_ld(soup, requested_fields)
 
     need_full_text = _wants(fields, "preco", "gtin", "estoque")
     full_text = soup.get_text(" ", strip=True) if need_full_text else ""
