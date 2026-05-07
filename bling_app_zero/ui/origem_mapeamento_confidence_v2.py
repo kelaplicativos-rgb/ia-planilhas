@@ -6,6 +6,7 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.default_field_values import default_for_column
 from bling_app_zero.ui.mapeamento.mapping_engine import (
     analyze_mapping,
     log_mapping_analysis,
@@ -68,9 +69,15 @@ def _tem(nome: str, termos: tuple[str, ...] | list[str] | set[str]) -> bool:
     return any(t in nome for t in termos)
 
 
+def _campo_tem_default_final(coluna_modelo: object) -> bool:
+    return bool(default_for_column(coluna_modelo))
+
+
 def _campo_modelo_auto_vazio(coluna_modelo: object) -> bool:
     nome = _norm(coluna_modelo)
     if not nome:
+        return True
+    if _campo_tem_default_final(coluna_modelo):
         return True
     if nome in {_norm(v) for v in CAMPOS_MODELO_AUTO_VAZIO}:
         return True
@@ -250,7 +257,11 @@ def _badge(titulo: str, subtitulo: str = "") -> None:
 
 
 def _status_basico(df_base: pd.DataFrame, coluna_modelo: str, coluna_origem: str) -> tuple[str, str]:
-    if _eh_coluna_video(coluna_modelo) or _campo_modelo_auto_vazio(coluna_modelo):
+    if _eh_coluna_video(coluna_modelo):
+        return "OFF", "Campo mantido vazio automaticamente."
+    if _campo_tem_default_final(coluna_modelo):
+        return "AUTO", f"Será preenchido no final como: {default_for_column(coluna_modelo)}."
+    if _campo_modelo_auto_vazio(coluna_modelo):
         return "OFF", "Campo mantido vazio automaticamente."
     if not coluna_origem:
         return "PENDENTE", "Escolha uma coluna real da origem."
@@ -296,20 +307,25 @@ def _render_resumo(df_origem: pd.DataFrame, df_modelo: pd.DataFrame, mapping: di
     st.caption(
         f"Origem/captura: {len(df_origem.columns)} colunas | Modelo: {total} | "
         f"Válidos: {preenchidos} | Alertas: {alertas} | Inválidos: {invalidos} | "
-        f"Pendentes: {pendentes} | Automáticos: {automaticos}"
+        f"Pendentes: {pendentes} | Automáticos/predefinidos: {automaticos}"
     )
 
 
 def _ordenar_colunas(df_modelo: pd.DataFrame, mapping: dict[str, str], bloqueados: set[str]) -> list[str]:
+    """Ordena a revisão manual: vazios sobem, preenchidos/predefinidos descem."""
     itens: list[tuple[int, str, str]] = []
-    for coluna in [str(c) for c in df_modelo.columns.tolist()]:
-        if coluna in bloqueados:
+    for posicao_original, coluna in enumerate([str(c) for c in df_modelo.columns.tolist()]):
+        valor_mapeado = str(mapping.get(coluna, "") or "").strip()
+
+        if coluna in bloqueados or _campo_tem_default_final(coluna):
             ordem = 3
-        elif not str(mapping.get(coluna, "") or "").strip():
+        elif not valor_mapeado:
             ordem = 0
         else:
             ordem = 2
-        itens.append((ordem, coluna.lower(), coluna))
+
+        itens.append((ordem, f"{posicao_original:04d}_{coluna.lower()}", coluna))
+
     itens.sort(key=lambda item: (item[0], item[1]))
     return [coluna for _, _, coluna in itens]
 
@@ -324,7 +340,7 @@ def _render_feedback_correlacao(df_origem: pd.DataFrame, coluna_modelo: str, col
 
 
 def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, operacao: str) -> None:
-    st.caption("Ajuste manual. O seletor agora filtra por tipo de campo para não mostrar colunas lixo.")
+    st.caption("Ajuste manual. Campos vazios aparecem primeiro; campos preenchidos, automáticos e predefinidos ficam no final.")
 
     if not isinstance(df_base, pd.DataFrame) or df_base.empty or not isinstance(df_modelo, pd.DataFrame):
         st.warning("Base ou modelo invalido para mapeamento.")
@@ -351,8 +367,11 @@ def _render_revisao_manual(df_base: pd.DataFrame, df_modelo: pd.DataFrame, opera
 
     for coluna_modelo in _ordenar_colunas(df_modelo, mapping_atual, bloqueados):
         if coluna_modelo in bloqueados:
+            valor_default = default_for_column(coluna_modelo)
             motivo = "campo mantido vazio automaticamente"
-            if _eh_coluna_video(coluna_modelo):
+            if valor_default:
+                motivo = f"predefinido no final: {valor_default}"
+            elif _eh_coluna_video(coluna_modelo):
                 motivo = "video fica vazio"
             elif coluna_modelo == _coluna_deposito_modelo(df_modelo) and operacao == "estoque":
                 motivo = "deposito fixo da operacao"
