@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
+
+from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.core.pricing import apply_pricing
+from bling_app_zero.engines.estoque_engine import requested_columns_from_model
+from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline as run_cadastro_pipeline
+from bling_app_zero.pipelines.estoque_pipeline import run_pipeline as run_estoque_pipeline
+from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
 
 
 OPERACOES = {
@@ -10,26 +19,53 @@ OPERACOES = {
 }
 
 
-def render_home() -> None:
-    st.title('🚀 IA Planilhas → Bling')
+def _show_mapping(mapping: dict[str, str]) -> None:
+    if not mapping:
+        return
+    with st.expander('Mapeamento automático aplicado', expanded=False):
+        st.dataframe(
+            pd.DataFrame([
+                {'Campo Bling': key, 'Coluna origem': value or '(vazio)'}
+                for key, value in mapping.items()
+            ]),
+            use_container_width=True,
+        )
 
-    st.markdown('### Plataforma inteligente de integração com o ERP Bling')
 
-    escolha = st.radio(
-        'O que você deseja fazer?',
-        list(OPERACOES.keys()),
-        horizontal=True,
+def _download(df: pd.DataFrame, operation: str) -> None:
+    if df is None or df.empty:
+        st.warning('Ainda não há dados finais para baixar.')
+        return
+    st.download_button(
+        '⬇️ Baixar CSV final para o Bling',
+        data=to_bling_csv_bytes(df),
+        file_name=filename_for_operation(operation),
+        mime='text/csv',
+        use_container_width=True,
     )
 
+
+def _preview(title: str, df: pd.DataFrame) -> None:
+    st.markdown(f'#### {title}')
+    if df is None or df.empty:
+        st.info('Sem dados para exibir ainda.')
+    else:
+        st.dataframe(df.head(100), use_container_width=True)
+        st.caption(f'{len(df)} linha(s) × {len(df.columns)} coluna(s)')
+
+
+def render_home() -> None:
+    st.title('🚀 IA Planilhas → Bling')
+    st.markdown('### Plataforma inteligente de integração, captura, transformação e automação de dados para o ERP Bling')
+
+    escolha = st.radio('O que você deseja fazer?', list(OPERACOES.keys()), horizontal=True)
     operacao = OPERACOES[escolha]
     st.session_state['tipo_operacao'] = operacao
 
     if operacao == 'cadastro':
         render_cadastro()
-
     elif operacao == 'estoque':
         render_estoque()
-
     elif operacao == 'site':
         render_site()
 
@@ -37,34 +73,94 @@ def render_home() -> None:
 def render_cadastro() -> None:
     st.success('Motor independente de CADASTRO carregado.')
 
-    st.file_uploader(
-        'Anexe planilha, XML, PDF ou modelo fornecedor',
-        type=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
-        key='upload_cadastro',
-    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        origem = st.file_uploader('Origem dos produtos: planilha, XML ou PDF', type=['xlsx', 'xls', 'csv', 'xml', 'pdf'], key='upload_cadastro')
+    with col_b:
+        modelo = st.file_uploader('Modelo de cadastro do Bling (opcional)', type=['xlsx', 'xls', 'csv'], key='modelo_cadastro')
 
-    st.info('Fluxo preparado para ETL completo → Bling.')
+    usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
+
+    if origem:
+        df_origem = read_uploaded_file(origem)
+        _preview('Preview da origem', df_origem)
+
+        if usar_preco and not df_origem.empty:
+            colunas = [str(c) for c in df_origem.columns]
+            coluna_custo = st.selectbox('Coluna de custo/preço base', colunas)
+            c1, c2, c3, c4 = st.columns(4)
+            margem = c1.number_input('Lucro %', min_value=0.0, value=30.0, step=1.0)
+            imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0)
+            taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0)
+            fixo = c4.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0)
+            df_origem = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo)
+            _preview('Origem com preço calculado', df_origem)
+
+        if st.button('Gerar cadastro Bling', use_container_width=True):
+            df_modelo = read_uploaded_file(modelo) if modelo else None
+            df_final, mapping = run_cadastro_pipeline(df_origem, df_modelo)
+            st.session_state['df_final_cadastro'] = df_final
+            st.session_state['mapping_cadastro'] = mapping
+
+    df_final = st.session_state.get('df_final_cadastro')
+    mapping = st.session_state.get('mapping_cadastro', {})
+    if isinstance(df_final, pd.DataFrame):
+        _show_mapping(mapping)
+        _preview('Preview final do cadastro', df_final)
+        _download(df_final, 'cadastro')
 
 
 def render_estoque() -> None:
     st.warning('Motor independente de ESTOQUE carregado.')
+    st.caption('Este fluxo usa somente as colunas pedidas pelo modelo de estoque. Se não encontrar um campo, ele fica vazio.')
 
-    st.file_uploader(
-        'Anexe o modelo de estoque do Bling',
-        type=['xlsx', 'xls', 'csv'],
-        key='upload_estoque',
-    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        origem = st.file_uploader('Origem dos dados de estoque', type=['xlsx', 'xls', 'csv'], key='upload_estoque_origem')
+    with col_b:
+        modelo = st.file_uploader('Modelo de estoque do Bling', type=['xlsx', 'xls', 'csv'], key='modelo_estoque')
 
-    st.info('Este fluxo busca SOMENTE os campos solicitados pela planilha.')
+    deposito = st.text_input('Nome do depósito', value='Não definido')
+
+    if origem:
+        df_origem = read_uploaded_file(origem)
+        df_modelo = read_uploaded_file(modelo) if modelo else None
+        _preview('Preview da origem de estoque', df_origem)
+
+        if st.button('Gerar atualização de estoque', use_container_width=True):
+            df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+            st.session_state['df_final_estoque'] = df_final
+            st.session_state['mapping_estoque'] = mapping
+
+    df_final = st.session_state.get('df_final_estoque')
+    mapping = st.session_state.get('mapping_estoque', {})
+    if isinstance(df_final, pd.DataFrame):
+        _show_mapping(mapping)
+        _preview('Preview final do estoque', df_final)
+        _download(df_final, 'estoque')
 
 
 def render_site() -> None:
-    st.info('Crawler inteligente estilo Instant Data Scraper carregado.')
+    st.info('Crawler inteligente independente carregado.')
 
-    st.text_area(
-        'Links dos produtos/sites',
-        height=180,
-        key='urls_site',
-    )
+    modo = st.radio('Modo da captura por site', ['Cadastro completo', 'Estoque orientado pelo modelo'], horizontal=True)
+    modelo = None
+    requested_columns = None
 
-    st.info('Captura automática: preço, GTIN, imagens, estoque, SKU, categoria e descrição.')
+    if modo == 'Estoque orientado pelo modelo':
+        modelo = st.file_uploader('Modelo de estoque do Bling', type=['xlsx', 'xls', 'csv'], key='modelo_site_estoque')
+        if modelo:
+            df_modelo = read_uploaded_file(modelo)
+            requested_columns = requested_columns_from_model(df_modelo)
+            st.caption('Colunas solicitadas pelo modelo: ' + ', '.join(requested_columns))
+
+    raw_urls = st.text_area('Links dos produtos/sites', height=180, key='urls_site')
+
+    if st.button('Buscar produtos no site', use_container_width=True):
+        df_site = run_site_pipeline(raw_urls, requested_columns=requested_columns)
+        st.session_state['df_site'] = df_site
+
+    df_site = st.session_state.get('df_site')
+    if isinstance(df_site, pd.DataFrame):
+        _preview('Resultado da busca por site', df_site)
+        _download(df_site, 'cadastro' if modo == 'Cadastro completo' else 'estoque')
