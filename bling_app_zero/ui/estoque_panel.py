@@ -7,47 +7,41 @@ from bling_app_zero.ui.home_shared import (
     download_final,
     load_estoque_pipeline,
     preview_df,
-    read_upload_fast,
     show_contract,
     show_mapping,
 )
+from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 
 def render_estoque_panel() -> None:
     st.warning('Motor independente de ESTOQUE será carregado somente quando gerar.')
     st.caption('Este fluxo usa somente as colunas pedidas pelo modelo de estoque. Se não encontrar um campo, ele fica vazio.')
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        origem = st.file_uploader(
-            'Origem dos dados de estoque',
-            type=['xlsx', 'xls', 'csv'],
-            key='upload_estoque_origem',
-        )
-    with col_b:
-        modelo = st.file_uploader(
-            'Modelo de estoque do Bling',
-            type=['xlsx', 'xls', 'csv'],
-            key='modelo_estoque',
-        )
+    upload = render_smart_upload_box(
+        title='📎 Anexos do estoque',
+        operation='estoque',
+        key='smart_upload_estoque',
+        allow_model=True,
+        required_model=True,
+        accepted_types=['xlsx', 'xls', 'csv'],
+    )
+
+    df_origem = upload.source_df
+    df_modelo = upload.model_df
+
+    if isinstance(df_modelo, pd.DataFrame):
+        show_contract([str(c) for c in df_modelo.columns])
 
     deposito = st.text_input('Nome do depósito', value='Não definido')
 
-    if modelo:
-        df_modelo_preview = read_upload_fast(modelo)
-        if isinstance(df_modelo_preview, pd.DataFrame):
-            show_contract([str(c) for c in df_modelo_preview.columns])
-
-    if origem:
-        df_origem = read_upload_fast(origem)
-        df_modelo = read_upload_fast(modelo) if modelo else None
-        preview_df('Preview da origem de estoque', df_origem)
-
+    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
         if st.button('Gerar atualização de estoque', use_container_width=True):
             run_estoque_pipeline = load_estoque_pipeline()
             df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
             st.session_state['df_final_estoque'] = df_final
             st.session_state['mapping_estoque'] = mapping
+    elif upload.attachments:
+        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o estoque.')
 
     df_final = st.session_state.get('df_final_estoque')
     mapping = st.session_state.get('mapping_estoque', {})
