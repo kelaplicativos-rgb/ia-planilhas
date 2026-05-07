@@ -27,6 +27,7 @@ class StockLookupResult:
     confidence: str
     reason: str = ""
     feed_url: str = ""
+    lookup_path: str = ""
 
     @property
     def found(self) -> bool:
@@ -59,6 +60,7 @@ def resolve_real_stock_for_product_url(
             confidence=page_result.confidence,
             reason=page_result.reason,
             feed_url="",
+            lookup_path="pagina_alta_confianca",
         )
 
     feed_result = find_stock_in_domain_feeds(
@@ -74,6 +76,7 @@ def resolve_real_stock_for_product_url(
             confidence=feed_result.confidence,
             reason=feed_result.reason,
             feed_url=feed_result.feed_url,
+            lookup_path="pagina_sem_quantidade_real_depois_feed",
         )
 
     if page_result.quantity:
@@ -83,6 +86,7 @@ def resolve_real_stock_for_product_url(
             confidence=page_result.confidence,
             reason=page_result.reason,
             feed_url="",
+            lookup_path="fallback_pagina_sem_feed",
         )
 
     return StockLookupResult(
@@ -91,6 +95,7 @@ def resolve_real_stock_for_product_url(
         confidence="nenhuma",
         reason="nenhum motor novo encontrou quantidade disponível para esta URL",
         feed_url="",
+        lookup_path="nao_encontrado",
     )
 
 
