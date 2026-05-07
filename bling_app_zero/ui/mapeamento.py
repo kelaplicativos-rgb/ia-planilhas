@@ -13,6 +13,11 @@ from bling_app_zero.core.auto_map_memory import (
     load_memory,
 )
 from bling_app_zero.core.bling_validator import validar_df_bling
+from bling_app_zero.core.model_field_correlator import (
+    build_correlated_dataframe,
+    correlate_model_fields,
+    correlations_to_dataframe,
+)
 
 from bling_app_zero.core.stock_intelligence import (
     build_stock_dataframe,
@@ -123,6 +128,51 @@ def _render_ferramentas(df: pd.DataFrame) -> None:
             st.session_state.pop("preco_unitario_calculado", None)
 
 
+def _render_correlacao_modelo(df: pd.DataFrame, modelo_cols: list[str], aprendido: dict[str, str], deposito: str | None) -> pd.DataFrame:
+    st.subheader("🧠 Correlação automática com o modelo anexado")
+    st.caption("Autoaprovação conservadora: só preenche campos com confiança alta e margem clara. Campos duvidosos ficam vazios para revisão, evitando mapeamento errado.")
+
+    correlacoes = correlate_model_fields(df, modelo_cols, learned_mapping=aprendido)
+    df_relatorio = correlations_to_dataframe(correlacoes)
+
+    auto = int((df_relatorio["Status"] == "auto_aprovado").sum()) if not df_relatorio.empty else 0
+    revisar = int((df_relatorio["Status"] == "revisar").sum()) if not df_relatorio.empty else 0
+    obrigatorio = int((df_relatorio["Status"] == "obrigatorio").sum()) if not df_relatorio.empty else 0
+    pendente = int((df_relatorio["Status"] == "pendente").sum()) if not df_relatorio.empty else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Autoaprovados", auto)
+    c2.metric("Revisar", revisar)
+    c3.metric("Obrigatórios pendentes", obrigatorio)
+    c4.metric("Pendentes", pendente)
+
+    usar_sugestoes_revisao = st.checkbox(
+        "Usar também sugestões marcadas como revisar",
+        value=False,
+        help="Por segurança, o padrão é usar somente autoaprovados. Ative apenas se você conferir a tabela de correlação.",
+    )
+
+    df_final = build_correlated_dataframe(
+        df,
+        modelo_cols,
+        correlacoes,
+        deposito=deposito,
+        include_review_suggestions=usar_sugestoes_revisao,
+    )
+
+    if obrigatorio > 0:
+        st.warning("Existem campos importantes sem confiança suficiente. Eles foram deixados vazios para evitar erro no arquivo final.")
+    else:
+        st.success("Campos importantes foram correlacionados com segurança alta ou permaneceram opcionais.")
+
+    st.session_state["mapeamento_correlacao_modelo"] = df_relatorio
+
+    with st.expander("🔎 Relatório de correlação campo a campo", expanded=False):
+        st.dataframe(df_relatorio, use_container_width=True, hide_index=True)
+
+    return df_final
+
+
 def render_origem_mapeamento() -> None:
     st.title("2. Mapeamento")
     st.caption("Revise o resultado logo após anexar a planilha. Se um modelo Bling foi anexado, as colunas dele são usadas como destino.")
@@ -198,22 +248,27 @@ def render_origem_mapeamento() -> None:
     memoria = load_memory()
     aprendido = get_supplier_memory(memoria, fornecedor_id)
 
-    sugestoes = suggest_mapping(
-        df,
-        tipo_operacao,
-        learned_mapping=aprendido,
-        modelo_columns=modelo_cols,
-    )
-    mapping: dict[str, str] = {s.target: s.source for s in sugestoes}
+    if modelo_cols:
+        df_final = _render_correlacao_modelo(df, modelo_cols, aprendido, deposito)
+        df_final = _aplicar_preco_calculado(df_final)
+        sugestoes = []
+    else:
+        sugestoes = suggest_mapping(
+            df,
+            tipo_operacao,
+            learned_mapping=aprendido,
+            modelo_columns=modelo_cols,
+        )
+        mapping: dict[str, str] = {s.target: s.source for s in sugestoes}
 
-    df_final = build_mapped_dataframe(
-        df,
-        mapping,
-        tipo_operacao,
-        deposito,
-        modelo_columns=modelo_cols,
-    )
-    df_final = _aplicar_preco_calculado(df_final)
+        df_final = build_mapped_dataframe(
+            df,
+            mapping,
+            tipo_operacao,
+            deposito,
+            modelo_columns=modelo_cols,
+        )
+        df_final = _aplicar_preco_calculado(df_final)
 
     erros = validar_df_bling(df_final) if tipo_operacao == "cadastro" else []
     if erros:
@@ -225,17 +280,18 @@ def render_origem_mapeamento() -> None:
 
     st.session_state["df_mapeado"] = df_final
 
-    with st.expander("🔎 Sugestões aplicadas", expanded=False):
-        if sugestoes:
-            st.dataframe(
-                pd.DataFrame([
-                    {"Destino Bling": s.target, "Origem fornecedor": s.source, "Confiança": s.confidence, "Motivo": s.reason}
-                    for s in sugestoes
-                ]),
-                use_container_width=True,
-            )
-        else:
-            st.warning("Nenhuma sugestão automática forte foi encontrada. O preview será gerado com as colunas do modelo e campos vazios onde não houve correspondência.")
+    if not modelo_cols:
+        with st.expander("🔎 Sugestões aplicadas", expanded=False):
+            if sugestoes:
+                st.dataframe(
+                    pd.DataFrame([
+                        {"Destino Bling": s.target, "Origem fornecedor": s.source, "Confiança": s.confidence, "Motivo": s.reason}
+                        for s in sugestoes
+                    ]),
+                    use_container_width=True,
+                )
+            else:
+                st.warning("Nenhuma sugestão automática forte foi encontrada. O preview será gerado com as colunas do modelo e campos vazios onde não houve correspondência.")
 
     with st.expander("Preview mapeado", expanded=False):
         st.dataframe(df_final.head(50), use_container_width=True)
