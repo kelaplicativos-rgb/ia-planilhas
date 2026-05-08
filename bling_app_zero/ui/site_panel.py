@@ -105,7 +105,8 @@ def _go_to_main_operation(operation: str) -> None:
     except Exception:
         pass
     st.session_state['tipo_operacao'] = operation
-    st.session_state['home_slim_flow_step'] = operation
+    st.session_state['home_slim_flow_step'] = 'estoque' if operation == 'estoque' else 'planilha'
+    st.session_state['home_slim_active_panel'] = 'estoque' if operation == 'estoque' else 'planilha'
 
 
 def _save_site_source(
@@ -132,19 +133,6 @@ def _source_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
 
-def _render_flow_steps() -> None:
-    st.markdown(
-        """
-        <div class="bling-compact-note">
-            <strong>Novo fluxo por site:</strong><br>
-            1) escolha cadastro ou estoque → 2) anexe o modelo do Bling → 3) cole os links →
-            4) gere a planilha origem → 5) revise/baixe → 6) continue para o fluxo final.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _render_generated_origin_actions(
     df_site: pd.DataFrame,
     operation: str,
@@ -158,9 +146,9 @@ def _render_generated_origin_actions(
         return
 
     config = config_for_site_operation(operation)
-    preview_df('Planilha origem gerada por busca de produtos em sites', df_site)
+    preview_df('Origem gerada', df_site)
     st.download_button(
-        '⬇️ Baixar planilha origem gerada',
+        'Baixar origem',
         data=_source_csv_bytes(df_site),
         file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
@@ -168,8 +156,7 @@ def _render_generated_origin_actions(
         key=f'download_origem_site_{config.operation}_{len(df_site)}_{len(df_site.columns)}',
     )
 
-    st.caption('A planilha origem já foi inserida internamente. O próximo botão joga essa origem para o fluxo final correto.')
-    if st.button('Continuar com esta origem no fluxo final', use_container_width=True, key='continuar_fluxo_planilha_site'):
+    if st.button('Usar origem', use_container_width=True, key='continuar_fluxo_planilha_site'):
         _save_site_source(
             df_site=df_site,
             operation=config.operation,
@@ -184,26 +171,23 @@ def _render_generated_origin_actions(
 
 
 def render_site_panel() -> None:
-    _render_flow_steps()
+    st.markdown('### Scraper')
 
     default_operation = _operation_from_query('cadastro')
-    operation_options = ['Cadastro de Produtos', 'Atualização de Estoque']
+    operation_options = ['Cadastro', 'Estoque']
     default_index = 0 if default_operation == 'cadastro' else 1
     modo = st.radio(
-        'A planilha origem gerada será usada para qual operação?',
+        'Destino',
         operation_options,
         index=default_index,
-        horizontal=False,
+        horizontal=True,
         key='site_operation_radio',
     )
-    operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
+    operation = 'cadastro' if modo == 'Cadastro' else 'estoque'
     config = config_for_site_operation(operation)
 
-    st.markdown(f'#### {config.title}')
-    st.caption(config.description)
-
     upload = render_model_upload_box(
-        title='📎 Modelo do Bling para guiar a busca',
+        title='Modelo',
         operation=config.operation,
         key='model_upload_site',
         required_model=config.required_model,
@@ -226,33 +210,30 @@ def render_site_panel() -> None:
             requested_columns = requested_columns_from_model(df_modelo)
         show_contract(requested_columns)
     elif config.operation == 'estoque':
-        st.warning('Para atualização de estoque, anexe o modelo do Bling. O motor de estoque só deve buscar o que a planilha solicitar.')
-    else:
-        st.info('Sem modelo anexado, o motor de cadastro usará colunas padrão. Para contrato rígido, anexe o modelo do Bling.')
+        st.warning('Anexe o modelo.')
 
     raw_urls = st.text_area(
-        'Cole aqui site, categoria ou links de produtos',
+        'Links',
         value=_query_urls_default(),
-        height=150,
+        height=120,
         key='urls_site',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
     )
 
-    all_products = st.checkbox('Varrer site/categoria e buscar todos os produtos encontrados', value=True)
-    col_limit_a, col_limit_b = st.columns(2)
-    max_pages = int(col_limit_a.number_input('Páginas/feeds analisados', min_value=10, max_value=1000, value=config.default_max_pages, step=20))
-    max_products = int(col_limit_b.number_input('Produtos capturados', min_value=10, max_value=5000, value=config.default_max_products, step=50))
+    all_products = st.checkbox('Varrer todos', value=True)
+    with st.expander('Limites', expanded=False):
+        col_limit_a, col_limit_b = st.columns(2)
+        max_pages = int(col_limit_a.number_input('Páginas', min_value=10, max_value=1000, value=config.default_max_pages, step=20))
+        max_products = int(col_limit_b.number_input('Produtos', min_value=10, max_value=5000, value=config.default_max_products, step=50))
 
-    st.markdown('#### 1. Gerar planilha origem')
     if config.required_model and not isinstance(df_modelo, pd.DataFrame):
-        st.warning('Anexe o modelo de estoque antes de gerar a origem por site.')
         can_run = False
     else:
         can_run = True
 
-    if st.button(config.button_label, use_container_width=True, disabled=not can_run):
+    if st.button('Gerar origem', use_container_width=True, disabled=not can_run):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Gerando planilha origem por busca em site...'):
+        with st.spinner('Buscando...'):
             df_site = run_site_engine(
                 operation=config.operation,
                 pipeline=run_site_pipeline,
@@ -273,12 +254,11 @@ def render_site_panel() -> None:
         )
         st.session_state['df_site_bruto'] = df_site
         st.session_state['operation_site'] = config.operation
-        st.success('Planilha origem gerada e inserida internamente como fornecedor de dados.')
+        st.success('Origem gerada.')
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     operation_state = str(st.session_state.get('operation_site') or config.operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        st.markdown('#### 2. Revisar e usar a origem gerada')
         _render_generated_origin_actions(
             df_site=df_site_bruto,
             operation=operation_state,
@@ -288,6 +268,3 @@ def render_site_panel() -> None:
             df_modelo_estoque=df_modelo_estoque,
             df_modelo=df_modelo,
         )
-    else:
-        st.markdown('#### 2. Próximo passo')
-        st.caption('Depois de gerar a planilha origem, ela aparecerá aqui para revisão, download e continuidade no fluxo final.')
