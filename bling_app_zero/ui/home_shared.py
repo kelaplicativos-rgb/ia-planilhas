@@ -144,15 +144,18 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
 
 def preview_df(title: str, df: pd.DataFrame | None) -> None:
-    st.markdown(f'#### {title}')
     if df is None or df.empty:
-        st.info('Sem dados para exibir ainda.')
+        with st.expander(title, expanded=False):
+            st.info('Sem dados para exibir ainda.')
         return
 
     total_rows = len(df)
     total_cols = len(df.columns)
-    st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
-    if total_rows > PREVIEW_ROWS:
-        st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
-    else:
-        st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
+    label = f'{title} · {total_rows} linha(s) × {total_cols} coluna(s)'
+
+    with st.expander(label, expanded=False):
+        st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
+        if total_rows > PREVIEW_ROWS:
+            st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
+        else:
+            st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
