@@ -8,11 +8,10 @@ from bling_app_zero.core.debug import add_debug, render_debug_panel
 from bling_app_zero.ui.home import render_home
 
 
-APP_VERSION = '3.1.1-BLINGSCAN-ESTOQUE-REAL-LINKS'
+APP_VERSION = '3.1.2-SITE-COMO-ORIGEM-PLANILHA'
 
 
 def _register_critical_error(exc: Exception) -> str:
-    """Registra o traceback completo para aparecer no arquivo baixado pelo painel Debug."""
     formatted = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     add_debug(f'Falha crítica: {exc}', origin='APP', level='ERRO')
     add_debug(formatted, origin='TRACEBACK', level='ERRO')
