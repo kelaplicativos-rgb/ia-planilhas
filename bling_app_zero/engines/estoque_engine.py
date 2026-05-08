@@ -5,18 +5,7 @@ import pandas as pd
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
 from bling_app_zero.core.text import normalize_key
-
-DEFAULT_ESTOQUE_COLUMNS = [
-    'Código',
-    'Descrição',
-    'Preço unitário (OBRIGATÓRIO)',
-    'Depósito (OBRIGATÓRIO)',
-    'Balanço (OBRIGATÓRIO)',
-]
-
-
-def default_model() -> pd.DataFrame:
-    return pd.DataFrame(columns=DEFAULT_ESTOQUE_COLUMNS)
+from bling_app_zero.flows.estoque_contract import DEFAULT_ESTOQUE_COLUMNS, default_model, requested_columns_from_model
 
 
 def _fill_deposito(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
@@ -37,9 +26,3 @@ def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = 
     final = apply_mapping(source, model, mapping)
     final = _fill_deposito(final, deposito)
     return sanitize_for_bling(final), mapping
-
-
-def requested_columns_from_model(df_model: pd.DataFrame) -> list[str]:
-    if isinstance(df_model, pd.DataFrame) and len(df_model.columns):
-        return [str(c) for c in df_model.columns]
-    return list(DEFAULT_ESTOQUE_COLUMNS)
