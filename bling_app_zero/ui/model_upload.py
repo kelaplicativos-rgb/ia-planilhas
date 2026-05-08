@@ -127,7 +127,7 @@ def render_model_upload_box(
 
     files = st.file_uploader(
         'Anexar modelos do Bling',
-        type=MODEL_SPREADSHEET_TYPES,
+        type=None,
         accept_multiple_files=True,
         key=key,
         label_visibility='collapsed',
