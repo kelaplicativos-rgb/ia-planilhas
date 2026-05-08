@@ -107,12 +107,6 @@ def _score_estoque_model(file: Any, df: pd.DataFrame | None) -> int:
     return score
 
 
-def _score_model(file: Any, df: pd.DataFrame | None, operation: str) -> int:
-    if operation == 'estoque':
-        return _score_estoque_model(file, df)
-    return _score_cadastro_model(file, df)
-
-
 def _score_source(file: Any, df: pd.DataFrame | None, operation: str) -> int:
     name = _file_name(file).lower()
     columns = _column_text(df)
@@ -196,19 +190,20 @@ def _render_upload_header(title: str) -> None:
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-upload-caption">Envie a origem e, se quiser, o modelo do Bling. A identificação acontece automaticamente.</div>',
+        '<div class="bling-upload-caption">Envie a planilha, PDF ou XML do fornecedor. Se tiver modelos do Bling, envie junto.</div>',
         unsafe_allow_html=True,
     )
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any]) -> None:
-    with st.expander(f'{len(supported_files)} arquivo(s) aceito(s)', expanded=False):
+    st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
+    with st.expander('Ver arquivos detectados', expanded=False):
         for file in supported_files:
-            role = 'Origem'
+            role = 'Origem do fornecedor'
             if result.cadastro_model_file is file:
-                role = 'Modelo cadastro Bling'
+                role = 'Modelo de cadastro Bling'
             elif result.estoque_model_file is file:
-                role = 'Modelo estoque Bling'
+                role = 'Modelo de estoque Bling'
             st.write(f'**{role}:** {_file_name(file)}')
 
 
@@ -223,11 +218,12 @@ def render_smart_upload_box(
     _render_upload_header(title)
 
     files = st.file_uploader(
-        'Anexar arquivos',
-        type=None,
+        'Enviar arquivos do fornecedor',
+        type=accepted_types or SUPPORTED_TYPES,
         accept_multiple_files=True,
         key=key,
-        help='Selecione os arquivos; a validação acontece depois do anexo.',
+        help='Envie planilha, PDF, XML e modelos do Bling quando tiver.',
+        label_visibility='collapsed',
     )
 
     if not files:
@@ -237,32 +233,29 @@ def render_smart_upload_box(
     supported_files, ignored_files = _split_supported_files(selected_files, accepted_types)
 
     if ignored_files:
-        st.warning(
-            'Arquivo(s) ignorado(s) por tipo não suportado neste fluxo: '
-            + ', '.join(_file_name(file) for file in ignored_files)
-        )
+        st.warning('Ignorado: ' + ', '.join(_file_name(file) for file in ignored_files))
 
     if not supported_files:
-        st.error('Os arquivos foram selecionados, mas nenhum deles é compatível com este fluxo.')
+        st.error('Nenhum arquivo compatível.')
         return SmartUploadResult(attachments=[], ignored_files=ignored_files)
 
     result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
     _render_detected_files(result, supported_files)
 
     if result.source_df is not None:
-        with st.expander('Preview automático da origem detectada', expanded=False):
+        with st.expander('Ver origem detectada', expanded=False):
             preview_df('Origem detectada', result.source_df)
     elif result.source_file is not None:
-        st.warning(f'Origem detectada, mas ainda sem preview tabular: {_file_name(result.source_file)}')
+        st.warning(f'Arquivo recebido, mas ainda sem tabela detectada: {_file_name(result.source_file)}')
 
     if allow_model:
         if result.cadastro_model_df is not None:
-            with st.expander('Preview do modelo de cadastro', expanded=False):
+            with st.expander('Ver modelo de cadastro', expanded=False):
                 preview_df('Modelo de cadastro', result.cadastro_model_df)
         if result.estoque_model_df is not None:
-            with st.expander('Preview do modelo de estoque', expanded=False):
+            with st.expander('Ver modelo de estoque', expanded=False):
                 preview_df('Modelo de estoque', result.estoque_model_df)
         if required_model and result.model_df is None:
-            st.warning('Modelo Bling ainda não detectado. Anexe o modelo junto da origem.')
+            st.warning('Modelo Bling ainda não detectado.')
 
     return result
