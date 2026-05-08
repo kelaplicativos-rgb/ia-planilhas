@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from io import BytesIO
 from typing import Any, Callable
 
@@ -12,12 +13,29 @@ from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.validators import validate_final_df
 
 PREVIEW_ROWS = 50
+_PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
 
 
 class _NamedBytesIO(BytesIO):
     def __init__(self, data: bytes, name: str):
         super().__init__(data)
         self.name = name
+
+
+@contextmanager
+def _preview_context(label: str):
+    level = int(st.session_state.get(_PREVIEW_NESTING_KEY, 0) or 0)
+    st.session_state[_PREVIEW_NESTING_KEY] = level + 1
+    try:
+        if level == 0:
+            with st.expander(label, expanded=False):
+                yield
+        else:
+            st.markdown(f'##### {label}')
+            yield
+    finally:
+        current = int(st.session_state.get(_PREVIEW_NESTING_KEY, 1) or 1)
+        st.session_state[_PREVIEW_NESTING_KEY] = max(0, current - 1)
 
 
 @st.cache_data(show_spinner=False)
@@ -108,7 +126,7 @@ def show_contract(columns: list[str]) -> None:
 def show_mapping(mapping: dict[str, str]) -> None:
     if not mapping:
         return
-    with st.expander('Mapeamento automático aplicado', expanded=False):
+    with st.expander('Mapeamento aplicado', expanded=False):
         st.dataframe(
             pd.DataFrame([
                 {'Campo Bling': key, 'Coluna origem': value or '(vazio)'}
@@ -143,19 +161,25 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     )
 
 
-def preview_df(title: str, df: pd.DataFrame | None) -> None:
+def _render_preview_body(df: pd.DataFrame | None) -> None:
     if df is None or df.empty:
-        with st.expander(title, expanded=False):
-            st.info('Sem dados para exibir ainda.')
+        st.info('Sem dados para exibir ainda.')
         return
 
     total_rows = len(df)
     total_cols = len(df.columns)
-    label = f'{title} · {total_rows} linha(s) × {total_cols} coluna(s)'
+    st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
+    if total_rows > PREVIEW_ROWS:
+        st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
+    else:
+        st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
 
-    with st.expander(label, expanded=False):
-        st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
-        if total_rows > PREVIEW_ROWS:
-            st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
-        else:
-            st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
+
+def preview_df(title: str, df: pd.DataFrame | None) -> None:
+    if df is None or df.empty:
+        label = title
+    else:
+        label = f'{title} · {len(df)} linha(s) × {len(df.columns)} coluna(s)'
+
+    with _preview_context(label):
+        _render_preview_body(df)
