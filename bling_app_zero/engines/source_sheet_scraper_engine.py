@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 
 from bling_app_zero.core.column_contract import RequestedField, build_contract
 from bling_app_zero.core.gtin import clean_gtin
@@ -19,7 +19,8 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-store, max-age=0',
+    'Pragma': 'no-cache',
 }
 
 COMMON_FEEDS = [
@@ -40,11 +41,11 @@ COMMON_FEEDS = [
 ]
 PRODUCT_HINTS = ['/produto', '/produtos', '/product', '/products', '/p/', '/item/', 'produto-', 'product-', 'sku=', 'cod=', 'codigo=', 'ref=']
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
-OUT_STOCK_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'outofstock', 'out_of_stock']
+OUT_STOCK_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'outofstock', 'out_of_stock', 'soldout', 'sold_out']
 IN_STOCK_TERMS = ['comprar', 'adicionar ao carrinho', 'em estoque', 'disponivel', 'disponível', 'instock', 'in_stock']
 MAX_WORKERS = 16
-MAX_DISCOVERY_PAGES = 80
-MAX_FEEDS = 80
+MAX_DISCOVERY_PAGES = 1_000_000
+MAX_FEEDS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -193,7 +194,7 @@ def _discover_from_html(starts: list[str], max_pages: int, max_products: int) ->
                 products.append(link)
                 if len(products) >= max_products:
                     break
-            if link not in visited and len(queue) + len(visited) < min(max_pages, MAX_DISCOVERY_PAGES):
+            if link not in visited and link not in queue:
                 queue.append(link)
     return products[:max_products]
 
@@ -239,8 +240,6 @@ def _stock(text: str) -> str:
     key = normalize_key(text)
     if any(normalize_key(term) in key for term in OUT_STOCK_TERMS):
         return '0'
-    if any(normalize_key(term) in key for term in IN_STOCK_TERMS):
-        return '1'
     return ''
 
 
@@ -322,10 +321,8 @@ def _jsonld_product(soup: BeautifulSoup, page_url: str) -> SourceProduct | None:
                     image_value = clean_cell(image or '')
                 stock_value = ''
                 availability = normalize_key(offer.get('availability', ''))
-                if any(term in availability for term in OUT_STOCK_TERMS):
+                if any(normalize_key(term) in availability for term in OUT_STOCK_TERMS):
                     stock_value = '0'
-                elif any(term in availability for term in IN_STOCK_TERMS):
-                    stock_value = '1'
                 return SourceProduct(
                     url=clean_cell(item.get('url') or page_url),
                     codigo=clean_cell(item.get('sku') or item.get('mpn') or ''),
@@ -423,8 +420,8 @@ def run_source_sheet_scraper(
     requested_columns: Iterable[str] | None = None,
     operation: str = 'cadastro',
     all_products: bool = True,
-    max_pages: int = 120,
-    max_products: int = 300,
+    max_pages: int = 1_000_000,
+    max_products: int = 1_000_000,
     keep_only_requested_columns: bool = True,
 ) -> pd.DataFrame:
     columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()] or _default_columns(operation)
