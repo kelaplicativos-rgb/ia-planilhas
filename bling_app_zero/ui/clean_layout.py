@@ -206,7 +206,7 @@ def render_compact_hero() -> None:
         """
         <div class="bling-hero">
             <div class="bling-hero-title">🚀 IA Planilhas → Bling</div>
-            <p class="bling-hero-subtitle">Transforme arquivos, sites e modelos do Bling em CSV pronto para importação.</p>
+            <p class="bling-hero-subtitle">Busque produtos ou envie arquivos. O sistema monta as planilhas do Bling para importação.</p>
         </div>
         """,
         unsafe_allow_html=True,
