@@ -4,6 +4,7 @@ import pandas as pd
 
 from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode, scrape_urls, split_urls
 from bling_app_zero.engines.instant_scraper_engine import run_instant_scraper
+from bling_app_zero.engines.power_scraper_engine import run_power_scraper
 
 
 DEFAULT_CADASTRO_SITE_COLUMNS = [
@@ -69,6 +70,18 @@ def run_site_cadastro_engine(
     if not urls:
         return pd.DataFrame(columns=columns or DEFAULT_CADASTRO_SITE_COLUMNS)
 
+    df_power = run_power_scraper(
+        raw_urls=raw_urls,
+        requested_columns=columns,
+        operation='cadastro',
+        all_products=all_products,
+        max_pages=max_pages,
+        max_products=max_products,
+        keep_only_requested_columns=bool(columns),
+    ).fillna('')
+    if _has_real_rows(df_power):
+        return df_power
+
     df_instant = run_instant_scraper(
         raw_urls=raw_urls,
         requested_columns=columns,
@@ -78,7 +91,6 @@ def run_site_cadastro_engine(
         max_products=max_products,
         keep_only_requested_columns=bool(columns),
     ).fillna('')
-
     if _has_real_rows(df_instant):
         return df_instant
 
