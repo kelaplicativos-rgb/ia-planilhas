@@ -22,60 +22,23 @@ DEFAULT_FLASH_WORKERS = 12
 MAX_FLASH_WORKERS = 16
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (compatible; IA-Planilhas-Bling/3.3-FLASH-AMPLO; +https://github.com/kelaplicativos-rgb/ia-planilhas)'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
 }
 
 PRODUCT_HINTS = [
-    '/produto',
-    '/produtos',
-    '/product',
-    '/products',
-    '/p/',
-    '/item',
-    '/loja/produto',
-    'produto-',
-    'product-',
-    'sku=',
-    'variant=',
-    'ref=',
-    'cod=',
-    'codigo=',
+    '/produto', '/produtos', '/product', '/products', '/p/', '/item', '/loja/produto',
+    'produto-', 'product-', 'sku=', 'variant=', 'ref=', 'cod=', 'codigo=',
 ]
 BLOCKED_HINTS = [
-    'facebook',
-    'instagram',
-    'whatsapp',
-    'youtube',
-    'mailto:',
-    'tel:',
-    '#',
-    '/login',
-    '/conta',
-    '/account',
-    '/carrinho',
-    '/cart',
-    '/checkout',
-    '/politica',
-    '/privacy',
-    '/termos',
-    '/blog',
-    '/noticia',
-    '/news',
-    '/institucional',
+    'facebook', 'instagram', 'whatsapp', 'youtube', 'mailto:', 'tel:', '#', '/login', '/conta',
+    '/account', '/carrinho', '/cart', '/checkout', '/politica', '/privacy', '/termos', '/blog',
+    '/noticia', '/news', '/institucional',
 ]
-XML_FEED_HINTS = [
-    '/feed',
-    '/feeds',
-    '/xml',
-    '/produto.xml',
-    '/produtos.xml',
-    '/products.xml',
-    '/google.xml',
-    '/merchant.xml',
-    '/facebook.xml',
-    '/catalog.xml',
-    '/catalogo.xml',
-]
+XML_FEED_HINTS = ['/feed', '/feeds', '/xml', '/produto.xml', '/produtos.xml', '/products.xml', '/google.xml', '/merchant.xml', '/facebook.xml', '/catalog.xml', '/catalogo.xml']
 OUT_STOCK_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'avise-me', 'sob consulta']
 IN_STOCK_TERMS = ['em estoque', 'disponivel', 'disponível', 'comprar', 'adicionar ao carrinho', 'in stock', 'available']
 
@@ -119,7 +82,11 @@ def _root_url(url: str) -> str:
 
 def _safe_get(url: str) -> str:
     try:
-        response = requests.get(url, headers=HEADERS, timeout=20)
+        response = requests.get(url, headers=HEADERS, timeout=25, allow_redirects=True)
+        if response.status_code in {403, 406, 429}:
+            alt_headers = dict(HEADERS)
+            alt_headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36'
+            response = requests.get(url, headers=alt_headers, timeout=25, allow_redirects=True)
         response.raise_for_status()
         return response.text or ''
     except Exception:
@@ -138,20 +105,23 @@ def _title(soup: BeautifulSoup, page_text: str = '') -> str:
     og = soup.find('meta', property='og:title')
     if og and og.get('content'):
         return clean_cell(og.get('content'))
+    h1 = soup.find('h1')
+    if h1:
+        return clean_cell(h1.get_text(' ', strip=True))
     if soup.title and soup.title.string:
         return clean_cell(soup.title.string)
-    h1 = soup.find('h1')
-    return clean_cell(h1.get_text(' ', strip=True)) if h1 else ''
+    return ''
 
 
 def _price(soup: BeautifulSoup, page_text: str) -> str:
     meta = soup.find('meta', property='product:price:amount')
     if meta and meta.get('content'):
         return clean_cell(meta.get('content'))
-    for selector in ['[itemprop=price]', '.price', '.preco', '.valor', '.product-price']:
+    for selector in ['[itemprop=price]', '[data-price]', '.price', '.preco', '.preço', '.valor', '.product-price', '.price-sales']:
         node = soup.select_one(selector)
         if node:
-            found = re.search(r'([0-9\.]+,[0-9]{2})', node.get_text(' ', strip=True))
+            text = node.get('content') or node.get('data-price') or node.get_text(' ', strip=True)
+            found = re.search(r'([0-9\.]+,[0-9]{2}|[0-9]+\.[0-9]{2})', str(text))
             if found:
                 return found.group(1)
     match = re.search(r'R\$\s*([0-9\.]+,[0-9]{2})', page_text)
@@ -165,7 +135,7 @@ def _images(soup: BeautifulSoup, page_text: str = '') -> str:
         if 'image' in prop and meta.get('content'):
             urls.append(str(meta.get('content')))
     for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-lazy') or img.get('data-original')
+        src = img.get('src') or img.get('data-src') or img.get('data-lazy') or img.get('data-original') or img.get('data-zoom-image')
         if src:
             urls.append(str(src))
     cleaned: list[str] = []
@@ -259,11 +229,7 @@ def _stock_from_scripts(soup: BeautifulSoup) -> tuple[str, int]:
 
 
 def _stock_from_text(page_text: str) -> tuple[str, int]:
-    for pattern in [
-        r'(?:estoque|saldo|quantidade|qtd)\s*[:\-]?\s*(\d{1,6})',
-        r'(?:restam|resta|apenas)\s*(\d{1,6})',
-        r'(\d{1,6})\s*(?:unidades|unidade|un\b|peças|pecas)',
-    ]:
+    for pattern in [r'(?:estoque|saldo|quantidade|qtd)\s*[:\-]?\s*(\d{1,6})', r'(?:restam|resta|apenas)\s*(\d{1,6})', r'(\d{1,6})\s*(?:unidades|unidade|un\b|peças|pecas)']:
         match = re.search(pattern, page_text, flags=re.I)
         if match:
             qty = _digits(match.group(1))
@@ -278,13 +244,7 @@ def _stock_from_text(page_text: str) -> tuple[str, int]:
 
 
 def _stock(soup: BeautifulSoup, page_text: str) -> str:
-    candidates = [
-        _stock_from_jsonld(soup),
-        _stock_from_meta(soup),
-        _stock_from_dom(soup),
-        _stock_from_scripts(soup),
-        _stock_from_text(page_text),
-    ]
+    candidates = [_stock_from_jsonld(soup), _stock_from_meta(soup), _stock_from_dom(soup), _stock_from_scripts(soup), _stock_from_text(page_text)]
     candidates = [item for item in candidates if item[0] != '']
     if not candidates:
         return ''
@@ -293,6 +253,10 @@ def _stock(soup: BeautifulSoup, page_text: str) -> str:
 
 
 def _sku(soup: BeautifulSoup, page_text: str) -> str:
+    for meta_name in ['sku', 'product:retailer_item_id', 'product:sku']:
+        meta = soup.find('meta', attrs={'name': meta_name}) or soup.find('meta', property=meta_name)
+        if meta and meta.get('content'):
+            return clean_cell(meta.get('content'))
     patterns = [r'(?:SKU|COD|CÓD|REF|REFERÊNCIA)[:\s#-]+([A-Za-z0-9._/-]+)', r'(?:Código|Codigo)[:\s#-]+([A-Za-z0-9._/-]+)']
     for pattern in patterns:
         match = re.search(pattern, page_text, flags=re.I)
@@ -364,7 +328,7 @@ def _is_product_like(url: str, html: str = '') -> bool:
         if 'og:type' in html.lower() and 'product' in html.lower():
             score += 30
         score += _jsonld_product_score(soup)
-        if any(term in text for term in ['comprar', 'adicionar ao carrinho', 'preco', 'sku', 'referencia']):
+        if any(term in text for term in ['comprar', 'adicionar ao carrinho', 'preco', 'preço', 'sku', 'referencia', 'referência']):
             score += 35
     return score >= 45
 
@@ -404,21 +368,7 @@ def _pagination_links(url: str, base_domain: str, page: int) -> list[str]:
 
 def _xml_candidates(start_url: str) -> list[str]:
     root = _root_url(start_url)
-    candidates = [
-        f'{root}/sitemap.xml',
-        f'{root}/sitemap_index.xml',
-        f'{root}/sitemap-products.xml',
-        f'{root}/product-sitemap.xml',
-        f'{root}/products_sitemap.xml',
-        f'{root}/produtos.xml',
-        f'{root}/products.xml',
-        f'{root}/google.xml',
-        f'{root}/merchant.xml',
-        f'{root}/facebook.xml',
-        f'{root}/catalog.xml',
-        f'{root}/catalogo.xml',
-        f'{root}/feed.xml',
-    ]
+    candidates = [f'{root}/sitemap.xml', f'{root}/sitemap_index.xml', f'{root}/sitemap-products.xml', f'{root}/product-sitemap.xml', f'{root}/products_sitemap.xml', f'{root}/produtos.xml', f'{root}/products.xml', f'{root}/google.xml', f'{root}/merchant.xml', f'{root}/facebook.xml', f'{root}/catalog.xml', f'{root}/catalogo.xml', f'{root}/feed.xml']
     robots = _safe_get(f'{root}/robots.txt')
     for match in re.findall(r'(?im)^\s*Sitemap:\s*(\S+)\s*$', robots or ''):
         normalized = _normalize_url(match)
@@ -507,26 +457,16 @@ def discover_product_urls(start_urls: list[str], max_pages: int = 250, max_produ
     discovered = _discover_from_site_navigation(normalized_starts, max_pages=max_pages, max_products=max_products)
     if len(discovered) < max_products:
         discovered = _discover_from_xml_complement(normalized_starts, already_found=discovered, max_products=max_products)
-    return discovered
+    if not discovered:
+        discovered = [url for url in normalized_starts if _safe_get(url)]
+    return discovered[:max_products]
 
 
 EXTRACTORS_BY_KIND: dict[str, Callable[[BeautifulSoup, str], str]] = {
-    'id_produto': _sku,
-    'codigo': _sku,
-    'gtin': _gtin,
-    'descricao': _title,
-    'deposito': _empty_value,
-    'estoque': _stock,
-    'preco_unitario': _price,
-    'preco_custo': _price,
-    'observacao': _empty_value,
-    'data': _today_value,
-    'url': _empty_value,
-    'nome_apoio': _title,
-    'imagem': _images,
-    'marca': _brand,
-    'categoria': _category,
-    'ncm': _empty_value,
+    'id_produto': _sku, 'codigo': _sku, 'gtin': _gtin, 'descricao': _title, 'deposito': _empty_value,
+    'estoque': _stock, 'preco_unitario': _price, 'preco_custo': _price, 'observacao': _empty_value,
+    'data': _today_value, 'url': _empty_value, 'nome_apoio': _title, 'imagem': _images, 'marca': _brand,
+    'categoria': _category, 'ncm': _empty_value,
 }
 
 
@@ -541,13 +481,36 @@ def _extract_by_contract(url: str, contract: list[RequestedField], soup: Beautif
     return row
 
 
+def _row_has_any_value(row: dict[str, str]) -> bool:
+    for key, value in row.items():
+        if normalize_key(key) == 'url' and str(value).strip():
+            continue
+        if str(value or '').strip():
+            return True
+    return False
+
+
 def scrape_product(url: str, requested_columns: Iterable[str] | None = None) -> dict[str, str]:
     contract = build_contract(requested_columns or [])
     html = _safe_get(url)
     soup = _make_soup(html)
     page_text = _page_text(soup)
     if contract:
-        return _extract_by_contract(url=url, contract=contract, soup=soup, page_text=page_text)
+        row = _extract_by_contract(url=url, contract=contract, soup=soup, page_text=page_text)
+        if not _row_has_any_value(row):
+            fallback = scrape_product(url, requested_columns=None)
+            for key in row:
+                if not str(row.get(key, '')).strip():
+                    kind = next((field.kind for field in contract if field.original == key), '')
+                    if kind in {'descricao', 'nome_apoio'}:
+                        row[key] = fallback.get('Descrição') or fallback.get('Nome') or ''
+                    elif kind in {'preco_unitario', 'preco_custo'}:
+                        row[key] = fallback.get('Preço') or fallback.get('Preço unitário (OBRIGATÓRIO)') or ''
+                    elif kind == 'estoque':
+                        row[key] = fallback.get('Estoque') or fallback.get('Balanço (OBRIGATÓRIO)') or ''
+                    elif kind == 'codigo':
+                        row[key] = fallback.get('Código') or fallback.get('SKU') or ''
+        return row
     title = _title(soup, page_text)
     price = _price(soup, page_text)
     stock = _stock(soup, page_text)
@@ -584,9 +547,9 @@ def _normalize_columns(requested_columns: Iterable[str] | None) -> list[str] | N
 def _safe_scrape_one(url: str, requested_columns: list[str] | None) -> tuple[str, dict[str, str] | None]:
     try:
         row = scrape_product(url, requested_columns=requested_columns)
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or not row:
             return url, None
-        if not row:
+        if not _row_has_any_value(row):
             return url, None
         return url, row
     except Exception:
@@ -597,57 +560,26 @@ def _ensure_requested_columns(df: pd.DataFrame, requested_columns: list[str] | N
     out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if not requested_columns:
         return out.fillna('')
-
     for column in requested_columns:
         if column not in out.columns:
             out[column] = ''
     return out.loc[:, requested_columns].fillna('')
 
 
-def crawl_flash_amplo_page_by_page_dataframe(
-    raw_urls: str,
-    requested_columns: list[str] | None = None,
-    max_pages: int = 250,
-    max_products: int = 1000,
-    workers: int = DEFAULT_FLASH_WORKERS,
-    keep_only_requested_columns: bool = False,
-) -> tuple[pd.DataFrame, FlashAmploReport]:
+def crawl_flash_amplo_page_by_page_dataframe(raw_urls: str, requested_columns: list[str] | None = None, max_pages: int = 250, max_products: int = 1000, workers: int = DEFAULT_FLASH_WORKERS, keep_only_requested_columns: bool = False) -> tuple[pd.DataFrame, FlashAmploReport]:
     started = monotonic()
     start_urls = split_urls(raw_urls)
     columns = _normalize_columns(requested_columns)
-
     if not start_urls:
         empty = pd.DataFrame(columns=columns or [])
-        report = FlashAmploReport(
-            start_urls=0,
-            discovered_products=0,
-            extracted_products=0,
-            failed_products=0,
-            elapsed_seconds=0.0,
-        )
-        return empty, report
-
-    product_urls = discover_product_urls(
-        start_urls=start_urls,
-        max_pages=max_pages,
-        max_products=max_products,
-    )
-
+        return empty, FlashAmploReport(0, 0, 0, 0, 0.0)
+    product_urls = discover_product_urls(start_urls=start_urls, max_pages=max_pages, max_products=max_products)
     if not product_urls:
         empty = pd.DataFrame(columns=columns or [])
-        report = FlashAmploReport(
-            start_urls=len(start_urls),
-            discovered_products=0,
-            extracted_products=0,
-            failed_products=0,
-            elapsed_seconds=round(monotonic() - started, 3),
-        )
-        return empty, report
-
+        return empty, FlashAmploReport(len(start_urls), 0, 0, 0, round(monotonic() - started, 3))
     safe_workers = max(1, min(int(workers or DEFAULT_FLASH_WORKERS), MAX_FLASH_WORKERS, len(product_urls)))
     rows: list[dict[str, str]] = []
     failed = 0
-
     with ThreadPoolExecutor(max_workers=safe_workers) as executor:
         futures = [executor.submit(_safe_scrape_one, url, columns) for url in product_urls]
         for future in as_completed(futures):
@@ -656,35 +588,16 @@ def crawl_flash_amplo_page_by_page_dataframe(
                 failed += 1
                 continue
             rows.append(row)
-
+    if not rows:
+        direct_rows = [scrape_product(url, requested_columns=columns) for url in start_urls]
+        rows = [row for row in direct_rows if isinstance(row, dict) and row]
     df = pd.DataFrame(rows).fillna('')
     if keep_only_requested_columns:
         df = _ensure_requested_columns(df, columns)
-
-    report = FlashAmploReport(
-        start_urls=len(start_urls),
-        discovered_products=len(product_urls),
-        extracted_products=len(rows),
-        failed_products=failed,
-        elapsed_seconds=round(monotonic() - started, 3),
-    )
+    report = FlashAmploReport(len(start_urls), len(product_urls), len(rows), failed, round(monotonic() - started, 3))
     return df, report
 
 
-def run_flash_amplo_page_mode(
-    raw_urls: str,
-    requested_columns: list[str] | None = None,
-    max_pages: int = 250,
-    max_products: int = 1000,
-    workers: int = DEFAULT_FLASH_WORKERS,
-    keep_only_requested_columns: bool = False,
-) -> pd.DataFrame:
-    df, _report = crawl_flash_amplo_page_by_page_dataframe(
-        raw_urls=raw_urls,
-        requested_columns=requested_columns,
-        max_pages=max_pages,
-        max_products=max_products,
-        workers=workers,
-        keep_only_requested_columns=keep_only_requested_columns,
-    )
+def run_flash_amplo_page_mode(raw_urls: str, requested_columns: list[str] | None = None, max_pages: int = 250, max_products: int = 1000, workers: int = DEFAULT_FLASH_WORKERS, keep_only_requested_columns: bool = False) -> pd.DataFrame:
+    df, _report = crawl_flash_amplo_page_by_page_dataframe(raw_urls=raw_urls, requested_columns=requested_columns, max_pages=max_pages, max_products=max_products, workers=workers, keep_only_requested_columns=keep_only_requested_columns)
     return df
