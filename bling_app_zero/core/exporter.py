@@ -27,6 +27,12 @@ PRODUCT_CODE_COLUMN_TERMS = [
     'código produto',
     'codigo do produto',
     'código do produto',
+    'cod fornecedor',
+    'cód fornecedor',
+    'cod no fornecedor',
+    'cód no fornecedor',
+    'codigo no fornecedor',
+    'código no fornecedor',
     'sku',
     'referencia',
     'referência',
@@ -43,9 +49,13 @@ PRODUCT_NAME_COLUMN_TERMS = [
 
 DEFAULT_MEASURES_CM = {
     'altura': '2',
-    'comprimento': '18',
     'largura': '11',
+    'profundidade': '18',
+    'comprimento': '18',
 }
+
+DEFAULT_SUPPLIER = 'Não definido'
+DEFAULT_MEASURE_UNIT = 'Centímetro'
 
 
 def _looks_like_image_column(column: object) -> bool:
@@ -67,25 +77,51 @@ def _looks_like_product_name_column(column: object) -> bool:
     return key in {normalize_key(term) for term in PRODUCT_NAME_COLUMN_TERMS}
 
 
+def _looks_like_supplier_column(column: object) -> bool:
+    key = normalize_key(column)
+    return key in {'fornecedor', 'nome fornecedor', 'nome do fornecedor', 'supplier'}
+
+
+def _looks_like_measure_unit_column(column: object) -> bool:
+    key = normalize_key(column)
+    return key in {'unidade de medida', 'unidade medida', 'unidade das medidas', 'unidade dimensoes', 'unidade dimensoes produto'}
+
+
 def _measure_kind(column: object) -> str:
     key = normalize_key(column)
     if not key:
         return ''
     if 'altura' in key:
         return 'altura'
-    if 'comprimento' in key:
-        return 'comprimento'
     if 'largura' in key:
         return 'largura'
+    if 'profundidade' in key:
+        return 'profundidade'
+    if 'comprimento' in key:
+        return 'comprimento'
     return ''
 
 
-def _is_empty_measure(value: object) -> bool:
+def _is_empty_text(value: object) -> bool:
     text = clean_cell(value).strip()
     if not text:
         return True
     key = normalize_key(text)
-    return key in {'nan', 'none', 'null', 'nao informado', 'naoinformado', 'sem medida', 'semmedida'}
+    return key in {'nan', 'none', 'null', 'na', 'n/a', 'nao informado', 'naoinformado', 'sem informacao', 'seminformacao'}
+
+
+def _is_empty_measure(value: object) -> bool:
+    if _is_empty_text(value):
+        return True
+    text = clean_cell(value).strip().lower().replace(',', '.')
+    numeric = re.sub(r'[^0-9.-]+', '', text)
+    if numeric:
+        try:
+            return float(numeric) == 0.0
+        except Exception:
+            pass
+    key = normalize_key(text)
+    return key in {'sem medida', 'semmedida', '0', '0000'}
 
 
 def normalize_image_urls(value: object) -> str:
@@ -195,6 +231,30 @@ def _fill_default_measures(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _fill_default_supplier(out: pd.DataFrame) -> pd.DataFrame:
+    if out is None or out.empty:
+        return out
+
+    for column in out.columns:
+        if not _looks_like_supplier_column(column):
+            continue
+        out[column] = out[column].apply(lambda value: DEFAULT_SUPPLIER if _is_empty_text(value) else clean_cell(value))
+
+    return out
+
+
+def _fill_measure_unit(out: pd.DataFrame) -> pd.DataFrame:
+    if out is None or out.empty:
+        return out
+
+    for column in out.columns:
+        if not _looks_like_measure_unit_column(column):
+            continue
+        out[column] = DEFAULT_MEASURE_UNIT
+
+    return out
+
+
 def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -210,6 +270,8 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].apply(clean_cell)
 
     out = _fill_default_measures(out)
+    out = _fill_measure_unit(out)
+    out = _fill_default_supplier(out)
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
