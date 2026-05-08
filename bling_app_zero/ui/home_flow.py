@@ -11,13 +11,13 @@ STEP_SITE = 'site'
 STEP_PLANILHA = 'planilha'
 
 STEP_LABELS = {
-    STEP_SITE: 'Buscar no site',
-    STEP_PLANILHA: 'Enviar planilha',
+    STEP_SITE: 'Buscar produtos no site do fornecedor',
+    STEP_PLANILHA: 'Anexar planilha, PDF ou XML do fornecedor',
 }
 
 STEP_HELP = {
-    STEP_SITE: 'Busca produtos nos links e cria uma planilha.',
-    STEP_PLANILHA: 'Use uma planilha pronta do fornecedor.',
+    STEP_SITE: 'Cole links de produtos ou categorias.',
+    STEP_PLANILHA: 'Use um arquivo pronto do fornecedor.',
 }
 
 
@@ -97,7 +97,7 @@ def render_flow_selector() -> str:
         'Escolha',
         labels,
         index=current_index,
-        horizontal=True,
+        horizontal=False,
         key='home_slim_flow_radio',
         label_visibility='collapsed',
     )
@@ -108,7 +108,7 @@ def render_flow_selector() -> str:
 
     st.caption(STEP_HELP.get(current, ''))
 
-    button_label = 'Abrir busca' if current == STEP_SITE else 'Enviar planilha'
+    button_label = 'Abrir busca' if current == STEP_SITE else 'Anexar arquivo'
     if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
         activate_current_step(current)
         st.rerun()
