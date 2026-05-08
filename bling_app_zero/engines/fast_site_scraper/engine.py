@@ -22,7 +22,7 @@ from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.page_parser import parse_product_page
 from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls
 
-MAX_WORKERS = 32
+MAX_WORKERS = 48
 
 
 def _default_columns(operation: str) -> list[str]:
@@ -38,8 +38,15 @@ def _needed_kinds(contract: list[RequestedField]) -> set[str]:
     return kinds
 
 
+def _url_only_row(url: str) -> FastProductData:
+    return FastProductData(url=url)
+
+
 def _scrape_one(url: str, needed: set[str]) -> FastProductData:
-    html = fetch_live(url, timeout=10)
+    if needed <= {'url'}:
+        return _url_only_row(url)
+
+    html = fetch_live(url, timeout=8)
     if not html:
         return FastProductData(url=url)
 
@@ -131,6 +138,10 @@ def run_fast_site_scraper(
     urls = discover_product_urls(raw_urls, max_pages=max_pages, max_products=max_products)
     if not urls:
         return pd.DataFrame(columns=columns)
+
+    if needed <= {'url'}:
+        rows = [_to_contract_row(_url_only_row(url), contract) for url in urls[:max_products]]
+        return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
     products: list[FastProductData] = []
     workers = max(1, min(MAX_WORKERS, len(urls)))
