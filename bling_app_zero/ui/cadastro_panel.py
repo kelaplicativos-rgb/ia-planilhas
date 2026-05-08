@@ -70,6 +70,14 @@ def _cadastro_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
     return default_model()
 
 
+def _select_cadastro_model(upload) -> pd.DataFrame | None:
+    if isinstance(upload.cadastro_model_df, pd.DataFrame):
+        return upload.cadastro_model_df
+    if isinstance(upload.model_df, pd.DataFrame):
+        return upload.model_df
+    return None
+
+
 def _default_index(options: list[str], value: str) -> int:
     try:
         return options.index(value)
@@ -216,7 +224,7 @@ def render_cadastro_panel() -> None:
     )
 
     df_origem = upload.source_df
-    df_modelo = upload.cadastro_model_df or upload.model_df
+    df_modelo = _select_cadastro_model(upload)
     df_modelo_estoque = upload.estoque_model_df
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
