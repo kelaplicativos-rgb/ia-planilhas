@@ -43,12 +43,86 @@ def _secret_value(*names: str) -> str:
     return ''
 
 
+def _masked_key(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    if len(text) <= 12:
+        return text[:3] + '...' + text[-2:]
+    return text[:7] + '...' + text[-4:]
+
+
 def ai_enabled() -> bool:
     return bool(_secret_value('OPENAI_API_KEY', 'openai_api_key'))
 
 
 def _model_name() -> str:
     return _secret_value('OPENAI_MODEL', 'openai_model') or DEFAULT_MODEL
+
+
+def validate_openai_connection() -> dict[str, str | bool]:
+    """Valida se a chave OpenAI existe e se a API responde sem revelar a chave."""
+    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key')
+    model = _model_name()
+
+    if not api_key:
+        return {
+            'ok': False,
+            'status': 'CHAVE NÃO ENCONTRADA',
+            'model': model,
+            'key': '',
+            'message': 'Configure OPENAI_API_KEY ou [openai].api_key nas secrets do Streamlit.',
+        }
+
+    payload = {
+        'model': model,
+        'temperature': 0,
+        'max_tokens': 8,
+        'messages': [
+            {'role': 'system', 'content': 'Responda apenas OK.'},
+            {'role': 'user', 'content': 'Teste de conexão.'},
+        ],
+    }
+
+    try:
+        response = httpx.post(
+            OPENAI_CHAT_URL,
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json=payload,
+            timeout=20,
+        )
+        if response.status_code == 401:
+            return {
+                'ok': False,
+                'status': 'CHAVE INVÁLIDA',
+                'model': model,
+                'key': _masked_key(api_key),
+                'message': 'A API recusou a chave. Confira se a secret foi copiada corretamente.',
+            }
+        if response.status_code == 429:
+            return {
+                'ok': False,
+                'status': 'LIMITE/CRÉDITO',
+                'model': model,
+                'key': _masked_key(api_key),
+                'message': 'A chave existe, mas a API retornou limite, cota ou crédito insuficiente.',
+            }
+        response.raise_for_status()
+        return {
+            'ok': True,
+            'status': 'CONECTADO',
+            'model': model,
+            'key': _masked_key(api_key),
+            'message': 'OpenAI respondeu com sucesso. O complemento de IA está pronto para o scraper.',
+        }
+    except Exception as exc:
+        return {
+            'ok': False,
+            'status': 'ERRO DE CONEXÃO',
+            'model': model,
+            'key': _masked_key(api_key),
+            'message': str(exc),
+        }
 
 
 def _field_schema(contract: Iterable[RequestedField]) -> list[dict[str, str]]:
