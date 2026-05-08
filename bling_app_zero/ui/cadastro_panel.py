@@ -11,7 +11,11 @@ from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
 from bling_app_zero.engines.estoque_engine import default_model as estoque_default_model
-from bling_app_zero.flows.site_as_source import get_site_source_for_operation
+from bling_app_zero.flows.site_as_source import (
+    get_site_estoque_model,
+    get_site_model_for_operation,
+    get_site_source_for_operation,
+)
 from bling_app_zero.ui.home_shared import (
     df_signature,
     download_final,
@@ -78,10 +82,22 @@ def _estoque_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _select_cadastro_model(upload) -> pd.DataFrame | None:
+    site_model = get_site_model_for_operation('cadastro')
+    if isinstance(site_model, pd.DataFrame):
+        return site_model
     if isinstance(upload.cadastro_model_df, pd.DataFrame):
         return upload.cadastro_model_df
     if isinstance(upload.model_df, pd.DataFrame):
         return upload.model_df
+    return None
+
+
+def _select_estoque_model(upload) -> pd.DataFrame | None:
+    site_model = get_site_estoque_model()
+    if isinstance(site_model, pd.DataFrame):
+        return site_model
+    if isinstance(upload.estoque_model_df, pd.DataFrame):
+        return upload.estoque_model_df
     return None
 
 
@@ -334,7 +350,7 @@ def render_cadastro_panel() -> None:
     df_origem_site = get_site_source_for_operation('cadastro')
     df_origem = df_origem_site if isinstance(df_origem_site, pd.DataFrame) else upload.source_df
     df_modelo = _select_cadastro_model(upload)
-    df_modelo_estoque = upload.estoque_model_df
+    df_modelo_estoque = _select_estoque_model(upload)
 
     if isinstance(df_origem_site, pd.DataFrame):
         st.success('Origem por site carregada como origem de dados. A partir daqui o fluxo é o mesmo da planilha.')
