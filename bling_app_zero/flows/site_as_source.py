@@ -40,7 +40,8 @@ def _mirror_as_uploaded_planilha(
     estoque_model_df: pd.DataFrame | None = None,
 ) -> None:
     """Faz a origem gerada por site aparecer como se fosse planilha anexada."""
-    origem = _copy_df(df) or pd.DataFrame()
+    copied_origin = _copy_df(df)
+    origem = copied_origin if copied_origin is not None else pd.DataFrame()
     for key in PLANILHA_SOURCE_KEYS:
         st.session_state[key] = origem.copy().fillna('')
 
@@ -78,6 +79,7 @@ def set_site_source_as_planilha(
     cadastro_model = _copy_df(cadastro_model_df)
     estoque_model = _copy_df(estoque_model_df)
     operation_model = _copy_df(operation_model_df)
+    cadastro_model_to_mirror = cadastro_model if cadastro_model is not None else operation_model
 
     if cadastro_model is not None:
         st.session_state[SITE_CADASTRO_MODEL_KEY] = cadastro_model
@@ -88,7 +90,7 @@ def set_site_source_as_planilha(
 
     _mirror_as_uploaded_planilha(
         df=df,
-        cadastro_model_df=cadastro_model or operation_model,
+        cadastro_model_df=cadastro_model_to_mirror,
         estoque_model_df=estoque_model,
     )
 
