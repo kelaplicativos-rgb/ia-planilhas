@@ -105,6 +105,7 @@ def _go_to_main_operation(operation: str) -> None:
     except Exception:
         pass
     st.session_state['tipo_operacao'] = operation
+    st.session_state['home_slim_flow_step'] = operation
 
 
 def _save_site_source(
