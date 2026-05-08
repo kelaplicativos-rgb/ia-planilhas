@@ -92,7 +92,7 @@ def load_site_pipeline() -> Callable:
 
 @st.cache_resource(show_spinner=False)
 def load_requested_columns_from_model() -> Callable:
-    from bling_app_zero.engines.estoque_engine import requested_columns_from_model
+    from bling_app_zero.flows.estoque_contract import requested_columns_from_model
 
     return requested_columns_from_model
 
