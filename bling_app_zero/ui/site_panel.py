@@ -152,14 +152,15 @@ def _render_generated_origin_actions(
 
 
 def render_site_panel() -> None:
-    st.markdown('### Scraper')
+    st.markdown('### Busca por site')
 
     config_for_site_operation('cadastro')
     upload = render_model_upload_box(
-        title='Modelo',
+        title='Modelos do Bling',
         operation='cadastro',
         key='model_upload_site',
         required_model=False,
+        caption='Anexe os modelos do Bling para gerar a planilha de importação.',
     )
 
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
