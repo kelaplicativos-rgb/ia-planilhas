@@ -41,6 +41,12 @@ PRODUCT_NAME_COLUMN_TERMS = [
     'título',
 ]
 
+DEFAULT_MEASURES_CM = {
+    'altura': '2',
+    'comprimento': '18',
+    'largura': '11',
+}
+
 
 def _looks_like_image_column(column: object) -> bool:
     key = str(column or '').strip().lower()
@@ -59,6 +65,27 @@ def _looks_like_product_code_column(column: object) -> bool:
 def _looks_like_product_name_column(column: object) -> bool:
     key = normalize_key(column)
     return key in {normalize_key(term) for term in PRODUCT_NAME_COLUMN_TERMS}
+
+
+def _measure_kind(column: object) -> str:
+    key = normalize_key(column)
+    if not key:
+        return ''
+    if 'altura' in key:
+        return 'altura'
+    if 'comprimento' in key:
+        return 'comprimento'
+    if 'largura' in key:
+        return 'largura'
+    return ''
+
+
+def _is_empty_measure(value: object) -> bool:
+    text = clean_cell(value).strip()
+    if not text:
+        return True
+    key = normalize_key(text)
+    return key in {'nan', 'none', 'null', 'nao informado', 'naoinformado', 'sem medida', 'semmedida'}
 
 
 def normalize_image_urls(value: object) -> str:
@@ -154,6 +181,20 @@ def _ensure_unique_product_codes(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _fill_default_measures(out: pd.DataFrame) -> pd.DataFrame:
+    if out is None or out.empty:
+        return out
+
+    for column in out.columns:
+        kind = _measure_kind(column)
+        if not kind:
+            continue
+        default_value = DEFAULT_MEASURES_CM[kind]
+        out[column] = out[column].apply(lambda value: default_value if _is_empty_measure(value) else clean_cell(value))
+
+    return out
+
+
 def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -168,6 +209,7 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out[col] = out[col].apply(clean_cell)
 
+    out = _fill_default_measures(out)
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
