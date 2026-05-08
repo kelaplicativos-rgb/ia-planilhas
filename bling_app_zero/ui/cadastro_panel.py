@@ -162,10 +162,11 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             auto_mapping[target] = _force_price_suggestion(target, source_columns, selected)
         st.session_state[mapping_key] = auto_mapping
 
-    st.markdown('#### 2. Correlacionar colunas')
-    st.caption('Confira as sugestões e ajuste manualmente antes de gerar o preview final.')
+    st.markdown('#### 2. Conferir colunas')
+    st.caption('Confira as sugestões antes de gerar a planilha final.')
 
-    preview_df('Origem para correlacionar', df_source)
+    with st.expander('Ver origem', expanded=False):
+        preview_df('Origem para conferir', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     edited_mapping: dict[str, str] = {}
@@ -195,16 +196,16 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
-        st.warning('Atenção: a mesma coluna de origem foi usada mais de uma vez: ' + ', '.join(duplicated))
+        st.warning('A mesma coluna foi usada mais de uma vez: ' + ', '.join(duplicated))
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar preview final do cadastro', use_container_width=True):
+        if st.button('Atualizar cadastro', use_container_width=True):
             st.session_state['df_final_cadastro'] = df_preview_manual
             st.session_state['mapping_cadastro'] = edited_mapping
             st.rerun()
     with col_b:
-        if st.button('Limpar correlação deste cadastro', use_container_width=True):
+        if st.button('Limpar colunas', use_container_width=True):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
@@ -230,10 +231,11 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
                 auto_mapping[target] = ''
         st.session_state[mapping_key] = auto_mapping
 
-    st.markdown('##### Correlacionar colunas do estoque')
-    st.caption('Ajuste manualmente o mapeamento do CSV de estoque antes do download.')
+    st.markdown('##### Conferir estoque')
+    st.caption('Ajuste o estoque antes do download.')
 
-    preview_df('Origem para estoque', df_source)
+    with st.expander('Ver origem do estoque', expanded=False):
+        preview_df('Origem para estoque', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     edited_mapping: dict[str, str] = {}
@@ -248,7 +250,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
                 value=deposito,
                 disabled=True,
                 key=f'{widget_key}_deposito_visual',
-                help='Este campo é preenchido pelo nome do depósito informado acima.',
+                help='Campo preenchido pelo depósito informado.',
             )
             st.markdown(
                 f"<div style='font-size:14px; color:#118a32; margin-top:-8px; margin-bottom:12px; font-weight:700;'>"
@@ -284,16 +286,16 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
-        st.warning('Atenção: a mesma coluna de origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
+        st.warning('A mesma coluna foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar preview final do estoque', use_container_width=True):
+        if st.button('Atualizar estoque', use_container_width=True):
             st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
             st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
             st.rerun()
     with col_b:
-        if st.button('Limpar correlação de estoque', use_container_width=True):
+        if st.button('Limpar estoque', use_container_width=True):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
@@ -304,17 +306,17 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
 
 
 def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
-    st.markdown('#### Download também para atualização de estoque')
+    st.markdown('#### Estoque')
 
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Anexe também o modelo de estoque para liberar o CSV final de atualização de estoque usando esta mesma origem.')
+        st.info('Anexe o modelo de estoque para gerar também a planilha de estoque.')
         st.session_state.pop('df_final_estoque_from_cadastro', None)
         st.session_state.pop('mapping_estoque_from_cadastro', None)
         return
 
-    st.success('Modelo de estoque detectado. O sistema vai gerar também a planilha final de estoque com esta mesma origem.')
+    st.success('Modelo de estoque detectado.')
     deposito = st.text_input(
-        'Nome do depósito para o CSV de estoque',
+        'Depósito',
         value='Não definido',
         key='cadastro_deposito_estoque_mesma_origem',
     )
@@ -327,36 +329,44 @@ def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Dat
     if isinstance(mapping_estoque, dict):
         show_mapping(mapping_estoque)
     if isinstance(df_final_estoque, pd.DataFrame):
-        preview_df('Preview final da atualização de estoque', df_final_estoque)
+        preview_df('Preview final do estoque', df_final_estoque)
         download_final(df_final_estoque, 'estoque', 'estoque_from_cadastro')
 
 
 def render_cadastro_panel() -> None:
-    with st.expander('Detalhes técnicos do motor de cadastro', expanded=False):
-        st.caption('Motor independente de CADASTRO será carregado somente quando gerar.')
-
-    upload = render_smart_upload_box(
-        title='Anexos do cadastro',
-        operation='cadastro',
-        key='smart_upload_cadastro',
-        allow_model=True,
-        required_model=False,
-        accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
-    )
-
     df_origem_site = get_site_source_for_operation('cadastro')
+
+    if isinstance(df_origem_site, pd.DataFrame):
+        st.success('Planilha criada pelo site carregada. Continue o fluxo normalmente.')
+        upload = render_smart_upload_box(
+            title='Modelos extras',
+            operation='cadastro',
+            key='smart_upload_cadastro',
+            allow_model=True,
+            required_model=False,
+            accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
+        )
+    else:
+        st.markdown('### Enviar arquivo do fornecedor')
+        st.caption('Anexe planilha, PDF ou XML com os produtos.')
+        upload = render_smart_upload_box(
+            title='Arquivos do fornecedor',
+            operation='cadastro',
+            key='smart_upload_cadastro',
+            allow_model=True,
+            required_model=False,
+            accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
+        )
+
     df_origem = df_origem_site if isinstance(df_origem_site, pd.DataFrame) else upload.source_df
     df_modelo = _select_cadastro_model(upload)
     df_modelo_estoque = _select_estoque_model(upload)
 
-    if isinstance(df_origem_site, pd.DataFrame):
-        st.success('Origem por site carregada como origem de dados. A partir daqui o fluxo é o mesmo da planilha.')
-
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
         if isinstance(df_modelo, pd.DataFrame) and isinstance(df_modelo_estoque, pd.DataFrame):
-            st.success('Dois modelos detectados: Cadastro/Produtos e Estoque. No final serão exibidos os dois downloads.')
+            st.success('Cadastro e estoque detectados. O sistema vai gerar os dois arquivos.')
 
-        usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
+        usar_preco = st.checkbox('Aplicar calculadora de preço', value=False)
 
         if usar_preco:
             apply_pricing = load_apply_pricing()
@@ -373,20 +383,21 @@ def render_cadastro_panel() -> None:
             _show_first_row_preview(df_origem, coluna_custo)
 
             if desconto_detectado > 0:
-                st.info(f'Desconto/comissão detectado e aplicado como padrão: {desconto_detectado:.2f}%')
+                st.info(f'Desconto/comissão detectado: {desconto_detectado:.2f}%')
 
             c1, c2, c3, c4, c5 = st.columns(5)
-            margem = c1.number_input('Lucro desejado %', min_value=0.0, value=30.0, step=1.0, key=f'cadastro_margem_{origem_signature}')
+            margem = c1.number_input('Lucro %', min_value=0.0, value=30.0, step=1.0, key=f'cadastro_margem_{origem_signature}')
             imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_imposto_{origem_signature}')
             taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_taxa_{origem_signature}')
-            desconto = c4.number_input('Desconto/Comissão %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
-            fixo = c5.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_fixo_{origem_signature}')
+            desconto = c4.number_input('Desconto %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
+            fixo = c5.number_input('Fixo R$', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_fixo_{origem_signature}')
 
             df_origem = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo, desconto)
             df_origem = _apply_calculated_price_aliases(df_origem, 'Preço de venda')
             st.session_state['cadastro_preco_calculado_ativo'] = True
             st.session_state['df_origem_cadastro_precificada'] = df_origem
-            preview_df('Origem com preço calculado', df_origem)
+            with st.expander('Ver preço calculado', expanded=False):
+                preview_df('Origem com preço calculado', df_origem)
         else:
             st.session_state['cadastro_preco_calculado_ativo'] = False
             st.session_state.pop('df_origem_cadastro_precificada', None)
@@ -395,7 +406,7 @@ def render_cadastro_panel() -> None:
         _render_manual_mapping(df_para_mapear, df_modelo)
         _render_dual_stock_output(df_para_mapear, df_modelo_estoque)
     elif upload.attachments:
-        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o cadastro.')
+        st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
 
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro', {})
