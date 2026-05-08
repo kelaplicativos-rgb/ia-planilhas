@@ -22,9 +22,7 @@ from bling_app_zero.ui.home_shared import (
     show_contract,
     show_mapping,
 )
-from bling_app_zero.ui.smart_upload import render_smart_upload_box
-
-MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
+from bling_app_zero.ui.model_upload import render_model_upload_box
 
 
 def _unique_columns(columns: list[str]) -> list[str]:
@@ -46,11 +44,6 @@ def _columns_from_df(df: pd.DataFrame | None) -> list[str]:
 
 
 def _choose_site_model_df(upload, operation: str) -> pd.DataFrame | None:
-    """Seleciona somente planilha modelo, nunca origem.
-
-    No fluxo por site, a origem é sempre URL. O anexo deste bloco serve apenas para
-    modelos Bling em planilha. Por isso não pode cair em upload.source_df.
-    """
     if operation == 'estoque' and isinstance(upload.estoque_model_df, pd.DataFrame):
         return upload.estoque_model_df
     if operation == 'cadastro' and isinstance(upload.cadastro_model_df, pd.DataFrame):
@@ -80,13 +73,6 @@ def _requested_columns_for_site_capture(
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo_operacao: pd.DataFrame | None,
 ) -> list[str] | None:
-    """Define o contrato de captura por site sem perder campos para as duas saídas.
-
-    Quando a operação é cadastro e o usuário anexa também o modelo de estoque, a origem
-    capturada precisa conter colunas suficientes para os dois CSVs finais. Isso deixa o
-    comportamento equivalente ao cadastro por anexo: uma origem alimenta cadastro e,
-    opcionalmente, estoque.
-    """
     if operation == 'cadastro':
         cadastro_columns = _columns_from_df(df_modelo_cadastro)
         estoque_columns = _columns_from_df(df_modelo_estoque)
@@ -101,12 +87,6 @@ def _render_cadastro_site_same_as_planilha(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
 ) -> None:
-    """Usa o mesmo fluxo operacional do cadastro por planilha, mudando só a origem.
-
-    A captura por site vira apenas a origem de dados. Depois dela, a operação é cadastro:
-    precificação opcional, mapeamento manual, preview final, CSV de cadastro e, quando
-    houver modelo de estoque anexado, a mesma opção de gerar também a saída de estoque.
-    """
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         st.warning('A captura por site ainda não retornou dados para o cadastro.')
         return
@@ -209,13 +189,11 @@ def render_site_panel() -> None:
     modo = st.radio('Operação que receberá a origem site', ['Cadastro de Produtos', 'Atualização de Estoque'], horizontal=True)
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
 
-    upload = render_smart_upload_box(
+    upload = render_model_upload_box(
         title='📎 Planilhas modelo Bling',
         operation=operation,
-        key='smart_upload_site_modelo',
-        allow_model=True,
+        key='model_upload_site',
         required_model=operation == 'estoque',
-        accepted_types=MODEL_SPREADSHEET_TYPES,
     )
 
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
