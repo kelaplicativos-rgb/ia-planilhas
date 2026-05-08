@@ -4,8 +4,7 @@ import pandas as pd
 
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.text import normalize_key
-from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode, scrape_urls, split_urls
-from bling_app_zero.engines.turbo_scraper_engine import run_turbo_scraper
+from bling_app_zero.engines.ai_only_scraper_engine import run_ai_only_scraper, split_urls
 
 
 DEFAULT_ESTOQUE_SITE_COLUMNS = [
@@ -66,35 +65,6 @@ def _remove_unrequested_product_noise(df: pd.DataFrame, requested_columns: list[
     return _blank_missing_requested_columns(out, requested_columns)
 
 
-def _has_real_rows(df: pd.DataFrame | None) -> bool:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return False
-    for _, row in df.iterrows():
-        values = [str(value or '').strip() for value in row.to_dict().values()]
-        if any(values):
-            return True
-    return False
-
-
-def _fallback_old_engine(
-    raw_urls: str,
-    urls: list[str],
-    extraction_columns: list[str],
-    all_products: bool,
-    max_pages: int,
-    max_products: int,
-) -> pd.DataFrame:
-    if all_products:
-        return run_flash_amplo_page_mode(
-            raw_urls=raw_urls,
-            requested_columns=extraction_columns,
-            max_pages=max_pages,
-            max_products=max_products,
-            keep_only_requested_columns=True,
-        )
-    return scrape_urls(urls, requested_columns=extraction_columns)
-
-
 def run_site_estoque_engine(
     raw_urls: str,
     requested_columns: list[str] | None = None,
@@ -108,7 +78,7 @@ def run_site_estoque_engine(
     if not urls:
         return pd.DataFrame(columns=extraction_columns)
 
-    df_turbo = run_turbo_scraper(
+    df_ai = run_ai_only_scraper(
         raw_urls=raw_urls,
         requested_columns=extraction_columns,
         operation='estoque',
@@ -117,15 +87,4 @@ def run_site_estoque_engine(
         max_products=max_products,
         keep_only_requested_columns=True,
     ).fillna('')
-    if _has_real_rows(df_turbo):
-        return _remove_unrequested_product_noise(df_turbo, extraction_columns)
-
-    df_old = _fallback_old_engine(
-        raw_urls=raw_urls,
-        urls=urls,
-        extraction_columns=extraction_columns,
-        all_products=all_products,
-        max_pages=max_pages,
-        max_products=max_products,
-    ).fillna('')
-    return _remove_unrequested_product_noise(df_old, extraction_columns)
+    return _remove_unrequested_product_noise(df_ai, extraction_columns)
