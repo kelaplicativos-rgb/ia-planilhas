@@ -143,12 +143,12 @@ def render_site_panel() -> None:
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
 
     upload = render_smart_upload_box(
-        title='📎 Modelo Bling para a operação',
+        title='📎 Anexos da operação por site',
         operation=operation,
         key='smart_upload_site_modelo',
         allow_model=True,
         required_model=operation == 'estoque',
-        accepted_types=['xlsx', 'xls', 'csv'],
+        accepted_types=None,
     )
 
     df_modelo = _choose_site_model_df(upload)
