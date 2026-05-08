@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.clean_layout import render_compact_note
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
@@ -91,6 +92,7 @@ def _render_loaded_summary() -> None:
 def render_home_bling_models() -> None:
     st.markdown('### 1. Modelos do Bling')
     st.caption('Anexe os modelos oficiais do Bling uma vez. Depois escolha como trazer os produtos.')
+    render_compact_note('Anexe o modelo uma vez e o sistema lembrará durante esta sessão.')
     _render_instructions()
 
     upload = render_model_upload_box(
