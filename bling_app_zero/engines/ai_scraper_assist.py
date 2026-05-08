@@ -16,27 +16,51 @@ DEFAULT_MODEL = 'gpt-4o-mini'
 MAX_CONTEXT_CHARS = 12000
 
 
-def _secret_value(*names: str) -> str:
+def _unique_names(*names: str) -> list[str]:
+    result: list[str] = []
     for name in names:
+        for candidate in [name, str(name).upper(), str(name).lower()]:
+            if candidate and candidate not in result:
+                result.append(candidate)
+    return result
+
+
+def _secret_value(*names: str) -> str:
+    expanded_names = _unique_names(*names)
+
+    for name in expanded_names:
         value = os.getenv(name)
         if value:
             return str(value).strip()
 
     try:
-        for name in names:
+        for name in expanded_names:
             if name in st.secrets:
-                return str(st.secrets.get(name) or '').strip()
+                value = st.secrets.get(name)
+                if value:
+                    return str(value).strip()
     except Exception:
         pass
 
     try:
         openai_section = st.secrets.get('openai', {})
         if isinstance(openai_section, dict):
-            for name in names:
-                if name in openai_section:
+            for name in expanded_names:
+                if name in openai_section and openai_section.get(name):
                     return str(openai_section.get(name) or '').strip()
-            if 'api_key' in openai_section:
-                return str(openai_section.get('api_key') or '').strip()
+
+            wants_key = any('key' in normalize_key(name) or 'token' in normalize_key(name) for name in expanded_names)
+            wants_model = any('model' in normalize_key(name) for name in expanded_names)
+
+            if wants_key:
+                for alias in ['api_key', 'key', 'token', 'OPENAI_API_KEY', 'openai_api_key']:
+                    if alias in openai_section and openai_section.get(alias):
+                        return str(openai_section.get(alias) or '').strip()
+
+            if wants_model:
+                for alias in ['model', 'OPENAI_MODEL', 'openai_model']:
+                    if alias in openai_section and openai_section.get(alias):
+                        return str(openai_section.get(alias) or '').strip()
     except Exception:
         pass
 
@@ -53,16 +77,16 @@ def _masked_key(value: str) -> str:
 
 
 def ai_enabled() -> bool:
-    return bool(_secret_value('OPENAI_API_KEY', 'openai_api_key'))
+    return bool(_secret_value('OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key'))
 
 
 def _model_name() -> str:
-    return _secret_value('OPENAI_MODEL', 'openai_model') or DEFAULT_MODEL
+    return _secret_value('OPENAI_MODEL', 'openai_model', 'model') or DEFAULT_MODEL
 
 
 def validate_openai_connection() -> dict[str, str | bool]:
     """Valida se a chave OpenAI existe e se a API responde sem revelar a chave."""
-    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key')
+    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key')
     model = _model_name()
 
     if not api_key:
@@ -71,7 +95,7 @@ def validate_openai_connection() -> dict[str, str | bool]:
             'status': 'CHAVE NÃO ENCONTRADA',
             'model': model,
             'key': '',
-            'message': 'Configure OPENAI_API_KEY ou [openai].api_key nas secrets do Streamlit.',
+            'message': 'Configure OPENAI_API_KEY ou [openai].api_key nas secrets do Streamlit e salve as alterações.',
         }
 
     payload = {
@@ -97,7 +121,7 @@ def validate_openai_connection() -> dict[str, str | bool]:
                 'status': 'CHAVE INVÁLIDA',
                 'model': model,
                 'key': _masked_key(api_key),
-                'message': 'A API recusou a chave. Confira se a secret foi copiada corretamente.',
+                'message': 'A API recusou a chave. Confira se a secret foi copiada corretamente e começa com sk-.',
             }
         if response.status_code == 429:
             return {
@@ -188,7 +212,7 @@ def enrich_row_with_ai(
     if not missing:
         return current_row
 
-    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key')
+    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key')
     if not api_key:
         return current_row
 
