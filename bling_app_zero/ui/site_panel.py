@@ -3,18 +3,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.cadastro_panel import (
-    _apply_calculated_price_aliases,
-    _best_cost_column,
-    _render_dual_stock_output,
-    _render_manual_mapping,
-    _show_first_row_preview,
-    _sync_detected_discount,
-)
+from bling_app_zero.flows.cadastro_tools import apply_pricing_ui, build_manual_mapping_result, cadastro_model
 from bling_app_zero.ui.home_shared import (
-    df_signature,
     download_final,
-    load_apply_pricing,
     load_estoque_pipeline,
     load_requested_columns_from_model,
     load_site_pipeline,
@@ -78,8 +69,34 @@ def _requested_columns_for_site_capture(
         estoque_columns = _columns_from_df(df_modelo_estoque)
         merged = _unique_columns(cadastro_columns + estoque_columns)
         return merged or None
-
     return _columns_from_df(df_modelo_operacao) or None
+
+
+def _render_site_cadastro_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
+    st.markdown('#### Gerar também atualização de estoque')
+    gerar_estoque = st.checkbox(
+        'Gerar CSV de atualização de estoque usando esta mesma origem site',
+        value=False,
+        key='site_cadastro_gerar_estoque_mesma_origem',
+    )
+    if not gerar_estoque:
+        st.session_state.pop('df_final_estoque_from_site_cadastro', None)
+        st.session_state.pop('mapping_estoque_from_site_cadastro', None)
+        return
+
+    deposito = st.text_input(
+        'Nome do depósito para o CSV de estoque',
+        value='Não definido',
+        key='site_cadastro_deposito_estoque_mesma_origem',
+    )
+    run_estoque_pipeline = load_estoque_pipeline()
+    df_final_estoque, mapping_estoque = run_estoque_pipeline(df_source, df_modelo_estoque, deposito=deposito)
+    st.session_state['df_final_estoque_from_site_cadastro'] = df_final_estoque
+    st.session_state['mapping_estoque_from_site_cadastro'] = mapping_estoque
+
+    show_mapping(mapping_estoque)
+    preview_df('Preview final da atualização de estoque', df_final_estoque)
+    download_final(df_final_estoque, 'estoque', 'estoque_from_site_cadastro')
 
 
 def _render_cadastro_site_same_as_planilha(
@@ -100,86 +117,47 @@ def _render_cadastro_site_same_as_planilha(
     )
 
     if usar_preco:
-        apply_pricing = load_apply_pricing()
-        colunas = [str(c) for c in df_origem.columns]
-        origem_signature = df_signature(df_origem)
-        desconto_detectado = _sync_detected_discount(df_origem, f'site:{origem_signature}')
-
-        coluna_custo = st.selectbox(
-            'Coluna de custo/preço base',
-            colunas,
-            index=_best_cost_column(colunas),
-            key=f'site_cadastro_coluna_custo_{origem_signature}',
+        df_origem = apply_pricing_ui(
+            df_origem=df_origem,
+            key_prefix='site_cadastro',
+            preview_title='Origem site com preço calculado',
         )
-        _show_first_row_preview(df_origem, coluna_custo)
-
-        if desconto_detectado > 0:
-            st.info(f'Desconto/comissão detectado e aplicado como padrão: {desconto_detectado:.2f}%')
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-        margem = c1.number_input(
-            'Lucro desejado %',
-            min_value=0.0,
-            value=30.0,
-            step=1.0,
-            key=f'site_cadastro_margem_{origem_signature}',
-        )
-        imposto = c2.number_input(
-            'Impostos %',
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f'site_cadastro_imposto_{origem_signature}',
-        )
-        taxa = c3.number_input(
-            'Taxas %',
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f'site_cadastro_taxa_{origem_signature}',
-        )
-        desconto = c4.number_input(
-            'Desconto/Comissão %',
-            min_value=0.0,
-            step=1.0,
-            key='cadastro_desconto_comissao',
-        )
-        fixo = c5.number_input(
-            'Custo fixo R$',
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f'site_cadastro_fixo_{origem_signature}',
-        )
-
-        df_origem = apply_pricing(
-            df_origem,
-            coluna_custo,
-            'Preço de venda',
-            margem,
-            imposto,
-            taxa,
-            fixo,
-            desconto,
-        )
-        df_origem = _apply_calculated_price_aliases(df_origem, 'Preço de venda')
         st.session_state['cadastro_preco_calculado_ativo'] = True
         st.session_state['df_origem_site_cadastro_precificada'] = df_origem
-        preview_df('Origem site com preço calculado', df_origem)
     else:
         st.session_state['cadastro_preco_calculado_ativo'] = False
         st.session_state.pop('df_origem_site_cadastro_precificada', None)
 
     df_para_mapear = st.session_state.get('df_origem_site_cadastro_precificada', df_origem)
-    _render_manual_mapping(df_para_mapear, df_modelo_cadastro)
-    _render_dual_stock_output(df_para_mapear, df_modelo_estoque)
+    model = cadastro_model(df_modelo_cadastro)
+    df_final, mapping = build_manual_mapping_result(
+        df_source=df_para_mapear,
+        model=model,
+        mapping_key_prefix='site_cadastro_manual_mapping',
+        title='#### 2. Correlacionar colunas',
+        caption='Confira as sugestões e ajuste manualmente antes de gerar o preview final.',
+        force_price=True,
+    )
+    st.session_state['df_final_cadastro'] = df_final
+    st.session_state['mapping_cadastro'] = mapping
 
-    df_final = st.session_state.get('df_final_cadastro')
-    mapping = st.session_state.get('mapping_cadastro', {})
-    if isinstance(df_final, pd.DataFrame):
-        show_mapping(mapping)
-        preview_df('Preview final do cadastro', df_final)
-        download_final(df_final, 'cadastro', 'site_cadastro')
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Atualizar preview final do cadastro', use_container_width=True, key='site_cadastro_atualizar_preview'):
+            st.session_state['df_final_cadastro'] = df_final
+            st.session_state['mapping_cadastro'] = mapping
+            st.rerun()
+    with col_b:
+        if st.button('Limpar correlação deste cadastro', use_container_width=True, key='site_cadastro_limpar_correlacao'):
+            st.session_state.pop('df_final_cadastro', None)
+            st.session_state.pop('mapping_cadastro', None)
+            st.rerun()
+
+    show_mapping(mapping)
+    preview_df('Preview final do cadastro', df_final)
+    download_final(df_final, 'cadastro', 'site_cadastro')
+
+    _render_site_cadastro_stock_output(df_para_mapear, df_modelo_estoque)
 
 
 def render_site_panel() -> None:
@@ -257,7 +235,6 @@ def render_site_panel() -> None:
 
     if isinstance(df_site_bruto, pd.DataFrame):
         preview_df('Origem capturada do site', df_site_bruto)
-
         if operation_state == 'cadastro':
             _render_cadastro_site_same_as_planilha(df_site_bruto, df_modelo_cadastro, df_modelo_estoque)
             return
