@@ -91,7 +91,21 @@ def _safe_code_text(value: object) -> str:
     return text[:60]
 
 
+def _gtin_code_from_row(out: pd.DataFrame, row_index: int) -> str:
+    for column in out.columns:
+        if not looks_like_gtin_column(column):
+            continue
+        value = clean_gtin(out.at[row_index, column]) if row_index in out.index else ''
+        if value:
+            return value[:60]
+    return ''
+
+
 def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
+    gtin_code = _gtin_code_from_row(out, row_index)
+    if gtin_code:
+        return gtin_code
+
     name_columns = [column for column in out.columns if _looks_like_product_name_column(column)]
     for column in name_columns:
         value = clean_cell(out.at[row_index, column]) if row_index in out.index else ''
@@ -129,7 +143,7 @@ def _ensure_unique_product_codes(out: pd.DataFrame) -> pd.DataFrame:
             original = clean_cell(out.at[row_index, column])
             base_code = _safe_code_text(original)
             if not base_code:
-                base_code = _fallback_code_from_row(out, position)
+                base_code = _fallback_code_from_row(out, row_index)
 
             unique_code = _make_unique_code(base_code, position, seen)
             seen.add(normalize_key(unique_code))
