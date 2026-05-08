@@ -24,12 +24,21 @@ from bling_app_zero.ui.home_shared import (
 )
 from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
+MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
 
-def _choose_site_model_df(upload) -> pd.DataFrame | None:
+
+def _choose_site_model_df(upload, operation: str) -> pd.DataFrame | None:
+    """Seleciona somente planilha modelo, nunca origem.
+
+    No fluxo por site, a origem é sempre URL. O anexo deste bloco serve apenas para
+    modelos Bling em planilha. Por isso não pode cair em upload.source_df.
+    """
+    if operation == 'estoque' and isinstance(upload.estoque_model_df, pd.DataFrame):
+        return upload.estoque_model_df
+    if operation == 'cadastro' and isinstance(upload.cadastro_model_df, pd.DataFrame):
+        return upload.cadastro_model_df
     if isinstance(upload.model_df, pd.DataFrame):
         return upload.model_df
-    if isinstance(upload.source_df, pd.DataFrame):
-        return upload.source_df
     return None
 
 
@@ -143,15 +152,15 @@ def render_site_panel() -> None:
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
 
     upload = render_smart_upload_box(
-        title='📎 Anexos da operação por site',
+        title='📎 Planilha modelo Bling',
         operation=operation,
         key='smart_upload_site_modelo',
         allow_model=True,
         required_model=operation == 'estoque',
-        accepted_types=None,
+        accepted_types=MODEL_SPREADSHEET_TYPES,
     )
 
-    df_modelo = _choose_site_model_df(upload)
+    df_modelo = _choose_site_model_df(upload, operation)
     requested_columns = None
     if isinstance(df_modelo, pd.DataFrame):
         requested_columns = [str(c) for c in df_modelo.columns]
