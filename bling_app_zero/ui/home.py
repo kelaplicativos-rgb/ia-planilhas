@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.ui.cadastro_panel import render_cadastro_panel
+from bling_app_zero.ui.clean_layout import inject_clean_home_css, render_compact_hero, render_step_title
 from bling_app_zero.ui.estoque_panel import render_estoque_panel
 from bling_app_zero.ui.site_panel import render_site_panel
 
@@ -15,10 +16,17 @@ OPERACOES = {
 
 
 def render_home() -> None:
-    st.title('🚀 IA Planilhas → Bling')
-    st.markdown('### Plataforma inteligente de integração, captura, transformação e automação de dados para o ERP Bling')
+    inject_clean_home_css()
+    render_compact_hero()
 
-    escolha = st.radio('O que você deseja fazer?', list(OPERACOES.keys()), horizontal=True)
+    render_step_title('O que você deseja fazer?')
+    escolha = st.radio(
+        'Escolha o fluxo principal',
+        list(OPERACOES.keys()),
+        horizontal=False,
+        label_visibility='collapsed',
+        key='home_tipo_operacao_radio',
+    )
     operacao = OPERACOES[escolha]
     st.session_state['tipo_operacao'] = operacao
 
