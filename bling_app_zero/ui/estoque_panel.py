@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_model_for_operation, get_site_source_for_operation
-from bling_app_zero.ui.home_models import get_home_estoque_model, save_home_models
 from bling_app_zero.ui.home_shared import (
     download_final,
     load_estoque_pipeline,
@@ -38,10 +37,6 @@ def _source_files_from_upload(upload) -> list[Any]:
     sources: list[Any] = []
     for file in attachments:
         if upload.model_file is not None and file is upload.model_file:
-            continue
-        if upload.estoque_model_file is not None and file is upload.estoque_model_file:
-            continue
-        if upload.cadastro_model_file is not None and file is upload.cadastro_model_file:
             continue
         sources.append(file)
 
@@ -113,45 +108,22 @@ def _render_stock_outputs() -> None:
                 download_final(df_final, 'estoque', f'estoque_{index}')
 
 
-def _select_estoque_model(upload) -> pd.DataFrame | None:
-    df_modelo_site = get_site_model_for_operation('estoque')
-    if isinstance(df_modelo_site, pd.DataFrame):
-        return df_modelo_site
-
-    df_modelo_home = get_home_estoque_model()
-    if isinstance(df_modelo_home, pd.DataFrame):
-        return df_modelo_home
-
-    if isinstance(upload.estoque_model_df, pd.DataFrame):
-        save_home_models(None, upload.estoque_model_df)
-        return upload.estoque_model_df
-
-    if isinstance(upload.model_df, pd.DataFrame):
-        save_home_models(None, upload.model_df)
-        return upload.model_df
-
-    return None
-
-
 def render_estoque_panel() -> None:
     st.warning('Motor independente de ESTOQUE será carregado somente quando gerar.')
     st.caption('Este fluxo usa somente as colunas pedidas pelo modelo de estoque. Se não encontrar um campo, ele fica vazio.')
 
-    home_model_loaded = get_home_estoque_model() is not None
-    if home_model_loaded:
-        st.success('Modelo de estoque do Bling carregado na Home. Envie somente a origem do fornecedor.')
-
     upload = render_smart_upload_box(
-        title='📎 Origem do estoque',
+        title='📎 Anexos do estoque',
         operation='estoque',
         key='smart_upload_estoque',
-        allow_model=not home_model_loaded,
-        required_model=not home_model_loaded,
+        allow_model=True,
+        required_model=True,
         accepted_types=['xlsx', 'xls', 'csv'],
     )
 
     df_origem_site = get_site_source_for_operation('estoque')
-    df_modelo = _select_estoque_model(upload)
+    df_modelo_site = get_site_model_for_operation('estoque')
+    df_modelo = df_modelo_site if isinstance(df_modelo_site, pd.DataFrame) else upload.model_df
 
     if isinstance(df_modelo, pd.DataFrame):
         show_contract([str(c) for c in df_modelo.columns])
@@ -171,9 +143,6 @@ def render_estoque_panel() -> None:
         if st.button('Gerar atualização de estoque', use_container_width=True):
             _build_stock_outputs(upload, df_modelo, deposito)
     else:
-        if home_model_loaded:
-            st.info('Anexe a origem do fornecedor para gerar o CSV final.')
-        else:
-            st.info('Anexe a origem e o modelo de estoque para gerar o CSV final.')
+        st.info('Anexe a origem e o modelo de estoque para gerar o CSV final.')
 
     _render_stock_outputs()
