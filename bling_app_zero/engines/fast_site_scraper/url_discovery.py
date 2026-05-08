@@ -25,9 +25,11 @@ COMMON_FEEDS = [
 ]
 PRODUCT_HINTS = ['/produto', '/produtos', '/product', '/products', '/p/', '/item/', 'produto-', 'product-', 'sku=', 'cod=', 'codigo=', 'ref=']
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
-HTML_DISCOVERY_PAGE_CAP = 2500
-HTML_DISCOVERY_BATCH = 48
-FEED_BATCH = 48
+HTML_DISCOVERY_PAGE_CAP = 350
+HTML_DISCOVERY_BATCH = 36
+FEED_BATCH = 36
+SMART_URL_TARGET = 220
+MIN_HTML_PRODUCTS_TO_SKIP_FEED = 60
 
 
 def split_urls(raw: str) -> list[str]:
@@ -86,7 +88,7 @@ def robots_sitemaps(raw: str) -> list[str]:
 def feed_candidates(start: str) -> list[str]:
     root = root_url(start)
     candidates = [f'{root}/{feed}' for feed in COMMON_FEEDS]
-    robots = fetch_live(f'{root}/robots.txt', timeout=6)
+    robots = fetch_live(f'{root}/robots.txt', timeout=5)
     for sitemap in robots_sitemaps(robots):
         if sitemap not in candidates:
             candidates.append(sitemap)
@@ -109,7 +111,7 @@ def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
             continue
         for url in batch:
             seen_feeds.add(url)
-        fetched = fetch_many_live(batch, timeout=6, workers=24)
+        fetched = fetch_many_live(batch, timeout=5, workers=18)
         for raw in fetched.values():
             if not raw:
                 continue
@@ -150,7 +152,7 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
             continue
         for url in batch:
             visited.add(url)
-        fetched = fetch_many_live(batch, timeout=6, workers=24)
+        fetched = fetch_many_live(batch, timeout=5, workers=18)
         for url, html in fetched.items():
             if not html:
                 continue
@@ -161,7 +163,7 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
                     products.append(link)
                     if len(products) >= max_products:
                         break
-                if link not in visited and link not in queue:
+                if link not in visited and link not in queue and len(visited) + len(queue) < page_limit:
                     queue.append(link)
     return products[:max_products]
 
@@ -171,6 +173,7 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
     if not starts:
         return []
 
+    smart_target = min(max_products, SMART_URL_TARGET)
     direct_products = [url for url in starts if productish_url(url)]
     only_direct_products = bool(direct_products) and len(direct_products) == len(starts)
     if only_direct_products:
@@ -181,21 +184,25 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
         if url not in urls:
             urls.append(url)
 
-    feed_urls = discover_from_feeds(starts, max_products=max_products)
-    for url in feed_urls:
+    # Fluxo rápido primeiro: segue links da página/categoria, parecido com Instant Data Scraper.
+    html_urls = discover_from_html(starts, max_pages=max_pages, max_products=smart_target)
+    for url in html_urls:
         if url not in urls:
             urls.append(url)
-            if len(urls) >= max_products:
-                return urls
+            if len(urls) >= smart_target:
+                return urls[:smart_target]
 
-    # Se sitemap/feed já retornou muitos produtos, evita varredura HTML lenta.
-    if len(urls) >= 25:
-        return urls[:max_products]
+    # Sitemap/feed agora é complemento, não a fonte principal gigante.
+    if len(urls) >= MIN_HTML_PRODUCTS_TO_SKIP_FEED:
+        return urls[:smart_target]
 
-    for url in discover_from_html(starts, max_pages=max_pages, max_products=max_products):
-        if url not in urls:
-            urls.append(url)
-            if len(urls) >= max_products:
-                return urls
+    feed_needed = max(0, smart_target - len(urls))
+    if feed_needed:
+        feed_urls = discover_from_feeds(starts, max_products=feed_needed)
+        for url in feed_urls:
+            if url not in urls:
+                urls.append(url)
+                if len(urls) >= smart_target:
+                    break
 
-    return (urls or starts)[:max_products]
+    return (urls or starts)[:smart_target]
