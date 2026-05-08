@@ -145,7 +145,46 @@ def _append_progress(payload: dict) -> None:
     st.session_state[PROGRESS_LAST_KEY] = payload
 
 
-def _make_progress_callback(progress_bar, status_box, metrics_box, log_box):
+def _progress_rows(log: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for item in log:
+        rows.append({
+            'Hora': item.get('time', ''),
+            'Etapa': item.get('stage', ''),
+            'Mensagem': item.get('message', ''),
+            'Links': item.get('urls_found', item.get('total', '')),
+            'Processados': item.get('processed', ''),
+            'Encontrados': item.get('found', ''),
+            'Erros': item.get('errors', ''),
+            'Tempo': item.get('total_seconds', item.get('discovery_seconds', '')),
+        })
+    return rows
+
+
+def _render_sidebar_progress_details(payload: dict) -> None:
+    log = st.session_state.get(PROGRESS_LOG_KEY) or []
+    with st.sidebar:
+        with st.expander('Detalhes da busca por site', expanded=False):
+            st.caption(str(payload.get('stage') or 'Processando'))
+            col_a, col_b = st.columns(2)
+            col_a.metric('Links', int(payload.get('urls_found') or payload.get('total') or 0))
+            col_b.metric('Processados', int(payload.get('processed') or 0))
+            col_c, col_d = st.columns(2)
+            col_c.metric('Encontrados', int(payload.get('found') or 0))
+            col_d.metric('Erros', int(payload.get('errors') or 0))
+
+            slow_links = payload.get('slow_links') or []
+            if slow_links:
+                st.markdown('##### Links lentos')
+                for item in slow_links[-5:]:
+                    st.caption(f"{item.get('seconds')}s · {item.get('url')}")
+
+            if log:
+                st.markdown('##### Relatório')
+                st.dataframe(pd.DataFrame(_progress_rows(log)), use_container_width=True, height=260)
+
+
+def _make_progress_callback(progress_bar, status_box):
     def callback(payload: dict) -> None:
         _append_progress(payload)
         progress = float(payload.get('progress') or 0.0)
@@ -154,18 +193,7 @@ def _make_progress_callback(progress_bar, status_box, metrics_box, log_box):
         message = str(payload.get('message') or '')
         progress_bar.progress(progress, text=f'{stage} · {int(progress * 100)}%')
         status_box.info(message or stage)
-
-        col_a, col_b, col_c, col_d = metrics_box.columns(4)
-        col_a.metric('Links', int(payload.get('urls_found') or payload.get('total') or 0))
-        col_b.metric('Processados', int(payload.get('processed') or 0))
-        col_c.metric('Encontrados', int(payload.get('found') or 0))
-        col_d.metric('Erros', int(payload.get('errors') or 0))
-
-        slow_links = payload.get('slow_links') or []
-        if slow_links:
-            with log_box.expander('Links lentos', expanded=False):
-                for item in slow_links[-5:]:
-                    st.caption(f"{item.get('seconds')}s · {item.get('url')}")
+        _render_sidebar_progress_details(payload)
     return callback
 
 
@@ -173,20 +201,9 @@ def _render_progress_history() -> None:
     log = st.session_state.get(PROGRESS_LOG_KEY) or []
     if not log:
         return
-    with st.expander('Relatório da busca', expanded=False):
-        rows = []
-        for item in log:
-            rows.append({
-                'Hora': item.get('time', ''),
-                'Etapa': item.get('stage', ''),
-                'Mensagem': item.get('message', ''),
-                'Links': item.get('urls_found', item.get('total', '')),
-                'Processados': item.get('processed', ''),
-                'Encontrados': item.get('found', ''),
-                'Erros': item.get('errors', ''),
-                'Tempo': item.get('total_seconds', item.get('discovery_seconds', '')),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=240)
+    with st.sidebar:
+        with st.expander('Relatório da busca', expanded=False):
+            st.dataframe(pd.DataFrame(_progress_rows(log)), use_container_width=True, height=280)
 
 
 def _render_generated_origin_actions(
@@ -286,9 +303,7 @@ def render_site_panel() -> None:
         _reset_progress()
         progress_bar = st.progress(0, text='Iniciando busca...')
         status_box = st.empty()
-        metrics_box = st.container()
-        log_box = st.container()
-        callback = _make_progress_callback(progress_bar, status_box, metrics_box, log_box)
+        callback = _make_progress_callback(progress_bar, status_box)
 
         run_site_pipeline = load_site_pipeline()
         df_site = run_site_engine(
