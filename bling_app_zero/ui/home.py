@@ -4,6 +4,7 @@ import streamlit as st
 
 from bling_app_zero.ui.cadastro_panel import render_cadastro_panel
 from bling_app_zero.ui.clean_layout import inject_clean_home_css, render_compact_hero, render_step_title
+from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.estoque_panel import render_estoque_panel
 from bling_app_zero.ui.site_panel import render_site_panel
 
@@ -18,6 +19,7 @@ OPERACOES = {
 def render_home() -> None:
     inject_clean_home_css()
     render_compact_hero()
+    render_diagnostics_panel()
 
     render_step_title('O que você deseja fazer?')
     escolha = st.radio(
