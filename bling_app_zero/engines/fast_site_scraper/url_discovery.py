@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -26,6 +25,9 @@ COMMON_FEEDS = [
 ]
 PRODUCT_HINTS = ['/produto', '/produtos', '/product', '/products', '/p/', '/item/', 'produto-', 'product-', 'sku=', 'cod=', 'codigo=', 'ref=']
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
+HTML_DISCOVERY_PAGE_CAP = 2500
+HTML_DISCOVERY_BATCH = 48
+FEED_BATCH = 48
 
 
 def split_urls(raw: str) -> list[str]:
@@ -84,7 +86,7 @@ def robots_sitemaps(raw: str) -> list[str]:
 def feed_candidates(start: str) -> list[str]:
     root = root_url(start)
     candidates = [f'{root}/{feed}' for feed in COMMON_FEEDS]
-    robots = fetch_live(f'{root}/robots.txt', timeout=8)
+    robots = fetch_live(f'{root}/robots.txt', timeout=6)
     for sitemap in robots_sitemaps(robots):
         if sitemap not in candidates:
             candidates.append(sitemap)
@@ -101,14 +103,14 @@ def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
     seen_feeds: set[str] = set()
 
     while queue and len(products) < max_products:
-        batch = [url for url in queue[:32] if url not in seen_feeds]
-        queue = queue[32:]
+        batch = [url for url in queue[:FEED_BATCH] if url not in seen_feeds]
+        queue = queue[FEED_BATCH:]
         if not batch:
             continue
         for url in batch:
             seen_feeds.add(url)
-        fetched = fetch_many_live(batch, timeout=8, workers=16)
-        for feed_url, raw in fetched.items():
+        fetched = fetch_many_live(batch, timeout=6, workers=24)
+        for raw in fetched.values():
             if not raw:
                 continue
             for loc in xml_urls(raw):
@@ -139,15 +141,16 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
     queue = list(dict.fromkeys(starts))
     visited: set[str] = set()
     products: list[str] = []
+    page_limit = min(max_pages, HTML_DISCOVERY_PAGE_CAP)
 
-    while queue and len(visited) < max_pages and len(products) < max_products:
-        batch = [url for url in queue[:24] if url not in visited]
-        queue = queue[24:]
+    while queue and len(visited) < page_limit and len(products) < max_products:
+        batch = [url for url in queue[:HTML_DISCOVERY_BATCH] if url not in visited]
+        queue = queue[HTML_DISCOVERY_BATCH:]
         if not batch:
             continue
         for url in batch:
             visited.add(url)
-        fetched = fetch_many_live(batch, timeout=8, workers=16)
+        fetched = fetch_many_live(batch, timeout=6, workers=24)
         for url, html in fetched.items():
             if not html:
                 continue
@@ -169,20 +172,27 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
         return []
 
     direct_products = [url for url in starts if productish_url(url)]
-    category_starts = starts
+    only_direct_products = bool(direct_products) and len(direct_products) == len(starts)
+    if only_direct_products:
+        return direct_products[:max_products]
 
     urls: list[str] = []
     for url in direct_products:
         if url not in urls:
             urls.append(url)
 
-    for url in discover_from_feeds(category_starts, max_products=max_products):
+    feed_urls = discover_from_feeds(starts, max_products=max_products)
+    for url in feed_urls:
         if url not in urls:
             urls.append(url)
             if len(urls) >= max_products:
                 return urls
 
-    for url in discover_from_html(category_starts, max_pages=max_pages, max_products=max_products):
+    # Se sitemap/feed já retornou muitos produtos, evita varredura HTML lenta.
+    if len(urls) >= 25:
+        return urls[:max_products]
+
+    for url in discover_from_html(starts, max_pages=max_pages, max_products=max_products):
         if url not in urls:
             urls.append(url)
             if len(urls) >= max_products:
