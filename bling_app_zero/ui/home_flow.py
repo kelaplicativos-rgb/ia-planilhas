@@ -11,13 +11,13 @@ STEP_SITE = 'site'
 STEP_PLANILHA = 'planilha'
 
 STEP_LABELS = {
-    STEP_SITE: 'Scraper',
+    STEP_SITE: 'Buscar no site',
     STEP_PLANILHA: 'Planilha',
 }
 
 STEP_HELP = {
-    STEP_SITE: 'Buscar no site',
-    STEP_PLANILHA: 'Anexar arquivo',
+    STEP_SITE: 'Gerar origem',
+    STEP_PLANILHA: 'Anexar origem',
 }
 
 
@@ -108,7 +108,7 @@ def render_flow_selector() -> str:
 
     st.caption(STEP_HELP.get(current, ''))
 
-    button_label = 'Abrir Scraper' if current == STEP_SITE else 'Anexar Planilha'
+    button_label = 'Abrir busca' if current == STEP_SITE else 'Anexar planilha'
     if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
         activate_current_step(current)
         st.rerun()
