@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.engines.site_cadastro_engine import run_site_cadastro_engine
 from bling_app_zero.engines.site_estoque_engine import run_site_estoque_engine
 
@@ -25,18 +26,20 @@ def run_pipeline(
     selected_operation = _normalize_operation(operation)
 
     if selected_operation == 'estoque':
-        return run_site_estoque_engine(
+        df_result = run_site_estoque_engine(
             raw_urls=raw_urls,
             requested_columns=requested_columns,
             all_products=all_products,
             max_pages=max_pages,
             max_products=max_products,
         )
+        return sanitize_for_bling(df_result)
 
-    return run_site_cadastro_engine(
+    df_result = run_site_cadastro_engine(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         all_products=all_products,
         max_pages=max_pages,
         max_products=max_products,
     )
+    return sanitize_for_bling(df_result)
