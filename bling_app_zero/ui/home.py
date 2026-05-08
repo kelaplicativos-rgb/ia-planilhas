@@ -9,7 +9,7 @@ from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
 
 def _render_home_intro() -> None:
-    render_step_title('Começar', 'Escolha uma opção. Nada pesado carrega antes do clique.')
+    render_step_title('Como quer começar?', 'Escolha a entrada dos produtos. O sistema monta as planilhas do Bling no final.')
     render_flow_selector()
 
 
