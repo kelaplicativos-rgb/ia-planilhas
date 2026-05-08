@@ -16,6 +16,27 @@ OPERACOES = {
 }
 
 
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name, '')
+        if isinstance(value, list):
+            return str(value[0] if value else '')
+        return str(value or '')
+    except Exception:
+        return ''
+
+
+def _default_home_index() -> int:
+    flow = _query_param('flow').lower().strip()
+    if flow in {'site', 'cadastro_site', 'estoque_site'}:
+        return list(OPERACOES.values()).index('site')
+    if flow == 'estoque':
+        return list(OPERACOES.values()).index('estoque')
+    if flow == 'cadastro':
+        return list(OPERACOES.values()).index('cadastro')
+    return 0
+
+
 def render_home() -> None:
     inject_clean_home_css()
     render_compact_hero()
@@ -25,6 +46,7 @@ def render_home() -> None:
     escolha = st.radio(
         'Escolha o fluxo principal',
         list(OPERACOES.keys()),
+        index=_default_home_index(),
         horizontal=False,
         label_visibility='collapsed',
         key='home_tipo_operacao_radio',
