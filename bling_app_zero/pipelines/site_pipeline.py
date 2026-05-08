@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from bling_app_zero.core.exporter import sanitize_for_bling
-from bling_app_zero.engines.source_sheet_scraper_engine import run_source_sheet_scraper
+from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 
 
 VALID_OPERATIONS = {'cadastro', 'estoque'}
@@ -24,14 +24,13 @@ def run_pipeline(
     max_products: int = ALL_PRODUCTS_LIMIT,
     operation: str = 'cadastro',
 ) -> pd.DataFrame:
+    _ = all_products
     selected_operation = _normalize_operation(operation)
-    df_result = run_source_sheet_scraper(
+    df_result = run_fast_site_scraper(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         operation=selected_operation,
-        all_products=True,
         max_pages=max(max_pages or 0, ALL_PAGES_LIMIT),
         max_products=max(max_products or 0, ALL_PRODUCTS_LIMIT),
-        keep_only_requested_columns=True,
     )
     return sanitize_for_bling(df_result)
