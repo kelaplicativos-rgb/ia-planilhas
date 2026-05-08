@@ -7,6 +7,8 @@ from bling_app_zero.engines.source_sheet_scraper_engine import run_source_sheet_
 
 
 VALID_OPERATIONS = {'cadastro', 'estoque'}
+ALL_PAGES_LIMIT = 1_000_000
+ALL_PRODUCTS_LIMIT = 1_000_000
 
 
 def _normalize_operation(operation: str | None) -> str:
@@ -17,9 +19,9 @@ def _normalize_operation(operation: str | None) -> str:
 def run_pipeline(
     raw_urls: str,
     requested_columns: list[str] | None = None,
-    all_products: bool = False,
-    max_pages: int = 120,
-    max_products: int = 300,
+    all_products: bool = True,
+    max_pages: int = ALL_PAGES_LIMIT,
+    max_products: int = ALL_PRODUCTS_LIMIT,
     operation: str = 'cadastro',
 ) -> pd.DataFrame:
     selected_operation = _normalize_operation(operation)
@@ -27,9 +29,9 @@ def run_pipeline(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         operation=selected_operation,
-        all_products=all_products,
-        max_pages=max_pages,
-        max_products=max_products,
+        all_products=True,
+        max_pages=max(max_pages or 0, ALL_PAGES_LIMIT),
+        max_products=max(max_products or 0, ALL_PRODUCTS_LIMIT),
         keep_only_requested_columns=True,
     )
     return sanitize_for_bling(df_result)
