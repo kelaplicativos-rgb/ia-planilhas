@@ -8,7 +8,7 @@ from bling_app_zero.core.debug import add_debug, render_debug_panel
 from bling_app_zero.ui.home import render_home
 
 
-APP_VERSION = '3.1.3-BLINGSCAN-SITE-ORIGEM-PLANILHA-OK'
+APP_VERSION = '3.1.4-SCRAPER-GERA-ORIGEM-FORNECEDOR'
 
 
 def _register_critical_error(exc: Exception) -> str:
