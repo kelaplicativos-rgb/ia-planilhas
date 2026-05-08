@@ -5,17 +5,22 @@ import streamlit as st
 from bling_app_zero.ui.lazy_panels import normalize_panel_operation
 
 FLOW_STEP_KEY = 'home_slim_flow_step'
+FLOW_ACTIVE_KEY = 'home_slim_active_panel'
 
 STEP_SITE = 'site'
 STEP_PLANILHA = 'planilha'
-STEP_CADASTRO = 'cadastro'
 STEP_ESTOQUE = 'estoque'
 
 STEP_LABELS = {
-    STEP_SITE: '1. Buscar produtos por Scraper',
-    STEP_PLANILHA: '2. Origem de dados por planilhas',
-    STEP_CADASTRO: 'Cadastro de Produtos',
-    STEP_ESTOQUE: 'Atualização de Estoque',
+    STEP_SITE: 'Scraper',
+    STEP_PLANILHA: 'Planilha',
+    STEP_ESTOQUE: 'Estoque',
+}
+
+STEP_HELP = {
+    STEP_SITE: 'Buscar no site',
+    STEP_PLANILHA: 'Anexar arquivo',
+    STEP_ESTOQUE: 'Atualizar saldo',
 }
 
 
@@ -32,11 +37,9 @@ def query_param(name: str) -> str:
 def initial_step_from_query() -> str:
     flow = query_param('flow').lower().strip()
     operation = normalize_panel_operation(flow)
-    if flow in {'cadastro', 'produtos'}:
-        return STEP_CADASTRO
     if operation == 'estoque':
         return STEP_ESTOQUE
-    if flow in {'planilha', 'planilhas', 'origem_planilha'}:
+    if flow in {'planilha', 'planilhas', 'origem_planilha', 'cadastro', 'produtos'}:
         return STEP_PLANILHA
     return STEP_SITE
 
@@ -55,38 +58,53 @@ def set_current_step(step: str) -> None:
     if step not in STEP_LABELS:
         step = STEP_SITE
     st.session_state[FLOW_STEP_KEY] = step
+    st.session_state.pop(FLOW_ACTIVE_KEY, None)
     try:
         if step == STEP_SITE:
             st.query_params['flow'] = 'site'
         elif step == STEP_PLANILHA:
             st.query_params['flow'] = 'planilha'
-        elif step == STEP_CADASTRO:
-            st.query_params['flow'] = 'cadastro'
         elif step == STEP_ESTOQUE:
             st.query_params['flow'] = 'estoque'
     except Exception:
         pass
 
 
+def activate_current_step(step: str) -> None:
+    if step not in STEP_LABELS:
+        step = STEP_SITE
+    st.session_state[FLOW_ACTIVE_KEY] = step
+    st.session_state[FLOW_STEP_KEY] = step
+
+
+def deactivate_panel() -> None:
+    st.session_state.pop(FLOW_ACTIVE_KEY, None)
+
+
+def get_active_panel() -> str | None:
+    active = st.session_state.get(FLOW_ACTIVE_KEY)
+    return str(active) if active in STEP_LABELS else None
+
+
 def step_to_panel_operation(step: str) -> str:
     if step == STEP_ESTOQUE:
         return 'estoque'
-    if step == STEP_CADASTRO or step == STEP_PLANILHA:
+    if step == STEP_PLANILHA:
         return 'cadastro'
     return 'site'
 
 
 def render_flow_selector() -> str:
     current = get_current_step()
-    options = [STEP_SITE, STEP_PLANILHA, STEP_CADASTRO, STEP_ESTOQUE]
+    options = [STEP_SITE, STEP_PLANILHA, STEP_ESTOQUE]
     labels = [STEP_LABELS[option] for option in options]
     current_index = options.index(current) if current in options else 0
 
     selected_label = st.radio(
-        'Fluxo principal',
+        'Escolha',
         labels,
         index=current_index,
-        horizontal=False,
+        horizontal=True,
         key='home_slim_flow_radio',
         label_visibility='collapsed',
     )
@@ -95,50 +113,18 @@ def render_flow_selector() -> str:
         set_current_step(selected_step)
         current = selected_step
 
+    st.caption(STEP_HELP.get(current, ''))
+
+    button_label = 'Abrir'
+    if current == STEP_SITE:
+        button_label = 'Abrir Scraper'
+    elif current == STEP_PLANILHA:
+        button_label = 'Anexar Planilha'
+    elif current == STEP_ESTOQUE:
+        button_label = 'Atualizar Estoque'
+
+    if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
+        activate_current_step(current)
+        st.rerun()
+
     return current
-
-
-def render_flow_status(step: str) -> None:
-    if step == STEP_SITE:
-        st.markdown(
-            """
-            <div class="bling-compact-note">
-                <strong>Fluxo novo:</strong> primeiro gere uma planilha origem pelo Scraper dos fornecedores.
-                Depois ela alimenta automaticamente a origem por planilha e segue para mapeamento, preview e CSV final.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        return
-
-    if step == STEP_PLANILHA:
-        st.markdown(
-            """
-            <div class="bling-compact-note">
-                <strong>Origem por planilha:</strong> use quando já tiver a planilha do fornecedor ou quando o Scraper já gerou a origem.
-                Este passo mantém o fluxo normal de cadastro, calculadora, mapeamento e preview final.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        return
-
-    if step == STEP_ESTOQUE:
-        st.markdown(
-            """
-            <div class="bling-compact-note">
-                <strong>Motor de estoque isolado:</strong> usa o modelo de estoque e busca/preenche somente as colunas solicitadas.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        return
-
-    st.markdown(
-        """
-        <div class="bling-compact-note">
-            <strong>Motor de cadastro isolado:</strong> lê origem, aplica precificação opcional, mapeia campos e gera CSV final.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
