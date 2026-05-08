@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 from bling_app_zero.core.column_contract import RequestedField, build_contract
 from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.engines.stock_xml_flash_engine import apply_flash_stock_complement
 
 OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 DEFAULT_MODEL = 'gpt-4o-mini'
@@ -163,14 +164,7 @@ def _make_page(url: str) -> AiPage | None:
 
 
 def _field_schema(contract: list[RequestedField]) -> list[dict[str, str | bool]]:
-    return [
-        {
-            'column': field.original,
-            'kind': field.kind,
-            'required': field.required,
-        }
-        for field in contract
-    ]
+    return [{'column': field.original, 'kind': field.kind, 'required': field.required} for field in contract]
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -219,7 +213,7 @@ def _chat_json(system: str, user_payload: dict, max_tokens: int = 2500) -> dict:
 
 def _discover_product_urls_with_ai(page: AiPage, max_products: int) -> list[str]:
     system = (
-        'Você é o motor de descoberta de produtos de um sistema de importação Bling. '
+        'Você é o motor prioritário de descoberta de produtos de um sistema de importação Bling. '
         'Analise os links e o texto da página e selecione SOMENTE URLs que pareçam páginas reais de produto. '
         'Ignore login, carrinho, checkout, política, blog, contato, categoria sem produto e redes sociais. '
         'Responda apenas JSON.'
@@ -249,30 +243,17 @@ def _discover_product_urls_with_ai(page: AiPage, max_products: int) -> list[str]
 def _default_columns_for_operation(operation: str) -> list[str]:
     if operation == 'estoque':
         return ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)']
-    return [
-        'URL',
-        'Código',
-        'SKU',
-        'GTIN',
-        'Descrição',
-        'Nome',
-        'Preço',
-        'Preço unitário (OBRIGATÓRIO)',
-        'URL Imagens',
-        'Imagens',
-        'Marca',
-        'Categoria',
-    ]
+    return ['URL', 'Código', 'SKU', 'GTIN', 'Descrição', 'Nome', 'Preço', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens', 'Imagens', 'Marca', 'Categoria']
 
 
 def _extract_rows_with_ai(page: AiPage, contract: list[RequestedField], operation: str, max_rows: int) -> list[dict[str, str]]:
     columns = [field.original for field in contract]
     system = (
-        'Você é um extrator AI Only para produtos de e-commerce e importação no Bling. '
-        'Extraia SOMENTE as colunas solicitadas. Não invente dados. Se um campo não estiver claro, deixe vazio. '
-        'Se houver vários produtos no texto/listagem, retorne várias linhas. Se for página de produto, retorne uma linha. '
-        'Para estoque: sem estoque, esgotado ou indisponível deve ser 0. Para disponível sem quantidade, use 1. '
-        'Para imagens: use URLs separadas por |. Para GTIN/EAN inválido, deixe vazio. Responda apenas JSON.'
+        'Você é o extrator PRIORITÁRIO por IA para produtos de e-commerce e importação no Bling. '
+        'Extraia SOMENTE as colunas solicitadas no contrato. Não adicione coluna extra. Não invente dados. '
+        'Se um campo não estiver claro, deixe vazio. Se houver vários produtos no texto/listagem, retorne várias linhas. '
+        'Se for página de produto, retorne uma linha. Para estoque: sem estoque, esgotado ou indisponível deve ser 0; '
+        'disponível sem quantidade deve ser 1. Para imagens: URLs separadas por |. Para GTIN/EAN inválido, deixe vazio. Responda apenas JSON.'
     )
     payload = {
         'operation': operation,
@@ -350,12 +331,7 @@ def run_ai_only_scraper(
     max_products: int = 1000,
     keep_only_requested_columns: bool = True,
 ) -> pd.DataFrame:
-    """Busca por site usando IA como cérebro principal.
-
-    O sistema baixa as páginas para dar contexto, mas a decisão de links de produtos e a
-    extração dos campos ficam com a IA. Este motor não usa fallback determinístico para
-    preencher dados de produto.
-    """
+    """IA prioritária + complementos flash/XML somente dentro do contrato solicitado."""
     urls = split_urls(raw_urls)
     columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()]
     if not columns:
@@ -410,6 +386,6 @@ def run_ai_only_scraper(
 
     rows = _unique_rows(rows)[:max_products]
     df = pd.DataFrame(rows).fillna('')
-    if keep_only_requested_columns:
-        df = _ensure_columns(df, columns)
-    return df.fillna('')
+    df = _ensure_columns(df, columns) if keep_only_requested_columns else df.fillna('')
+    df = apply_flash_stock_complement(df, raw_urls=raw_urls, requested_columns=columns)
+    return _ensure_columns(df, columns).fillna('')
