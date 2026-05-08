@@ -13,6 +13,8 @@ from bling_app_zero.ui.home_shared import (
     df_signature,
     download_final,
     load_apply_pricing,
+    load_cadastro_pipeline,
+    load_estoque_pipeline,
     preview_df,
     show_mapping,
 )
@@ -172,6 +174,35 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.rerun()
 
 
+def _render_dual_stock_output(df_source: pd.DataFrame) -> None:
+    st.markdown('#### Gerar também atualização de estoque')
+    gerar_estoque = st.checkbox(
+        'Gerar CSV de atualização de estoque usando esta mesma origem',
+        value=False,
+        key='cadastro_gerar_estoque_mesma_origem',
+    )
+
+    if not gerar_estoque:
+        st.session_state.pop('df_final_estoque_from_cadastro', None)
+        st.session_state.pop('mapping_estoque_from_cadastro', None)
+        return
+
+    deposito = st.text_input(
+        'Nome do depósito para o CSV de estoque',
+        value='Não definido',
+        key='cadastro_deposito_estoque_mesma_origem',
+    )
+
+    run_estoque_pipeline = load_estoque_pipeline()
+    df_final_estoque, mapping_estoque = run_estoque_pipeline(df_source, None, deposito=deposito)
+    st.session_state['df_final_estoque_from_cadastro'] = df_final_estoque
+    st.session_state['mapping_estoque_from_cadastro'] = mapping_estoque
+
+    show_mapping(mapping_estoque)
+    preview_df('Preview final da atualização de estoque', df_final_estoque)
+    download_final(df_final_estoque, 'estoque', 'estoque_from_cadastro')
+
+
 def render_cadastro_panel() -> None:
     st.success('Motor independente de CADASTRO será carregado somente quando gerar.')
 
@@ -263,6 +294,7 @@ def render_cadastro_panel() -> None:
 
         df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_origem)
         _render_manual_mapping(df_para_mapear, df_modelo)
+        _render_dual_stock_output(df_para_mapear)
     elif upload.attachments:
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o cadastro.')
 
