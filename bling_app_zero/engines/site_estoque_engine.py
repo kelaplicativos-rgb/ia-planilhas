@@ -6,6 +6,7 @@ from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.flash_amplo_engine import run_flash_amplo_page_mode, scrape_urls, split_urls
 from bling_app_zero.engines.instant_scraper_engine import run_instant_scraper
+from bling_app_zero.engines.power_scraper_engine import run_power_scraper
 
 
 DEFAULT_ESTOQUE_SITE_COLUMNS = [
@@ -108,6 +109,18 @@ def run_site_estoque_engine(
     if not urls:
         return pd.DataFrame(columns=extraction_columns)
 
+    df_power = run_power_scraper(
+        raw_urls=raw_urls,
+        requested_columns=extraction_columns,
+        operation='estoque',
+        all_products=all_products,
+        max_pages=max_pages,
+        max_products=max_products,
+        keep_only_requested_columns=True,
+    ).fillna('')
+    if _has_real_rows(df_power):
+        return _remove_unrequested_product_noise(df_power, extraction_columns)
+
     df_instant = run_instant_scraper(
         raw_urls=raw_urls,
         requested_columns=extraction_columns,
@@ -117,7 +130,6 @@ def run_site_estoque_engine(
         max_products=max_products,
         keep_only_requested_columns=True,
     ).fillna('')
-
     if _has_real_rows(df_instant):
         return _remove_unrequested_product_noise(df_instant, extraction_columns)
 
