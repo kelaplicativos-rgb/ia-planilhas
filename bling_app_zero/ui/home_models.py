@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.clean_layout import render_compact_note
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
@@ -62,22 +61,7 @@ def has_home_models() -> bool:
     return get_home_cadastro_model() is not None or get_home_estoque_model() is not None
 
 
-def _render_instructions() -> None:
-    with st.expander('Como pegar os modelos no Bling', expanded=False):
-        st.markdown(
-            """
-            1. Entre no **Bling**.
-            2. Vá em **Produtos**.
-            3. Abra **Importar / Exportar**.
-            4. Escolha **Importar produtos** ou **Atualizar estoque**.
-            5. Baixe a **planilha modelo**.
-            6. Volte aqui e anexe os modelos.
-            """
-        )
-        st.caption('Use o modelo oficial do Bling. Ele define as colunas, a ordem e o padrão do arquivo final.')
-
-
-def _render_loaded_summary() -> None:
+def _loaded_summary_text() -> str:
     cadastro = get_home_cadastro_model()
     estoque = get_home_estoque_model()
     parts: list[str] = []
@@ -85,27 +69,41 @@ def _render_loaded_summary() -> None:
         parts.append(f'Cadastro: {len(cadastro.columns)} coluna(s)')
     if isinstance(estoque, pd.DataFrame):
         parts.append(f'Estoque: {len(estoque.columns)} coluna(s)')
-    if parts:
-        st.success('Modelos carregados · ' + ' · '.join(parts))
+    return ' · '.join(parts)
+
+
+def _render_loaded_summary() -> None:
+    summary = _loaded_summary_text()
+    if summary:
+        st.success('Modelos carregados · ' + summary)
 
 
 def render_home_bling_models() -> None:
-    st.markdown('### 1. Modelos do Bling')
-    st.caption('Anexe os modelos oficiais do Bling uma vez. Depois escolha como trazer os produtos.')
-    render_compact_note('Anexe o modelo uma vez e o sistema lembrará durante esta sessão.')
-    _render_instructions()
+    """Renderiza um ponto unico e discreto para os modelos do Bling.
 
-    upload = render_model_upload_box(
-        title='Anexar modelos oficiais',
-        operation='cadastro',
-        key='home_model_upload_bling',
-        required_model=False,
-        caption='Pode anexar o modelo de cadastro, o modelo de estoque ou os dois.',
-    )
+    A home continua limpa: os detalhes ficam recolhidos. Quando o usuario anexa
+    os modelos aqui, cadastro, estoque e site reutilizam os mesmos DataFrames e
+    nao precisam pedir novamente em cada fluxo.
+    """
+    expanded = not has_home_models()
+    title = 'Modelos do Bling'
+    summary = _loaded_summary_text()
+    if summary:
+        title = f'Modelos do Bling carregados · {summary}'
 
-    cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
-    estoque_model = upload.estoque_model_df
-    if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
-        save_home_models(cadastro_model, estoque_model)
+    with st.expander(title, expanded=expanded):
+        st.caption('Anexe uma vez os modelos oficiais. Eles serão usados nos fluxos de cadastro, estoque e busca por site.')
+        upload = render_model_upload_box(
+            title='Anexar ou trocar modelos',
+            operation='cadastro',
+            key='home_model_upload_bling',
+            required_model=False,
+            caption='Pode anexar o modelo de cadastro, o modelo de estoque ou os dois.',
+        )
 
-    _render_loaded_summary()
+        cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
+        estoque_model = upload.estoque_model_df
+        if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
+            save_home_models(cadastro_model, estoque_model)
+
+        _render_loaded_summary()
