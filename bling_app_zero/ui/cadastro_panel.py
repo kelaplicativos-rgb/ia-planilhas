@@ -11,6 +11,7 @@ from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
 from bling_app_zero.engines.estoque_engine import default_model as estoque_default_model
+from bling_app_zero.flows.site_as_source import get_site_source_for_operation
 from bling_app_zero.ui.home_shared import (
     df_signature,
     download_final,
@@ -330,9 +331,13 @@ def render_cadastro_panel() -> None:
         accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
     )
 
-    df_origem = upload.source_df
+    df_origem_site = get_site_source_for_operation('cadastro')
+    df_origem = df_origem_site if isinstance(df_origem_site, pd.DataFrame) else upload.source_df
     df_modelo = _select_cadastro_model(upload)
     df_modelo_estoque = upload.estoque_model_df
+
+    if isinstance(df_origem_site, pd.DataFrame):
+        st.success('Origem por site carregada como origem de dados. A partir daqui o fluxo é o mesmo da planilha.')
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
         usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
@@ -355,51 +360,13 @@ def render_cadastro_panel() -> None:
                 st.info(f'Desconto/comissão detectado e aplicado como padrão: {desconto_detectado:.2f}%')
 
             c1, c2, c3, c4, c5 = st.columns(5)
-            margem = c1.number_input(
-                'Lucro desejado %',
-                min_value=0.0,
-                value=30.0,
-                step=1.0,
-                key=f'cadastro_margem_{origem_signature}',
-            )
-            imposto = c2.number_input(
-                'Impostos %',
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key=f'cadastro_imposto_{origem_signature}',
-            )
-            taxa = c3.number_input(
-                'Taxas %',
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key=f'cadastro_taxa_{origem_signature}',
-            )
-            desconto = c4.number_input(
-                'Desconto/Comissão %',
-                min_value=0.0,
-                step=1.0,
-                key='cadastro_desconto_comissao',
-            )
-            fixo = c5.number_input(
-                'Custo fixo R$',
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key=f'cadastro_fixo_{origem_signature}',
-            )
+            margem = c1.number_input('Lucro desejado %', min_value=0.0, value=30.0, step=1.0, key=f'cadastro_margem_{origem_signature}')
+            imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_imposto_{origem_signature}')
+            taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_taxa_{origem_signature}')
+            desconto = c4.number_input('Desconto/Comissão %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
+            fixo = c5.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_fixo_{origem_signature}')
 
-            df_origem = apply_pricing(
-                df_origem,
-                coluna_custo,
-                'Preço de venda',
-                margem,
-                imposto,
-                taxa,
-                fixo,
-                desconto,
-            )
+            df_origem = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo, desconto)
             df_origem = _apply_calculated_price_aliases(df_origem, 'Preço de venda')
             st.session_state['cadastro_preco_calculado_ativo'] = True
             st.session_state['df_origem_cadastro_precificada'] = df_origem
