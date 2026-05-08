@@ -27,6 +27,24 @@ from bling_app_zero.ui.smart_upload import render_smart_upload_box
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
 
 
+def _unique_columns(columns: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for column in columns:
+        text = str(column or '').strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _columns_from_df(df: pd.DataFrame | None) -> list[str]:
+    if isinstance(df, pd.DataFrame) and len(df.columns):
+        return [str(c) for c in df.columns]
+    return []
+
+
 def _choose_site_model_df(upload, operation: str) -> pd.DataFrame | None:
     """Seleciona somente planilha modelo, nunca origem.
 
@@ -54,6 +72,28 @@ def _choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
     if isinstance(upload.estoque_model_df, pd.DataFrame):
         return upload.estoque_model_df
     return None
+
+
+def _requested_columns_for_site_capture(
+    operation: str,
+    df_modelo_cadastro: pd.DataFrame | None,
+    df_modelo_estoque: pd.DataFrame | None,
+    df_modelo_operacao: pd.DataFrame | None,
+) -> list[str] | None:
+    """Define o contrato de captura por site sem perder campos para as duas saídas.
+
+    Quando a operação é cadastro e o usuário anexa também o modelo de estoque, a origem
+    capturada precisa conter colunas suficientes para os dois CSVs finais. Isso deixa o
+    comportamento equivalente ao cadastro por anexo: uma origem alimenta cadastro e,
+    opcionalmente, estoque.
+    """
+    if operation == 'cadastro':
+        cadastro_columns = _columns_from_df(df_modelo_cadastro)
+        estoque_columns = _columns_from_df(df_modelo_estoque)
+        merged = _unique_columns(cadastro_columns + estoque_columns)
+        return merged or None
+
+    return _columns_from_df(df_modelo_operacao) or None
 
 
 def _render_cadastro_site_same_as_planilha(
@@ -182,11 +222,16 @@ def render_site_panel() -> None:
     df_modelo_estoque = _choose_site_estoque_model_df(upload)
     df_modelo = _choose_site_model_df(upload, operation)
 
-    requested_columns = None
-    if isinstance(df_modelo, pd.DataFrame):
-        requested_columns = [str(c) for c in df_modelo.columns]
+    requested_columns = _requested_columns_for_site_capture(
+        operation=operation,
+        df_modelo_cadastro=df_modelo_cadastro,
+        df_modelo_estoque=df_modelo_estoque,
+        df_modelo_operacao=df_modelo,
+    )
+
+    if requested_columns:
         show_contract(requested_columns)
-        if operation == 'estoque':
+        if operation == 'estoque' and isinstance(df_modelo, pd.DataFrame):
             requested_columns_from_model = load_requested_columns_from_model()
             requested_columns = requested_columns_from_model(df_modelo)
 
