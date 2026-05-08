@@ -148,8 +148,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     st.markdown('#### 2. Correlacionar colunas')
     st.caption('Confira as sugestões e ajuste manualmente antes de gerar o preview final.')
 
-    with st.expander('Prévia da origem usada no mapeamento', expanded=False):
-        preview_df('Origem para correlacionar', df_source)
+    preview_df('Origem para correlacionar', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     edited_mapping: dict[str, str] = {}
@@ -217,8 +216,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     st.markdown('##### Correlacionar colunas do estoque')
     st.caption('Ajuste manualmente o mapeamento do CSV de estoque antes do download.')
 
-    with st.expander('Prévia da origem usada no estoque', expanded=False):
-        preview_df('Origem para estoque', df_source)
+    preview_df('Origem para estoque', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     edited_mapping: dict[str, str] = {}
