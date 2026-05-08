@@ -89,6 +89,31 @@ def _pick_estoque(loaded: list[tuple[Any, pd.DataFrame | None]], used_file: Any 
     return file, df
 
 
+def _render_detected_summary(
+    supported_files: list[Any],
+    cadastro_file: Any | None,
+    estoque_file: Any | None,
+    cadastro_df: pd.DataFrame | None,
+    estoque_df: pd.DataFrame | None,
+) -> None:
+    names = ', '.join(_file_name(file) for file in supported_files)
+    st.success(f'Modelos recebidos: {len(supported_files)}')
+    st.caption(names)
+
+    with st.expander('Ver modelos e colunas', expanded=False):
+        for file in supported_files:
+            role = 'Modelo'
+            if file is cadastro_file:
+                role = 'Cadastro'
+            elif file is estoque_file:
+                role = 'Estoque'
+            st.caption(f'{role}: {_file_name(file)}')
+        if isinstance(cadastro_df, pd.DataFrame):
+            preview_df('Cadastro', cadastro_df)
+        if isinstance(estoque_df, pd.DataFrame):
+            preview_df('Estoque', estoque_df)
+
+
 def render_model_upload_box(
     title: str,
     operation: str,
@@ -101,7 +126,7 @@ def render_model_upload_box(
         st.caption(caption)
 
     files = st.file_uploader(
-        'Anexar modelo',
+        'Anexar modelos do Bling',
         type=MODEL_SPREADSHEET_TYPES,
         accept_multiple_files=True,
         key=key,
@@ -110,7 +135,7 @@ def render_model_upload_box(
 
     if not files:
         if required_model:
-            st.info('Modelo obrigatório.')
+            st.info('Anexe o modelo do Bling.')
         return ModelUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
@@ -126,20 +151,7 @@ def render_model_upload_box(
 
     model_file, model_df = (estoque_file, estoque_df) if operation == 'estoque' else (cadastro_file, cadastro_df)
 
-    st.success('Modelo recebido.')
-
-    with st.expander('Ver modelo', expanded=False):
-        for file in supported_files:
-            role = 'Modelo'
-            if file is cadastro_file:
-                role = 'Cadastro'
-            elif file is estoque_file:
-                role = 'Estoque'
-            st.caption(f'{role}: {_file_name(file)}')
-        if isinstance(cadastro_df, pd.DataFrame):
-            preview_df('Cadastro', cadastro_df)
-        if isinstance(estoque_df, pd.DataFrame):
-            preview_df('Estoque', estoque_df)
+    _render_detected_summary(supported_files, cadastro_file, estoque_file, cadastro_df, estoque_df)
 
     if required_model and model_df is None:
         st.warning('Modelo não detectado.')
