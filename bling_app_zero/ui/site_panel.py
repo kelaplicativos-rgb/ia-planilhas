@@ -42,12 +42,30 @@ def _choose_site_model_df(upload, operation: str) -> pd.DataFrame | None:
     return None
 
 
-def _render_cadastro_site_same_as_planilha(df_origem: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
+def _choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
+    if isinstance(upload.cadastro_model_df, pd.DataFrame):
+        return upload.cadastro_model_df
+    if isinstance(upload.model_df, pd.DataFrame):
+        return upload.model_df
+    return None
+
+
+def _choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
+    if isinstance(upload.estoque_model_df, pd.DataFrame):
+        return upload.estoque_model_df
+    return None
+
+
+def _render_cadastro_site_same_as_planilha(
+    df_origem: pd.DataFrame,
+    df_modelo_cadastro: pd.DataFrame | None,
+    df_modelo_estoque: pd.DataFrame | None,
+) -> None:
     """Usa o mesmo fluxo operacional do cadastro por planilha, mudando só a origem.
 
     A captura por site vira apenas a origem de dados. Depois dela, a operação é cadastro:
-    precificação opcional, mapeamento manual, preview final e CSV no mesmo padrão do
-    cadastro por planilha.
+    precificação opcional, mapeamento manual, preview final, CSV de cadastro e, quando
+    houver modelo de estoque anexado, a mesma opção de gerar também a saída de estoque.
     """
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         st.warning('A captura por site ainda não retornou dados para o cadastro.')
@@ -133,8 +151,8 @@ def _render_cadastro_site_same_as_planilha(df_origem: pd.DataFrame, df_modelo: p
         st.session_state.pop('df_origem_site_cadastro_precificada', None)
 
     df_para_mapear = st.session_state.get('df_origem_site_cadastro_precificada', df_origem)
-    _render_manual_mapping(df_para_mapear, df_modelo)
-    _render_dual_stock_output(df_para_mapear, None)
+    _render_manual_mapping(df_para_mapear, df_modelo_cadastro)
+    _render_dual_stock_output(df_para_mapear, df_modelo_estoque)
 
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro', {})
@@ -152,7 +170,7 @@ def render_site_panel() -> None:
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
 
     upload = render_smart_upload_box(
-        title='📎 Planilha modelo Bling',
+        title='📎 Planilhas modelo Bling',
         operation=operation,
         key='smart_upload_site_modelo',
         allow_model=True,
@@ -160,7 +178,10 @@ def render_site_panel() -> None:
         accepted_types=MODEL_SPREADSHEET_TYPES,
     )
 
+    df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
+    df_modelo_estoque = _choose_site_estoque_model_df(upload)
     df_modelo = _choose_site_model_df(upload, operation)
+
     requested_columns = None
     if isinstance(df_modelo, pd.DataFrame):
         requested_columns = [str(c) for c in df_modelo.columns]
@@ -168,6 +189,11 @@ def render_site_panel() -> None:
         if operation == 'estoque':
             requested_columns_from_model = load_requested_columns_from_model()
             requested_columns = requested_columns_from_model(df_modelo)
+
+    if operation == 'cadastro' and isinstance(df_modelo_estoque, pd.DataFrame):
+        with st.expander('Modelo de estoque também anexado', expanded=False):
+            st.caption('Esse modelo será usado para gerar também o CSV final de atualização de estoque a partir da mesma origem site.')
+            st.dataframe(df_modelo_estoque.head(20), use_container_width=True, height=220)
 
     deposito = ''
     if operation == 'estoque':
@@ -210,7 +236,7 @@ def render_site_panel() -> None:
         preview_df('Origem capturada do site', df_site_bruto)
 
         if operation_state == 'cadastro':
-            _render_cadastro_site_same_as_planilha(df_site_bruto, df_modelo)
+            _render_cadastro_site_same_as_planilha(df_site_bruto, df_modelo_cadastro, df_modelo_estoque)
             return
 
     df_final = st.session_state.get('df_site_final')
