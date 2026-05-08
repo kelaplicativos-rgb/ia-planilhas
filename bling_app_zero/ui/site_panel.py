@@ -15,6 +15,9 @@ from bling_app_zero.ui.home_shared import (
 )
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
+ALL_PAGES_LIMIT = 1_000_000
+ALL_PRODUCTS_LIMIT = 1_000_000
+
 
 def _query_param(name: str) -> str:
     try:
@@ -151,7 +154,7 @@ def _render_generated_origin_actions(
 def render_site_panel() -> None:
     st.markdown('### Scraper')
 
-    config = config_for_site_operation('cadastro')
+    config_for_site_operation('cadastro')
     upload = render_model_upload_box(
         title='Modelo',
         operation='cadastro',
@@ -179,23 +182,17 @@ def render_site_panel() -> None:
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
     )
 
-    all_products = st.checkbox('Varrer todos', value=True)
-    with st.expander('Limites', expanded=False):
-        col_limit_a, col_limit_b = st.columns(2)
-        max_pages = int(col_limit_a.number_input('Páginas', min_value=10, max_value=1000, value=config.default_max_pages, step=20))
-        max_products = int(col_limit_b.number_input('Produtos', min_value=10, max_value=5000, value=config.default_max_products, step=50))
-
     if st.button('Gerar origem', use_container_width=True):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Buscando...'):
+        with st.spinner('Buscando ao vivo...'):
             df_site = run_site_engine(
                 operation='cadastro',
                 pipeline=run_site_pipeline,
                 raw_urls=raw_urls,
                 requested_columns=requested_columns,
-                all_products=all_products,
-                max_pages=max_pages,
-                max_products=max_products,
+                all_products=True,
+                max_pages=ALL_PAGES_LIMIT,
+                max_products=ALL_PRODUCTS_LIMIT,
             )
         _save_site_source(
             df_site=df_site,
