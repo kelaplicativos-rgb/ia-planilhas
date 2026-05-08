@@ -4,6 +4,11 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
+from bling_app_zero.flows.site_operation_router import (
+    config_for_site_operation,
+    normalize_site_operation,
+    run_site_engine,
+)
 from bling_app_zero.ui.home_shared import (
     load_requested_columns_from_model,
     load_site_pipeline,
@@ -90,10 +95,11 @@ def _operation_from_query(default_operation: str = 'cadastro') -> str:
         return 'estoque'
     if flow == 'cadastro_site' or operation == 'cadastro':
         return 'cadastro'
-    return default_operation
+    return normalize_site_operation(default_operation)
 
 
 def _go_to_main_operation(operation: str) -> None:
+    operation = normalize_site_operation(operation)
     try:
         st.query_params['flow'] = operation
     except Exception:
@@ -112,7 +118,7 @@ def _save_site_source(
 ) -> None:
     set_site_source_as_planilha(
         df=df_site,
-        operation=operation,
+        operation=normalize_site_operation(operation),
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         cadastro_model_df=df_modelo_cadastro,
@@ -123,6 +129,19 @@ def _save_site_source(
 
 def _source_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+
+
+def _render_flow_steps() -> None:
+    st.markdown(
+        """
+        <div class="bling-compact-note">
+            <strong>Novo fluxo por site:</strong><br>
+            1) escolha cadastro ou estoque → 2) anexe o modelo do Bling → 3) cole os links →
+            4) gere a planilha origem → 5) revise/baixe → 6) continue para o fluxo final.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_generated_origin_actions(
@@ -137,94 +156,114 @@ def _render_generated_origin_actions(
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
 
-    preview_df('Planilha de origem gerada por Scraper', df_site)
+    config = config_for_site_operation(operation)
+    preview_df('Planilha origem gerada por busca de produtos em sites', df_site)
     st.download_button(
-        '⬇️ Baixar planilha de origem gerada pelo Scraper',
+        '⬇️ Baixar planilha origem gerada',
         data=_source_csv_bytes(df_site),
-        file_name=f'origem_site_{operation}.csv',
+        file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
         use_container_width=True,
-        key=f'download_origem_site_{operation}_{len(df_site)}_{len(df_site.columns)}',
+        key=f'download_origem_site_{config.operation}_{len(df_site)}_{len(df_site.columns)}',
     )
 
-    st.caption('Esta planilha já está inserida internamente como fornecedor de dados. O próximo passo usa o mesmo fluxo da origem por planilha.')
-    if st.button('Continuar para mapeamento / preview final', use_container_width=True, key='continuar_fluxo_planilha_site'):
+    st.caption('A planilha origem já foi inserida internamente. O próximo botão joga essa origem para o fluxo final correto.')
+    if st.button('Continuar com esta origem no fluxo final', use_container_width=True, key='continuar_fluxo_planilha_site'):
         _save_site_source(
             df_site=df_site,
-            operation=operation,
+            operation=config.operation,
             raw_urls=raw_urls,
             requested_columns=requested_columns,
             df_modelo_cadastro=df_modelo_cadastro,
             df_modelo_estoque=df_modelo_estoque,
             df_modelo=df_modelo,
         )
-        _go_to_main_operation(operation)
+        _go_to_main_operation(config.operation)
         st.rerun()
 
 
 def render_site_panel() -> None:
-    st.info('Etapa 1: gerar a planilha de origem por Scraper. Depois ela entra no mesmo fluxo da origem por planilha do fornecedor.')
-    st.caption('Fluxo ajustado para velocidade: primeiro gera a origem por Scraper rápido; depois mapeia, revisa e baixa o CSV final no fluxo normal.')
+    _render_flow_steps()
 
     default_operation = _operation_from_query('cadastro')
     operation_options = ['Cadastro de Produtos', 'Atualização de Estoque']
     default_index = 0 if default_operation == 'cadastro' else 1
-    modo = st.radio('Operação que receberá esta origem site', operation_options, index=default_index, horizontal=True)
+    modo = st.radio(
+        'A planilha origem gerada será usada para qual operação?',
+        operation_options,
+        index=default_index,
+        horizontal=False,
+        key='site_operation_radio',
+    )
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
+    config = config_for_site_operation(operation)
+
+    st.markdown(f'#### {config.title}')
+    st.caption(config.description)
 
     upload = render_model_upload_box(
-        title='📎 Planilhas modelo Bling',
-        operation=operation,
+        title='📎 Modelo do Bling para guiar a busca',
+        operation=config.operation,
         key='model_upload_site',
-        required_model=operation == 'estoque',
+        required_model=config.required_model,
     )
 
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
     df_modelo_estoque = _choose_site_estoque_model_df(upload)
-    df_modelo = _choose_site_model_df(upload, operation)
+    df_modelo = _choose_site_model_df(upload, config.operation)
 
     requested_columns = _requested_columns_for_site_capture(
-        operation=operation,
+        operation=config.operation,
         df_modelo_cadastro=df_modelo_cadastro,
         df_modelo_estoque=df_modelo_estoque,
         df_modelo_operacao=df_modelo,
     )
 
     if requested_columns:
-        if operation == 'estoque' and isinstance(df_modelo, pd.DataFrame):
+        if config.operation == 'estoque' and isinstance(df_modelo, pd.DataFrame):
             requested_columns_from_model = load_requested_columns_from_model()
             requested_columns = requested_columns_from_model(df_modelo)
         show_contract(requested_columns)
+    elif config.operation == 'estoque':
+        st.warning('Para atualização de estoque, anexe o modelo do Bling. O motor de estoque só deve buscar o que a planilha solicitar.')
     else:
-        st.warning('Sem modelo anexado, o Scraper usará colunas padrão da operação. Para contrato rígido, anexe o modelo do Bling antes de buscar.')
+        st.info('Sem modelo anexado, o motor de cadastro usará colunas padrão. Para contrato rígido, anexe o modelo do Bling.')
 
     raw_urls = st.text_area(
-        'URL inicial, categoria, home ou links de produtos',
+        'Cole aqui site, categoria ou links de produtos',
         value=_query_urls_default(),
-        height=180,
+        height=150,
         key='urls_site',
+        placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
     )
 
     all_products = st.checkbox('Varrer site/categoria e buscar todos os produtos encontrados', value=True)
     col_limit_a, col_limit_b = st.columns(2)
-    max_pages = int(col_limit_a.number_input('Limite de páginas/feeds analisados', min_value=10, max_value=1000, value=120, step=20))
-    max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=5000, value=300, step=50))
+    max_pages = int(col_limit_a.number_input('Páginas/feeds analisados', min_value=10, max_value=1000, value=config.default_max_pages, step=20))
+    max_products = int(col_limit_b.number_input('Produtos capturados', min_value=10, max_value=5000, value=config.default_max_products, step=50))
 
-    st.markdown('#### 1. Gerar planilha de origem')
-    if st.button('Gerar planilha de origem por Scraper', use_container_width=True):
+    st.markdown('#### 1. Gerar planilha origem')
+    if config.required_model and not isinstance(df_modelo, pd.DataFrame):
+        st.warning('Anexe o modelo de estoque antes de gerar a origem por site.')
+        can_run = False
+    else:
+        can_run = True
+
+    if st.button(config.button_label, use_container_width=True, disabled=not can_run):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Gerando planilha de origem por Scraper rápido...'):
-            df_site = run_site_pipeline(
-                raw_urls,
+        with st.spinner('Gerando planilha origem por busca em site...'):
+            df_site = run_site_engine(
+                operation=config.operation,
+                pipeline=run_site_pipeline,
+                raw_urls=raw_urls,
                 requested_columns=requested_columns,
                 all_products=all_products,
                 max_pages=max_pages,
                 max_products=max_products,
-                operation=operation,
             )
         _save_site_source(
             df_site=df_site,
-            operation=operation,
+            operation=config.operation,
             raw_urls=raw_urls,
             requested_columns=requested_columns,
             df_modelo_cadastro=df_modelo_cadastro,
@@ -232,13 +271,13 @@ def render_site_panel() -> None:
             df_modelo=df_modelo,
         )
         st.session_state['df_site_bruto'] = df_site
-        st.session_state['operation_site'] = operation
-        st.success('Planilha de origem gerada e inserida internamente como fornecedor de dados.')
+        st.session_state['operation_site'] = config.operation
+        st.success('Planilha origem gerada e inserida internamente como fornecedor de dados.')
 
     df_site_bruto = st.session_state.get('df_site_bruto')
-    operation_state = str(st.session_state.get('operation_site') or operation)
+    operation_state = str(st.session_state.get('operation_site') or config.operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        st.markdown('#### 2. Usar planilha de origem no fluxo normal')
+        st.markdown('#### 2. Revisar e usar a origem gerada')
         _render_generated_origin_actions(
             df_site=df_site_bruto,
             operation=operation_state,
@@ -249,5 +288,5 @@ def render_site_panel() -> None:
             df_modelo=df_modelo,
         )
     else:
-        st.markdown('#### 2. Já tenho a planilha de origem')
-        st.caption('Se você já baixou ou já tem a planilha do fornecedor, use diretamente o fluxo Cadastro ou Estoque e anexe em “Anexos do cadastro/estoque”.')
+        st.markdown('#### 2. Próximo passo')
+        st.caption('Depois de gerar a planilha origem, ela aparecerá aqui para revisão, download e continuidade no fluxo final.')
