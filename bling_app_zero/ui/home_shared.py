@@ -113,24 +113,34 @@ def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str) -> bytes
     return to_bling_csv_bytes(df)
 
 
+def _render_contract_body(columns: list[str]) -> None:
+    contract = build_contract(columns)
+    st.caption('Busca somente os campos pedidos. Se não encontrar, deixa vazio.')
+    st.dataframe(
+        pd.DataFrame([
+            {
+                'Coluna solicitada': field.original,
+                'Tipo detectado': field.kind,
+                'Obrigatório': 'Sim' if field.required else 'Não',
+            }
+            for field in contract
+        ]),
+        use_container_width=True,
+        height=260,
+    )
+
+
 def show_contract(columns: list[str]) -> None:
     if not columns:
         return
-    contract = build_contract(columns)
-    with st.expander('Contrato de colunas solicitado pela planilha', expanded=False):
-        st.caption('O crawler usa este contrato para buscar somente estes campos. Campo não encontrado fica vazio.')
-        st.dataframe(
-            pd.DataFrame([
-                {
-                    'Coluna solicitada': field.original,
-                    'Tipo detectado': field.kind,
-                    'Obrigatório': 'Sim' if field.required else 'Não',
-                }
-                for field in contract
-            ]),
-            use_container_width=True,
-            height=260,
-        )
+    try:
+        with st.expander('Colunas que serão buscadas', expanded=False):
+            _render_contract_body(columns)
+    except StreamlitAPIException as exc:
+        if 'Expanders may not be nested' not in str(exc):
+            raise
+        st.markdown('##### Colunas que serão buscadas')
+        _render_contract_body(columns)
 
 
 def show_mapping(mapping: dict[str, str]) -> None:
