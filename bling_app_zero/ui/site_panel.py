@@ -10,6 +10,7 @@ from bling_app_zero.flows.site_operation_router import (
     config_for_site_operation,
     run_site_engine,
 )
+from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model, save_home_models
 from bling_app_zero.ui.home_shared import (
     load_site_pipeline,
     preview_df,
@@ -56,6 +57,9 @@ def _columns_from_df(df: pd.DataFrame | None) -> list[str]:
 
 
 def _choose_site_model_df(upload) -> pd.DataFrame | None:
+    home_model = get_home_cadastro_model()
+    if isinstance(home_model, pd.DataFrame):
+        return home_model
     if isinstance(upload.cadastro_model_df, pd.DataFrame):
         return upload.cadastro_model_df
     if isinstance(upload.model_df, pd.DataFrame):
@@ -64,6 +68,9 @@ def _choose_site_model_df(upload) -> pd.DataFrame | None:
 
 
 def _choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
+    home_model = get_home_cadastro_model()
+    if isinstance(home_model, pd.DataFrame):
+        return home_model
     if isinstance(upload.cadastro_model_df, pd.DataFrame):
         return upload.cadastro_model_df
     if isinstance(upload.model_df, pd.DataFrame):
@@ -72,6 +79,9 @@ def _choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
 
 
 def _choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
+    home_model = get_home_estoque_model()
+    if isinstance(home_model, pd.DataFrame):
+        return home_model
     if isinstance(upload.estoque_model_df, pd.DataFrame):
         return upload.estoque_model_df
     return None
@@ -105,6 +115,7 @@ def _save_site_source(
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
 ) -> None:
+    save_home_models(df_modelo_cadastro, df_modelo_estoque)
     set_site_source_as_planilha(
         df=df_site,
         operation='cadastro',
@@ -219,20 +230,34 @@ def _render_generated_origin_actions(
             st.rerun()
 
 
-def render_site_panel() -> None:
-    st.markdown('### Criar planilha pelo site')
-    st.caption('Informe os modelos e os links. Depois clique em criar.')
-
-    config_for_site_operation('cadastro')
-
-    st.markdown('#### 1. Modelos do Bling')
-    upload = render_model_upload_box(
+def _render_optional_model_upload() -> object:
+    if get_home_cadastro_model() is not None or get_home_estoque_model() is not None:
+        st.success('Modelos do Bling carregados na home.')
+        with st.expander('Trocar modelos', expanded=False):
+            return render_model_upload_box(
+                title='Novos modelos',
+                operation='cadastro',
+                key='model_upload_site',
+                required_model=False,
+                caption='Use apenas se quiser trocar os modelos desta busca.',
+            )
+    return render_model_upload_box(
         title='Modelos para cadastro e estoque',
         operation='cadastro',
         key='model_upload_site',
         required_model=False,
         caption='Anexe os modelos do Bling para preencher as colunas certas.',
     )
+
+
+def render_site_panel() -> None:
+    st.markdown('### Criar planilha pelo site')
+    st.caption('Informe os links. O sistema usa os modelos do Bling para buscar só as colunas necessárias.')
+
+    config_for_site_operation('cadastro')
+
+    st.markdown('#### 1. Modelos do Bling')
+    upload = _render_optional_model_upload()
 
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
     df_modelo_estoque = _choose_site_estoque_model_df(upload)
