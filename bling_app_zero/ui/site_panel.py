@@ -250,14 +250,14 @@ def _render_generated_origin_actions(
 def _render_optional_model_upload() -> object:
     if get_home_cadastro_model() is not None or get_home_estoque_model() is not None:
         st.success('Modelos do Bling carregados na home.')
-        with st.expander('Trocar modelos', expanded=False):
-            return render_model_upload_box(
-                title='Novos modelos',
-                operation='cadastro',
-                key='model_upload_site',
-                required_model=False,
-                caption='Use apenas se quiser trocar os modelos desta busca.',
-            )
+        st.caption('Para trocar os modelos, envie novos arquivos abaixo. O painel interno já mostra as colunas detectadas.')
+        return render_model_upload_box(
+            title='Trocar modelos',
+            operation='cadastro',
+            key='model_upload_site',
+            required_model=False,
+            caption='Use apenas se quiser trocar os modelos desta busca.',
+        )
     return render_model_upload_box(
         title='Modelos para cadastro e estoque',
         operation='cadastro',
