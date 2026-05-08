@@ -78,10 +78,19 @@ def inject_clean_home_css() -> None:
             margin: 0 0 10px 0;
         }
         div[data-testid="stFileUploader"] section {
-            padding: 16px 14px;
+            padding: 12px 12px !important;
+            min-height: 88px !important;
+        }
+        div[data-testid="stFileUploader"] section > div {
+            gap: 0.35rem !important;
+        }
+        div[data-testid="stFileUploader"] section p {
+            font-size: 0.9rem !important;
+            line-height: 1.18 !important;
+            margin-bottom: 0.15rem !important;
         }
         div[data-testid="stFileUploader"] small {
-            font-size: 0.82rem;
+            font-size: 0.78rem !important;
         }
         @media (max-width: 760px) {
             .main .block-container,
@@ -128,6 +137,16 @@ def inject_clean_home_css() -> None:
                 font-size: 0.84rem;
                 line-height: 1.27;
             }
+            .bling-upload-title {
+                font-size: 1rem;
+                line-height: 1.18;
+                margin: 7px 0 2px 0;
+            }
+            .bling-upload-caption {
+                font-size: 0.83rem;
+                line-height: 1.25;
+                margin: 0 0 5px 0;
+            }
             div[data-testid="stVerticalBlock"] {
                 gap: 0.45rem;
             }
@@ -160,8 +179,21 @@ def inject_clean_home_css() -> None:
                 margin: 0 !important;
             }
             div[data-testid="stFileUploader"] section {
-                min-height: 104px;
-                padding: 12px 10px;
+                min-height: 74px !important;
+                padding: 8px 9px !important;
+            }
+            div[data-testid="stFileUploader"] section p {
+                font-size: 0.78rem !important;
+                line-height: 1.1 !important;
+            }
+            div[data-testid="stFileUploader"] small {
+                font-size: 0.68rem !important;
+                line-height: 1.1 !important;
+            }
+            div[data-testid="stFileUploader"] button {
+                min-height: 34px !important;
+                padding: 0.25rem 0.55rem !important;
+                font-size: 0.82rem !important;
             }
             div[data-testid="stExpander"] details summary p {
                 font-size: 0.9rem !important;
