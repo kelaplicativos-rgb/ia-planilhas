@@ -59,23 +59,15 @@ def run_site_engine(
     all_products: bool,
     max_pages: int,
     max_products: int,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     normalized = normalize_site_operation(operation)
-    if normalized == 'estoque':
-        return pipeline(
-            raw_urls,
-            requested_columns=requested_columns,
-            all_products=all_products,
-            max_pages=max_pages,
-            max_products=max_products,
-            operation='estoque',
-        )
-
     return pipeline(
         raw_urls,
         requested_columns=requested_columns,
         all_products=all_products,
         max_pages=max_pages,
         max_products=max_products,
-        operation='cadastro',
+        operation=normalized,
+        progress_callback=progress_callback,
     )
