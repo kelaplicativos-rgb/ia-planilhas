@@ -128,9 +128,9 @@ def _render_generated_origin_actions(
         return
 
     config = config_for_site_operation('cadastro')
-    preview_df('Origem gerada', df_site)
+    preview_df('Planilha criada', df_site)
     st.download_button(
-        'Baixar origem',
+        'Baixar planilha',
         data=_source_csv_bytes(df_site),
         file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
@@ -138,7 +138,7 @@ def _render_generated_origin_actions(
         key=f'download_origem_site_unica_{len(df_site)}_{len(df_site.columns)}',
     )
 
-    if st.button('Usar origem', use_container_width=True, key='continuar_fluxo_planilha_site'):
+    if st.button('Continuar', use_container_width=True, key='continuar_fluxo_planilha_site'):
         _save_site_source(
             df_site=df_site,
             raw_urls=raw_urls,
@@ -152,7 +152,8 @@ def _render_generated_origin_actions(
 
 
 def render_site_panel() -> None:
-    st.markdown('### Busca por site')
+    st.markdown('### Criar planilha pelo site')
+    st.caption('Cole os links. O sistema busca os produtos e monta a planilha.')
 
     config_for_site_operation('cadastro')
     upload = render_model_upload_box(
@@ -160,7 +161,7 @@ def render_site_panel() -> None:
         operation='cadastro',
         key='model_upload_site',
         required_model=False,
-        caption='Anexe os modelos do Bling para gerar a planilha de importação.',
+        caption='Anexe os modelos para o sistema saber quais colunas preencher.',
     )
 
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
@@ -176,16 +177,16 @@ def render_site_panel() -> None:
         show_contract(requested_columns)
 
     raw_urls = st.text_area(
-        'Links',
+        'Links do fornecedor',
         value=_query_urls_default(),
         height=120,
         key='urls_site',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
     )
 
-    if st.button('Gerar origem', use_container_width=True):
+    if st.button('Criar planilha', use_container_width=True):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Buscando ao vivo...'):
+        with st.spinner('Buscando produtos...'):
             df_site = run_site_engine(
                 operation='cadastro',
                 pipeline=run_site_pipeline,
@@ -205,7 +206,7 @@ def render_site_panel() -> None:
         )
         st.session_state['df_site_bruto'] = df_site
         st.session_state['operation_site'] = 'cadastro'
-        st.success('Origem gerada.')
+        st.success('Planilha criada.')
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
