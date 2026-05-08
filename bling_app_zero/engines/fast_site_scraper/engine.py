@@ -7,6 +7,7 @@ from typing import Callable, Iterable
 import pandas as pd
 
 from bling_app_zero.core.column_contract import RequestedField, build_contract
+from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.fast_site_scraper.extractors import (
     extract_brand,
     extract_category,
@@ -25,6 +26,11 @@ from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_prod
 
 MAX_WORKERS = 48
 SLOW_LINK_SECONDS = 6.0
+SMART_COMPLETE_TARGET = 180
+SMART_STOP_MIN_PROCESSED = 120
+SMART_STOP_COMPLETE_RATIO = 0.72
+SMART_STOP_NO_GAIN_WINDOW = 80
+SMART_STOP_MIN_FOUND = 60
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -47,6 +53,49 @@ def _needed_kinds(contract: list[RequestedField]) -> set[str]:
     if 'codigo' in kinds or 'id_produto' in kinds:
         kinds.add('gtin')
     return kinds
+
+
+def _important_kinds(contract: list[RequestedField]) -> set[str]:
+    kinds = {field.kind for field in contract if field.kind != 'custom'}
+    if 'codigo' in kinds or 'id_produto' in kinds:
+        kinds.add('gtin')
+    # Campos de preenchimento padrão não devem travar parada inteligente.
+    kinds -= {'deposito', 'data', 'observacao'}
+    return kinds or {'url'}
+
+
+def _value_for_kind(product: FastProductData, kind: str) -> str:
+    if kind == 'url':
+        return product.url
+    if kind in {'codigo', 'id_produto'}:
+        return product.codigo or product.gtin
+    if kind == 'gtin':
+        return product.gtin
+    if kind in {'descricao', 'nome_apoio'}:
+        return product.descricao
+    if kind in {'preco_unitario', 'preco_custo'}:
+        return product.preco
+    if kind == 'estoque':
+        return product.estoque
+    if kind == 'imagem':
+        return product.imagem
+    if kind == 'marca':
+        return product.marca
+    if kind == 'categoria':
+        return product.categoria
+    return ''
+
+
+def _has_useful_data(product: FastProductData) -> bool:
+    return any([product.codigo, product.gtin, product.descricao, product.preco, product.estoque, product.imagem, product.url])
+
+
+def _is_complete_product(product: FastProductData, important_kinds: set[str]) -> bool:
+    for kind in important_kinds:
+        value = str(_value_for_kind(product, kind) or '').strip()
+        if not value:
+            return False
+    return True
 
 
 def _url_only_row(url: str) -> FastProductData:
@@ -105,27 +154,7 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[FastProductData, float, boo
 def _to_contract_row(product: FastProductData, contract: list[RequestedField]) -> dict[str, str]:
     row: dict[str, str] = {}
     for field in contract:
-        kind = field.kind
-        if kind == 'url':
-            row[field.original] = product.url
-        elif kind in {'codigo', 'id_produto'}:
-            row[field.original] = product.codigo or product.gtin
-        elif kind == 'gtin':
-            row[field.original] = product.gtin
-        elif kind in {'descricao', 'nome_apoio'}:
-            row[field.original] = product.descricao
-        elif kind in {'preco_unitario', 'preco_custo'}:
-            row[field.original] = product.preco
-        elif kind == 'estoque':
-            row[field.original] = product.estoque
-        elif kind == 'imagem':
-            row[field.original] = product.imagem
-        elif kind == 'marca':
-            row[field.original] = product.marca
-        elif kind == 'categoria':
-            row[field.original] = product.categoria
-        else:
-            row[field.original] = ''
+        row[field.original] = _value_for_kind(product, field.kind)
     return row
 
 
@@ -135,6 +164,28 @@ def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
         if column not in out.columns:
             out[column] = ''
     return out.loc[:, columns].fillna('')
+
+
+def _should_stop_early(
+    *,
+    processed: int,
+    products: list[FastProductData],
+    complete_count: int,
+    last_gain_at: int,
+) -> tuple[bool, str]:
+    found = len(products)
+    if complete_count >= SMART_COMPLETE_TARGET:
+        return True, f'{complete_count} produto(s) completos encontrados.'
+
+    if processed >= SMART_STOP_MIN_PROCESSED and found >= SMART_STOP_MIN_FOUND:
+        ratio = complete_count / max(found, 1)
+        if ratio >= SMART_STOP_COMPLETE_RATIO:
+            return True, f'{complete_count}/{found} produto(s) completos. Busca suficiente.'
+
+    if processed - last_gain_at >= SMART_STOP_NO_GAIN_WINDOW and found >= SMART_STOP_MIN_FOUND:
+        return True, 'Sem ganho relevante nos últimos links. Busca encerrada para ganhar velocidade.'
+
+    return False, ''
 
 
 def run_fast_site_scraper(
@@ -149,10 +200,11 @@ def run_fast_site_scraper(
     columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()] or _default_columns(operation)
     contract = build_contract(columns)
     needed = _needed_kinds(contract)
+    important = _important_kinds(contract)
 
     _emit(progress_callback, {
         'stage': 'Descobrindo links',
-        'message': 'Buscando produtos no site, sitemap e categorias...',
+        'message': 'Buscando primeiro pelos links visíveis da página/categoria...',
         'progress': 0.08,
         'columns': len(columns),
     })
@@ -162,7 +214,7 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Links encontrados',
-        'message': f'{len(urls)} link(s) de produto encontrado(s).',
+        'message': f'{len(urls)} link(s) selecionado(s) para busca inteligente.',
         'progress': 0.22,
         'urls_found': len(urls),
         'discovery_seconds': round(discovery_seconds, 2),
@@ -191,6 +243,9 @@ def run_fast_site_scraper(
 
     products: list[FastProductData] = []
     errors = 0
+    complete_count = 0
+    last_gain_at = 0
+    stop_reason = ''
     slow_links: list[dict[str, object]] = []
     workers = max(1, min(MAX_WORKERS, len(urls)))
     total = len(urls[:max_products])
@@ -199,7 +254,7 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo {total} produto(s) ao vivo...',
+        'message': f'Lendo até {total} produto(s), com parada inteligente.',
         'progress': 0.28,
         'processed': 0,
         'total': total,
@@ -217,10 +272,37 @@ def run_fast_site_scraper(
                     errors += 1
                 if elapsed >= SLOW_LINK_SECONDS:
                     slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
-                if any([product.codigo, product.descricao, product.preco, product.estoque, product.imagem, product.url]):
+                if _has_useful_data(product):
                     products.append(product)
+                    last_gain_at = processed
+                    if _is_complete_product(product, important):
+                        complete_count += 1
             except Exception:
                 errors += 1
+
+            should_stop, reason = _should_stop_early(
+                processed=processed,
+                products=products,
+                complete_count=complete_count,
+                last_gain_at=last_gain_at,
+            )
+            if should_stop:
+                stop_reason = reason
+                for pending in futures:
+                    if not pending.done():
+                        pending.cancel()
+                _emit(progress_callback, {
+                    'stage': 'Parada inteligente',
+                    'message': stop_reason,
+                    'progress': 0.88,
+                    'processed': processed,
+                    'total': total,
+                    'found': len(products),
+                    'complete': complete_count,
+                    'errors': errors,
+                    'slow_links': slow_links[-5:],
+                })
+                break
 
             now = time.perf_counter()
             if now - last_emit >= 0.5 or processed == total:
@@ -232,18 +314,23 @@ def run_fast_site_scraper(
                     'processed': processed,
                     'total': total,
                     'found': len(products),
+                    'complete': complete_count,
                     'errors': errors,
                     'slow_links': slow_links[-5:],
                 })
                 last_emit = now
 
     rows = [_to_contract_row(product, contract) for product in products]
+    final_message = f'Montando planilha com {len(rows)} produto(s).'
+    if stop_reason:
+        final_message = f'{final_message} {stop_reason}'
     _emit(progress_callback, {
         'stage': 'Montando planilha',
-        'message': f'Montando planilha com {len(rows)} produto(s).',
+        'message': final_message,
         'progress': 0.91,
         'processed': processed,
         'found': len(products),
+        'complete': complete_count,
         'errors': errors,
         'slow_links': slow_links[-10:],
         'total_seconds': round(time.perf_counter() - total_started, 2),
