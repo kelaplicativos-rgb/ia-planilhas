@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -17,6 +19,8 @@ from bling_app_zero.ui.model_upload import render_model_upload_box
 
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
+PROGRESS_LOG_KEY = 'site_progress_log'
+PROGRESS_LAST_KEY = 'site_progress_last'
 
 
 def _query_param(name: str) -> str:
@@ -116,6 +120,64 @@ def _source_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
 
+def _reset_progress() -> None:
+    st.session_state[PROGRESS_LOG_KEY] = []
+    st.session_state[PROGRESS_LAST_KEY] = {}
+
+
+def _append_progress(payload: dict) -> None:
+    log = list(st.session_state.get(PROGRESS_LOG_KEY, []))
+    payload = dict(payload or {})
+    payload['time'] = time.strftime('%H:%M:%S')
+    log.append(payload)
+    st.session_state[PROGRESS_LOG_KEY] = log[-80:]
+    st.session_state[PROGRESS_LAST_KEY] = payload
+
+
+def _make_progress_callback(progress_bar, status_box, metrics_box, log_box):
+    def callback(payload: dict) -> None:
+        _append_progress(payload)
+        progress = float(payload.get('progress') or 0.0)
+        progress = max(0.0, min(1.0, progress))
+        stage = str(payload.get('stage') or 'Processando')
+        message = str(payload.get('message') or '')
+        progress_bar.progress(progress, text=f'{stage} · {int(progress * 100)}%')
+        status_box.info(message or stage)
+
+        col_a, col_b, col_c, col_d = metrics_box.columns(4)
+        col_a.metric('Links', int(payload.get('urls_found') or payload.get('total') or 0))
+        col_b.metric('Processados', int(payload.get('processed') or 0))
+        col_c.metric('Encontrados', int(payload.get('found') or 0))
+        col_d.metric('Erros', int(payload.get('errors') or 0))
+
+        slow_links = payload.get('slow_links') or []
+        if slow_links:
+            with log_box.expander('Links lentos', expanded=False):
+                for item in slow_links[-5:]:
+                    st.caption(f"{item.get('seconds')}s · {item.get('url')}")
+    return callback
+
+
+def _render_progress_history() -> None:
+    log = st.session_state.get(PROGRESS_LOG_KEY) or []
+    if not log:
+        return
+    with st.expander('Relatório da busca', expanded=False):
+        rows = []
+        for item in log:
+            rows.append({
+                'Hora': item.get('time', ''),
+                'Etapa': item.get('stage', ''),
+                'Mensagem': item.get('message', ''),
+                'Links': item.get('urls_found', item.get('total', '')),
+                'Processados': item.get('processed', ''),
+                'Encontrados': item.get('found', ''),
+                'Erros': item.get('errors', ''),
+                'Tempo': item.get('total_seconds', item.get('discovery_seconds', '')),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=240)
+
+
 def _render_generated_origin_actions(
     df_site: pd.DataFrame,
     raw_urls: str,
@@ -129,6 +191,7 @@ def _render_generated_origin_actions(
 
     config = config_for_site_operation('cadastro')
     st.success('Planilha criada e enviada para o fluxo de planilha.')
+    _render_progress_history()
     with st.expander('Ver planilha criada', expanded=False):
         preview_df('Planilha criada', df_site)
 
@@ -181,8 +244,7 @@ def render_site_panel() -> None:
     )
 
     if requested_columns:
-        with st.expander('Colunas que serão buscadas', expanded=False):
-            show_contract(requested_columns)
+        show_contract(requested_columns)
 
     st.markdown('#### 2. Links do fornecedor')
     raw_urls = st.text_area(
@@ -196,17 +258,24 @@ def render_site_panel() -> None:
 
     st.markdown('#### 3. Criar planilha')
     if st.button('Criar planilha', use_container_width=True):
+        _reset_progress()
+        progress_bar = st.progress(0, text='Iniciando busca...')
+        status_box = st.empty()
+        metrics_box = st.container()
+        log_box = st.container()
+        callback = _make_progress_callback(progress_bar, status_box, metrics_box, log_box)
+
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Buscando produtos...'):
-            df_site = run_site_engine(
-                operation='cadastro',
-                pipeline=run_site_pipeline,
-                raw_urls=raw_urls,
-                requested_columns=requested_columns,
-                all_products=True,
-                max_pages=ALL_PAGES_LIMIT,
-                max_products=ALL_PRODUCTS_LIMIT,
-            )
+        df_site = run_site_engine(
+            operation='cadastro',
+            pipeline=run_site_pipeline,
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            all_products=True,
+            max_pages=ALL_PAGES_LIMIT,
+            max_products=ALL_PRODUCTS_LIMIT,
+            progress_callback=callback,
+        )
         _save_site_source(
             df_site=df_site,
             raw_urls=raw_urls,
