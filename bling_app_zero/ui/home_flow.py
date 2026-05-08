@@ -9,18 +9,15 @@ FLOW_ACTIVE_KEY = 'home_slim_active_panel'
 
 STEP_SITE = 'site'
 STEP_PLANILHA = 'planilha'
-STEP_ESTOQUE = 'estoque'
 
 STEP_LABELS = {
     STEP_SITE: 'Scraper',
     STEP_PLANILHA: 'Planilha',
-    STEP_ESTOQUE: 'Estoque',
 }
 
 STEP_HELP = {
     STEP_SITE: 'Buscar no site',
     STEP_PLANILHA: 'Anexar arquivo',
-    STEP_ESTOQUE: 'Atualizar saldo',
 }
 
 
@@ -38,7 +35,7 @@ def initial_step_from_query() -> str:
     flow = query_param('flow').lower().strip()
     operation = normalize_panel_operation(flow)
     if operation == 'estoque':
-        return STEP_ESTOQUE
+        return STEP_PLANILHA
     if flow in {'planilha', 'planilhas', 'origem_planilha', 'cadastro', 'produtos'}:
         return STEP_PLANILHA
     return STEP_SITE
@@ -64,8 +61,6 @@ def set_current_step(step: str) -> None:
             st.query_params['flow'] = 'site'
         elif step == STEP_PLANILHA:
             st.query_params['flow'] = 'planilha'
-        elif step == STEP_ESTOQUE:
-            st.query_params['flow'] = 'estoque'
     except Exception:
         pass
 
@@ -87,8 +82,6 @@ def get_active_panel() -> str | None:
 
 
 def step_to_panel_operation(step: str) -> str:
-    if step == STEP_ESTOQUE:
-        return 'estoque'
     if step == STEP_PLANILHA:
         return 'cadastro'
     return 'site'
@@ -96,7 +89,7 @@ def step_to_panel_operation(step: str) -> str:
 
 def render_flow_selector() -> str:
     current = get_current_step()
-    options = [STEP_SITE, STEP_PLANILHA, STEP_ESTOQUE]
+    options = [STEP_SITE, STEP_PLANILHA]
     labels = [STEP_LABELS[option] for option in options]
     current_index = options.index(current) if current in options else 0
 
@@ -115,14 +108,7 @@ def render_flow_selector() -> str:
 
     st.caption(STEP_HELP.get(current, ''))
 
-    button_label = 'Abrir'
-    if current == STEP_SITE:
-        button_label = 'Abrir Scraper'
-    elif current == STEP_PLANILHA:
-        button_label = 'Anexar Planilha'
-    elif current == STEP_ESTOQUE:
-        button_label = 'Atualizar Estoque'
-
+    button_label = 'Abrir Scraper' if current == STEP_SITE else 'Anexar Planilha'
     if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
         activate_current_step(current)
         st.rerun()
