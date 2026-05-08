@@ -5,6 +5,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.flows.site_as_source import get_site_source_for_operation
 from bling_app_zero.ui.home_shared import (
     download_final,
     load_estoque_pipeline,
@@ -45,6 +46,15 @@ def _source_files_from_upload(upload) -> list[Any]:
     return sources
 
 
+def _build_stock_outputs_from_dataframe(df_origem: pd.DataFrame, df_modelo: pd.DataFrame | None, deposito: str, name: str = 'Origem por site') -> None:
+    run_estoque_pipeline = load_estoque_pipeline()
+    df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+    result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
+    st.session_state['estoque_multi_outputs'] = [result]
+    st.session_state['df_final_estoque'] = df_final
+    st.session_state['mapping_estoque'] = mapping
+
+
 def _build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -> None:
     source_files = _source_files_from_upload(upload)
     if not source_files:
@@ -82,7 +92,7 @@ def _render_stock_outputs() -> None:
         return
 
     st.markdown('#### Downloads finais de estoque')
-    st.caption('Cada origem anexada gera uma planilha final separada.')
+    st.caption('Cada origem gera uma planilha final separada.')
 
     for result in results:
         index = result.get('index')
@@ -112,13 +122,19 @@ def render_estoque_panel() -> None:
     )
 
     df_modelo = upload.model_df
+    df_origem_site = get_site_source_for_operation('estoque')
 
     if isinstance(df_modelo, pd.DataFrame):
         show_contract([str(c) for c in df_modelo.columns])
 
     deposito = st.text_input('Nome do depósito', value='Não definido')
 
-    if upload.attachments:
+    if isinstance(df_origem_site, pd.DataFrame):
+        st.success('Origem por site carregada como origem de dados. A partir daqui o fluxo é o mesmo da planilha.')
+        preview_df('Origem por site para atualização de estoque', df_origem_site)
+        if st.button('Gerar atualização de estoque', use_container_width=True):
+            _build_stock_outputs_from_dataframe(df_origem_site, df_modelo, deposito, name='Origem por site')
+    elif upload.attachments:
         source_files = _source_files_from_upload(upload)
         if len(source_files) > 1:
             st.info(f'{len(source_files)} origens de estoque detectadas. O sistema vai gerar um CSV final para cada uma.')
