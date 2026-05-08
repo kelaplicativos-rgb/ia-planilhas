@@ -304,18 +304,15 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
 
 
 def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
-    st.markdown('#### Gerar também atualização de estoque')
-    gerar_estoque = st.checkbox(
-        'Gerar CSV de atualização de estoque usando esta mesma origem',
-        value=False,
-        key='cadastro_gerar_estoque_mesma_origem',
-    )
+    st.markdown('#### Download também para atualização de estoque')
 
-    if not gerar_estoque:
+    if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
+        st.info('Anexe também o modelo de estoque para liberar o CSV final de atualização de estoque usando esta mesma origem.')
         st.session_state.pop('df_final_estoque_from_cadastro', None)
         st.session_state.pop('mapping_estoque_from_cadastro', None)
         return
 
+    st.success('Modelo de estoque detectado. O sistema vai gerar também a planilha final de estoque com esta mesma origem.')
     deposito = st.text_input(
         'Nome do depósito para o CSV de estoque',
         value='Não definido',
@@ -356,6 +353,9 @@ def render_cadastro_panel() -> None:
         st.success('Origem por site carregada como origem de dados. A partir daqui o fluxo é o mesmo da planilha.')
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
+        if isinstance(df_modelo, pd.DataFrame) and isinstance(df_modelo_estoque, pd.DataFrame):
+            st.success('Dois modelos detectados: Cadastro/Produtos e Estoque. No final serão exibidos os dois downloads.')
+
         usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
 
         if usar_preco:
