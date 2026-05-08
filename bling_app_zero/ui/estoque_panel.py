@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.flows.site_as_source import get_site_source_for_operation
+from bling_app_zero.flows.site_as_source import get_site_model_for_operation, get_site_source_for_operation
 from bling_app_zero.ui.home_shared import (
     download_final,
     load_estoque_pipeline,
@@ -121,8 +121,9 @@ def render_estoque_panel() -> None:
         accepted_types=['xlsx', 'xls', 'csv'],
     )
 
-    df_modelo = upload.model_df
     df_origem_site = get_site_source_for_operation('estoque')
+    df_modelo_site = get_site_model_for_operation('estoque')
+    df_modelo = df_modelo_site if isinstance(df_modelo_site, pd.DataFrame) else upload.model_df
 
     if isinstance(df_modelo, pd.DataFrame):
         show_contract([str(c) for c in df_modelo.columns])
