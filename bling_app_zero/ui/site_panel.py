@@ -101,6 +101,26 @@ def _go_to_main_operation(operation: str) -> None:
     st.session_state['tipo_operacao'] = operation
 
 
+def _save_site_source(
+    df_site: pd.DataFrame,
+    operation: str,
+    raw_urls: str,
+    requested_columns: list[str] | None,
+    df_modelo_cadastro: pd.DataFrame | None,
+    df_modelo_estoque: pd.DataFrame | None,
+    df_modelo: pd.DataFrame | None,
+) -> None:
+    set_site_source_as_planilha(
+        df=df_site,
+        operation=operation,
+        raw_urls=raw_urls,
+        requested_columns=requested_columns,
+        cadastro_model_df=df_modelo_cadastro,
+        estoque_model_df=df_modelo_estoque,
+        operation_model_df=df_modelo,
+    )
+
+
 def render_site_panel() -> None:
     st.info('A busca por site agora prepara uma ORIGEM DE DADOS. Depois da captura, ela segue o mesmo fluxo da origem por planilha.')
     st.caption('Tecnologia ativa: IA prioritária + complemento Flash/XML/Sitemaps para saldo real quando o contrato pedir estoque.')
@@ -160,30 +180,34 @@ def render_site_panel() -> None:
                 max_products=max_products,
                 operation=operation,
             )
-        set_site_source_as_planilha(
-            df=df_site,
+        _save_site_source(
+            df_site=df_site,
             operation=operation,
             raw_urls=raw_urls,
             requested_columns=requested_columns,
+            df_modelo_cadastro=df_modelo_cadastro,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo,
         )
         st.session_state['df_site_bruto'] = df_site
         st.session_state['operation_site'] = operation
         st.success('Origem por site capturada. Ela agora será usada no mesmo fluxo da origem por planilha.')
         preview_df('Origem por site capturada', df_site)
-
-        if st.button('Continuar agora no fluxo da planilha', use_container_width=True, key='continuar_fluxo_planilha_site'):
-            _go_to_main_operation(operation)
-            st.rerun()
+        _go_to_main_operation(operation)
+        st.rerun()
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         preview_df('Última origem por site capturada', df_site_bruto)
         if st.button('Usar esta origem no fluxo da planilha', use_container_width=True, key='usar_ultima_origem_site'):
-            set_site_source_as_planilha(
-                df=df_site_bruto,
+            _save_site_source(
+                df_site=df_site_bruto,
                 operation=operation,
                 raw_urls=raw_urls,
                 requested_columns=requested_columns,
+                df_modelo_cadastro=df_modelo_cadastro,
+                df_modelo_estoque=df_modelo_estoque,
+                df_modelo=df_modelo,
             )
             _go_to_main_operation(operation)
             st.rerun()
