@@ -8,13 +8,13 @@ import streamlit as st
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
 from bling_app_zero.core.pricing import detect_discount_percent
+from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
+from bling_app_zero.engines.estoque_engine import default_model as estoque_default_model
 from bling_app_zero.ui.home_shared import (
     df_signature,
     download_final,
     load_apply_pricing,
-    load_cadastro_pipeline,
-    load_estoque_pipeline,
     preview_df,
     show_mapping,
 )
@@ -70,6 +70,12 @@ def _cadastro_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
     return default_model()
 
 
+def _estoque_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
+    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns):
+        return df_modelo
+    return estoque_default_model()
+
+
 def _select_cadastro_model(upload) -> pd.DataFrame | None:
     if isinstance(upload.cadastro_model_df, pd.DataFrame):
         return upload.cadastro_model_df
@@ -112,6 +118,16 @@ def _force_price_suggestion(target: str, source_columns: list[str], suggested: s
     if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
         return 'Preço de venda'
     return suggested
+
+
+def _fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
+    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    if not deposito:
+        return out
+    for column in out.columns:
+        if 'deposito' in normalize_key(column):
+            out[column] = deposito
+    return out
 
 
 def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -182,6 +198,96 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.rerun()
 
 
+def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None, deposito: str) -> None:
+    model = _estoque_model(df_modelo_estoque)
+    source_columns = [str(column) for column in df_source.columns]
+    target_columns = [str(column) for column in model.columns]
+    options = [''] + source_columns
+
+    signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
+    mapping_key = f'estoque_manual_mapping_from_cadastro_{signature}'
+
+    if mapping_key not in st.session_state:
+        auto_mapping = auto_map_columns(df_source, model)
+        for target in target_columns:
+            if 'deposito' in normalize_key(target):
+                auto_mapping[target] = ''
+        st.session_state[mapping_key] = auto_mapping
+
+    st.markdown('##### Correlacionar colunas do estoque')
+    st.caption('Ajuste manualmente o mapeamento do CSV de estoque antes do download.')
+
+    with st.expander('Prévia da origem usada no estoque', expanded=False):
+        preview_df('Origem para estoque', df_source)
+
+    current_mapping = dict(st.session_state.get(mapping_key, {}))
+    edited_mapping: dict[str, str] = {}
+
+    for target in target_columns:
+        target_key = normalize_key(target)
+        widget_key = f'{mapping_key}_{target}'
+
+        if 'deposito' in target_key:
+            st.text_input(
+                target,
+                value=deposito,
+                disabled=True,
+                key=f'{widget_key}_deposito_visual',
+                help='Este campo é preenchido pelo nome do depósito informado acima.',
+            )
+            st.markdown(
+                f"<div style='font-size:14px; color:#118a32; margin-top:-8px; margin-bottom:12px; font-weight:700;'>"
+                f"{html.escape(str(deposito or ''))}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            edited_mapping[target] = ''
+            continue
+
+        suggested = current_mapping.get(target, '')
+        if widget_key in st.session_state:
+            suggested = st.session_state.get(widget_key, suggested)
+
+        selected = st.selectbox(
+            target,
+            options,
+            index=_default_index(options, suggested),
+            key=widget_key,
+            help=f'Campo de destino no estoque Bling: {target}',
+        )
+        _show_first_row_preview(df_source, selected)
+        edited_mapping[target] = selected
+
+    st.session_state[mapping_key] = edited_mapping
+
+    df_preview_manual = apply_mapping(df_source, model, edited_mapping)
+    df_preview_manual = _fill_deposito_manual(df_preview_manual, deposito)
+    df_preview_manual = sanitize_for_bling(df_preview_manual)
+    st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
+    st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
+
+    used_values = [value for value in edited_mapping.values() if value]
+    duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
+    if duplicated:
+        st.warning('Atenção: a mesma coluna de origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Atualizar preview final do estoque', use_container_width=True):
+            st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
+            st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
+            st.rerun()
+    with col_b:
+        if st.button('Limpar correlação de estoque', use_container_width=True):
+            st.session_state.pop(mapping_key, None)
+            st.session_state.pop('df_final_estoque_from_cadastro', None)
+            st.session_state.pop('mapping_estoque_from_cadastro', None)
+            for key in list(st.session_state.keys()):
+                if str(key).startswith(f'{mapping_key}_'):
+                    st.session_state.pop(key, None)
+            st.rerun()
+
+
 def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Gerar também atualização de estoque')
     gerar_estoque = st.checkbox(
@@ -201,14 +307,16 @@ def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Dat
         key='cadastro_deposito_estoque_mesma_origem',
     )
 
-    run_estoque_pipeline = load_estoque_pipeline()
-    df_final_estoque, mapping_estoque = run_estoque_pipeline(df_source, df_modelo_estoque, deposito=deposito)
-    st.session_state['df_final_estoque_from_cadastro'] = df_final_estoque
-    st.session_state['mapping_estoque_from_cadastro'] = mapping_estoque
+    _render_manual_stock_mapping(df_source, df_modelo_estoque, deposito)
 
-    show_mapping(mapping_estoque)
-    preview_df('Preview final da atualização de estoque', df_final_estoque)
-    download_final(df_final_estoque, 'estoque', 'estoque_from_cadastro')
+    mapping_estoque = st.session_state.get('mapping_estoque_from_cadastro', {})
+    df_final_estoque = st.session_state.get('df_final_estoque_from_cadastro')
+
+    if isinstance(mapping_estoque, dict):
+        show_mapping(mapping_estoque)
+    if isinstance(df_final_estoque, pd.DataFrame):
+        preview_df('Preview final da atualização de estoque', df_final_estoque)
+        download_final(df_final_estoque, 'estoque', 'estoque_from_cadastro')
 
 
 def render_cadastro_panel() -> None:
