@@ -36,7 +36,7 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
         return read_upload_fast(file)
     except Exception as exc:
-        st.warning(f'Não consegui ler {_file_name(file)}: {exc}')
+        st.warning(f'Erro ao ler {_file_name(file)}: {exc}')
         return None
 
 
@@ -96,18 +96,18 @@ def render_model_upload_box(
     required_model: bool = False,
 ) -> ModelUploadResult:
     st.markdown(f'#### {title}')
-    st.caption('Anexe aqui somente as planilhas modelo do Bling. A origem deste fluxo é o site/URL.')
 
     files = st.file_uploader(
-        '📎 Anexar planilhas modelo',
+        'Anexar modelo',
         type=MODEL_SPREADSHEET_TYPES,
         accept_multiple_files=True,
         key=key,
-        help='Aceita modelo de cadastro e modelo de estoque ao mesmo tempo.',
+        label_visibility='collapsed',
     )
 
     if not files:
-        st.info('Nenhuma planilha modelo anexada ainda.')
+        if required_model:
+            st.info('Modelo obrigatório.')
         return ModelUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
@@ -115,7 +115,7 @@ def render_model_upload_box(
     ignored_files = [file for file in selected_files if _file_ext(file) not in MODEL_SPREADSHEET_TYPES]
 
     if ignored_files:
-        st.warning('Arquivo(s) ignorado(s): ' + ', '.join(_file_name(file) for file in ignored_files))
+        st.warning('Ignorado: ' + ', '.join(_file_name(file) for file in ignored_files))
 
     loaded = [(file, _safe_read(file)) for file in supported_files]
     cadastro_file, cadastro_df = _pick_cadastro(loaded)
@@ -123,24 +123,23 @@ def render_model_upload_box(
 
     model_file, model_df = (estoque_file, estoque_df) if operation == 'estoque' else (cadastro_file, cadastro_df)
 
-    st.success(f'{len(supported_files)} planilha(s) modelo aceita(s).')
-    cards = st.columns(min(len(supported_files), 3))
-    for index, file in enumerate(supported_files):
-        with cards[index % len(cards)]:
-            role = 'Planilha modelo'
-            if file is cadastro_file:
-                role = 'Modelo cadastro Bling'
-            elif file is estoque_file:
-                role = 'Modelo estoque Bling'
-            st.info(f'📎 {role}\n\n{_file_name(file)}')
+    st.success('Modelo recebido.')
 
-    if isinstance(cadastro_df, pd.DataFrame):
-        preview_df('Preview do modelo de cadastro', cadastro_df)
-    if isinstance(estoque_df, pd.DataFrame):
-        preview_df('Preview do modelo de estoque', estoque_df)
+    with st.expander('Ver modelo', expanded=False):
+        for file in supported_files:
+            role = 'Modelo'
+            if file is cadastro_file:
+                role = 'Cadastro'
+            elif file is estoque_file:
+                role = 'Estoque'
+            st.caption(f'{role}: {_file_name(file)}')
+        if isinstance(cadastro_df, pd.DataFrame):
+            preview_df('Cadastro', cadastro_df)
+        if isinstance(estoque_df, pd.DataFrame):
+            preview_df('Estoque', estoque_df)
 
     if required_model and model_df is None:
-        st.warning('Modelo Bling obrigatório ainda não detectado.')
+        st.warning('Modelo não detectado.')
 
     return ModelUploadResult(
         cadastro_model_file=cadastro_file,
