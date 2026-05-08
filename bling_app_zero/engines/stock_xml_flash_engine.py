@@ -5,13 +5,13 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from bling_app_zero.core.column_contract import RequestedField, build_contract
+from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 HEADERS = {
@@ -39,9 +39,10 @@ COMMON_XML_PATHS = [
 ]
 OUT_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'outofstock', 'out_of_stock']
 IN_TERMS = ['em estoque', 'disponivel', 'disponível', 'instock', 'in_stock', 'available', 'comprar']
-MAX_XML_DOCS = 80
-MAX_PRODUCT_URLS = 1200
-MAX_WORKERS = 14
+MAX_XML_DOCS = 100
+MAX_PRODUCT_URLS = 1800
+MAX_WORKERS = 18
+STRONG_MATCH_SCORE = 60
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class StockCandidate:
     code: str
     name: str
     stock: str
+    confidence: int
 
 
 def _norm(url: str) -> str:
@@ -77,7 +79,7 @@ def _same_domain(url: str, base_url: str) -> bool:
 
 def _get(url: str) -> str:
     try:
-        response = requests.get(url, headers=HEADERS, timeout=16, allow_redirects=True)
+        response = requests.get(url, headers=HEADERS, timeout=14, allow_redirects=True)
         response.raise_for_status()
         return response.text or ''
     except Exception:
@@ -140,7 +142,7 @@ def _digits(value: object) -> str:
     return str(int(digits)) if digits else ''
 
 
-def _stock_from_jsonld(soup: BeautifulSoup) -> str:
+def _stock_from_jsonld(soup: BeautifulSoup) -> tuple[str, int]:
     for script in soup.find_all('script', type='application/ld+json'):
         raw = script.string or script.get_text() or ''
         try:
@@ -160,22 +162,22 @@ def _stock_from_jsonld(soup: BeautifulSoup) -> str:
             for offer in offers_list:
                 if not isinstance(offer, dict):
                     continue
-                for key in ['inventoryLevel', 'quantity', 'stock', 'qty', 'availableQuantity', 'availabilityStarts']:
+                for key in ['inventoryLevel', 'quantity', 'stock', 'qty', 'availableQuantity']:
                     qty = _digits(offer.get(key))
                     if qty:
-                        return qty
+                        return qty, 95
                 availability = normalize_key(offer.get('availability', ''))
                 if any(term in availability for term in OUT_TERMS):
-                    return '0'
+                    return '0', 90
                 if any(term in availability for term in IN_TERMS):
-                    return '1'
+                    return '1', 70
             for value in item.values():
                 if isinstance(value, (dict, list)):
                     queue.append(value)
-    return ''
+    return '', 0
 
 
-def _stock_from_html(html: str, text: str) -> str:
+def _stock_from_html(html: str, text: str) -> tuple[str, int]:
     for pattern in [
         r'["\'](?:stock|estoque|inventory|quantity|qty|saldo|available_quantity)["\']\s*[:=]\s*["\']?(\d{1,7})',
         r'(?:estoque|saldo|quantidade|qtd)\s*[:\-]?\s*(\d{1,7})',
@@ -183,13 +185,13 @@ def _stock_from_html(html: str, text: str) -> str:
     ]:
         match = re.search(pattern, html + ' ' + text, flags=re.I)
         if match:
-            return _digits(match.group(1))
+            return _digits(match.group(1)), 82
     key = normalize_key(text + ' ' + html[:5000])
     if any(normalize_key(term) in key for term in OUT_TERMS):
-        return '0'
+        return '0', 75
     if any(normalize_key(term) in key for term in IN_TERMS):
-        return '1'
-    return ''
+        return '1', 55
+    return '', 0
 
 
 def _code_from_text(text: str) -> str:
@@ -212,14 +214,16 @@ def _name_from_soup(soup: BeautifulSoup) -> str:
 def _scan_one(url: str) -> StockCandidate:
     html = _get(url)
     if not html:
-        return StockCandidate(url=url, code='', name='', stock='')
+        return StockCandidate(url=url, code='', name='', stock='', confidence=0)
     soup = BeautifulSoup(html, 'html.parser')
     text = clean_cell(soup.get_text(' ', strip=True))
-    stock = _stock_from_jsonld(soup) or _stock_from_html(html, text)
-    return StockCandidate(url=url, code=_code_from_text(text), name=_name_from_soup(soup), stock=stock)
+    stock, confidence = _stock_from_jsonld(soup)
+    if not stock:
+        stock, confidence = _stock_from_html(html, text)
+    return StockCandidate(url=url, code=_code_from_text(text), name=_name_from_soup(soup), stock=stock, confidence=confidence)
 
 
-def _best_match_stock(row: dict[str, str], candidates: list[StockCandidate]) -> str:
+def _best_match_stock(row: dict[str, str], candidates: list[StockCandidate]) -> tuple[str, int]:
     row_values = {normalize_key(key): normalize_key(value) for key, value in row.items() if str(value or '').strip()}
     row_url = row_values.get('url') or row_values.get('link') or ''
     row_code = row_values.get('codigo') or row_values.get('sku') or row_values.get('referencia') or ''
@@ -241,10 +245,11 @@ def _best_match_stock(row: dict[str, str], candidates: list[StockCandidate]) -> 
         if row_name and item_name:
             words = set(row_name.split()) & set(item_name.split())
             score += min(60, len(words) * 8)
+        score += min(20, item.confidence // 5)
         if score > best_score:
             best_score = score
             best_stock = item.stock
-    return best_stock if best_score >= 24 else ''
+    return best_stock, best_score
 
 
 def contract_has_stock(columns: Iterable[str]) -> bool:
@@ -288,12 +293,11 @@ def apply_flash_stock_complement(df: pd.DataFrame, raw_urls: str, requested_colu
 
     for idx, row in out.iterrows():
         row_dict = {str(k): str(v or '') for k, v in row.to_dict().items()}
-        stock = _best_match_stock(row_dict, candidates)
-        if not stock:
+        stock, score = _best_match_stock(row_dict, candidates)
+        if not stock or score < STRONG_MATCH_SCORE:
             continue
         for column in stock_columns:
-            if not str(out.at[idx, column]).strip() or str(out.at[idx, column]).strip() == '1':
-                out.at[idx, column] = stock
+            out.at[idx, column] = stock
 
     for column in columns:
         if column not in out.columns:
