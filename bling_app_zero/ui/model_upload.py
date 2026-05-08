@@ -94,8 +94,11 @@ def render_model_upload_box(
     operation: str,
     key: str,
     required_model: bool = False,
+    caption: str | None = None,
 ) -> ModelUploadResult:
     st.markdown(f'#### {title}')
+    if caption:
+        st.caption(caption)
 
     files = st.file_uploader(
         'Anexar modelo',
