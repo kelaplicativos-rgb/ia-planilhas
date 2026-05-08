@@ -192,6 +192,26 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
     )
 
 
+def _render_upload_header(title: str) -> None:
+    clean_title = str(title).replace('📎', '').strip()
+    st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="bling-upload-caption">Envie a origem e, se quiser, o modelo do Bling. A identificação acontece automaticamente.</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_detected_files(result: SmartUploadResult, supported_files: list[Any]) -> None:
+    with st.expander(f'{len(supported_files)} arquivo(s) aceito(s)', expanded=False):
+        for file in supported_files:
+            role = 'Origem'
+            if result.cadastro_model_file is file:
+                role = 'Modelo cadastro Bling'
+            elif result.estoque_model_file is file:
+                role = 'Modelo estoque Bling'
+            st.write(f'**{role}:** {_file_name(file)}')
+
+
 def render_smart_upload_box(
     title: str,
     operation: str,
@@ -200,11 +220,10 @@ def render_smart_upload_box(
     required_model: bool = False,
     accepted_types: list[str] | None = None,
 ) -> SmartUploadResult:
-    st.markdown(f'#### {title}')
-    st.caption('Selecione os arquivos. O sistema identifica automaticamente a origem e os modelos quando possível.')
+    _render_upload_header(title)
 
     files = st.file_uploader(
-        '📎 Anexar arquivos',
+        'Anexar arquivos',
         type=None,
         accept_multiple_files=True,
         key=key,
@@ -212,7 +231,6 @@ def render_smart_upload_box(
     )
 
     if not files:
-        st.info('Nenhum arquivo anexado ainda.')
         return SmartUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
@@ -229,28 +247,21 @@ def render_smart_upload_box(
         return SmartUploadResult(attachments=[], ignored_files=ignored_files)
 
     result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
-
-    st.success(f'{len(supported_files)} arquivo(s) anexado(s) e aceito(s).')
-    cards = st.columns(min(len(supported_files), 3))
-    for index, file in enumerate(supported_files):
-        with cards[index % len(cards)]:
-            role = 'Origem'
-            if result.cadastro_model_file is file:
-                role = 'Modelo cadastro Bling'
-            elif result.estoque_model_file is file:
-                role = 'Modelo estoque Bling'
-            st.info(f'📎 {role}\n\n{_file_name(file)}')
+    _render_detected_files(result, supported_files)
 
     if result.source_df is not None:
-        preview_df('Preview automático da origem detectada', result.source_df)
+        with st.expander('Preview automático da origem detectada', expanded=False):
+            preview_df('Origem detectada', result.source_df)
     elif result.source_file is not None:
         st.warning(f'Origem detectada, mas ainda sem preview tabular: {_file_name(result.source_file)}')
 
     if allow_model:
         if result.cadastro_model_df is not None:
-            preview_df('Preview do modelo de cadastro', result.cadastro_model_df)
+            with st.expander('Preview do modelo de cadastro', expanded=False):
+                preview_df('Modelo de cadastro', result.cadastro_model_df)
         if result.estoque_model_df is not None:
-            preview_df('Preview do modelo de estoque', result.estoque_model_df)
+            with st.expander('Preview do modelo de estoque', expanded=False):
+                preview_df('Modelo de estoque', result.estoque_model_df)
         if required_model and result.model_df is None:
             st.warning('Modelo Bling ainda não detectado. Anexe o modelo junto da origem.')
 
