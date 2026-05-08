@@ -6,7 +6,6 @@ import streamlit as st
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
 from bling_app_zero.flows.site_operation_router import (
     config_for_site_operation,
-    normalize_site_operation,
     run_site_engine,
 )
 from bling_app_zero.ui.home_shared import (
