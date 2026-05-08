@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
+from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
@@ -26,9 +27,17 @@ class _NamedBytesIO(BytesIO):
 def _preview_context(label: str):
     level = int(st.session_state.get(_PREVIEW_NESTING_KEY, 0) or 0)
     st.session_state[_PREVIEW_NESTING_KEY] = level + 1
+    opened_expander = False
     try:
         if level == 0:
-            with st.expander(label, expanded=False):
+            try:
+                with st.expander(label, expanded=False):
+                    opened_expander = True
+                    yield
+            except StreamlitAPIException as exc:
+                if 'Expanders may not be nested' not in str(exc):
+                    raise
+                st.markdown(f'##### {label}')
                 yield
         else:
             st.markdown(f'##### {label}')
@@ -36,6 +45,7 @@ def _preview_context(label: str):
     finally:
         current = int(st.session_state.get(_PREVIEW_NESTING_KEY, 1) or 1)
         st.session_state[_PREVIEW_NESTING_KEY] = max(0, current - 1)
+        _ = opened_expander
 
 
 @st.cache_data(show_spinner=False)
