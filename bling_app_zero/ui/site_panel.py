@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import pandas as pd
 import streamlit as st
 
@@ -14,6 +16,39 @@ from bling_app_zero.ui.home_shared import (
     show_mapping,
 )
 from bling_app_zero.ui.model_upload import render_model_upload_box
+
+
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name, '')
+        if isinstance(value, list):
+            return str(value[0] if value else '')
+        return str(value or '')
+    except Exception:
+        return ''
+
+
+def _query_urls_default() -> str:
+    return _query_param('urls') or _query_param('url')
+
+
+def _base_app_url() -> str:
+    try:
+        return str(st.secrets.get('app', {}).get('public_base_url') or '').strip().rstrip('/')
+    except Exception:
+        return ''
+
+
+def _current_or_public_base_url() -> str:
+    return _base_app_url() or 'https://ia-planilhas.streamlit.app'
+
+
+def _direct_site_link(operation: str, raw_urls: str) -> str:
+    flow = 'cadastro_site' if operation == 'cadastro' else 'estoque_site'
+    base = _current_or_public_base_url()
+    if raw_urls.strip():
+        return f'{base}/?flow={flow}&url={quote(raw_urls.strip(), safe="")}'
+    return f'{base}/?flow={flow}'
 
 
 def _unique_columns(columns: list[str]) -> list[str]:
@@ -70,6 +105,24 @@ def _requested_columns_for_site_capture(
         merged = _unique_columns(cadastro_columns + estoque_columns)
         return merged or None
     return _columns_from_df(df_modelo_operacao) or None
+
+
+def _operation_from_query(default_operation: str = 'cadastro') -> str:
+    flow = _query_param('flow').lower().strip()
+    operation = _query_param('operation').lower().strip()
+    if flow == 'estoque_site' or operation == 'estoque':
+        return 'estoque'
+    if flow == 'cadastro_site' or operation == 'cadastro':
+        return 'cadastro'
+    return default_operation
+
+
+def _render_direct_links(raw_urls: str) -> None:
+    st.markdown('#### Links diretos usando esta mesma fonte')
+    cadastro_link = _direct_site_link('cadastro', raw_urls)
+    estoque_link = _direct_site_link('estoque', raw_urls)
+    st.markdown(f'[Abrir busca por site para Cadastro de Produtos]({cadastro_link})')
+    st.markdown(f'[Abrir busca por site para Atualização de Estoque]({estoque_link})')
 
 
 def _render_site_cadastro_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
@@ -162,9 +215,12 @@ def _render_cadastro_site_same_as_planilha(
 
 def render_site_panel() -> None:
     st.info('A busca por site muda apenas a ORIGEM. A operação continua sendo Cadastro ou Estoque conforme escolhido.')
-    st.caption('Tecnologia ativa: FLASH AMPLO + extração orientada pela operação escolhida.')
+    st.caption('Tecnologia ativa: IA prioritária + complemento Flash/XML/Sitemaps para saldo real quando o contrato pedir estoque.')
 
-    modo = st.radio('Operação que receberá a origem site', ['Cadastro de Produtos', 'Atualização de Estoque'], horizontal=True)
+    default_operation = _operation_from_query('cadastro')
+    operation_options = ['Cadastro de Produtos', 'Atualização de Estoque']
+    default_index = 0 if default_operation == 'cadastro' else 1
+    modo = st.radio('Operação que receberá a origem site', operation_options, index=default_index, horizontal=True)
     operation = 'cadastro' if modo == 'Cadastro de Produtos' else 'estoque'
 
     upload = render_model_upload_box(
@@ -200,16 +256,23 @@ def render_site_panel() -> None:
     if operation == 'estoque':
         deposito = st.text_input('Nome do depósito para estoque por site', value='Não definido')
 
-    raw_urls = st.text_area('URL inicial, categoria, home ou links de produtos', height=180, key='urls_site')
+    raw_urls = st.text_area(
+        'URL inicial, categoria, home ou links de produtos',
+        value=_query_urls_default(),
+        height=180,
+        key='urls_site',
+    )
 
-    all_products = st.checkbox('FLASH AMPLO: varrer site/categoria e buscar todos os produtos encontrados', value=True)
+    _render_direct_links(raw_urls)
+
+    all_products = st.checkbox('IA + Flash/XML: varrer site/categoria e buscar todos os produtos encontrados', value=True)
     col_limit_a, col_limit_b = st.columns(2)
-    max_pages = int(col_limit_a.number_input('Limite de páginas varridas', min_value=10, max_value=3000, value=250, step=50))
+    max_pages = int(col_limit_a.number_input('Limite de páginas/feeds analisados', min_value=10, max_value=3000, value=250, step=50))
     max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=10000, value=1000, step=100))
 
     if st.button('Buscar produtos no site', use_container_width=True):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Varrendo site, descobrindo produtos e preparando a origem da operação...'):
+        with st.spinner('IA analisando a fonte, descobrindo produtos e complementando saldo real via XML/Sitemaps quando solicitado...'):
             df_site = run_site_pipeline(
                 raw_urls,
                 requested_columns=requested_columns,
