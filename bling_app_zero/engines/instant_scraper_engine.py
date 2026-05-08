@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup, Tag
 from bling_app_zero.core.column_contract import RequestedField, build_contract
 from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.engines.ai_scraper_assist import enrich_row_with_ai
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
@@ -133,7 +134,6 @@ def discover_product_links(start_urls: list[str], max_pages: int = 250, max_prod
     queue: deque[str] = deque(starts)
     visited: set[str] = set()
     products: list[str] = []
-
     while queue and len(visited) < max_pages and len(products) < max_products:
         url = queue.popleft()
         if url in visited:
@@ -142,12 +142,10 @@ def discover_product_links(start_urls: list[str], max_pages: int = 250, max_prod
         page = _make_page(url)
         if page is None:
             continue
-
         if _is_product_like_page(page) and url not in products:
             products.append(url)
             if len(products) >= max_products:
                 break
-
         links = _extract_links(page)
         links = sorted(links, key=lambda item: 0 if _is_product_like_url(item) else 1)
         for link in links:
@@ -159,7 +157,6 @@ def discover_product_links(start_urls: list[str], max_pages: int = 250, max_prod
                     break
             if len(queue) + len(visited) < max_pages:
                 queue.append(link)
-
     if not products:
         products = starts[:max_products]
     return products[:max_products]
@@ -196,14 +193,9 @@ def _extract_repeating_cards(soup: BeautifulSoup) -> list[Tag]:
         score = _score_repeating_node(node)
         if score >= 40:
             candidates.append(node)
-
     signatures = Counter(_node_signature(node) for node in candidates)
     repeating = [sig for sig, count in signatures.items() if count >= 2]
-    if repeating:
-        filtered = [node for node in candidates if _node_signature(node) in repeating]
-    else:
-        filtered = candidates
-
+    filtered = [node for node in candidates if _node_signature(node) in repeating] if repeating else candidates
     compact: list[Tag] = []
     seen_text: set[str] = set()
     for node in filtered:
@@ -240,19 +232,17 @@ def _jsonld_products(page: ScrapedPage) -> list[dict[str, str]]:
                 if isinstance(offer, list):
                     offer = offer[0] if offer else {}
                 offer = offer if isinstance(offer, dict) else {}
-                rows.append(
-                    {
-                        'url': clean_cell(item.get('url') or page.url),
-                        'codigo': clean_cell(item.get('sku') or item.get('mpn') or ''),
-                        'gtin': clean_gtin(item.get('gtin') or item.get('gtin13') or item.get('gtin14') or ''),
-                        'descricao': clean_cell(item.get('name') or ''),
-                        'preco': clean_cell(offer.get('price') or ''),
-                        'estoque': _availability_to_stock(clean_cell(offer.get('availability') or '')),
-                        'imagem': _join_images(item.get('image')),
-                        'marca': _brand_from_json(item.get('brand')),
-                        'categoria': clean_cell(item.get('category') or ''),
-                    }
-                )
+                rows.append({
+                    'url': clean_cell(item.get('url') or page.url),
+                    'codigo': clean_cell(item.get('sku') or item.get('mpn') or ''),
+                    'gtin': clean_gtin(item.get('gtin') or item.get('gtin13') or item.get('gtin14') or ''),
+                    'descricao': clean_cell(item.get('name') or ''),
+                    'preco': clean_cell(offer.get('price') or ''),
+                    'estoque': _availability_to_stock(clean_cell(offer.get('availability') or '')),
+                    'imagem': _join_images(item.get('image')),
+                    'marca': _brand_from_json(item.get('brand')),
+                    'categoria': clean_cell(item.get('category') or ''),
+                })
             for value in item.values():
                 if isinstance(value, (dict, list)):
                     queue.append(value)
@@ -380,10 +370,8 @@ def _page_single_product_row(page: ScrapedPage) -> dict[str, str]:
         title = clean_cell(h1.get_text(' ', strip=True)) if h1 else ''
     if not title and page.soup.title:
         title = clean_cell(page.soup.title.get_text(' ', strip=True))
-
     meta_price = page.soup.find('meta', property='product:price:amount')
     price = clean_cell(meta_price.get('content')) if meta_price and meta_price.get('content') else _text_price(page.text)
-
     return {
         'url': page.url,
         'codigo': _text_code(page.text),
@@ -406,7 +394,6 @@ def _generic_rows_from_page(page: ScrapedPage) -> list[dict[str, str]]:
             rows.append(row)
     if not rows or _is_product_like_page(page):
         rows.append(_page_single_product_row(page))
-
     unique: list[dict[str, str]] = []
     seen: set[str] = set()
     for row in rows:
@@ -455,6 +442,10 @@ def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return out.loc[:, columns].fillna('')
 
 
+def _has_missing_requested_value(row: dict[str, str], contract: list[RequestedField]) -> bool:
+    return any(not str(row.get(field.original, '')).strip() for field in contract)
+
+
 def run_instant_scraper(
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
@@ -468,7 +459,6 @@ def run_instant_scraper(
     contract = build_contract(requested_columns or [])
     if not start_urls:
         return pd.DataFrame(columns=[field.original for field in contract])
-
     urls = discover_product_links(start_urls, max_pages=max_pages, max_products=max_products) if all_products else start_urls
     rows: list[dict[str, str]] = []
     for url in urls[:max_products]:
@@ -478,31 +468,37 @@ def run_instant_scraper(
         generic_rows = _generic_rows_from_page(page)
         for generic in generic_rows:
             if contract:
-                rows.append(_map_generic_to_contract(generic, contract))
+                row = _map_generic_to_contract(generic, contract)
+                if _has_missing_requested_value(row, contract):
+                    row = enrich_row_with_ai(
+                        current_row=row,
+                        contract=contract,
+                        page_url=generic.get('url') or page.url,
+                        page_text=page.text,
+                        operation=operation,
+                    )
+                rows.append(row)
             else:
-                rows.append(
-                    {
-                        'URL': generic.get('url', ''),
-                        'Código': generic.get('codigo', ''),
-                        'SKU': generic.get('codigo', ''),
-                        'GTIN': generic.get('gtin', ''),
-                        'Descrição': generic.get('descricao', ''),
-                        'Nome': generic.get('descricao', ''),
-                        'Preço': generic.get('preco', ''),
-                        'Preço unitário (OBRIGATÓRIO)': generic.get('preco', ''),
-                        'Estoque': generic.get('estoque', ''),
-                        'Balanço (OBRIGATÓRIO)': generic.get('estoque', ''),
-                        'URL Imagens': generic.get('imagem', ''),
-                        'Imagens': generic.get('imagem', ''),
-                        'Marca': generic.get('marca', ''),
-                        'Categoria': generic.get('categoria', ''),
-                    }
-                )
+                rows.append({
+                    'URL': generic.get('url', ''),
+                    'Código': generic.get('codigo', ''),
+                    'SKU': generic.get('codigo', ''),
+                    'GTIN': generic.get('gtin', ''),
+                    'Descrição': generic.get('descricao', ''),
+                    'Nome': generic.get('descricao', ''),
+                    'Preço': generic.get('preco', ''),
+                    'Preço unitário (OBRIGATÓRIO)': generic.get('preco', ''),
+                    'Estoque': generic.get('estoque', ''),
+                    'Balanço (OBRIGATÓRIO)': generic.get('estoque', ''),
+                    'URL Imagens': generic.get('imagem', ''),
+                    'Imagens': generic.get('imagem', ''),
+                    'Marca': generic.get('marca', ''),
+                    'Categoria': generic.get('categoria', ''),
+                })
             if len(rows) >= max_products:
                 break
         if len(rows) >= max_products:
             break
-
     df = pd.DataFrame(rows).fillna('')
     if contract and keep_only_requested_columns:
         df = _ensure_columns(df, [field.original for field in contract])
