@@ -219,7 +219,7 @@ def render_smart_upload_box(
 
     files = st.file_uploader(
         'Enviar arquivos do fornecedor',
-        type=accepted_types or SUPPORTED_TYPES,
+        type=None,
         accept_multiple_files=True,
         key=key,
         help='Envie planilha, PDF, XML e modelos do Bling quando tiver.',
