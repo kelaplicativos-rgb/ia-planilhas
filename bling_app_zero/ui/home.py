@@ -5,15 +5,17 @@ import streamlit as st
 from bling_app_zero.ui.clean_layout import inject_clean_home_css, render_compact_hero, render_step_title
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
+from bling_app_zero.ui.home_models import render_home_bling_models
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
 
 def _render_home_intro() -> None:
     render_step_title(
         'O que você quer fazer?',
-        'Escolha o fluxo. O envio do modelo e dos dados aparece no próximo passo, conforme a operação escolhida.',
+        'Escolha o fluxo. Os modelos do Bling ficam salvos uma vez e são reutilizados nos próximos passos.',
     )
     render_flow_selector()
+    render_home_bling_models()
 
 
 def _render_back_home() -> None:
