@@ -121,16 +121,17 @@ def render_model_upload_box(
     required_model: bool = False,
     caption: str | None = None,
 ) -> ModelUploadResult:
-    st.markdown(f'#### {title}')
+    st.markdown(f'<div class="bling-upload-title">{title}</div>', unsafe_allow_html=True)
     if caption:
-        st.caption(caption)
+        st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
+    st.caption('Toque em procurar arquivos e selecione a planilha modelo oficial do Bling.')
     files = st.file_uploader(
-        'Anexar modelos do Bling',
-        type=None,
+        'Procurar arquivos dos modelos do Bling',
+        type=MODEL_SPREADSHEET_TYPES,
         accept_multiple_files=True,
         key=key,
-        label_visibility='collapsed',
+        help='Formatos aceitos: XLSX, XLS, CSV, XLSM e XLSB.',
     )
 
     if not files:
