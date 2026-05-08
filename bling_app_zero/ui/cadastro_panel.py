@@ -174,7 +174,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.rerun()
 
 
-def _render_dual_stock_output(df_source: pd.DataFrame) -> None:
+def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Gerar também atualização de estoque')
     gerar_estoque = st.checkbox(
         'Gerar CSV de atualização de estoque usando esta mesma origem',
@@ -194,7 +194,7 @@ def _render_dual_stock_output(df_source: pd.DataFrame) -> None:
     )
 
     run_estoque_pipeline = load_estoque_pipeline()
-    df_final_estoque, mapping_estoque = run_estoque_pipeline(df_source, None, deposito=deposito)
+    df_final_estoque, mapping_estoque = run_estoque_pipeline(df_source, df_modelo_estoque, deposito=deposito)
     st.session_state['df_final_estoque_from_cadastro'] = df_final_estoque
     st.session_state['mapping_estoque_from_cadastro'] = mapping_estoque
 
@@ -216,7 +216,8 @@ def render_cadastro_panel() -> None:
     )
 
     df_origem = upload.source_df
-    df_modelo = upload.model_df
+    df_modelo = upload.cadastro_model_df or upload.model_df
+    df_modelo_estoque = upload.estoque_model_df
 
     if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
         usar_preco = st.checkbox('Aplicar calculadora de preço antes do mapeamento', value=False)
@@ -294,7 +295,7 @@ def render_cadastro_panel() -> None:
 
         df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_origem)
         _render_manual_mapping(df_para_mapear, df_modelo)
-        _render_dual_stock_output(df_para_mapear)
+        _render_dual_stock_output(df_para_mapear, df_modelo_estoque)
     elif upload.attachments:
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o cadastro.')
 
