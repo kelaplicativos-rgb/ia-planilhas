@@ -140,6 +140,14 @@ def _pick_best_candidate(loaded: list[tuple[Any, pd.DataFrame | None]], scorer) 
     return file, df, int(scorer(file, df))
 
 
+def _is_same_file(left: Any, right: Any) -> bool:
+    return left is right
+
+
+def _is_any_same_file(file: Any, candidates: list[Any]) -> bool:
+    return any(_is_same_file(file, candidate) for candidate in candidates if candidate is not None)
+
+
 def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files: list[Any] | None = None) -> SmartUploadResult:
     loaded: list[tuple[Any, pd.DataFrame | None]] = [(file, _safe_read(file)) for file in files]
     if not loaded:
@@ -158,8 +166,8 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
         if estoque_score < 45:
             estoque_file, estoque_df = None, None
 
-    model_files = {file for file in [cadastro_file, estoque_file] if file is not None}
-    source_candidates = [item for item in loaded if item[0] not in model_files]
+    model_files = [file for file in [cadastro_file, estoque_file] if file is not None]
+    source_candidates = [item for item in loaded if not _is_any_same_file(item[0], model_files)]
     if not source_candidates:
         source_candidates = loaded
 
