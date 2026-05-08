@@ -11,11 +11,53 @@ SITE_CADASTRO_MODEL_KEY = 'site_modelo_cadastro_como_planilha'
 SITE_ESTOQUE_MODEL_KEY = 'site_modelo_estoque_como_planilha'
 SITE_OPERATION_MODEL_KEY = 'site_modelo_operacao_como_planilha'
 
+PLANILHA_SOURCE_KEYS = [
+    'df_origem',
+    'df_origem_cadastro',
+    'df_origem_planilha',
+    'df_produtos_origem',
+    'df_source',
+]
+PLANILHA_MODEL_CADASTRO_KEYS = [
+    'df_modelo_cadastro',
+    'modelo_cadastro_df',
+]
+PLANILHA_MODEL_ESTOQUE_KEYS = [
+    'df_modelo_estoque',
+    'modelo_estoque_df',
+]
+
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         return df.copy().fillna('')
     return None
+
+
+def _mirror_as_uploaded_planilha(
+    df: pd.DataFrame,
+    cadastro_model_df: pd.DataFrame | None = None,
+    estoque_model_df: pd.DataFrame | None = None,
+) -> None:
+    """Faz a origem gerada por site aparecer como se fosse planilha anexada."""
+    origem = _copy_df(df) or pd.DataFrame()
+    for key in PLANILHA_SOURCE_KEYS:
+        st.session_state[key] = origem.copy().fillna('')
+
+    cadastro_model = _copy_df(cadastro_model_df)
+    estoque_model = _copy_df(estoque_model_df)
+
+    if cadastro_model is not None:
+        for key in PLANILHA_MODEL_CADASTRO_KEYS:
+            st.session_state[key] = cadastro_model.copy().fillna('')
+    if estoque_model is not None:
+        for key in PLANILHA_MODEL_ESTOQUE_KEYS:
+            st.session_state[key] = estoque_model.copy().fillna('')
+
+    st.session_state['origem_dados'] = 'planilha'
+    st.session_state['origem_tipo'] = 'planilha'
+    st.session_state['origem_planilha_via_site'] = True
+    st.session_state['site_gerou_origem_planilha'] = True
 
 
 def set_site_source_as_planilha(
@@ -43,6 +85,12 @@ def set_site_source_as_planilha(
         st.session_state[SITE_ESTOQUE_MODEL_KEY] = estoque_model
     if operation_model is not None:
         st.session_state[SITE_OPERATION_MODEL_KEY] = operation_model
+
+    _mirror_as_uploaded_planilha(
+        df=df,
+        cadastro_model_df=cadastro_model or operation_model,
+        estoque_model_df=estoque_model,
+    )
 
 
 def get_site_source_for_operation(operation: str) -> pd.DataFrame | None:
@@ -83,6 +131,13 @@ def clear_site_source() -> None:
         SITE_CADASTRO_MODEL_KEY,
         SITE_ESTOQUE_MODEL_KEY,
         SITE_OPERATION_MODEL_KEY,
+        *PLANILHA_SOURCE_KEYS,
+        *PLANILHA_MODEL_CADASTRO_KEYS,
+        *PLANILHA_MODEL_ESTOQUE_KEYS,
+        'origem_dados',
+        'origem_tipo',
+        'origem_planilha_via_site',
+        'site_gerou_origem_planilha',
     ]:
         st.session_state.pop(key, None)
 
