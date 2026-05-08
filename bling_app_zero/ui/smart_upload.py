@@ -248,11 +248,9 @@ def render_smart_upload_box(
 
     if allow_model:
         if result.cadastro_model_df is not None:
-            with st.expander('Modelo cadastro Bling detectado', expanded=False):
-                preview_df('Preview do modelo de cadastro', result.cadastro_model_df)
+            preview_df('Preview do modelo de cadastro', result.cadastro_model_df)
         if result.estoque_model_df is not None:
-            with st.expander('Modelo estoque Bling detectado', expanded=False):
-                preview_df('Preview do modelo de estoque', result.estoque_model_df)
+            preview_df('Preview do modelo de estoque', result.estoque_model_df)
         if required_model and result.model_df is None:
             st.warning('Modelo Bling ainda não detectado. Anexe o modelo junto da origem.')
 
