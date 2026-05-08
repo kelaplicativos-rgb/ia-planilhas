@@ -318,10 +318,11 @@ def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Dat
 
 
 def render_cadastro_panel() -> None:
-    st.success('Motor independente de CADASTRO será carregado somente quando gerar.')
+    with st.expander('Detalhes técnicos do motor de cadastro', expanded=False):
+        st.caption('Motor independente de CADASTRO será carregado somente quando gerar.')
 
     upload = render_smart_upload_box(
-        title='📎 Anexos do cadastro',
+        title='Anexos do cadastro',
         operation='cadastro',
         key='smart_upload_cadastro',
         allow_model=True,
