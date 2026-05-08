@@ -121,9 +121,50 @@ def _save_site_source(
     )
 
 
+def _source_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+
+
+def _render_generated_origin_actions(
+    df_site: pd.DataFrame,
+    operation: str,
+    raw_urls: str,
+    requested_columns: list[str] | None,
+    df_modelo_cadastro: pd.DataFrame | None,
+    df_modelo_estoque: pd.DataFrame | None,
+    df_modelo: pd.DataFrame | None,
+) -> None:
+    if not isinstance(df_site, pd.DataFrame) or df_site.empty:
+        return
+
+    preview_df('Planilha de origem gerada por Scraper', df_site)
+    st.download_button(
+        '⬇️ Baixar planilha de origem gerada pelo Scraper',
+        data=_source_csv_bytes(df_site),
+        file_name=f'origem_site_{operation}.csv',
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=f'download_origem_site_{operation}_{len(df_site)}_{len(df_site.columns)}',
+    )
+
+    st.caption('Esta planilha já está inserida internamente como fornecedor de dados. O próximo passo usa o mesmo fluxo da origem por planilha.')
+    if st.button('Continuar para mapeamento / preview final', use_container_width=True, key='continuar_fluxo_planilha_site'):
+        _save_site_source(
+            df_site=df_site,
+            operation=operation,
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            df_modelo_cadastro=df_modelo_cadastro,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo,
+        )
+        _go_to_main_operation(operation)
+        st.rerun()
+
+
 def render_site_panel() -> None:
-    st.info('A busca por site agora prepara uma ORIGEM DE DADOS. Depois da captura, ela segue o mesmo fluxo da origem por planilha.')
-    st.caption('Tecnologia ativa: IA prioritária + complemento Flash/XML/Sitemaps para saldo real quando o contrato pedir estoque.')
+    st.info('Etapa 1: gerar a planilha de origem por Scraper. Depois ela entra no mesmo fluxo da origem por planilha do fornecedor.')
+    st.caption('Fluxo ajustado para velocidade: primeiro gera a origem por Scraper rápido; depois mapeia, revisa e baixa o CSV final no fluxo normal.')
 
     default_operation = _operation_from_query('cadastro')
     operation_options = ['Cadastro de Produtos', 'Atualização de Estoque']
@@ -155,7 +196,7 @@ def render_site_panel() -> None:
             requested_columns = requested_columns_from_model(df_modelo)
         show_contract(requested_columns)
     else:
-        st.warning('Sem modelo anexado, a IA usará colunas padrão da operação. Para contrato rígido, anexe o modelo do Bling antes de buscar.')
+        st.warning('Sem modelo anexado, o Scraper usará colunas padrão da operação. Para contrato rígido, anexe o modelo do Bling antes de buscar.')
 
     raw_urls = st.text_area(
         'URL inicial, categoria, home ou links de produtos',
@@ -166,12 +207,13 @@ def render_site_panel() -> None:
 
     all_products = st.checkbox('Varrer site/categoria e buscar todos os produtos encontrados', value=True)
     col_limit_a, col_limit_b = st.columns(2)
-    max_pages = int(col_limit_a.number_input('Limite de páginas/feeds analisados', min_value=10, max_value=3000, value=250, step=50))
-    max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=10000, value=1000, step=100))
+    max_pages = int(col_limit_a.number_input('Limite de páginas/feeds analisados', min_value=10, max_value=1000, value=120, step=20))
+    max_products = int(col_limit_b.number_input('Limite de produtos capturados', min_value=10, max_value=5000, value=300, step=50))
 
-    if st.button('Capturar origem por site e continuar no fluxo da planilha', use_container_width=True):
+    st.markdown('#### 1. Gerar planilha de origem')
+    if st.button('Gerar planilha de origem por Scraper', use_container_width=True):
         run_site_pipeline = load_site_pipeline()
-        with st.spinner('Capturando origem por site com IA e complementando saldo real via XML/Sitemaps quando solicitado...'):
+        with st.spinner('Gerando planilha de origem por Scraper rápido...'):
             df_site = run_site_pipeline(
                 raw_urls,
                 requested_columns=requested_columns,
@@ -191,23 +233,21 @@ def render_site_panel() -> None:
         )
         st.session_state['df_site_bruto'] = df_site
         st.session_state['operation_site'] = operation
-        st.success('Origem por site capturada. Ela agora será usada no mesmo fluxo da origem por planilha.')
-        preview_df('Origem por site capturada', df_site)
-        _go_to_main_operation(operation)
-        st.rerun()
+        st.success('Planilha de origem gerada e inserida internamente como fornecedor de dados.')
 
     df_site_bruto = st.session_state.get('df_site_bruto')
+    operation_state = str(st.session_state.get('operation_site') or operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        preview_df('Última origem por site capturada', df_site_bruto)
-        if st.button('Usar esta origem no fluxo da planilha', use_container_width=True, key='usar_ultima_origem_site'):
-            _save_site_source(
-                df_site=df_site_bruto,
-                operation=operation,
-                raw_urls=raw_urls,
-                requested_columns=requested_columns,
-                df_modelo_cadastro=df_modelo_cadastro,
-                df_modelo_estoque=df_modelo_estoque,
-                df_modelo=df_modelo,
-            )
-            _go_to_main_operation(operation)
-            st.rerun()
+        st.markdown('#### 2. Usar planilha de origem no fluxo normal')
+        _render_generated_origin_actions(
+            df_site=df_site_bruto,
+            operation=operation_state,
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            df_modelo_cadastro=df_modelo_cadastro,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo,
+        )
+    else:
+        st.markdown('#### 2. Já tenho a planilha de origem')
+        st.caption('Se você já baixou ou já tem a planilha do fornecedor, use diretamente o fluxo Cadastro ou Estoque e anexe em “Anexos do cadastro/estoque”.')
