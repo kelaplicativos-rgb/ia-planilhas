@@ -12,12 +12,12 @@ STEP_PLANILHA = 'planilha'
 
 STEP_LABELS = {
     STEP_SITE: 'Buscar no site',
-    STEP_PLANILHA: 'Planilha',
+    STEP_PLANILHA: 'Enviar planilha',
 }
 
 STEP_HELP = {
-    STEP_SITE: 'Gerar origem',
-    STEP_PLANILHA: 'Anexar origem',
+    STEP_SITE: 'Busca produtos nos links e cria uma planilha.',
+    STEP_PLANILHA: 'Use uma planilha pronta do fornecedor.',
 }
 
 
@@ -108,7 +108,7 @@ def render_flow_selector() -> str:
 
     st.caption(STEP_HELP.get(current, ''))
 
-    button_label = 'Abrir busca' if current == STEP_SITE else 'Anexar planilha'
+    button_label = 'Abrir busca' if current == STEP_SITE else 'Enviar planilha'
     if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
         activate_current_step(current)
         st.rerun()
