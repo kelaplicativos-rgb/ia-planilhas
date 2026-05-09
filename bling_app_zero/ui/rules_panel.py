@@ -75,8 +75,8 @@ def render_rules_panel() -> None:
                     st.success('Regras restauradas.')
                     st.rerun()
 
-            with st.expander('Ver regras atuais', expanded=False):
-                current = get_user_rules()
-                for option in RULE_OPTIONS:
-                    value = current.get(option.key, default_rules().get(option.key, ''))
-                    st.caption(f'{option.label}: {value}')
+            st.markdown('##### Regras atuais')
+            current = get_user_rules()
+            for option in RULE_OPTIONS:
+                value = current.get(option.key, default_rules().get(option.key, ''))
+                st.caption(f'{option.label}: {value}')
