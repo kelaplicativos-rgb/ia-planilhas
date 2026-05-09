@@ -39,12 +39,6 @@ PRICE_TARGET_ALIASES = [
     'Valor',
 ]
 
-SIGNAL_STYLES = {
-    'verde': {'bg': '#E8F7EE', 'fg': '#087A34', 'border': '#A8E4BC'},
-    'amarelo': {'bg': '#FFF7D6', 'fg': '#8A6500', 'border': '#F2D36B'},
-    'vermelho': {'bg': '#FFE8E8', 'fg': '#A01818', 'border': '#F0A5A5'},
-}
-
 
 def _apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty or calculated_column not in df.columns:
@@ -145,32 +139,30 @@ def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> No
         return
     safe_text = html.escape(text)
     st.markdown(
-        f"<div style='font-size:14px; color:#118a32; margin-top:-7px; margin-bottom:8px; font-weight:700;'>"
+        f"<div style='font-size:14px; color:#118a32; margin-top:-6px; margin-bottom:8px; font-weight:700;'>"
         f"{safe_text}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
 
-def _render_signal(info: dict[str, object]) -> None:
-    level = str(info.get('level') or 'vermelho')
-    style = SIGNAL_STYLES.get(level, SIGNAL_STYLES['vermelho'])
-    emoji = html.escape(str(info.get('emoji') or '🔴'))
-    label = html.escape(str(info.get('label') or 'alterar'))
-    score = int(info.get('score') or 0)
-    st.markdown(
-        f"<div style='display:inline-flex; align-items:center; gap:6px; margin:-4px 0 8px 0; "
-        f"padding:5px 9px; border-radius:999px; border:1px solid {style['border']}; "
-        f"background:{style['bg']}; color:{style['fg']}; font-size:13px; font-weight:800;'>"
-        f"<span>{emoji}</span><span>{label}</span><span>{score}%</span></div>",
-        unsafe_allow_html=True,
-    )
-
-
 def _signal_label(target: str, info: dict[str, object]) -> str:
     emoji = str(info.get('emoji') or '🔴')
-    label = str(info.get('label') or 'alterar')
-    return f'{emoji} {target} — {label}'
+    return f'{emoji} {target}'
+
+
+def _current_confidence_from_widgets(
+    df_source: pd.DataFrame,
+    target_columns: list[str],
+    current_mapping: dict[str, str],
+    mapping_key: str,
+) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for target in target_columns:
+        widget_key = f'{mapping_key}_{target}'
+        selected = st.session_state.get(widget_key, current_mapping.get(target, ''))
+        result[target] = confidence_for_mapping(df_source, target, selected)
+    return result
 
 
 def _force_price_suggestion(target: str, source_columns: list[str], suggested: str) -> str:
@@ -205,13 +197,13 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
         st.session_state[mapping_key] = auto_mapping
 
     st.markdown('#### 2. Conferir colunas')
-    st.caption('Vermelhos ficam em cima para corrigir primeiro. Verdes ficam no final porque estão seguros.')
+    st.caption('🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
 
     with st.expander('Ver origem', expanded=False):
         preview_df('Origem para conferir', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    current_confidence = confidence_for_mapping_dict(df_source, current_mapping)
+    current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
@@ -231,7 +223,6 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             help=f'Campo de destino no Bling: {target}',
         )
         info_after = confidence_for_mapping(df_source, target, selected)
-        _render_signal(info_after)
         _show_first_row_preview(df_source, selected)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
@@ -284,13 +275,13 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
         st.session_state[mapping_key] = auto_mapping
 
     st.markdown('##### Conferir estoque')
-    st.caption('Vermelhos ficam em cima para corrigir primeiro. Verdes ficam no final.')
+    st.caption('🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
 
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    current_confidence = confidence_for_mapping_dict(df_source, current_mapping)
+    current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
@@ -301,13 +292,12 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
 
         if 'deposito' in target_key:
             st.text_input(
-                '🟢 ' + target + ' — 100% seguro',
+                '🟢 ' + target,
                 value=deposito,
                 disabled=True,
                 key=f'{widget_key}_deposito_visual',
                 help='Campo preenchido pelo depósito informado.',
             )
-            _render_signal({'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'score': 100})
             edited_mapping[target] = ''
             edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'score': 100, 'order': 2}
             continue
@@ -325,7 +315,6 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
             help=f'Campo de destino no estoque Bling: {target}',
         )
         info_after = confidence_for_mapping(df_source, target, selected)
-        _render_signal(info_after)
         _show_first_row_preview(df_source, selected)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
