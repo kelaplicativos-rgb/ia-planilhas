@@ -9,6 +9,7 @@ from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
     choose_site_estoque_model_df,
     choose_site_model_df,
+    has_home_site_model_for_operation,
     render_optional_site_model_upload,
     requested_columns_for_site_capture,
 )
@@ -33,22 +34,41 @@ def _query_urls_default() -> str:
     return _query_param('urls') or _query_param('url')
 
 
-def _render_site_models_step() -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
-    st.markdown('#### 1. Modelos do Bling')
-    upload = render_optional_site_model_upload()
+def _current_site_operation() -> str:
+    for key in ('tipo_operacao_site', 'operacao_final', 'tipo_operacao_final'):
+        value = str(st.session_state.get(key) or '').strip().lower()
+        if value in {'cadastro', 'estoque'}:
+            return value
+    flow = str(_query_param('flow') or _query_param('operacao') or '').strip().lower()
+    if flow in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
+        return 'estoque'
+    return 'cadastro'
+
+
+def _operation_label(operation: str) -> str:
+    return 'estoque' if operation == 'estoque' else 'cadastro'
+
+
+def _render_site_models_step(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
+    has_home_model = has_home_site_model_for_operation(operation)
+    if not has_home_model:
+        st.markdown('#### 1. Modelo do Bling')
+    upload = render_optional_site_model_upload(operation)
     df_modelo_cadastro = choose_site_cadastro_model_df(upload)
     df_modelo_estoque = choose_site_estoque_model_df(upload)
-    df_modelo = choose_site_model_df(upload)
-    requested_columns = requested_columns_for_site_capture(df_modelo_cadastro, df_modelo_estoque)
+    df_modelo = choose_site_model_df(upload, operation)
+    requested_columns = requested_columns_for_site_capture(operation, df_modelo_cadastro, df_modelo_estoque)
 
     if requested_columns:
         show_contract(requested_columns)
+    else:
+        st.info('Sem modelo da operação atual. A busca tentará capturar os campos principais e deixará vazios os não encontrados.')
 
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
-def _render_urls_input() -> str:
-    st.markdown('#### 2. Links do fornecedor')
+def _render_urls_input(step_number: int) -> str:
+    st.markdown(f'#### {step_number}. Links do fornecedor')
     return st.text_area(
         'Cole site, categoria ou produtos',
         value=_query_urls_default(),
@@ -60,6 +80,7 @@ def _render_urls_input() -> str:
 
 
 def _run_site_capture(
+    operation: str,
     raw_urls: str,
     requested_columns: list[str] | None,
     df_modelo_cadastro: pd.DataFrame | None,
@@ -70,7 +91,7 @@ def _run_site_capture(
     progress_bar = st.progress(0, text='Iniciando busca...')
     status_box = st.empty()
     df_site = run_site_engine(
-        operation='cadastro',
+        operation=operation,
         pipeline=load_site_pipeline(),
         raw_urls=raw_urls,
         requested_columns=requested_columns,
@@ -81,21 +102,31 @@ def _run_site_capture(
     )
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
     st.session_state['df_site_bruto'] = df_site
-    st.session_state['operation_site'] = 'cadastro'
+    st.session_state['operation_site'] = operation
+    st.session_state['tipo_operacao_site'] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['origem_final'] = 'site'
     st.rerun()
 
 
 def render_site_panel() -> None:
-    st.markdown('### Criar planilha pelo site')
-    st.caption('Informe os links. O sistema usa os modelos do Bling para buscar só as colunas necessárias.')
+    operation = _current_site_operation()
+    label = _operation_label(operation)
 
-    config_for_site_operation('cadastro')
-    _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_step()
-    raw_urls = _render_urls_input()
+    st.markdown(f'### Criar planilha de {label} pelo site')
+    st.caption('Informe os links. O sistema usa somente o modelo da operação escolhida para buscar as colunas necessárias.')
 
-    st.markdown('#### 3. Criar planilha')
-    if st.button('Criar planilha', use_container_width=True):
-        _run_site_capture(raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
+    config_for_site_operation(operation)
+    _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_step(operation)
+
+    url_step_number = 1 if has_home_site_model_for_operation(operation) else 2
+    raw_urls = _render_urls_input(url_step_number)
+
+    create_step_number = url_step_number + 1
+    st.markdown(f'#### {create_step_number}. Criar planilha')
+    button_label = 'Criar planilha de estoque' if operation == 'estoque' else 'Criar planilha de cadastro'
+    if st.button(button_label, use_container_width=True):
+        _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
