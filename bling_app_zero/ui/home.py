@@ -83,7 +83,7 @@ def _centered_two_buttons(left_label: str, left_key: str, right_label: str, righ
 
 def _render_home_start() -> None:
     render_home_start_card()
-    if _centered_button('Anexar modelos do Bling', key='home_start_open_models'):
+    if _centered_button('Começar agora', key='home_start_open_models'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
     close_home_start_card()
@@ -92,7 +92,7 @@ def _render_home_start() -> None:
 def _render_home_models_step() -> None:
     render_step_title(
         'Modelos do Bling',
-        'Anexe o modelo de cadastro, o modelo de estoque ou os dois.',
+        'Envie o modelo de cadastro, o modelo de estoque ou os dois. Isso evita colunas erradas no CSV final.',
     )
     _render_home_bling_models_lazy()
 
@@ -102,13 +102,13 @@ def _render_home_models_step() -> None:
         st.rerun()
     if continue_clicked:
         if not _has_home_models_strict():
-            st.warning('Anexe pelo menos um modelo para continuar.')
+            st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
         else:
             _set_home_stage(STAGE_PRECIFICACAO)
             st.rerun()
 
     if not _has_home_models_strict():
-        st.info('Anexe pelo menos um modelo para continuar.')
+        st.info('O modelo do Bling é a base que define as colunas do arquivo final.')
 
 
 def _render_pricing_choice_step() -> None:
@@ -116,9 +116,9 @@ def _render_pricing_choice_step() -> None:
     pricing_config = render_home_pricing_config_form()
 
     save_clicked, no_pricing_clicked = _centered_two_buttons(
-        'Salvar precificação e continuar',
+        'Salvar preço e continuar',
         'home_pricing_save_continue',
-        'Seguir sem precificar',
+        'Continuar sem calcular preço',
         'home_pricing_disable_continue',
     )
     if save_clicked:
@@ -137,18 +137,18 @@ def _render_pricing_choice_step() -> None:
 
 def _render_home_origin_step() -> None:
     render_step_title(
-        'O que você quer fazer?',
-        'Escolha a origem dos produtos. Os modelos anexados serão reutilizados nos próximos passos.',
+        'Escolha o caminho do arquivo final',
+        'Primeiro escolha cadastro ou estoque. Depois informe se os dados virão de site ou de arquivo.',
     )
     pricing = st.session_state.get(HOME_PRICING_KEY)
     if pricing is True:
-        st.success('Precificação configurada. A calculadora usará esses valores no cadastro de produtos.')
+        st.success('Precificação salva. O cadastro poderá usar o preço calculado automaticamente.')
     elif pricing is False:
-        st.info('Precificação desativada. O sistema seguirá com o preço da origem quando existir.')
+        st.info('Precificação desativada. O sistema usará o preço encontrado na origem, quando existir.')
     render_flow_selector()
 
     change_models, change_pricing = _centered_two_buttons(
-        'Trocar modelos do Bling',
+        'Trocar modelos',
         'home_origin_change_models',
         'Alterar precificação',
         'home_origin_change_pricing',
@@ -176,7 +176,7 @@ def _render_home_intro() -> None:
 
 
 def _render_back_home() -> None:
-    if _centered_button('← Início', key='home_back_to_light_start'):
+    if _centered_button('← Voltar para escolha inicial', key='home_back_to_light_start'):
         deactivate_panel()
         _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
         st.rerun()
