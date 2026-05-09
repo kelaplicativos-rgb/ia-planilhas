@@ -17,10 +17,10 @@ def inject_mapping_css() -> None:
             border-radius: 13px !important;
             border: 2px solid rgba(49, 51, 63, 0.18) !important;
             background: rgba(248, 250, 252, 0.92) !important;
-            padding: 16px 12px 10px 12px !important;
+            padding: 16px 12px 14px 12px !important;
             margin: 8px 0 11px 0 !important;
             box-shadow: none !important;
-            min-height: 82px !important;
+            min-height: 98px !important;
             height: auto !important;
         }
 
@@ -105,6 +105,21 @@ def inject_mapping_css() -> None:
             align-items: center !important;
         }
 
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-red) div[data-baseweb="select"] > div {
+            background: #fef2f2 !important;
+            border-color: rgba(220, 38, 38, 0.24) !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-yellow) div[data-baseweb="select"] > div {
+            background: #fff8db !important;
+            border-color: rgba(202, 138, 4, 0.24) !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-green) div[data-baseweb="select"] > div {
+            background: #f0fdf4 !important;
+            border-color: rgba(22, 163, 74, 0.24) !important;
+        }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
             max-width: 100% !important;
             overflow: hidden !important;
@@ -134,11 +149,11 @@ def inject_mapping_css() -> None:
 
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 15px 10px 9px 10px !important;
+                padding: 15px 10px 13px 10px !important;
                 margin: 7px 0 10px 0 !important;
                 border-radius: 13px !important;
                 border-width: 2px !important;
-                min-height: 80px !important;
+                min-height: 96px !important;
                 height: auto !important;
                 overflow: visible !important;
             }
