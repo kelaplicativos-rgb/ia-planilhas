@@ -20,7 +20,7 @@ def inject_mapping_css() -> None:
             padding: 16px 12px 10px 12px !important;
             margin: 8px 0 11px 0 !important;
             box-shadow: none !important;
-            min-height: 86px !important;
+            min-height: 82px !important;
             height: auto !important;
         }
 
@@ -138,7 +138,7 @@ def inject_mapping_css() -> None:
                 margin: 7px 0 10px 0 !important;
                 border-radius: 13px !important;
                 border-width: 2px !important;
-                min-height: 84px !important;
+                min-height: 80px !important;
                 height: auto !important;
                 overflow: visible !important;
             }
