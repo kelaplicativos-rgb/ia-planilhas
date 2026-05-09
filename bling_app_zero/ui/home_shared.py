@@ -16,6 +16,26 @@ from bling_app_zero.core.validators import validate_final_df
 PREVIEW_ROWS = 50
 _PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
 
+KIND_LABELS = {
+    'id_produto': 'Identificador do produto',
+    'codigo': 'Código/SKU',
+    'gtin': 'GTIN/EAN',
+    'descricao': 'Nome ou descrição',
+    'deposito': 'Depósito',
+    'estoque': 'Saldo/quantidade',
+    'preco_custo': 'Preço de custo',
+    'preco_unitario': 'Preço de venda',
+    'observacao': 'Observação',
+    'data': 'Data',
+    'url': 'Link/URL',
+    'nome_apoio': 'Nome de apoio',
+    'imagem': 'Imagem',
+    'marca': 'Marca',
+    'categoria': 'Categoria',
+    'ncm': 'NCM',
+    'custom': 'Campo personalizado',
+}
+
 
 class _NamedBytesIO(BytesIO):
     def __init__(self, data: bytes, name: str):
@@ -113,6 +133,10 @@ def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str) -> bytes
     return to_bling_csv_bytes(df)
 
 
+def _kind_label(kind: str) -> str:
+    return KIND_LABELS.get(str(kind or '').strip(), 'Campo personalizado')
+
+
 def _render_contract_body(columns: list[str]) -> None:
     contract = build_contract(columns)
     st.caption('Serão buscados somente estes campos. Se algum dado não existir no site, ele ficará vazio.')
@@ -120,7 +144,7 @@ def _render_contract_body(columns: list[str]) -> None:
         pd.DataFrame([
             {
                 'Coluna solicitada': field.original,
-                'Tipo detectado': field.kind,
+                'Tipo detectado': _kind_label(field.kind),
                 'Obrigatório': 'Sim' if field.required else 'Não',
             }
             for field in contract
