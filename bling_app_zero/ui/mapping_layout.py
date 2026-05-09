@@ -34,7 +34,7 @@ def inject_mapping_css() -> None:
             display: block;
             position: relative;
             z-index: 2;
-            top: -6px;
+            top: -8px;
             font-size: 0.84rem;
             line-height: 1.18;
             font-weight: 800;
@@ -151,7 +151,7 @@ def inject_mapping_css() -> None:
             .bling-map-title {
                 position: relative;
                 z-index: 2;
-                top: -6px;
+                top: -8px;
                 font-size: 0.82rem;
                 line-height: 1.16;
                 margin: 0 0 5px 0 !important;
