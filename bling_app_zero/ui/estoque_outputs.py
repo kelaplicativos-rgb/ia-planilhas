@@ -24,7 +24,7 @@ def build_stock_outputs_from_dataframe(
 def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -> None:
     source_files = source_files_from_upload(upload)
     if not source_files:
-        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem tabular válida para o estoque.')
+        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.')
         return
 
     run_estoque_pipeline = load_estoque_pipeline()
@@ -50,6 +50,9 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
     if results:
         st.session_state['df_final_estoque'] = results[0]['df_final']
         st.session_state['mapping_estoque'] = results[0]['mapping']
+    else:
+        st.session_state.pop('df_final_estoque', None)
+        st.session_state.pop('mapping_estoque', None)
 
 
 def render_stock_outputs() -> None:
@@ -57,8 +60,8 @@ def render_stock_outputs() -> None:
     if not results:
         return
 
-    st.markdown('#### Downloads finais de estoque')
-    st.caption('Cada origem gera uma planilha final separada.')
+    st.markdown('#### CSV final de estoque')
+    st.caption('Confira o resultado antes de baixar. Cada origem gera um CSV separado.')
 
     for result in results:
         index = result.get('index')
@@ -66,9 +69,11 @@ def render_stock_outputs() -> None:
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
 
-        with st.expander(f'Planilha final {index}: {name}', expanded=index == 1):
+        with st.expander(f'CSV {index}: {name}', expanded=index == 1):
             if isinstance(mapping, dict):
                 show_mapping(mapping)
             if isinstance(df_final, pd.DataFrame):
                 preview_df('Preview final do estoque', df_final)
-                download_final(df_final, 'estoque', f'estoque_{index}')
+                download_final(df_final, 'estoque', f'estoque_{index}_{name}_{len(df_final)}_{len(df_final.columns)}')
+            else:
+                st.warning('Não foi possível montar o CSV desta origem.')
