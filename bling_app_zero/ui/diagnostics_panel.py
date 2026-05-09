@@ -23,6 +23,7 @@ def _render_openai_validation() -> None:
 
     result = st.session_state.get('openai_validation_result')
     if not result:
+        st.caption('Opcional. O sistema continua funcionando sem IA configurada.')
         return
 
     df = pd.DataFrame([
@@ -41,24 +42,30 @@ def _render_openai_validation() -> None:
         st.warning('A IA ainda não está pronta. Confira a chave nos secrets.')
 
 
+def _render_simulation_result(result: pd.DataFrame) -> None:
+    st.markdown('##### Resultado da conferência')
+    st.dataframe(result, use_container_width=True, height=260)
+
+    failures = result[result['Status'] != 'OK'] if 'Status' in result.columns else result
+    if failures.empty:
+        st.success('Fluxos principais conferidos sem erro.')
+    else:
+        st.warning('Alguns fluxos precisam de atenção. Abra o resultado acima para ver a mensagem.')
+
+
 def render_diagnostics_panel() -> None:
     with st.sidebar:
         with st.expander('Ferramentas de conferência', expanded=False):
+            st.caption('Use esta área para testar rapidamente os fluxos principais sem precisar importar arquivos reais.')
             _render_openai_validation()
 
             st.markdown('##### Recursos internos')
-            st.dataframe(run_engine_inventory(), use_container_width=True, height=220)
+            with st.expander('Ver recursos carregados', expanded=False):
+                st.dataframe(run_engine_inventory(), use_container_width=True, height=220)
 
-            if st.button('Conferir fluxos', use_container_width=True, key='run_blingflow_simulation'):
+            if st.button('Conferir fluxos principais', use_container_width=True, key='run_blingflow_simulation'):
                 st.session_state['blingflow_simulation_result'] = run_all_simulations()
 
             result = st.session_state.get('blingflow_simulation_result')
-            if result is not None:
-                st.markdown('##### Resultado da conferência')
-                st.dataframe(result, use_container_width=True, height=260)
-
-                failures = result[result['Status'] != 'OK'] if 'Status' in result.columns else result
-                if failures.empty:
-                    st.success('Fluxos conferidos sem erro.')
-                else:
-                    st.warning('Alguns fluxos precisam de atenção.')
+            if isinstance(result, pd.DataFrame):
+                _render_simulation_result(result)
