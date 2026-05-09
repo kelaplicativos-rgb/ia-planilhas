@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from bling_app_zero.core.text import normalize_key
+from bling_app_zero.engines.platform_stock_probe import probe_platform_stock
 
 OUT_STOCK_TERMS = [
     'sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque',
@@ -76,12 +77,13 @@ def _json_values(data: object) -> list[object]:
         'available quantity', 'availablequantity', 'stock quantity', 'stockquantity',
         'stocklevel', 'inventoryquantity', 'inventory quantity', 'max quantity', 'maxquantity',
     }
+    normalized_keys = {k.replace(' ', '') for k in keys}
     while queue:
         item = queue.pop(0)
         if isinstance(item, dict):
             for key, value in item.items():
                 key_norm = normalize_key(key).replace(' ', '')
-                if key_norm in {k.replace(' ', '') for k in keys}:
+                if key_norm in normalized_keys:
                     values.append(value)
                 if isinstance(value, (dict, list)):
                     queue.append(value)
@@ -149,13 +151,14 @@ def detect_stock_status(html: str, text: str = '') -> StockDetection:
 
 
 def detect_platform_stock(url: str, html: str, text: str = '') -> StockDetection:
+    safe_probe = probe_platform_stock(url, html, text)
+    if safe_probe.quantity:
+        return StockDetection(safe_probe.quantity, safe_probe.confidence, safe_probe.source, safe_probe.platform)
+
     platform = _platform_from_html(url, html)
     if not platform:
         return StockDetection('', 'baixa', '')
 
-    # Camada universal por plataforma: não depende de domínio específico.
-    # Shopify, VTEX, WooCommerce, Tray, Nuvemshop e Magento normalmente deixam
-    # quantidade/availability em JSON, atributos data-* ou blocos JS.
     json_result = detect_stock_from_json(html)
     if json_result.quantity:
         return StockDetection(json_result.quantity, json_result.confidence, f'{platform}:{json_result.source}', platform)
