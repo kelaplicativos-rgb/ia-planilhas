@@ -122,8 +122,6 @@ def _manual_like_valid(target: str, source: str, profile: dict[str, float | str]
     if target_kind == 'categoria':
         return has_values and text >= 0.25 and avg_len <= 120
 
-    # Campos customizados do Bling: se o usuário escolheu manualmente e existe
-    # valor na coluna, tratamos como validado para não ficar preso no vermelho.
     return has_values
 
 
@@ -178,7 +176,10 @@ def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
 
 
 def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) -> dict[str, object]:
-    if not source or not isinstance(df_source, pd.DataFrame) or source not in df_source.columns:
+    if not source:
+        return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': 'vazio', 'order': 2}
+
+    if not isinstance(df_source, pd.DataFrame) or source not in df_source.columns:
         return _confidence(0)
 
     profile = _profile(df_source, source)
@@ -187,8 +188,6 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
 
     score = _name_score(target, source) + _content_score(target, source, profile)
 
-    # Escolha manual com nome equivalente ou campo custom válido deve virar verde
-    # para descer no fluxo e não ficar atrapalhando a revisão.
     if _custom_equivalent(target, source):
         return _confidence(score, 'verde')
     if infer_kind(target) == 'custom' and bool(profile.get('has_values')):
