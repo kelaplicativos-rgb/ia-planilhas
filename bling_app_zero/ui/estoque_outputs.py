@@ -87,8 +87,8 @@ def render_stock_outputs() -> None:
     if not results:
         return
 
-    st.markdown('#### CSV final de estoque')
-    st.caption('Confira o resultado antes de baixar. Cada origem gera um CSV separado.')
+    st.markdown('#### 📦 Arquivo final de ESTOQUE')
+    st.caption('Baixe aqui somente o CSV de atualização de estoque. Cada origem gera um CSV separado.')
 
     for result in results:
         index = result.get('index')
@@ -96,11 +96,11 @@ def render_stock_outputs() -> None:
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
 
-        with st.expander(f'CSV {index}: {name}', expanded=index == 1):
+        with st.expander(f'📦 ESTOQUE · CSV {index}: {name}', expanded=index == 1):
             if isinstance(mapping, dict):
-                show_mapping(mapping)
+                show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
-                preview_df('Preview final do estoque', df_final)
+                preview_df('📦 ESTOQUE · Preview final', df_final)
                 download_final(df_final, 'estoque', f'estoque_{index}_{name}_{len(df_final)}_{len(df_final.columns)}')
             else:
                 st.warning('Não foi possível montar o CSV desta origem.')
