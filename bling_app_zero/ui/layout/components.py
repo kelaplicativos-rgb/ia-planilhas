@@ -62,11 +62,21 @@ def inject_clean_home_css() -> None:
             margin: 0 auto 0.72rem auto;
             border: 1px solid rgba(49, 51, 63, 0.10);
             border-radius: var(--bling-radius);
-            padding: 14px 46px 13px 46px;
+            padding: 13px 14px;
             background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
-            text-align: center;
             overflow: hidden;
-            position: relative;
+        }
+
+        .bling-hero-row {
+            display: grid;
+            grid-template-columns: 34px minmax(0, 1fr) 34px;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .bling-hero-text {
+            text-align: center;
+            min-width: 0;
         }
 
         .bling-hero-title {
@@ -83,6 +93,24 @@ def inject_clean_home_css() -> None:
             color: var(--bling-muted);
             margin: 0 auto;
             max-width: 820px;
+        }
+
+        .bling-hero-tech-slot .stButton > button {
+            min-height: 30px !important;
+            height: 30px !important;
+            width: 30px !important;
+            border-radius: 999px !important;
+            padding: 0 !important;
+            font-size: 0.84rem !important;
+            opacity: 0.78;
+            border: 1px solid rgba(15,23,42,0.14) !important;
+            background: rgba(255,255,255,0.94) !important;
+            box-shadow: 0 4px 10px rgba(15,23,42,0.07) !important;
+        }
+
+        .bling-hero-tech-slot .stButton > button:hover {
+            opacity: 1;
+            border-color: rgba(185,28,28,0.30) !important;
         }
 
         .bling-step-title {
@@ -220,9 +248,14 @@ def inject_clean_home_css() -> None:
 
             .bling-hero {
                 width: 100%;
-                padding: 11px 42px 10px 42px;
+                padding: 11px 10px;
                 margin: 0 auto 0.62rem auto;
                 border-radius: 15px;
+            }
+
+            .bling-hero-row {
+                grid-template-columns: 30px minmax(0, 1fr) 30px;
+                gap: 5px;
             }
 
             .bling-hero-title {
@@ -235,6 +268,13 @@ def inject_clean_home_css() -> None:
             .bling-hero-subtitle {
                 font-size: 0.86rem;
                 line-height: 1.42;
+            }
+
+            .bling-hero-tech-slot .stButton > button {
+                min-height: 28px !important;
+                height: 28px !important;
+                width: 28px !important;
+                font-size: 0.78rem !important;
             }
 
             .bling-home-button-center {
@@ -348,11 +388,6 @@ def inject_clean_home_css() -> None:
                 min-height: 2.6rem !important;
             }
 
-            .bling-hero {
-                padding: 10px 38px 9px 38px;
-                margin-bottom: 0.55rem;
-            }
-
             .bling-hero-title {
                 font-size: 1.08rem;
             }
@@ -382,15 +417,14 @@ def inject_clean_home_css() -> None:
 
 
 def render_compact_hero() -> None:
-    st.markdown(
-        """
-        <div class="bling-hero">
-            <div class="bling-hero-title"><span>🚀 IA Planilhas → Bling</span></div>
-            <p class="bling-hero-subtitle">Transforme dados em CSV pronto para o Bling.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    from bling_app_zero.core.debug import render_debug_compact_button
+
+    st.markdown('<div class="bling-hero"><div class="bling-hero-row"><div></div><div class="bling-hero-text">', unsafe_allow_html=True)
+    st.markdown('<div class="bling-hero-title"><span>🚀 IA Planilhas → Bling</span></div>', unsafe_allow_html=True)
+    st.markdown('<p class="bling-hero-subtitle">Transforme dados em CSV pronto para o Bling.</p>', unsafe_allow_html=True)
+    st.markdown('</div><div class="bling-hero-tech-slot">', unsafe_allow_html=True)
+    render_debug_compact_button()
+    st.markdown('</div></div></div>', unsafe_allow_html=True)
 
 
 def render_home_start_card() -> None:
