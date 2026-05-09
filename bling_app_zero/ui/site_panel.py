@@ -62,7 +62,7 @@ def _render_site_models_step(operation: str) -> tuple[object, pd.DataFrame | Non
     if requested_columns:
         show_contract(requested_columns)
     else:
-        st.info('Sem modelo da operação atual. A busca tentará capturar os campos principais e deixará vazios os não encontrados.')
+        st.info('Sem modelo desta operação. Vou capturar os campos principais e deixar vazio o que não encontrar.')
 
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
@@ -88,7 +88,7 @@ def _run_site_capture(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     reset_site_progress()
-    progress_bar = st.progress(0, text='Iniciando busca...')
+    progress_bar = st.progress(0, text='Buscando produtos no site...')
     status_box = st.empty()
     df_site = run_site_engine(
         operation=operation,
@@ -113,8 +113,8 @@ def render_site_panel() -> None:
     operation = _current_site_operation()
     label = _operation_label(operation)
 
-    st.markdown(f'### Criar planilha de {label} pelo site')
-    st.caption('Informe os links. O sistema usa somente o modelo da operação escolhida para buscar as colunas necessárias.')
+    st.markdown(f'### Criar origem de {label} pelo site')
+    st.caption('Cole os links do fornecedor. O sistema monta uma planilha de origem para continuar no fluxo certo.')
 
     config_for_site_operation(operation)
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_step(operation)
@@ -123,8 +123,8 @@ def render_site_panel() -> None:
     raw_urls = _render_urls_input(url_step_number)
 
     create_step_number = url_step_number + 1
-    st.markdown(f'#### {create_step_number}. Criar planilha')
-    button_label = 'Criar planilha de estoque' if operation == 'estoque' else 'Criar planilha de cadastro'
+    st.markdown(f'#### {create_step_number}. Gerar origem')
+    button_label = 'Buscar no site e criar origem de estoque' if operation == 'estoque' else 'Buscar no site e criar origem de cadastro'
     if st.button(button_label, use_container_width=True):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
