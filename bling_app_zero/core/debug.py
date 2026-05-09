@@ -115,51 +115,26 @@ def _render_debug_content(prefix: str = 'debug') -> None:
     _render_recent_logs(logs, prefix=prefix)
 
 
-def render_debug_home_button() -> None:
-    """Atalho técnico discreto, estável e sem sobrepor o layout."""
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) {
-            margin-top: 0 !important;
-            margin-bottom: 0.40rem !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton {
-            display: flex !important;
-            justify-content: flex-end !important;
-            padding-right: 0.35rem !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button {
-            min-height: 30px !important;
-            height: 30px !important;
-            width: 30px !important;
-            border-radius: 999px !important;
-            padding: 0 !important;
-            font-size: 0.84rem !important;
-            opacity: 0.76;
-            border: 1px solid rgba(15,23,42,0.14) !important;
-            background: rgba(255,255,255,0.94) !important;
-            box-shadow: 0 4px 10px rgba(15,23,42,0.07) !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button:hover {
-            opacity: 1;
-            border-color: rgba(185,28,28,0.30) !important;
-        }
-        </style>
-        <span id="bling-tech-anchor"></span>
-        """,
-        unsafe_allow_html=True,
-    )
-
+def render_debug_compact_button() -> None:
+    """Botão técnico compacto para ser usado dentro do layout principal."""
     if st.button('⚙️', key='open_debug_home_area', help='Área técnica'):
         st.session_state[DEBUG_HOME_OPEN_KEY] = not bool(st.session_state.get(DEBUG_HOME_OPEN_KEY, False))
 
+
+def render_debug_home_area() -> None:
+    """Painel técnico renderizado abaixo do topo quando ativado."""
     if not st.session_state.get(DEBUG_HOME_OPEN_KEY, False):
         return
 
     with st.container(border=True):
         st.markdown('##### Área técnica')
         _render_debug_content(prefix='debug_home')
+
+
+def render_debug_home_button() -> None:
+    """Compatibilidade: renderiza botão compacto e painel sem interferir no layout."""
+    render_debug_compact_button()
+    render_debug_home_area()
 
 
 def render_debug_panel() -> None:
