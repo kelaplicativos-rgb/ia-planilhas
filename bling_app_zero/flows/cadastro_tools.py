@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.exporter import sanitize_for_bling
-from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
+from bling_app_zero.core.mapping import apply_mapping
+from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
 from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model as cadastro_default_model
@@ -156,7 +157,7 @@ def build_manual_mapping_result(
     mapping_key = f'{mapping_key_prefix}_{signature}'
 
     if mapping_key not in st.session_state:
-        auto_mapping = auto_map_columns(df_source, model)
+        auto_mapping = super_auto_map_columns(df_source, model)
         if force_price:
             for target, selected in list(auto_mapping.items()):
                 auto_mapping[target] = force_price_suggestion(target, source_columns, selected)
