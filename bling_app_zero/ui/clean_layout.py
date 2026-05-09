@@ -129,7 +129,7 @@ def inject_clean_home_css() -> None:
             .block-container {
                 padding-left: 0.62rem !important;
                 padding-right: 0.62rem !important;
-                padding-top: 1.35rem !important;
+                padding-top: 1.80rem !important;
                 padding-bottom: 1rem !important;
                 max-width: 100vw !important;
                 min-height: 84svh !important;
@@ -281,7 +281,7 @@ def inject_clean_home_css() -> None:
             .block-container {
                 padding-left: 0.50rem !important;
                 padding-right: 0.50rem !important;
-                padding-top: 1.25rem !important;
+                padding-top: 1.65rem !important;
                 min-height: 84svh !important;
             }
             header[data-testid="stHeader"] {
