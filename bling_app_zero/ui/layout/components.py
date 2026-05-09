@@ -507,7 +507,7 @@ def render_compact_hero() -> None:
     st.markdown(
         """
         <div class="bling-hero">
-            <div class="bling-hero-title">🚀 IA Planilhas → Bling</div>
+            <div class="bling-hero-title"><span class="bling-hero-icon">🚀</span><span>IA Planilhas → Bling</span></div>
             <p class="bling-hero-subtitle">Transforme site, planilha, PDF ou XML em CSV pronto para cadastro ou estoque no Bling.</p>
         </div>
         """,
@@ -519,21 +519,21 @@ def render_home_start_card() -> None:
     st.markdown(
         """
         <div class="bling-home-center">
-            <div class="bling-home-card">
-                <div class="bling-home-pill">● Primeiro passo</div>
+            <div class="bling-home-card bling-home-card-start">
+                <div class="bling-home-pill">Primeiro passo</div>
                 <div class="bling-home-title">Comece pelo modelo certo do Bling</div>
                 <div class="bling-home-text">
-                    Envie o modelo oficial uma vez. A partir dele, o sistema sabe exatamente quais colunas preencher em cadastro ou estoque.
+                    Envie o modelo oficial uma única vez. A partir dele, o sistema entende quais colunas precisa preencher em cadastro ou estoque.
                 </div>
                 <div class="bling-home-mini-steps">
-                    <div class="bling-home-mini-step"><strong>1. Modelo</strong><span>padrão Bling</span></div>
-                    <div class="bling-home-mini-step"><strong>2. Preço</strong><span>opcional</span></div>
-                    <div class="bling-home-mini-step"><strong>3. Origem</strong><span>site ou arquivo</span></div>
-                    <div class="bling-home-mini-step"><strong>4. CSV</strong><span>pronto para importar</span></div>
+                    <div class="bling-home-mini-step"><strong>1. Modelo</strong><span>Modelo padrão Bling</span></div>
+                    <div class="bling-home-mini-step"><strong>2. Preço</strong><span>Preço opcional</span></div>
+                    <div class="bling-home-mini-step"><strong>3. Origem</strong><span>Origem: site ou arquivo</span></div>
+                    <div class="bling-home-mini-step"><strong>4. CSV</strong><span>CSV pronto para importar</span></div>
                 </div>
             </div>
         </div>
-        <div class="bling-home-button-center"></div>
+        <div class="bling-home-button-center bling-primary-cta-anchor"></div>
         """,
         unsafe_allow_html=True,
     )
@@ -544,7 +544,7 @@ def render_home_pricing_card() -> None:
         """
         <div class="bling-home-center">
             <div class="bling-home-card">
-                <div class="bling-home-pill">● Segundo passo</div>
+                <div class="bling-home-pill">Segundo passo</div>
                 <div class="bling-home-title">Quer calcular o preço de venda agora?</div>
                 <div class="bling-home-text">
                     Configure lucro, taxas e valores fixos. O preço calculado pode entrar automaticamente no cadastro dos produtos.
