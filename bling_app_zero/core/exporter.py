@@ -61,8 +61,8 @@ DEFAULT_MEASURE_UNIT = 'Centímetro'
 
 
 def _looks_like_image_column(column: object) -> bool:
-    key = str(column or '').strip().lower()
-    return any(term in key for term in IMAGE_COLUMN_TERMS)
+    key = normalize_key(column)
+    return any(normalize_key(term) in key for term in IMAGE_COLUMN_TERMS)
 
 
 def _looks_like_product_code_column(column: object) -> bool:
@@ -145,8 +145,7 @@ def _rules() -> dict[str, Any]:
 
 
 def _image_separator() -> str:
-    separator = str(_rules().get('image_separator') or '|')
-    return separator or '|'
+    return '|'
 
 
 def normalize_image_urls(value: object) -> str:
@@ -174,8 +173,9 @@ def normalize_image_urls(value: object) -> str:
 
 def _safe_code_text(value: object) -> str:
     text = clean_cell(value)
-    text = re.sub(r'\s+', '', text)
+    text = re.sub(r'\s+', '-', text)
     text = re.sub(r'[^A-Za-z0-9._-]+', '', text)
+    text = re.sub(r'-+', '-', text).strip('-._')
     return text[:60]
 
 
@@ -204,14 +204,14 @@ def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
         if key:
             base = re.sub(r'[^a-z0-9]+', '', key)[:24]
             if base:
-                return f'auto{base}{row_index + 1}'[:60]
-    return f'auto{row_index + 1}'
+                return f'auto-{base}-{row_index + 1}'[:60]
+    return f'auto-{row_index + 1}'
 
 
 def _make_unique_code(base_code: str, row_index: int, seen: set[str]) -> str:
     base = _safe_code_text(base_code)
     if not base and bool(_rules().get('auto_product_code', True)):
-        base = f'auto{row_index + 1}'
+        base = f'auto-{row_index + 1}'
     if not base:
         return ''
 
@@ -289,7 +289,7 @@ def _fill_measure_unit(out: pd.DataFrame) -> pd.DataFrame:
     for column in out.columns:
         if not _looks_like_measure_unit_column(column):
             continue
-        out[column] = measure_unit
+        out[column] = out[column].apply(lambda value: measure_unit if _is_empty_text(value) else clean_cell(value))
 
     return out
 
@@ -299,6 +299,7 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     out = df.copy().fillna('')
+    out.columns = [clean_cell(column) for column in out.columns]
 
     for col in out.columns:
         if looks_like_gtin_column(col):
