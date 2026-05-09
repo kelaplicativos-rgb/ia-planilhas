@@ -20,7 +20,7 @@ class SiteEngineConfig:
 
 def normalize_site_operation(operation: str | None) -> str:
     text = str(operation or '').strip().lower()
-    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
+    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
         return 'estoque'
     return 'cadastro'
 
@@ -30,9 +30,9 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
     if normalized == 'estoque':
         return SiteEngineConfig(
             operation='estoque',
-            title='Motor independente: busca por site para atualização de estoque',
-            description='Preenche somente as colunas solicitadas pela planilha modelo de estoque. O que não for encontrado fica vazio.',
-            button_label='Gerar planilha origem de estoque por site',
+            title='Criar origem de estoque pelo site',
+            description='Busca somente as colunas pedidas pelo modelo de estoque. O que não for encontrado fica vazio.',
+            button_label='Buscar no site e criar origem de estoque',
             output_filename='origem_site_estoque.csv',
             default_max_pages=80,
             default_max_products=300,
@@ -40,9 +40,9 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
         )
     return SiteEngineConfig(
         operation='cadastro',
-        title='Motor independente: busca por site para cadastro de produtos',
-        description='Captura dados de produtos em sites e monta uma planilha origem para o fluxo de cadastro do Bling.',
-        button_label='Gerar planilha origem de cadastro por site',
+        title='Criar origem de cadastro pelo site',
+        description='Busca produtos no site do fornecedor e monta uma origem para gerar o CSV de cadastro.',
+        button_label='Buscar no site e criar origem de cadastro',
         output_filename='origem_site_cadastro.csv',
         default_max_pages=120,
         default_max_products=300,
