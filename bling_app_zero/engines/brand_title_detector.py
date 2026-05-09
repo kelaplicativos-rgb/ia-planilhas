@@ -5,7 +5,7 @@ import re
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 KNOWN_BRANDS = [
-    'H\u2019maston', 'H\'maston', 'Hmaston', 'Multilaser', 'Intelbras', 'Elgin', 'Xiaomi', 'Samsung',
+    'H’maston', 'H\'maston', 'Hmaston', 'Multilaser', 'Intelbras', 'Elgin', 'Xiaomi', 'Samsung',
     'Apple', 'Motorola', 'LG', 'Sony', 'JBL', 'Lenovo', 'Dell', 'HP', 'Acer', 'Asus', 'TP-Link',
     'D-Link', 'Mercusys', 'Logitech', 'Redragon', 'Knup', 'Exbom', 'Tomate', 'Inova', 'KAP', 'Kapbom',
     'Aquario', 'Aquário', 'Geonav', 'I2GO', 'Elg', 'Viniks', 'Fortrek', 'C3Tech', 'Hayom', 'Kimaster',
@@ -14,9 +14,11 @@ KNOWN_BRANDS = [
 ]
 
 BRAND_ALIASES = {
-    'h maston': 'H\u2019maston',
-    'hmaston': 'H\u2019maston',
-    'h m aston': 'H\u2019maston',
+    'h maston': 'H’maston',
+    'h’maston': 'H’maston',
+    "h'maston": 'H’maston',
+    'hmaston': 'H’maston',
+    'h m aston': 'H’maston',
     'kap 2u': 'KAP',
     'kap': 'KAP',
     'c3 tech': 'C3Tech',
@@ -29,6 +31,7 @@ GENERIC_WORDS = {
     'produto', 'controle', 'carregador', 'cabo', 'fone', 'mouse', 'teclado', 'caixa', 'som', 'pen',
     'drive', 'adaptador', 'suporte', 'camera', 'câmera', 'pelicula', 'película', 'capinha', 'fonte',
     'usb', 'tipo', 'type', 'sem', 'fio', 'recarregavel', 'recarregável', 'completo', 'micro', 'gamer',
+    'para', 'com', 'sem', 'novo', 'original', 'premium', 'universal', 'digital', 'wireless', 'bluetooth',
 }
 
 
@@ -36,9 +39,25 @@ def _tokens(title: str) -> list[str]:
     return [token for token in re.split(r'[^A-Za-zÀ-ÿ0-9]+', title or '') if token]
 
 
+def _is_generic_token(token: str) -> bool:
+    key = normalize_key(token)
+    if not key or key in GENERIC_WORDS:
+        return True
+    if key.isdigit():
+        return True
+    if re.fullmatch(r'[a-z]?\d+[a-z0-9]*', key):
+        return True
+    return False
+
+
+def _clean_brand(value: str) -> str:
+    text = clean_cell(value or '').replace("'", '’')
+    return BRAND_ALIASES.get(normalize_key(text), text)
+
+
 def detect_brand_from_title(title: str, fallback: str = '') -> str:
     text = clean_cell(title or '')
-    fallback_clean = clean_cell(fallback or '')
+    fallback_clean = _clean_brand(fallback or '')
     if not text:
         return fallback_clean
 
@@ -53,19 +72,22 @@ def detect_brand_from_title(title: str, fallback: str = '') -> str:
         if not brand_key:
             continue
         if re.search(rf'(^|\s){re.escape(brand_key)}(\s|$)', normalized_title):
-            return clean_cell(brand.replace("'", '’'))
+            return _clean_brand(brand)
+
+    if fallback_clean and not _is_generic_token(fallback_clean):
+        return fallback_clean
 
     tokens = _tokens(text)
     for token in tokens:
         key = normalize_key(token)
-        if len(key) < 3 or key in GENERIC_WORDS:
+        if len(key) < 3 or _is_generic_token(token):
             continue
         if token.isupper() and len(token) >= 3:
-            return clean_cell(token)
+            return _clean_brand(token)
 
     for token in reversed(tokens):
         key = normalize_key(token)
-        if len(key) >= 4 and key not in GENERIC_WORDS and not key.isdigit():
-            return clean_cell(token)
+        if len(key) >= 4 and not _is_generic_token(token):
+            return _clean_brand(token)
 
     return fallback_clean
