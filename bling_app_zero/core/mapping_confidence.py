@@ -26,6 +26,14 @@ CUSTOM_EQUIVALENT_TERMS = {
 }
 
 
+def resolved_empty_confidence() -> dict[str, object]:
+    return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': 'vazio', 'order': 2}
+
+
+def pending_confidence() -> dict[str, object]:
+    return {'score': 0, 'level': 'vermelho', 'emoji': '🔴', 'label': 'alterar', 'order': 0}
+
+
 def _values(df: pd.DataFrame, column: str, limit: int = 80) -> list[str]:
     if not isinstance(df, pd.DataFrame) or column not in df.columns:
         return []
@@ -142,9 +150,7 @@ def _name_score(target: str, source: str) -> int:
 
 
 def _compatible(target: str, source: str, profile: dict[str, float | str]) -> bool:
-    if _manual_like_valid(target, source, profile):
-        return True
-    return False
+    return _manual_like_valid(target, source, profile)
 
 
 def _content_score(target: str, source: str, profile: dict[str, float | str]) -> int:
@@ -172,19 +178,19 @@ def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
         return {'score': max(score, 100), 'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'order': 2}
     if score >= 82:
         return {'score': score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'atenção', 'order': 1}
-    return {'score': max(score, 0), 'level': 'vermelho', 'emoji': '🔴', 'label': 'alterar', 'order': 0}
+    return pending_confidence()
 
 
 def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) -> dict[str, object]:
     if not source:
-        return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': 'vazio', 'order': 2}
+        return pending_confidence()
 
     if not isinstance(df_source, pd.DataFrame) or source not in df_source.columns:
-        return _confidence(0)
+        return pending_confidence()
 
     profile = _profile(df_source, source)
     if not _compatible(target, source, profile):
-        return _confidence(0)
+        return pending_confidence()
 
     score = _name_score(target, source) + _content_score(target, source, profile)
 
