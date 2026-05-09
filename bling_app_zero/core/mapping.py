@@ -22,6 +22,7 @@ SYNONYMS = {
 }
 
 GENERIC_DESCRIPTION_TARGETS = {'descricao complementar', 'descricao curta'}
+PRICE_LIKE_TERMS = {'preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário'}
 TEXT_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}')
 PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,6}(?:[\.,]\d{2})')
 GTIN_RE = re.compile(r'^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$')
@@ -89,7 +90,12 @@ def _content_profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
     }
 
 
-def _compatible(target: str, profile: dict[str, float | str]) -> bool:
+def _source_has_price_name(column: str) -> bool:
+    tokens = set(normalize_key(column).split())
+    return bool(tokens & {normalize_key(term) for term in PRICE_LIKE_TERMS})
+
+
+def _compatible(target: str, source: str, profile: dict[str, float | str]) -> bool:
     target_key = normalize_key(target)
     target_kind = infer_kind(target)
     source_kind = str(profile.get('kind') or '')
@@ -114,7 +120,9 @@ def _compatible(target: str, profile: dict[str, float | str]) -> bool:
     if target_kind in {'preco_unitario', 'preco_custo'}:
         return source_kind in {'preco_unitario', 'preco_custo'} or price >= 0.35 or numeric >= 0.70
     if target_kind == 'estoque':
-        return source_kind == 'estoque' or numeric >= 0.80
+        if source_kind in {'preco_unitario', 'preco_custo'} or _source_has_price_name(str(profile.get('source_name') or '')):
+            return False
+        return source_kind == 'estoque' or (numeric >= 0.80 and price < 0.35)
     if target_kind == 'url':
         return source_kind == 'url' or url >= 0.60
     if target_kind == 'imagem':
@@ -126,8 +134,10 @@ def _compatible(target: str, profile: dict[str, float | str]) -> bool:
     return source_kind == target_kind
 
 
-def _content_bonus(target: str, profile: dict[str, float | str]) -> int:
-    if not _compatible(target, profile):
+def _content_bonus(target: str, source: str, profile: dict[str, float | str]) -> int:
+    profile = dict(profile)
+    profile['source_name'] = source
+    if not _compatible(target, source, profile):
         return -1000
     target_kind = infer_kind(target)
     source_kind = str(profile.get('kind') or '')
@@ -159,7 +169,7 @@ def auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame) -> dict[st
             if source_col in used:
                 continue
             base_score = _score(model_col, source_col)
-            bonus = _content_bonus(model_col, profiles[source_col])
+            bonus = _content_bonus(model_col, source_col, profiles[source_col])
             if bonus <= -1000:
                 continue
             score = base_score + bonus
