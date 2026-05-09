@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from bling_app_zero.core.debug import render_debug_home_area
@@ -78,25 +80,9 @@ def _render_selected_flow_badge(active_panel: str) -> None:
         else:
             label = 'Fluxo selecionado'
 
+    safe_label = html.escape(str(label))
     st.markdown(
-        f"""
-        <div style="
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-            margin:0 0 8px 0;
-            padding:7px 11px;
-            border-radius:999px;
-            background:rgba(185,28,28,0.10);
-            color:#991b1b;
-            border:1px solid rgba(185,28,28,0.20);
-            font-size:0.84rem;
-            font-weight:800;
-        ">
-            <span style="width:8px;height:8px;border-radius:999px;background:#dc2626;display:inline-block;"></span>
-            Selecionado: {label}
-        </div>
-        """,
+        f'<div class="bling-selected-flow-badge"><span class="bling-selected-flow-dot"></span>Selecionado: {safe_label}</div>',
         unsafe_allow_html=True,
     )
 
