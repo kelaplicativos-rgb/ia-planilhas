@@ -168,28 +168,36 @@ def inject_unified_light_layout(force: bool = False) -> None:
             margin: 1.2rem auto 0 auto !important;
         }
 
-        .bling-home-pill {
+        .bling-home-pill,
+        .bling-selected-flow-badge {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            gap: 0.4rem !important;
+            gap: 0.42rem !important;
             color: var(--bling-primary-dark) !important;
             background: var(--bling-primary-soft) !important;
             border: 1px solid rgba(37, 99, 235, 0.14) !important;
             border-radius: 999px !important;
-            padding: 0.32rem 0.62rem !important;
+            padding: 0.34rem 0.68rem !important;
+            font-size: 0.84rem !important;
             font-weight: 820 !important;
+            line-height: 1.2 !important;
         }
 
-        .bling-home-pill::before {
+        .bling-selected-flow-badge {
+            margin: 0.15rem 0 0.82rem 0 !important;
+        }
+
+        .bling-home-pill::before,
+        .bling-selected-flow-dot {
             content: "";
-            display: inline-block;
-            width: 0.48rem;
-            height: 0.48rem;
-            border-radius: 999px;
-            background: var(--bling-accent);
-            box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.14);
-            flex: 0 0 auto;
+            display: inline-block !important;
+            width: 0.48rem !important;
+            height: 0.48rem !important;
+            border-radius: 999px !important;
+            background: var(--bling-accent) !important;
+            box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.14) !important;
+            flex: 0 0 auto !important;
         }
 
         .bling-primary-cta-anchor + div .stButton > button,
@@ -292,7 +300,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             font-size: 0.9rem !important;
         }
 
-        .bling-compact-note {
+        .bling-compact-note,
+        .bling-inline-preview {
             border-radius: var(--bling-radius-sm) !important;
             padding: 10px 12px !important;
             background: rgba(239, 246, 255, 0.84) !important;
@@ -301,6 +310,13 @@ def inject_unified_light_layout(force: bool = False) -> None:
             font-size: 0.9rem !important;
             line-height: 1.42 !important;
             margin: 0.55rem 0 0.75rem 0 !important;
+        }
+
+        .bling-inline-preview {
+            font-size: 0.82rem !important;
+            font-weight: 760 !important;
+            padding: 7px 9px !important;
+            margin: 0.18rem 0 0.58rem 0 !important;
         }
 
         .stAlert {
