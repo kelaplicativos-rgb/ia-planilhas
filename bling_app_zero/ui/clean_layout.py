@@ -13,22 +13,26 @@ def inject_clean_home_css() -> None:
             --bling-gap: 0.72rem;
             --bling-radius: 16px;
         }
+
         html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
             overflow-x: hidden !important;
             max-width: 100vw !important;
         }
+
         .block-container {
             padding-top: 1.15rem;
             padding-bottom: 1.5rem;
             max-width: 1060px;
             overflow-x: hidden !important;
         }
+
         div[data-testid="stMarkdownContainer"] h1,
         div[data-testid="stMarkdownContainer"] h2,
         div[data-testid="stMarkdownContainer"] h3,
         div[data-testid="stMarkdownContainer"] h4 {
             letter-spacing: -0.02em;
         }
+
         .bling-hero {
             border: 1px solid rgba(49, 51, 63, 0.10);
             border-radius: var(--bling-radius);
@@ -51,6 +55,7 @@ def inject_clean_home_css() -> None:
             margin: 0;
             overflow-wrap: anywhere;
         }
+
         .bling-step-title {
             font-size: 1.14rem;
             line-height: 1.22;
@@ -89,6 +94,7 @@ def inject_clean_home_css() -> None:
             line-height: 1.30;
             margin: 0 0 7px 0;
         }
+
         div[data-testid="stVerticalBlock"] {
             gap: 0.58rem !important;
             max-width: 100% !important;
@@ -96,13 +102,17 @@ def inject_clean_home_css() -> None:
         div[data-testid="column"] {
             padding: 0 0.2rem !important;
         }
+
+        /* Cartão visual para cada campo de mapeamento */
         div[data-testid="stSelectbox"] {
             border: 1px solid rgba(49, 51, 63, 0.10) !important;
             border-radius: 16px !important;
-            background: rgba(248, 250, 252, 0.82) !important;
+            background: rgba(248, 250, 252, 0.90) !important;
             padding: 10px 10px 12px 10px !important;
             margin: 4px 0 8px 0 !important;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
         }
         div[data-testid="stSelectbox"] label {
             margin-bottom: 7px !important;
@@ -111,6 +121,29 @@ def inject_clean_home_css() -> None:
             font-weight: 750 !important;
             letter-spacing: -0.01em !important;
         }
+
+        /* Preview da primeira linha: continuação do cartão acima */
+        div[data-testid="stSelectbox"] + div[data-testid="stElementContainer"] {
+            border-left: 1px solid rgba(49, 51, 63, 0.10) !important;
+            border-right: 1px solid rgba(49, 51, 63, 0.10) !important;
+            border-bottom: 1px solid rgba(49, 51, 63, 0.10) !important;
+            border-radius: 0 0 16px 16px !important;
+            background: rgba(248, 250, 252, 0.90) !important;
+            padding: 0 10px 9px 10px !important;
+            margin: -18px 0 11px 0 !important;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+        }
+        div[data-testid="stSelectbox"] + div[data-testid="stElementContainer"] div[data-testid="stMarkdownContainer"] > div {
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+            padding: 6px 8px !important;
+            border-radius: 10px !important;
+            background: rgba(232, 247, 238, 0.58) !important;
+            overflow-wrap: anywhere !important;
+        }
+
         div[data-baseweb="select"] {
             max-width: 100% !important;
             width: 100% !important;
@@ -136,6 +169,7 @@ def inject_clean_home_css() -> None:
             word-break: normal !important;
             background: #ffffff !important;
         }
+
         .stButton > button,
         .stDownloadButton > button {
             border-radius: 14px !important;
@@ -168,10 +202,6 @@ def inject_clean_home_css() -> None:
         }
 
         @media (max-width: 760px) {
-            html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
-                overflow-x: hidden !important;
-                max-width: 100vw !important;
-            }
             .main .block-container,
             .block-container {
                 padding-left: 0.62rem !important;
@@ -199,12 +229,16 @@ def inject_clean_home_css() -> None:
                 overflow-x: hidden !important;
             }
             div[data-testid="stSelectbox"] {
-                max-width: 100% !important;
-                overflow-x: hidden !important;
                 padding: 9px 9px 11px 9px !important;
                 margin: 5px 0 9px 0 !important;
                 border-radius: 15px !important;
-                background: rgba(248, 250, 252, 0.94) !important;
+                background: rgba(248, 250, 252, 0.96) !important;
+            }
+            div[data-testid="stSelectbox"] + div[data-testid="stElementContainer"] {
+                padding: 0 9px 9px 9px !important;
+                margin: -19px 0 11px 0 !important;
+                border-radius: 0 0 15px 15px !important;
+                background: rgba(248, 250, 252, 0.96) !important;
             }
             div[data-baseweb="select"] > div {
                 min-height: 46px !important;
@@ -264,9 +298,6 @@ def inject_clean_home_css() -> None:
                 line-height: 1.30 !important;
                 margin-bottom: 0.35rem !important;
             }
-            div[role="radiogroup"] {
-                gap: 0.34rem !important;
-            }
             div[role="radiogroup"] label {
                 border: 1px solid rgba(49, 51, 63, 0.14);
                 border-radius: 14px;
@@ -278,11 +309,6 @@ def inject_clean_home_css() -> None:
                 align-items: center;
                 overflow: hidden;
             }
-            div[role="radiogroup"] label > div:first-child {
-                margin-right: 0.45rem !important;
-                flex: 0 0 auto;
-                transform: scale(0.96);
-            }
             div[role="radiogroup"] label p,
             div[role="radiogroup"] label span,
             div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
@@ -290,7 +316,6 @@ def inject_clean_home_css() -> None:
                 line-height: 1.22 !important;
                 white-space: normal !important;
                 overflow-wrap: anywhere !important;
-                word-break: normal !important;
                 margin: 0 !important;
             }
             div[data-testid="stFileUploader"] section {
@@ -375,14 +400,10 @@ def inject_clean_home_css() -> None:
                 padding: 8px 8px 10px 8px !important;
                 border-radius: 14px !important;
             }
-            div[role="radiogroup"] label {
-                min-height: 44px;
-                padding: 8px 9px !important;
-            }
-            div[role="radiogroup"] label p,
-            div[role="radiogroup"] label span,
-            div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-                font-size: 0.88rem !important;
+            div[data-testid="stSelectbox"] + div[data-testid="stElementContainer"] {
+                padding: 0 8px 8px 8px !important;
+                margin-top: -18px !important;
+                border-radius: 0 0 14px 14px !important;
             }
             .stButton > button,
             .stDownloadButton > button {
