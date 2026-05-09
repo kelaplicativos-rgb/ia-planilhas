@@ -17,15 +17,15 @@ def inject_mapping_css() -> None:
             border-radius: 13px !important;
             border: 2px solid rgba(49, 51, 63, 0.18) !important;
             background: rgba(248, 250, 252, 0.92) !important;
-            padding: 16px 12px 14px 12px !important;
-            margin: 8px 0 11px 0 !important;
+            padding: 17px 12px 14px 12px !important;
+            margin: 8px 0 12px 0 !important;
             box-shadow: none !important;
-            min-height: 98px !important;
+            min-height: 104px !important;
             height: auto !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.30rem !important;
+            gap: 0.34rem !important;
             overflow: visible !important;
         }
 
@@ -34,16 +34,17 @@ def inject_mapping_css() -> None:
             display: block;
             position: relative;
             z-index: 2;
-            top: -10px;
-            font-size: 0.84rem;
-            line-height: 1.18;
+            top: -9px;
+            font-size: 0.85rem;
+            line-height: 1.26;
             font-weight: 800;
             color: rgba(49, 51, 63, 0.96);
             margin: 0 0 6px 0 !important;
-            padding: 0 0 0 0 !important;
+            padding: 0 !important;
             text-align: left;
-            overflow-wrap: anywhere;
+            overflow-wrap: normal;
             word-break: normal;
+            hyphens: none;
         }
 
         .bling-map-title-red { color: #dc2626 !important; }
@@ -53,7 +54,8 @@ def inject_mapping_css() -> None:
         .bling-map-title-text {
             display: inline;
             min-width: 0;
-            overflow-wrap: anywhere;
+            overflow-wrap: normal;
+            word-break: normal;
         }
 
         .bling-map-help {
@@ -67,7 +69,7 @@ def inject_mapping_css() -> None:
             width: 100% !important;
             max-width: 100% !important;
             overflow: visible !important;
-            margin: 0 0 4px 0 !important;
+            margin: 0 0 5px 0 !important;
             padding: 0 !important;
             border: 0 !important;
             background: transparent !important;
@@ -92,15 +94,15 @@ def inject_mapping_css() -> None:
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 30px !important;
-            height: 30px !important;
+            min-height: 34px !important;
+            height: 34px !important;
             background: #fff3e0 !important;
             border: 1px solid rgba(249, 115, 22, 0.20) !important;
             border-radius: 10px !important;
             box-shadow: none !important;
             max-width: 100% !important;
             overflow: hidden !important;
-            font-size: 0.84rem !important;
+            font-size: 0.85rem !important;
             display: flex !important;
             align-items: center !important;
         }
@@ -124,8 +126,8 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
-            line-height: 1.14 !important;
-            font-size: 0.84rem !important;
+            line-height: 1.20 !important;
+            font-size: 0.85rem !important;
         }
 
         .bling-map-preview {
@@ -134,72 +136,73 @@ def inject_mapping_css() -> None:
             z-index: 1;
             width: 100%;
             font-size: 0.82rem;
-            line-height: 1.20;
+            line-height: 1.28;
             color: #2563eb !important;
             font-weight: 700;
-            padding: 0 0 0 0 !important;
-            margin: -2px 0 0 0 !important;
+            padding: 0 !important;
+            margin: -1px 0 0 0 !important;
             border-radius: 0;
             background: transparent !important;
             border: 0;
             text-align: left;
-            overflow-wrap: anywhere;
+            overflow-wrap: break-word;
             word-break: normal;
+            hyphens: none;
         }
 
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 15px 10px 13px 10px !important;
-                margin: 7px 0 10px 0 !important;
+                padding: 16px 10px 13px 10px !important;
+                margin: 7px 0 11px 0 !important;
                 border-radius: 13px !important;
                 border-width: 2px !important;
-                min-height: 96px !important;
+                min-height: 102px !important;
                 height: auto !important;
                 overflow: visible !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.28rem !important;
+                gap: 0.32rem !important;
                 overflow: visible !important;
             }
 
             .bling-map-title {
                 position: relative;
                 z-index: 2;
-                top: -10px;
-                font-size: 0.82rem;
-                line-height: 1.16;
-                margin: 0 0 5px 0 !important;
-                padding: 0 0 0 0 !important;
+                top: -9px;
+                font-size: 0.83rem;
+                line-height: 1.24;
+                margin: 0 0 6px 0 !important;
+                padding: 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
                 position: relative !important;
                 z-index: 1;
-                margin: 0 0 3px 0 !important;
+                margin: 0 0 4px 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 30px !important;
-                height: 30px !important;
+                min-height: 34px !important;
+                height: 34px !important;
                 border-radius: 10px !important;
-                font-size: 0.82rem !important;
+                font-size: 0.83rem !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
-                font-size: 0.82rem !important;
-                line-height: 1.12 !important;
+                font-size: 0.83rem !important;
+                line-height: 1.18 !important;
             }
 
             .bling-map-preview {
                 position: relative;
                 z-index: 1;
                 font-size: 0.82rem;
-                line-height: 1.18;
+                line-height: 1.26;
                 color: #2563eb !important;
                 background: transparent !important;
-                padding: 0 0 0 0 !important;
-                margin: -2px 0 0 0 !important;
+                padding: 0 !important;
+                margin: -1px 0 0 0 !important;
             }
         }
         </style>
