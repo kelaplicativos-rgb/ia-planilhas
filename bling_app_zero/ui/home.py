@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.ui.clean_layout import inject_clean_home_css, render_compact_hero, render_step_title
+from bling_app_zero.ui.clean_layout import (
+    close_home_start_card,
+    inject_clean_home_css,
+    render_compact_hero,
+    render_home_start_card,
+    render_step_title,
+)
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
@@ -102,13 +108,11 @@ def _inject_compact_middle_selector_css() -> None:
 
 
 def _render_home_start() -> None:
-    render_step_title(
-        'Comece pelos modelos do Bling',
-        'Anexe os modelos uma vez. Depois eles serão usados nos fluxos de site, planilha, PDF, XML, cadastro e estoque.',
-    )
+    render_home_start_card()
     if st.button('Anexar modelos do Bling', use_container_width=True, key='home_start_open_models'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
+    close_home_start_card()
 
 
 def _render_home_models_step() -> None:
