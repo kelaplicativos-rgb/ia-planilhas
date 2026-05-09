@@ -61,7 +61,7 @@ def _option_value(value: str | None) -> str:
 def _display_option(value: str | None) -> str:
     text = str(value or '').strip()
     if not text:
-        return EMPTY_CHOOSE_OPTION
+        return EMPTY_LEAVE_OPTION
     return text
 
 
@@ -301,7 +301,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     model = _cadastro_model(df_modelo)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
-    options = [EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
+    options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
     mapping_key = f'cadastro_manual_mapping_{signature}'
 
@@ -361,7 +361,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     model = _estoque_model(df_modelo_estoque)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
-    options = [EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
+    options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
     mapping_key = f'estoque_manual_mapping_from_cadastro_{signature}'
 
