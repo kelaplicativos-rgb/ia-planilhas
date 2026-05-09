@@ -189,6 +189,28 @@ def _signal_label(target: str, info: dict[str, object]) -> str:
     return f'{emoji} {target}'
 
 
+def _ordered_targets_once(order_key: str, target_columns: list[str], confidence: dict[str, dict[str, object]]) -> list[str]:
+    """Mantem a ordem dos cards estavel durante o mapeamento manual.
+
+    Sem isso, ao escolher '— deixar vazio —' o campo fica verde, a lista e reordenada
+    no ciclo seguinte do Streamlit e a tela parece pular para outro ponto.
+    """
+    saved = st.session_state.get(order_key)
+    valid_targets = [str(target) for target in target_columns]
+    valid_set = set(valid_targets)
+    if isinstance(saved, list):
+        clean_saved = [str(item) for item in saved if str(item) in valid_set]
+        missing = [target for target in valid_targets if target not in set(clean_saved)]
+        if clean_saved or missing:
+            order = clean_saved + missing
+            st.session_state[order_key] = order
+            return order
+
+    order = sort_targets_by_confidence(valid_targets, confidence)
+    st.session_state[order_key] = order
+    return order
+
+
 def _current_confidence_from_widgets(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -247,6 +269,7 @@ def _apply_ai_to_session_mapping(
         return
     st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
     _clear_mapping_widgets(mapping_key)
+    st.session_state.pop(f'{mapping_key}__order', None)
     st.success(f'IA aplicou {result.applied} sugestão(ões) validadas pelo motor local.')
     st.rerun()
 
@@ -304,9 +327,11 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
     mapping_key = f'cadastro_manual_mapping_{signature}'
+    order_key = f'{mapping_key}__order'
 
     if mapping_key not in st.session_state:
         st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
+        st.session_state.pop(order_key, None)
 
     st.markdown('#### 2. Conferir colunas')
     st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
@@ -316,7 +341,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA nos pendentes')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
-    ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
+    ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
 
@@ -352,6 +377,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
             st.session_state.pop('mapping_confidence_cadastro', None)
+            st.session_state.pop(order_key, None)
             _clear_mapping_widgets(mapping_key)
             st.rerun()
 
@@ -364,6 +390,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
     mapping_key = f'estoque_manual_mapping_from_cadastro_{signature}'
+    order_key = f'{mapping_key}__order'
 
     if mapping_key not in st.session_state:
         auto_mapping = super_auto_map_columns(df_source, model)
@@ -371,6 +398,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
             if 'deposito' in normalize_key(target):
                 auto_mapping[target] = ''
         st.session_state[mapping_key] = auto_mapping
+        st.session_state.pop(order_key, None)
 
     st.markdown('##### Conferir estoque')
     st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
@@ -380,7 +408,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA no estoque pendente')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
-    ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
+    ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
 
@@ -427,6 +455,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
             st.session_state.pop('mapping_confidence_estoque_from_cadastro', None)
+            st.session_state.pop(order_key, None)
             _clear_mapping_widgets(mapping_key)
             st.rerun()
 
