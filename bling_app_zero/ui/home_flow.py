@@ -15,18 +15,18 @@ OP_CADASTRO = 'cadastro'
 OP_ESTOQUE = 'estoque'
 
 ORIGIN_LABELS = {
-    ORIGIN_SITE: 'Buscar produtos no site do fornecedor',
-    ORIGIN_ARQUIVO: 'Anexar planilha, PDF ou XML do fornecedor',
+    ORIGIN_SITE: 'Site do fornecedor',
+    ORIGIN_ARQUIVO: 'Arquivo do fornecedor',
 }
 
 OPERATION_LABELS = {
-    OP_CADASTRO: 'Cadastrar produtos no Bling',
-    OP_ESTOQUE: 'Atualizar estoque no Bling',
+    OP_CADASTRO: 'Cadastro de produtos',
+    OP_ESTOQUE: 'Atualização de estoque',
 }
 
 ORIGIN_HELP = {
-    ORIGIN_SITE: 'Cole links de produtos ou categorias. O sistema buscará somente as colunas do modelo da operação escolhida.',
-    ORIGIN_ARQUIVO: 'Use um arquivo pronto do fornecedor e gere o CSV conforme a operação escolhida.',
+    ORIGIN_SITE: 'Busca por links usando somente as colunas do modelo escolhido.',
+    ORIGIN_ARQUIVO: 'Importação por planilha, PDF ou XML do fornecedor.',
 }
 
 
@@ -165,50 +165,56 @@ def step_to_panel_operation(step: str) -> str:
     return operation
 
 
+def _choice_button(label: str, caption: str, selected: bool, key: str) -> bool:
+    prefix = '✓ ' if selected else ''
+    button_label = f'{prefix}{label}\n{caption}'
+    return st.button(button_label, use_container_width=True, key=key)
+
+
+def _render_operation_cards(current_operation: str) -> str:
+    col_a, col_b = st.columns(2)
+    selected = current_operation
+    with col_a:
+        if _choice_button('Cadastro', 'Produtos novos no Bling', current_operation == OP_CADASTRO, 'home_pick_cadastro'):
+            selected = OP_CADASTRO
+    with col_b:
+        if _choice_button('Estoque', 'Atualizar saldos existentes', current_operation == OP_ESTOQUE, 'home_pick_estoque'):
+            selected = OP_ESTOQUE
+    return selected
+
+
+def _render_origin_cards(current_origin: str) -> str:
+    col_a, col_b = st.columns(2)
+    selected = current_origin
+    with col_a:
+        if _choice_button('Site', 'Buscar por links', current_origin == ORIGIN_SITE, 'home_pick_site'):
+            selected = ORIGIN_SITE
+    with col_b:
+        if _choice_button('Arquivo', 'Planilha, PDF ou XML', current_origin == ORIGIN_ARQUIVO, 'home_pick_arquivo'):
+            selected = ORIGIN_ARQUIVO
+    return selected
+
+
 def render_flow_selector() -> str:
     current_operation = get_current_operation()
     current_origin = get_current_origin()
 
-    operation_options = [OP_CADASTRO, OP_ESTOQUE]
-    operation_labels = [OPERATION_LABELS[option] for option in operation_options]
-    operation_index = operation_options.index(current_operation) if current_operation in operation_options else 0
-
-    selected_operation_label = st.radio(
-        'O que você quer fazer?',
-        operation_labels,
-        index=operation_index,
-        horizontal=False,
-        key='home_slim_operation_radio',
-    )
-    selected_operation = operation_options[operation_labels.index(selected_operation_label)]
+    st.markdown('#### Escolha o fluxo')
+    selected_operation = _render_operation_cards(current_operation)
     if selected_operation != current_operation:
         set_current_operation(selected_operation)
         current_operation = selected_operation
 
-    origin_options = [ORIGIN_SITE, ORIGIN_ARQUIVO]
-    origin_labels = [ORIGIN_LABELS[option] for option in origin_options]
-    origin_index = origin_options.index(current_origin) if current_origin in origin_options else 0
-
-    selected_origin_label = st.radio(
-        'De onde vêm os dados?',
-        origin_labels,
-        index=origin_index,
-        horizontal=False,
-        key='home_slim_origin_radio',
-    )
-    selected_origin = origin_options[origin_labels.index(selected_origin_label)]
+    st.markdown('#### Origem dos dados')
+    selected_origin = _render_origin_cards(current_origin)
     if selected_origin != current_origin:
         set_current_origin(selected_origin)
         current_origin = selected_origin
 
     st.caption(ORIGIN_HELP.get(current_origin, ''))
 
-    if current_origin == ORIGIN_SITE:
-        button_label = 'Abrir busca de cadastro' if current_operation == OP_CADASTRO else 'Abrir busca de estoque'
-    else:
-        button_label = 'Anexar arquivo para cadastro' if current_operation == OP_CADASTRO else 'Anexar arquivo para estoque'
-
-    if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
+    action = 'Abrir captura por site' if current_origin == ORIGIN_SITE else 'Abrir importação por arquivo'
+    if st.button(action, use_container_width=True, key='home_open_selected_flow'):
         activate_current_step(current_origin)
         st.rerun()
 
