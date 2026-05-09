@@ -50,6 +50,11 @@ def default_rules() -> dict[str, Any]:
     return dict(DEFAULT_RULES)
 
 
+def _safe_text(value: Any, fallback: str) -> str:
+    text = str(value if value is not None else '').strip()
+    return text if text else fallback
+
+
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules = default_rules()
     if isinstance(raw, dict):
@@ -57,14 +62,17 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
             if key in raw:
                 rules[key] = raw[key]
 
-    for key in ['supplier_default', 'measure_unit_default', 'height_default', 'width_default', 'depth_default', 'length_default', 'image_separator']:
-        rules[key] = str(rules.get(key, DEFAULT_RULES[key]) or '').strip()
+    rules['supplier_default'] = _safe_text(rules.get('supplier_default'), DEFAULT_RULES['supplier_default'])
+    rules['measure_unit_default'] = _safe_text(rules.get('measure_unit_default'), DEFAULT_RULES['measure_unit_default'])
+    rules['height_default'] = _safe_text(rules.get('height_default'), DEFAULT_RULES['height_default'])
+    rules['width_default'] = _safe_text(rules.get('width_default'), DEFAULT_RULES['width_default'])
+    rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
+    rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
 
     rules['invalid_gtin_mode'] = 'limpar'
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
     rules['unique_product_code'] = bool(rules.get('unique_product_code', True))
-    if not rules['image_separator']:
-        rules['image_separator'] = '|'
+    rules['image_separator'] = '|'
     return rules
 
 
