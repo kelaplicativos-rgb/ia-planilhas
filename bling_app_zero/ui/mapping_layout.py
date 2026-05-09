@@ -10,109 +10,151 @@ def inject_mapping_css() -> None:
         """
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
+            width: 100% !important;
             max-width: 100% !important;
-            overflow-x: hidden !important;
-            border-radius: 16px !important;
-            border: 1px solid rgba(49, 51, 63, 0.13) !important;
-            background: rgba(248, 250, 252, 0.96) !important;
-            padding: 18px 14px 16px 14px !important;
-            margin: 10px 0 18px 0 !important;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
-            min-height: 126px !important;
+            overflow: visible !important;
+            border-radius: 15px !important;
+            border: 1px solid rgba(49, 51, 63, 0.14) !important;
+            background: rgba(248, 250, 252, 0.92) !important;
+            padding: 12px 12px 11px 12px !important;
+            margin: 8px 0 14px 0 !important;
+            box-shadow: none !important;
+            min-height: auto !important;
+            height: auto !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.42rem !important;
+            gap: 0.36rem !important;
+            overflow: visible !important;
         }
+
         .bling-map-title {
-            font-size: 0.88rem;
-            line-height: 1.22;
+            width: 100%;
+            display: block;
+            position: relative;
+            z-index: 1;
+            font-size: 0.86rem;
+            line-height: 1.24;
             font-weight: 800;
             color: rgba(49, 51, 63, 0.96);
             margin: 0 0 6px 0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
+            padding: 0;
+            text-align: left;
             overflow-wrap: anywhere;
+            word-break: normal;
         }
+
         .bling-map-title-text {
+            display: inline;
             min-width: 0;
             overflow-wrap: anywhere;
         }
+
         .bling-map-help {
-            opacity: 0.62;
-            flex: 0 0 auto;
+            display: none !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
+            display: block !important;
+            position: relative !important;
+            z-index: 2 !important;
+            width: 100% !important;
             max-width: 100% !important;
-            overflow-x: hidden !important;
+            overflow: visible !important;
             margin: 0 !important;
             padding: 0 !important;
             border: 0 !important;
             background: transparent !important;
             box-shadow: none !important;
+            clear: both !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] label {
             display: none !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] {
-            max-width: 100% !important;
+            display: block !important;
             width: 100% !important;
+            max-width: 100% !important;
             margin: 0 !important;
+            position: relative !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 46px !important;
-            height: 46px !important;
+            min-height: 42px !important;
+            height: auto !important;
             background: #eef2f7 !important;
-            border: 1px solid rgba(49, 51, 63, 0.11) !important;
-            border-radius: 13px !important;
+            border: 1px solid rgba(49, 51, 63, 0.12) !important;
+            border-radius: 12px !important;
             box-shadow: none !important;
             max-width: 100% !important;
             overflow: hidden !important;
+            font-size: 0.86rem !important;
         }
+
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span,
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] div {
             max-width: 100% !important;
             overflow-x: hidden !important;
             text-overflow: ellipsis !important;
             line-height: 1.20 !important;
+            font-size: 0.86rem !important;
         }
+
         .bling-map-preview {
-            font-size: 0.72rem;
-            line-height: 1.16;
+            display: block;
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            font-size: 0.74rem;
+            line-height: 1.22;
             color: #118a32;
-            font-weight: 750;
-            padding: 5px 7px;
+            font-weight: 700;
+            padding: 0;
             margin: 5px 0 0 0;
-            border-radius: 9px;
-            background: rgba(232, 247, 238, 0.70);
-            border: 1px solid rgba(17, 138, 50, 0.08);
+            border-radius: 0;
+            background: transparent;
+            border: 0;
+            text-align: left;
             overflow-wrap: anywhere;
+            word-break: normal;
         }
+
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 16px 13px 14px 13px !important;
-                margin: 9px 0 16px 0 !important;
-                border-radius: 15px !important;
-                min-height: 118px !important;
+                padding: 11px 10px 10px 10px !important;
+                margin: 7px 0 13px 0 !important;
+                border-radius: 14px !important;
+                min-height: auto !important;
+                height: auto !important;
             }
+
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.34rem !important;
+                gap: 0.32rem !important;
             }
+
             .bling-map-title {
-                font-size: 0.84rem;
-                line-height: 1.18;
+                font-size: 0.82rem;
+                line-height: 1.22;
                 margin-bottom: 5px;
             }
+
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 44px !important;
-                height: 44px !important;
-                border-radius: 12px !important;
+                min-height: 41px !important;
+                height: auto !important;
+                border-radius: 11px !important;
+                font-size: 0.82rem !important;
             }
+
+            div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span,
+            div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] div {
+                font-size: 0.82rem !important;
+            }
+
             .bling-map-preview {
-                font-size: 0.68rem;
-                line-height: 1.12;
-                padding: 4px 6px;
+                font-size: 0.70rem;
+                line-height: 1.18;
                 margin-top: 4px;
             }
         }
