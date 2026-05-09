@@ -41,6 +41,13 @@ def _normalize_types(accepted_types: list[str] | None) -> list[str]:
     return [str(value).lower().lstrip('.') for value in values]
 
 
+def _accepted_label(accepted_types: list[str] | None) -> str:
+    types = _normalize_types(accepted_types)
+    if not types:
+        return 'arquivos compatíveis'
+    return ', '.join(f'.{item}' for item in types)
+
+
 def _split_supported_files(files: list[Any], accepted_types: list[str] | None) -> tuple[list[Any], list[Any]]:
     allowed = set(_normalize_types(accepted_types))
     supported: list[Any] = []
@@ -186,12 +193,12 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
     )
 
 
-def _render_upload_header(title: str, allow_model: bool) -> None:
+def _render_upload_header(title: str, allow_model: bool, accepted_types: list[str] | None) -> None:
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
-    caption = 'Envie o arquivo do fornecedor para transformar em CSV final.'
+    caption = f'Envie arquivo { _accepted_label(accepted_types) } do fornecedor para transformar em CSV final.'
     if allow_model:
-        caption = 'Envie o arquivo do fornecedor. Se ainda não enviou o modelo do Bling, pode enviar junto.'
+        caption = f'Envie o arquivo do fornecedor. Se ainda não enviou o modelo do Bling, pode enviar junto. Formatos aceitos: {_accepted_label(accepted_types)}.'
     st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
 
@@ -215,14 +222,14 @@ def render_smart_upload_box(
     required_model: bool = False,
     accepted_types: list[str] | None = None,
 ) -> SmartUploadResult:
-    _render_upload_header(title, allow_model=allow_model)
+    _render_upload_header(title, allow_model=allow_model, accepted_types=accepted_types)
 
     files = st.file_uploader(
         'Enviar arquivos',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie planilha, PDF ou XML do fornecedor.',
+        help=f'Formatos aceitos: {_accepted_label(accepted_types)}.',
         label_visibility='collapsed',
     )
 
@@ -236,7 +243,7 @@ def render_smart_upload_box(
         st.warning('Arquivo ignorado por formato incompatível: ' + ', '.join(_file_name(file) for file in ignored_files))
 
     if not supported_files:
-        st.error('Nenhum arquivo compatível foi encontrado.')
+        st.error(f'Nenhum arquivo compatível foi encontrado. Formatos aceitos: {_accepted_label(accepted_types)}.')
         return SmartUploadResult(attachments=[], ignored_files=ignored_files)
 
     result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
