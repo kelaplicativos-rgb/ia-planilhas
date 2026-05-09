@@ -10,7 +10,6 @@ from bling_app_zero.ui.layout import (
     close_home_start_card,
     inject_app_layout,
     render_compact_hero,
-    render_home_pricing_card,
     render_home_start_card,
     render_step_title,
 )
@@ -112,7 +111,6 @@ def _render_home_models_step() -> None:
 
 
 def _render_pricing_choice_step() -> None:
-    render_home_pricing_card()
     pricing_config = render_home_pricing_config_form()
 
     save_clicked, no_pricing_clicked = _centered_two_buttons(
