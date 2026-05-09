@@ -71,6 +71,19 @@ def _render_debug_actions(logs: list[dict[str, Any]]) -> None:
         )
 
 
+def _render_recent_logs(logs: list[dict[str, Any]]) -> None:
+    show_logs = st.toggle('Ver últimos eventos', value=False, key='debug_show_recent_logs')
+    if not show_logs:
+        return
+
+    with st.container(border=True):
+        for item in logs[-25:]:
+            level = item.get('nivel', 'INFO')
+            origin = item.get('origem', 'SISTEMA')
+            message = item.get('mensagem', '')
+            st.caption(f'[{level}] {origin}: {message}')
+
+
 def render_debug_panel() -> None:
     logs = list(st.session_state.get(LOG_SESSION_KEY, []))
     with st.sidebar:
@@ -83,9 +96,4 @@ def render_debug_panel() -> None:
                 return
 
             st.caption(f'{len(logs)} evento(s) registrado(s).')
-            with st.expander('Ver últimos eventos', expanded=False):
-                for item in logs[-25:]:
-                    level = item.get('nivel', 'INFO')
-                    origin = item.get('origem', 'SISTEMA')
-                    message = item.get('mensagem', '')
-                    st.caption(f'[{level}] {origin}: {message}')
+            _render_recent_logs(logs)
