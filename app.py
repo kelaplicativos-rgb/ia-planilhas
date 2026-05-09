@@ -9,15 +9,11 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.5.1-BLINGFIX-MENU'
+APP_VERSION = '3.5.3-BLINGFIX-SIDEBAR'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
-    """Mantem visivel o menu de tres pontinhos do Streamlit.
-
-    Alguns estilos globais do layout podem limitar overflow ou altura do header.
-    Esta blindagem deve rodar depois de set_page_config e antes da tela principal.
-    """
+    """Mantem visiveis menu superior, tres pontinhos e sidebar do Streamlit."""
     st.markdown(
         """
         <style>
@@ -40,7 +36,6 @@ def _inject_streamlit_toolbar_fix() -> None:
         div[data-testid="stDecoration"],
         div[data-testid="stStatusWidget"],
         #MainMenu {
-            display: flex !important;
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
@@ -49,6 +44,24 @@ def _inject_streamlit_toolbar_fix() -> None:
 
         #MainMenu {
             display: block !important;
+        }
+
+        section[data-testid="stSidebar"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 999998 !important;
+        }
+
+        button[kind="header"],
+        button[data-testid="collapsedControl"],
+        [data-testid="collapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 1000001 !important;
         }
         </style>
         """,
@@ -68,7 +81,7 @@ def main() -> None:
         page_title='IA Planilhas → Bling',
         page_icon='🚀',
         layout='wide',
-        initial_sidebar_state='collapsed',
+        initial_sidebar_state='expanded',
     )
     _inject_streamlit_toolbar_fix()
 
