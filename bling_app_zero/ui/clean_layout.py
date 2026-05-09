@@ -9,10 +9,14 @@ def inject_clean_home_css() -> None:
     st.markdown(
         """
         <style>
+        :root {
+            --bling-gap: 0.72rem;
+            --bling-radius: 16px;
+        }
         .block-container {
             padding-top: 1rem;
-            padding-bottom: 1.4rem;
-            max-width: 1080px;
+            padding-bottom: 1.5rem;
+            max-width: 1060px;
         }
         div[data-testid="stMarkdownContainer"] h1,
         div[data-testid="stMarkdownContainer"] h2,
@@ -22,101 +26,99 @@ def inject_clean_home_css() -> None:
         }
         .bling-hero {
             border: 1px solid rgba(49, 51, 63, 0.10);
-            border-radius: 16px;
-            padding: 14px 16px 12px 16px;
-            margin: 0 0 12px 0;
-            background: rgba(250, 250, 250, 0.72);
+            border-radius: var(--bling-radius);
+            padding: 14px 16px 13px 16px;
+            margin: 0 0 var(--bling-gap) 0;
+            background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
             overflow: hidden;
         }
         .bling-hero-title {
-            font-size: clamp(1.35rem, 5vw, 2rem);
-            line-height: 1.08;
+            font-size: clamp(1.32rem, 5vw, 2rem);
+            line-height: 1.16;
             font-weight: 800;
             margin: 0 0 6px 0;
             overflow-wrap: anywhere;
         }
         .bling-hero-subtitle {
-            font-size: clamp(0.88rem, 3.4vw, 1rem);
-            line-height: 1.28;
+            font-size: clamp(0.90rem, 3.4vw, 1rem);
+            line-height: 1.36;
             color: rgba(49, 51, 63, 0.72);
             margin: 0;
             overflow-wrap: anywhere;
         }
         .bling-step-title {
-            font-size: 1.08rem;
-            line-height: 1.16;
+            font-size: 1.14rem;
+            line-height: 1.22;
             font-weight: 800;
-            margin: 8px 0 3px 0;
+            margin: 10px 0 5px 0;
             overflow-wrap: anywhere;
+            clear: both;
         }
         .bling-muted {
-            color: rgba(49, 51, 63, 0.65);
-            font-size: 0.9rem;
-            line-height: 1.23;
-            margin-bottom: 0.48rem;
+            color: rgba(49, 51, 63, 0.66);
+            font-size: 0.92rem;
+            line-height: 1.34;
+            margin: 0 0 0.62rem 0;
             overflow-wrap: anywhere;
+            clear: both;
         }
         .bling-compact-note {
-            border-radius: 11px;
-            padding: 8px 10px;
+            border-radius: 12px;
+            padding: 9px 11px;
             background: rgba(240, 242, 246, 0.72);
             color: rgba(49, 51, 63, 0.76);
-            font-size: 0.86rem;
-            line-height: 1.22;
-            margin: 6px 0 9px 0;
+            font-size: 0.88rem;
+            line-height: 1.32;
+            margin: 7px 0 10px 0;
             overflow-wrap: anywhere;
         }
         .bling-upload-title {
-            font-size: 1.08rem;
+            font-size: 1.10rem;
             font-weight: 800;
-            margin: 7px 0 2px 0;
-            line-height: 1.16;
+            margin: 9px 0 3px 0;
+            line-height: 1.22;
         }
         .bling-upload-caption {
             color: rgba(49, 51, 63, 0.62);
-            font-size: 0.86rem;
-            line-height: 1.22;
-            margin: 0 0 6px 0;
-        }
-        div[data-testid="stFileUploader"] section {
-            padding: 10px 10px !important;
-            min-height: 76px !important;
-        }
-        div[data-testid="stFileUploader"] section > div {
-            gap: 0.25rem !important;
-        }
-        div[data-testid="stFileUploader"] section p {
-            font-size: 0.84rem !important;
-            line-height: 1.12 !important;
-            margin-bottom: 0.10rem !important;
-        }
-        div[data-testid="stFileUploader"] small {
-            font-size: 0.72rem !important;
+            font-size: 0.88rem;
+            line-height: 1.30;
+            margin: 0 0 7px 0;
         }
         div[data-testid="stVerticalBlock"] {
-            gap: 0.42rem !important;
+            gap: 0.58rem !important;
         }
         div[data-testid="column"] {
-            padding: 0 0.18rem !important;
+            padding: 0 0.2rem !important;
         }
         .stButton > button,
         .stDownloadButton > button {
-            border-radius: 12px !important;
-            min-height: 42px;
-            padding: 0.42rem 0.62rem;
-            font-size: 0.92rem;
-            line-height: 1.18;
+            border-radius: 14px !important;
+            min-height: 44px;
+            padding: 0.48rem 0.72rem;
+            font-size: 0.95rem;
+            line-height: 1.22;
             white-space: normal;
         }
+        div[data-testid="stFileUploader"] section {
+            padding: 11px 12px !important;
+            min-height: 82px !important;
+            border-radius: 14px !important;
+        }
+        div[data-testid="stFileUploader"] section p {
+            font-size: 0.86rem !important;
+            line-height: 1.22 !important;
+            margin-bottom: 0.15rem !important;
+        }
+        div[data-testid="stFileUploader"] small {
+            font-size: 0.74rem !important;
+            line-height: 1.18 !important;
+        }
         div[data-testid="stExpander"] details {
-            border-radius: 12px !important;
+            border-radius: 14px !important;
         }
         div[data-testid="stExpander"] details summary {
-            padding-top: 0.45rem !important;
-            padding-bottom: 0.45rem !important;
-        }
-        div[data-testid="stDataFrame"] {
-            font-size: 0.8rem !important;
+            padding-top: 0.55rem !important;
+            padding-bottom: 0.55rem !important;
         }
 
         @media (max-width: 760px) {
@@ -125,12 +127,12 @@ def inject_clean_home_css() -> None:
             }
             .main .block-container,
             .block-container {
-                padding-left: 0.42rem !important;
-                padding-right: 0.42rem !important;
-                padding-top: 0.22rem !important;
-                padding-bottom: 0.65rem !important;
-                max-width: calc(100vw - 0.20rem) !important;
-                width: calc(100vw - 0.20rem) !important;
+                padding-left: 0.62rem !important;
+                padding-right: 0.62rem !important;
+                padding-top: 0.55rem !important;
+                padding-bottom: 0.9rem !important;
+                max-width: 100vw !important;
+                min-height: 88svh !important;
             }
             header[data-testid="stHeader"] {
                 height: 0 !important;
@@ -138,142 +140,133 @@ def inject_clean_home_css() -> None:
                 visibility: hidden;
             }
             section[data-testid="stSidebar"] {
-                max-width: 86vw !important;
+                max-width: 88vw !important;
             }
             .bling-hero {
-                padding: 8px 10px 7px 10px;
-                margin: 0 0 7px 0;
-                border-radius: 13px;
+                padding: 11px 12px 10px 12px;
+                margin: 0 0 0.62rem 0;
+                border-radius: 15px;
             }
             .bling-hero-title {
-                font-size: 1.06rem;
-                line-height: 1.04;
-                white-space: normal;
-                margin-bottom: 4px;
+                font-size: 1.17rem;
+                line-height: 1.18;
+                margin-bottom: 5px;
             }
             .bling-hero-subtitle {
-                font-size: 0.78rem;
-                line-height: 1.18;
+                font-size: 0.86rem;
+                line-height: 1.34;
             }
             .bling-step-title {
-                font-size: 0.98rem;
-                line-height: 1.08;
-                margin: 5px 0 1px 0;
+                font-size: 1.08rem;
+                line-height: 1.22;
+                margin: 0.55rem 0 0.18rem 0;
+                display: block;
             }
             .bling-muted {
-                font-size: 0.78rem;
-                line-height: 1.16;
-                margin-bottom: 0.28rem;
+                font-size: 0.86rem;
+                line-height: 1.32;
+                margin: 0 0 0.56rem 0;
+                display: block;
             }
             .bling-compact-note {
-                padding: 6px 8px;
-                margin: 4px 0 6px 0;
-                border-radius: 10px;
-                font-size: 0.76rem;
-                line-height: 1.16;
+                padding: 8px 10px;
+                margin: 0.45rem 0 0.58rem 0;
+                border-radius: 12px;
+                font-size: 0.84rem;
+                line-height: 1.30;
             }
             .bling-upload-title {
-                font-size: 0.92rem;
-                line-height: 1.10;
-                margin: 4px 0 1px 0;
+                font-size: 1rem;
+                line-height: 1.22;
+                margin: 0.55rem 0 0.18rem 0;
             }
             .bling-upload-caption {
-                font-size: 0.74rem;
-                line-height: 1.14;
-                margin: 0 0 3px 0;
+                font-size: 0.82rem;
+                line-height: 1.28;
+                margin: 0 0 0.45rem 0;
             }
             div[data-testid="stVerticalBlock"] {
-                gap: 0.28rem !important;
+                gap: 0.52rem !important;
             }
             div[data-testid="stHorizontalBlock"] {
-                gap: 0.28rem !important;
-            }
-            div[data-testid="column"] {
-                padding: 0 0.08rem !important;
+                gap: 0.42rem !important;
             }
             div[data-testid="stMarkdownContainer"] p {
-                margin-bottom: 0.18rem !important;
-                line-height: 1.16 !important;
+                line-height: 1.30 !important;
+                margin-bottom: 0.35rem !important;
             }
             div[role="radiogroup"] {
-                gap: 0.18rem !important;
+                gap: 0.34rem !important;
             }
             div[role="radiogroup"] label {
                 border: 1px solid rgba(49, 51, 63, 0.14);
-                border-radius: 11px;
-                padding: 5px 7px !important;
-                background: rgba(250, 250, 250, 0.78);
-                margin-bottom: 3px !important;
+                border-radius: 14px;
+                padding: 9px 10px !important;
+                background: rgba(250, 250, 250, 0.84);
+                margin-bottom: 6px !important;
                 width: 100%;
-                min-height: 38px;
+                min-height: 48px;
                 align-items: center;
                 overflow: hidden;
             }
             div[role="radiogroup"] label > div:first-child {
-                margin-right: 0.35rem !important;
+                margin-right: 0.45rem !important;
                 flex: 0 0 auto;
-                transform: scale(0.88);
+                transform: scale(0.96);
             }
             div[role="radiogroup"] label p,
             div[role="radiogroup"] label span,
             div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-                font-size: 0.82rem !important;
-                line-height: 1.10 !important;
+                font-size: 0.94rem !important;
+                line-height: 1.22 !important;
                 white-space: normal !important;
                 overflow-wrap: anywhere !important;
                 word-break: normal !important;
                 margin: 0 !important;
             }
             div[data-testid="stFileUploader"] section {
-                min-height: 58px !important;
-                padding: 6px 7px !important;
-                border-radius: 11px !important;
+                min-height: 78px !important;
+                padding: 9px 10px !important;
+                border-radius: 14px !important;
             }
             div[data-testid="stFileUploader"] section p {
-                font-size: 0.70rem !important;
-                line-height: 1.04 !important;
+                font-size: 0.80rem !important;
+                line-height: 1.20 !important;
             }
             div[data-testid="stFileUploader"] small {
-                font-size: 0.62rem !important;
-                line-height: 1.04 !important;
+                font-size: 0.70rem !important;
+                line-height: 1.16 !important;
             }
             div[data-testid="stFileUploader"] button {
-                min-height: 30px !important;
-                padding: 0.18rem 0.45rem !important;
-                font-size: 0.74rem !important;
-                line-height: 1.05 !important;
+                min-height: 36px !important;
+                padding: 0.32rem 0.58rem !important;
+                font-size: 0.82rem !important;
+                line-height: 1.12 !important;
             }
             div[data-testid="stExpander"] details summary p {
-                font-size: 0.80rem !important;
-                line-height: 1.10 !important;
+                font-size: 0.88rem !important;
+                line-height: 1.22 !important;
             }
             div[data-testid="stExpander"] details summary {
-                padding: 0.35rem 0.45rem !important;
-            }
-            div[data-testid="stExpander"] div[role="button"] p {
-                font-size: 0.80rem !important;
+                padding: 0.48rem 0.58rem !important;
             }
             .stButton > button,
             .stDownloadButton > button {
-                min-height: 38px !important;
-                padding: 0.32rem 0.48rem !important;
-                font-size: 0.82rem !important;
-                line-height: 1.10 !important;
-                border-radius: 11px !important;
+                min-height: 46px !important;
+                padding: 0.46rem 0.68rem !important;
+                font-size: 0.96rem !important;
+                line-height: 1.20 !important;
+                border-radius: 14px !important;
                 white-space: normal !important;
             }
             textarea,
             input,
             div[data-baseweb="input"] input,
             div[data-baseweb="textarea"] textarea {
-                font-size: 0.82rem !important;
-            }
-            div[data-baseweb="input"],
-            div[data-baseweb="textarea"] {
-                border-radius: 10px !important;
+                font-size: 0.92rem !important;
             }
             div[data-testid="stDataFrame"] {
-                max-height: 300px !important;
+                max-height: 360px !important;
             }
             iframe,
             div[data-testid="stDataFrame"] > div {
@@ -284,39 +277,39 @@ def inject_clean_home_css() -> None:
         @media (max-width: 390px) {
             .main .block-container,
             .block-container {
-                padding-left: 0.32rem !important;
-                padding-right: 0.32rem !important;
-                max-width: calc(100vw - 0.10rem) !important;
-                width: calc(100vw - 0.10rem) !important;
+                padding-left: 0.50rem !important;
+                padding-right: 0.50rem !important;
+                min-height: 88svh !important;
             }
             .bling-hero {
-                padding: 7px 8px 6px 8px;
-                margin-bottom: 6px;
+                padding: 10px 11px 9px 11px;
+                margin-bottom: 0.55rem;
             }
             .bling-hero-title {
-                font-size: 0.98rem;
+                font-size: 1.08rem;
             }
-            .bling-hero-subtitle,
-            .bling-muted,
-            .bling-compact-note {
-                font-size: 0.72rem;
+            .bling-hero-subtitle {
+                font-size: 0.80rem;
             }
             .bling-step-title {
-                font-size: 0.92rem;
+                font-size: 1rem;
+            }
+            .bling-muted {
+                font-size: 0.80rem;
             }
             div[role="radiogroup"] label {
-                min-height: 35px;
-                padding: 4px 6px !important;
+                min-height: 44px;
+                padding: 8px 9px !important;
             }
             div[role="radiogroup"] label p,
             div[role="radiogroup"] label span,
             div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-                font-size: 0.76rem !important;
+                font-size: 0.88rem !important;
             }
             .stButton > button,
             .stDownloadButton > button {
-                min-height: 35px !important;
-                font-size: 0.77rem !important;
+                min-height: 44px !important;
+                font-size: 0.90rem !important;
             }
         }
         </style>
