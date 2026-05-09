@@ -6,12 +6,12 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.exporter import sanitize_for_bling
-from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
+from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_confidence import (
     confidence_for_mapping,
-    confidence_for_mapping_dict,
     sort_targets_by_confidence,
 )
+from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
 from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
@@ -171,6 +171,13 @@ def _force_price_suggestion(target: str, source_columns: list[str], suggested: s
     return suggested
 
 
+def _build_super_mapping(df_source: pd.DataFrame, model: pd.DataFrame, source_columns: list[str]) -> dict[str, str]:
+    auto_mapping = super_auto_map_columns(df_source, model)
+    for target, selected in list(auto_mapping.items()):
+        auto_mapping[target] = _force_price_suggestion(target, source_columns, selected)
+    return auto_mapping
+
+
 def _fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if not deposito:
@@ -191,13 +198,10 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
     mapping_key = f'cadastro_manual_mapping_{signature}'
 
     if mapping_key not in st.session_state:
-        auto_mapping = auto_map_columns(df_source, model)
-        for target, selected in list(auto_mapping.items()):
-            auto_mapping[target] = _force_price_suggestion(target, source_columns, selected)
-        st.session_state[mapping_key] = auto_mapping
+        st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
 
     st.markdown('#### 2. Conferir colunas')
-    st.caption('🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
+    st.caption('Motor super inteligente ativo: 🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
 
     with st.expander('Ver origem', expanded=False):
         preview_df('Origem para conferir', df_source)
@@ -247,8 +251,8 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.session_state['mapping_confidence_cadastro'] = edited_confidence
             st.rerun()
     with col_b:
-        if st.button('Limpar colunas', use_container_width=True):
-            st.session_state.pop(mapping_key, None)
+        if st.button('Remapear com motor inteligente', use_container_width=True):
+            st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
             st.session_state.pop('mapping_confidence_cadastro', None)
@@ -268,14 +272,14 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
     mapping_key = f'estoque_manual_mapping_from_cadastro_{signature}'
 
     if mapping_key not in st.session_state:
-        auto_mapping = auto_map_columns(df_source, model)
+        auto_mapping = super_auto_map_columns(df_source, model)
         for target in target_columns:
             if 'deposito' in normalize_key(target):
                 auto_mapping[target] = ''
         st.session_state[mapping_key] = auto_mapping
 
     st.markdown('##### Conferir estoque')
-    st.caption('🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
+    st.caption('Motor super inteligente ativo: 🔴 corrigir primeiro · 🟡 revisar · 🟢 seguro no final')
 
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
@@ -341,7 +345,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
             st.session_state['mapping_confidence_estoque_from_cadastro'] = edited_confidence
             st.rerun()
     with col_b:
-        if st.button('Limpar estoque', use_container_width=True):
+        if st.button('Remapear estoque inteligente', use_container_width=True):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
