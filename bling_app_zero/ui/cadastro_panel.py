@@ -5,6 +5,11 @@ import html
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.ai_mapping_assistant import (
+    ai_mapping_enabled,
+    apply_ai_mapping_assist,
+    merge_ai_suggestions,
+)
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_confidence import (
@@ -215,6 +220,39 @@ def _fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     return out
 
 
+def _clear_mapping_widgets(mapping_key: str) -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(f'{mapping_key}_'):
+            st.session_state.pop(key, None)
+
+
+def _apply_ai_to_session_mapping(
+    df_source: pd.DataFrame,
+    target_columns: list[str],
+    current_mapping: dict[str, str],
+    mapping_key: str,
+) -> None:
+    result = apply_ai_mapping_assist(df_source, target_columns, current_mapping, only_uncertain=True)
+    if not result.enabled:
+        st.warning('IA de mapeamento não configurada. Adicione OPENAI_API_KEY nos secrets do Streamlit.')
+        return
+    if result.applied <= 0:
+        st.info('A IA não encontrou sugestões seguras para aplicar.')
+        return
+    st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
+    _clear_mapping_widgets(mapping_key)
+    st.success(f'IA aplicou {result.applied} sugestão(ões) validadas pelo motor local.')
+    st.rerun()
+
+
+def _render_ai_button(df_source: pd.DataFrame, target_columns: list[str], current_mapping: dict[str, str], mapping_key: str, label: str) -> None:
+    if not ai_mapping_enabled():
+        st.caption('IA opcional inativa: configure OPENAI_API_KEY nos secrets para usar assistência GPT nos pendentes.')
+        return
+    if st.button(label, use_container_width=True):
+        _apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
+
+
 def _render_mapping_select(
     df_source: pd.DataFrame,
     target: str,
@@ -260,6 +298,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
         preview_df('Origem para conferir', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
+    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA nos pendentes')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
@@ -297,9 +336,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
             st.session_state.pop('mapping_confidence_cadastro', None)
-            for key in list(st.session_state.keys()):
-                if str(key).startswith(f'{mapping_key}_'):
-                    st.session_state.pop(key, None)
+            _clear_mapping_widgets(mapping_key)
             st.rerun()
 
 
@@ -324,6 +361,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
         preview_df('Origem para estoque', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
+    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA no estoque pendente')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = sort_targets_by_confidence(target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
@@ -370,9 +408,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
             st.session_state.pop('mapping_confidence_estoque_from_cadastro', None)
-            for key in list(st.session_state.keys()):
-                if str(key).startswith(f'{mapping_key}_'):
-                    st.session_state.pop(key, None)
+            _clear_mapping_widgets(mapping_key)
             st.rerun()
 
 
