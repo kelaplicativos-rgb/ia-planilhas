@@ -105,6 +105,7 @@ def inject_clean_home_css() -> None:
             opacity: 0.78;
             border: 1px solid rgba(15,23,42,0.14) !important;
             background: rgba(255,255,255,0.94) !important;
+            color: rgba(17,24,39,0.86) !important;
             box-shadow: 0 4px 10px rgba(15,23,42,0.07) !important;
         }
 
@@ -144,21 +145,18 @@ def inject_clean_home_css() -> None:
             margin: 1.25rem auto 0 auto;
         }
 
-        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button {
+        button[kind="primary"] {
             background: linear-gradient(135deg, #b91c1c, #ef4444) !important;
             color: #ffffff !important;
             border: 0 !important;
-            border-radius: 18px !important;
-            min-height: 54px !important;
-            font-weight: 900 !important;
-            letter-spacing: 0.01em !important;
-            box-shadow: 0 14px 30px rgba(185, 28, 28, 0.28) !important;
-            opacity: 1 !important;
+            box-shadow: 0 14px 30px rgba(185, 28, 28, 0.24) !important;
         }
 
-        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 18px 34px rgba(185, 28, 28, 0.34) !important;
+        button[kind="primary"]:active,
+        button[kind="primary"]:focus:not(:active) {
+            background: #991b1b !important;
+            color: #ffffff !important;
+            box-shadow: 0 10px 22px rgba(185, 28, 28, 0.30) !important;
         }
 
         div[data-baseweb="select"] {
@@ -428,7 +426,7 @@ def render_compact_hero() -> None:
 
 
 def render_home_start_card() -> None:
-    st.markdown('<div class="bling-home-button-center bling-primary-cta-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="bling-home-button-center"></div>', unsafe_allow_html=True)
 
 
 def render_home_pricing_card() -> None:
