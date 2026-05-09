@@ -40,7 +40,7 @@ def inject_mapping_css() -> None:
             font-weight: 800;
             color: rgba(49, 51, 63, 0.96);
             margin: 0 0 6px 0 !important;
-            padding: 0 !important;
+            padding: 0 0 0 0 !important;
             text-align: left;
             overflow-wrap: anywhere;
             word-break: normal;
@@ -122,7 +122,7 @@ def inject_mapping_css() -> None:
             line-height: 1.20;
             color: #2563eb;
             font-weight: 700;
-            padding: 0;
+            padding: 0 0 0 0 !important;
             margin: -2px 0 0 0 !important;
             border-radius: 0;
             background: transparent;
@@ -155,7 +155,7 @@ def inject_mapping_css() -> None:
                 font-size: 0.82rem;
                 line-height: 1.16;
                 margin: 0 0 5px 0 !important;
-                padding: 0 !important;
+                padding: 0 0 0 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
@@ -181,6 +181,7 @@ def inject_mapping_css() -> None:
                 z-index: 1;
                 font-size: 0.73rem;
                 line-height: 1.18;
+                padding: 0 0 0 0 !important;
                 margin: -2px 0 0 0 !important;
             }
         }
