@@ -6,6 +6,7 @@ from bling_app_zero.ui.clean_layout import (
     close_home_start_card,
     inject_clean_home_css,
     render_compact_hero,
+    render_home_pricing_card,
     render_home_start_card,
     render_step_title,
 )
@@ -14,8 +15,10 @@ from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, rend
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
 HOME_STAGE_KEY = 'home_stage'
+HOME_PRICING_KEY = 'home_precificacao_inicial'
 STAGE_START = 'inicio'
 STAGE_MODELOS = 'modelos'
+STAGE_PRECIFICACAO = 'precificacao'
 STAGE_ORIGEM = 'origem'
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
@@ -48,15 +51,16 @@ def _has_home_models_strict() -> bool:
 
 def _current_home_stage() -> str:
     stage = str(st.session_state.get(HOME_STAGE_KEY) or '')
-    if stage in {STAGE_START, STAGE_MODELOS, STAGE_ORIGEM}:
+    valid = {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}
+    if stage in valid:
         return stage
     if _has_home_models_light():
-        return STAGE_ORIGEM
+        return STAGE_PRECIFICACAO
     return STAGE_START
 
 
 def _set_home_stage(stage: str) -> None:
-    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_ORIGEM}:
+    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
         stage = STAGE_START
     st.session_state[HOME_STAGE_KEY] = stage
 
@@ -65,12 +69,8 @@ def _inject_compact_middle_selector_css() -> None:
     st.markdown(
         """
         <style>
-        div[data-testid="stRadio"] {
-            margin-bottom: 0.08rem !important;
-        }
-        div[data-testid="stRadio"] > label {
-            display: none !important;
-        }
+        div[data-testid="stRadio"] { margin-bottom: 0.08rem !important; }
+        div[data-testid="stRadio"] > label { display: none !important; }
         div[data-testid="stRadio"] div[role="radiogroup"] {
             gap: 0.22rem !important;
             margin-bottom: 0.04rem !important;
@@ -94,9 +94,7 @@ def _inject_compact_middle_selector_css() -> None:
             margin-top: 0 !important;
             padding-top: 0 !important;
         }
-        div[data-testid="stExpander"] {
-            margin-top: 0.12rem !important;
-        }
+        div[data-testid="stExpander"] { margin-top: 0.12rem !important; }
         div[data-testid="stExpander"] details summary {
             padding-top: 0.38rem !important;
             padding-bottom: 0.38rem !important;
@@ -107,8 +105,13 @@ def _inject_compact_middle_selector_css() -> None:
     )
 
 
+def _render_center_marker() -> None:
+    st.markdown('<div class="bling-home-button-center"></div>', unsafe_allow_html=True)
+
+
 def _render_home_start() -> None:
     render_home_start_card()
+    _render_center_marker()
     if st.button('Anexar modelos do Bling', use_container_width=True, key='home_start_open_models'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
@@ -130,11 +133,33 @@ def _render_home_models_step() -> None:
     with col_b:
         disabled = not _has_home_models_strict()
         if st.button('Continuar', use_container_width=True, disabled=disabled, key='home_models_continue'):
-            _set_home_stage(STAGE_ORIGEM)
+            _set_home_stage(STAGE_PRECIFICACAO)
             st.rerun()
 
     if not _has_home_models_strict():
         st.info('Anexe pelo menos um modelo para continuar.')
+
+
+def _render_pricing_choice_step() -> None:
+    render_home_pricing_card()
+    _render_center_marker()
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Sim, vou precificar', use_container_width=True, key='home_pricing_yes'):
+            st.session_state[HOME_PRICING_KEY] = True
+            st.session_state['cadastro_preco_calculado_ativo'] = True
+            _set_home_stage(STAGE_ORIGEM)
+            st.rerun()
+    with col_b:
+        if st.button('Não, seguir sem precificar', use_container_width=True, key='home_pricing_no'):
+            st.session_state[HOME_PRICING_KEY] = False
+            st.session_state['cadastro_preco_calculado_ativo'] = False
+            _set_home_stage(STAGE_ORIGEM)
+            st.rerun()
+
+    if st.button('← Voltar aos modelos', use_container_width=True, key='home_pricing_back'):
+        _set_home_stage(STAGE_MODELOS)
+        st.rerun()
 
 
 def _render_home_origin_step() -> None:
@@ -142,18 +167,32 @@ def _render_home_origin_step() -> None:
         'O que você quer fazer?',
         'Escolha a origem dos produtos. Os modelos anexados serão reutilizados nos próximos passos.',
     )
+    pricing = st.session_state.get(HOME_PRICING_KEY)
+    if pricing is True:
+        st.success('Precificação inicial marcada como SIM. A calculadora poderá ser usada no fluxo de cadastro.')
+    elif pricing is False:
+        st.info('Precificação inicial marcada como NÃO. O sistema seguirá com o preço da origem quando existir.')
     _inject_compact_middle_selector_css()
     render_flow_selector()
 
-    if st.button('Trocar modelos do Bling', use_container_width=True, key='home_origin_change_models'):
-        _set_home_stage(STAGE_MODELOS)
-        st.rerun()
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Trocar modelos do Bling', use_container_width=True, key='home_origin_change_models'):
+            _set_home_stage(STAGE_MODELOS)
+            st.rerun()
+    with col_b:
+        if st.button('Alterar precificação', use_container_width=True, key='home_origin_change_pricing'):
+            _set_home_stage(STAGE_PRECIFICACAO)
+            st.rerun()
 
 
 def _render_home_intro() -> None:
     stage = _current_home_stage()
     if stage == STAGE_MODELOS:
         _render_home_models_step()
+        return
+    if stage == STAGE_PRECIFICACAO:
+        _render_pricing_choice_step()
         return
     if stage == STAGE_ORIGEM:
         _render_home_origin_step()
