@@ -175,15 +175,16 @@ def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> No
     st.markdown(
         f"""
         <div style="
-            font-size:14px;
+            font-size:11px;
+            line-height:1.08;
             color:#118a32;
-            margin-top:4px;
-            margin-bottom:2px;
-            font-weight:800;
-            padding:7px 9px;
-            border-radius:11px;
-            background:rgba(232,247,238,0.78);
-            border:1px solid rgba(17,138,50,0.12);
+            margin-top:-10px;
+            margin-bottom:-4px;
+            font-weight:750;
+            padding:2px 5px;
+            border-radius:7px;
+            background:rgba(232,247,238,0.62);
+            border:1px solid rgba(17,138,50,0.08);
             overflow-wrap:anywhere;
         ">{safe_text}</div>
         """,
