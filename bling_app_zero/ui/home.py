@@ -29,6 +29,52 @@ def _set_home_stage(stage: str) -> None:
     st.session_state[HOME_STAGE_KEY] = stage
 
 
+def _inject_compact_middle_selector_css() -> None:
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stRadio"] {
+            margin-bottom: 0.08rem !important;
+        }
+        div[data-testid="stRadio"] > label {
+            display: none !important;
+        }
+        div[data-testid="stRadio"] div[role="radiogroup"] {
+            gap: 0.22rem !important;
+            margin-bottom: 0.04rem !important;
+        }
+        div[data-testid="stRadio"] div[role="radiogroup"] label {
+            min-height: 34px !important;
+            padding: 5px 8px !important;
+            margin-bottom: 2px !important;
+            border-radius: 10px !important;
+            background: rgba(240, 242, 246, 0.62) !important;
+        }
+        div[data-testid="stRadio"] div[role="radiogroup"] label p,
+        div[data-testid="stRadio"] div[role="radiogroup"] label span,
+        div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+            font-size: 0.84rem !important;
+            line-height: 1.12 !important;
+            margin: 0 !important;
+        }
+        div[data-testid="stRadio"] + div,
+        div[data-testid="stRadio"] + div[data-testid="stElementContainer"] {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+        }
+        div[data-testid="stExpander"] {
+            margin-top: 0.12rem !important;
+        }
+        div[data-testid="stExpander"] details summary {
+            padding-top: 0.38rem !important;
+            padding-bottom: 0.38rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_home_start() -> None:
     render_step_title(
         'Comece pelos modelos do Bling',
@@ -66,6 +112,7 @@ def _render_home_origin_step() -> None:
         'O que você quer fazer?',
         'Escolha a origem dos produtos. Os modelos anexados serão reutilizados nos próximos passos.',
     )
+    _inject_compact_middle_selector_css()
     render_flow_selector()
 
     if st.button('Trocar modelos do Bling', use_container_width=True, key='home_origin_change_models'):
