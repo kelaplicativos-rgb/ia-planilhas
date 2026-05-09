@@ -11,7 +11,9 @@ from bling_app_zero.ui.cadastro_sources import (
     select_cadastro_model,
     select_estoque_model_for_cadastro,
 )
-from bling_app_zero.ui.home_shared import download_final, preview_df, show_mapping
+from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
+
+CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
 
 
 def _source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFrame | None:
@@ -19,6 +21,26 @@ def _source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFra
         return df_origem_site
     source_df = getattr(upload, 'source_df', None)
     return source_df if isinstance(source_df, pd.DataFrame) else None
+
+
+def _clear_cadastro_outputs_if_source_changed(df_origem: pd.DataFrame | None) -> None:
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        return
+    signature = df_signature(df_origem)
+    previous = st.session_state.get(CADASTRO_SOURCE_SIGNATURE_KEY)
+    if previous == signature:
+        return
+    for key in [
+        'df_final_cadastro',
+        'mapping_cadastro',
+        'mapping_confidence_cadastro',
+        'df_origem_cadastro_precificada',
+        'df_final_estoque_from_cadastro',
+        'mapping_estoque_from_cadastro',
+        'mapping_confidence_estoque_from_cadastro',
+    ]:
+        st.session_state.pop(key, None)
+    st.session_state[CADASTRO_SOURCE_SIGNATURE_KEY] = signature
 
 
 def _render_final_cadastro_download() -> None:
@@ -34,6 +56,8 @@ def render_cadastro_panel() -> None:
     df_origem_site = get_site_source_for_operation('cadastro')
     upload = render_cadastro_source_upload(df_origem_site)
     df_origem = _source_dataframe(df_origem_site, upload)
+    _clear_cadastro_outputs_if_source_changed(df_origem)
+
     df_modelo = select_cadastro_model(upload)
     df_modelo_estoque = select_estoque_model_for_cadastro(upload)
 
@@ -47,5 +71,8 @@ def render_cadastro_panel() -> None:
         render_dual_stock_output(df_para_mapear, df_modelo_estoque)
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
+    else:
+        st.session_state.pop('df_final_cadastro', None)
+        st.session_state.pop('mapping_cadastro', None)
 
     _render_final_cadastro_download()
