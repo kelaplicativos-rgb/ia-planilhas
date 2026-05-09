@@ -63,18 +63,17 @@ def has_home_models() -> bool:
 
 
 def _render_instructions() -> None:
-    with st.expander('Como pegar os modelos no Bling', expanded=False):
+    with st.expander('Onde encontro o modelo no Bling?', expanded=False):
         st.markdown(
             """
             1. Entre no **Bling**.
-            2. Vá em **Produtos**.
-            3. Abra **Importar / Exportar**.
-            4. Escolha **Importar produtos** ou **Atualizar estoque**.
-            5. Baixe a **planilha modelo**.
-            6. Volte aqui e anexe os modelos.
+            2. Abra a área de **Produtos**.
+            3. Vá em **Importar / Exportar**.
+            4. Baixe o modelo de **Cadastro de produtos** ou de **Atualização de estoque**.
+            5. Volte aqui e envie o arquivo.
             """
         )
-        st.caption('Use o modelo oficial do Bling. Ele define as colunas, a ordem e o padrão do arquivo final.')
+        st.caption('Use o modelo oficial para o sistema preencher as colunas certas e evitar erro na importação.')
 
 
 def _render_loaded_summary() -> None:
@@ -86,21 +85,21 @@ def _render_loaded_summary() -> None:
     if isinstance(estoque, pd.DataFrame):
         parts.append(f'Estoque: {len(estoque.columns)} coluna(s)')
     if parts:
-        st.success('Modelos carregados · ' + ' · '.join(parts))
+        st.success('Modelo pronto para uso · ' + ' · '.join(parts))
 
 
 def render_home_bling_models() -> None:
     st.markdown('### 1. Modelos do Bling')
-    st.caption('Anexe os modelos oficiais do Bling uma vez. Depois escolha como trazer os produtos.')
-    render_compact_note('Anexe o modelo uma vez e o sistema lembrará durante esta sessão.')
+    st.caption('Envie o modelo oficial uma vez. Depois o sistema usa essa base em todos os próximos passos.')
+    render_compact_note('Quanto melhor o modelo, mais limpo sai o CSV final para importar no Bling.')
     _render_instructions()
 
     upload = render_model_upload_box(
-        title='Anexar modelos oficiais',
+        title='Enviar modelo oficial',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
-        caption='Pode anexar o modelo de cadastro, o modelo de estoque ou os dois.',
+        caption='Pode enviar o modelo de cadastro, o modelo de estoque ou os dois juntos.',
     )
 
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
