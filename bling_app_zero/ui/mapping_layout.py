@@ -9,31 +9,30 @@ def inject_mapping_css() -> None:
     st.markdown(
         """
         <style>
-        /* CSS exclusivo do mapeamento manual.
-           Card externo confortável + select central menor + preview legível. */
         div[data-testid="stVerticalBlockBorderWrapper"] {
             max-width: 100% !important;
             overflow-x: hidden !important;
-            border-radius: 15px !important;
+            border-radius: 16px !important;
             border: 1px solid rgba(49, 51, 63, 0.13) !important;
             background: rgba(248, 250, 252, 0.96) !important;
-            padding: 13px 10px 10px 10px !important;
-            margin: 8px 0 12px 0 !important;
+            padding: 18px 14px 16px 14px !important;
+            margin: 10px 0 18px 0 !important;
             box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
+            min-height: 126px !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.18rem !important;
+            gap: 0.42rem !important;
         }
         .bling-map-title {
             font-size: 0.88rem;
-            line-height: 1.14;
+            line-height: 1.22;
             font-weight: 800;
-            color: rgba(49, 51, 63, 0.95);
-            margin: 0 0 4px 0;
+            color: rgba(49, 51, 63, 0.96);
+            margin: 0 0 6px 0;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 6px;
+            gap: 8px;
             overflow-wrap: anywhere;
         }
         .bling-map-title-text {
@@ -61,13 +60,12 @@ def inject_mapping_css() -> None:
             width: 100% !important;
             margin: 0 !important;
         }
-        /* Campo selecionável do meio menor para não esmagar título e preview. */
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 34px !important;
-            height: 34px !important;
+            min-height: 46px !important;
+            height: 46px !important;
             background: #eef2f7 !important;
             border: 1px solid rgba(49, 51, 63, 0.11) !important;
-            border-radius: 10px !important;
+            border-radius: 13px !important;
             box-shadow: none !important;
             max-width: 100% !important;
             overflow: hidden !important;
@@ -77,44 +75,45 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             overflow-x: hidden !important;
             text-overflow: ellipsis !important;
+            line-height: 1.20 !important;
         }
         .bling-map-preview {
-            font-size: 0.70rem;
-            line-height: 1.08;
+            font-size: 0.72rem;
+            line-height: 1.16;
             color: #118a32;
             font-weight: 750;
-            padding: 3px 5px;
-            margin: 4px 0 0 0;
-            border-radius: 7px;
+            padding: 5px 7px;
+            margin: 5px 0 0 0;
+            border-radius: 9px;
             background: rgba(232, 247, 238, 0.70);
             border: 1px solid rgba(17, 138, 50, 0.08);
             overflow-wrap: anywhere;
         }
-
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 12px 9px 9px 9px !important;
-                margin: 7px 0 11px 0 !important;
-                border-radius: 14px !important;
+                padding: 16px 13px 14px 13px !important;
+                margin: 9px 0 16px 0 !important;
+                border-radius: 15px !important;
+                min-height: 118px !important;
             }
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.14rem !important;
+                gap: 0.34rem !important;
             }
             .bling-map-title {
-                font-size: 0.83rem;
-                line-height: 1.10;
-                margin-bottom: 3px;
+                font-size: 0.84rem;
+                line-height: 1.18;
+                margin-bottom: 5px;
             }
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 33px !important;
-                height: 33px !important;
-                border-radius: 10px !important;
+                min-height: 44px !important;
+                height: 44px !important;
+                border-radius: 12px !important;
             }
             .bling-map-preview {
-                font-size: 0.66rem;
-                line-height: 1.04;
-                padding: 2px 4px;
-                margin-top: 3px;
+                font-size: 0.68rem;
+                line-height: 1.12;
+                padding: 4px 6px;
+                margin-top: 4px;
             }
         }
         </style>
