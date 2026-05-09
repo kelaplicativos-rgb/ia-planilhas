@@ -14,7 +14,7 @@ class HomePricingDefaults:
     profit_percent: float = 50.0
     tax_percent: float = 0.0
     fee_percent: float = 0.0
-    discount_percent: float = 0.0
+    commission_percent: float = 0.0
     fixed_value: float = 0.0
 
 
@@ -25,7 +25,7 @@ def default_home_pricing_config() -> dict[str, Any]:
         'profit_percent': defaults.profit_percent,
         'tax_percent': defaults.tax_percent,
         'fee_percent': defaults.fee_percent,
-        'discount_percent': defaults.discount_percent,
+        'discount_percent': defaults.commission_percent,
         'fixed_value': defaults.fixed_value,
     }
 
@@ -68,12 +68,12 @@ def disable_home_pricing() -> dict[str, Any]:
 
 def render_home_pricing_config_form() -> dict[str, Any]:
     current = get_home_pricing_config()
-    st.markdown('##### Configuração da precificação')
-    st.caption('Esses valores serão usados como padrão na calculadora do cadastro de produtos.')
+    st.markdown('##### Calculadora de preço de venda')
+    st.caption('Informe lucro, impostos, taxas e valor fixo. O sistema usa esses dados para sugerir o preço de venda no cadastro.')
 
     col_a, col_b, col_c = st.columns(3)
     profit_percent = col_a.number_input(
-        'Lucro %',
+        'Lucro desejado %',
         min_value=0.0,
         value=float(current.get('profit_percent', 50.0)),
         step=1.0,
@@ -87,7 +87,7 @@ def render_home_pricing_config_form() -> dict[str, Any]:
         key='home_pricing_tax_percent',
     )
     fee_percent = col_c.number_input(
-        'Taxas %',
+        'Taxas da venda %',
         min_value=0.0,
         value=float(current.get('fee_percent', 0.0)),
         step=1.0,
@@ -95,27 +95,29 @@ def render_home_pricing_config_form() -> dict[str, Any]:
     )
 
     col_d, col_e = st.columns(2)
-    discount_percent = col_d.number_input(
-        'Desconto %',
+    commission_percent = col_d.number_input(
+        'Comissão / marketplace %',
         min_value=0.0,
         value=float(current.get('discount_percent', 0.0)),
         step=1.0,
         key='home_pricing_discount_percent',
     )
     fixed_value = col_e.number_input(
-        'Fixo R$',
+        'Custo fixo R$',
         min_value=0.0,
         value=float(current.get('fixed_value', 0.0)),
         step=1.0,
         key='home_pricing_fixed_value',
     )
 
+    st.caption('A calculadora parte do custo do produto. No cadastro, o sistema tenta escolher automaticamente a melhor coluna de custo.')
+
     preview = {
         'enabled': True,
         'profit_percent': float(profit_percent),
         'tax_percent': float(tax_percent),
         'fee_percent': float(fee_percent),
-        'discount_percent': float(discount_percent),
+        'discount_percent': float(commission_percent),
         'fixed_value': float(fixed_value),
     }
     return preview
