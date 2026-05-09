@@ -96,6 +96,21 @@ def inject_clean_home_css() -> None:
         div[data-testid="column"] {
             padding: 0 0.2rem !important;
         }
+        div[data-testid="stSelectbox"] {
+            border: 1px solid rgba(49, 51, 63, 0.10) !important;
+            border-radius: 16px !important;
+            background: rgba(248, 250, 252, 0.82) !important;
+            padding: 10px 10px 12px 10px !important;
+            margin: 4px 0 8px 0 !important;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+        }
+        div[data-testid="stSelectbox"] label {
+            margin-bottom: 7px !important;
+        }
+        div[data-testid="stSelectbox"] label p {
+            font-weight: 750 !important;
+            letter-spacing: -0.01em !important;
+        }
         div[data-baseweb="select"] {
             max-width: 100% !important;
             width: 100% !important;
@@ -103,7 +118,7 @@ def inject_clean_home_css() -> None:
         div[data-baseweb="select"] > div {
             max-width: 100% !important;
             overflow: hidden !important;
-            background: #f2f4f8 !important;
+            background: #eef2f7 !important;
             border-radius: 14px !important;
         }
         div[data-baseweb="popover"],
@@ -179,15 +194,22 @@ def inject_clean_home_css() -> None:
             }
             div[data-testid="stVerticalBlock"],
             div[data-testid="stHorizontalBlock"],
-            div[data-testid="stElementContainer"],
-            div[data-testid="stSelectbox"] {
+            div[data-testid="stElementContainer"] {
                 max-width: 100% !important;
                 overflow-x: hidden !important;
             }
+            div[data-testid="stSelectbox"] {
+                max-width: 100% !important;
+                overflow-x: hidden !important;
+                padding: 9px 9px 11px 9px !important;
+                margin: 5px 0 9px 0 !important;
+                border-radius: 15px !important;
+                background: rgba(248, 250, 252, 0.94) !important;
+            }
             div[data-baseweb="select"] > div {
                 min-height: 46px !important;
-                background: #f1f3f7 !important;
-                border: 1px solid rgba(49, 51, 63, 0.10) !important;
+                background: #eef2f7 !important;
+                border: 1px solid rgba(49, 51, 63, 0.12) !important;
             }
             .bling-hero {
                 padding: 11px 12px 10px 12px;
@@ -348,6 +370,10 @@ def inject_clean_home_css() -> None:
             }
             .bling-muted {
                 font-size: 0.80rem;
+            }
+            div[data-testid="stSelectbox"] {
+                padding: 8px 8px 10px 8px !important;
+                border-radius: 14px !important;
             }
             div[role="radiogroup"] label {
                 min-height: 44px;
