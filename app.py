@@ -9,7 +9,51 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.5.0-BLINGSCAN-UX-FLOW'
+APP_VERSION = '3.5.1-BLINGFIX-MENU'
+
+
+def _inject_streamlit_toolbar_fix() -> None:
+    """Mantem visivel o menu de tres pontinhos do Streamlit.
+
+    Alguns estilos globais do layout podem limitar overflow ou altura do header.
+    Esta blindagem deve rodar depois de set_page_config e antes da tela principal.
+    """
+    st.markdown(
+        """
+        <style>
+        header[data-testid="stHeader"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 999999 !important;
+            overflow: visible !important;
+        }
+
+        header[data-testid="stHeader"] * {
+            visibility: visible !important;
+            pointer-events: auto !important;
+        }
+
+        div[data-testid="stToolbar"],
+        div[data-testid="stToolbar"] *,
+        div[data-testid="stDecoration"],
+        div[data-testid="stStatusWidget"],
+        #MainMenu {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 1000000 !important;
+        }
+
+        #MainMenu {
+            display: block !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _register_critical_error(exc: Exception) -> str:
@@ -26,6 +70,7 @@ def main() -> None:
         layout='wide',
         initial_sidebar_state='collapsed',
     )
+    _inject_streamlit_toolbar_fix()
 
     add_debug(f'Aplicacao iniciada | versao {APP_VERSION}', origin='APP')
 
