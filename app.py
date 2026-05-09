@@ -4,12 +4,11 @@ import traceback
 
 import streamlit as st
 
-from bling_app_zero.core.debug import add_debug, render_debug_panel
+from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
-from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.5.4-BLINGLAYOUT-SIDEBAR-COLLAPSED'
+APP_VERSION = '3.5.5-BLINGPERF-FAST-START'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -75,6 +74,22 @@ def _register_critical_error(exc: Exception) -> str:
     return formatted
 
 
+def _render_sidebar_tools() -> None:
+    with st.sidebar:
+        show_tools = st.toggle('Mostrar ferramentas técnicas', value=False, key='show_sidebar_tools')
+
+    if not show_tools:
+        return
+
+    from bling_app_zero.core.debug import render_debug_panel
+    from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+    from bling_app_zero.ui.rules_panel import render_rules_panel
+
+    render_rules_panel()
+    render_diagnostics_panel()
+    render_debug_panel()
+
+
 def main() -> None:
     st.set_page_config(
         page_title='IA Planilhas → Bling',
@@ -87,16 +102,14 @@ def main() -> None:
     add_debug(f'Aplicacao iniciada | versao {APP_VERSION}', origin='APP')
 
     try:
-        render_rules_panel()
         render_home()
+        _render_sidebar_tools()
     except Exception as exc:
         formatted = _register_critical_error(exc)
         st.error('Encontrei um erro interno, mas o aplicativo continuou aberto.')
         st.caption('Abra a barra lateral, baixe o log debug e envie para o próximo BLINGFIX.')
         with st.expander('Ver detalhe técnico do erro', expanded=False):
             st.code(formatted)
-    finally:
-        render_debug_panel()
 
 
 if __name__ == '__main__':
