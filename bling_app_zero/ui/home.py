@@ -4,14 +4,12 @@ import streamlit as st
 
 from bling_app_zero.ui.clean_layout import (
     close_home_start_card,
-    inject_clean_home_css,
     render_compact_hero,
     render_home_pricing_card,
     render_home_start_card,
     render_step_title,
 )
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
-from bling_app_zero.ui.global_layout_guard import inject_global_layout_guard
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
 from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
@@ -66,46 +64,6 @@ def _set_home_stage(stage: str) -> None:
     if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
         stage = STAGE_START
     st.session_state[HOME_STAGE_KEY] = stage
-
-
-def _inject_compact_middle_selector_css() -> None:
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stRadio"] { margin-bottom: 0.08rem !important; }
-        div[data-testid="stRadio"] > label { display: none !important; }
-        div[data-testid="stRadio"] div[role="radiogroup"] {
-            gap: 0.22rem !important;
-            margin-bottom: 0.04rem !important;
-        }
-        div[data-testid="stRadio"] div[role="radiogroup"] label {
-            min-height: 34px !important;
-            padding: 5px 8px !important;
-            margin-bottom: 2px !important;
-            border-radius: 10px !important;
-            background: rgba(240, 242, 246, 0.62) !important;
-        }
-        div[data-testid="stRadio"] div[role="radiogroup"] label p,
-        div[data-testid="stRadio"] div[role="radiogroup"] label span,
-        div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-            font-size: 0.84rem !important;
-            line-height: 1.12 !important;
-            margin: 0 !important;
-        }
-        div[data-testid="stRadio"] + div,
-        div[data-testid="stRadio"] + div[data-testid="stElementContainer"] {
-            margin-top: 0 !important;
-            padding-top: 0 !important;
-        }
-        div[data-testid="stExpander"] { margin-top: 0.12rem !important; }
-        div[data-testid="stExpander"] details summary {
-            padding-top: 0.38rem !important;
-            padding-bottom: 0.38rem !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def _centered_button(label: str, key: str, disabled: bool = False) -> bool:
@@ -187,7 +145,6 @@ def _render_home_origin_step() -> None:
         st.success('Precificação configurada. A calculadora usará esses valores no cadastro de produtos.')
     elif pricing is False:
         st.info('Precificação desativada. O sistema seguirá com o preço da origem quando existir.')
-    _inject_compact_middle_selector_css()
     render_flow_selector()
 
     change_models, change_pricing = _centered_two_buttons(
@@ -226,8 +183,6 @@ def _render_back_home() -> None:
 
 
 def render_home() -> None:
-    inject_clean_home_css()
-    inject_global_layout_guard()
     inject_unified_light_layout()
     render_compact_hero()
     render_diagnostics_panel()
