@@ -10,7 +10,7 @@ from bling_app_zero.core.mapping_confidence import confidence_for_mapping, resol
 from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
-from bling_app_zero.engines.estoque_engine import default_model as estoque_default_model
+from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
 from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview, render_mapping_title
 
