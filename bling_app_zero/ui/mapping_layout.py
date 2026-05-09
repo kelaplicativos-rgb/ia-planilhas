@@ -17,27 +17,28 @@ def inject_mapping_css() -> None:
             border-radius: 13px !important;
             border: 2px solid rgba(49, 51, 63, 0.18) !important;
             background: rgba(248, 250, 252, 0.92) !important;
-            padding: 10px 12px 9px 12px !important;
-            margin: 7px 0 10px 0 !important;
+            padding: 16px 12px 10px 12px !important;
+            margin: 8px 0 11px 0 !important;
             box-shadow: none !important;
-            min-height: unset !important;
+            min-height: 86px !important;
             height: auto !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.24rem !important;
+            gap: 0.30rem !important;
             overflow: visible !important;
         }
 
         .bling-map-title {
             width: 100%;
             display: block;
-            position: static;
+            position: relative;
+            z-index: 2;
             font-size: 0.84rem;
-            line-height: 1.16;
+            line-height: 1.18;
             font-weight: 800;
             color: rgba(49, 51, 63, 0.96);
-            margin: 0 0 5px 0 !important;
+            margin: 0 0 8px 0 !important;
             padding: 0 !important;
             text-align: left;
             overflow-wrap: anywhere;
@@ -56,7 +57,8 @@ def inject_mapping_css() -> None:
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
             display: block !important;
-            position: static !important;
+            position: relative !important;
+            z-index: 1;
             width: 100% !important;
             max-width: 100% !important;
             overflow: visible !important;
@@ -108,7 +110,8 @@ def inject_mapping_css() -> None:
 
         .bling-map-preview {
             display: block;
-            position: static;
+            position: relative;
+            z-index: 1;
             width: 100%;
             font-size: 0.74rem;
             line-height: 1.20;
@@ -126,26 +129,32 @@ def inject_mapping_css() -> None:
 
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 9px 10px 8px 10px !important;
-                margin: 6px 0 9px 0 !important;
+                padding: 15px 10px 9px 10px !important;
+                margin: 7px 0 10px 0 !important;
                 border-radius: 13px !important;
                 border-width: 2px !important;
-                min-height: unset !important;
+                min-height: 84px !important;
                 height: auto !important;
+                overflow: visible !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.20rem !important;
+                gap: 0.28rem !important;
+                overflow: visible !important;
             }
 
             .bling-map-title {
+                position: relative;
+                z-index: 2;
                 font-size: 0.82rem;
-                line-height: 1.14;
-                margin: 0 0 4px 0 !important;
+                line-height: 1.16;
+                margin: 0 0 7px 0 !important;
                 padding: 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
+                position: relative !important;
+                z-index: 1;
                 margin: 0 0 3px 0 !important;
             }
 
@@ -162,6 +171,8 @@ def inject_mapping_css() -> None:
             }
 
             .bling-map-preview {
+                position: relative;
+                z-index: 1;
                 font-size: 0.73rem;
                 line-height: 1.18;
                 margin: 2px 0 0 0 !important;
