@@ -113,14 +113,13 @@ def render_model_upload_box(
     required_model: bool = False,
     caption: str | None = None,
 ) -> ModelUploadResult:
-    st.markdown(f'<div class="bling-upload-title">{title}</div>', unsafe_allow_html=True)
-
     files = st.file_uploader(
-        'Anexar modelos',
+        'Modelos do Bling',
         type=None,
         accept_multiple_files=True,
         key=key,
         help='Mostra todos os arquivos no Android.',
+        label_visibility='collapsed',
     )
 
     if not files:
