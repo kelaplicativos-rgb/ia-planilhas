@@ -6,6 +6,7 @@ import streamlit as st
 
 
 def inject_mapping_css() -> None:
+    """Ajustes especificos do mapeamento herdando o tema global."""
     st.markdown(
         """
         <style>
@@ -14,13 +15,13 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             box-sizing: border-box !important;
             overflow: visible !important;
-            border-radius: 13px !important;
-            border: 2px solid rgba(49, 51, 63, 0.18) !important;
-            background: rgba(248, 250, 252, 0.92) !important;
-            padding: 17px 12px 14px 12px !important;
-            margin: 8px 0 12px 0 !important;
-            box-shadow: none !important;
-            min-height: 104px !important;
+            border-radius: var(--bling-radius-md) !important;
+            border: 1px solid var(--bling-border) !important;
+            background: var(--bling-panel) !important;
+            padding: 16px 12px 13px 12px !important;
+            margin: 0.55rem 0 0.78rem 0 !important;
+            box-shadow: var(--bling-shadow-soft) !important;
+            min-height: 100px !important;
             height: auto !important;
         }
 
@@ -34,11 +35,10 @@ def inject_mapping_css() -> None:
             display: block;
             position: relative;
             z-index: 2;
-            top: -9px;
             font-size: 0.85rem;
             line-height: 1.26;
-            font-weight: 800;
-            color: rgba(49, 51, 63, 0.96);
+            font-weight: 820;
+            color: var(--bling-text) !important;
             margin: 0 0 6px 0 !important;
             padding: 0 !important;
             text-align: left;
@@ -47,9 +47,9 @@ def inject_mapping_css() -> None:
             hyphens: none;
         }
 
-        .bling-map-title-red { color: #dc2626 !important; }
-        .bling-map-title-yellow { color: #ca8a04 !important; }
-        .bling-map-title-green { color: #16a34a !important; }
+        .bling-map-title-red { color: var(--bling-danger) !important; }
+        .bling-map-title-yellow { color: var(--bling-warning) !important; }
+        .bling-map-title-green { color: var(--bling-success) !important; }
 
         .bling-map-title-text {
             display: inline;
@@ -94,11 +94,11 @@ def inject_mapping_css() -> None:
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 34px !important;
-            height: 34px !important;
-            background: #fff3e0 !important;
-            border: 1px solid rgba(249, 115, 22, 0.20) !important;
-            border-radius: 10px !important;
+            min-height: 36px !important;
+            height: 36px !important;
+            background: rgba(239, 246, 255, 0.82) !important;
+            border: 1px solid rgba(37, 99, 235, 0.16) !important;
+            border-radius: 12px !important;
             box-shadow: none !important;
             max-width: 100% !important;
             overflow: hidden !important;
@@ -108,18 +108,18 @@ def inject_mapping_css() -> None:
         }
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-red) + div div[data-baseweb="select"] > div {
-            background: #fef2f2 !important;
-            border-color: rgba(220, 38, 38, 0.30) !important;
+            background: rgba(254, 242, 242, 0.78) !important;
+            border-color: rgba(220, 38, 38, 0.22) !important;
         }
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-yellow) + div div[data-baseweb="select"] > div {
-            background: #fff8db !important;
-            border-color: rgba(202, 138, 4, 0.30) !important;
+            background: rgba(254, 252, 232, 0.82) !important;
+            border-color: rgba(202, 138, 4, 0.22) !important;
         }
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-green) + div div[data-baseweb="select"] > div {
-            background: #f0fdf4 !important;
-            border-color: rgba(22, 163, 74, 0.30) !important;
+            background: rgba(240, 253, 244, 0.82) !important;
+            border-color: rgba(22, 163, 74, 0.22) !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
@@ -137,8 +137,8 @@ def inject_mapping_css() -> None:
             width: 100%;
             font-size: 0.82rem;
             line-height: 1.28;
-            color: #2563eb !important;
-            font-weight: 700;
+            color: rgba(30, 64, 175, 0.82) !important;
+            font-weight: 760;
             padding: 0 !important;
             margin: -1px 0 0 0 !important;
             border-radius: 0;
@@ -152,11 +152,10 @@ def inject_mapping_css() -> None:
 
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 16px 10px 13px 10px !important;
-                margin: 7px 0 11px 0 !important;
-                border-radius: 13px !important;
-                border-width: 2px !important;
-                min-height: 102px !important;
+                padding: 15px 10px 12px 10px !important;
+                margin: 0.5rem 0 0.72rem 0 !important;
+                border-radius: 14px !important;
+                min-height: 98px !important;
                 height: auto !important;
                 overflow: visible !important;
             }
@@ -169,7 +168,6 @@ def inject_mapping_css() -> None:
             .bling-map-title {
                 position: relative;
                 z-index: 2;
-                top: -9px;
                 font-size: 0.83rem;
                 line-height: 1.24;
                 margin: 0 0 6px 0 !important;
@@ -183,9 +181,9 @@ def inject_mapping_css() -> None:
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 34px !important;
-                height: 34px !important;
-                border-radius: 10px !important;
+                min-height: 35px !important;
+                height: 35px !important;
+                border-radius: 12px !important;
                 font-size: 0.83rem !important;
             }
 
@@ -199,7 +197,7 @@ def inject_mapping_css() -> None:
                 z-index: 1;
                 font-size: 0.82rem;
                 line-height: 1.26;
-                color: #2563eb !important;
+                color: rgba(30, 64, 175, 0.82) !important;
                 background: transparent !important;
                 padding: 0 !important;
                 margin: -1px 0 0 0 !important;
