@@ -118,7 +118,7 @@ def inject_mapping_css() -> None:
             color: #118a32;
             font-weight: 700;
             padding: 0;
-            margin: 2px 0 0 0 !important;
+            margin: -2px 0 0 0 !important;
             border-radius: 0;
             background: transparent;
             border: 0;
@@ -175,7 +175,7 @@ def inject_mapping_css() -> None:
                 z-index: 1;
                 font-size: 0.73rem;
                 line-height: 1.18;
-                margin: 2px 0 0 0 !important;
+                margin: -2px 0 0 0 !important;
             }
         }
         </style>
