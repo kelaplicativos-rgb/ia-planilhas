@@ -86,8 +86,11 @@ def _value_for_kind(product: FastProductData, kind: str) -> str:
     return ''
 
 
-def _has_useful_data(product: FastProductData) -> bool:
-    return any([product.codigo, product.gtin, product.descricao, product.preco, product.estoque, product.imagem, product.url])
+def _has_useful_data(product: FastProductData, needed: set[str]) -> bool:
+    """Evita linhas vazias quando a página falha e o modelo não pediu URL."""
+    if any([product.codigo, product.gtin, product.descricao, product.preco, product.estoque, product.imagem, product.marca, product.categoria]):
+        return True
+    return 'url' in needed and bool(product.url)
 
 
 def _is_complete_product(product: FastProductData, important_kinds: set[str]) -> bool:
@@ -180,10 +183,10 @@ def _should_stop_early(
     if processed >= SMART_STOP_MIN_PROCESSED and found >= SMART_STOP_MIN_FOUND:
         ratio = complete_count / max(found, 1)
         if ratio >= SMART_STOP_COMPLETE_RATIO:
-            return True, f'{complete_count}/{found} produto(s) completos. Busca suficiente.'
+            return True, f'{complete_count}/{found} produto(s) com os principais campos preenchidos.'
 
     if processed - last_gain_at >= SMART_STOP_NO_GAIN_WINDOW and found >= SMART_STOP_MIN_FOUND:
-        return True, 'Sem ganho relevante nos últimos links. Busca encerrada para ganhar velocidade.'
+        return True, 'A busca parou porque os últimos links não trouxeram novos produtos úteis.'
 
     return False, ''
 
@@ -203,8 +206,8 @@ def run_fast_site_scraper(
     important = _important_kinds(contract)
 
     _emit(progress_callback, {
-        'stage': 'Descobrindo links',
-        'message': 'Buscando primeiro pelos links visíveis da página/categoria...',
+        'stage': 'Procurando links',
+        'message': 'Procurando produtos nos links informados...',
         'progress': 0.08,
         'columns': len(columns),
     })
@@ -214,7 +217,7 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Links encontrados',
-        'message': f'{len(urls)} link(s) selecionado(s) para busca inteligente.',
+        'message': f'{len(urls)} link(s) de produto separados para leitura.',
         'progress': 0.22,
         'urls_found': len(urls),
         'discovery_seconds': round(discovery_seconds, 2),
@@ -222,8 +225,8 @@ def run_fast_site_scraper(
 
     if not urls:
         _emit(progress_callback, {
-            'stage': 'Sem produtos',
-            'message': 'Nenhum produto encontrado nos links informados.',
+            'stage': 'Nada encontrado',
+            'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.',
             'progress': 1.0,
             'urls_found': 0,
         })
@@ -232,8 +235,8 @@ def run_fast_site_scraper(
     if needed <= {'url'}:
         rows = [_to_contract_row(_url_only_row(url), contract) for url in urls[:max_products]]
         _emit(progress_callback, {
-            'stage': 'Concluído',
-            'message': f'{len(rows)} URL(s) preparada(s) sem baixar páginas de produto.',
+            'stage': 'Pronto',
+            'message': f'{len(rows)} link(s) preparados para a origem.',
             'progress': 0.92,
             'processed': len(rows),
             'urls_found': len(urls),
@@ -254,7 +257,7 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo até {total} produto(s), com parada inteligente.',
+        'message': f'Lendo até {total} produto(s). A busca para sozinha quando já tiver resultado suficiente.',
         'progress': 0.28,
         'processed': 0,
         'total': total,
@@ -272,7 +275,7 @@ def run_fast_site_scraper(
                     errors += 1
                 if elapsed >= SLOW_LINK_SECONDS:
                     slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
-                if _has_useful_data(product):
+                if _has_useful_data(product, needed):
                     products.append(product)
                     last_gain_at = processed
                     if _is_complete_product(product, important):
@@ -292,7 +295,7 @@ def run_fast_site_scraper(
                     if not pending.done():
                         pending.cancel()
                 _emit(progress_callback, {
-                    'stage': 'Parada inteligente',
+                    'stage': 'Busca suficiente',
                     'message': stop_reason,
                     'progress': 0.88,
                     'processed': processed,
@@ -309,7 +312,7 @@ def run_fast_site_scraper(
                 ratio = processed / max(total, 1)
                 _emit(progress_callback, {
                     'stage': 'Lendo produtos',
-                    'message': f'{processed}/{total} produto(s) processado(s).',
+                    'message': f'{processed}/{total} produto(s) lido(s).',
                     'progress': 0.28 + (0.60 * ratio),
                     'processed': processed,
                     'total': total,
@@ -321,11 +324,11 @@ def run_fast_site_scraper(
                 last_emit = now
 
     rows = [_to_contract_row(product, contract) for product in products]
-    final_message = f'Montando planilha com {len(rows)} produto(s).'
+    final_message = f'Montando origem com {len(rows)} produto(s).'
     if stop_reason:
         final_message = f'{final_message} {stop_reason}'
     _emit(progress_callback, {
-        'stage': 'Montando planilha',
+        'stage': 'Montando origem',
         'message': final_message,
         'progress': 0.91,
         'processed': processed,
