@@ -8,7 +8,7 @@ from bling_app_zero.core.debug import add_debug, render_debug_panel
 from bling_app_zero.ui.home import render_home
 
 
-APP_VERSION = '3.4.7-BUSCA-INTELIGENTE-COMPLEMENTAR'
+APP_VERSION = '3.4.8-ANDROID-UPLOAD-FIX'
 
 
 def _register_critical_error(exc: Exception) -> str:
