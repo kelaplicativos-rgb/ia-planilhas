@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.4.9-RULES-PANEL'
+APP_VERSION = '3.5.0-BLINGSCAN-UX-FLOW'
 
 
 def _register_critical_error(exc: Exception) -> str:
@@ -21,7 +21,7 @@ def _register_critical_error(exc: Exception) -> str:
 
 def main() -> None:
     st.set_page_config(
-        page_title='IA Planilhas -> Bling',
+        page_title='IA Planilhas → Bling',
         page_icon='🚀',
         layout='wide',
         initial_sidebar_state='collapsed',
@@ -34,9 +34,10 @@ def main() -> None:
         render_home()
     except Exception as exc:
         formatted = _register_critical_error(exc)
-        st.error('O app encontrou um erro interno, mas nao caiu.')
-        st.caption('Baixe o log debug na barra lateral para enviar o erro completo do BLINGFIX.')
-        st.code(formatted)
+        st.error('Encontrei um erro interno, mas o aplicativo continuou aberto.')
+        st.caption('Abra a barra lateral, baixe o log debug e envie para o próximo BLINGFIX.')
+        with st.expander('Ver detalhe técnico do erro', expanded=False):
+            st.code(formatted)
     finally:
         render_debug_panel()
 
