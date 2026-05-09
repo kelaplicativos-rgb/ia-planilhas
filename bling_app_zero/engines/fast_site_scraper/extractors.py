@@ -5,10 +5,10 @@ from urllib.parse import urljoin
 
 from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
 from bling_app_zero.engines.fast_site_scraper.models import FastProductPage
 from bling_app_zero.engines.fast_site_scraper.page_parser import soup_from_page
-
-OUT_STOCK_TERMS = ['sem estoque', 'indisponivel', 'indisponível', 'esgotado', 'fora de estoque', 'outofstock', 'out_of_stock', 'soldout', 'sold_out']
+from bling_app_zero.engines.real_stock_detector import OUT_STOCK_TERMS, detect_real_stock
 
 
 def _first_product(page: FastProductPage) -> dict:
@@ -50,19 +50,27 @@ def extract_description(page: FastProductPage) -> str:
 
 def extract_brand(page: FastProductPage) -> str:
     product = _first_product(page)
+    title = extract_description(page)
     brand = product.get('brand') if product else None
+
     if isinstance(brand, dict):
         value = clean_cell(brand.get('name') or '')
         if value:
-            return value
+            return detect_brand_from_title(title, fallback=value)
+
     value = clean_cell(brand or '')
     if value:
-        return value
+        return detect_brand_from_title(title, fallback=value)
 
-    title = extract_description(page)
-    # Fallback leve: primeira palavra significativa do título, comum em sites de fornecedores.
-    parts = [part for part in re.split(r'\s+', title) if len(part) > 2]
-    return clean_cell(parts[0]) if parts else ''
+    soup = soup_from_page(page)
+    for selector in ['[itemprop=brand]', '.brand', '.marca', '[class*=brand]', '[class*=marca]']:
+        node = soup.select_one(selector)
+        if node:
+            detected = clean_cell(node.get('content') or node.get_text(' ', strip=True))
+            if detected:
+                return detect_brand_from_title(title, fallback=detected)
+
+    return detect_brand_from_title(title)
 
 
 def extract_price(page: FastProductPage) -> str:
@@ -86,18 +94,11 @@ def extract_stock(page: FastProductPage) -> str:
     if any(normalize_key(term) in availability for term in OUT_STOCK_TERMS):
         return '0'
 
-    full_text = f'{page.html} {page.text}'
-    for pattern in [
-        r'["\'](?:stock|estoque|inventory|quantity|qty|saldo|available_quantity)["\']\s*[:=]\s*["\']?(\d{1,7})',
-        r'(?:estoque|saldo|quantidade|qtd)\s*[:\-]?\s*(\d{1,7})',
-        r'(?:restam|resta|apenas)\s*(\d{1,7})',
-    ]:
-        match = re.search(pattern, full_text, flags=re.I)
-        if match:
-            digits = re.sub(r'\D+', '', match.group(1))
-            return str(int(digits)) if digits else ''
+    real_stock = detect_real_stock(page.html, page.text)
+    if real_stock != '':
+        return real_stock
 
-    key = normalize_key(full_text)
+    key = normalize_key(f'{page.html} {page.text}')
     if any(normalize_key(term) in key for term in OUT_STOCK_TERMS):
         return '0'
     return ''
@@ -124,7 +125,7 @@ def extract_images(page: FastProductPage, limit: int = 12) -> str:
             continue
         url = urljoin(page.url, str(src))
         low = url.lower()
-        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp']):
+        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr']):
             continue
         if url not in urls:
             urls.append(url)
