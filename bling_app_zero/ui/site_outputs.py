@@ -79,15 +79,16 @@ def render_generated_site_actions(
     normalized = normalize_site_operation(operation)
     label = _label(normalized)
     config = config_for_site_operation(normalized)
-    st.success(f'Planilha de origem de {label} criada pelo site.')
+    st.success(f'Origem de {label} criada com sucesso.')
+    st.caption('Você pode baixar esta origem ou continuar para gerar o CSV final do Bling.')
     render_site_progress_history()
-    with st.expander('Ver planilha criada', expanded=False):
-        preview_df(f'Planilha criada para {label}', df_site)
+    with st.expander('Conferir origem criada pelo site', expanded=False):
+        preview_df(f'Origem criada para {label}', df_site)
 
     col_a, col_b = st.columns(2)
     with col_a:
         st.download_button(
-            f'Baixar planilha de {label}',
+            f'Baixar origem de {label}',
             data=source_csv_bytes(df_site),
             file_name=config.output_filename,
             mime='text/csv; charset=utf-8',
@@ -95,7 +96,7 @@ def render_generated_site_actions(
             key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
         )
     with col_b:
-        if st.button(f'Continuar para fluxo de {label}', use_container_width=True, key=f'continuar_fluxo_planilha_site_{normalized}'):
+        if st.button(f'Continuar para o CSV de {label}', use_container_width=True, key=f'continuar_fluxo_planilha_site_{normalized}'):
             save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
             go_to_main_flow(normalized)
             st.rerun()
