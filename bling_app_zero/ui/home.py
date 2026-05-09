@@ -61,6 +61,44 @@ def _open_next_panel() -> None:
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['tipo_operacao_site'] = operation
     st.session_state['origem_final'] = 'site'
+    st.session_state['selected_flow_label'] = 'Estoque por site' if operation == 'estoque' else 'Cadastro por site'
+
+
+def _render_selected_flow_badge(active_panel: str) -> None:
+    label = st.session_state.get('selected_flow_label')
+    if not label:
+        if active_panel == 'estoque_site':
+            label = 'Estoque por site'
+        elif active_panel == 'cadastro_site':
+            label = 'Cadastro por site'
+        elif active_panel == 'estoque':
+            label = 'Estoque por arquivo'
+        elif active_panel == 'cadastro':
+            label = 'Cadastro por arquivo'
+        else:
+            label = 'Fluxo selecionado'
+
+    st.markdown(
+        f"""
+        <div style="
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            margin:0 0 8px 0;
+            padding:7px 11px;
+            border-radius:999px;
+            background:rgba(185,28,28,0.10);
+            color:#991b1b;
+            border:1px solid rgba(185,28,28,0.20);
+            font-size:0.84rem;
+            font-weight:800;
+        ">
+            <span style="width:8px;height:8px;border-radius:999px;background:#dc2626;display:inline-block;"></span>
+            Selecionado: {label}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_home_bling_models_lazy() -> None:
@@ -167,6 +205,7 @@ def _render_home_intro() -> None:
 def _render_back_home() -> None:
     if _centered_button('← Voltar para modelos', key='home_back_to_light_start'):
         deactivate_panel()
+        st.session_state.pop('selected_flow_label', None)
         _set_home_stage(STAGE_MODELOS if _has_home_models_light() else STAGE_START)
         st.rerun()
 
@@ -182,5 +221,6 @@ def render_home() -> None:
         _render_home_intro()
         return
 
+    _render_selected_flow_badge(active_panel)
     _render_back_home()
     render_lazy_panel(step_to_panel_operation(active_panel))
