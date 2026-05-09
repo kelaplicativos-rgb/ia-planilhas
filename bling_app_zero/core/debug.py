@@ -5,6 +5,8 @@ from typing import Any
 
 import streamlit as st
 
+from bling_app_zero.core.user_rules import RULE_OPTIONS, default_rules, get_user_rules
+
 LOG_SESSION_KEY = 'logs'
 MAX_LOG_ITEMS = 300
 DEBUG_HOME_OPEN_KEY = 'debug_home_area_open'
@@ -73,7 +75,7 @@ def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> 
 
 
 def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
-    show_logs = st.toggle('Ver últimos eventos', value=False, key=f'{prefix}_show_recent_logs')
+    show_logs = st.toggle('Ver eventos', value=False, key=f'{prefix}_show_recent_logs')
     if not show_logs:
         return
 
@@ -85,10 +87,21 @@ def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> No
             st.caption(f'[{level}] {origin}: {message}')
 
 
+def _render_rules_snapshot() -> None:
+    rules = get_user_rules()
+    with st.expander('Regras e padrões atuais', expanded=False):
+        for option in RULE_OPTIONS:
+            value = rules.get(option.key, default_rules().get(option.key, ''))
+            label = option.label.replace(' padrão', '')
+            st.caption(f'{label}: {value}')
+        st.caption(f'Regras personalizadas: {len(rules.get("custom_rules", []))}')
+        st.caption('Para editar esses padrões, use o painel lateral “Padrões do CSV final”.')
+
+
 def _render_debug_content(prefix: str = 'debug') -> None:
     logs = list(st.session_state.get(LOG_SESSION_KEY, []))
-    st.caption('Logs, cache e diagnóstico rápido do sistema.')
     _render_debug_actions(logs, prefix=prefix)
+    _render_rules_snapshot()
 
     if not logs:
         st.caption('Nenhum evento registrado ainda.')
@@ -99,10 +112,32 @@ def _render_debug_content(prefix: str = 'debug') -> None:
 
 
 def render_debug_home_button() -> None:
-    """Atalho visível da área técnica dentro da Home."""
-    col_a, col_b, col_c = st.columns([1, 1.4, 1])
+    """Atalho discreto da área técnica dentro da Home."""
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button {
+            min-height: 34px !important;
+            height: 34px !important;
+            width: 34px !important;
+            border-radius: 999px !important;
+            padding: 0 !important;
+            font-size: 0.95rem !important;
+            opacity: 0.72;
+            box-shadow: none !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button:hover {
+            opacity: 1;
+        }
+        </style>
+        <span id="bling-tech-anchor"></span>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_a, col_b = st.columns([0.92, 0.08])
     with col_b:
-        if st.button('Área técnica', use_container_width=True, key='open_debug_home_area'):
+        if st.button('⚙️', key='open_debug_home_area', help='Área técnica'):
             st.session_state[DEBUG_HOME_OPEN_KEY] = not bool(st.session_state.get(DEBUG_HOME_OPEN_KEY, False))
 
     if not st.session_state.get(DEBUG_HOME_OPEN_KEY, False):
@@ -115,5 +150,5 @@ def render_debug_home_button() -> None:
 
 def render_debug_panel() -> None:
     with st.sidebar:
-        with st.expander('Suporte e logs', expanded=False):
+        with st.expander('Suporte, logs e regras', expanded=False):
             _render_debug_content(prefix='debug_sidebar')
