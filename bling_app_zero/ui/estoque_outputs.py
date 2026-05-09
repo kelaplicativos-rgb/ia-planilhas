@@ -3,8 +3,17 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
+
+
+def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
+    return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
+
+
+def _show_missing_model_warning() -> None:
+    st.error('Envie o modelo de estoque do Bling antes de gerar o CSV. O sistema só preenche as colunas existentes nesse modelo.')
 
 
 def build_stock_outputs_from_dataframe(
@@ -13,8 +22,17 @@ def build_stock_outputs_from_dataframe(
     deposito: str,
     name: str = 'Origem por site',
 ) -> None:
+    if not _valid_model(df_modelo):
+        _show_missing_model_warning()
+        return
+
     run_estoque_pipeline = load_estoque_pipeline()
-    df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+    try:
+        df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+    except MissingEstoqueModelError:
+        _show_missing_model_warning()
+        return
+
     result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
     st.session_state['estoque_multi_outputs'] = [result]
     st.session_state['df_final_estoque'] = df_final
@@ -22,6 +40,10 @@ def build_stock_outputs_from_dataframe(
 
 
 def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -> None:
+    if not _valid_model(df_modelo):
+        _show_missing_model_warning()
+        return
+
     source_files = source_files_from_upload(upload)
     if not source_files:
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.')
@@ -35,7 +57,12 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
         if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
             continue
 
-        df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+        try:
+            df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+        except MissingEstoqueModelError:
+            _show_missing_model_warning()
+            return
+
         results.append(
             {
                 'index': index,
