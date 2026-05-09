@@ -115,7 +115,7 @@ def inject_mapping_css() -> None:
             width: 100%;
             font-size: 0.74rem;
             line-height: 1.20;
-            color: #118a32;
+            color: #2563eb;
             font-weight: 700;
             padding: 0;
             margin: -2px 0 0 0 !important;
