@@ -39,36 +39,44 @@ def _render_custom_rules(rules: dict) -> None:
     else:
         st.caption('Nenhuma regra personalizada criada ainda.')
 
-    with st.expander('Adicionar nova regra', expanded=False):
-        condition = st.text_input(
-            'Quando encontrar esta situação',
-            key='custom_rule_condition',
-            placeholder='Ex: produto gamer, sem marca, controle, fornecedor X',
-            help='O sistema procura este texto em qualquer campo da linha do produto.',
-        )
-        target_column = st.text_input(
-            'Preencher este campo',
-            key='custom_rule_target_column',
-            placeholder='Ex: Fornecedor, Marca, Categoria, Unidade',
-            help='Digite o nome da coluna final que deve receber o valor.',
-        )
-        fill_value = st.text_input(
-            'Com este valor',
-            key='custom_rule_fill_value',
-            placeholder='Ex: Não definido, Gamer, Mega Center',
-        )
-        only_when_empty = st.toggle(
-            'Aplicar somente se o campo estiver vazio',
-            value=True,
-            key='custom_rule_only_empty',
-        )
-        if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
-            if not condition.strip() or not target_column.strip():
-                st.warning('Informe a situação e o campo que será preenchido.')
-            else:
-                add_custom_rule(condition, target_column, fill_value, only_when_empty)
-                st.success('Regra personalizada adicionada.')
-                st.rerun()
+    show_new_rule_form = st.toggle(
+        'Adicionar nova regra',
+        value=False,
+        key='show_custom_rule_form',
+        help='Abre o formulário de criação sem usar expander aninhado.',
+    )
+
+    if show_new_rule_form:
+        with st.container(border=True):
+            condition = st.text_input(
+                'Quando encontrar esta situação',
+                key='custom_rule_condition',
+                placeholder='Ex: produto gamer, sem marca, controle, fornecedor X',
+                help='O sistema procura este texto em qualquer campo da linha do produto.',
+            )
+            target_column = st.text_input(
+                'Preencher este campo',
+                key='custom_rule_target_column',
+                placeholder='Ex: Fornecedor, Marca, Categoria, Unidade',
+                help='Digite o nome da coluna final que deve receber o valor.',
+            )
+            fill_value = st.text_input(
+                'Com este valor',
+                key='custom_rule_fill_value',
+                placeholder='Ex: Não definido, Gamer, Mega Center',
+            )
+            only_when_empty = st.toggle(
+                'Aplicar somente se o campo estiver vazio',
+                value=True,
+                key='custom_rule_only_empty',
+            )
+            if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
+                if not condition.strip() or not target_column.strip():
+                    st.warning('Informe a situação e o campo que será preenchido.')
+                else:
+                    add_custom_rule(condition, target_column, fill_value, only_when_empty)
+                    st.success('Regra personalizada adicionada.')
+                    st.rerun()
 
 
 def render_rules_panel() -> None:
