@@ -49,10 +49,7 @@ def _operation_label(operation: str) -> str:
     return 'estoque' if operation == 'estoque' else 'cadastro'
 
 
-def _render_site_models_step(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
-    has_home_model = has_home_site_model_for_operation(operation)
-    if not has_home_model:
-        st.markdown('#### 1. Modelo do Bling')
+def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
     upload = render_optional_site_model_upload(operation)
     df_modelo_cadastro = choose_site_cadastro_model_df(upload)
     df_modelo_estoque = choose_site_estoque_model_df(upload)
@@ -67,15 +64,14 @@ def _render_site_models_step(operation: str) -> tuple[object, pd.DataFrame | Non
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
-def _render_urls_input(step_number: int) -> str:
-    st.markdown(f'#### {step_number}. Links do fornecedor')
+def _render_urls_input() -> str:
     return st.text_area(
-        'Cole site, categoria ou produtos',
+        'Links do fornecedor',
         value=_query_urls_default(),
         height=120,
         key='urls_site',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        label_visibility='collapsed',
+        help='Cole um ou mais links: categoria, busca ou produtos individuais.',
     )
 
 
@@ -113,18 +109,22 @@ def render_site_panel() -> None:
     operation = _current_site_operation()
     label = _operation_label(operation)
 
-    st.markdown(f'### Criar origem de {label} pelo site')
-    st.caption('Cole os links do fornecedor. O sistema monta uma planilha de origem para continuar no fluxo certo.')
+    st.markdown(
+        """
+        <section class="bling-flow-card bling-inline-card">
+            <div class="bling-flow-card-kicker">Entrada por site</div>
+            <h2 class="bling-flow-card-title">Cole os links do fornecedor</h2>
+            <p class="bling-flow-card-text">A captura acontece aqui mesmo. Depois da busca, o mapeamento, preview e download aparecem logo abaixo.</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
 
     config_for_site_operation(operation)
-    _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_step(operation)
+    _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
+    raw_urls = _render_urls_input()
 
-    url_step_number = 1 if has_home_site_model_for_operation(operation) else 2
-    raw_urls = _render_urls_input(url_step_number)
-
-    create_step_number = url_step_number + 1
-    st.markdown(f'#### {create_step_number}. Gerar origem')
-    button_label = 'Buscar no site e criar origem de estoque' if operation == 'estoque' else 'Buscar no site e criar origem de cadastro'
+    button_label = 'Buscar no site e gerar origem de estoque' if operation == 'estoque' else 'Buscar no site e gerar origem de cadastro'
     if st.button(button_label, use_container_width=True):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
