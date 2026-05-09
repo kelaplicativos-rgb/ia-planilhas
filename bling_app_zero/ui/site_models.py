@@ -50,6 +50,8 @@ def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
         return home_model
     if isinstance(upload.estoque_model_df, pd.DataFrame):
         return upload.estoque_model_df
+    if isinstance(upload.model_df, pd.DataFrame):
+        return upload.model_df
     return None
 
 
@@ -69,7 +71,8 @@ def requested_columns_for_site_capture(
     Regra BLINGFIX:
     - cadastro por site usa apenas modelo de cadastro;
     - estoque por site usa apenas modelo de estoque;
-    - nunca mistura cadastro + estoque na mesma captura.
+    - nunca mistura cadastro + estoque na mesma captura;
+    - estoque por site não usa fallback solto sem modelo.
     """
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
@@ -82,25 +85,33 @@ def requested_columns_for_site_capture(
 def has_home_site_model_for_operation(operation: str) -> bool:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
-        return get_home_estoque_model() is not None
-    return get_home_cadastro_model() is not None
+        return isinstance(get_home_estoque_model(), pd.DataFrame)
+    return isinstance(get_home_cadastro_model(), pd.DataFrame)
 
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
     normalized = str(operation or '').strip().lower()
-    if has_home_site_model_for_operation(normalized):
-        label = 'estoque' if normalized == 'estoque' else 'cadastro'
-        st.success(f'Modelo de {label} já carregado no passo inicial.')
+    operation_key = 'estoque' if normalized == 'estoque' else 'cadastro'
+
+    if has_home_site_model_for_operation(operation_key):
+        st.success(f'Modelo de {operation_key} já carregado no passo inicial.')
         st.caption('Este fluxo vai usar o modelo salvo. Não é necessário anexar novamente.')
         return EmptyModelUpload()
 
     if get_home_cadastro_model() is not None or get_home_estoque_model() is not None:
         st.warning('Existe modelo carregado na Home, mas não para esta operação.')
 
+    required_model = operation_key == 'estoque'
+    caption = (
+        'Obrigatório para estoque por site: o sistema só vai buscar as colunas existentes neste modelo.'
+        if required_model
+        else 'Anexe o modelo do Bling para o sistema buscar somente as colunas pedidas.'
+    )
+
     return render_model_upload_box(
         title='Modelo do Bling para esta operação',
-        operation='estoque' if normalized == 'estoque' else 'cadastro',
-        key=f'model_upload_site_{normalized or "cadastro"}',
-        required_model=False,
-        caption='Anexe o modelo do Bling para o sistema buscar somente as colunas pedidas.',
+        operation=operation_key,
+        key=f'model_upload_site_{operation_key}',
+        required_model=required_model,
+        caption=caption,
     )
