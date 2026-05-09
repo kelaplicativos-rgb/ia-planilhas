@@ -12,6 +12,7 @@ from bling_app_zero.core.pricing import detect_discount_percent
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model as cadastro_default_model
 from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
+from bling_app_zero.ui.cadastro_pricing import apply_calculated_price_aliases, best_cost_column
 from bling_app_zero.ui.home_shared import df_signature, load_apply_pricing, preview_df
 
 PRICE_TARGET_ALIASES = [
@@ -21,26 +22,6 @@ PRICE_TARGET_ALIASES = [
     'Preço',
     'Valor',
 ]
-
-
-def apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty or calculated_column not in df.columns:
-        return df
-    out = df.copy().fillna('')
-    calculated_values = out[calculated_column]
-    for column in PRICE_TARGET_ALIASES:
-        out[column] = calculated_values
-    return out
-
-
-def best_cost_column(columns: list[str]) -> int:
-    preferred_terms = ['custo', 'preço custo', 'preco custo', 'valor produto', 'valor', 'preço', 'preco', 'price']
-    lower_columns = [column.lower() for column in columns]
-    for term in preferred_terms:
-        for index, column in enumerate(lower_columns):
-            if term in column:
-                return index
-    return 0
 
 
 def sync_detected_discount(df_origem: pd.DataFrame, signature: str) -> float:
@@ -89,7 +70,7 @@ def show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> Non
         return
     safe_text = html.escape(text)
     st.markdown(
-        f"<div style='font-size:14px; color:#118a32; margin-top:-8px; margin-bottom:12px; font-weight:700;'>"
+        f"<div style='font-size:13px; color:#2563eb; margin-top:2px; margin-bottom:8px; font-weight:700; line-height:1.3; overflow-wrap:break-word;'>"
         f"{safe_text}"
         f"</div>",
         unsafe_allow_html=True,
@@ -127,16 +108,16 @@ def apply_pricing_ui(df_origem: pd.DataFrame, key_prefix: str, preview_title: st
     show_first_row_preview(df_origem, coluna_custo)
 
     if desconto_detectado > 0:
-        st.info(f'Desconto/comissão detectado e aplicado como padrão: {desconto_detectado:.2f}%')
+        st.info(f'Comissão/marketplace detectado e aplicado como padrão: {desconto_detectado:.2f}%')
 
     c1, c2, c3, c4, c5 = st.columns(5)
     margem = c1.number_input('Lucro desejado %', min_value=0.0, value=30.0, step=1.0, key=f'{key_prefix}_margem_{origem_signature}')
     imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0, key=f'{key_prefix}_imposto_{origem_signature}')
-    taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0, key=f'{key_prefix}_taxa_{origem_signature}')
-    desconto = c4.number_input('Desconto/Comissão %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
+    taxa = c3.number_input('Taxas da venda %', min_value=0.0, value=0.0, step=1.0, key=f'{key_prefix}_taxa_{origem_signature}')
+    comissao = c4.number_input('Comissão / marketplace %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
     fixo = c5.number_input('Custo fixo R$', min_value=0.0, value=0.0, step=1.0, key=f'{key_prefix}_fixo_{origem_signature}')
 
-    df_precificado = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo, desconto)
+    df_precificado = apply_pricing(df_origem, coluna_custo, 'Preço de venda', margem, imposto, taxa, fixo, comissao)
     df_precificado = apply_calculated_price_aliases(df_precificado, 'Preço de venda')
     preview_df(preview_title, df_precificado)
     return df_precificado
@@ -165,7 +146,7 @@ def build_manual_mapping_result(
 
     st.markdown(title)
     st.caption(caption)
-    preview_df('Origem para correlacionar', df_source)
+    preview_df('Origem para conferir', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     edited_mapping: dict[str, str] = {}
@@ -184,6 +165,6 @@ def build_manual_mapping_result(
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
-        st.warning('Atenção: a mesma coluna de origem foi usada mais de uma vez: ' + ', '.join(duplicated))
+        st.warning('A mesma coluna da origem foi usada mais de uma vez: ' + ', '.join(duplicated))
 
     return df_preview_manual, edited_mapping
