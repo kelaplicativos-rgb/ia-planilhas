@@ -12,6 +12,7 @@ def inject_clean_home_css() -> None:
         :root {
             --bling-radius: 16px;
             --bling-accent: #2563eb;
+            --bling-red: #b91c1c;
             --bling-text: rgba(17, 24, 39, 0.96);
             --bling-muted: rgba(49, 51, 63, 0.68);
         }
@@ -61,10 +62,11 @@ def inject_clean_home_css() -> None:
             margin: 0 auto 0.72rem auto;
             border: 1px solid rgba(49, 51, 63, 0.10);
             border-radius: var(--bling-radius);
-            padding: 14px 16px 13px 16px;
+            padding: 14px 46px 13px 46px;
             background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
             text-align: center;
             overflow: hidden;
+            position: relative;
         }
 
         .bling-hero-title {
@@ -107,6 +109,28 @@ def inject_clean_home_css() -> None:
             font-size: 0.88rem;
             line-height: 1.38;
             margin: 7px 0 10px 0;
+        }
+
+        .bling-home-button-center {
+            width: min(100%, 360px);
+            margin: 1.25rem auto 0 auto;
+        }
+
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button {
+            background: linear-gradient(135deg, #b91c1c, #ef4444) !important;
+            color: #ffffff !important;
+            border: 0 !important;
+            border-radius: 18px !important;
+            min-height: 54px !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.01em !important;
+            box-shadow: 0 14px 30px rgba(185, 28, 28, 0.28) !important;
+            opacity: 1 !important;
+        }
+
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 18px 34px rgba(185, 28, 28, 0.34) !important;
         }
 
         div[data-baseweb="select"] {
@@ -196,7 +220,7 @@ def inject_clean_home_css() -> None:
 
             .bling-hero {
                 width: 100%;
-                padding: 11px 12px 10px 12px;
+                padding: 11px 42px 10px 42px;
                 margin: 0 auto 0.62rem auto;
                 border-radius: 15px;
             }
@@ -211,6 +235,11 @@ def inject_clean_home_css() -> None:
             .bling-hero-subtitle {
                 font-size: 0.86rem;
                 line-height: 1.42;
+            }
+
+            .bling-home-button-center {
+                width: min(100%, 330px);
+                margin-top: 1rem;
             }
 
             .bling-step-title {
@@ -320,7 +349,7 @@ def inject_clean_home_css() -> None:
             }
 
             .bling-hero {
-                padding: 10px 11px 9px 11px;
+                padding: 10px 38px 9px 38px;
                 margin-bottom: 0.55rem;
             }
 
@@ -365,7 +394,7 @@ def render_compact_hero() -> None:
 
 
 def render_home_start_card() -> None:
-    st.markdown('<div class="bling-home-button-center"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="bling-home-button-center bling-primary-cta-anchor"></div>', unsafe_allow_html=True)
 
 
 def render_home_pricing_card() -> None:
