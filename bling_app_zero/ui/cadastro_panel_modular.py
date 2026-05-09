@@ -47,8 +47,10 @@ def _render_final_cadastro_download() -> None:
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro', {})
     if isinstance(df_final, pd.DataFrame):
-        show_mapping(mapping)
-        preview_df('Preview final do cadastro', df_final)
+        st.markdown('#### 🧾 Arquivo final de CADASTRO')
+        st.caption('Baixe aqui somente o CSV de cadastro de produtos.')
+        show_mapping(mapping, operation='cadastro')
+        preview_df('🧾 CADASTRO · Preview final', df_final)
         download_final(df_final, 'cadastro', 'cadastro')
 
 
