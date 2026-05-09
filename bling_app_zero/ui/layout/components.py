@@ -10,7 +10,7 @@ def inject_clean_home_css() -> None:
         """
         <style>
         :root {
-            --bling-radius: 16px;
+            --bling-radius: 18px;
             --bling-accent: #2563eb;
             --bling-red: #b91c1c;
             --bling-text: rgba(17, 24, 39, 0.96);
@@ -24,8 +24,8 @@ def inject_clean_home_css() -> None:
 
         .main .block-container,
         .block-container {
-            max-width: 1060px !important;
-            padding-top: 1.15rem !important;
+            max-width: 980px !important;
+            padding-top: 0.72rem !important;
             padding-bottom: 1.5rem !important;
             overflow-x: hidden !important;
         }
@@ -40,7 +40,7 @@ def inject_clean_home_css() -> None:
         }
 
         div[data-testid="stVerticalBlock"] {
-            gap: 0.54rem !important;
+            gap: 0.46rem !important;
         }
 
         div[data-testid="column"] {
@@ -58,18 +58,19 @@ def inject_clean_home_css() -> None:
         }
 
         .bling-hero {
-            width: min(100%, 860px);
-            margin: 0 auto 0.72rem auto;
-            border: 1px solid rgba(49, 51, 63, 0.10);
+            width: min(100%, 820px);
+            margin: 0.10rem auto 0.70rem auto;
+            border: 1px solid rgba(15, 23, 42, 0.10);
             border-radius: var(--bling-radius);
-            padding: 13px 14px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
+            padding: 16px 15px 17px 15px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,249,251,0.94));
             overflow: hidden;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
         }
 
         .bling-hero-row {
             display: grid;
-            grid-template-columns: 34px minmax(0, 1fr) 34px;
+            grid-template-columns: 32px minmax(0, 1fr) 32px;
             align-items: center;
             gap: 8px;
         }
@@ -80,19 +81,27 @@ def inject_clean_home_css() -> None:
         }
 
         .bling-hero-title {
-            font-size: clamp(1.32rem, 4vw, 2rem);
-            line-height: 1.20;
+            font-size: clamp(1.34rem, 4vw, 2rem);
+            line-height: 1.18;
             font-weight: 900;
             margin: 0 0 6px 0;
             letter-spacing: -0.006em;
+            color: var(--bling-text);
         }
 
         .bling-hero-subtitle {
             font-size: clamp(0.90rem, 2.4vw, 1rem);
-            line-height: 1.42;
+            line-height: 1.40;
             color: var(--bling-muted);
             margin: 0 auto;
-            max-width: 820px;
+            max-width: 760px;
+        }
+
+        .bling-hero-tech-slot {
+            display: flex;
+            justify-content: flex-end;
+            align-items: flex-start;
+            align-self: start;
         }
 
         .bling-hero-tech-slot .stButton > button {
@@ -101,12 +110,12 @@ def inject_clean_home_css() -> None:
             width: 30px !important;
             border-radius: 999px !important;
             padding: 0 !important;
-            font-size: 0.84rem !important;
-            opacity: 0.78;
-            border: 1px solid rgba(15,23,42,0.14) !important;
-            background: rgba(255,255,255,0.94) !important;
-            color: rgba(17,24,39,0.86) !important;
-            box-shadow: 0 4px 10px rgba(15,23,42,0.07) !important;
+            font-size: 0.82rem !important;
+            opacity: 0.72;
+            border: 1px solid rgba(15,23,42,0.13) !important;
+            background: rgba(255,255,255,0.95) !important;
+            color: rgba(17,24,39,0.78) !important;
+            box-shadow: 0 4px 10px rgba(15,23,42,0.06) !important;
         }
 
         .bling-hero-tech-slot .stButton > button:hover {
@@ -141,8 +150,8 @@ def inject_clean_home_css() -> None:
         }
 
         .bling-home-button-center {
-            width: min(100%, 360px);
-            margin: 1.25rem auto 0 auto;
+            width: min(100%, 310px);
+            margin: 1.0rem auto 0 auto;
         }
 
         button[kind="primary"] {
@@ -224,9 +233,9 @@ def inject_clean_home_css() -> None:
         @media (max-width: 760px) {
             .main .block-container,
             .block-container {
-                padding-left: 0.62rem !important;
-                padding-right: 0.62rem !important;
-                padding-top: 1.80rem !important;
+                padding-left: 0.86rem !important;
+                padding-right: 0.86rem !important;
+                padding-top: 0.78rem !important;
                 padding-bottom: 1rem !important;
                 max-width: 100vw !important;
                 min-height: 84svh !important;
@@ -234,8 +243,8 @@ def inject_clean_home_css() -> None:
 
             header[data-testid="stHeader"] {
                 visibility: visible !important;
-                height: 2.75rem !important;
-                min-height: 2.75rem !important;
+                height: 2.72rem !important;
+                min-height: 2.72rem !important;
                 background: rgba(255,255,255,0.78) !important;
                 backdrop-filter: blur(10px);
             }
@@ -246,38 +255,38 @@ def inject_clean_home_css() -> None:
 
             .bling-hero {
                 width: 100%;
-                padding: 11px 10px;
-                margin: 0 auto 0.62rem auto;
-                border-radius: 15px;
+                padding: 14px 12px 15px 12px;
+                margin: 0.08rem auto 0.70rem auto;
+                border-radius: 17px;
             }
 
             .bling-hero-row {
-                grid-template-columns: 30px minmax(0, 1fr) 30px;
+                grid-template-columns: 26px minmax(0, 1fr) 30px;
                 gap: 5px;
             }
 
             .bling-hero-title {
-                font-size: 1.17rem;
-                line-height: 1.24;
-                margin-bottom: 5px;
+                font-size: 1.18rem;
+                line-height: 1.22;
+                margin-bottom: 6px;
                 letter-spacing: normal;
             }
 
             .bling-hero-subtitle {
-                font-size: 0.86rem;
-                line-height: 1.42;
+                font-size: 0.84rem;
+                line-height: 1.38;
             }
 
             .bling-hero-tech-slot .stButton > button {
                 min-height: 28px !important;
                 height: 28px !important;
                 width: 28px !important;
-                font-size: 0.78rem !important;
+                font-size: 0.76rem !important;
             }
 
             .bling-home-button-center {
-                width: min(100%, 330px);
-                margin-top: 1rem;
+                width: min(100%, 285px);
+                margin-top: 0.95rem;
             }
 
             .bling-step-title {
@@ -301,7 +310,7 @@ def inject_clean_home_css() -> None:
             }
 
             div[data-testid="stVerticalBlock"] {
-                gap: 0.50rem !important;
+                gap: 0.46rem !important;
             }
 
             div[data-testid="stHorizontalBlock"] {
@@ -375,9 +384,9 @@ def inject_clean_home_css() -> None:
         @media (max-width: 390px) {
             .main .block-container,
             .block-container {
-                padding-left: 0.50rem !important;
-                padding-right: 0.50rem !important;
-                padding-top: 1.65rem !important;
+                padding-left: 0.70rem !important;
+                padding-right: 0.70rem !important;
+                padding-top: 0.68rem !important;
                 min-height: 84svh !important;
             }
 
@@ -386,12 +395,16 @@ def inject_clean_home_css() -> None:
                 min-height: 2.6rem !important;
             }
 
+            .bling-hero {
+                padding: 13px 10px 14px 10px;
+            }
+
             .bling-hero-title {
                 font-size: 1.08rem;
             }
 
             .bling-hero-subtitle {
-                font-size: 0.80rem;
+                font-size: 0.79rem;
             }
 
             .bling-step-title {
