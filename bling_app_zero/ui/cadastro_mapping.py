@@ -12,7 +12,7 @@ from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
 from bling_app_zero.engines.estoque_engine import default_model as estoque_default_model
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
-from bling_app_zero.ui.mapping_layout import inject_mapping_css, render_mapping_preview, render_mapping_title
+from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview, render_mapping_title
 
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
