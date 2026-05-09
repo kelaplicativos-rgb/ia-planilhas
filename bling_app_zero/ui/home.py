@@ -11,6 +11,7 @@ from bling_app_zero.ui.clean_layout import (
     render_step_title,
 )
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+from bling_app_zero.ui.global_layout_guard import inject_global_layout_guard
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
@@ -224,6 +225,7 @@ def _render_back_home() -> None:
 
 def render_home() -> None:
     inject_clean_home_css()
+    inject_global_layout_guard()
     render_compact_hero()
     render_diagnostics_panel()
 
