@@ -7,6 +7,7 @@ import streamlit as st
 
 LOG_SESSION_KEY = 'logs'
 MAX_LOG_ITEMS = 300
+DEBUG_HOME_OPEN_KEY = 'debug_home_area_open'
 
 
 def _safe_text(value: Any, limit: int = 4000) -> str:
@@ -43,18 +44,18 @@ def _clear_app_cache() -> None:
         st.cache_resource.clear()
     except Exception:
         pass
-    add_debug('Cache do Streamlit limpo pelo painel lateral.', origin='DEBUG', level='INFO')
+    add_debug('Cache do Streamlit limpo.', origin='DEBUG', level='INFO')
 
 
-def _render_debug_actions(logs: list[dict[str, Any]]) -> None:
+def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Limpar logs', use_container_width=True, key='debug_clear_logs'):
+        if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
             st.session_state[LOG_SESSION_KEY] = []
             st.success('Logs limpos.')
             st.rerun()
     with col_b:
-        if st.button('Limpar cache', use_container_width=True, key='debug_clear_cache'):
+        if st.button('Limpar cache', use_container_width=True, key=f'{prefix}_clear_cache'):
             _clear_app_cache()
             st.success('Cache limpo.')
             st.rerun()
@@ -67,12 +68,12 @@ def _render_debug_actions(logs: list[dict[str, Any]]) -> None:
             file_name='bling_debug.log',
             mime='text/plain; charset=utf-8',
             use_container_width=True,
-            key=f'download_debug_log_{len(logs)}',
+            key=f'{prefix}_download_debug_log_{len(logs)}',
         )
 
 
-def _render_recent_logs(logs: list[dict[str, Any]]) -> None:
-    show_logs = st.toggle('Ver últimos eventos', value=False, key='debug_show_recent_logs')
+def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
+    show_logs = st.toggle('Ver últimos eventos', value=False, key=f'{prefix}_show_recent_logs')
     if not show_logs:
         return
 
@@ -84,16 +85,35 @@ def _render_recent_logs(logs: list[dict[str, Any]]) -> None:
             st.caption(f'[{level}] {origin}: {message}')
 
 
-def render_debug_panel() -> None:
+def _render_debug_content(prefix: str = 'debug') -> None:
     logs = list(st.session_state.get(LOG_SESSION_KEY, []))
+    st.caption('Logs, cache e diagnóstico rápido do sistema.')
+    _render_debug_actions(logs, prefix=prefix)
+
+    if not logs:
+        st.caption('Nenhum evento registrado ainda.')
+        return
+
+    st.caption(f'{len(logs)} evento(s) registrado(s).')
+    _render_recent_logs(logs, prefix=prefix)
+
+
+def render_debug_home_button() -> None:
+    """Atalho visível da área técnica dentro da Home."""
+    col_a, col_b, col_c = st.columns([1, 1.4, 1])
+    with col_b:
+        if st.button('Área técnica', use_container_width=True, key='open_debug_home_area'):
+            st.session_state[DEBUG_HOME_OPEN_KEY] = not bool(st.session_state.get(DEBUG_HOME_OPEN_KEY, False))
+
+    if not st.session_state.get(DEBUG_HOME_OPEN_KEY, False):
+        return
+
+    with st.container(border=True):
+        st.markdown('##### Área técnica')
+        _render_debug_content(prefix='debug_home')
+
+
+def render_debug_panel() -> None:
     with st.sidebar:
         with st.expander('Suporte e logs', expanded=False):
-            st.caption('Use esta área apenas para conferir erros, baixar logs ou limpar cache durante testes.')
-            _render_debug_actions(logs)
-
-            if not logs:
-                st.caption('Nenhum evento registrado ainda.')
-                return
-
-            st.caption(f'{len(logs)} evento(s) registrado(s).')
-            _render_recent_logs(logs)
+            _render_debug_content(prefix='debug_sidebar')
