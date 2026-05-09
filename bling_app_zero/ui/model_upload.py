@@ -36,7 +36,7 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
         return read_upload_fast(file)
     except Exception as exc:
-        st.warning(f'Erro ao ler {_file_name(file)}: {exc}')
+        st.warning(f'Não consegui ler {_file_name(file)}. Confira se a planilha abre normalmente e tente enviar de novo. Detalhe: {exc}')
         return None
 
 
@@ -97,21 +97,21 @@ def _render_detected_summary(
     estoque_df: pd.DataFrame | None,
 ) -> None:
     names = ', '.join(_file_name(file) for file in supported_files)
-    st.success(f'Modelos recebidos: {len(supported_files)}')
+    st.success(f'{len(supported_files)} modelo(s) recebido(s) com sucesso.')
     st.caption(names)
 
-    with st.expander('Ver modelos e colunas', expanded=False):
+    with st.expander('Conferir modelos detectados', expanded=False):
         for file in supported_files:
-            role = 'Modelo'
+            role = 'Modelo recebido'
             if file is cadastro_file:
-                role = 'Cadastro'
+                role = 'Modelo de cadastro'
             elif file is estoque_file:
-                role = 'Estoque'
+                role = 'Modelo de estoque'
             st.caption(f'{role}: {_file_name(file)}')
         if isinstance(cadastro_df, pd.DataFrame):
-            preview_df('Cadastro', cadastro_df)
+            preview_df('Modelo de cadastro', cadastro_df)
         if isinstance(estoque_df, pd.DataFrame):
-            preview_df('Estoque', estoque_df)
+            preview_df('Modelo de estoque', estoque_df)
 
 
 def render_model_upload_box(
@@ -125,19 +125,18 @@ def render_model_upload_box(
     if caption:
         st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
-    st.caption('Toque em procurar arquivos e selecione a planilha modelo oficial do Bling.')
-    st.caption('No Android, se o arquivo aparecer apagado, toque no filtro do gerenciador e escolha "Todos os arquivos".')
+    st.caption('Envie arquivo XLSX, XLS, CSV, XLSM ou XLSB.')
     files = st.file_uploader(
-        'Procurar arquivos dos modelos do Bling',
+        'Selecionar modelos do Bling',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Formatos aceitos: XLSX, XLS, CSV, XLSM e XLSB.',
+        help='Você pode enviar o modelo de cadastro, o modelo de estoque ou os dois.',
     )
 
     if not files:
         if required_model:
-            st.info('Anexe o modelo do Bling.')
+            st.info('Envie o modelo do Bling para continuar com segurança.')
         return ModelUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
@@ -145,10 +144,10 @@ def render_model_upload_box(
     ignored_files = [file for file in selected_files if _file_ext(file) not in MODEL_SPREADSHEET_TYPES]
 
     if ignored_files:
-        st.warning('Ignorado: ' + ', '.join(_file_name(file) for file in ignored_files))
+        st.warning('Arquivo ignorado por formato incompatível: ' + ', '.join(_file_name(file) for file in ignored_files))
 
     if not supported_files:
-        st.error('Nenhum modelo compatível. Use XLSX, XLS, CSV, XLSM ou XLSB.')
+        st.error('Nenhum modelo compatível foi encontrado. Envie XLSX, XLS, CSV, XLSM ou XLSB.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
     loaded = [(file, _safe_read(file)) for file in supported_files]
@@ -160,7 +159,7 @@ def render_model_upload_box(
     _render_detected_summary(supported_files, cadastro_file, estoque_file, cadastro_df, estoque_df)
 
     if required_model and model_df is None:
-        st.warning('Modelo não detectado.')
+        st.warning('Ainda não identifiquei o modelo correto para esta operação.')
 
     return ModelUploadResult(
         cadastro_model_file=cadastro_file,
