@@ -309,7 +309,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
         st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
 
     st.markdown('#### 2. Conferir colunas')
-    st.caption('🔴 escolher coluna · 🟡 revisar · 🟢 seguro/vazio resolvido no final')
+    st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
     with st.expander('Ver origem', expanded=False):
         preview_df('Origem para conferir', df_source)
 
@@ -373,7 +373,7 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
         st.session_state[mapping_key] = auto_mapping
 
     st.markdown('##### Conferir estoque')
-    st.caption('🔴 escolher coluna · 🟡 revisar · 🟢 seguro/vazio resolvido no final')
+    st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
