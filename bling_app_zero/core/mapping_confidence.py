@@ -82,16 +82,18 @@ def _custom_equivalent(target: str, source: str) -> bool:
 
     if target_compact and source_compact and target_compact == source_compact:
         return True
-    if target_key and source_key and (target_key in source_key or source_key in target_key):
-        return True
 
     for aliases in CUSTOM_EQUIVALENT_TERMS.values():
         normalized_aliases = [normalize_key(alias) for alias in aliases]
-        target_hit = any(alias in target_key or target_key in alias for alias in normalized_aliases if alias)
-        source_hit = any(alias in source_key or source_key in alias for alias in normalized_aliases if alias)
+        target_hit = target_key in normalized_aliases
+        source_hit = source_key in normalized_aliases
         if target_hit and source_hit:
             return True
     return False
+
+
+def _exact_normalized_match(target: str, source: str) -> bool:
+    return bool(_compact_key(target) and _compact_key(target) == _compact_key(source))
 
 
 def _manual_like_valid(target: str, source: str, profile: dict[str, float | str]) -> bool:
@@ -174,7 +176,7 @@ def _content_score(target: str, source: str, profile: dict[str, float | str]) ->
 
 
 def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
-    if level_hint == 'verde' or score >= 115:
+    if level_hint == 'verde':
         return {'score': max(score, 100), 'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'order': 2}
     if score >= 82:
         return {'score': score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'atenção', 'order': 1}
@@ -194,10 +196,8 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
 
     score = _name_score(target, source) + _content_score(target, source, profile)
 
-    if _custom_equivalent(target, source):
+    if _exact_normalized_match(target, source):
         return _confidence(score, 'verde')
-    if infer_kind(target) == 'custom' and bool(profile.get('has_values')):
-        return _confidence(max(score, 100), 'verde')
 
     return _confidence(score)
 
