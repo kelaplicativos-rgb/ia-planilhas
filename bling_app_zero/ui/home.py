@@ -105,9 +105,24 @@ def _inject_compact_middle_selector_css() -> None:
     )
 
 
+def _centered_button(label: str, key: str, disabled: bool = False) -> bool:
+    left, middle, right = st.columns([1, 1.65, 1])
+    with middle:
+        return st.button(label, use_container_width=True, key=key, disabled=disabled)
+
+
+def _centered_two_buttons(left_label: str, left_key: str, right_label: str, right_key: str) -> tuple[bool, bool]:
+    pad_l, col_l, col_r, pad_r = st.columns([0.8, 1.35, 1.35, 0.8])
+    with col_l:
+        left_clicked = st.button(left_label, use_container_width=True, key=left_key)
+    with col_r:
+        right_clicked = st.button(right_label, use_container_width=True, key=right_key)
+    return left_clicked, right_clicked
+
+
 def _render_home_start() -> None:
     render_home_start_card()
-    if st.button('Anexar modelos do Bling', use_container_width=True, key='home_start_open_models'):
+    if _centered_button('Anexar modelos do Bling', key='home_start_open_models'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
     close_home_start_card()
@@ -120,14 +135,14 @@ def _render_home_models_step() -> None:
     )
     _render_home_bling_models_lazy()
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('← Voltar', use_container_width=True, key='home_models_back'):
-            _set_home_stage(STAGE_START)
-            st.rerun()
-    with col_b:
-        disabled = not _has_home_models_strict()
-        if st.button('Continuar', use_container_width=True, disabled=disabled, key='home_models_continue'):
+    back_clicked, continue_clicked = _centered_two_buttons('← Voltar', 'home_models_back', 'Continuar', 'home_models_continue')
+    if back_clicked:
+        _set_home_stage(STAGE_START)
+        st.rerun()
+    if continue_clicked:
+        if not _has_home_models_strict():
+            st.warning('Anexe pelo menos um modelo para continuar.')
+        else:
             _set_home_stage(STAGE_PRECIFICACAO)
             st.rerun()
 
@@ -137,21 +152,24 @@ def _render_home_models_step() -> None:
 
 def _render_pricing_choice_step() -> None:
     render_home_pricing_card()
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('Sim, vou precificar', use_container_width=True, key='home_pricing_yes'):
-            st.session_state[HOME_PRICING_KEY] = True
-            st.session_state['cadastro_preco_calculado_ativo'] = True
-            _set_home_stage(STAGE_ORIGEM)
-            st.rerun()
-    with col_b:
-        if st.button('Não, seguir sem precificar', use_container_width=True, key='home_pricing_no'):
-            st.session_state[HOME_PRICING_KEY] = False
-            st.session_state['cadastro_preco_calculado_ativo'] = False
-            _set_home_stage(STAGE_ORIGEM)
-            st.rerun()
+    yes_clicked, no_clicked = _centered_two_buttons(
+        'Sim, vou precificar',
+        'home_pricing_yes',
+        'Não, seguir sem precificar',
+        'home_pricing_no',
+    )
+    if yes_clicked:
+        st.session_state[HOME_PRICING_KEY] = True
+        st.session_state['cadastro_preco_calculado_ativo'] = True
+        _set_home_stage(STAGE_ORIGEM)
+        st.rerun()
+    if no_clicked:
+        st.session_state[HOME_PRICING_KEY] = False
+        st.session_state['cadastro_preco_calculado_ativo'] = False
+        _set_home_stage(STAGE_ORIGEM)
+        st.rerun()
 
-    if st.button('← Voltar aos modelos', use_container_width=True, key='home_pricing_back'):
+    if _centered_button('← Voltar aos modelos', key='home_pricing_back'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
 
@@ -169,15 +187,18 @@ def _render_home_origin_step() -> None:
     _inject_compact_middle_selector_css()
     render_flow_selector()
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('Trocar modelos do Bling', use_container_width=True, key='home_origin_change_models'):
-            _set_home_stage(STAGE_MODELOS)
-            st.rerun()
-    with col_b:
-        if st.button('Alterar precificação', use_container_width=True, key='home_origin_change_pricing'):
-            _set_home_stage(STAGE_PRECIFICACAO)
-            st.rerun()
+    change_models, change_pricing = _centered_two_buttons(
+        'Trocar modelos do Bling',
+        'home_origin_change_models',
+        'Alterar precificação',
+        'home_origin_change_pricing',
+    )
+    if change_models:
+        _set_home_stage(STAGE_MODELOS)
+        st.rerun()
+    if change_pricing:
+        _set_home_stage(STAGE_PRECIFICACAO)
+        st.rerun()
 
 
 def _render_home_intro() -> None:
@@ -195,7 +216,7 @@ def _render_home_intro() -> None:
 
 
 def _render_back_home() -> None:
-    if st.button('← Início', use_container_width=True, key='home_back_to_light_start'):
+    if _centered_button('← Início', key='home_back_to_light_start'):
         deactivate_panel()
         _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
         st.rerun()
