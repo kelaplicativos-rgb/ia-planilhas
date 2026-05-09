@@ -36,6 +36,11 @@ KIND_LABELS = {
     'custom': 'Campo personalizado',
 }
 
+OPERATION_LABELS = {
+    'cadastro': 'Cadastro de produtos',
+    'estoque': 'Atualização de estoque',
+}
+
 
 class _NamedBytesIO(BytesIO):
     def __init__(self, data: bytes, name: str):
@@ -137,6 +142,28 @@ def _kind_label(kind: str) -> str:
     return KIND_LABELS.get(str(kind or '').strip(), 'Campo personalizado')
 
 
+def _operation_label(operation: str) -> str:
+    return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'Arquivo final')
+
+
+def _operation_badge(operation: str) -> str:
+    op = str(operation or '').strip().lower()
+    if op == 'estoque':
+        return '📦 ESTOQUE'
+    if op == 'cadastro':
+        return '🧾 CADASTRO'
+    return '📄 ARQUIVO'
+
+
+def _download_label(operation: str) -> str:
+    op = str(operation or '').strip().lower()
+    if op == 'estoque':
+        return '⬇️ Baixar CSV de ESTOQUE para o Bling'
+    if op == 'cadastro':
+        return '⬇️ Baixar CSV de CADASTRO para o Bling'
+    return '⬇️ Baixar CSV para o Bling'
+
+
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     """Normaliza preview para evitar erros repetidos do Arrow no Streamlit.
 
@@ -184,10 +211,13 @@ def show_contract(columns: list[str]) -> None:
         _render_contract_body(columns)
 
 
-def show_mapping(mapping: dict[str, str]) -> None:
+def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
     if not mapping:
         return
-    with st.expander('Como os campos foram preenchidos', expanded=False):
+    label = 'Como os campos foram preenchidos'
+    if operation:
+        label = f'{_operation_badge(operation)} · Como os campos foram preenchidos'
+    with st.expander(label, expanded=False):
         st.dataframe(
             pd.DataFrame([
                 {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
@@ -203,9 +233,13 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         st.warning('Ainda não há dados finais para baixar.')
         return
 
+    operation_title = _operation_label(operation)
+    st.markdown(f'##### {_operation_badge(operation)}')
+    st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
+
     errors = validate_final_df(df, operation)
     if errors:
-        with st.expander('Conferência antes do download', expanded=True):
+        with st.expander(f'{_operation_badge(operation)} · Conferência antes do download', expanded=True):
             for error in errors:
                 st.warning(error)
 
@@ -213,7 +247,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     csv_bytes = _csv_bytes_cached(df.copy(), operation, signature)
 
     st.download_button(
-        '⬇️ Baixar CSV pronto para o Bling',
+        _download_label(operation),
         data=csv_bytes,
         file_name=filename_for_operation(operation),
         mime='text/csv; charset=utf-8',
