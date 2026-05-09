@@ -3,18 +3,17 @@ from __future__ import annotations
 import streamlit as st
 
 
-_THEME_ALREADY_INJECTED_KEY = 'bling_layout_theme_injected'
-
-
 def inject_unified_light_layout(force: bool = False) -> None:
-    """Tema maestro global: mobile-first, limpo e sem molduras quebradas."""
-    if st.session_state.get(_THEME_ALREADY_INJECTED_KEY) and not force:
-        return
-    st.session_state[_THEME_ALREADY_INJECTED_KEY] = True
+    """Tema maestro global do sistema.
 
+    O Streamlit executa o script novamente a cada clique. Por isso o CSS precisa
+    ser reinjetado em todo rerun. Não usamos mais trava por session_state aqui,
+    pois ela fazia o app perder o tema depois de qualquer ação.
+    """
+    _ = force
     st.markdown(
         """
-        <style>
+        <style id="bling-unified-theme">
         :root {
             --bling-bg: #f8fbff;
             --bling-surface: #ffffff;
@@ -40,7 +39,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
         html,
         body,
         [data-testid="stApp"],
-        [data-testid="stAppViewContainer"] {
+        [data-testid="stAppViewContainer"],
+        .stApp {
             overflow-x: hidden !important;
             color: var(--bling-text) !important;
             background:
@@ -52,9 +52,28 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         header[data-testid="stHeader"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 999999 !important;
             background: rgba(255, 255, 255, 0.82) !important;
             border-bottom: 1px solid rgba(226, 232, 240, 0.78) !important;
             backdrop-filter: blur(14px) !important;
+        }
+
+        div[data-testid="stToolbar"],
+        div[data-testid="stToolbar"] *,
+        div[data-testid="stDecoration"],
+        div[data-testid="stStatusWidget"],
+        button[kind="header"],
+        button[data-testid="collapsedControl"],
+        [data-testid="collapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 1000000 !important;
         }
 
         .main .block-container,
@@ -66,7 +85,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             box-sizing: border-box !important;
         }
 
-        /* Remove a moldura gigante que estava criando cara de layout quebrado. */
         .main .block-container > div:first-child {
             margin-top: 0 !important;
             padding: 0 !important;
@@ -78,7 +96,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         .bling-hero,
-        .bling-flow-card {
+        .bling-flow-card,
+        .bling-inline-card {
             width: min(100%, 760px) !important;
             margin: 0 auto 1rem auto !important;
             padding: 1.25rem 1.15rem !important;
@@ -92,7 +111,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         .bling-hero::before,
-        .bling-flow-card::before {
+        .bling-flow-card::before,
+        .bling-inline-card::before {
             content: "";
             position: absolute;
             top: 0;
@@ -116,6 +136,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             font-size: 0.78rem !important;
             font-weight: 820 !important;
             line-height: 1.1 !important;
+            letter-spacing: 0 !important;
+            text-transform: none !important;
         }
 
         .bling-hero-title,
@@ -296,7 +318,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             border-right: 1px solid rgba(191, 219, 254, 0.72) !important;
         }
 
-        #MainMenu,
         footer { visibility: hidden !important; }
 
         @media (max-width: 760px) {
@@ -308,7 +329,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             }
 
             .bling-hero,
-            .bling-flow-card {
+            .bling-flow-card,
+            .bling-inline-card {
                 width: 100% !important;
                 margin: 0 0 0.78rem 0 !important;
                 padding: 1rem 0.92rem !important;
