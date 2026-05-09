@@ -42,8 +42,7 @@ def render_cadastro_source_upload(df_origem_site: pd.DataFrame | None):
     home_has_models = get_home_cadastro_model() is not None or get_home_estoque_model() is not None
     allow_model_upload = not home_has_models
     if isinstance(df_origem_site, pd.DataFrame):
-        st.success('Origem criada pelo site carregada com sucesso.')
-        st.caption('Agora confira, precifique se quiser e gere o CSV final de cadastro.')
+        st.success('Origem criada pelo site carregada. O mapeamento e o CSV final aparecem nesta mesma página.')
         return render_smart_upload_box(
             title='Arquivo complementar do fornecedor',
             operation='cadastro',
@@ -53,10 +52,8 @@ def render_cadastro_source_upload(df_origem_site: pd.DataFrame | None):
             accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
         )
 
-    st.markdown('### Origem dos produtos')
-    st.caption('Envie a planilha, PDF ou XML do fornecedor. O sistema transforma essa origem no padrão do Bling.')
     if home_has_models:
-        st.success('Modelo do Bling já carregado. Envie somente o arquivo do fornecedor.')
+        st.info('Modelo do Bling já carregado. Envie abaixo a planilha, XML ou PDF do fornecedor.')
     return render_smart_upload_box(
         title='Arquivo do fornecedor',
         operation='cadastro',
