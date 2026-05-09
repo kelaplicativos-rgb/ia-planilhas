@@ -10,8 +10,8 @@ def inject_clean_home_css() -> None:
         """
         <style>
         :root {
-            --bling-gap: 0.62rem;
-            --bling-radius: 14px;
+            --bling-gap: 0.72rem;
+            --bling-radius: 16px;
         }
 
         html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
@@ -20,8 +20,8 @@ def inject_clean_home_css() -> None:
         }
 
         .block-container {
-            padding-top: 1.10rem;
-            padding-bottom: 1.2rem;
+            padding-top: 1.15rem;
+            padding-bottom: 1.5rem;
             max-width: 1060px;
             overflow-x: hidden !important;
         }
@@ -35,11 +35,11 @@ def inject_clean_home_css() -> None:
         }
 
         div[data-testid="stVerticalBlock"] {
-            gap: 0.44rem !important;
+            gap: 0.58rem !important;
         }
 
         div[data-testid="column"] {
-            padding: 0 0.15rem !important;
+            padding: 0 0.2rem !important;
         }
 
         div[data-testid="stMarkdownContainer"] h1,
@@ -52,135 +52,75 @@ def inject_clean_home_css() -> None:
         .bling-hero {
             border: 1px solid rgba(49, 51, 63, 0.10);
             border-radius: var(--bling-radius);
-            padding: 12px 14px;
+            padding: 14px 16px 13px 16px;
             margin: 0 0 var(--bling-gap) 0;
             background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
             overflow: hidden;
         }
         .bling-hero-title {
-            font-size: clamp(1.24rem, 4.6vw, 1.9rem);
-            line-height: 1.14;
+            font-size: clamp(1.32rem, 5vw, 2rem);
+            line-height: 1.16;
             font-weight: 800;
-            margin: 0 0 5px 0;
+            margin: 0 0 6px 0;
             overflow-wrap: anywhere;
         }
         .bling-hero-subtitle {
-            font-size: clamp(0.84rem, 3.2vw, 0.96rem);
-            line-height: 1.32;
+            font-size: clamp(0.90rem, 3.4vw, 1rem);
+            line-height: 1.36;
             color: rgba(49, 51, 63, 0.72);
             margin: 0;
             overflow-wrap: anywhere;
         }
 
         .bling-step-title {
-            font-size: 1.08rem;
-            line-height: 1.18;
+            font-size: 1.14rem;
+            line-height: 1.22;
             font-weight: 800;
-            margin: 8px 0 4px 0;
+            margin: 10px 0 5px 0;
             overflow-wrap: anywhere;
             clear: both;
         }
         .bling-muted {
             color: rgba(49, 51, 63, 0.66);
-            font-size: 0.86rem;
-            line-height: 1.28;
-            margin: 0 0 0.45rem 0;
+            font-size: 0.92rem;
+            line-height: 1.34;
+            margin: 0 0 0.62rem 0;
             overflow-wrap: anywhere;
             clear: both;
         }
         .bling-compact-note {
-            border-radius: 11px;
-            padding: 7px 9px;
+            border-radius: 12px;
+            padding: 9px 11px;
             background: rgba(240, 242, 246, 0.72);
             color: rgba(49, 51, 63, 0.76);
-            font-size: 0.82rem;
-            line-height: 1.26;
-            margin: 5px 0 8px 0;
+            font-size: 0.88rem;
+            line-height: 1.32;
+            margin: 7px 0 10px 0;
             overflow-wrap: anywhere;
         }
         .bling-upload-title {
-            font-size: 1rem;
+            font-size: 1.10rem;
             font-weight: 800;
-            margin: 7px 0 2px 0;
-            line-height: 1.18;
+            margin: 9px 0 3px 0;
+            line-height: 1.22;
         }
         .bling-upload-caption {
             color: rgba(49, 51, 63, 0.62);
-            font-size: 0.82rem;
-            line-height: 1.24;
-            margin: 0 0 5px 0;
+            font-size: 0.88rem;
+            line-height: 1.30;
+            margin: 0 0 7px 0;
         }
 
-        /* Card REAL do mapeamento: container externo do Streamlit, sem card duplicado no select. */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            max-width: 100% !important;
-            overflow-x: hidden !important;
-            border-radius: 13px !important;
-            border: 1px solid rgba(49, 51, 63, 0.13) !important;
-            background: rgba(248, 250, 252, 0.92) !important;
-            padding: 7px 8px 6px 8px !important;
-            margin: 3px 0 6px 0 !important;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035) !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.16rem !important;
-        }
-
-        /* Select limpo dentro do card: sem borda externa, sem margem gigante, sem deslizar. */
-        div[data-testid="stSelectbox"] {
-            max-width: 100% !important;
-            overflow-x: hidden !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            border: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-        }
-        div[data-testid="stSelectbox"] label {
-            margin: 0 0 3px 0 !important;
-            padding: 0 !important;
-        }
-        div[data-testid="stSelectbox"] label p {
-            font-weight: 760 !important;
-            letter-spacing: -0.01em !important;
-            line-height: 1.08 !important;
-            margin: 0 !important;
-        }
         div[data-baseweb="select"] {
             max-width: 100% !important;
             width: 100% !important;
-            margin: 0 !important;
         }
         div[data-baseweb="select"] > div {
             max-width: 100% !important;
-            min-height: 39px !important;
             overflow: hidden !important;
             background: #eef2f7 !important;
-            border: 1px solid rgba(49, 51, 63, 0.11) !important;
-            border-radius: 12px !important;
-            box-shadow: none !important;
+            border-radius: 14px !important;
         }
-        div[data-baseweb="select"] [data-testid="stMarkdownContainer"],
-        div[data-baseweb="select"] span,
-        div[data-baseweb="select"] div {
-            max-width: 100% !important;
-            overflow-x: hidden !important;
-            text-overflow: ellipsis !important;
-        }
-
-        /* Preview da primeira linha dentro do mesmo card: colado no select. */
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMarkdownContainer"] > div[style*="font-size:11px"] {
-            font-size: 10px !important;
-            line-height: 1.02 !important;
-            margin-top: -5px !important;
-            margin-bottom: -2px !important;
-            padding: 1px 4px !important;
-            border-radius: 6px !important;
-            max-width: 100% !important;
-            overflow-wrap: anywhere !important;
-        }
-
         div[data-baseweb="popover"],
         div[data-baseweb="menu"] {
             max-width: calc(100vw - 24px) !important;
@@ -199,188 +139,183 @@ def inject_clean_home_css() -> None:
 
         .stButton > button,
         .stDownloadButton > button {
-            border-radius: 13px !important;
-            min-height: 42px;
-            padding: 0.42rem 0.62rem;
-            font-size: 0.92rem;
-            line-height: 1.18;
+            border-radius: 14px !important;
+            min-height: 44px;
+            padding: 0.48rem 0.72rem;
+            font-size: 0.95rem;
+            line-height: 1.22;
             white-space: normal;
         }
-
         div[data-testid="stFileUploader"] section {
-            padding: 9px 10px !important;
-            min-height: 76px !important;
-            border-radius: 13px !important;
+            padding: 11px 12px !important;
+            min-height: 82px !important;
+            border-radius: 14px !important;
         }
         div[data-testid="stFileUploader"] section p {
-            font-size: 0.82rem !important;
-            line-height: 1.18 !important;
-            margin-bottom: 0.10rem !important;
+            font-size: 0.86rem !important;
+            line-height: 1.22 !important;
+            margin-bottom: 0.15rem !important;
         }
         div[data-testid="stFileUploader"] small {
-            font-size: 0.70rem !important;
-            line-height: 1.14 !important;
+            font-size: 0.74rem !important;
+            line-height: 1.18 !important;
         }
         div[data-testid="stExpander"] details {
-            border-radius: 13px !important;
+            border-radius: 14px !important;
         }
         div[data-testid="stExpander"] details summary {
-            padding-top: 0.46rem !important;
-            padding-bottom: 0.46rem !important;
+            padding-top: 0.55rem !important;
+            padding-bottom: 0.55rem !important;
         }
 
         @media (max-width: 760px) {
             .main .block-container,
             .block-container {
-                padding-left: 0.48rem !important;
-                padding-right: 0.48rem !important;
-                padding-top: 1.70rem !important;
-                padding-bottom: 0.85rem !important;
+                padding-left: 0.62rem !important;
+                padding-right: 0.62rem !important;
+                padding-top: 1.80rem !important;
+                padding-bottom: 1rem !important;
                 max-width: 100vw !important;
                 min-height: 84svh !important;
                 overflow-x: hidden !important;
             }
             header[data-testid="stHeader"] {
                 visibility: visible !important;
-                height: 2.65rem !important;
-                min-height: 2.65rem !important;
+                height: 2.75rem !important;
+                min-height: 2.75rem !important;
                 background: rgba(255,255,255,0.78) !important;
                 backdrop-filter: blur(10px);
             }
             section[data-testid="stSidebar"] {
                 max-width: 88vw !important;
             }
-            div[data-testid="stVerticalBlock"] {
-                gap: 0.40rem !important;
-            }
-            div[data-testid="stHorizontalBlock"] {
-                gap: 0.34rem !important;
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 6px 7px 5px 7px !important;
-                margin: 2px 0 5px 0 !important;
-                border-radius: 12px !important;
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.10rem !important;
+            div[data-testid="stVerticalBlock"],
+            div[data-testid="stHorizontalBlock"],
+            div[data-testid="stElementContainer"] {
+                max-width: 100% !important;
+                overflow-x: hidden !important;
             }
             div[data-baseweb="select"] > div {
-                min-height: 38px !important;
-                border-radius: 11px !important;
-            }
-            div[data-testid="stSelectbox"] label {
-                margin-bottom: 2px !important;
+                min-height: 46px !important;
+                background: #eef2f7 !important;
+                border: 1px solid rgba(49, 51, 63, 0.12) !important;
             }
             .bling-hero {
-                padding: 10px 11px;
-                margin: 0 0 0.56rem 0;
-                border-radius: 14px;
+                padding: 11px 12px 10px 12px;
+                margin: 0 0 0.70rem 0;
+                border-radius: 15px;
             }
             .bling-hero-title {
-                font-size: 1.08rem;
-                line-height: 1.15;
-                margin-bottom: 4px;
+                font-size: 1.17rem;
+                line-height: 1.18;
+                margin-bottom: 5px;
             }
             .bling-hero-subtitle {
-                font-size: 0.80rem;
-                line-height: 1.28;
+                font-size: 0.86rem;
+                line-height: 1.34;
             }
             .bling-step-title {
-                font-size: 1.02rem;
-                line-height: 1.18;
-                margin: 0.50rem 0 0.14rem 0;
+                font-size: 1.08rem;
+                line-height: 1.22;
+                margin: 0.62rem 0 0.18rem 0;
                 display: block;
             }
             .bling-muted {
-                font-size: 0.80rem;
-                line-height: 1.25;
-                margin: 0 0 0.42rem 0;
+                font-size: 0.86rem;
+                line-height: 1.32;
+                margin: 0 0 0.62rem 0;
                 display: block;
             }
             .bling-compact-note {
-                padding: 7px 8px;
-                margin: 0.36rem 0 0.46rem 0;
-                border-radius: 11px;
-                font-size: 0.78rem;
-                line-height: 1.24;
+                padding: 8px 10px;
+                margin: 0.45rem 0 0.58rem 0;
+                border-radius: 12px;
+                font-size: 0.84rem;
+                line-height: 1.30;
             }
             .bling-upload-title {
-                font-size: 0.96rem;
-                line-height: 1.18;
-                margin: 0.45rem 0 0.14rem 0;
+                font-size: 1rem;
+                line-height: 1.22;
+                margin: 0.55rem 0 0.18rem 0;
             }
             .bling-upload-caption {
-                font-size: 0.78rem;
-                line-height: 1.23;
-                margin: 0 0 0.36rem 0;
+                font-size: 0.82rem;
+                line-height: 1.28;
+                margin: 0 0 0.45rem 0;
+            }
+            div[data-testid="stVerticalBlock"] {
+                gap: 0.54rem !important;
+            }
+            div[data-testid="stHorizontalBlock"] {
+                gap: 0.42rem !important;
             }
             div[data-testid="stMarkdownContainer"] p {
-                line-height: 1.24 !important;
-                margin-bottom: 0.28rem !important;
+                line-height: 1.30 !important;
+                margin-bottom: 0.35rem !important;
             }
             div[role="radiogroup"] label {
                 border: 1px solid rgba(49, 51, 63, 0.14);
-                border-radius: 13px;
-                padding: 8px 9px !important;
+                border-radius: 14px;
+                padding: 9px 10px !important;
                 background: rgba(250, 250, 250, 0.84);
-                margin-bottom: 5px !important;
+                margin-bottom: 6px !important;
                 width: 100%;
-                min-height: 44px;
+                min-height: 48px;
                 align-items: center;
                 overflow: hidden;
             }
             div[role="radiogroup"] label p,
             div[role="radiogroup"] label span,
             div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-                font-size: 0.88rem !important;
-                line-height: 1.18 !important;
+                font-size: 0.94rem !important;
+                line-height: 1.22 !important;
                 white-space: normal !important;
                 overflow-wrap: anywhere !important;
                 margin: 0 !important;
             }
             div[data-testid="stFileUploader"] section {
-                min-height: 72px !important;
-                padding: 8px 9px !important;
-                border-radius: 13px !important;
+                min-height: 78px !important;
+                padding: 9px 10px !important;
+                border-radius: 14px !important;
             }
             div[data-testid="stFileUploader"] section p {
-                font-size: 0.76rem !important;
-                line-height: 1.16 !important;
+                font-size: 0.80rem !important;
+                line-height: 1.20 !important;
             }
             div[data-testid="stFileUploader"] small {
-                font-size: 0.68rem !important;
-                line-height: 1.12 !important;
+                font-size: 0.70rem !important;
+                line-height: 1.16 !important;
             }
             div[data-testid="stFileUploader"] button {
-                min-height: 34px !important;
-                padding: 0.30rem 0.52rem !important;
-                font-size: 0.78rem !important;
-                line-height: 1.10 !important;
+                min-height: 36px !important;
+                padding: 0.32rem 0.58rem !important;
+                font-size: 0.82rem !important;
+                line-height: 1.12 !important;
             }
             div[data-testid="stExpander"] details summary p {
-                font-size: 0.84rem !important;
-                line-height: 1.18 !important;
+                font-size: 0.88rem !important;
+                line-height: 1.22 !important;
             }
             div[data-testid="stExpander"] details summary {
-                padding: 0.42rem 0.52rem !important;
+                padding: 0.48rem 0.58rem !important;
             }
             .stButton > button,
             .stDownloadButton > button {
-                min-height: 42px !important;
-                padding: 0.40rem 0.60rem !important;
-                font-size: 0.90rem !important;
-                line-height: 1.16 !important;
-                border-radius: 13px !important;
+                min-height: 46px !important;
+                padding: 0.46rem 0.68rem !important;
+                font-size: 0.96rem !important;
+                line-height: 1.20 !important;
+                border-radius: 14px !important;
                 white-space: normal !important;
             }
             textarea,
             input,
             div[data-baseweb="input"] input,
             div[data-baseweb="textarea"] textarea {
-                font-size: 0.88rem !important;
+                font-size: 0.92rem !important;
             }
             div[data-testid="stDataFrame"] {
-                max-height: 340px !important;
+                max-height: 360px !important;
             }
             iframe,
             div[data-testid="stDataFrame"] > div {
@@ -391,41 +326,35 @@ def inject_clean_home_css() -> None:
         @media (max-width: 390px) {
             .main .block-container,
             .block-container {
-                padding-left: 0.42rem !important;
-                padding-right: 0.42rem !important;
-                padding-top: 1.58rem !important;
+                padding-left: 0.50rem !important;
+                padding-right: 0.50rem !important;
+                padding-top: 1.65rem !important;
+                min-height: 84svh !important;
             }
             header[data-testid="stHeader"] {
-                height: 2.55rem !important;
-                min-height: 2.55rem !important;
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 5px 6px 5px 6px !important;
-                margin: 2px 0 5px 0 !important;
-            }
-            div[data-baseweb="select"] > div {
-                min-height: 37px !important;
+                height: 2.6rem !important;
+                min-height: 2.6rem !important;
             }
             .bling-hero {
-                padding: 9px 10px;
-                margin-bottom: 0.48rem;
+                padding: 10px 11px 9px 11px;
+                margin-bottom: 0.55rem;
             }
             .bling-hero-title {
-                font-size: 1.02rem;
+                font-size: 1.08rem;
             }
             .bling-hero-subtitle {
-                font-size: 0.76rem;
+                font-size: 0.80rem;
             }
             .bling-step-title {
-                font-size: 0.98rem;
+                font-size: 1rem;
             }
             .bling-muted {
-                font-size: 0.76rem;
+                font-size: 0.80rem;
             }
             .stButton > button,
             .stDownloadButton > button {
-                min-height: 40px !important;
-                font-size: 0.86rem !important;
+                min-height: 44px !important;
+                font-size: 0.90rem !important;
             }
         }
         </style>
