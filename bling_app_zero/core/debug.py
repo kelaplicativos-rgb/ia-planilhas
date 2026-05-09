@@ -116,45 +116,34 @@ def _render_debug_content(prefix: str = 'debug') -> None:
 
 
 def render_debug_home_button() -> None:
-    """Atalho discreto da área técnica próximo ao card do topo."""
+    """Atalho técnico discreto, estável e sem sobrepor o layout."""
     st.markdown(
         """
         <style>
         div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) {
-            margin-top: -3.20rem !important;
-            margin-bottom: 1.15rem !important;
-            pointer-events: none;
+            margin-top: 0 !important;
+            margin-bottom: 0.40rem !important;
         }
         div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton {
             display: flex !important;
             justify-content: flex-end !important;
-            padding-right: 1.55rem !important;
-            pointer-events: auto;
+            padding-right: 0.35rem !important;
         }
         div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button {
-            min-height: 32px !important;
-            height: 32px !important;
-            width: 32px !important;
+            min-height: 30px !important;
+            height: 30px !important;
+            width: 30px !important;
             border-radius: 999px !important;
             padding: 0 !important;
-            font-size: 0.90rem !important;
-            opacity: 0.70;
+            font-size: 0.84rem !important;
+            opacity: 0.76;
             border: 1px solid rgba(15,23,42,0.14) !important;
-            background: rgba(255,255,255,0.88) !important;
-            box-shadow: 0 6px 14px rgba(15,23,42,0.08) !important;
+            background: rgba(255,255,255,0.94) !important;
+            box-shadow: 0 4px 10px rgba(15,23,42,0.07) !important;
         }
         div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton > button:hover {
             opacity: 1;
-            border-color: rgba(185,28,28,0.32) !important;
-        }
-        @media (max-width: 760px) {
-            div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) {
-                margin-top: -3.05rem !important;
-                margin-bottom: 1.0rem !important;
-            }
-            div[data-testid="stVerticalBlock"]:has(#bling-tech-anchor) .stButton {
-                padding-right: 1.05rem !important;
-            }
+            border-color: rgba(185,28,28,0.30) !important;
         }
         </style>
         <span id="bling-tech-anchor"></span>
