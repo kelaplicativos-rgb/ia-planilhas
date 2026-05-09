@@ -21,6 +21,15 @@ DEFAULT_RULES: dict[str, Any] = {
     'image_separator': '|',
     'auto_product_code': True,
     'unique_product_code': True,
+    'custom_rules': [],
+}
+
+CUSTOM_RULE_KEYS = {
+    'condition': '',
+    'target_column': '',
+    'fill_value': '',
+    'only_when_empty': True,
+    'enabled': True,
 }
 
 
@@ -47,12 +56,54 @@ RULE_OPTIONS: list[RuleOption] = [
 
 
 def default_rules() -> dict[str, Any]:
-    return dict(DEFAULT_RULES)
+    rules = dict(DEFAULT_RULES)
+    rules['custom_rules'] = []
+    return rules
 
 
-def _safe_text(value: Any, fallback: str) -> str:
+def _safe_text(value: Any, fallback: str = '') -> str:
     text = str(value if value is not None else '').strip()
     return text if text else fallback
+
+
+def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    rule = dict(CUSTOM_RULE_KEYS)
+    for key in rule:
+        if key in raw:
+            rule[key] = raw[key]
+
+    rule['condition'] = _safe_text(rule.get('condition'))
+    rule['target_column'] = _safe_text(rule.get('target_column'))
+    rule['fill_value'] = _safe_text(rule.get('fill_value'))
+    rule['only_when_empty'] = bool(rule.get('only_when_empty', True))
+    rule['enabled'] = bool(rule.get('enabled', True))
+
+    if not rule['condition'] or not rule['target_column']:
+        return None
+    return rule
+
+
+def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in raw:
+        rule = normalize_custom_rule(item)
+        if not rule:
+            continue
+        key = (
+            rule['condition'].lower(),
+            rule['target_column'].lower(),
+            rule['fill_value'].lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(rule)
+    return normalized[:30]
 
 
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -73,6 +124,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
     rules['unique_product_code'] = bool(rules.get('unique_product_code', True))
     rules['image_separator'] = '|'
+    rules['custom_rules'] = normalize_custom_rules(rules.get('custom_rules'))
     return rules
 
 
@@ -96,6 +148,33 @@ def reset_user_rules() -> dict[str, Any]:
     return set_user_rules(default_rules())
 
 
+def add_custom_rule(condition: str, target_column: str, fill_value: str, only_when_empty: bool = True) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = list(current.get('custom_rules', []))
+    rule = normalize_custom_rule(
+        {
+            'condition': condition,
+            'target_column': target_column,
+            'fill_value': fill_value,
+            'only_when_empty': only_when_empty,
+            'enabled': True,
+        }
+    )
+    if rule:
+        custom_rules.append(rule)
+    current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
+def remove_custom_rule(index: int) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = list(current.get('custom_rules', []))
+    if 0 <= index < len(custom_rules):
+        custom_rules.pop(index)
+    current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
 def measure_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str, str]:
     current = normalize_rules(rules)
     return {
@@ -104,3 +183,8 @@ def measure_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str
         'profundidade': str(current['depth_default']),
         'comprimento': str(current['length_default']),
     }
+
+
+def custom_rules_from_rules(rules: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    current = normalize_rules(rules)
+    return list(current.get('custom_rules', []))
