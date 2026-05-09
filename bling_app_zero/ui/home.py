@@ -5,7 +5,6 @@ import streamlit as st
 from bling_app_zero.ui.clean_layout import inject_clean_home_css, render_compact_hero, render_step_title
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
-from bling_app_zero.ui.home_models import has_home_models, render_home_bling_models
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
 HOME_STAGE_KEY = 'home_stage'
@@ -13,12 +12,39 @@ STAGE_START = 'inicio'
 STAGE_MODELOS = 'modelos'
 STAGE_ORIGEM = 'origem'
 
+HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
+HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
+GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
+GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
+
+
+def _looks_like_loaded_df(value: object) -> bool:
+    return value is not None and hasattr(value, 'columns') and bool(getattr(value, 'columns', []))
+
+
+def _has_home_models_light() -> bool:
+    """Checagem leve para nao importar pandas/upload na inicializacao da home."""
+    keys = [HOME_CADASTRO_MODEL_KEY, HOME_ESTOQUE_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS + GLOBAL_ESTOQUE_MODEL_KEYS
+    return any(_looks_like_loaded_df(st.session_state.get(key)) for key in keys)
+
+
+def _render_home_bling_models_lazy() -> None:
+    from bling_app_zero.ui.home_models import render_home_bling_models
+
+    render_home_bling_models()
+
+
+def _has_home_models_strict() -> bool:
+    from bling_app_zero.ui.home_models import has_home_models
+
+    return has_home_models()
+
 
 def _current_home_stage() -> str:
     stage = str(st.session_state.get(HOME_STAGE_KEY) or '')
     if stage in {STAGE_START, STAGE_MODELOS, STAGE_ORIGEM}:
         return stage
-    if has_home_models():
+    if _has_home_models_light():
         return STAGE_ORIGEM
     return STAGE_START
 
@@ -90,7 +116,7 @@ def _render_home_models_step() -> None:
         'Modelos do Bling',
         'Anexe o modelo de cadastro, o modelo de estoque ou os dois.',
     )
-    render_home_bling_models()
+    _render_home_bling_models_lazy()
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -98,12 +124,12 @@ def _render_home_models_step() -> None:
             _set_home_stage(STAGE_START)
             st.rerun()
     with col_b:
-        disabled = not has_home_models()
+        disabled = not _has_home_models_strict()
         if st.button('Continuar', use_container_width=True, disabled=disabled, key='home_models_continue'):
             _set_home_stage(STAGE_ORIGEM)
             st.rerun()
 
-    if not has_home_models():
+    if not _has_home_models_strict():
         st.info('Anexe pelo menos um modelo para continuar.')
 
 
@@ -134,7 +160,7 @@ def _render_home_intro() -> None:
 def _render_back_home() -> None:
     if st.button('← Início', use_container_width=True, key='home_back_to_light_start'):
         deactivate_panel()
-        _set_home_stage(STAGE_ORIGEM if has_home_models() else STAGE_START)
+        _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
         st.rerun()
 
 
