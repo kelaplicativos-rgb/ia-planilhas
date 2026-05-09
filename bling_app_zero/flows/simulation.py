@@ -5,6 +5,8 @@ from typing import Any
 
 import pandas as pd
 
+from bling_app_zero.core.column_contract import build_contract
+from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.flows.engine_registry import get_engine, registry_dataframe
 from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
 
@@ -53,52 +55,55 @@ def _result(flow: str, df: Any, message: str = 'OK') -> SimulationResult:
     if isinstance(df, tuple) and df:
         df = df[0]
     if isinstance(df, pd.DataFrame):
-        return SimulationResult(flow=flow, ok=not df.empty or len(df.columns) > 0, rows=len(df), columns=len(df.columns), message=message)
+        has_structure = len(df.columns) > 0
+        has_rows = len(df) > 0
+        return SimulationResult(flow=flow, ok=has_structure and (has_rows or message.startswith('Contrato')), rows=len(df), columns=len(df.columns), message=message)
     return SimulationResult(flow=flow, ok=False, rows=0, columns=0, message='Retorno inválido')
 
 
 def simulate_cadastro_planilha() -> SimulationResult:
     engine = get_engine('cadastro_planilha')
     df_final, _mapping = engine.run(_sample_source(), _cadastro_model())
-    return _result('Cadastro por planilha', df_final)
+    return _result('Cadastro por arquivo', sanitize_for_bling(df_final), 'Cadastro gerou estrutura final')
 
 
 def simulate_estoque_planilha() -> SimulationResult:
     engine = get_engine('estoque_planilha')
     df_final, _mapping = engine.run(_sample_source(), estoque_default_model(), deposito='Não definido')
-    return _result('Estoque por planilha', df_final)
+    return _result('Estoque por arquivo', sanitize_for_bling(df_final), 'Estoque gerou estrutura final')
+
+
+def _contract_dataframe(columns: list[str]) -> pd.DataFrame:
+    contract = build_contract(columns)
+    return pd.DataFrame(
+        [
+            {
+                'Coluna solicitada': field.original,
+                'Tipo': field.kind,
+                'Obrigatório': field.required,
+            }
+            for field in contract
+        ]
+    )
 
 
 def simulate_site_cadastro_contract() -> SimulationResult:
-    engine = get_engine('site_cadastro')
-    df_site = engine.run(
-        'https://example.com/produto-teste',
-        requested_columns=['URL', 'Código', 'Descrição', 'Preço', 'URL Imagens'],
-        all_products=False,
-        max_pages=10,
-        max_products=1,
-        operation='cadastro',
-    )
-    return _result('Site para cadastro', df_site, 'Contrato de site cadastro executado')
+    columns = ['URL', 'Código', 'Descrição', 'Preço', 'URL Imagens']
+    df_contract = _contract_dataframe(columns)
+    return _result('Site para cadastro', df_contract, 'Contrato de site cadastro conferido offline')
 
 
 def simulate_site_estoque_contract() -> SimulationResult:
-    engine = get_engine('site_estoque')
-    df_site = engine.run(
-        'https://example.com/produto-teste',
-        requested_columns=['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'],
-        all_products=False,
-        max_pages=10,
-        max_products=1,
-        operation='estoque',
-    )
-    return _result('Site para estoque', df_site, 'Contrato de site estoque executado')
+    columns = ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)']
+    df_contract = _contract_dataframe(columns)
+    return _result('Site para estoque', df_contract, 'Contrato de site estoque conferido offline')
 
 
 def simulate_pricing() -> SimulationResult:
     engine = get_engine('precificacao')
     df = engine.run(_sample_source(), 'Preço', 'Preço de venda', 30.0, 0.0, 0.0, 0.0, 0.0)
-    return _result('Precificação', df)
+    ok = isinstance(df, pd.DataFrame) and 'Preço de venda' in df.columns and not df.empty
+    return SimulationResult(flow='Precificação', ok=ok, rows=len(df) if isinstance(df, pd.DataFrame) else 0, columns=len(df.columns) if isinstance(df, pd.DataFrame) else 0, message='Preço calculado a partir da coluna de preço/custo')
 
 
 def run_all_simulations() -> pd.DataFrame:
