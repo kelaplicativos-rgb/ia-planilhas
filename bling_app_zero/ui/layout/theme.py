@@ -77,7 +77,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             overflow: visible !important;
         }
 
-        .bling-hero {
+        .bling-hero,
+        .bling-flow-card {
             width: min(100%, 720px) !important;
             margin: 0 auto 1rem auto !important;
             padding: 1.35rem 1.15rem 1.25rem 1.15rem !important;
@@ -90,7 +91,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             overflow: hidden !important;
         }
 
-        .bling-hero::before {
+        .bling-hero::before,
+        .bling-flow-card::before {
             content: "";
             position: absolute;
             top: 0;
@@ -100,7 +102,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             background: linear-gradient(90deg, var(--bling-primary), var(--bling-accent));
         }
 
-        .bling-hero-kicker {
+        .bling-hero-kicker,
+        .bling-flow-card-kicker {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
@@ -115,17 +118,19 @@ def inject_unified_light_layout(force: bool = False) -> None:
             line-height: 1.1 !important;
         }
 
-        .bling-hero-title {
+        .bling-hero-title,
+        .bling-flow-card-title {
             display: block !important;
             margin: 0 0 0.45rem 0 !important;
             color: var(--bling-text) !important;
-            font-size: clamp(1.52rem, 4vw, 2.22rem) !important;
+            font-size: clamp(1.42rem, 3.6vw, 2.15rem) !important;
             font-weight: 920 !important;
             letter-spacing: -0.035em !important;
             line-height: 1.08 !important;
         }
 
-        .bling-hero-subtitle {
+        .bling-hero-subtitle,
+        .bling-flow-card-text {
             display: block !important;
             margin: 0 auto !important;
             max-width: 560px !important;
@@ -156,10 +161,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
             margin: 0.8rem auto 0 auto !important;
         }
 
-        div[data-testid="stVerticalBlock"] {
-            gap: 0.74rem !important;
-        }
-
+        div[data-testid="stVerticalBlock"] { gap: 0.74rem !important; }
         div[data-testid="column"],
         div[data-testid="stElementContainer"],
         div[data-testid="stHorizontalBlock"] {
@@ -307,9 +309,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         #MainMenu,
-        footer {
-            visibility: hidden !important;
-        }
+        footer { visibility: hidden !important; }
 
         @media (max-width: 760px) {
             .main .block-container,
@@ -327,7 +327,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
                 box-shadow: 0 14px 34px rgba(37, 99, 235, 0.07) !important;
             }
 
-            .bling-hero {
+            .bling-hero,
+            .bling-flow-card {
                 width: 100% !important;
                 margin: 0 auto 0.75rem auto !important;
                 padding: 1.05rem 0.88rem 1rem 0.88rem !important;
@@ -335,19 +336,22 @@ def inject_unified_light_layout(force: bool = False) -> None:
                 box-shadow: 0 10px 24px rgba(37, 99, 235, 0.07) !important;
             }
 
-            .bling-hero-kicker {
+            .bling-hero-kicker,
+            .bling-flow-card-kicker {
                 font-size: 0.68rem !important;
                 margin-bottom: 0.48rem !important;
             }
 
-            .bling-hero-title {
+            .bling-hero-title,
+            .bling-flow-card-title {
                 font-size: 1.34rem !important;
                 line-height: 1.12 !important;
                 letter-spacing: -0.025em !important;
                 margin-bottom: 0.42rem !important;
             }
 
-            .bling-hero-subtitle {
+            .bling-hero-subtitle,
+            .bling-flow-card-text {
                 font-size: 0.84rem !important;
                 line-height: 1.36 !important;
                 max-width: 300px !important;
