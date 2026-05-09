@@ -38,6 +38,6 @@ def render_lazy_panel(operation: str | None) -> None:
         render_estoque_panel()
         return
 
-    from bling_app_zero.ui.cadastro_panel import render_cadastro_panel
+    from bling_app_zero.ui.cadastro_panel_modular import render_cadastro_panel
 
     render_cadastro_panel()
