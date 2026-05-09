@@ -39,20 +39,29 @@ def progress_rows(log: list[dict]) -> list[dict]:
     ]
 
 
+def _render_progress_metrics(payload: dict) -> None:
+    st.caption(str(payload.get('stage') or 'Processando'))
+    col_a, col_b = st.columns(2)
+    col_a.metric('Links', int(payload.get('urls_found') or payload.get('total') or 0))
+    col_b.metric('Processados', int(payload.get('processed') or 0))
+    col_c, col_d = st.columns(2)
+    col_c.metric('Encontrados', int(payload.get('found') or 0))
+    col_d.metric('Erros', int(payload.get('errors') or 0))
+
+
 def render_sidebar_progress_details(payload: dict) -> None:
+    """Mostra detalhes na sidebar sem expander aninhado.
+
+    Esta funcao pode ser chamada durante callbacks de progresso. Evitar expander aqui
+    previne o erro do Streamlit quando a sidebar ja estiver dentro de outro expander.
+    """
     log = st.session_state.get(PROGRESS_LOG_KEY) or []
     with st.sidebar:
-        with st.expander('Detalhes da busca por site', expanded=False):
-            st.caption(str(payload.get('stage') or 'Processando'))
-            col_a, col_b = st.columns(2)
-            col_a.metric('Links', int(payload.get('urls_found') or payload.get('total') or 0))
-            col_b.metric('Processados', int(payload.get('processed') or 0))
-            col_c, col_d = st.columns(2)
-            col_c.metric('Encontrados', int(payload.get('found') or 0))
-            col_d.metric('Erros', int(payload.get('errors') or 0))
-            if log:
-                st.markdown('##### Relatório')
-                st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=260)
+        st.markdown('##### Detalhes da busca por site')
+        _render_progress_metrics(payload)
+        if log:
+            st.markdown('##### Relatório')
+            st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=260)
 
 
 def make_site_progress_callback(progress_bar, status_box):
@@ -73,5 +82,5 @@ def render_site_progress_history() -> None:
     if not log:
         return
     with st.sidebar:
-        with st.expander('Relatório da busca', expanded=False):
-            st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=280)
+        st.markdown('##### Relatório da busca')
+        st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=280)
