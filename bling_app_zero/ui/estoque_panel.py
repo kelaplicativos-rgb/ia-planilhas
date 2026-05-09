@@ -11,6 +11,10 @@ from bling_app_zero.ui.home_shared import df_signature, preview_df
 ESTOQUE_SOURCE_SIGNATURE_KEY = 'estoque_source_signature_atual'
 
 
+def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
+    return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
+
+
 def _render_header() -> None:
     st.markdown('### Atualização de estoque')
     st.caption('Preencha somente as colunas pedidas pelo modelo de estoque do Bling. Campo não encontrado fica vazio.')
@@ -45,10 +49,18 @@ def _clear_estoque_outputs_if_source_changed(df_origem_site: pd.DataFrame | None
     st.session_state[ESTOQUE_SOURCE_SIGNATURE_KEY] = signature
 
 
+def _render_model_required_warning(df_modelo: pd.DataFrame | None) -> bool:
+    if _valid_model(df_modelo):
+        return False
+    st.error('Envie o modelo de estoque do Bling antes de gerar o CSV. O sistema só vai preencher as colunas existentes nesse modelo.')
+    return True
+
+
 def _render_site_origin_actions(df_origem_site: pd.DataFrame, df_modelo: pd.DataFrame | None, deposito: str) -> None:
     st.success('Origem criada pelo site carregada para atualização de estoque.')
     preview_df('Origem de estoque criada pelo site', df_origem_site)
-    if st.button('Gerar CSV de estoque', use_container_width=True, key='gerar_csv_estoque_site'):
+    missing_model = _render_model_required_warning(df_modelo)
+    if st.button('Gerar CSV de estoque', use_container_width=True, key='gerar_csv_estoque_site', disabled=missing_model):
         build_stock_outputs_from_dataframe(df_origem_site, df_modelo, deposito, name='Origem criada pelo site')
 
 
@@ -57,7 +69,8 @@ def _render_upload_origin_actions(upload, df_modelo: pd.DataFrame | None, deposi
     if len(source_files) > 1:
         st.info(f'{len(source_files)} origens detectadas. Será gerado um CSV final para cada uma.')
 
-    if st.button('Gerar CSV de estoque', use_container_width=True, key='gerar_csv_estoque_upload'):
+    missing_model = _render_model_required_warning(df_modelo)
+    if st.button('Gerar CSV de estoque', use_container_width=True, key='gerar_csv_estoque_upload', disabled=missing_model):
         build_stock_outputs(upload, df_modelo, deposito)
 
 
