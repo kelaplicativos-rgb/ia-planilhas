@@ -12,7 +12,6 @@ from bling_app_zero.ui.layout import (
     inject_app_layout,
     render_compact_hero,
     render_home_start_card,
-    render_step_title,
 )
 
 HOME_STAGE_KEY = 'home_stage'
@@ -137,7 +136,6 @@ def _render_home_start() -> None:
 
 
 def _render_home_models_step() -> None:
-    render_step_title('Modelos do Bling')
     _render_home_bling_models_lazy()
 
     back_clicked, continue_clicked = _centered_two_buttons('← Voltar', 'home_models_back', 'Continuar', 'home_models_continue')
