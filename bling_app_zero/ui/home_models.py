@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -73,9 +75,24 @@ def _render_loaded_summary() -> None:
         st.success('Modelos carregados: ' + ' + '.join(parts))
 
 
+def _render_model_card() -> None:
+    kicker = html.escape('Modelo do Bling')
+    title = html.escape('Envie o modelo')
+    text = html.escape('Cadastro, estoque ou ambos. Ele define exatamente quais colunas serão preenchidas.')
+    st.markdown(
+        f"""
+        <section class="bling-flow-card bling-model-card">
+            <div class="bling-flow-card-kicker">{kicker}</div>
+            <h2 class="bling-flow-card-title">{title}</h2>
+            <p class="bling-flow-card-text">{text}</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_home_bling_models() -> None:
-    st.markdown('### Modelo do Bling')
-    st.caption('Envie o modelo de cadastro, estoque ou ambos. Ele define as colunas que serão preenchidas.')
+    _render_model_card()
 
     upload = render_model_upload_box(
         title='Modelos do Bling',
