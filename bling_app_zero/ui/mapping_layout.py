@@ -34,6 +34,7 @@ def inject_mapping_css() -> None:
             display: block;
             position: relative;
             z-index: 2;
+            top: -4px;
             font-size: 0.84rem;
             line-height: 1.18;
             font-weight: 800;
@@ -44,6 +45,10 @@ def inject_mapping_css() -> None:
             overflow-wrap: anywhere;
             word-break: normal;
         }
+
+        .bling-map-title-red { color: #dc2626 !important; }
+        .bling-map-title-yellow { color: #ca8a04 !important; }
+        .bling-map-title-green { color: #16a34a !important; }
 
         .bling-map-title-text {
             display: inline;
@@ -89,8 +94,8 @@ def inject_mapping_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
             min-height: 30px !important;
             height: 30px !important;
-            background: #eef2f7 !important;
-            border: 1px solid rgba(49, 51, 63, 0.12) !important;
+            background: #fff3e0 !important;
+            border: 1px solid rgba(249, 115, 22, 0.20) !important;
             border-radius: 10px !important;
             box-shadow: none !important;
             max-width: 100% !important;
@@ -146,6 +151,7 @@ def inject_mapping_css() -> None:
             .bling-map-title {
                 position: relative;
                 z-index: 2;
+                top: -4px;
                 font-size: 0.82rem;
                 line-height: 1.16;
                 margin: 0 0 7px 0 !important;
@@ -185,9 +191,17 @@ def inject_mapping_css() -> None:
 
 
 def render_mapping_title(target_label: str) -> None:
-    safe = html.escape(str(target_label or ''))
+    raw = str(target_label or '')
+    safe = html.escape(raw)
+    status_class = ''
+    if raw.startswith('🔴'):
+        status_class = ' bling-map-title-red'
+    elif raw.startswith('🟡'):
+        status_class = ' bling-map-title-yellow'
+    elif raw.startswith('🟢'):
+        status_class = ' bling-map-title-green'
     st.markdown(
-        f'<div class="bling-map-title"><span class="bling-map-title-text">{safe}</span><span class="bling-map-help">?</span></div>',
+        f'<div class="bling-map-title{status_class}"><span class="bling-map-title-text">{safe}</span><span class="bling-map-help">?</span></div>',
         unsafe_allow_html=True,
     )
 
