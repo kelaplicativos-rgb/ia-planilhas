@@ -137,6 +137,23 @@ def _kind_label(kind: str) -> str:
     return KIND_LABELS.get(str(kind or '').strip(), 'Campo personalizado')
 
 
+def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Normaliza preview para evitar erros repetidos do Arrow no Streamlit.
+
+    Alguns crawlers podem devolver colunas object misturando texto, listas,
+    números e valores vazios. O Streamlit tenta serializar isso em Arrow e
+    gera avisos repetidos. Para preview, tudo vira string segura sem alterar o
+    DataFrame usado no processamento/exportação.
+    """
+    if df is None or df.empty:
+        return df
+    out = df.head(PREVIEW_ROWS).copy()
+    for column in out.columns:
+        if out[column].dtype == 'object':
+            out[column] = out[column].map(lambda value: '' if pd.isna(value) else str(value))
+    return out
+
+
 def _render_contract_body(columns: list[str]) -> None:
     contract = build_contract(columns)
     st.caption('Serão buscados somente estes campos. Se algum dado não existir no site, ele ficará vazio.')
@@ -175,7 +192,7 @@ def show_mapping(mapping: dict[str, str]) -> None:
             pd.DataFrame([
                 {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
                 for key, value in mapping.items()
-            ]),
+            ]).astype(str),
             use_container_width=True,
             height=260,
         )
@@ -212,7 +229,8 @@ def _render_preview_body(df: pd.DataFrame | None) -> None:
 
     total_rows = len(df)
     total_cols = len(df.columns)
-    st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
+    safe_df = _preview_safe_df(df)
+    st.dataframe(safe_df, use_container_width=True, height=360)
     if total_rows > PREVIEW_ROWS:
         st.caption(f'Mostrando {PREVIEW_ROWS} de {total_rows} linha(s). Total: {total_cols} coluna(s).')
     else:
