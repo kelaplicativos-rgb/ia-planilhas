@@ -35,6 +35,7 @@ from bling_app_zero.ui.home_shared import (
     preview_df,
     show_mapping,
 )
+from bling_app_zero.ui.mapping_layout import inject_mapping_css, render_mapping_preview, render_mapping_title
 from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
@@ -162,32 +163,23 @@ def _first_row_preview(df_source: pd.DataFrame, selected_column: str) -> str:
         return ''
     value = df_source[selected_column].iloc[0]
     text = str(value if value is not None else '').strip()
-    if len(text) > 180:
-        text = text[:180] + '...'
+    if len(text) > 160:
+        text = text[:160] + '...'
     return text
 
 
+def _render_mapping_preview(df_source: pd.DataFrame, selected_column: str) -> None:
+    render_mapping_preview(_first_row_preview(df_source, selected_column))
+
+
 def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> None:
+    # Usado fora do mapeamento, por exemplo na calculadora.
     text = _first_row_preview(df_source, selected_column)
     if not text:
         return
     safe_text = html.escape(text)
     st.markdown(
-        f"""
-        <div style="
-            font-size:11px;
-            line-height:1.08;
-            color:#118a32;
-            margin-top:-10px;
-            margin-bottom:-4px;
-            font-weight:750;
-            padding:2px 5px;
-            border-radius:7px;
-            background:rgba(232,247,238,0.62);
-            border:1px solid rgba(17,138,50,0.08);
-            overflow-wrap:anywhere;
-        ">{safe_text}</div>
-        """,
+        f"<div style='font-size:12px; color:#118a32; margin-top:2px; margin-bottom:4px; font-weight:750; overflow-wrap:anywhere;'>{safe_text}</div>",
         unsafe_allow_html=True,
     )
 
@@ -280,14 +272,16 @@ def _render_mapping_select(
 
     raw_before = st.session_state.get(widget_key, suggested)
     info_before = _confidence_for_selection(df_source, target, raw_before, widget_key)
+    label = _signal_label(target, info_before)
 
     with st.container(border=True):
+        render_mapping_title(label)
         selected_raw = st.selectbox(
-            _signal_label(target, info_before),
+            target,
             options,
             index=_default_index(options, suggested, widget_key),
             key=widget_key,
-            help=f'Campo de destino no Bling: {target}',
+            label_visibility='collapsed',
         )
 
         if selected_raw == EMPTY_LEAVE_OPTION:
@@ -297,12 +291,13 @@ def _render_mapping_select(
 
         selected = _option_value(selected_raw)
         info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
-        _show_first_row_preview(df_source, selected)
+        _render_mapping_preview(df_source, selected)
 
     return selected, info_after
 
 
 def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
+    inject_mapping_css()
     model = _cadastro_model(df_modelo)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
@@ -362,6 +357,7 @@ def _render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | No
 
 
 def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None, deposito: str) -> None:
+    inject_mapping_css()
     model = _estoque_model(df_modelo_estoque)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
@@ -393,7 +389,8 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
         widget_key = f'{mapping_key}_{target}'
         if 'deposito' in target_key:
             with st.container(border=True):
-                st.text_input('🟢 ' + target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual')
+                render_mapping_title('🟢 ' + target)
+                st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual', label_visibility='collapsed')
             edited_mapping[target] = ''
             edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'score': 100, 'order': 2}
             continue
