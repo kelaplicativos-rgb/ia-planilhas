@@ -87,9 +87,13 @@ def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> No
             st.caption(f'[{level}] {origin}: {message}')
 
 
-def _render_rules_snapshot() -> None:
+def _render_rules_snapshot(prefix: str = 'debug') -> None:
     rules = get_user_rules()
-    with st.expander('Regras e padrões atuais', expanded=False):
+    show_rules = st.toggle('Regras e padrões atuais', value=False, key=f'{prefix}_show_rules_snapshot')
+    if not show_rules:
+        return
+
+    with st.container(border=True):
         for option in RULE_OPTIONS:
             value = rules.get(option.key, default_rules().get(option.key, ''))
             label = option.label.replace(' padrão', '')
@@ -101,7 +105,7 @@ def _render_rules_snapshot() -> None:
 def _render_debug_content(prefix: str = 'debug') -> None:
     logs = list(st.session_state.get(LOG_SESSION_KEY, []))
     _render_debug_actions(logs, prefix=prefix)
-    _render_rules_snapshot()
+    _render_rules_snapshot(prefix=prefix)
 
     if not logs:
         st.caption('Nenhum evento registrado ainda.')
