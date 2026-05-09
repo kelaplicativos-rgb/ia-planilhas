@@ -18,24 +18,14 @@ def inject_clean_home_css() -> None:
 
 
 def render_compact_hero() -> None:
-    from bling_app_zero.core.debug import render_debug_compact_button
-
     outer_l, outer_c, outer_r = st.columns([0.06, 0.88, 0.06])
     with outer_c:
         st.markdown('<div class="bling-hero">', unsafe_allow_html=True)
-        left, center, right = st.columns([0.12, 0.76, 0.12])
-        with left:
-            st.empty()
-        with center:
-            st.markdown('<div class="bling-hero-title">🚀 IA Planilhas → Bling</div>', unsafe_allow_html=True)
-            st.markdown(
-                '<p class="bling-hero-subtitle">Sistema inteligente para transformar dados em CSV pronto para o Bling, com fluxo limpo, leve e organizado.</p>',
-                unsafe_allow_html=True,
-            )
-        with right:
-            st.markdown('<div class="bling-tech-button-slot">', unsafe_allow_html=True)
-            render_debug_compact_button()
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="bling-hero-title">🚀 IA Planilhas → Bling</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="bling-hero-subtitle">Sistema inteligente para transformar dados em CSV pronto para o Bling, com fluxo limpo, leve e organizado.</p>',
+            unsafe_allow_html=True,
+        )
         st.markdown('</div>', unsafe_allow_html=True)
 
 
