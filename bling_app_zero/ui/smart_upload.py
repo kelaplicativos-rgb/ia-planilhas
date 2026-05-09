@@ -57,7 +57,7 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
         return read_upload_fast(file)
     except Exception as exc:
-        st.warning(f'Não consegui ler {_file_name(file)}: {exc}')
+        st.warning(f'Não consegui ler {_file_name(file)}. Confira se o arquivo abre normalmente e tente novamente. Detalhe: {exc}')
         return None
 
 
@@ -189,15 +189,15 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
 def _render_upload_header(title: str, allow_model: bool) -> None:
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
-    caption = 'Envie a planilha, PDF ou XML do fornecedor.'
+    caption = 'Envie o arquivo do fornecedor para transformar em CSV final.'
     if allow_model:
-        caption = 'Envie a planilha, PDF ou XML do fornecedor. Se ainda não tiver modelo salvo, pode enviar o modelo do Bling junto.'
+        caption = 'Envie o arquivo do fornecedor. Se ainda não enviou o modelo do Bling, pode enviar junto.'
     st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
     st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
-    with st.expander('Ver arquivos detectados', expanded=False):
+    with st.expander('Conferir arquivos detectados', expanded=False):
         for file in supported_files:
             role = 'Origem do fornecedor'
             if allow_model and result.cadastro_model_file is file:
@@ -218,7 +218,7 @@ def render_smart_upload_box(
     _render_upload_header(title, allow_model=allow_model)
 
     files = st.file_uploader(
-        'Enviar arquivos do fornecedor',
+        'Enviar arquivos',
         type=None,
         accept_multiple_files=True,
         key=key,
@@ -233,10 +233,10 @@ def render_smart_upload_box(
     supported_files, ignored_files = _split_supported_files(selected_files, accepted_types)
 
     if ignored_files:
-        st.warning('Ignorado: ' + ', '.join(_file_name(file) for file in ignored_files))
+        st.warning('Arquivo ignorado por formato incompatível: ' + ', '.join(_file_name(file) for file in ignored_files))
 
     if not supported_files:
-        st.error('Nenhum arquivo compatível.')
+        st.error('Nenhum arquivo compatível foi encontrado.')
         return SmartUploadResult(attachments=[], ignored_files=ignored_files)
 
     result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
@@ -246,7 +246,7 @@ def render_smart_upload_box(
         with st.expander('Ver origem detectada', expanded=False):
             preview_df('Origem detectada', result.source_df)
     elif result.source_file is not None:
-        st.warning(f'Arquivo recebido, mas ainda sem tabela detectada: {_file_name(result.source_file)}')
+        st.warning(f'Arquivo recebido, mas nenhuma tabela foi detectada em {_file_name(result.source_file)}.')
 
     if allow_model:
         if result.cadastro_model_df is not None:
@@ -256,6 +256,6 @@ def render_smart_upload_box(
             with st.expander('Ver modelo de estoque', expanded=False):
                 preview_df('Modelo de estoque', result.estoque_model_df)
         if required_model and result.model_df is None:
-            st.warning('Modelo Bling ainda não detectado.')
+            st.warning('Ainda não identifiquei o modelo Bling desta operação.')
 
     return result
