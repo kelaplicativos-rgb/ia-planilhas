@@ -20,6 +20,7 @@ ALT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0 Safari/537.36',
 }
 
+_TEXT_CONTENT_HINTS = ('text/', 'html', 'xml', 'json', 'javascript')
 _THREAD_LOCAL = threading.local()
 
 
@@ -46,6 +47,21 @@ def _session() -> requests.Session:
     return session
 
 
+def _looks_text_response(response: requests.Response) -> bool:
+    content_type = str(response.headers.get('content-type') or '').lower()
+    if not content_type:
+        return True
+    return any(hint in content_type for hint in _TEXT_CONTENT_HINTS)
+
+
+def _response_text(response: requests.Response) -> str:
+    if not _looks_text_response(response):
+        return ''
+    if not response.encoding:
+        response.encoding = response.apparent_encoding or 'utf-8'
+    return response.text or ''
+
+
 def fetch_live(url: str, timeout: int = 8) -> str:
     if not url:
         return ''
@@ -56,7 +72,7 @@ def fetch_live(url: str, timeout: int = 8) -> str:
             response = session.get(url, headers=ALT_HEADERS, timeout=(3, timeout), allow_redirects=True)
         if response.status_code >= 400:
             return ''
-        return response.text or ''
+        return _response_text(response)
     except Exception:
         return ''
 
