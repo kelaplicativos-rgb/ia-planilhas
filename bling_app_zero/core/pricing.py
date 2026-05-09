@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -10,10 +11,23 @@ def to_number(value: Any) -> float:
     if not text:
         return 0.0
     text = text.replace('R$', '').replace('%', '').replace(' ', '')
+    text = re.sub(r'[^0-9,.-]+', '', text)
+    if not text or text in {'-', ',', '.', '-,', '-.'}:
+        return 0.0
+
+    # Formato brasileiro: 1.234,56 -> 1234.56
     if ',' in text and '.' in text:
         text = text.replace('.', '').replace(',', '.')
     elif ',' in text:
         text = text.replace(',', '.')
+    elif text.count('.') == 1:
+        before, after = text.split('.', 1)
+        # 1.234 normalmente é milhar, não decimal.
+        if len(after) == 3 and len(before) <= 3:
+            text = before + after
+    elif text.count('.') > 1:
+        text = text.replace('.', '')
+
     try:
         return float(text)
     except Exception:
