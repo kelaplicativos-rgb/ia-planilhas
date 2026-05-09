@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
@@ -23,7 +23,8 @@ COMMON_FEEDS = [
     'catalogo.xml',
     'feed.xml',
 ]
-PRODUCT_HINTS = ['/produto', '/produtos', '/product', '/products', '/p/', '/item/', 'produto-', 'product-', 'sku=', 'cod=', 'codigo=', 'ref=']
+PRODUCT_PATH_HINTS = ['/produto/', '/product/', '/p/', '/item/', 'produto-', 'product-']
+PRODUCT_QUERY_HINTS = {'sku', 'cod', 'codigo', 'ref', 'idproduto', 'product_id'}
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
 HTML_DISCOVERY_PAGE_CAP = 350
 HTML_DISCOVERY_BATCH = 36
@@ -60,8 +61,24 @@ def same_domain(url: str, base: str) -> bool:
 
 
 def productish_url(url: str) -> bool:
-    low = url.lower()
-    return any(hint in low for hint in PRODUCT_HINTS)
+    parsed = urlparse(str(url or ''))
+    low_path = (parsed.path or '').lower()
+    low_url = str(url or '').lower()
+
+    if any(hint in low_path for hint in PRODUCT_PATH_HINTS):
+        return True
+
+    query_keys = {key.lower() for key in parse_qs(parsed.query).keys()}
+    if query_keys & PRODUCT_QUERY_HINTS:
+        return True
+
+    # Evita marcar categorias genéricas como produto só porque contêm /produtos.
+    if re.search(r'/(produto|product)s?/[a-z0-9][a-z0-9._-]{2,}', low_path):
+        return True
+    if re.search(r'/(p|item)/[a-z0-9][a-z0-9._-]{2,}', low_path):
+        return True
+
+    return any(hint in low_url for hint in ['produto-', 'product-'])
 
 
 def allowed_url(url: str, base: str) -> bool:
@@ -122,7 +139,7 @@ def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
                 if ('sitemap' in low or low.endswith('.xml')) and loc not in seen_feeds and loc not in queue:
                     queue.append(loc)
                     continue
-                if loc not in products:
+                if productish_url(loc) and loc not in products:
                     products.append(loc)
                     if len(products) >= max_products:
                         break
@@ -205,4 +222,4 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
                 if len(urls) >= smart_target:
                     break
 
-    return (urls or starts)[:smart_target]
+    return (urls or direct_products or starts)[:smart_target]
