@@ -26,7 +26,12 @@ GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
 
 
 def _looks_like_loaded_df(value: object) -> bool:
-    return value is not None and hasattr(value, 'columns') and bool(getattr(value, 'columns', []))
+    if value is None or not hasattr(value, 'columns'):
+        return False
+    try:
+        return len(getattr(value, 'columns', [])) > 0
+    except Exception:
+        return False
 
 
 def _has_any_model(keys: list[str]) -> bool:
