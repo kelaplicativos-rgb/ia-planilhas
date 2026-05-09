@@ -53,9 +53,11 @@ def inject_clean_home_css() -> None:
             border: 1px solid rgba(49, 51, 63, 0.10);
             border-radius: var(--bling-radius);
             padding: 14px 16px 13px 16px;
-            margin: 0 0 var(--bling-gap) 0;
+            margin: 0 auto var(--bling-gap) auto;
             background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,249,251,0.92));
             overflow: hidden;
+            max-width: 860px;
+            text-align: center;
         }
         .bling-hero-title {
             font-size: clamp(1.32rem, 5vw, 2rem);
@@ -70,6 +72,91 @@ def inject_clean_home_css() -> None:
             color: rgba(49, 51, 63, 0.72);
             margin: 0;
             overflow-wrap: anywhere;
+        }
+
+        .bling-home-start-wrap {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 0.25rem 0 0 0;
+        }
+        .bling-home-start-card {
+            width: min(100%, 760px);
+            border: 1px solid rgba(49, 51, 63, 0.10);
+            border-radius: 22px;
+            padding: 20px 22px 18px 22px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.94));
+            box-shadow: 0 12px 35px rgba(15, 23, 42, 0.06);
+            text-align: center;
+            margin: 0 auto 0.85rem auto;
+        }
+        .bling-home-step-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            border-radius: 999px;
+            padding: 6px 11px;
+            background: rgba(239, 68, 68, 0.09);
+            color: #b91c1c;
+            font-size: 0.78rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+        }
+        .bling-home-start-title {
+            font-size: clamp(1.20rem, 4vw, 1.65rem);
+            line-height: 1.18;
+            font-weight: 900;
+            margin: 0 0 7px 0;
+            color: rgba(17, 24, 39, 0.96);
+            overflow-wrap: anywhere;
+        }
+        .bling-home-start-text {
+            max-width: 620px;
+            margin: 0 auto 14px auto;
+            color: rgba(49, 51, 63, 0.68);
+            font-size: 0.94rem;
+            line-height: 1.42;
+            overflow-wrap: anywhere;
+        }
+        .bling-home-mini-steps {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin: 13px auto 16px auto;
+            max-width: 680px;
+        }
+        .bling-home-mini-step {
+            border-radius: 14px;
+            border: 1px solid rgba(49, 51, 63, 0.08);
+            background: rgba(255, 255, 255, 0.78);
+            padding: 9px 8px;
+            min-height: 56px;
+        }
+        .bling-home-mini-step strong {
+            display: block;
+            font-size: 0.80rem;
+            line-height: 1.16;
+            margin-bottom: 3px;
+            color: rgba(17, 24, 39, 0.92);
+        }
+        .bling-home-mini-step span {
+            display: block;
+            font-size: 0.72rem;
+            line-height: 1.16;
+            color: rgba(49, 51, 63, 0.62);
+        }
+        .bling-home-start-actions {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .bling-home-start-actions .stButton > button,
+        div[data-testid="stVerticalBlock"]:has(.bling-home-start-actions) .stButton > button {
+            width: 100% !important;
+            min-height: 46px !important;
+            font-weight: 800 !important;
+            border-radius: 16px !important;
         }
 
         .bling-step-title {
@@ -202,8 +289,9 @@ def inject_clean_home_css() -> None:
             }
             .bling-hero {
                 padding: 11px 12px 10px 12px;
-                margin: 0 0 0.70rem 0;
+                margin: 0 auto 0.70rem auto;
                 border-radius: 15px;
+                max-width: 100%;
             }
             .bling-hero-title {
                 font-size: 1.17rem;
@@ -213,6 +301,49 @@ def inject_clean_home_css() -> None:
             .bling-hero-subtitle {
                 font-size: 0.86rem;
                 line-height: 1.34;
+            }
+            .bling-home-start-wrap {
+                padding-top: 0.10rem;
+            }
+            .bling-home-start-card {
+                width: 100%;
+                border-radius: 18px;
+                padding: 16px 13px 14px 13px;
+                margin-bottom: 0.70rem;
+            }
+            .bling-home-step-pill {
+                font-size: 0.74rem;
+                padding: 5px 9px;
+                margin-bottom: 8px;
+            }
+            .bling-home-start-title {
+                font-size: 1.18rem;
+                line-height: 1.18;
+                margin-bottom: 6px;
+            }
+            .bling-home-start-text {
+                font-size: 0.84rem;
+                line-height: 1.34;
+                margin-bottom: 11px;
+            }
+            .bling-home-mini-steps {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 7px;
+                margin: 10px auto 13px auto;
+            }
+            .bling-home-mini-step {
+                min-height: 50px;
+                padding: 8px 7px;
+                border-radius: 13px;
+            }
+            .bling-home-mini-step strong {
+                font-size: 0.76rem;
+            }
+            .bling-home-mini-step span {
+                font-size: 0.68rem;
+            }
+            .bling-home-start-actions {
+                max-width: 100%;
             }
             .bling-step-title {
                 font-size: 1.08rem;
@@ -345,6 +476,25 @@ def inject_clean_home_css() -> None:
             .bling-hero-subtitle {
                 font-size: 0.80rem;
             }
+            .bling-home-start-card {
+                padding: 14px 10px 12px 10px;
+                border-radius: 16px;
+            }
+            .bling-home-start-title {
+                font-size: 1.08rem;
+            }
+            .bling-home-start-text {
+                font-size: 0.79rem;
+            }
+            .bling-home-mini-steps {
+                gap: 6px;
+            }
+            .bling-home-mini-step strong {
+                font-size: 0.70rem;
+            }
+            .bling-home-mini-step span {
+                font-size: 0.64rem;
+            }
             .bling-step-title {
                 font-size: 1rem;
             }
@@ -369,6 +519,39 @@ def render_compact_hero() -> None:
         <div class="bling-hero">
             <div class="bling-hero-title">🚀 IA Planilhas → Bling</div>
             <p class="bling-hero-subtitle">Busque produtos ou envie arquivos e gere planilhas no padrão Bling, prontas para importar.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_home_start_card() -> None:
+    st.markdown(
+        """
+        <div class="bling-home-start-wrap">
+            <div class="bling-home-start-card">
+                <div class="bling-home-step-pill">● Primeiro passo</div>
+                <div class="bling-home-start-title">Comece pelos modelos do Bling</div>
+                <div class="bling-home-start-text">
+                    Anexe o modelo oficial uma vez. Ele define as colunas que serão preenchidas em cadastro, estoque, site, planilha, PDF ou XML.
+                </div>
+                <div class="bling-home-mini-steps">
+                    <div class="bling-home-mini-step"><strong>1. Modelos</strong><span>base oficial</span></div>
+                    <div class="bling-home-mini-step"><strong>2. Origem</strong><span>site ou arquivo</span></div>
+                    <div class="bling-home-mini-step"><strong>3. Conferir</strong><span>mapeamento</span></div>
+                    <div class="bling-home-mini-step"><strong>4. Baixar</strong><span>CSV final</span></div>
+                </div>
+                <div class="bling-home-start-actions">
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def close_home_start_card() -> None:
+    st.markdown(
+        """
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
