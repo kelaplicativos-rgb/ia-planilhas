@@ -7,7 +7,7 @@ _THEME_ALREADY_INJECTED_KEY = 'bling_layout_theme_injected'
 
 
 def inject_unified_light_layout(force: bool = False) -> None:
-    """Tema maestro global limpo, leve e profissional."""
+    """Tema maestro global: mobile-first, limpo e sem molduras quebradas."""
     if st.session_state.get(_THEME_ALREADY_INJECTED_KEY) and not force:
         return
     st.session_state[_THEME_ALREADY_INJECTED_KEY] = True
@@ -16,24 +16,23 @@ def inject_unified_light_layout(force: bool = False) -> None:
         """
         <style>
         :root {
-            --bling-bg: #f6f9ff;
-            --bling-panel: rgba(255, 255, 255, 0.96);
-            --bling-panel-soft: rgba(248, 251, 255, 0.92);
+            --bling-bg: #f8fbff;
+            --bling-surface: #ffffff;
+            --bling-surface-soft: #f1f7ff;
             --bling-border: rgba(37, 99, 235, 0.14);
             --bling-text: #0f172a;
-            --bling-muted: rgba(71, 85, 105, 0.78);
+            --bling-muted: #64748b;
             --bling-primary: #2563eb;
             --bling-primary-dark: #1d4ed8;
-            --bling-primary-soft: rgba(37, 99, 235, 0.10);
             --bling-accent: #38bdf8;
-            --bling-success: #16a34a;
+            --bling-success-bg: #ecfdf5;
+            --bling-success-text: #166534;
             --bling-warning: #ca8a04;
             --bling-danger: #dc2626;
             --bling-radius-xl: 24px;
             --bling-radius-lg: 18px;
             --bling-radius-md: 14px;
-            --bling-radius-sm: 11px;
-            --bling-shadow: 0 18px 48px rgba(37, 99, 235, 0.08);
+            --bling-shadow: 0 16px 42px rgba(15, 23, 42, 0.065);
             --bling-shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.045);
             --bling-content-width: 980px;
         }
@@ -45,16 +44,16 @@ def inject_unified_light_layout(force: bool = False) -> None:
             overflow-x: hidden !important;
             color: var(--bling-text) !important;
             background:
-                radial-gradient(circle at 18% 0%, rgba(56, 189, 248, 0.16), transparent 24rem),
-                radial-gradient(circle at 82% 0%, rgba(37, 99, 235, 0.12), transparent 26rem),
-                linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 52%, #ffffff 100%) !important;
+                radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.13), transparent 22rem),
+                radial-gradient(circle at 88% 2%, rgba(37, 99, 235, 0.10), transparent 28rem),
+                linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 100%) !important;
             -webkit-font-smoothing: antialiased !important;
             text-rendering: optimizeLegibility !important;
         }
 
         header[data-testid="stHeader"] {
-            background: rgba(255, 255, 255, 0.78) !important;
-            border-bottom: 1px solid rgba(191, 219, 254, 0.55) !important;
+            background: rgba(255, 255, 255, 0.82) !important;
+            border-bottom: 1px solid rgba(226, 232, 240, 0.78) !important;
             backdrop-filter: blur(14px) !important;
         }
 
@@ -63,30 +62,31 @@ def inject_unified_light_layout(force: bool = False) -> None:
             width: min(100%, var(--bling-content-width)) !important;
             max-width: var(--bling-content-width) !important;
             margin: 0 auto !important;
-            padding: 4.6rem 1rem 2rem 1rem !important;
+            padding: 4.2rem 1rem 2rem 1rem !important;
             box-sizing: border-box !important;
         }
 
+        /* Remove a moldura gigante que estava criando cara de layout quebrado. */
         .main .block-container > div:first-child {
-            margin-top: 0.85rem !important;
-            border: 1px solid var(--bling-border) !important;
-            border-radius: var(--bling-radius-xl) !important;
-            background: rgba(255, 255, 255, 0.70) !important;
-            box-shadow: var(--bling-shadow) !important;
-            padding: 1.25rem !important;
+            margin-top: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
             overflow: visible !important;
         }
 
         .bling-hero,
         .bling-flow-card {
-            width: min(100%, 720px) !important;
+            width: min(100%, 760px) !important;
             margin: 0 auto 1rem auto !important;
-            padding: 1.35rem 1.15rem 1.25rem 1.15rem !important;
-            border: 1px solid rgba(37, 99, 235, 0.16) !important;
-            border-radius: 22px !important;
-            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(239,246,255,0.92)) !important;
-            box-shadow: 0 14px 34px rgba(37, 99, 235, 0.08) !important;
-            text-align: center !important;
+            padding: 1.25rem 1.15rem !important;
+            border: 1px solid var(--bling-border) !important;
+            border-radius: var(--bling-radius-xl) !important;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.94)) !important;
+            box-shadow: var(--bling-shadow) !important;
+            text-align: left !important;
             position: relative !important;
             overflow: hidden !important;
         }
@@ -107,13 +107,13 @@ def inject_unified_light_layout(force: bool = False) -> None:
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            margin: 0 0 0.58rem 0 !important;
-            padding: 0.28rem 0.62rem !important;
+            margin: 0 0 0.62rem 0 !important;
+            padding: 0.30rem 0.66rem !important;
             border-radius: 999px !important;
-            background: var(--bling-primary-soft) !important;
-            border: 1px solid rgba(37, 99, 235, 0.13) !important;
+            background: rgba(37, 99, 235, 0.10) !important;
+            border: 1px solid rgba(37, 99, 235, 0.12) !important;
             color: var(--bling-primary-dark) !important;
-            font-size: 0.76rem !important;
+            font-size: 0.78rem !important;
             font-weight: 820 !important;
             line-height: 1.1 !important;
         }
@@ -121,9 +121,9 @@ def inject_unified_light_layout(force: bool = False) -> None:
         .bling-hero-title,
         .bling-flow-card-title {
             display: block !important;
-            margin: 0 0 0.45rem 0 !important;
+            margin: 0 0 0.46rem 0 !important;
             color: var(--bling-text) !important;
-            font-size: clamp(1.42rem, 3.6vw, 2.15rem) !important;
+            font-size: clamp(1.48rem, 3.6vw, 2.18rem) !important;
             font-weight: 920 !important;
             letter-spacing: -0.035em !important;
             line-height: 1.08 !important;
@@ -132,42 +132,25 @@ def inject_unified_light_layout(force: bool = False) -> None:
         .bling-hero-subtitle,
         .bling-flow-card-text {
             display: block !important;
-            margin: 0 auto !important;
-            max-width: 560px !important;
+            margin: 0 !important;
+            max-width: 620px !important;
             color: var(--bling-muted) !important;
-            font-size: 0.96rem !important;
+            font-size: 0.98rem !important;
             line-height: 1.45 !important;
         }
 
-        .bling-home-card,
-        div[data-testid="stExpander"] details,
-        div[data-testid="stFileUploader"] section,
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid var(--bling-border) !important;
-            border-radius: var(--bling-radius-lg) !important;
-            background: var(--bling-panel) !important;
-            box-shadow: var(--bling-shadow-soft) !important;
-        }
-
-        .bling-home-card {
-            width: min(100%, 760px) !important;
-            padding: 1.1rem !important;
-            margin: 0.8rem auto !important;
-            text-align: center !important;
-        }
-
-        .bling-home-button-center {
-            width: min(100%, 300px) !important;
-            margin: 0.8rem auto 0 auto !important;
-        }
-
-        div[data-testid="stVerticalBlock"] { gap: 0.74rem !important; }
+        div[data-testid="stVerticalBlock"] { gap: 0.82rem !important; }
         div[data-testid="column"],
         div[data-testid="stElementContainer"],
         div[data-testid="stHorizontalBlock"] {
             max-width: 100% !important;
             box-sizing: border-box !important;
             overflow-x: hidden !important;
+        }
+
+        .bling-home-button-center {
+            width: min(100%, 300px) !important;
+            margin: 0.8rem auto 0 auto !important;
         }
 
         .bling-step-title,
@@ -204,35 +187,24 @@ def inject_unified_light_layout(force: bool = False) -> None:
             line-height: 1.45 !important;
         }
 
-        .bling-upload-title {
-            margin: 1rem 0 0.25rem 0 !important;
-            color: var(--bling-text) !important;
-            font-size: 1rem !important;
-            font-weight: 850 !important;
-        }
-
-        .bling-upload-caption {
-            margin: 0 0 0.62rem 0 !important;
-            font-size: 0.88rem !important;
-        }
-
-        .bling-home-pill,
-        .bling-selected-flow-badge {
+        .bling-selected-flow-badge,
+        .bling-home-pill {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
             gap: 0.42rem !important;
             color: var(--bling-primary-dark) !important;
-            background: var(--bling-primary-soft) !important;
+            background: rgba(37, 99, 235, 0.10) !important;
             border: 1px solid rgba(37, 99, 235, 0.14) !important;
             border-radius: 999px !important;
             padding: 0.34rem 0.68rem !important;
             font-size: 0.84rem !important;
             font-weight: 820 !important;
+            margin: 0 0 0.8rem 0 !important;
         }
 
-        .bling-home-pill::before,
-        .bling-selected-flow-dot {
+        .bling-selected-flow-dot,
+        .bling-home-pill::before {
             content: "";
             display: inline-block !important;
             width: 0.48rem !important;
@@ -244,14 +216,21 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
         .bling-compact-note,
         .bling-inline-preview {
-            border-radius: var(--bling-radius-sm) !important;
-            padding: 0.6rem 0.7rem !important;
-            background: rgba(239, 246, 255, 0.84) !important;
-            color: rgba(30, 64, 175, 0.82) !important;
+            border-radius: 12px !important;
+            padding: 0.62rem 0.72rem !important;
+            background: rgba(239, 246, 255, 0.88) !important;
+            color: rgba(30, 64, 175, 0.85) !important;
             border: 1px solid rgba(37, 99, 235, 0.12) !important;
             font-size: 0.88rem !important;
             line-height: 1.42 !important;
             margin: 0.55rem 0 0.75rem 0 !important;
+        }
+
+        .stAlert,
+        div[data-testid="stAlert"] {
+            border-radius: 16px !important;
+            border: 1px solid rgba(37, 99, 235, 0.10) !important;
+            box-shadow: none !important;
         }
 
         .stButton > button,
@@ -260,9 +239,9 @@ def inject_unified_light_layout(force: bool = False) -> None:
             min-height: 44px !important;
             border-radius: 14px !important;
             border: 1px solid rgba(37, 99, 235, 0.18) !important;
-            background: rgba(255, 255, 255, 0.96) !important;
+            background: #ffffff !important;
             color: var(--bling-text) !important;
-            box-shadow: 0 7px 18px rgba(15, 23, 42, 0.045) !important;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.045) !important;
             font-weight: 780 !important;
             white-space: normal !important;
         }
@@ -271,8 +250,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
         .stDownloadButton > button:hover,
         div[data-testid="stFileUploader"] button:hover {
             border-color: rgba(37, 99, 235, 0.34) !important;
-            background: rgba(239, 246, 255, 0.98) !important;
-            box-shadow: 0 12px 26px rgba(37, 99, 235, 0.11) !important;
+            background: var(--bling-surface-soft) !important;
+            box-shadow: 0 10px 22px rgba(37, 99, 235, 0.10) !important;
             transform: translateY(-1px) !important;
         }
 
@@ -282,7 +261,16 @@ def inject_unified_light_layout(force: bool = False) -> None:
             color: #ffffff !important;
             background: linear-gradient(135deg, var(--bling-primary), var(--bling-primary-dark)) !important;
             border-color: rgba(37, 99, 235, 0.34) !important;
-            box-shadow: 0 14px 32px rgba(37, 99, 235, 0.24) !important;
+            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22) !important;
+        }
+
+        div[data-testid="stFileUploader"] section {
+            border: 1px dashed rgba(37, 99, 235, 0.22) !important;
+            border-radius: 18px !important;
+            background: rgba(241, 247, 255, 0.78) !important;
+            box-shadow: none !important;
+            padding: 1rem !important;
+            min-height: 118px !important;
         }
 
         input,
@@ -291,16 +279,16 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-baseweb="input"] > div,
         div[data-baseweb="textarea"] > div {
             border-radius: 14px !important;
-            background: rgba(255, 255, 255, 0.96) !important;
-            border-color: rgba(37, 99, 235, 0.15) !important;
+            background: #ffffff !important;
+            border-color: rgba(37, 99, 235, 0.16) !important;
         }
 
         div[data-testid="stDataFrame"] {
-            border-radius: var(--bling-radius-md) !important;
+            border-radius: 16px !important;
             overflow: hidden !important;
             border: 1px solid var(--bling-border) !important;
             background: #ffffff !important;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.035) !important;
+            box-shadow: var(--bling-shadow-soft) !important;
         }
 
         section[data-testid="stSidebar"] {
@@ -316,50 +304,48 @@ def inject_unified_light_layout(force: bool = False) -> None:
             .block-container {
                 width: 100% !important;
                 max-width: 100vw !important;
-                padding: 3.2rem 0.82rem 1.2rem 0.82rem !important;
-            }
-
-            .main .block-container > div:first-child {
-                margin-top: 0.65rem !important;
-                padding: 0.9rem !important;
-                border-radius: 22px !important;
-                background: rgba(255, 255, 255, 0.62) !important;
-                box-shadow: 0 14px 34px rgba(37, 99, 235, 0.07) !important;
+                padding: 3.15rem 0.9rem 1.2rem 0.9rem !important;
             }
 
             .bling-hero,
             .bling-flow-card {
                 width: 100% !important;
-                margin: 0 auto 0.75rem auto !important;
-                padding: 1.05rem 0.88rem 1rem 0.88rem !important;
-                border-radius: 18px !important;
-                box-shadow: 0 10px 24px rgba(37, 99, 235, 0.07) !important;
+                margin: 0 0 0.78rem 0 !important;
+                padding: 1rem 0.92rem !important;
+                border-radius: 20px !important;
+                text-align: left !important;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.055) !important;
             }
 
             .bling-hero-kicker,
             .bling-flow-card-kicker {
                 font-size: 0.68rem !important;
-                margin-bottom: 0.48rem !important;
+                margin-bottom: 0.52rem !important;
             }
 
             .bling-hero-title,
             .bling-flow-card-title {
-                font-size: 1.34rem !important;
+                font-size: 1.42rem !important;
                 line-height: 1.12 !important;
-                letter-spacing: -0.025em !important;
-                margin-bottom: 0.42rem !important;
+                letter-spacing: -0.026em !important;
+                margin-bottom: 0.46rem !important;
             }
 
             .bling-hero-subtitle,
             .bling-flow-card-text {
-                font-size: 0.84rem !important;
-                line-height: 1.36 !important;
-                max-width: 300px !important;
+                font-size: 0.86rem !important;
+                line-height: 1.38 !important;
+                max-width: 100% !important;
             }
 
             .bling-home-button-center {
-                width: min(100%, 250px) !important;
+                width: min(100%, 260px) !important;
                 margin-top: 0.68rem !important;
+            }
+
+            div[data-testid="stFileUploader"] section {
+                min-height: 110px !important;
+                padding: 0.9rem !important;
             }
 
             .stButton > button,
