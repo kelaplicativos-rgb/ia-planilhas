@@ -14,7 +14,7 @@ def inject_clean_home_css() -> None:
             --bling-radius: 16px;
         }
         .block-container {
-            padding-top: 1rem;
+            padding-top: 1.15rem;
             padding-bottom: 1.5rem;
             max-width: 1060px;
         }
@@ -129,22 +129,24 @@ def inject_clean_home_css() -> None:
             .block-container {
                 padding-left: 0.62rem !important;
                 padding-right: 0.62rem !important;
-                padding-top: 0.55rem !important;
-                padding-bottom: 0.9rem !important;
+                padding-top: 1.35rem !important;
+                padding-bottom: 1rem !important;
                 max-width: 100vw !important;
-                min-height: 88svh !important;
+                min-height: 84svh !important;
             }
             header[data-testid="stHeader"] {
-                height: 0 !important;
-                min-height: 0 !important;
-                visibility: hidden;
+                visibility: visible !important;
+                height: 2.75rem !important;
+                min-height: 2.75rem !important;
+                background: rgba(255,255,255,0.78) !important;
+                backdrop-filter: blur(10px);
             }
             section[data-testid="stSidebar"] {
                 max-width: 88vw !important;
             }
             .bling-hero {
                 padding: 11px 12px 10px 12px;
-                margin: 0 0 0.62rem 0;
+                margin: 0 0 0.70rem 0;
                 border-radius: 15px;
             }
             .bling-hero-title {
@@ -159,13 +161,13 @@ def inject_clean_home_css() -> None:
             .bling-step-title {
                 font-size: 1.08rem;
                 line-height: 1.22;
-                margin: 0.55rem 0 0.18rem 0;
+                margin: 0.62rem 0 0.18rem 0;
                 display: block;
             }
             .bling-muted {
                 font-size: 0.86rem;
                 line-height: 1.32;
-                margin: 0 0 0.56rem 0;
+                margin: 0 0 0.62rem 0;
                 display: block;
             }
             .bling-compact-note {
@@ -186,7 +188,7 @@ def inject_clean_home_css() -> None:
                 margin: 0 0 0.45rem 0;
             }
             div[data-testid="stVerticalBlock"] {
-                gap: 0.52rem !important;
+                gap: 0.54rem !important;
             }
             div[data-testid="stHorizontalBlock"] {
                 gap: 0.42rem !important;
@@ -279,7 +281,12 @@ def inject_clean_home_css() -> None:
             .block-container {
                 padding-left: 0.50rem !important;
                 padding-right: 0.50rem !important;
-                min-height: 88svh !important;
+                padding-top: 1.25rem !important;
+                min-height: 84svh !important;
+            }
+            header[data-testid="stHeader"] {
+                height: 2.6rem !important;
+                min-height: 2.6rem !important;
             }
             .bling-hero {
                 padding: 10px 11px 9px 11px;
