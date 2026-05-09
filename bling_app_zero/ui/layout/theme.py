@@ -110,6 +110,10 @@ def inject_unified_light_layout(force: bool = False) -> None:
             overflow: hidden !important;
         }
 
+        .bling-model-card {
+            margin-bottom: 0.55rem !important;
+        }
+
         .bling-hero::before,
         .bling-flow-card::before,
         .bling-inline-card::before {
@@ -286,11 +290,16 @@ def inject_unified_light_layout(force: bool = False) -> None:
             box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22) !important;
         }
 
+        div[data-testid="stFileUploader"] {
+            width: min(100%, 760px) !important;
+            margin: 0 auto 1rem auto !important;
+        }
+
         div[data-testid="stFileUploader"] section {
             border: 1px dashed rgba(37, 99, 235, 0.22) !important;
-            border-radius: 18px !important;
-            background: rgba(241, 247, 255, 0.78) !important;
-            box-shadow: none !important;
+            border-radius: var(--bling-radius-xl) !important;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.94)) !important;
+            box-shadow: var(--bling-shadow-soft) !important;
             padding: 1rem !important;
             min-height: 118px !important;
         }
@@ -330,9 +339,15 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
             .bling-hero,
             .bling-flow-card,
-            .bling-inline-card {
+            .bling-inline-card,
+            div[data-testid="stFileUploader"] {
                 width: 100% !important;
                 margin: 0 0 0.78rem 0 !important;
+            }
+
+            .bling-hero,
+            .bling-flow-card,
+            .bling-inline-card {
                 padding: 1rem 0.92rem !important;
                 border-radius: 20px !important;
                 text-align: left !important;
@@ -368,6 +383,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
             div[data-testid="stFileUploader"] section {
                 min-height: 110px !important;
                 padding: 0.9rem !important;
+                border-radius: 20px !important;
             }
 
             .stButton > button,
