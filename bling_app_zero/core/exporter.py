@@ -8,7 +8,7 @@ import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell, normalize_key
-from bling_app_zero.core.user_rules import get_user_rules, measure_defaults_from_rules
+from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules, measure_defaults_from_rules
 
 IMAGE_COLUMN_TERMS = [
     'imagem',
@@ -126,22 +126,27 @@ def _is_empty_measure(value: object) -> bool:
     return key in {'sem medida', 'semmedida', '0', '0000'}
 
 
+def _fallback_rules() -> dict[str, Any]:
+    return {
+        'supplier_default': DEFAULT_SUPPLIER,
+        'measure_unit_default': DEFAULT_MEASURE_UNIT,
+        'height_default': DEFAULT_MEASURES_CM['altura'],
+        'width_default': DEFAULT_MEASURES_CM['largura'],
+        'depth_default': DEFAULT_MEASURES_CM['profundidade'],
+        'length_default': DEFAULT_MEASURES_CM['comprimento'],
+        'invalid_gtin_mode': 'limpar',
+        'image_separator': '|',
+        'auto_product_code': True,
+        'unique_product_code': True,
+        'custom_rules': [],
+    }
+
+
 def _rules() -> dict[str, Any]:
     try:
         return get_user_rules()
     except Exception:
-        return {
-            'supplier_default': DEFAULT_SUPPLIER,
-            'measure_unit_default': DEFAULT_MEASURE_UNIT,
-            'height_default': DEFAULT_MEASURES_CM['altura'],
-            'width_default': DEFAULT_MEASURES_CM['largura'],
-            'depth_default': DEFAULT_MEASURES_CM['profundidade'],
-            'length_default': DEFAULT_MEASURES_CM['comprimento'],
-            'invalid_gtin_mode': 'limpar',
-            'image_separator': '|',
-            'auto_product_code': True,
-            'unique_product_code': True,
-        }
+        return _fallback_rules()
 
 
 def _image_separator() -> str:
@@ -294,6 +299,51 @@ def _fill_measure_unit(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
+    target_key = normalize_key(target_column)
+    for column in out.columns:
+        if normalize_key(column) == target_key:
+            return str(column)
+    return ''
+
+
+def _row_matches_condition(out: pd.DataFrame, row_index: int, condition: str) -> bool:
+    condition_key = normalize_key(condition)
+    if not condition_key:
+        return False
+    values = []
+    for column in out.columns:
+        values.append(clean_cell(out.at[row_index, column]) if row_index in out.index else '')
+    row_text = normalize_key(' '.join(values))
+    return condition_key in row_text
+
+
+def _apply_custom_rules(out: pd.DataFrame) -> pd.DataFrame:
+    if out is None or out.empty:
+        return out
+
+    rules = custom_rules_from_rules(_rules())
+    if not rules:
+        return out
+
+    for rule in rules:
+        if not rule.get('enabled', True):
+            continue
+        target_column = _target_column_by_rule(out, str(rule.get('target_column', '')))
+        if not target_column:
+            continue
+        condition = str(rule.get('condition', ''))
+        fill_value = clean_cell(rule.get('fill_value', ''))
+        only_when_empty = bool(rule.get('only_when_empty', True))
+        for row_index in out.index:
+            if not _row_matches_condition(out, row_index, condition):
+                continue
+            if only_when_empty and not _is_empty_text(out.at[row_index, target_column]):
+                continue
+            out.at[row_index, target_column] = fill_value
+    return out
+
+
 def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -312,6 +362,7 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     out = _fill_default_measures(out)
     out = _fill_measure_unit(out)
     out = _fill_default_supplier(out)
+    out = _apply_custom_rules(out)
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
