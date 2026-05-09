@@ -4,8 +4,6 @@ import html
 
 import streamlit as st
 
-from bling_app_zero.core.debug import render_debug_home_area
-from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, step_to_panel_operation
 from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
@@ -199,8 +197,6 @@ def _render_back_home() -> None:
 def render_home() -> None:
     inject_app_layout()
     render_compact_hero()
-    render_debug_home_area()
-    render_diagnostics_panel()
 
     active_panel = get_active_panel()
     if not active_panel:
