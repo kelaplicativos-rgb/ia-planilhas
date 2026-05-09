@@ -23,6 +23,26 @@ def inject_mapping_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
             gap: 0.28rem !important;
         }
+        .bling-map-title {
+            font-size: 0.88rem;
+            line-height: 1.15;
+            font-weight: 800;
+            color: rgba(49, 51, 63, 0.95);
+            margin: 0 0 5px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            overflow-wrap: anywhere;
+        }
+        .bling-map-title-text {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+        .bling-map-help {
+            opacity: 0.62;
+            flex: 0 0 auto;
+        }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
             max-width: 100% !important;
             overflow-x: hidden !important;
@@ -33,17 +53,7 @@ def inject_mapping_css() -> None:
             box-shadow: none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] label {
-            display: block !important;
-            margin: 0 0 5px 0 !important;
-            padding: 0 !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] label p {
-            font-size: 0.88rem !important;
-            line-height: 1.15 !important;
-            font-weight: 800 !important;
-            margin: 0 !important;
-            color: rgba(49, 51, 63, 0.95) !important;
-            overflow-wrap: anywhere !important;
+            display: none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] {
             max-width: 100% !important;
@@ -87,12 +97,10 @@ def inject_mapping_css() -> None:
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
                 gap: 0.22rem !important;
             }
-            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] label {
-                margin-bottom: 4px !important;
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] label p {
-                font-size: 0.84rem !important;
-                line-height: 1.12 !important;
+            .bling-map-title {
+                font-size: 0.84rem;
+                line-height: 1.12;
+                margin-bottom: 4px;
             }
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
                 min-height: 43px !important;
@@ -106,6 +114,14 @@ def inject_mapping_css() -> None:
         }
         </style>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_mapping_title(target_label: str) -> None:
+    safe = html.escape(str(target_label or ''))
+    st.markdown(
+        f'<div class="bling-map-title"><span class="bling-map-title-text">{safe}</span><span class="bling-map-help">?</span></div>',
         unsafe_allow_html=True,
     )
 
