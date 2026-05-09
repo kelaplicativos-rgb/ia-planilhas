@@ -105,13 +105,8 @@ def _inject_compact_middle_selector_css() -> None:
     )
 
 
-def _render_center_marker() -> None:
-    st.markdown('<div class="bling-home-button-center"></div>', unsafe_allow_html=True)
-
-
 def _render_home_start() -> None:
     render_home_start_card()
-    _render_center_marker()
     if st.button('Anexar modelos do Bling', use_container_width=True, key='home_start_open_models'):
         _set_home_stage(STAGE_MODELOS)
         st.rerun()
@@ -142,7 +137,6 @@ def _render_home_models_step() -> None:
 
 def _render_pricing_choice_step() -> None:
     render_home_pricing_card()
-    _render_center_marker()
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button('Sim, vou precificar', use_container_width=True, key='home_pricing_yes'):
