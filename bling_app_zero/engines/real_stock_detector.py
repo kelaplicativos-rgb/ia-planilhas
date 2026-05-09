@@ -50,9 +50,12 @@ def _digits(value: object) -> str:
     if not text:
         return ''
     try:
-        return str(int(text))
+        number = int(text)
     except Exception:
         return text
+    if number < 0 or number > 1_000_000:
+        return ''
+    return str(number)
 
 
 def _platform_from_html(url: str, html: str) -> str:
@@ -143,10 +146,14 @@ def detect_stock_from_dom(html: str, text: str = '') -> StockDetection:
 
 def detect_stock_status(html: str, text: str = '') -> StockDetection:
     full = normalize_key(f'{html or ""} {text or ""}')
-    if any(normalize_key(term) in full for term in OUT_STOCK_TERMS):
+    out_hit = any(normalize_key(term) in full for term in OUT_STOCK_TERMS)
+    in_hit = any(normalize_key(term) in full for term in IN_STOCK_TERMS)
+    if out_hit and not in_hit:
         return StockDetection('0', 'alta', 'status/out')
-    if any(normalize_key(term) in full for term in IN_STOCK_TERMS):
+    if in_hit:
         return StockDetection('', 'baixa', 'status/in')
+    if out_hit:
+        return StockDetection('0', 'media', 'status/out')
     return StockDetection('', 'baixa', '')
 
 
@@ -169,7 +176,7 @@ def detect_platform_stock(url: str, html: str, text: str = '') -> StockDetection
 
     status_result = detect_stock_status(html, text)
     if status_result.quantity == '0':
-        return StockDetection('0', 'alta', f'{platform}:{status_result.source}', platform)
+        return StockDetection('0', status_result.confidence, f'{platform}:{status_result.source}', platform)
 
     return StockDetection('', 'baixa', f'{platform}:sem_quantidade', platform)
 
