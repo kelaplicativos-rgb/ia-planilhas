@@ -12,13 +12,13 @@ from bling_app_zero.flows.simulation import run_all_simulations, run_engine_inve
 
 
 def _render_openai_validation() -> None:
-    st.markdown('##### OpenAI')
+    st.markdown('##### Assistência com IA')
 
     if validate_openai_connection is None:
-        st.caption('Validação indisponível neste build.')
+        st.caption('Validação de IA indisponível nesta versão.')
         return
 
-    if st.button('Validar chave', use_container_width=True, key='validate_openai_key'):
+    if st.button('Testar conexão da IA', use_container_width=True, key='validate_openai_key'):
         st.session_state['openai_validation_result'] = validate_openai_connection()
 
     result = st.session_state.get('openai_validation_result')
@@ -36,29 +36,29 @@ def _render_openai_validation() -> None:
     st.dataframe(df, use_container_width=True, height=90)
 
     if result.get('ok'):
-        st.success('Conectado.')
+        st.success('IA conectada.')
     else:
-        st.warning('Atenção.')
+        st.warning('A IA ainda não está pronta. Confira a chave nos secrets.')
 
 
 def render_diagnostics_panel() -> None:
     with st.sidebar:
-        with st.expander('Diagnóstico técnico', expanded=False):
+        with st.expander('Ferramentas de conferência', expanded=False):
             _render_openai_validation()
 
-            st.markdown('##### Motores')
+            st.markdown('##### Recursos internos')
             st.dataframe(run_engine_inventory(), use_container_width=True, height=220)
 
-            if st.button('Simular fluxos', use_container_width=True, key='run_blingflow_simulation'):
+            if st.button('Conferir fluxos', use_container_width=True, key='run_blingflow_simulation'):
                 st.session_state['blingflow_simulation_result'] = run_all_simulations()
 
             result = st.session_state.get('blingflow_simulation_result')
             if result is not None:
-                st.markdown('##### Resultado')
+                st.markdown('##### Resultado da conferência')
                 st.dataframe(result, use_container_width=True, height=260)
 
                 failures = result[result['Status'] != 'OK'] if 'Status' in result.columns else result
                 if failures.empty:
-                    st.success('Tudo certo.')
+                    st.success('Fluxos conferidos sem erro.')
                 else:
-                    st.warning('Verificar.')
+                    st.warning('Alguns fluxos precisam de atenção.')
