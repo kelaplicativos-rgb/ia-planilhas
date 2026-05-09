@@ -38,6 +38,8 @@ def inject_unified_light_layout() -> None:
                 linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 100%) !important;
             color: var(--bling-text) !important;
             overflow-x: hidden !important;
+            -webkit-font-smoothing: antialiased !important;
+            text-rendering: optimizeLegibility !important;
         }
 
         header[data-testid="stHeader"] {
@@ -79,18 +81,22 @@ def inject_unified_light_layout() -> None:
         .bling-hero-title {
             color: var(--bling-text) !important;
             font-size: clamp(1.45rem, 3.1vw, 2.05rem) !important;
-            font-weight: 950 !important;
-            letter-spacing: -0.035em !important;
-            line-height: 1.12 !important;
+            font-weight: 920 !important;
+            letter-spacing: -0.01em !important;
+            line-height: 1.18 !important;
             margin: 0 0 7px 0 !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
         }
 
         .bling-hero-subtitle {
             color: var(--bling-muted) !important;
             font-size: 0.98rem !important;
-            line-height: 1.35 !important;
+            line-height: 1.42 !important;
             margin: 0 auto !important;
             max-width: 760px !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
         }
 
         .bling-home-center,
@@ -131,9 +137,11 @@ def inject_unified_light_layout() -> None:
         .bling-step-title,
         h1, h2, h3, h4, h5 {
             color: var(--bling-text) !important;
-            font-weight: 900 !important;
-            letter-spacing: -0.028em !important;
-            line-height: 1.18 !important;
+            font-weight: 880 !important;
+            letter-spacing: -0.006em !important;
+            line-height: 1.24 !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
         }
 
         .bling-step-title,
@@ -161,7 +169,9 @@ def inject_unified_light_layout() -> None:
         div[data-testid="stCaptionContainer"],
         div[data-testid="stMarkdownContainer"] p {
             color: var(--bling-muted) !important;
-            line-height: 1.38 !important;
+            line-height: 1.42 !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
         }
 
         .bling-upload-title {
@@ -171,8 +181,9 @@ def inject_unified_light_layout() -> None:
             padding-top: 0.2rem !important;
             color: var(--bling-text) !important;
             font-size: 1.04rem !important;
-            font-weight: 900 !important;
-            line-height: 1.22 !important;
+            font-weight: 880 !important;
+            letter-spacing: -0.004em !important;
+            line-height: 1.28 !important;
         }
 
         .bling-upload-caption {
@@ -196,7 +207,7 @@ def inject_unified_light_layout() -> None:
             background: rgba(255, 255, 255, 0.95) !important;
             color: var(--bling-text) !important;
             box-shadow: 0 5px 16px rgba(15, 23, 42, 0.035) !important;
-            font-weight: 760 !important;
+            font-weight: 740 !important;
             transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease !important;
         }
 
@@ -271,8 +282,8 @@ def inject_unified_light_layout() -> None:
 
         @media (max-width: 760px) {
             :root {
-                --bling-flow-gap: 0.68rem;
-                --bling-section-gap: 0.92rem;
+                --bling-flow-gap: 0.72rem;
+                --bling-section-gap: 0.96rem;
             }
 
             .main .block-container,
@@ -284,26 +295,29 @@ def inject_unified_light_layout() -> None:
 
             .main .block-container > div:first-child {
                 border-radius: 18px !important;
-                padding: 0.85rem 0.58rem 0.95rem 0.58rem !important;
+                padding: 0.95rem 0.66rem 1rem 0.66rem !important;
                 min-height: calc(100vh - 5rem) !important;
             }
 
             .bling-hero {
                 border-radius: 14px !important;
-                padding: 12px 11px !important;
-                margin-bottom: 0.7rem !important;
+                padding: 12px 12px !important;
+                margin-bottom: 0.74rem !important;
             }
 
             .bling-hero-title {
-                font-size: 1.24rem !important;
+                font-size: 1.22rem !important;
+                letter-spacing: normal !important;
+                line-height: 1.22 !important;
             }
 
             .bling-hero-subtitle {
                 font-size: 0.84rem !important;
+                line-height: 1.42 !important;
             }
 
             .bling-home-card {
-                padding: 13px 11px !important;
+                padding: 14px 12px !important;
                 border-radius: 15px !important;
             }
 
@@ -317,8 +331,16 @@ def inject_unified_light_layout() -> None:
             div[data-testid="stMarkdownContainer"] h3,
             div[data-testid="stMarkdownContainer"] h4,
             div[data-testid="stMarkdownContainer"] h5 {
-                margin-top: 0.88rem !important;
-                margin-bottom: 0.42rem !important;
+                letter-spacing: normal !important;
+                line-height: 1.26 !important;
+                margin-top: 0.92rem !important;
+                margin-bottom: 0.44rem !important;
+            }
+
+            div[data-testid="stMarkdownContainer"] p,
+            .bling-muted,
+            .bling-upload-caption {
+                line-height: 1.42 !important;
             }
 
             div[data-testid="stFileUploader"] section {
