@@ -15,6 +15,7 @@ from bling_app_zero.ui.global_layout_guard import inject_global_layout_guard
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
 from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
+from bling_app_zero.ui.unified_light_layout import inject_unified_light_layout
 
 HOME_STAGE_KEY = 'home_stage'
 HOME_PRICING_KEY = 'home_precificacao_inicial'
@@ -227,6 +228,7 @@ def _render_back_home() -> None:
 def render_home() -> None:
     inject_clean_home_css()
     inject_global_layout_guard()
+    inject_unified_light_layout()
     render_compact_hero()
     render_diagnostics_panel()
 
