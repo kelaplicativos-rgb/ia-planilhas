@@ -4,20 +4,29 @@ import streamlit as st
 
 from bling_app_zero.ui.lazy_panels import normalize_panel_operation
 
-FLOW_STEP_KEY = 'home_slim_flow_step'
+FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
+FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ACTIVE_KEY = 'home_slim_active_panel'
 
-STEP_SITE = 'site'
-STEP_PLANILHA = 'planilha'
+ORIGIN_SITE = 'site'
+ORIGIN_ARQUIVO = 'arquivo'
 
-STEP_LABELS = {
-    STEP_SITE: 'Buscar produtos no site do fornecedor',
-    STEP_PLANILHA: 'Anexar planilha, PDF ou XML do fornecedor',
+OP_CADASTRO = 'cadastro'
+OP_ESTOQUE = 'estoque'
+
+ORIGIN_LABELS = {
+    ORIGIN_SITE: 'Buscar produtos no site do fornecedor',
+    ORIGIN_ARQUIVO: 'Anexar planilha, PDF ou XML do fornecedor',
 }
 
-STEP_HELP = {
-    STEP_SITE: 'Cole links de produtos ou categorias.',
-    STEP_PLANILHA: 'Use um arquivo pronto do fornecedor.',
+OPERATION_LABELS = {
+    OP_CADASTRO: 'Cadastrar produtos no Bling',
+    OP_ESTOQUE: 'Atualizar estoque no Bling',
+}
+
+ORIGIN_HELP = {
+    ORIGIN_SITE: 'Cole links de produtos ou categorias. O sistema buscará somente as colunas do modelo da operação escolhida.',
+    ORIGIN_ARQUIVO: 'Use um arquivo pronto do fornecedor e gere o CSV conforme a operação escolhida.',
 }
 
 
@@ -31,45 +40,98 @@ def query_param(name: str) -> str:
         return ''
 
 
-def initial_step_from_query() -> str:
+def _operation_from_text(value: str) -> str:
+    operation = normalize_panel_operation(value)
+    if operation == OP_ESTOQUE:
+        return OP_ESTOQUE
+    if str(value or '').lower().strip() in {'estoque_site', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
+        return OP_ESTOQUE
+    return OP_CADASTRO
+
+
+def _origin_from_text(value: str) -> str:
+    text = str(value or '').lower().strip()
+    if text in {'planilha', 'planilhas', 'arquivo', 'arquivos', 'pdf', 'xml', 'origem_planilha'}:
+        return ORIGIN_ARQUIVO
+    return ORIGIN_SITE
+
+
+def initial_origin_from_query() -> str:
     flow = query_param('flow').lower().strip()
-    operation = normalize_panel_operation(flow)
-    if operation == 'estoque':
-        return STEP_PLANILHA
-    if flow in {'planilha', 'planilhas', 'origem_planilha', 'cadastro', 'produtos'}:
-        return STEP_PLANILHA
-    return STEP_SITE
+    origem = query_param('origem').lower().strip()
+    if origem:
+        return _origin_from_text(origem)
+    if flow in {'planilha', 'planilhas', 'arquivo', 'arquivos', 'pdf', 'xml', 'origem_planilha', 'cadastro'}:
+        return ORIGIN_ARQUIVO
+    return ORIGIN_SITE
 
 
-def get_current_step() -> str:
-    if FLOW_STEP_KEY not in st.session_state:
-        st.session_state[FLOW_STEP_KEY] = initial_step_from_query()
-    current = str(st.session_state.get(FLOW_STEP_KEY) or STEP_SITE)
-    if current not in STEP_LABELS:
-        current = STEP_SITE
-        st.session_state[FLOW_STEP_KEY] = current
+def initial_operation_from_query() -> str:
+    operation = query_param('operacao') or query_param('operation') or query_param('flow')
+    return _operation_from_text(operation)
+
+
+def get_current_origin() -> str:
+    if FLOW_ORIGIN_KEY not in st.session_state:
+        st.session_state[FLOW_ORIGIN_KEY] = initial_origin_from_query()
+    current = str(st.session_state.get(FLOW_ORIGIN_KEY) or ORIGIN_SITE)
+    if current not in ORIGIN_LABELS:
+        current = ORIGIN_SITE
+        st.session_state[FLOW_ORIGIN_KEY] = current
     return current
 
 
-def set_current_step(step: str) -> None:
-    if step not in STEP_LABELS:
-        step = STEP_SITE
-    st.session_state[FLOW_STEP_KEY] = step
+def get_current_operation() -> str:
+    if FLOW_OPERATION_KEY not in st.session_state:
+        st.session_state[FLOW_OPERATION_KEY] = initial_operation_from_query()
+    current = str(st.session_state.get(FLOW_OPERATION_KEY) or OP_CADASTRO)
+    if current not in OPERATION_LABELS:
+        current = OP_CADASTRO
+        st.session_state[FLOW_OPERATION_KEY] = current
+    return current
+
+
+def set_current_origin(origin: str) -> None:
+    if origin not in ORIGIN_LABELS:
+        origin = ORIGIN_SITE
+    st.session_state[FLOW_ORIGIN_KEY] = origin
     st.session_state.pop(FLOW_ACTIVE_KEY, None)
     try:
-        if step == STEP_SITE:
-            st.query_params['flow'] = 'site'
-        elif step == STEP_PLANILHA:
-            st.query_params['flow'] = 'planilha'
+        st.query_params['origem'] = origin
+        st.query_params['flow'] = 'site' if origin == ORIGIN_SITE else 'planilha'
     except Exception:
         pass
 
 
-def activate_current_step(step: str) -> None:
-    if step not in STEP_LABELS:
-        step = STEP_SITE
-    st.session_state[FLOW_ACTIVE_KEY] = step
-    st.session_state[FLOW_STEP_KEY] = step
+def set_current_operation(operation: str) -> None:
+    if operation not in OPERATION_LABELS:
+        operation = OP_CADASTRO
+    st.session_state[FLOW_OPERATION_KEY] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state.pop(FLOW_ACTIVE_KEY, None)
+    try:
+        st.query_params['operacao'] = operation
+    except Exception:
+        pass
+
+
+def _active_panel_id(origin: str, operation: str) -> str:
+    if origin == ORIGIN_SITE:
+        return f'{operation}_site'
+    return operation
+
+
+def activate_current_step(origin: str | None = None) -> None:
+    current_origin = origin if origin in ORIGIN_LABELS else get_current_origin()
+    current_operation = get_current_operation()
+    panel_id = _active_panel_id(current_origin, current_operation)
+    st.session_state[FLOW_ACTIVE_KEY] = panel_id
+    st.session_state[FLOW_ORIGIN_KEY] = current_origin
+    st.session_state[FLOW_OPERATION_KEY] = current_operation
+    st.session_state['operacao_final'] = current_operation
+    st.session_state['origem_final'] = current_origin
+    st.session_state['tipo_operacao_site'] = current_operation if current_origin == ORIGIN_SITE else ''
 
 
 def deactivate_panel() -> None:
@@ -77,40 +139,77 @@ def deactivate_panel() -> None:
 
 
 def get_active_panel() -> str | None:
-    active = st.session_state.get(FLOW_ACTIVE_KEY)
-    return str(active) if active in STEP_LABELS else None
+    active = str(st.session_state.get(FLOW_ACTIVE_KEY) or '')
+    if active in {'cadastro_site', 'estoque_site', OP_CADASTRO, OP_ESTOQUE}:
+        return active
+    return None
 
 
 def step_to_panel_operation(step: str) -> str:
-    if step == STEP_PLANILHA:
-        return 'cadastro'
-    return 'site'
+    text = str(step or '').strip().lower()
+    if text == 'estoque_site':
+        st.session_state['tipo_operacao_site'] = OP_ESTOQUE
+        return 'site'
+    if text == 'cadastro_site':
+        st.session_state['tipo_operacao_site'] = OP_CADASTRO
+        return 'site'
+    if text == OP_ESTOQUE:
+        return OP_ESTOQUE
+    if text == OP_CADASTRO:
+        return OP_CADASTRO
+    origin = get_current_origin()
+    operation = get_current_operation()
+    if origin == ORIGIN_SITE:
+        st.session_state['tipo_operacao_site'] = operation
+        return 'site'
+    return operation
 
 
 def render_flow_selector() -> str:
-    current = get_current_step()
-    options = [STEP_SITE, STEP_PLANILHA]
-    labels = [STEP_LABELS[option] for option in options]
-    current_index = options.index(current) if current in options else 0
+    current_operation = get_current_operation()
+    current_origin = get_current_origin()
 
-    selected_label = st.radio(
-        'Escolha',
-        labels,
-        index=current_index,
+    operation_options = [OP_CADASTRO, OP_ESTOQUE]
+    operation_labels = [OPERATION_LABELS[option] for option in operation_options]
+    operation_index = operation_options.index(current_operation) if current_operation in operation_options else 0
+
+    selected_operation_label = st.radio(
+        'O que você quer fazer?',
+        operation_labels,
+        index=operation_index,
         horizontal=False,
-        key='home_slim_flow_radio',
-        label_visibility='collapsed',
+        key='home_slim_operation_radio',
     )
-    selected_step = options[labels.index(selected_label)]
-    if selected_step != current:
-        set_current_step(selected_step)
-        current = selected_step
+    selected_operation = operation_options[operation_labels.index(selected_operation_label)]
+    if selected_operation != current_operation:
+        set_current_operation(selected_operation)
+        current_operation = selected_operation
 
-    st.caption(STEP_HELP.get(current, ''))
+    origin_options = [ORIGIN_SITE, ORIGIN_ARQUIVO]
+    origin_labels = [ORIGIN_LABELS[option] for option in origin_options]
+    origin_index = origin_options.index(current_origin) if current_origin in origin_options else 0
 
-    button_label = 'Abrir busca' if current == STEP_SITE else 'Anexar arquivo'
+    selected_origin_label = st.radio(
+        'De onde vêm os dados?',
+        origin_labels,
+        index=origin_index,
+        horizontal=False,
+        key='home_slim_origin_radio',
+    )
+    selected_origin = origin_options[origin_labels.index(selected_origin_label)]
+    if selected_origin != current_origin:
+        set_current_origin(selected_origin)
+        current_origin = selected_origin
+
+    st.caption(ORIGIN_HELP.get(current_origin, ''))
+
+    if current_origin == ORIGIN_SITE:
+        button_label = 'Abrir busca de cadastro' if current_operation == OP_CADASTRO else 'Abrir busca de estoque'
+    else:
+        button_label = 'Anexar arquivo para cadastro' if current_operation == OP_CADASTRO else 'Anexar arquivo para estoque'
+
     if st.button(button_label, use_container_width=True, key='home_open_selected_flow'):
-        activate_current_step(current)
+        activate_current_step(current_origin)
         st.rerun()
 
-    return current
+    return _active_panel_id(current_origin, current_operation)
