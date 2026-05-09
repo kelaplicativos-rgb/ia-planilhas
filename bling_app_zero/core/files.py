@@ -57,10 +57,10 @@ def read_uploaded_file(uploaded_file: Any) -> pd.DataFrame:
 
     if name.endswith('.xml'):
         text = _decode_bytes(data)
-        return pd.DataFrame([{'arquivo_xml': getattr(uploaded_file, 'name', 'xml'), 'conteudo_xml': text}])
+        return pd.DataFrame([{'Arquivo XML': getattr(uploaded_file, 'name', 'xml'), 'Conteúdo XML': text}])
 
     if name.endswith('.pdf'):
-        return pd.DataFrame([{'arquivo_pdf': getattr(uploaded_file, 'name', 'pdf'), 'observacao': 'PDF recebido para extração futura'}])
+        return pd.DataFrame([{'Arquivo PDF': getattr(uploaded_file, 'name', 'pdf'), 'Status': 'PDF recebido. Confira se há dados tabulares disponíveis para extração.'}])
 
     return pd.DataFrame()
 
