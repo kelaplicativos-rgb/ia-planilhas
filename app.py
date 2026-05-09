@@ -9,11 +9,11 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.5.3-BLINGFIX-SIDEBAR'
+APP_VERSION = '3.5.4-BLINGLAYOUT-SIDEBAR-COLLAPSED'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
-    """Mantem visiveis menu superior, tres pontinhos e sidebar do Streamlit."""
+    """Mantem visiveis menu superior, tres pontinhos e controle da sidebar."""
     st.markdown(
         """
         <style>
@@ -47,7 +47,6 @@ def _inject_streamlit_toolbar_fix() -> None:
         }
 
         section[data-testid="stSidebar"] {
-            display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
@@ -81,7 +80,7 @@ def main() -> None:
         page_title='IA Planilhas → Bling',
         page_icon='🚀',
         layout='wide',
-        initial_sidebar_state='expanded',
+        initial_sidebar_state='collapsed',
     )
     _inject_streamlit_toolbar_fix()
 
