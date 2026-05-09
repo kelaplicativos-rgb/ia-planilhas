@@ -115,7 +115,7 @@ def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str) -> bytes
 
 def _render_contract_body(columns: list[str]) -> None:
     contract = build_contract(columns)
-    st.caption('Busca somente os campos pedidos. Se não encontrar, deixa vazio.')
+    st.caption('Serão buscados somente estes campos. Se algum dado não existir no site, ele ficará vazio.')
     st.dataframe(
         pd.DataFrame([
             {
@@ -134,22 +134,22 @@ def show_contract(columns: list[str]) -> None:
     if not columns:
         return
     try:
-        with st.expander('Colunas que serão buscadas', expanded=False):
+        with st.expander('Campos que serão buscados', expanded=False):
             _render_contract_body(columns)
     except StreamlitAPIException as exc:
         if 'Expanders may not be nested' not in str(exc):
             raise
-        st.markdown('##### Colunas que serão buscadas')
+        st.markdown('##### Campos que serão buscados')
         _render_contract_body(columns)
 
 
 def show_mapping(mapping: dict[str, str]) -> None:
     if not mapping:
         return
-    with st.expander('Mapeamento aplicado', expanded=False):
+    with st.expander('Como os campos foram preenchidos', expanded=False):
         st.dataframe(
             pd.DataFrame([
-                {'Campo Bling': key, 'Coluna origem': value or '(vazio)'}
+                {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
                 for key, value in mapping.items()
             ]),
             use_container_width=True,
@@ -164,7 +164,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     errors = validate_final_df(df, operation)
     if errors:
-        with st.expander('Avisos da validação final', expanded=True):
+        with st.expander('Conferência antes do download', expanded=True):
             for error in errors:
                 st.warning(error)
 
@@ -172,7 +172,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     csv_bytes = _csv_bytes_cached(df.copy(), operation, signature)
 
     st.download_button(
-        '⬇️ Baixar CSV final para o Bling',
+        '⬇️ Baixar CSV pronto para o Bling',
         data=csv_bytes,
         file_name=filename_for_operation(operation),
         mime='text/csv; charset=utf-8',
@@ -190,7 +190,7 @@ def _render_preview_body(df: pd.DataFrame | None) -> None:
     total_cols = len(df.columns)
     st.dataframe(df.head(PREVIEW_ROWS), use_container_width=True, height=360)
     if total_rows > PREVIEW_ROWS:
-        st.caption(f'Exibindo {PREVIEW_ROWS} de {total_rows} linha(s) para manter o sistema rápido. Total: {total_cols} coluna(s).')
+        st.caption(f'Mostrando {PREVIEW_ROWS} de {total_rows} linha(s). Total: {total_cols} coluna(s).')
     else:
         st.caption(f'{total_rows} linha(s) × {total_cols} coluna(s)')
 
