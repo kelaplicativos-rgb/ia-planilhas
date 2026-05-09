@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.ui.clean_layout import (
+from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
+from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
+from bling_app_zero.ui.lazy_panels import render_lazy_panel
+from bling_app_zero.ui.layout import (
     close_home_start_card,
+    inject_app_layout,
     render_compact_hero,
     render_home_pricing_card,
     render_home_start_card,
     render_step_title,
 )
-from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
-from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
-from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
-from bling_app_zero.ui.lazy_panels import render_lazy_panel
-from bling_app_zero.ui.unified_light_layout import inject_unified_light_layout
 
 HOME_STAGE_KEY = 'home_stage'
 HOME_PRICING_KEY = 'home_precificacao_inicial'
@@ -73,7 +73,7 @@ def _centered_button(label: str, key: str, disabled: bool = False) -> bool:
 
 
 def _centered_two_buttons(left_label: str, left_key: str, right_label: str, right_key: str) -> tuple[bool, bool]:
-    pad_l, col_l, col_r, pad_r = st.columns([0.8, 1.35, 1.35, 0.8])
+    _pad_l, col_l, col_r, _pad_r = st.columns([0.8, 1.35, 1.35, 0.8])
     with col_l:
         left_clicked = st.button(left_label, use_container_width=True, key=left_key)
     with col_r:
@@ -183,7 +183,7 @@ def _render_back_home() -> None:
 
 
 def render_home() -> None:
-    inject_unified_light_layout()
+    inject_app_layout()
     render_compact_hero()
     render_diagnostics_panel()
 
