@@ -99,10 +99,12 @@ def _render_detected_summary(
         return
     st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
     if isinstance(cadastro_df, pd.DataFrame) or isinstance(estoque_df, pd.DataFrame):
-        with st.expander('Conferir', expanded=False):
+        with st.expander('Conferir modelos detectados', expanded=False):
             if isinstance(cadastro_df, pd.DataFrame):
+                st.caption(f'Cadastro: {_file_name(cadastro_file)}' if cadastro_file else 'Cadastro detectado')
                 preview_df('Cadastro', cadastro_df)
             if isinstance(estoque_df, pd.DataFrame):
+                st.caption(f'Estoque: {_file_name(estoque_file)}' if estoque_file else 'Estoque detectado')
                 preview_df('Estoque', estoque_df)
 
 
@@ -114,11 +116,11 @@ def render_model_upload_box(
     caption: str | None = None,
 ) -> ModelUploadResult:
     files = st.file_uploader(
-        'Modelos do Bling',
+        'Enviar modelos do Bling',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Mostra todos os arquivos no Android.',
+        help='Envie o modelo de cadastro, estoque ou ambos.',
         label_visibility='collapsed',
     )
 
