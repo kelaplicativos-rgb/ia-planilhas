@@ -118,7 +118,7 @@ def inject_mapping_css() -> None:
             position: relative;
             z-index: 1;
             width: 100%;
-            font-size: 0.74rem;
+            font-size: 0.82rem;
             line-height: 1.20;
             color: #2563eb;
             font-weight: 700;
@@ -179,7 +179,7 @@ def inject_mapping_css() -> None:
             .bling-map-preview {
                 position: relative;
                 z-index: 1;
-                font-size: 0.73rem;
+                font-size: 0.82rem;
                 line-height: 1.18;
                 padding: 0 0 0 0 !important;
                 margin: -2px 0 0 0 !important;
