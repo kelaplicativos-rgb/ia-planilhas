@@ -69,12 +69,7 @@ def show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> Non
     if not text:
         return
     safe_text = html.escape(text)
-    st.markdown(
-        f"<div style='font-size:13px; color:#2563eb; margin-top:2px; margin-bottom:8px; font-weight:700; line-height:1.3; overflow-wrap:break-word;'>"
-        f"{safe_text}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="bling-inline-preview">{safe_text}</div>', unsafe_allow_html=True)
 
 
 def force_price_suggestion(target: str, source_columns: list[str], suggested: str) -> str:
