@@ -18,30 +18,34 @@ def _label(operation: str) -> str:
     return 'estoque' if normalize_site_operation(operation) == 'estoque' else 'cadastro'
 
 
-def _mark_site_as_internal_planilha(normalized: str) -> None:
-    """A busca por site vira uma origem interna e segue o fluxo de planilha."""
+def _mark_site_as_inline_source(normalized: str) -> None:
+    """A busca por site vira origem interna, mas permanece na Home unica.
+
+    Nao ativa painel secundario e nao muda a tela para outro fluxo. A Home
+    detecta a origem salva e renderiza mapeamento/preview logo abaixo.
+    """
     st.session_state['tipo_operacao'] = normalized
     st.session_state['operacao_final'] = normalized
     st.session_state['tipo_operacao_final'] = normalized
-    st.session_state['origem_final'] = 'arquivo'
-    st.session_state['origem_dados'] = 'planilha'
-    st.session_state['origem_tipo'] = 'planilha'
+    st.session_state['origem_final'] = 'site'
+    st.session_state['origem_dados'] = 'site'
+    st.session_state['origem_tipo'] = 'site'
     st.session_state['origem_planilha_via_site'] = True
     st.session_state['site_gerou_origem_planilha'] = True
-    st.session_state['home_slim_flow_origin'] = 'arquivo'
+    st.session_state['home_slim_flow_origin'] = 'site'
     st.session_state['home_slim_flow_operation'] = normalized
-    st.session_state['home_slim_active_panel'] = normalized
+    st.session_state.pop('home_slim_active_panel', None)
 
 
 def go_to_main_flow(operation: str) -> None:
     normalized = normalize_site_operation(operation)
     try:
-        st.query_params['flow'] = 'planilha'
+        st.query_params['flow'] = 'site'
         st.query_params['operacao'] = normalized
-        st.query_params['origem'] = 'arquivo'
+        st.query_params['origem'] = 'site'
     except Exception:
         pass
-    _mark_site_as_internal_planilha(normalized)
+    _mark_site_as_inline_source(normalized)
 
 
 def save_site_source(
@@ -66,7 +70,7 @@ def save_site_source(
     )
     st.session_state['operation_site'] = normalized
     st.session_state['tipo_operacao_site'] = normalized
-    _mark_site_as_internal_planilha(normalized)
+    _mark_site_as_inline_source(normalized)
 
 
 def render_generated_site_actions(
@@ -84,23 +88,18 @@ def render_generated_site_actions(
     normalized = normalize_site_operation(operation)
     label = _label(normalized)
     config = config_for_site_operation(normalized)
+    save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
+
     st.success(f'Origem de {label} criada com sucesso.')
-    st.caption('A busca por site foi convertida em origem interna e seguirá o mesmo fluxo da planilha.')
+    st.caption('A busca por site foi convertida em origem interna. O mapeamento, preview e download aparecem abaixo na mesma página.')
     render_site_progress_history()
     preview_df(f'Origem criada para {label}', df_site)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.download_button(
-            f'Baixar origem de {label}',
-            data=source_csv_bytes(df_site),
-            file_name=config.output_filename,
-            mime='text/csv; charset=utf-8',
-            use_container_width=True,
-            key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
-        )
-    with col_b:
-        if st.button(f'Continuar para mapeamento de {label}', use_container_width=True, key=f'continuar_fluxo_planilha_site_{normalized}'):
-            save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
-            go_to_main_flow(normalized)
-            st.rerun()
+    st.download_button(
+        f'Baixar origem de {label}',
+        data=source_csv_bytes(df_site),
+        file_name=config.output_filename,
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
+    )
