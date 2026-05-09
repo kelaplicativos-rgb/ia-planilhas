@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_source_for_operation
-from bling_app_zero.ui.cadastro_panel import _render_dual_stock_output, _render_manual_mapping
+from bling_app_zero.ui.cadastro_mapping import render_dual_stock_output, render_manual_mapping
 from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.cadastro_sources import (
     render_cadastro_source_upload,
@@ -43,8 +43,8 @@ def render_cadastro_panel() -> None:
 
         df_para_mapear = render_cadastro_pricing(df_origem)
         df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
-        _render_manual_mapping(df_para_mapear, df_modelo)
-        _render_dual_stock_output(df_para_mapear, df_modelo_estoque)
+        render_manual_mapping(df_para_mapear, df_modelo)
+        render_dual_stock_output(df_para_mapear, df_modelo_estoque)
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
 
