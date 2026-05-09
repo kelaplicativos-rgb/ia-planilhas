@@ -13,10 +13,15 @@ def inject_clean_home_css() -> None:
             --bling-gap: 0.72rem;
             --bling-radius: 16px;
         }
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+            overflow-x: hidden !important;
+            max-width: 100vw !important;
+        }
         .block-container {
             padding-top: 1.15rem;
             padding-bottom: 1.5rem;
             max-width: 1060px;
+            overflow-x: hidden !important;
         }
         div[data-testid="stMarkdownContainer"] h1,
         div[data-testid="stMarkdownContainer"] h2,
@@ -86,9 +91,35 @@ def inject_clean_home_css() -> None:
         }
         div[data-testid="stVerticalBlock"] {
             gap: 0.58rem !important;
+            max-width: 100% !important;
         }
         div[data-testid="column"] {
             padding: 0 0.2rem !important;
+        }
+        div[data-baseweb="select"] {
+            max-width: 100% !important;
+            width: 100% !important;
+        }
+        div[data-baseweb="select"] > div {
+            max-width: 100% !important;
+            overflow: hidden !important;
+            background: #f2f4f8 !important;
+            border-radius: 14px !important;
+        }
+        div[data-baseweb="popover"],
+        div[data-baseweb="menu"] {
+            max-width: calc(100vw - 24px) !important;
+            overflow-x: hidden !important;
+        }
+        ul[role="listbox"] {
+            max-width: calc(100vw - 24px) !important;
+            overflow-x: hidden !important;
+        }
+        ul[role="listbox"] li {
+            white-space: normal !important;
+            overflow-wrap: anywhere !important;
+            word-break: normal !important;
+            background: #ffffff !important;
         }
         .stButton > button,
         .stDownloadButton > button {
@@ -122,8 +153,9 @@ def inject_clean_home_css() -> None:
         }
 
         @media (max-width: 760px) {
-            html, body, [data-testid="stAppViewContainer"] {
+            html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
                 overflow-x: hidden !important;
+                max-width: 100vw !important;
             }
             .main .block-container,
             .block-container {
@@ -133,6 +165,7 @@ def inject_clean_home_css() -> None:
                 padding-bottom: 1rem !important;
                 max-width: 100vw !important;
                 min-height: 84svh !important;
+                overflow-x: hidden !important;
             }
             header[data-testid="stHeader"] {
                 visibility: visible !important;
@@ -143,6 +176,18 @@ def inject_clean_home_css() -> None:
             }
             section[data-testid="stSidebar"] {
                 max-width: 88vw !important;
+            }
+            div[data-testid="stVerticalBlock"],
+            div[data-testid="stHorizontalBlock"],
+            div[data-testid="stElementContainer"],
+            div[data-testid="stSelectbox"] {
+                max-width: 100% !important;
+                overflow-x: hidden !important;
+            }
+            div[data-baseweb="select"] > div {
+                min-height: 46px !important;
+                background: #f1f3f7 !important;
+                border: 1px solid rgba(49, 51, 63, 0.10) !important;
             }
             .bling-hero {
                 padding: 11px 12px 10px 12px;
