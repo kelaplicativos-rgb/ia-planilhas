@@ -107,17 +107,17 @@ def inject_mapping_css() -> None:
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-red) + div div[data-baseweb="select"] > div {
             background: #fef2f2 !important;
-            border-color: rgba(220, 38, 38, 0.24) !important;
+            border-color: rgba(220, 38, 38, 0.30) !important;
         }
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-yellow) + div div[data-baseweb="select"] > div {
             background: #fff8db !important;
-            border-color: rgba(202, 138, 4, 0.24) !important;
+            border-color: rgba(202, 138, 4, 0.30) !important;
         }
 
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-green) + div div[data-baseweb="select"] > div {
             background: #f0fdf4 !important;
-            border-color: rgba(22, 163, 74, 0.24) !important;
+            border-color: rgba(22, 163, 74, 0.30) !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
@@ -135,12 +135,12 @@ def inject_mapping_css() -> None:
             width: 100%;
             font-size: 0.82rem;
             line-height: 1.20;
-            color: #2563eb;
+            color: #2563eb !important;
             font-weight: 700;
             padding: 0 0 0 0 !important;
             margin: -2px 0 0 0 !important;
             border-radius: 0;
-            background: transparent;
+            background: transparent !important;
             border: 0;
             text-align: left;
             overflow-wrap: anywhere;
@@ -196,6 +196,8 @@ def inject_mapping_css() -> None:
                 z-index: 1;
                 font-size: 0.82rem;
                 line-height: 1.18;
+                color: #2563eb !important;
+                background: transparent !important;
                 padding: 0 0 0 0 !important;
                 margin: -2px 0 0 0 !important;
             }
