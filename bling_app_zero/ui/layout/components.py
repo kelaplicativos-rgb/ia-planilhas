@@ -18,15 +18,21 @@ def inject_clean_home_css() -> None:
 
 
 def render_compact_hero() -> None:
-    outer_l, outer_c, outer_r = st.columns([0.06, 0.88, 0.06])
-    with outer_c:
-        st.markdown('<div class="bling-hero">', unsafe_allow_html=True)
-        st.markdown('<div class="bling-hero-title">🚀 IA Planilhas → Bling</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<p class="bling-hero-subtitle">Sistema inteligente para transformar dados em CSV pronto para o Bling, com fluxo limpo, leve e organizado.</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+    """Hero principal renderizado em um unico bloco HTML.
+
+    Evita o efeito quebrado no mobile causado por abrir/fechar divs em
+    chamadas separadas do Streamlit.
+    """
+    st.markdown(
+        """
+        <section class="bling-hero" aria-label="IA Planilhas para Bling">
+            <div class="bling-hero-kicker">CSV inteligente para Bling</div>
+            <h1 class="bling-hero-title">IA Planilhas → Bling</h1>
+            <p class="bling-hero-subtitle">Transforme arquivos, sites e modelos em um CSV pronto para importar.</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_home_start_card() -> None:
