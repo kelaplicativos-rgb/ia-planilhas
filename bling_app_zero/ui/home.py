@@ -200,14 +200,7 @@ def _render_inline_data_entry(origin: str) -> None:
 def render_home() -> None:
     inject_app_layout()
     render_compact_hero()
-
-    _render_section_card(
-        'Modelos do Bling',
-        'Envie o modelo uma vez e siga rolando',
-        'O modelo define as colunas que o sistema precisa preencher. Pode enviar cadastro, estoque ou ambos.',
-    )
     _render_home_bling_models_lazy()
-
     _render_pricing_frontpage()
     origin = _render_origin_frontpage()
     _render_inline_data_entry(origin)
