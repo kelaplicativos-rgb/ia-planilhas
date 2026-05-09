@@ -70,10 +70,21 @@ def _render_loaded_summary() -> None:
     if isinstance(estoque, pd.DataFrame):
         parts.append('estoque')
     if parts:
-        st.success('Pronto: ' + ' + '.join(parts))
+        st.success('Modelos carregados: ' + ' + '.join(parts))
 
 
 def render_home_bling_models() -> None:
+    st.markdown(
+        """
+        <section class="bling-flow-card">
+            <div class="bling-flow-card-kicker">Base do fluxo</div>
+            <h2 class="bling-flow-card-title">Envie o modelo do Bling</h2>
+            <p class="bling-flow-card-text">O sistema usa esse modelo para saber exatamente quais colunas precisa preencher no cadastro ou no estoque.</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
     upload = render_model_upload_box(
         title='Modelos do Bling',
         operation='cadastro',
