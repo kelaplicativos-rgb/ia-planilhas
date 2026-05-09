@@ -105,17 +105,17 @@ def inject_mapping_css() -> None:
             align-items: center !important;
         }
 
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-red) div[data-baseweb="select"] > div {
+        div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-red) + div div[data-baseweb="select"] > div {
             background: #fef2f2 !important;
             border-color: rgba(220, 38, 38, 0.24) !important;
         }
 
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-yellow) div[data-baseweb="select"] > div {
+        div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-yellow) + div div[data-baseweb="select"] > div {
             background: #fff8db !important;
             border-color: rgba(202, 138, 4, 0.24) !important;
         }
 
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.bling-map-title-green) div[data-baseweb="select"] > div {
+        div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-green) + div div[data-baseweb="select"] > div {
             background: #f0fdf4 !important;
             border-color: rgba(22, 163, 74, 0.24) !important;
         }
