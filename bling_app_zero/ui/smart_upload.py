@@ -186,23 +186,23 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
     )
 
 
-def _render_upload_header(title: str) -> None:
+def _render_upload_header(title: str, allow_model: bool) -> None:
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="bling-upload-caption">Envie a planilha, PDF ou XML do fornecedor. Se tiver modelos do Bling, envie junto.</div>',
-        unsafe_allow_html=True,
-    )
+    caption = 'Envie a planilha, PDF ou XML do fornecedor.'
+    if allow_model:
+        caption = 'Envie a planilha, PDF ou XML do fornecedor. Se ainda não tiver modelo salvo, pode enviar o modelo do Bling junto.'
+    st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
 
-def _render_detected_files(result: SmartUploadResult, supported_files: list[Any]) -> None:
+def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
     st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
     with st.expander('Ver arquivos detectados', expanded=False):
         for file in supported_files:
             role = 'Origem do fornecedor'
-            if result.cadastro_model_file is file:
+            if allow_model and result.cadastro_model_file is file:
                 role = 'Modelo de cadastro Bling'
-            elif result.estoque_model_file is file:
+            elif allow_model and result.estoque_model_file is file:
                 role = 'Modelo de estoque Bling'
             st.write(f'**{role}:** {_file_name(file)}')
 
@@ -215,14 +215,14 @@ def render_smart_upload_box(
     required_model: bool = False,
     accepted_types: list[str] | None = None,
 ) -> SmartUploadResult:
-    _render_upload_header(title)
+    _render_upload_header(title, allow_model=allow_model)
 
     files = st.file_uploader(
         'Enviar arquivos do fornecedor',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie planilha, PDF, XML e modelos do Bling quando tiver.',
+        help='Envie planilha, PDF ou XML do fornecedor.',
         label_visibility='collapsed',
     )
 
@@ -240,7 +240,7 @@ def render_smart_upload_box(
         return SmartUploadResult(attachments=[], ignored_files=ignored_files)
 
     result = _classify(supported_files, operation=operation, allow_model=allow_model, ignored_files=ignored_files)
-    _render_detected_files(result, supported_files)
+    _render_detected_files(result, supported_files, allow_model=allow_model)
 
     if result.source_df is not None:
         with st.expander('Ver origem detectada', expanded=False):
