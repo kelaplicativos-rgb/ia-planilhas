@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 from io import BytesIO
+from typing import Any
 
 import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.core.user_rules import get_user_rules, measure_defaults_from_rules
 
 IMAGE_COLUMN_TERMS = [
     'imagem',
@@ -124,6 +126,29 @@ def _is_empty_measure(value: object) -> bool:
     return key in {'sem medida', 'semmedida', '0', '0000'}
 
 
+def _rules() -> dict[str, Any]:
+    try:
+        return get_user_rules()
+    except Exception:
+        return {
+            'supplier_default': DEFAULT_SUPPLIER,
+            'measure_unit_default': DEFAULT_MEASURE_UNIT,
+            'height_default': DEFAULT_MEASURES_CM['altura'],
+            'width_default': DEFAULT_MEASURES_CM['largura'],
+            'depth_default': DEFAULT_MEASURES_CM['profundidade'],
+            'length_default': DEFAULT_MEASURES_CM['comprimento'],
+            'invalid_gtin_mode': 'limpar',
+            'image_separator': '|',
+            'auto_product_code': True,
+            'unique_product_code': True,
+        }
+
+
+def _image_separator() -> str:
+    separator = str(_rules().get('image_separator') or '|')
+    return separator or '|'
+
+
 def normalize_image_urls(value: object) -> str:
     text = clean_cell(value)
     if not text:
@@ -144,7 +169,7 @@ def normalize_image_urls(value: object) -> str:
         seen.add(item)
         parts.append(item)
 
-    return '|'.join(parts)
+    return _image_separator().join(parts)
 
 
 def _safe_code_text(value: object) -> str:
@@ -165,6 +190,9 @@ def _gtin_code_from_row(out: pd.DataFrame, row_index: int) -> str:
 
 
 def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
+    if not bool(_rules().get('auto_product_code', True)):
+        return ''
+
     gtin_code = _gtin_code_from_row(out, row_index)
     if gtin_code:
         return gtin_code
@@ -181,10 +209,17 @@ def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
 
 
 def _make_unique_code(base_code: str, row_index: int, seen: set[str]) -> str:
-    base = _safe_code_text(base_code) or f'auto{row_index + 1}'
-    candidate = base[:60]
-    counter = 2
+    base = _safe_code_text(base_code)
+    if not base and bool(_rules().get('auto_product_code', True)):
+        base = f'auto{row_index + 1}'
+    if not base:
+        return ''
 
+    candidate = base[:60]
+    if not bool(_rules().get('unique_product_code', True)):
+        return candidate
+
+    counter = 2
     while normalize_key(candidate) in seen:
         suffix = f'-{counter}'
         candidate = f'{base[:60 - len(suffix)]}{suffix}'
@@ -209,7 +244,8 @@ def _ensure_unique_product_codes(out: pd.DataFrame) -> pd.DataFrame:
                 base_code = _fallback_code_from_row(out, row_index)
 
             unique_code = _make_unique_code(base_code, position, seen)
-            seen.add(normalize_key(unique_code))
+            if unique_code:
+                seen.add(normalize_key(unique_code))
             cleaned_values.append(unique_code)
 
         out[column] = cleaned_values
@@ -221,11 +257,12 @@ def _fill_default_measures(out: pd.DataFrame) -> pd.DataFrame:
     if out is None or out.empty:
         return out
 
+    defaults = measure_defaults_from_rules(_rules())
     for column in out.columns:
         kind = _measure_kind(column)
         if not kind:
             continue
-        default_value = DEFAULT_MEASURES_CM[kind]
+        default_value = str(defaults.get(kind, DEFAULT_MEASURES_CM.get(kind, '')) or '')
         out[column] = out[column].apply(lambda value: default_value if _is_empty_measure(value) else clean_cell(value))
 
     return out
@@ -235,10 +272,11 @@ def _fill_default_supplier(out: pd.DataFrame) -> pd.DataFrame:
     if out is None or out.empty:
         return out
 
+    supplier_default = str(_rules().get('supplier_default') or DEFAULT_SUPPLIER)
     for column in out.columns:
         if not _looks_like_supplier_column(column):
             continue
-        out[column] = out[column].apply(lambda value: DEFAULT_SUPPLIER if _is_empty_text(value) else clean_cell(value))
+        out[column] = out[column].apply(lambda value: supplier_default if _is_empty_text(value) else clean_cell(value))
 
     return out
 
@@ -247,10 +285,11 @@ def _fill_measure_unit(out: pd.DataFrame) -> pd.DataFrame:
     if out is None or out.empty:
         return out
 
+    measure_unit = str(_rules().get('measure_unit_default') or DEFAULT_MEASURE_UNIT)
     for column in out.columns:
         if not _looks_like_measure_unit_column(column):
             continue
-        out[column] = DEFAULT_MEASURE_UNIT
+        out[column] = measure_unit
 
     return out
 
