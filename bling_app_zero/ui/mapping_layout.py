@@ -87,8 +87,8 @@ def inject_mapping_css() -> None:
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 35px !important;
-            height: 35px !important;
+            min-height: 30px !important;
+            height: 30px !important;
             background: #eef2f7 !important;
             border: 1px solid rgba(49, 51, 63, 0.12) !important;
             border-radius: 10px !important;
@@ -159,8 +159,8 @@ def inject_mapping_css() -> None:
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 34px !important;
-                height: 34px !important;
+                min-height: 30px !important;
+                height: 30px !important;
                 border-radius: 10px !important;
                 font-size: 0.82rem !important;
             }
