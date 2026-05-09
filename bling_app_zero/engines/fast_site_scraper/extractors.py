@@ -22,6 +22,29 @@ def _offer(product: dict) -> dict:
     return offers if isinstance(offers, dict) else {}
 
 
+def _as_absolute_url(page_url: str, value: object) -> str:
+    text = clean_cell(value or '')
+    if not text:
+        return ''
+    return urljoin(page_url, text)
+
+
+def _first_from_srcset(value: object) -> str:
+    text = clean_cell(value or '')
+    if not text:
+        return ''
+    first = text.split(',')[0].strip()
+    return first.split()[0].strip() if first else ''
+
+
+def _clean_price(value: object) -> str:
+    text = clean_cell(value or '')
+    if not text:
+        return ''
+    match = re.search(r'(?:R\$\s*)?([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+(?:[\.,][0-9]{2})?)', text)
+    return match.group(1) if match else text[:40]
+
+
 def extract_url(page: FastProductPage) -> str:
     product = _first_product(page)
     return clean_cell(product.get('url') or page.url) if product else page.url
@@ -76,9 +99,25 @@ def extract_brand(page: FastProductPage) -> str:
 def extract_price(page: FastProductPage) -> str:
     product = _first_product(page)
     offer = _offer(product)
-    value = clean_cell(offer.get('price') or '')
+    value = _clean_price(offer.get('price') or '')
     if value:
         return value
+
+    price_spec = offer.get('priceSpecification') if isinstance(offer, dict) else None
+    if isinstance(price_spec, dict):
+        value = _clean_price(price_spec.get('price') or '')
+        if value:
+            return value
+
+    soup = soup_from_page(page)
+    for selector in ['meta[property="product:price:amount"]', 'meta[itemprop=price]', '[itemprop=price]', '[class*=price]', '[class*=preco]', '[class*=preço]']:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        value = _clean_price(node.get('content') or node.get_text(' ', strip=True))
+        if value:
+            return value
+
     text = page.text
     match = re.search(r'R\$\s*([0-9\.]+,[0-9]{2})', text)
     if match:
@@ -108,27 +147,44 @@ def extract_images(page: FastProductPage, limit: int = 12) -> str:
     product = _first_product(page)
     image = product.get('image') if product else None
     urls: list[str] = []
-    if isinstance(image, list):
-        for item in image:
-            value = clean_cell(item)
-            if value and value not in urls:
-                urls.append(value)
-    else:
-        value = clean_cell(image or '')
-        if value:
-            urls.append(value)
 
-    soup = soup_from_page(page)
-    for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-lazy') or img.get('data-original') or img.get('data-zoom-image')
-        if not src:
-            continue
-        url = urljoin(page.url, str(src))
+    def add(value: object) -> None:
+        url = _as_absolute_url(page.url, value)
+        if not url:
+            return
         low = url.lower()
-        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr']):
-            continue
+        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif']):
+            return
         if url not in urls:
             urls.append(url)
+
+    if isinstance(image, list):
+        for item in image:
+            if isinstance(item, dict):
+                add(item.get('url') or item.get('contentUrl'))
+            else:
+                add(item)
+    elif isinstance(image, dict):
+        add(image.get('url') or image.get('contentUrl'))
+    else:
+        add(image)
+
+    soup = soup_from_page(page)
+    for meta_selector in ['meta[property="og:image"]', 'meta[property="og:image:secure_url"]', 'link[rel="image_src"]']:
+        node = soup.select_one(meta_selector)
+        if node:
+            add(node.get('content') or node.get('href'))
+
+    for img in soup.find_all('img'):
+        src = (
+            img.get('src')
+            or img.get('data-src')
+            or img.get('data-lazy')
+            or img.get('data-original')
+            or img.get('data-zoom-image')
+            or _first_from_srcset(img.get('srcset') or img.get('data-srcset'))
+        )
+        add(src)
         if len(urls) >= limit:
             break
     return '|'.join(urls[:limit])
@@ -137,7 +193,7 @@ def extract_images(page: FastProductPage, limit: int = 12) -> str:
 def extract_code(page: FastProductPage) -> str:
     product = _first_product(page)
     if product:
-        value = clean_cell(product.get('sku') or product.get('mpn') or '')
+        value = clean_cell(product.get('sku') or product.get('mpn') or product.get('productID') or '')
         if value:
             return value
     match = re.search(r'(?:SKU|COD|CÓD|Código|Codigo|REF|Referência|Modelo)[:\s#-]+([A-Za-z0-9._/-]+)', page.text, flags=re.I)
@@ -147,9 +203,10 @@ def extract_code(page: FastProductPage) -> str:
 def extract_gtin(page: FastProductPage) -> str:
     product = _first_product(page)
     if product:
-        value = clean_gtin(product.get('gtin') or product.get('gtin13') or product.get('gtin14') or '')
-        if value:
-            return value
+        for key in ['gtin', 'gtin8', 'gtin12', 'gtin13', 'gtin14', 'ean']:
+            value = clean_gtin(product.get(key) or '')
+            if value:
+                return value
     match = re.search(r'(?:GTIN|EAN|Código de barras|Codigo de barras)[:\s#-]+([0-9 .-]{8,20})', page.text, flags=re.I)
     if match:
         return clean_gtin(match.group(1))
