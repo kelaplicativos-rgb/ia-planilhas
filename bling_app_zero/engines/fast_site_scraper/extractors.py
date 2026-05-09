@@ -94,7 +94,7 @@ def extract_stock(page: FastProductPage) -> str:
     if any(normalize_key(term) in availability for term in OUT_STOCK_TERMS):
         return '0'
 
-    real_stock = detect_real_stock(page.html, page.text)
+    real_stock = detect_real_stock(page.html, page.text, url=page.url)
     if real_stock != '':
         return real_stock
 
