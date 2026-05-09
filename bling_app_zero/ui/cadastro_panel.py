@@ -39,6 +39,7 @@ from bling_app_zero.ui.smart_upload import render_smart_upload_box
 
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
+DEFAULT_PROFIT_PERCENT = 50.0
 
 PRICE_TARGET_ALIASES = [
     'Preço de venda',
@@ -480,7 +481,7 @@ def render_cadastro_panel() -> None:
             if desconto_detectado > 0:
                 st.info(f'Desconto/comissão detectado: {desconto_detectado:.2f}%')
             c1, c2, c3, c4, c5 = st.columns(5)
-            margem = c1.number_input('Lucro %', min_value=0.0, value=30.0, step=1.0, key=f'cadastro_margem_{origem_signature}')
+            margem = c1.number_input('Lucro %', min_value=0.0, value=DEFAULT_PROFIT_PERCENT, step=1.0, key=f'cadastro_margem_{origem_signature}')
             imposto = c2.number_input('Impostos %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_imposto_{origem_signature}')
             taxa = c3.number_input('Taxas %', min_value=0.0, value=0.0, step=1.0, key=f'cadastro_taxa_{origem_signature}')
             desconto = c4.number_input('Desconto %', min_value=0.0, step=1.0, key='cadastro_desconto_comissao')
