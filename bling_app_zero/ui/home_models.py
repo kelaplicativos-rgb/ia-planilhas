@@ -74,16 +74,8 @@ def _render_loaded_summary() -> None:
 
 
 def render_home_bling_models() -> None:
-    st.markdown(
-        """
-        <section class="bling-flow-card">
-            <div class="bling-flow-card-kicker">Base do fluxo</div>
-            <h2 class="bling-flow-card-title">Envie o modelo do Bling</h2>
-            <p class="bling-flow-card-text">O sistema usa esse modelo para saber exatamente quais colunas precisa preencher no cadastro ou no estoque.</p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown('### Modelo do Bling')
+    st.caption('Envie o modelo de cadastro, estoque ou ambos. Ele define as colunas que serão preenchidas.')
 
     upload = render_model_upload_box(
         title='Modelos do Bling',
