@@ -150,21 +150,21 @@ def _apply_ai_to_session_mapping(
 ) -> None:
     result = apply_ai_mapping_assist(df_source, target_columns, current_mapping, only_uncertain=True)
     if not result.enabled:
-        st.warning('IA de mapeamento não configurada. Adicione OPENAI_API_KEY nos secrets do Streamlit.')
+        st.warning('Assistência com IA não configurada. Para usar, adicione OPENAI_API_KEY nos secrets do Streamlit.')
         return
     if result.applied <= 0:
-        st.info('A IA não encontrou sugestões seguras para aplicar.')
+        st.info('A IA não encontrou ajustes seguros para aplicar agora.')
         return
     st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
     _clear_mapping_widgets(mapping_key)
     st.session_state.pop(f'{mapping_key}__order', None)
-    st.success(f'IA aplicou {result.applied} sugestão(ões) validadas pelo motor local.')
+    st.success(f'IA ajustou {result.applied} campo(s) com segurança.')
     st.rerun()
 
 
 def _render_ai_button(df_source: pd.DataFrame, target_columns: list[str], current_mapping: dict[str, str], mapping_key: str, label: str) -> None:
     if not ai_mapping_enabled():
-        st.caption('IA opcional inativa: configure OPENAI_API_KEY nos secrets para usar assistência GPT nos pendentes.')
+        st.caption('IA opcional inativa. Configure OPENAI_API_KEY para receber ajuda nos campos em dúvida.')
         return
     if st.button(label, use_container_width=True):
         _apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
@@ -214,12 +214,12 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     if mapping_key not in st.session_state:
         st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
         st.session_state.pop(order_key, None)
-    st.markdown('#### 2. Conferir colunas')
-    st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
-    with st.expander('Ver origem', expanded=False):
+    st.markdown('#### 2. Conferir campos do cadastro')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto ou vazio confirmado')
+    with st.expander('Ver origem antes de preencher', expanded=False):
         preview_df('Origem para conferir', df_source)
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA nos pendentes')
+    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA nos campos em dúvida')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
@@ -236,13 +236,13 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
-        st.warning('A mesma coluna foi usada mais de uma vez: ' + ', '.join(duplicated))
+        st.warning('A mesma coluna da origem foi usada em mais de um campo: ' + ', '.join(duplicated))
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar cadastro', use_container_width=True):
+        if st.button('Atualizar prévia do cadastro', use_container_width=True):
             st.rerun()
     with col_b:
-        if st.button('Remapear com motor inteligente', use_container_width=True):
+        if st.button('Refazer sugestões automáticas', use_container_width=True):
             st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
@@ -268,12 +268,12 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
                 auto_mapping[target] = ''
         st.session_state[mapping_key] = auto_mapping
         st.session_state.pop(order_key, None)
-    st.markdown('##### Conferir estoque')
-    st.caption('🔴 pendente · 🟡 revisar · 🟢 seguro/vazio resolvido')
+    st.markdown('##### Conferir campos do estoque')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto ou vazio confirmado')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Usar IA no estoque pendente')
+    _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA no estoque')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     edited_mapping: dict[str, str] = {}
@@ -286,7 +286,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
                 render_mapping_title('🟢 ' + target)
                 st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual', label_visibility='collapsed')
             edited_mapping[target] = ''
-            edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'score': 100, 'order': 2}
+            edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': 'pronto', 'score': 100, 'order': 2}
             continue
         selected, info_after = _render_mapping_select(df_source, target, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
@@ -301,13 +301,13 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
-        st.warning('A mesma coluna foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
+        st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar estoque', use_container_width=True):
+        if st.button('Atualizar prévia do estoque', use_container_width=True):
             st.rerun()
     with col_b:
-        if st.button('Remapear estoque inteligente', use_container_width=True):
+        if st.button('Refazer sugestões do estoque', use_container_width=True):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
@@ -320,11 +320,11 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Estoque')
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Anexe o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
+        st.info('Envie o modelo de estoque no passo inicial para gerar também o CSV de estoque.')
         st.session_state.pop('df_final_estoque_from_cadastro', None)
         st.session_state.pop('mapping_estoque_from_cadastro', None)
         return
-    st.success('Modelo de estoque detectado.')
+    st.success('Modelo de estoque encontrado. Você também pode gerar o CSV de estoque com esta mesma origem.')
     deposito = st.text_input('Depósito', value='Não definido', key='cadastro_deposito_estoque_mesma_origem')
     render_manual_stock_mapping(df_source, df_modelo_estoque, deposito)
     mapping_estoque = st.session_state.get('mapping_estoque_from_cadastro', {})
