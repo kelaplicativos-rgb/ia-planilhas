@@ -55,7 +55,7 @@ def inject_clean_home_css() -> None:
         .bling-upload-caption {
             box-sizing: border-box !important;
             max-width: 100% !important;
-            overflow-wrap: anywhere !important;
+            overflow-wrap: normal !important;
             word-break: normal !important;
         }
 
@@ -71,13 +71,14 @@ def inject_clean_home_css() -> None:
         }
         .bling-hero-title {
             font-size: clamp(1.32rem, 4vw, 2rem);
-            line-height: 1.16;
+            line-height: 1.20;
             font-weight: 900;
             margin: 0 0 6px 0;
+            letter-spacing: -0.006em;
         }
         .bling-hero-subtitle {
             font-size: clamp(0.90rem, 2.4vw, 1rem);
-            line-height: 1.36;
+            line-height: 1.42;
             color: var(--bling-muted);
             margin: 0 auto;
             max-width: 820px;
@@ -115,18 +116,19 @@ def inject_clean_home_css() -> None:
         }
         .bling-home-title {
             font-size: clamp(1.20rem, 3.6vw, 1.62rem);
-            line-height: 1.18;
-            font-weight: 950;
+            line-height: 1.22;
+            font-weight: 920;
             margin: 0 auto 8px auto;
             color: var(--bling-text);
             max-width: 720px;
+            letter-spacing: -0.004em;
         }
         .bling-home-text {
-            max-width: 620px;
+            max-width: 640px;
             margin: 0 auto 14px auto;
             color: var(--bling-muted);
             font-size: 0.94rem;
-            line-height: 1.42;
+            line-height: 1.46;
         }
         .bling-home-mini-steps {
             display: grid;
@@ -146,14 +148,14 @@ def inject_clean_home_css() -> None:
         .bling-home-mini-step strong {
             display: block;
             font-size: 0.80rem;
-            line-height: 1.16;
+            line-height: 1.20;
             margin-bottom: 3px;
             color: rgba(17, 24, 39, 0.92);
         }
         .bling-home-mini-step span {
             display: block;
             font-size: 0.72rem;
-            line-height: 1.16;
+            line-height: 1.20;
             color: rgba(49, 51, 63, 0.62);
         }
         .bling-home-button-center {
@@ -164,13 +166,13 @@ def inject_clean_home_css() -> None:
         div[data-testid="stVerticalBlock"]:has(.bling-home-button-center) .stButton > button {
             width: 100% !important;
             min-height: 46px !important;
-            font-weight: 850 !important;
+            font-weight: 820 !important;
             border-radius: 16px !important;
         }
 
         .bling-step-title {
             font-size: 1.14rem;
-            line-height: 1.22;
+            line-height: 1.28;
             font-weight: 850;
             margin: 10px 0 5px 0;
             clear: both;
@@ -178,7 +180,7 @@ def inject_clean_home_css() -> None:
         .bling-muted {
             color: var(--bling-muted);
             font-size: 0.92rem;
-            line-height: 1.34;
+            line-height: 1.42;
             margin: 0 0 0.62rem 0;
             clear: both;
         }
@@ -188,19 +190,19 @@ def inject_clean_home_css() -> None:
             background: rgba(240, 242, 246, 0.72);
             color: rgba(49, 51, 63, 0.76);
             font-size: 0.88rem;
-            line-height: 1.32;
+            line-height: 1.38;
             margin: 7px 0 10px 0;
         }
         .bling-upload-title {
             font-size: 1.10rem;
             font-weight: 850;
             margin: 9px 0 3px 0;
-            line-height: 1.22;
+            line-height: 1.28;
         }
         .bling-upload-caption {
             color: rgba(49, 51, 63, 0.62);
             font-size: 0.88rem;
-            line-height: 1.30;
+            line-height: 1.36;
             margin: 0 0 7px 0;
         }
 
@@ -233,7 +235,7 @@ def inject_clean_home_css() -> None:
             min-height: 44px;
             padding: 0.48rem 0.72rem;
             font-size: 0.95rem;
-            line-height: 1.22;
+            line-height: 1.24;
             white-space: normal;
         }
         div[data-testid="stFileUploader"] section {
@@ -243,12 +245,12 @@ def inject_clean_home_css() -> None:
         }
         div[data-testid="stFileUploader"] section p {
             font-size: 0.86rem !important;
-            line-height: 1.22 !important;
+            line-height: 1.24 !important;
             margin-bottom: 0.15rem !important;
         }
         div[data-testid="stFileUploader"] small {
             font-size: 0.74rem !important;
-            line-height: 1.18 !important;
+            line-height: 1.20 !important;
         }
         div[data-testid="stExpander"] details {
             border-radius: 14px !important;
@@ -286,12 +288,13 @@ def inject_clean_home_css() -> None:
             }
             .bling-hero-title {
                 font-size: 1.17rem;
-                line-height: 1.18;
+                line-height: 1.24;
                 margin-bottom: 5px;
+                letter-spacing: normal;
             }
             .bling-hero-subtitle {
                 font-size: 0.86rem;
-                line-height: 1.34;
+                line-height: 1.42;
             }
             .bling-home-card {
                 width: 100%;
@@ -306,12 +309,12 @@ def inject_clean_home_css() -> None:
             }
             .bling-home-title {
                 font-size: 1.16rem;
-                line-height: 1.18;
+                line-height: 1.24;
                 margin-bottom: 6px;
             }
             .bling-home-text {
                 font-size: 0.84rem;
-                line-height: 1.34;
+                line-height: 1.42;
                 margin-bottom: 11px;
             }
             .bling-home-mini-steps {
@@ -336,12 +339,12 @@ def inject_clean_home_css() -> None:
             }
             .bling-step-title {
                 font-size: 1.08rem;
-                line-height: 1.22;
+                line-height: 1.28;
                 margin: 0.62rem 0 0.18rem 0;
             }
             .bling-muted {
                 font-size: 0.86rem;
-                line-height: 1.32;
+                line-height: 1.42;
                 margin: 0 0 0.62rem 0;
             }
             .bling-compact-note {
@@ -349,16 +352,16 @@ def inject_clean_home_css() -> None:
                 margin: 0.45rem 0 0.58rem 0;
                 border-radius: 12px;
                 font-size: 0.84rem;
-                line-height: 1.30;
+                line-height: 1.38;
             }
             .bling-upload-title {
                 font-size: 1rem;
-                line-height: 1.22;
+                line-height: 1.28;
                 margin: 0.55rem 0 0.18rem 0;
             }
             .bling-upload-caption {
                 font-size: 0.82rem;
-                line-height: 1.28;
+                line-height: 1.36;
                 margin: 0 0 0.45rem 0;
             }
             div[data-testid="stVerticalBlock"] {
@@ -368,7 +371,7 @@ def inject_clean_home_css() -> None:
                 gap: 0.42rem !important;
             }
             div[data-testid="stMarkdownContainer"] p {
-                line-height: 1.30 !important;
+                line-height: 1.36 !important;
                 margin-bottom: 0.35rem !important;
             }
             div[role="radiogroup"] label {
@@ -386,9 +389,9 @@ def inject_clean_home_css() -> None:
             div[role="radiogroup"] label span,
             div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
                 font-size: 0.94rem !important;
-                line-height: 1.22 !important;
+                line-height: 1.26 !important;
                 white-space: normal !important;
-                overflow-wrap: anywhere !important;
+                overflow-wrap: normal !important;
                 margin: 0 !important;
             }
             div[data-testid="stFileUploader"] section {
@@ -398,21 +401,21 @@ def inject_clean_home_css() -> None:
             }
             div[data-testid="stFileUploader"] section p {
                 font-size: 0.80rem !important;
-                line-height: 1.20 !important;
+                line-height: 1.24 !important;
             }
             div[data-testid="stFileUploader"] small {
                 font-size: 0.70rem !important;
-                line-height: 1.16 !important;
+                line-height: 1.20 !important;
             }
             div[data-testid="stFileUploader"] button {
                 min-height: 36px !important;
                 padding: 0.32rem 0.58rem !important;
                 font-size: 0.82rem !important;
-                line-height: 1.12 !important;
+                line-height: 1.18 !important;
             }
             div[data-testid="stExpander"] details summary p {
                 font-size: 0.88rem !important;
-                line-height: 1.22 !important;
+                line-height: 1.26 !important;
             }
             div[data-testid="stExpander"] details summary {
                 padding: 0.48rem 0.58rem !important;
@@ -422,7 +425,7 @@ def inject_clean_home_css() -> None:
                 min-height: 46px !important;
                 padding: 0.46rem 0.68rem !important;
                 font-size: 0.96rem !important;
-                line-height: 1.20 !important;
+                line-height: 1.24 !important;
                 border-radius: 14px !important;
                 white-space: normal !important;
             }
@@ -505,7 +508,7 @@ def render_compact_hero() -> None:
         """
         <div class="bling-hero">
             <div class="bling-hero-title">🚀 IA Planilhas → Bling</div>
-            <p class="bling-hero-subtitle">Busque produtos ou envie arquivos e gere planilhas no padrão Bling, prontas para importar.</p>
+            <p class="bling-hero-subtitle">Transforme site, planilha, PDF ou XML em CSV pronto para cadastro ou estoque no Bling.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -518,15 +521,15 @@ def render_home_start_card() -> None:
         <div class="bling-home-center">
             <div class="bling-home-card">
                 <div class="bling-home-pill">● Primeiro passo</div>
-                <div class="bling-home-title">Comece pelos modelos do Bling</div>
+                <div class="bling-home-title">Comece pelo modelo certo do Bling</div>
                 <div class="bling-home-text">
-                    Anexe o modelo oficial uma vez. Ele define as colunas que serão preenchidas em cadastro, estoque, site, planilha, PDF ou XML.
+                    Envie o modelo oficial uma vez. A partir dele, o sistema sabe exatamente quais colunas preencher em cadastro ou estoque.
                 </div>
                 <div class="bling-home-mini-steps">
-                    <div class="bling-home-mini-step"><strong>1. Modelos</strong><span>base oficial</span></div>
-                    <div class="bling-home-mini-step"><strong>2. Precificar</strong><span>sim ou não</span></div>
+                    <div class="bling-home-mini-step"><strong>1. Modelo</strong><span>padrão Bling</span></div>
+                    <div class="bling-home-mini-step"><strong>2. Preço</strong><span>opcional</span></div>
                     <div class="bling-home-mini-step"><strong>3. Origem</strong><span>site ou arquivo</span></div>
-                    <div class="bling-home-mini-step"><strong>4. Baixar</strong><span>CSV final</span></div>
+                    <div class="bling-home-mini-step"><strong>4. CSV</strong><span>pronto para importar</span></div>
                 </div>
             </div>
         </div>
@@ -542,15 +545,15 @@ def render_home_pricing_card() -> None:
         <div class="bling-home-center">
             <div class="bling-home-card">
                 <div class="bling-home-pill">● Segundo passo</div>
-                <div class="bling-home-title">Você vai precificar os produtos?</div>
+                <div class="bling-home-title">Quer calcular o preço de venda agora?</div>
                 <div class="bling-home-text">
-                    Escolha agora para o sistema já abrir o próximo fluxo com a calculadora preparada. Você ainda poderá mudar isso depois.
+                    Configure lucro, taxas e valores fixos. O preço calculado pode entrar automaticamente no cadastro dos produtos.
                 </div>
                 <div class="bling-home-mini-steps">
-                    <div class="bling-home-mini-step"><strong>Sim</strong><span>calcular venda</span></div>
-                    <div class="bling-home-mini-step"><strong>Não</strong><span>usar preço origem</span></div>
-                    <div class="bling-home-mini-step"><strong>Depois</strong><span>pode alterar</span></div>
-                    <div class="bling-home-mini-step"><strong>Seguro</strong><span>sem carregar motor</span></div>
+                    <div class="bling-home-mini-step"><strong>Lucro</strong><span>margem desejada</span></div>
+                    <div class="bling-home-mini-step"><strong>Custos</strong><span>taxas e impostos</span></div>
+                    <div class="bling-home-mini-step"><strong>Flexível</strong><span>pode mudar depois</span></div>
+                    <div class="bling-home-mini-step"><strong>Opcional</strong><span>seguir sem cálculo</span></div>
                 </div>
             </div>
         </div>
