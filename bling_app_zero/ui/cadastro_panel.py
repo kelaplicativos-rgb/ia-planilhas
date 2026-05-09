@@ -319,7 +319,7 @@ def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Dat
     st.markdown('#### Estoque')
 
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Anexe o modelo de estoque para gerar também a planilha de estoque.')
+        st.info('Anexe o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
         st.session_state.pop('df_final_estoque_from_cadastro', None)
         st.session_state.pop('mapping_estoque_from_cadastro', None)
         return
@@ -345,24 +345,16 @@ def _render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Dat
 
 def _render_source_upload(df_origem_site: pd.DataFrame | None):
     home_has_models = get_home_cadastro_model() is not None or get_home_estoque_model() is not None
+    allow_model_upload = not home_has_models
+
     if isinstance(df_origem_site, pd.DataFrame):
         st.success('Planilha criada pelo site carregada. Continue o fluxo normalmente.')
-        if home_has_models:
-            st.success('Modelos do Bling carregados na home.')
-            with st.expander('Trocar ou complementar modelos', expanded=False):
-                return render_smart_upload_box(
-                    title='Modelos extras',
-                    operation='cadastro',
-                    key='smart_upload_cadastro',
-                    allow_model=True,
-                    required_model=False,
-                    accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
-                )
+        st.caption('Nenhum modelo será pedido novamente neste fluxo.')
         return render_smart_upload_box(
-            title='Modelos extras',
+            title='Arquivo complementar do fornecedor',
             operation='cadastro',
             key='smart_upload_cadastro',
-            allow_model=True,
+            allow_model=allow_model_upload,
             required_model=False,
             accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
         )
@@ -370,12 +362,12 @@ def _render_source_upload(df_origem_site: pd.DataFrame | None):
     st.markdown('### Enviar arquivo do fornecedor')
     st.caption('Anexe planilha, PDF ou XML com os produtos.')
     if home_has_models:
-        st.success('Modelos do Bling carregados na home. Agora envie só o arquivo do fornecedor.')
+        st.success('Modelos do Bling carregados no passo inicial. Agora envie somente o arquivo do fornecedor.')
     return render_smart_upload_box(
         title='Arquivos do fornecedor',
         operation='cadastro',
         key='smart_upload_cadastro',
-        allow_model=True,
+        allow_model=allow_model_upload,
         required_model=False,
         accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
     )
