@@ -24,6 +24,8 @@ def inject_unified_light_layout() -> None:
             --bling-radius-sm: 12px;
             --bling-flow-gap: 0.82rem;
             --bling-section-gap: 1.08rem;
+            --bling-primary: #b91c1c;
+            --bling-primary-dark: #991b1b;
         }
 
         html,
@@ -50,7 +52,7 @@ def inject_unified_light_layout() -> None:
             width: min(100%, 1006px) !important;
             max-width: 1006px !important;
             margin: 0 auto !important;
-            padding: 4.7rem 0.82rem 2rem 0.82rem !important;
+            padding: 4.7rem 0.82rem 1.4rem 0.82rem !important;
             box-sizing: border-box !important;
         }
 
@@ -59,9 +61,9 @@ def inject_unified_light_layout() -> None:
             border-radius: 24px !important;
             background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(248,250,252,0.84)) !important;
             box-shadow: var(--bling-shadow) !important;
-            padding: 2.65rem 0.85rem 1.3rem 0.85rem !important;
-            min-height: calc(100vh - 8.2rem) !important;
-            overflow: hidden !important;
+            padding: 2.1rem 0.85rem 1.15rem 0.85rem !important;
+            min-height: auto !important;
+            overflow: visible !important;
         }
 
         .bling-hero {
@@ -84,6 +86,17 @@ def inject_unified_light_layout() -> None:
             margin: 0 0 7px 0 !important;
             overflow-wrap: normal !important;
             word-break: normal !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 0.48rem !important;
+            flex-wrap: wrap !important;
+        }
+
+        .bling-hero-icon {
+            display: inline-flex !important;
+            align-items: center !important;
+            line-height: 1 !important;
         }
 
         .bling-hero-subtitle {
@@ -114,7 +127,52 @@ def inject_unified_light_layout() -> None:
         .bling-home-card {
             width: min(100%, 760px) !important;
             padding: 18px !important;
-            margin: 0 auto 0.95rem auto !important;
+            margin: 0 auto 0.65rem auto !important;
+        }
+
+        .bling-home-card-start {
+            text-align: center !important;
+        }
+
+        .bling-home-pill {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 0.35rem !important;
+        }
+
+        .bling-home-pill::before {
+            content: "";
+            display: inline-block;
+            width: 0.45rem;
+            height: 0.45rem;
+            border-radius: 999px;
+            background: var(--bling-primary);
+            flex: 0 0 auto;
+        }
+
+        .bling-home-mini-step strong,
+        .bling-home-mini-step span {
+            white-space: normal !important;
+            overflow-wrap: normal !important;
+            word-break: keep-all !important;
+        }
+
+        .bling-primary-cta-anchor + div .stButton > button,
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button {
+            background: linear-gradient(135deg, var(--bling-primary), var(--bling-primary-dark)) !important;
+            border: 1px solid rgba(127, 29, 29, 0.25) !important;
+            color: #ffffff !important;
+            box-shadow: 0 12px 26px rgba(185, 28, 28, 0.22) !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.01em !important;
+        }
+
+        .bling-primary-cta-anchor + div .stButton > button:hover,
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 16px 32px rgba(185, 28, 28, 0.28) !important;
+            border-color: rgba(127, 29, 29, 0.42) !important;
         }
 
         div[data-testid="column"] {
@@ -279,33 +337,35 @@ def inject_unified_light_layout() -> None:
 
         @media (max-width: 760px) {
             :root {
-                --bling-flow-gap: 0.72rem;
-                --bling-section-gap: 0.96rem;
+                --bling-flow-gap: 0.6rem;
+                --bling-section-gap: 0.84rem;
             }
 
             .main .block-container,
             .block-container {
                 width: 100% !important;
                 max-width: 100vw !important;
-                padding: 3.5rem 0.62rem 1rem 0.62rem !important;
+                padding: 3.35rem 0.58rem 0.85rem 0.58rem !important;
             }
 
             .main .block-container > div:first-child {
                 border-radius: 18px !important;
-                padding: 0.95rem 0.66rem 1rem 0.66rem !important;
-                min-height: calc(100vh - 5rem) !important;
+                padding: 0.78rem 0.58rem 0.82rem 0.58rem !important;
+                min-height: auto !important;
+                overflow: visible !important;
             }
 
             .bling-hero {
                 border-radius: 14px !important;
-                padding: 12px 12px !important;
-                margin-bottom: 0.74rem !important;
+                padding: 12px 11px !important;
+                margin-bottom: 0.62rem !important;
             }
 
             .bling-hero-title {
                 font-size: 1.22rem !important;
                 letter-spacing: normal !important;
                 line-height: 1.22 !important;
+                gap: 0.36rem !important;
             }
 
             .bling-hero-subtitle {
@@ -314,8 +374,17 @@ def inject_unified_light_layout() -> None:
             }
 
             .bling-home-card {
-                padding: 14px 12px !important;
+                padding: 14px 11px !important;
                 border-radius: 15px !important;
+                margin-bottom: 0.45rem !important;
+            }
+
+            .bling-home-mini-steps {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            }
+
+            .bling-home-mini-step {
+                min-height: 54px !important;
             }
 
             div[data-testid="column"] {
@@ -330,8 +399,8 @@ def inject_unified_light_layout() -> None:
             div[data-testid="stMarkdownContainer"] h5 {
                 letter-spacing: normal !important;
                 line-height: 1.26 !important;
-                margin-top: 0.92rem !important;
-                margin-bottom: 0.44rem !important;
+                margin-top: 0.82rem !important;
+                margin-bottom: 0.38rem !important;
             }
 
             div[data-testid="stMarkdownContainer"] p,
@@ -343,6 +412,31 @@ def inject_unified_light_layout() -> None:
             div[data-testid="stFileUploader"] section {
                 min-height: 88px !important;
                 padding: 13px !important;
+            }
+        }
+
+        @media (max-width: 390px) {
+            .main .block-container,
+            .block-container {
+                padding-left: 0.48rem !important;
+                padding-right: 0.48rem !important;
+            }
+
+            .main .block-container > div:first-child {
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+            }
+
+            .bling-home-mini-steps {
+                gap: 0.42rem !important;
+            }
+
+            .bling-home-mini-step strong {
+                font-size: 0.72rem !important;
+            }
+
+            .bling-home-mini-step span {
+                font-size: 0.66rem !important;
             }
         }
         </style>
