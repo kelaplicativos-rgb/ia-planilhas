@@ -126,9 +126,10 @@ def render_model_upload_box(
         st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
 
     st.caption('Toque em procurar arquivos e selecione a planilha modelo oficial do Bling.')
+    st.caption('No Android, se o arquivo aparecer apagado, toque no filtro do gerenciador e escolha "Todos os arquivos".')
     files = st.file_uploader(
         'Procurar arquivos dos modelos do Bling',
-        type=MODEL_SPREADSHEET_TYPES,
+        type=None,
         accept_multiple_files=True,
         key=key,
         help='Formatos aceitos: XLSX, XLS, CSV, XLSM e XLSB.',
@@ -145,6 +146,10 @@ def render_model_upload_box(
 
     if ignored_files:
         st.warning('Ignorado: ' + ', '.join(_file_name(file) for file in ignored_files))
+
+    if not supported_files:
+        st.error('Nenhum modelo compatível. Use XLSX, XLS, CSV, XLSM ou XLSB.')
+        return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
     loaded = [(file, _safe_read(file)) for file in supported_files]
     cadastro_file, cadastro_df = _pick_cadastro(loaded)
