@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.layout import render_compact_note
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
@@ -62,44 +61,28 @@ def has_home_models() -> bool:
     return get_home_cadastro_model() is not None or get_home_estoque_model() is not None
 
 
-def _render_instructions() -> None:
-    with st.expander('Onde encontro o modelo no Bling?', expanded=False):
-        st.markdown(
-            """
-            1. Entre no **Bling**.
-            2. Abra a área de **Produtos**.
-            3. Vá em **Importar / Exportar**.
-            4. Baixe o modelo de **Cadastro de produtos** ou de **Atualização de estoque**.
-            5. Volte aqui e envie o arquivo.
-            """
-        )
-        st.caption('Use o modelo oficial para o sistema preencher as colunas certas e evitar erro na importação.')
-
-
 def _render_loaded_summary() -> None:
     cadastro = get_home_cadastro_model()
     estoque = get_home_estoque_model()
     parts: list[str] = []
     if isinstance(cadastro, pd.DataFrame):
-        parts.append(f'Cadastro: {len(cadastro.columns)} coluna(s)')
+        parts.append('Cadastro')
     if isinstance(estoque, pd.DataFrame):
-        parts.append(f'Estoque: {len(estoque.columns)} coluna(s)')
+        parts.append('Estoque')
     if parts:
-        st.success('Modelo pronto para uso · ' + ' · '.join(parts))
+        st.success('Modelos carregados: ' + ' + '.join(parts))
 
 
 def render_home_bling_models() -> None:
-    st.markdown('### 1. Modelos do Bling')
-    st.caption('Envie o modelo oficial uma vez. Depois o sistema usa essa base em todos os próximos passos.')
-    render_compact_note('Quanto melhor o modelo, mais limpo sai o CSV final para importar no Bling.')
-    _render_instructions()
+    st.markdown('### Modelos do Bling')
+    st.caption('Envie o modelo de cadastro, estoque ou os dois juntos.')
 
     upload = render_model_upload_box(
-        title='Enviar modelo oficial',
+        title='Enviar modelos',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
-        caption='Pode enviar o modelo de cadastro, o modelo de estoque ou os dois juntos.',
+        caption='Arquivos aceitos: XLSX, XLS, CSV, XLSM ou XLSB.',
     )
 
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
