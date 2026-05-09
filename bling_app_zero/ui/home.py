@@ -24,6 +24,14 @@ HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
 GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
 GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
+FLOW_ACTIVE_KEY = 'home_slim_active_panel'
+
+
+def _clear_active_panel_state(clear_label: bool = True) -> None:
+    deactivate_panel()
+    st.session_state.pop(FLOW_ACTIVE_KEY, None)
+    if clear_label:
+        st.session_state.pop('selected_flow_label', None)
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -59,7 +67,7 @@ def _activate_origin_panel(origin: str) -> None:
 
     st.session_state['home_slim_flow_operation'] = operation
     st.session_state['home_slim_flow_origin'] = origin
-    st.session_state['home_slim_active_panel'] = active_panel
+    st.session_state[FLOW_ACTIVE_KEY] = active_panel
     st.session_state['operacao_final'] = operation
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = origin
@@ -117,6 +125,8 @@ def _set_home_stage(stage: str) -> None:
     if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
         stage = STAGE_START
     st.session_state[HOME_STAGE_KEY] = stage
+    if stage in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
+        _clear_active_panel_state(clear_label=True)
 
 
 def _centered_button(label: str, key: str, disabled: bool = False) -> bool:
@@ -228,8 +238,6 @@ def _render_home_intro() -> None:
 
 def _render_back_home() -> None:
     if _centered_button('← Voltar para origem dos dados', key='home_back_to_origin_choice'):
-        deactivate_panel()
-        st.session_state.pop('selected_flow_label', None)
         _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
         st.rerun()
 
@@ -238,7 +246,12 @@ def render_home() -> None:
     inject_app_layout()
     render_compact_hero()
 
+    stage = _current_home_stage()
     active_panel = get_active_panel()
+    if stage in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM} and not active_panel:
+        _render_home_intro()
+        return
+
     if not active_panel:
         _render_home_intro()
         return
