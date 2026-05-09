@@ -18,6 +18,7 @@ HOME_STAGE_KEY = 'home_stage'
 STAGE_START = 'inicio'
 STAGE_MODELOS = 'modelos'
 STAGE_PRECIFICACAO = 'precificacao'
+STAGE_ORIGEM = 'origem'
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
@@ -51,16 +52,22 @@ def _preferred_operation_from_models() -> str:
     return 'cadastro'
 
 
-def _open_next_panel() -> None:
+def _activate_origin_panel(origin: str) -> None:
     operation = _preferred_operation_from_models()
+    origin = 'arquivo' if origin == 'arquivo' else 'site'
+    active_panel = f'{operation}_site' if origin == 'site' else operation
+
     st.session_state['home_slim_flow_operation'] = operation
-    st.session_state['home_slim_flow_origin'] = 'site'
-    st.session_state['home_slim_active_panel'] = f'{operation}_site'
+    st.session_state['home_slim_flow_origin'] = origin
+    st.session_state['home_slim_active_panel'] = active_panel
     st.session_state['operacao_final'] = operation
     st.session_state['tipo_operacao_final'] = operation
-    st.session_state['tipo_operacao_site'] = operation
-    st.session_state['origem_final'] = 'site'
-    st.session_state['selected_flow_label'] = 'Estoque por site' if operation == 'estoque' else 'Cadastro por site'
+    st.session_state['origem_final'] = origin
+    st.session_state['tipo_operacao_site'] = operation if origin == 'site' else ''
+
+    operation_label = 'Estoque' if operation == 'estoque' else 'Cadastro'
+    origin_label = 'site' if origin == 'site' else 'arquivo/planilha'
+    st.session_state['selected_flow_label'] = f'{operation_label} por {origin_label}'
 
 
 def _render_selected_flow_badge(active_panel: str) -> None:
@@ -98,7 +105,7 @@ def _has_home_models_strict() -> bool:
 
 def _current_home_stage() -> str:
     stage = str(st.session_state.get(HOME_STAGE_KEY) or '')
-    valid = {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO}
+    valid = {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}
     if stage in valid:
         return stage
     if _has_home_models_light():
@@ -107,7 +114,7 @@ def _current_home_stage() -> str:
 
 
 def _set_home_stage(stage: str) -> None:
-    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO}:
+    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
         stage = STAGE_START
     st.session_state[HOME_STAGE_KEY] = stage
 
@@ -161,15 +168,47 @@ def _render_pricing_choice_step() -> None:
     )
     if save_clicked:
         set_home_pricing_config(pricing_config)
-        _open_next_panel()
+        _set_home_stage(STAGE_ORIGEM)
         st.rerun()
     if no_pricing_clicked:
         disable_home_pricing()
-        _open_next_panel()
+        _set_home_stage(STAGE_ORIGEM)
         st.rerun()
 
     if _centered_button('← Voltar aos modelos', key='home_pricing_back'):
         _set_home_stage(STAGE_MODELOS)
+        st.rerun()
+
+
+def _render_origin_choice_step() -> None:
+    operation = _preferred_operation_from_models()
+    operation_label = 'atualização de estoque' if operation == 'estoque' else 'cadastro de produtos'
+    st.markdown(
+        f"""
+        <section class="bling-flow-card">
+            <div class="bling-flow-card-kicker">Origem dos dados</div>
+            <h2 class="bling-flow-card-title">De onde vêm os produtos?</h2>
+            <p class="bling-flow-card-text">Escolha se você vai anexar a planilha/XML/PDF do fornecedor ou informar links para capturar os dados por site no fluxo de {html.escape(operation_label)}.</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    file_clicked, site_clicked = _centered_two_buttons(
+        '📎 Anexar planilha/XML/PDF',
+        'home_origin_choose_file',
+        '🌐 Buscar por site/link',
+        'home_origin_choose_site',
+    )
+    if file_clicked:
+        _activate_origin_panel('arquivo')
+        st.rerun()
+    if site_clicked:
+        _activate_origin_panel('site')
+        st.rerun()
+
+    if _centered_button('← Voltar à precificação', key='home_origin_back_pricing'):
+        _set_home_stage(STAGE_PRECIFICACAO)
         st.rerun()
 
 
@@ -181,14 +220,17 @@ def _render_home_intro() -> None:
     if stage == STAGE_PRECIFICACAO:
         _render_pricing_choice_step()
         return
+    if stage == STAGE_ORIGEM:
+        _render_origin_choice_step()
+        return
     _render_home_start()
 
 
 def _render_back_home() -> None:
-    if _centered_button('← Voltar para modelos', key='home_back_to_light_start'):
+    if _centered_button('← Voltar para origem dos dados', key='home_back_to_origin_choice'):
         deactivate_panel()
         st.session_state.pop('selected_flow_label', None)
-        _set_home_stage(STAGE_MODELOS if _has_home_models_light() else STAGE_START)
+        _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
         st.rerun()
 
 
