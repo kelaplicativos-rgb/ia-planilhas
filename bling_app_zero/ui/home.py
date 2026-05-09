@@ -13,6 +13,7 @@ from bling_app_zero.ui.clean_layout import (
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.global_layout_guard import inject_global_layout_guard
 from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
+from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 
 HOME_STAGE_KEY = 'home_stage'
@@ -153,20 +154,20 @@ def _render_home_models_step() -> None:
 
 def _render_pricing_choice_step() -> None:
     render_home_pricing_card()
-    yes_clicked, no_clicked = _centered_two_buttons(
-        'Sim, vou precificar',
-        'home_pricing_yes',
-        'Não, seguir sem precificar',
-        'home_pricing_no',
+    pricing_config = render_home_pricing_config_form()
+
+    save_clicked, no_pricing_clicked = _centered_two_buttons(
+        'Salvar precificação e continuar',
+        'home_pricing_save_continue',
+        'Seguir sem precificar',
+        'home_pricing_disable_continue',
     )
-    if yes_clicked:
-        st.session_state[HOME_PRICING_KEY] = True
-        st.session_state['cadastro_preco_calculado_ativo'] = True
+    if save_clicked:
+        set_home_pricing_config(pricing_config)
         _set_home_stage(STAGE_ORIGEM)
         st.rerun()
-    if no_clicked:
-        st.session_state[HOME_PRICING_KEY] = False
-        st.session_state['cadastro_preco_calculado_ativo'] = False
+    if no_pricing_clicked:
+        disable_home_pricing()
         _set_home_stage(STAGE_ORIGEM)
         st.rerun()
 
@@ -182,9 +183,9 @@ def _render_home_origin_step() -> None:
     )
     pricing = st.session_state.get(HOME_PRICING_KEY)
     if pricing is True:
-        st.success('Precificação inicial marcada como SIM. A calculadora poderá ser usada no fluxo de cadastro.')
+        st.success('Precificação configurada. A calculadora usará esses valores no cadastro de produtos.')
     elif pricing is False:
-        st.info('Precificação inicial marcada como NÃO. O sistema seguirá com o preço da origem quando existir.')
+        st.info('Precificação desativada. O sistema seguirá com o preço da origem quando existir.')
     _inject_compact_middle_selector_css()
     render_flow_selector()
 
