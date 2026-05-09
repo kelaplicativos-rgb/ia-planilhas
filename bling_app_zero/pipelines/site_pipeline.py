@@ -30,7 +30,7 @@ def run_pipeline(
     _ = all_products
     selected_operation = _normalize_operation(operation)
     if progress_callback:
-        progress_callback({'stage': 'Iniciando', 'message': 'Preparando busca ao vivo...', 'progress': 0.02})
+        progress_callback({'stage': 'Preparando', 'message': 'Preparando a busca no fornecedor...', 'progress': 0.02})
 
     df_result = run_fast_site_scraper(
         raw_urls=raw_urls,
@@ -42,8 +42,8 @@ def run_pipeline(
     )
 
     if progress_callback:
-        progress_callback({'stage': 'Finalizando', 'message': 'Limpando dados para o padrão Bling...', 'progress': 0.96})
+        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados no padrão do Bling...', 'progress': 0.96})
     safe = sanitize_for_bling(df_result)
     if progress_callback:
-        progress_callback({'stage': 'Concluído', 'message': f'{len(safe)} produto(s) na planilha.', 'progress': 1.0})
+        progress_callback({'stage': 'Pronto', 'message': f'{len(safe)} produto(s) preparados na origem.', 'progress': 1.0})
     return safe
