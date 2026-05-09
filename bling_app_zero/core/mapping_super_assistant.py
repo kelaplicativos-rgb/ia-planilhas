@@ -41,12 +41,13 @@ FIELD_ALIASES = {
     ],
 }
 
-# Bloqueios só valem para tentativa de chute. Nome igual nunca será bloqueado.
 RISKY_TARGET_TERMS = [
     'altura', 'largura', 'profundidade', 'peso', 'comprimento', 'unidade', 'origem',
     'cest', 'ipi', 'classe enquadramento', 'cross docking', 'clonar dados', 'frete gratis',
     'frete grátis', 'garantia', 'condicao', 'condição', 'situacao', 'situação', 'tipo item',
 ]
+
+PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
 
 SAFE_CONSTANTS = {
     'clonar dados do pai': 'NÃO',
@@ -94,6 +95,7 @@ def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
     total = max(len(values), 1)
     return {
         'kind': infer_kind(column),
+        'name': column,
         'text': sum(1 for v in values if re.search(r'[A-Za-zÀ-ÿ]{3,}', v)) / total,
         'numeric': sum(1 for v in values if NUMBER_RE.match(v.replace(' ', ''))) / total,
         'price': sum(1 for v in values if PRICE_RE.search(v)) / total,
@@ -122,6 +124,13 @@ def _is_risky_target(target: str) -> bool:
     return any(term in key for term in RISKY_TARGET_TERMS)
 
 
+def _is_price_like_source(source: str, profile: dict[str, float | str]) -> bool:
+    source_key = normalize_key(source)
+    if str(profile.get('kind') or '') in {'preco_unitario', 'preco_custo'}:
+        return True
+    return any(normalize_key(term) in source_key for term in PRICE_SOURCE_TERMS)
+
+
 def _name_score(target: str, source: str, target_kind: str) -> int:
     target_key = normalize_key(target)
     source_key = normalize_key(source)
@@ -140,7 +149,7 @@ def _name_score(target: str, source: str, target_kind: str) -> int:
     return score
 
 
-def _content_score(target_kind: str, profile: dict[str, float | str], exact_match: bool = False) -> int:
+def _content_score(target_kind: str, source: str, profile: dict[str, float | str], exact_match: bool = False) -> int:
     if exact_match:
         return 80
 
@@ -168,7 +177,9 @@ def _content_score(target_kind: str, profile: dict[str, float | str], exact_matc
     if target_kind in {'preco_unitario', 'preco_custo'}:
         return int(max(price, numeric) * 80) if price >= 0.25 or numeric >= 0.70 else -80
     if target_kind == 'estoque':
-        return int(numeric * 80) if numeric >= 0.65 else -80
+        if _is_price_like_source(source, profile):
+            return -120
+        return int(numeric * 80) if numeric >= 0.65 and price < 0.35 else -80
     if target_kind == 'url':
         return int(url * 90) if url >= 0.45 else -80
     if target_kind == 'imagem':
@@ -200,7 +211,7 @@ def _best_candidate(df: pd.DataFrame, target: str, source_columns: list[str], us
             continue
         profile = _profile(df, source)
         exact = _is_exact_or_equivalent(target, source)
-        score = _name_score(target, source, target_kind) + _content_score(target_kind, profile, exact)
+        score = _name_score(target, source, target_kind) + _content_score(target_kind, source, profile, exact)
         if score > best.score:
             best = Candidate(source, score)
     return best
