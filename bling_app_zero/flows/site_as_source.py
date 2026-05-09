@@ -33,6 +33,22 @@ PLANILHA_MODEL_ESTOQUE_KEYS = [
 ]
 
 
+def _op_key(operation: str) -> str:
+    return _normalize_operation(operation)
+
+
+def _source_key(operation: str) -> str:
+    return f'{SITE_SOURCE_KEY}_{_op_key(operation)}'
+
+
+def _urls_key(operation: str) -> str:
+    return f'{SITE_SOURCE_URLS_KEY}_{_op_key(operation)}'
+
+
+def _columns_key(operation: str) -> str:
+    return f'{SITE_REQUESTED_COLUMNS_KEY}_{_op_key(operation)}'
+
+
 def _normalize_operation(operation: str | None) -> str:
     text = str(operation or '').strip().lower()
     if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
@@ -46,28 +62,52 @@ def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
+def _clear_output_cache_for_operation(operation: str) -> None:
+    normalized = _normalize_operation(operation)
+    keys = []
+    if normalized == 'cadastro':
+        keys.extend([
+            'df_final_cadastro',
+            'mapping_cadastro',
+            'mapping_confidence_cadastro',
+            'df_origem_cadastro_precificada',
+            'cadastro_preco_calculado_ativo',
+            'df_final_estoque_from_cadastro',
+            'mapping_estoque_from_cadastro',
+            'mapping_confidence_estoque_from_cadastro',
+        ])
+    else:
+        keys.extend([
+            'estoque_multi_outputs',
+            'df_final_estoque',
+            'mapping_estoque',
+        ])
+    for key in keys:
+        st.session_state.pop(key, None)
+
+
 def _mirror_as_uploaded_planilha(
     df: pd.DataFrame,
     operation: str,
     cadastro_model_df: pd.DataFrame | None = None,
     estoque_model_df: pd.DataFrame | None = None,
 ) -> None:
-    """Faz a origem gerada por site aparecer como se fosse planilha anexada.
-
-    BLINGFIX:
-    - cadastro por site espelha nas chaves gerais de origem/cadastro;
-    - estoque por site também espelha nas chaves específicas de estoque;
-    - modelo de estoque nunca é salvo como modelo de cadastro por engano.
-    """
     normalized = _normalize_operation(operation)
     copied_origin = _copy_df(df)
     origem = copied_origin if copied_origin is not None else pd.DataFrame()
 
-    for key in PLANILHA_SOURCE_KEYS:
-        st.session_state[key] = origem.copy().fillna('')
-    if normalized == 'estoque':
+    if normalized == 'cadastro':
+        for key in PLANILHA_SOURCE_KEYS:
+            st.session_state[key] = origem.copy().fillna('')
+        # Não deixa uma origem antiga de estoque parecer atual.
+        for key in ESTOQUE_SOURCE_KEYS:
+            st.session_state.pop(key, None)
+    else:
         for key in ESTOQUE_SOURCE_KEYS:
             st.session_state[key] = origem.copy().fillna('')
+        # O fluxo de estoque usa as chaves específicas. Evita cadastro antigo atravessar.
+        for key in PLANILHA_SOURCE_KEYS:
+            st.session_state.pop(key, None)
 
     cadastro_model = _copy_df(cadastro_model_df)
     estoque_model = _copy_df(estoque_model_df)
@@ -99,10 +139,15 @@ def set_site_source_as_planilha(
 ) -> None:
     """Registra a captura por site como origem equivalente a uma planilha carregada."""
     normalized = _normalize_operation(operation)
-    st.session_state[SITE_SOURCE_KEY] = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    source_df = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+    st.session_state[SITE_SOURCE_KEY] = source_df
+    st.session_state[_source_key(normalized)] = source_df.copy().fillna('')
     st.session_state[SITE_OPERATION_KEY] = normalized
     st.session_state[SITE_SOURCE_URLS_KEY] = raw_urls
+    st.session_state[_urls_key(normalized)] = raw_urls
     st.session_state[SITE_REQUESTED_COLUMNS_KEY] = list(requested_columns or [])
+    st.session_state[_columns_key(normalized)] = list(requested_columns or [])
 
     cadastro_model = _copy_df(cadastro_model_df)
     estoque_model = _copy_df(estoque_model_df)
@@ -120,8 +165,9 @@ def set_site_source_as_planilha(
     if operation_model is not None:
         st.session_state[SITE_OPERATION_MODEL_KEY] = operation_model
 
+    _clear_output_cache_for_operation(normalized)
     _mirror_as_uploaded_planilha(
-        df=df,
+        df=source_df,
         operation=normalized,
         cadastro_model_df=cadastro_model,
         estoque_model_df=estoque_model,
@@ -129,9 +175,14 @@ def set_site_source_as_planilha(
 
 
 def get_site_source_for_operation(operation: str) -> pd.DataFrame | None:
+    normalized = _normalize_operation(operation)
+    df = st.session_state.get(_source_key(normalized))
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.copy().fillna('')
+
     saved_operation = st.session_state.get(SITE_OPERATION_KEY)
     df = st.session_state.get(SITE_SOURCE_KEY)
-    if saved_operation != _normalize_operation(operation):
+    if saved_operation != normalized:
         return None
     if isinstance(df, pd.DataFrame) and not df.empty:
         return df.copy().fillna('')
@@ -158,28 +209,35 @@ def get_site_estoque_model() -> pd.DataFrame | None:
     return _copy_df(df) if isinstance(df, pd.DataFrame) else None
 
 
-def clear_site_source() -> None:
-    for key in [
-        SITE_SOURCE_KEY,
-        SITE_OPERATION_KEY,
-        SITE_SOURCE_URLS_KEY,
-        SITE_REQUESTED_COLUMNS_KEY,
-        SITE_CADASTRO_MODEL_KEY,
-        SITE_ESTOQUE_MODEL_KEY,
-        SITE_OPERATION_MODEL_KEY,
-        *PLANILHA_SOURCE_KEYS,
-        *ESTOQUE_SOURCE_KEYS,
-        *PLANILHA_MODEL_CADASTRO_KEYS,
-        *PLANILHA_MODEL_ESTOQUE_KEYS,
-        'origem_dados',
-        'origem_tipo',
-        'origem_planilha_via_site',
-        'site_gerou_origem_planilha',
-        'tipo_operacao',
-        'operacao_final',
-        'tipo_operacao_final',
-    ]:
-        st.session_state.pop(key, None)
+def clear_site_source(operation: str | None = None) -> None:
+    operations = [_normalize_operation(operation)] if operation else ['cadastro', 'estoque']
+    for op in operations:
+        for key in [_source_key(op), _urls_key(op), _columns_key(op)]:
+            st.session_state.pop(key, None)
+        _clear_output_cache_for_operation(op)
+
+    if operation is None:
+        for key in [
+            SITE_SOURCE_KEY,
+            SITE_OPERATION_KEY,
+            SITE_SOURCE_URLS_KEY,
+            SITE_REQUESTED_COLUMNS_KEY,
+            SITE_CADASTRO_MODEL_KEY,
+            SITE_ESTOQUE_MODEL_KEY,
+            SITE_OPERATION_MODEL_KEY,
+            *PLANILHA_SOURCE_KEYS,
+            *ESTOQUE_SOURCE_KEYS,
+            *PLANILHA_MODEL_CADASTRO_KEYS,
+            *PLANILHA_MODEL_ESTOQUE_KEYS,
+            'origem_dados',
+            'origem_tipo',
+            'origem_planilha_via_site',
+            'site_gerou_origem_planilha',
+            'tipo_operacao',
+            'operacao_final',
+            'tipo_operacao_final',
+        ]:
+            st.session_state.pop(key, None)
 
 
 def has_site_source(operation: str) -> bool:
