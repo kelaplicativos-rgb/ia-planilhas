@@ -100,7 +100,7 @@ def _run_site_capture(
         max_products=ALL_PRODUCTS_LIMIT,
         progress_callback=make_site_progress_callback(progress_bar, status_box),
     )
-    save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
+    save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     st.session_state['df_site_bruto'] = df_site
     st.session_state['operation_site'] = operation
     st.session_state['tipo_operacao_site'] = operation
@@ -130,4 +130,12 @@ def render_site_panel() -> None:
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        render_generated_site_actions(df_site_bruto, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
+        render_generated_site_actions(
+            df_site_bruto,
+            raw_urls,
+            requested_columns,
+            df_modelo_cadastro,
+            df_modelo_estoque,
+            df_modelo,
+            operation,
+        )
