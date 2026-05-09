@@ -6,9 +6,10 @@ import streamlit as st
 
 from bling_app_zero.core.debug import add_debug, render_debug_panel
 from bling_app_zero.ui.home import render_home
+from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
-APP_VERSION = '3.4.8-ANDROID-UPLOAD-FIX'
+APP_VERSION = '3.4.9-RULES-PANEL'
 
 
 def _register_critical_error(exc: Exception) -> str:
@@ -29,6 +30,7 @@ def main() -> None:
     add_debug(f'Aplicacao iniciada | versao {APP_VERSION}', origin='APP')
 
     try:
+        render_rules_panel()
         render_home()
     except Exception as exc:
         formatted = _register_critical_error(exc)
