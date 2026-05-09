@@ -173,8 +173,20 @@ def _show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> No
         return
     safe_text = html.escape(text)
     st.markdown(
-        f"<div style='font-size:14px; color:#118a32; margin-top:-6px; margin-bottom:8px; font-weight:700;'>"
-        f"{safe_text}</div>",
+        f"""
+        <div style="
+            font-size:14px;
+            color:#118a32;
+            margin-top:4px;
+            margin-bottom:2px;
+            font-weight:800;
+            padding:7px 9px;
+            border-radius:11px;
+            background:rgba(232,247,238,0.78);
+            border:1px solid rgba(17,138,50,0.12);
+            overflow-wrap:anywhere;
+        ">{safe_text}</div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -264,21 +276,28 @@ def _render_mapping_select(
     widget_key = f'{mapping_key}_{target}'
     if widget_key in st.session_state:
         suggested = _option_value(st.session_state.get(widget_key, suggested))
-    info_before = _confidence_for_selection(df_source, target, st.session_state.get(widget_key, suggested), widget_key)
-    selected_raw = st.selectbox(
-        _signal_label(target, info_before),
-        options,
-        index=_default_index(options, suggested, widget_key),
-        key=widget_key,
-        help=f'Campo de destino no Bling: {target}',
-    )
-    if selected_raw == EMPTY_LEAVE_OPTION:
-        st.session_state[f'{widget_key}__empty_resolved'] = True
-    elif selected_raw != EMPTY_LEAVE_OPTION:
-        st.session_state.pop(f'{widget_key}__empty_resolved', None)
-    selected = _option_value(selected_raw)
-    info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
-    _show_first_row_preview(df_source, selected)
+
+    raw_before = st.session_state.get(widget_key, suggested)
+    info_before = _confidence_for_selection(df_source, target, raw_before, widget_key)
+
+    with st.container(border=True):
+        selected_raw = st.selectbox(
+            _signal_label(target, info_before),
+            options,
+            index=_default_index(options, suggested, widget_key),
+            key=widget_key,
+            help=f'Campo de destino no Bling: {target}',
+        )
+
+        if selected_raw == EMPTY_LEAVE_OPTION:
+            st.session_state[f'{widget_key}__empty_resolved'] = True
+        else:
+            st.session_state.pop(f'{widget_key}__empty_resolved', None)
+
+        selected = _option_value(selected_raw)
+        info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
+        _show_first_row_preview(df_source, selected)
+
     return selected, info_after
 
 
@@ -372,7 +391,8 @@ def _render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.
         target_key = normalize_key(target)
         widget_key = f'{mapping_key}_{target}'
         if 'deposito' in target_key:
-            st.text_input('🟢 ' + target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual')
+            with st.container(border=True):
+                st.text_input('🟢 ' + target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual')
             edited_mapping[target] = ''
             edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': '100% seguro', 'score': 100, 'order': 2}
             continue
