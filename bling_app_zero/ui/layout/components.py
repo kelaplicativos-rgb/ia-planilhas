@@ -50,6 +50,12 @@ def inject_clean_home_css() -> None:
             margin: 0;
         }
 
+        .bling-tech-button-slot {
+            display: flex;
+            justify-content: flex-end;
+            align-items: flex-start;
+        }
+
         .bling-tech-button-slot .stButton > button {
             min-height: 30px !important;
             height: 30px !important;
@@ -167,7 +173,7 @@ def render_compact_hero() -> None:
     from bling_app_zero.core.debug import render_debug_compact_button
 
     with st.container(border=True):
-        left, center, right = st.columns([0.08, 0.84, 0.08], vertical_alignment='top')
+        left, center, right = st.columns([0.08, 0.84, 0.08])
         with left:
             st.empty()
         with center:
