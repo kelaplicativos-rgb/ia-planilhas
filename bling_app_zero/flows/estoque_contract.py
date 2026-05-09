@@ -5,7 +5,6 @@ import pandas as pd
 DEFAULT_ESTOQUE_COLUMNS = [
     'Código',
     'Descrição',
-    'Preço unitário (OBRIGATÓRIO)',
     'Depósito (OBRIGATÓRIO)',
     'Balanço (OBRIGATÓRIO)',
 ]
