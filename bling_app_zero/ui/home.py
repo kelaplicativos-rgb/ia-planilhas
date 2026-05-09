@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
-from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, render_flow_selector, step_to_panel_operation
+from bling_app_zero.ui.home_flow import deactivate_panel, get_active_panel, step_to_panel_operation
 from bling_app_zero.ui.home_pricing_config import disable_home_pricing, render_home_pricing_config_form, set_home_pricing_config
 from bling_app_zero.ui.lazy_panels import render_lazy_panel
 from bling_app_zero.ui.layout import (
@@ -15,11 +15,9 @@ from bling_app_zero.ui.layout import (
 )
 
 HOME_STAGE_KEY = 'home_stage'
-HOME_PRICING_KEY = 'home_precificacao_inicial'
 STAGE_START = 'inicio'
 STAGE_MODELOS = 'modelos'
 STAGE_PRECIFICACAO = 'precificacao'
-STAGE_ORIGEM = 'origem'
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
@@ -31,10 +29,32 @@ def _looks_like_loaded_df(value: object) -> bool:
     return value is not None and hasattr(value, 'columns') and bool(getattr(value, 'columns', []))
 
 
-def _has_home_models_light() -> bool:
-    """Checagem leve para nao importar pandas/upload na inicializacao da home."""
-    keys = [HOME_CADASTRO_MODEL_KEY, HOME_ESTOQUE_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS + GLOBAL_ESTOQUE_MODEL_KEYS
+def _has_any_model(keys: list[str]) -> bool:
     return any(_looks_like_loaded_df(st.session_state.get(key)) for key in keys)
+
+
+def _has_home_models_light() -> bool:
+    keys = [HOME_CADASTRO_MODEL_KEY, HOME_ESTOQUE_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS + GLOBAL_ESTOQUE_MODEL_KEYS
+    return _has_any_model(keys)
+
+
+def _preferred_operation_from_models() -> str:
+    has_cadastro = _has_any_model([HOME_CADASTRO_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS)
+    has_estoque = _has_any_model([HOME_ESTOQUE_MODEL_KEY] + GLOBAL_ESTOQUE_MODEL_KEYS)
+    if has_estoque and not has_cadastro:
+        return 'estoque'
+    return 'cadastro'
+
+
+def _open_next_panel() -> None:
+    operation = _preferred_operation_from_models()
+    st.session_state['home_slim_flow_operation'] = operation
+    st.session_state['home_slim_flow_origin'] = 'site'
+    st.session_state['home_slim_active_panel'] = f'{operation}_site'
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['tipo_operacao_site'] = operation
+    st.session_state['origem_final'] = 'site'
 
 
 def _render_home_bling_models_lazy() -> None:
@@ -51,7 +71,7 @@ def _has_home_models_strict() -> bool:
 
 def _current_home_stage() -> str:
     stage = str(st.session_state.get(HOME_STAGE_KEY) or '')
-    valid = {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}
+    valid = {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO}
     if stage in valid:
         return stage
     if _has_home_models_light():
@@ -60,7 +80,7 @@ def _current_home_stage() -> str:
 
 
 def _set_home_stage(stage: str) -> None:
-    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO, STAGE_ORIGEM}:
+    if stage not in {STAGE_START, STAGE_MODELOS, STAGE_PRECIFICACAO}:
         stage = STAGE_START
     st.session_state[HOME_STAGE_KEY] = stage
 
@@ -89,10 +109,7 @@ def _render_home_start() -> None:
 
 
 def _render_home_models_step() -> None:
-    render_step_title(
-        'Modelos do Bling',
-        'Envie o modelo de cadastro, o modelo de estoque ou os dois. Isso evita colunas erradas no CSV final.',
-    )
+    render_step_title('Modelos do Bling')
     _render_home_bling_models_lazy()
 
     back_clicked, continue_clicked = _centered_two_buttons('← Voltar', 'home_models_back', 'Continuar', 'home_models_continue')
@@ -101,13 +118,10 @@ def _render_home_models_step() -> None:
         st.rerun()
     if continue_clicked:
         if not _has_home_models_strict():
-            st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
+            st.warning('Anexe o modelo do Bling: cadastro, estoque ou ambos.')
         else:
             _set_home_stage(STAGE_PRECIFICACAO)
             st.rerun()
-
-    if not _has_home_models_strict():
-        st.info('O modelo do Bling é a base que define as colunas do arquivo final.')
 
 
 def _render_pricing_choice_step() -> None:
@@ -121,41 +135,15 @@ def _render_pricing_choice_step() -> None:
     )
     if save_clicked:
         set_home_pricing_config(pricing_config)
-        _set_home_stage(STAGE_ORIGEM)
+        _open_next_panel()
         st.rerun()
     if no_pricing_clicked:
         disable_home_pricing()
-        _set_home_stage(STAGE_ORIGEM)
+        _open_next_panel()
         st.rerun()
 
     if _centered_button('← Voltar aos modelos', key='home_pricing_back'):
         _set_home_stage(STAGE_MODELOS)
-        st.rerun()
-
-
-def _render_home_origin_step() -> None:
-    render_step_title(
-        'Escolha o caminho do arquivo final',
-        'Primeiro escolha cadastro ou estoque. Depois informe se os dados virão de site ou de arquivo.',
-    )
-    pricing = st.session_state.get(HOME_PRICING_KEY)
-    if pricing is True:
-        st.success('Precificação salva. O cadastro poderá usar o preço calculado automaticamente.')
-    elif pricing is False:
-        st.info('Precificação desativada. O sistema usará o preço encontrado na origem, quando existir.')
-    render_flow_selector()
-
-    change_models, change_pricing = _centered_two_buttons(
-        'Trocar modelos',
-        'home_origin_change_models',
-        'Alterar precificação',
-        'home_origin_change_pricing',
-    )
-    if change_models:
-        _set_home_stage(STAGE_MODELOS)
-        st.rerun()
-    if change_pricing:
-        _set_home_stage(STAGE_PRECIFICACAO)
         st.rerun()
 
 
@@ -167,16 +155,13 @@ def _render_home_intro() -> None:
     if stage == STAGE_PRECIFICACAO:
         _render_pricing_choice_step()
         return
-    if stage == STAGE_ORIGEM:
-        _render_home_origin_step()
-        return
     _render_home_start()
 
 
 def _render_back_home() -> None:
-    if _centered_button('← Voltar para escolha inicial', key='home_back_to_light_start'):
+    if _centered_button('← Voltar para modelos', key='home_back_to_light_start'):
         deactivate_panel()
-        _set_home_stage(STAGE_ORIGEM if _has_home_models_light() else STAGE_START)
+        _set_home_stage(STAGE_MODELOS if _has_home_models_light() else STAGE_START)
         st.rerun()
 
 
