@@ -1,27 +1,28 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
-from bling_app_zero.flows.site_operation_router import (
-    config_for_site_operation,
-    run_site_engine,
-)
+from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model, save_home_models
-from bling_app_zero.ui.home_shared import (
-    load_site_pipeline,
-    preview_df,
-    show_contract,
-)
+from bling_app_zero.ui.home_shared import load_site_pipeline, preview_df, show_contract
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
 PROGRESS_LOG_KEY = 'site_progress_log'
 PROGRESS_LAST_KEY = 'site_progress_last'
+
+
+@dataclass
+class EmptyModelUpload:
+    cadastro_model_df: pd.DataFrame | None = None
+    estoque_model_df: pd.DataFrame | None = None
+    model_df: pd.DataFrame | None = None
 
 
 def _query_param(name: str) -> str:
@@ -43,10 +44,9 @@ def _unique_columns(columns: list[str]) -> list[str]:
     seen: set[str] = set()
     for column in columns:
         text = str(column or '').strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
     return result
 
 
@@ -54,17 +54,6 @@ def _columns_from_df(df: pd.DataFrame | None) -> list[str]:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         return [str(c) for c in df.columns]
     return []
-
-
-def _choose_site_model_df(upload) -> pd.DataFrame | None:
-    home_model = get_home_cadastro_model()
-    if isinstance(home_model, pd.DataFrame):
-        return home_model
-    if isinstance(upload.cadastro_model_df, pd.DataFrame):
-        return upload.cadastro_model_df
-    if isinstance(upload.model_df, pd.DataFrame):
-        return upload.model_df
-    return None
 
 
 def _choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
@@ -87,13 +76,15 @@ def _choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
     return None
 
 
+def _choose_site_model_df(upload) -> pd.DataFrame | None:
+    return _choose_site_cadastro_model_df(upload)
+
+
 def _requested_columns_for_site_capture(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
 ) -> list[str] | None:
-    cadastro_columns = _columns_from_df(df_modelo_cadastro)
-    estoque_columns = _columns_from_df(df_modelo_estoque)
-    merged = _unique_columns(cadastro_columns + estoque_columns)
+    merged = _unique_columns(_columns_from_df(df_modelo_cadastro) + _columns_from_df(df_modelo_estoque))
     return merged or None
 
 
@@ -138,17 +129,16 @@ def _reset_progress() -> None:
 
 def _append_progress(payload: dict) -> None:
     log = list(st.session_state.get(PROGRESS_LOG_KEY, []))
-    payload = dict(payload or {})
-    payload['time'] = time.strftime('%H:%M:%S')
-    log.append(payload)
+    item = dict(payload or {})
+    item['time'] = time.strftime('%H:%M:%S')
+    log.append(item)
     st.session_state[PROGRESS_LOG_KEY] = log[-80:]
-    st.session_state[PROGRESS_LAST_KEY] = payload
+    st.session_state[PROGRESS_LAST_KEY] = item
 
 
 def _progress_rows(log: list[dict]) -> list[dict]:
-    rows: list[dict] = []
-    for item in log:
-        rows.append({
+    return [
+        {
             'Hora': item.get('time', ''),
             'Etapa': item.get('stage', ''),
             'Mensagem': item.get('message', ''),
@@ -157,8 +147,9 @@ def _progress_rows(log: list[dict]) -> list[dict]:
             'Encontrados': item.get('found', ''),
             'Erros': item.get('errors', ''),
             'Tempo': item.get('total_seconds', item.get('discovery_seconds', '')),
-        })
-    return rows
+        }
+        for item in log
+    ]
 
 
 def _render_sidebar_progress_details(payload: dict) -> None:
@@ -172,13 +163,6 @@ def _render_sidebar_progress_details(payload: dict) -> None:
             col_c, col_d = st.columns(2)
             col_c.metric('Encontrados', int(payload.get('found') or 0))
             col_d.metric('Erros', int(payload.get('errors') or 0))
-
-            slow_links = payload.get('slow_links') or []
-            if slow_links:
-                st.markdown('##### Links lentos')
-                for item in slow_links[-5:]:
-                    st.caption(f"{item.get('seconds')}s · {item.get('url')}")
-
             if log:
                 st.markdown('##### Relatório')
                 st.dataframe(pd.DataFrame(_progress_rows(log)), use_container_width=True, height=260)
@@ -187,13 +171,13 @@ def _render_sidebar_progress_details(payload: dict) -> None:
 def _make_progress_callback(progress_bar, status_box):
     def callback(payload: dict) -> None:
         _append_progress(payload)
-        progress = float(payload.get('progress') or 0.0)
-        progress = max(0.0, min(1.0, progress))
+        progress = max(0.0, min(1.0, float(payload.get('progress') or 0.0)))
         stage = str(payload.get('stage') or 'Processando')
         message = str(payload.get('message') or '')
         progress_bar.progress(progress, text=f'{stage} · {int(progress * 100)}%')
         status_box.info(message or stage)
         _render_sidebar_progress_details(payload)
+
     return callback
 
 
@@ -235,29 +219,17 @@ def _render_generated_origin_actions(
         )
     with col_b:
         if st.button('Continuar', use_container_width=True, key='continuar_fluxo_planilha_site'):
-            _save_site_source(
-                df_site=df_site,
-                raw_urls=raw_urls,
-                requested_columns=requested_columns,
-                df_modelo_cadastro=df_modelo_cadastro,
-                df_modelo_estoque=df_modelo_estoque,
-                df_modelo=df_modelo,
-            )
+            _save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
             _go_to_main_flow()
             st.rerun()
 
 
 def _render_optional_model_upload() -> object:
     if get_home_cadastro_model() is not None or get_home_estoque_model() is not None:
-        st.success('Modelos do Bling carregados na home.')
-        st.caption('Para trocar os modelos, envie novos arquivos abaixo. O painel interno já mostra as colunas detectadas.')
-        return render_model_upload_box(
-            title='Trocar modelos',
-            operation='cadastro',
-            key='model_upload_site',
-            required_model=False,
-            caption='Use apenas se quiser trocar os modelos desta busca.',
-        )
+        st.success('Modelos do Bling já carregados no passo inicial.')
+        st.caption('Este fluxo vai usar os modelos salvos. Não é necessário anexar novamente.')
+        return EmptyModelUpload()
+
     return render_model_upload_box(
         title='Modelos para cadastro e estoque',
         operation='cadastro',
@@ -279,11 +251,7 @@ def render_site_panel() -> None:
     df_modelo_cadastro = _choose_site_cadastro_model_df(upload)
     df_modelo_estoque = _choose_site_estoque_model_df(upload)
     df_modelo = _choose_site_model_df(upload)
-
-    requested_columns = _requested_columns_for_site_capture(
-        df_modelo_cadastro=df_modelo_cadastro,
-        df_modelo_estoque=df_modelo_estoque,
-    )
+    requested_columns = _requested_columns_for_site_capture(df_modelo_cadastro, df_modelo_estoque)
 
     if requested_columns:
         show_contract(requested_columns)
@@ -303,38 +271,21 @@ def render_site_panel() -> None:
         _reset_progress()
         progress_bar = st.progress(0, text='Iniciando busca...')
         status_box = st.empty()
-        callback = _make_progress_callback(progress_bar, status_box)
-
-        run_site_pipeline = load_site_pipeline()
         df_site = run_site_engine(
             operation='cadastro',
-            pipeline=run_site_pipeline,
+            pipeline=load_site_pipeline(),
             raw_urls=raw_urls,
             requested_columns=requested_columns,
             all_products=True,
             max_pages=ALL_PAGES_LIMIT,
             max_products=ALL_PRODUCTS_LIMIT,
-            progress_callback=callback,
+            progress_callback=_make_progress_callback(progress_bar, status_box),
         )
-        _save_site_source(
-            df_site=df_site,
-            raw_urls=raw_urls,
-            requested_columns=requested_columns,
-            df_modelo_cadastro=df_modelo_cadastro,
-            df_modelo_estoque=df_modelo_estoque,
-            df_modelo=df_modelo,
-        )
+        _save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
         st.session_state['df_site_bruto'] = df_site
         st.session_state['operation_site'] = 'cadastro'
         st.rerun()
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        _render_generated_origin_actions(
-            df_site=df_site_bruto,
-            raw_urls=raw_urls,
-            requested_columns=requested_columns,
-            df_modelo_cadastro=df_modelo_cadastro,
-            df_modelo_estoque=df_modelo_estoque,
-            df_modelo=df_modelo,
-        )
+        _render_generated_origin_actions(df_site_bruto, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
