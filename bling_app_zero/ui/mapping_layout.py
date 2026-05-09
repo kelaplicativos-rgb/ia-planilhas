@@ -14,18 +14,18 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             box-sizing: border-box !important;
             overflow: visible !important;
-            border-radius: 12px !important;
+            border-radius: 13px !important;
             border: 1px solid rgba(49, 51, 63, 0.13) !important;
             background: rgba(248, 250, 252, 0.92) !important;
-            padding: 7px 10px 7px 10px !important;
-            margin: 6px 0 8px 0 !important;
+            padding: 10px 12px 9px 12px !important;
+            margin: 7px 0 10px 0 !important;
             box-shadow: none !important;
             min-height: unset !important;
             height: auto !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-            gap: 0.14rem !important;
+            gap: 0.24rem !important;
             overflow: visible !important;
         }
 
@@ -33,11 +33,11 @@ def inject_mapping_css() -> None:
             width: 100%;
             display: block;
             position: static;
-            font-size: 0.82rem;
-            line-height: 1.12;
+            font-size: 0.84rem;
+            line-height: 1.16;
             font-weight: 800;
             color: rgba(49, 51, 63, 0.96);
-            margin: 0 0 3px 0 !important;
+            margin: 0 0 5px 0 !important;
             padding: 0 !important;
             text-align: left;
             overflow-wrap: anywhere;
@@ -60,7 +60,7 @@ def inject_mapping_css() -> None:
             width: 100% !important;
             max-width: 100% !important;
             overflow: visible !important;
-            margin: 0 0 2px 0 !important;
+            margin: 0 0 4px 0 !important;
             padding: 0 !important;
             border: 0 !important;
             background: transparent !important;
@@ -85,15 +85,15 @@ def inject_mapping_css() -> None:
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-            min-height: 32px !important;
-            height: 32px !important;
+            min-height: 35px !important;
+            height: 35px !important;
             background: #eef2f7 !important;
             border: 1px solid rgba(49, 51, 63, 0.12) !important;
             border-radius: 10px !important;
             box-shadow: none !important;
             max-width: 100% !important;
             overflow: hidden !important;
-            font-size: 0.82rem !important;
+            font-size: 0.84rem !important;
             display: flex !important;
             align-items: center !important;
         }
@@ -102,20 +102,20 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
-            line-height: 1.10 !important;
-            font-size: 0.82rem !important;
+            line-height: 1.14 !important;
+            font-size: 0.84rem !important;
         }
 
         .bling-map-preview {
             display: block;
             position: static;
             width: 100%;
-            font-size: 0.73rem;
-            line-height: 1.16;
+            font-size: 0.74rem;
+            line-height: 1.20;
             color: #118a32;
             font-weight: 700;
             padding: 0;
-            margin: 1px 0 0 0 !important;
+            margin: 2px 0 0 0 !important;
             border-radius: 0;
             background: transparent;
             border: 0;
@@ -126,44 +126,44 @@ def inject_mapping_css() -> None:
 
         @media (max-width: 760px) {
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                padding: 6px 8px 6px 8px !important;
-                margin: 5px 0 7px 0 !important;
-                border-radius: 12px !important;
+                padding: 9px 10px 8px 10px !important;
+                margin: 6px 0 9px 0 !important;
+                border-radius: 13px !important;
                 min-height: unset !important;
                 height: auto !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
-                gap: 0.10rem !important;
+                gap: 0.20rem !important;
             }
 
             .bling-map-title {
-                font-size: 0.80rem;
-                line-height: 1.10;
-                margin: 0 0 2px 0 !important;
+                font-size: 0.82rem;
+                line-height: 1.14;
+                margin: 0 0 4px 0 !important;
                 padding: 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {
-                margin: 0 0 1px 0 !important;
+                margin: 0 0 3px 0 !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] > div {
-                min-height: 31px !important;
-                height: 31px !important;
-                border-radius: 9px !important;
-                font-size: 0.80rem !important;
+                min-height: 34px !important;
+                height: 34px !important;
+                border-radius: 10px !important;
+                font-size: 0.82rem !important;
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
-                font-size: 0.80rem !important;
-                line-height: 1.08 !important;
+                font-size: 0.82rem !important;
+                line-height: 1.12 !important;
             }
 
             .bling-map-preview {
-                font-size: 0.72rem;
-                line-height: 1.15;
-                margin: 1px 0 0 0 !important;
+                font-size: 0.73rem;
+                line-height: 1.18;
+                margin: 2px 0 0 0 !important;
             }
         }
         </style>
