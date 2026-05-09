@@ -66,23 +66,20 @@ def _render_loaded_summary() -> None:
     estoque = get_home_estoque_model()
     parts: list[str] = []
     if isinstance(cadastro, pd.DataFrame):
-        parts.append('Cadastro')
+        parts.append('cadastro')
     if isinstance(estoque, pd.DataFrame):
-        parts.append('Estoque')
+        parts.append('estoque')
     if parts:
-        st.success('Modelos carregados: ' + ' + '.join(parts))
+        st.success('Pronto: ' + ' + '.join(parts))
 
 
 def render_home_bling_models() -> None:
-    st.markdown('### Modelos do Bling')
-    st.caption('Envie o modelo de cadastro, estoque ou os dois juntos.')
-
     upload = render_model_upload_box(
-        title='Enviar modelos',
+        title='Modelos do Bling',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
-        caption='Arquivos aceitos: XLSX, XLS, CSV, XLSM ou XLSB.',
+        caption=None,
     )
 
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
