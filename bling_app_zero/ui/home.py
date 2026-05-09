@@ -131,13 +131,14 @@ def _render_origin_frontpage() -> str:
 
     selected = _current_origin_choice()
     options = {
-        '': 'Selecione a origem dos dados',
         'arquivo': '📎 Anexar planilha/XML/PDF do fornecedor',
         'site': '🌐 Buscar por site/link',
     }
     labels = list(options.values())
     values = list(options.keys())
-    index = values.index(selected) if selected in values else 0
+    index = values.index(selected) if selected in values else None
+
+    st.caption('Selecione uma das opções abaixo:')
     choice_label = st.radio(
         'Origem dos dados',
         labels,
@@ -145,9 +146,12 @@ def _render_origin_frontpage() -> str:
         key='frontpage_origin_radio',
         label_visibility='collapsed',
     )
+
+    if choice_label is None:
+        return ''
+
     choice = values[labels.index(choice_label)]
-    if choice:
-        _sync_flow_state(choice, operation)
+    _sync_flow_state(choice, operation)
     return choice
 
 
