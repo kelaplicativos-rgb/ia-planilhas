@@ -9,7 +9,6 @@ from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
     choose_site_estoque_model_df,
     choose_site_model_df,
-    has_home_site_model_for_operation,
     render_optional_site_model_upload,
     requested_columns_for_site_capture,
 )
@@ -49,6 +48,10 @@ def _operation_label(operation: str) -> str:
     return 'estoque' if operation == 'estoque' else 'cadastro'
 
 
+def _has_columns(columns: list[str] | None) -> bool:
+    return bool([str(column).strip() for column in (columns or [])])
+
+
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
     upload = render_optional_site_model_upload(operation)
     df_modelo_cadastro = choose_site_cadastro_model_df(upload)
@@ -58,6 +61,8 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
 
     if requested_columns:
         show_contract(requested_columns)
+    elif operation == 'estoque':
+        st.error('Para estoque por site, envie primeiro o modelo de estoque do Bling. A busca só será feita nas colunas desse modelo.')
     else:
         st.info('Sem modelo desta operação. Vou capturar os campos principais e deixar vazio o que não encontrar.')
 
@@ -83,6 +88,10 @@ def _run_site_capture(
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
 ) -> None:
+    if operation == 'estoque' and not _has_columns(requested_columns):
+        st.error('Busca bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
+        return
+
     reset_site_progress()
     progress_bar = st.progress(0, text='Buscando produtos no site...')
     status_box = st.empty()
@@ -107,7 +116,7 @@ def _run_site_capture(
 
 def render_site_panel() -> None:
     operation = _current_site_operation()
-    label = _operation_label(operation)
+    _ = _operation_label(operation)
 
     st.markdown(
         """
@@ -125,7 +134,11 @@ def render_site_panel() -> None:
     raw_urls = _render_urls_input()
 
     button_label = 'Buscar no site e gerar origem de estoque' if operation == 'estoque' else 'Buscar no site e gerar origem de cadastro'
-    if st.button(button_label, use_container_width=True):
+    button_disabled = operation == 'estoque' and not _has_columns(requested_columns)
+    if button_disabled:
+        st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
+
+    if st.button(button_label, use_container_width=True, disabled=button_disabled):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
     df_site_bruto = st.session_state.get('df_site_bruto')
