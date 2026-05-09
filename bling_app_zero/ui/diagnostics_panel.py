@@ -53,15 +53,19 @@ def _render_simulation_result(result: pd.DataFrame) -> None:
         st.warning('Alguns fluxos precisam de atenção. Abra o resultado acima para ver a mensagem.')
 
 
+def _render_engine_inventory() -> None:
+    st.markdown('##### Recursos internos')
+    show_inventory = st.checkbox('Mostrar recursos carregados', value=False, key='show_engine_inventory')
+    if show_inventory:
+        st.dataframe(run_engine_inventory(), use_container_width=True, height=220)
+
+
 def render_diagnostics_panel() -> None:
     with st.sidebar:
         with st.expander('Ferramentas de conferência', expanded=False):
             st.caption('Use esta área para testar rapidamente os fluxos principais sem precisar importar arquivos reais.')
             _render_openai_validation()
-
-            st.markdown('##### Recursos internos')
-            with st.expander('Ver recursos carregados', expanded=False):
-                st.dataframe(run_engine_inventory(), use_container_width=True, height=220)
+            _render_engine_inventory()
 
             if st.button('Conferir fluxos principais', use_container_width=True, key='run_blingflow_simulation'):
                 st.session_state['blingflow_simulation_result'] = run_all_simulations()
