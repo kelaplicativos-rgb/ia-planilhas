@@ -21,6 +21,8 @@ EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
 MAPPING_PAGE_SIZE = 12
+CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
+CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
 MAPPING_WIDGET_PREFIXES = (
     'cad_map_',
     'stk_map_',
@@ -171,6 +173,34 @@ def _current_confidence_from_widgets(
     return result
 
 
+def _mapping_signature(mapping: dict[str, str], df_final: pd.DataFrame) -> str:
+    parts = [f'{key}={mapping.get(key, "")}' for key in sorted(mapping)]
+    return _short_hash('|'.join(parts) + ':' + df_signature(df_final), size=16)
+
+
+def _invalidate_confirmation_if_changed(mapping: dict[str, str], df_final: pd.DataFrame) -> str:
+    signature = _mapping_signature(mapping, df_final)
+    confirmed_signature = st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY)
+    if confirmed_signature and confirmed_signature != signature:
+        st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+        st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
+    return signature
+
+
+def _render_confirm_mapping_button(mapping: dict[str, str], df_final: pd.DataFrame, mapping_key: str) -> None:
+    signature = _invalidate_confirmation_if_changed(mapping, df_final)
+    confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY)) and st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY) == signature
+    if confirmed:
+        st.success('Mapeamento confirmado. Você já pode continuar para o preview final.')
+        return
+    st.info('Revise os campos necessários e clique em Confirmar mapeamento para liberar o Preview.')
+    if st.button('Confirmar mapeamento', use_container_width=True, key=f'{mapping_key}_confirm'):
+        st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+        st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
+        st.success('Mapeamento confirmado.')
+        st.rerun()
+
+
 def _force_price_suggestion(target: str, source_columns: list[str], suggested: str) -> str:
     if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
         return 'Preço de venda'
@@ -208,6 +238,8 @@ def _apply_ai_to_session_mapping(
         st.info('A IA não encontrou ajustes seguros para aplicar agora.')
         return
     st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
+    st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+    st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     _clear_mapping_widgets(mapping_key)
     st.session_state.pop(f'{mapping_key}_order', None)
     st.success(f'IA ajustou {result.applied} campo(s) com segurança.')
@@ -268,6 +300,8 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     if mapping_key not in st.session_state:
         st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
         st.session_state.pop(order_key, None)
+        st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+        st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     st.markdown('#### 2. Conferir campos do cadastro')
     st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto ou vazio confirmado')
     with st.expander('Ver origem antes de preencher', expanded=False):
@@ -293,6 +327,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
         st.warning('A mesma coluna da origem foi usada em mais de um campo: ' + ', '.join(duplicated))
+    _render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key)
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button('Atualizar prévia do cadastro', use_container_width=True, key=f'{mapping_key}_refresh'):
@@ -303,6 +338,8 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
             st.session_state.pop('mapping_confidence_cadastro', None)
+            st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+            st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
             st.session_state.pop(order_key, None)
             _clear_mapping_widgets(mapping_key)
             st.rerun()
