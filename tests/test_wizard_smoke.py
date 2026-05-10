@@ -24,6 +24,28 @@ SITE_CRITICAL_MODULES = [
     'bling_app_zero.ui.site_outputs',
 ]
 
+EXPECTED_CADASTRO_STEPS = [
+    'modelo',
+    'operacao',
+    'precificacao',
+    'origem',
+    'entrada',
+    'mapeamento',
+    'preview',
+    'download',
+]
+
+EXPECTED_ESTOQUE_STEPS = [
+    'modelo',
+    'operacao',
+    'precificacao',
+    'origem',
+    'entrada',
+    'gerar_estoque',
+    'preview',
+    'download',
+]
+
 
 def test_light_critical_wizard_modules_import() -> None:
     for module_name in LIGHT_CRITICAL_MODULES:
@@ -33,6 +55,16 @@ def test_light_critical_wizard_modules_import() -> None:
 def test_site_critical_modules_import_without_running_scraper() -> None:
     for module_name in SITE_CRITICAL_MODULES:
         importlib.import_module(module_name)
+
+
+def test_wizard_step_order_is_preserved() -> None:
+    wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
+
+    assert wizard.CADASTRO_STEPS == EXPECTED_CADASTRO_STEPS
+    assert wizard.ESTOQUE_STEPS == EXPECTED_ESTOQUE_STEPS
+    assert wizard.STEP_DOWNLOAD == 'download'
+    assert wizard.STEP_GERAR_ESTOQUE == 'gerar_estoque'
+    assert wizard.STEP_MAPEAMENTO == 'mapeamento'
 
 
 def test_mapping_css_uses_existing_theme_variables() -> None:
