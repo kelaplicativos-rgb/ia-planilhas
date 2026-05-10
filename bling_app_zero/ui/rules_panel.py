@@ -15,6 +15,13 @@ def _bool_label(value: bool) -> str:
     return 'Sim' if value else 'Não'
 
 
+def _rule_key(rule: dict, index: int) -> str:
+    target = str(rule.get('target_column', '')).strip().lower()
+    value = str(rule.get('fill_value', '')).strip().lower()
+    safe = ''.join(ch if ch.isalnum() else '_' for ch in f'{target}_{value}')[:80]
+    return safe or str(index)
+
+
 def _render_saved_column_rules(rules: dict) -> None:
     custom_rules = list(rules.get('custom_rules', []))
 
@@ -23,16 +30,23 @@ def _render_saved_column_rules(rules: dict) -> None:
             st.caption('Nenhuma regra de coluna criada ainda.')
             return
 
+        st.caption('Toda regra salva pode ser excluída a qualquer momento.')
+
         for index, rule in enumerate(custom_rules):
             target = str(rule.get('target_column', '')).strip()
             value = str(rule.get('fill_value', '')).strip()
-            col_text, col_remove = st.columns([0.76, 0.24])
+            only_when_empty = bool(rule.get('only_when_empty', True))
+            rule_suffix = _rule_key(rule, index)
+
+            col_text, col_remove = st.columns([0.72, 0.28])
             with col_text:
                 st.caption(f'**{target}** → {value if value else "(vazio)"}')
+                if only_when_empty:
+                    st.caption('Aplicar somente quando estiver vazio.')
             with col_remove:
-                if st.button('Remover', use_container_width=True, key=f'remove_column_rule_{index}'):
+                if st.button('Excluir regra', use_container_width=True, key=f'delete_saved_column_rule_{index}_{rule_suffix}'):
                     remove_custom_rule(index)
-                    st.success('Regra removida.')
+                    st.success('Regra excluída.')
                     st.rerun()
 
 
