@@ -38,6 +38,7 @@ LEGACY_ORIGIN_RADIO_KEY = 'frontpage_origin_radio'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 
 STEP_MODELO = 'modelo'
+STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
@@ -49,6 +50,7 @@ STEP_PROCESSAR = 'processar'
 
 CADASTRO_STEPS = [
     STEP_MODELO,
+    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_ENTRADA,
@@ -58,15 +60,18 @@ CADASTRO_STEPS = [
 ]
 ESTOQUE_STEPS = [
     STEP_MODELO,
+    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
     STEP_PREVIEW,
 ]
+ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
+    STEP_OPERACAO: 'Operação',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
     STEP_ENTRADA: 'Entrada',
@@ -99,27 +104,47 @@ def _has_any_model(keys: list[str]) -> bool:
     return any(_looks_like_loaded_df(st.session_state.get(key)) for key in keys)
 
 
+def _has_cadastro_model() -> bool:
+    return _has_any_model([HOME_CADASTRO_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS)
+
+
+def _has_estoque_model() -> bool:
+    return _has_any_model([HOME_ESTOQUE_MODEL_KEY] + GLOBAL_ESTOQUE_MODEL_KEYS)
+
+
 def _has_home_models() -> bool:
-    return _has_any_model([HOME_CADASTRO_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS + [HOME_ESTOQUE_MODEL_KEY] + GLOBAL_ESTOQUE_MODEL_KEYS)
+    return _has_cadastro_model() or _has_estoque_model()
 
 
-def _preferred_operation_from_models() -> str:
-    has_cadastro = _has_any_model([HOME_CADASTRO_MODEL_KEY] + GLOBAL_CADASTRO_MODEL_KEYS)
-    has_estoque = _has_any_model([HOME_ESTOQUE_MODEL_KEY] + GLOBAL_ESTOQUE_MODEL_KEYS)
-    if has_estoque and not has_cadastro:
-        return 'estoque'
-    return 'cadastro'
+def _available_operations() -> list[str]:
+    operations: list[str] = []
+    if _has_cadastro_model():
+        operations.append('cadastro')
+    if _has_estoque_model():
+        operations.append('estoque')
+    return operations or ['cadastro']
+
+
+def _selected_operation() -> str:
+    operation = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
+    available = _available_operations()
+    if operation not in available:
+        operation = available[0]
+        st.session_state[FLOW_OPERATION_KEY] = operation
+        st.session_state['operacao_final'] = operation
+        st.session_state['tipo_operacao_final'] = operation
+    return operation
 
 
 def _active_steps() -> list[str]:
-    return CADASTRO_STEPS if _preferred_operation_from_models() == 'cadastro' else ESTOQUE_STEPS
+    return CADASTRO_STEPS if _selected_operation() == 'cadastro' else ESTOQUE_STEPS
 
 
 def _current_step() -> str:
     steps = _active_steps()
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
     if step not in steps:
-        step = STEP_ORIGEM if step in set(CADASTRO_STEPS + ESTOQUE_STEPS) and STEP_ORIGEM in steps else STEP_MODELO
+        step = STEP_OPERACAO if step in ALL_STEPS and STEP_OPERACAO in steps else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
 
@@ -152,10 +177,9 @@ def _previous_step() -> None:
         _go_to_step(steps[index - 1])
 
 
-def _reset_wizard() -> None:
+def _reset_outputs_for_operation_change() -> None:
     for key in [
         FLOW_ORIGIN_KEY,
-        FLOW_OPERATION_KEY,
         FLOW_ACTIVE_KEY,
         'origem_final',
         'origem_dados',
@@ -176,6 +200,13 @@ def _reset_wizard() -> None:
         'mapping_estoque',
     ]:
         st.session_state.pop(key, None)
+
+
+def _reset_wizard() -> None:
+    _reset_outputs_for_operation_change()
+    st.session_state.pop(FLOW_OPERATION_KEY, None)
+    st.session_state.pop('operacao_final', None)
+    st.session_state.pop('tipo_operacao_final', None)
     _go_to_step(STEP_MODELO)
 
 
@@ -284,12 +315,53 @@ def _render_model_step() -> None:
         st.info('Envie pelo menos um modelo do Bling para continuar com segurança.')
 
 
-def _render_pricing_step() -> None:
+def _render_operation_step() -> None:
+    available = _available_operations()
+    labels_by_value = {
+        'cadastro': '🧾 Cadastrar produtos no Bling',
+        'estoque': '📦 Atualizar estoque no Bling',
+    }
     _render_section_card(
         'Etapa 2',
+        'O que você quer fazer?',
+        'Escolha explicitamente o fluxo. O sistema não vai mais adivinhar cadastro ou estoque apenas pelo modelo carregado.',
+    )
+    labels = [labels_by_value[value] for value in available]
+    current = _selected_operation()
+    index = available.index(current) if current in available else 0
+    choice_label = st.radio(
+        'Operação',
+        labels,
+        index=index,
+        key='wizard_operation_radio',
+        label_visibility='collapsed',
+    )
+    selected = available[labels.index(choice_label)] if choice_label else current
+    previous = st.session_state.get(FLOW_OPERATION_KEY)
+    if selected != previous:
+        _reset_outputs_for_operation_change()
+    st.session_state[FLOW_OPERATION_KEY] = selected
+    st.session_state['operacao_final'] = selected
+    st.session_state['tipo_operacao_final'] = selected
+    try:
+        st.query_params['operacao'] = selected
+    except Exception:
+        pass
+    _render_nav_buttons(allow_next=bool(selected))
+
+
+def _render_pricing_step() -> None:
+    operation = _selected_operation()
+    _render_section_card(
+        'Etapa 3',
         'Precificação opcional',
         'Ative somente se quiser calcular preço de venda antes do mapeamento. Se não precisar, pule esta etapa.',
     )
+    if operation == 'estoque':
+        disable_home_pricing()
+        st.info('Precificação não é usada no fluxo de estoque. Continue para escolher a origem.')
+        _render_nav_buttons(allow_next=True, next_label='Continuar')
+        return
     use_pricing = st.toggle(
         'Usar calculadora de preço',
         value=bool(st.session_state.get('home_precificacao_inicial', False)),
@@ -304,11 +376,11 @@ def _render_pricing_step() -> None:
 
 
 def _render_origin_step() -> None:
-    operation = _preferred_operation_from_models()
+    operation = _selected_operation()
     _clear_legacy_origin_widget_state(operation)
     operation_label = 'atualização de estoque' if operation == 'estoque' else 'cadastro de produtos'
     _render_section_card(
-        'Etapa 3',
+        'Etapa 4',
         'Origem dos dados',
         f'Escolha como os produtos entram no fluxo de {operation_label}. A próxima tela carrega somente o módulo necessário.',
     )
@@ -349,7 +421,7 @@ def _render_operation_panel(operation: str) -> None:
 
 def _render_process_step() -> None:
     origin = _current_origin_choice()
-    operation = _preferred_operation_from_models()
+    operation = _selected_operation()
     if not origin:
         st.warning('Escolha a origem dos dados antes de processar.')
         _render_nav_buttons(allow_next=False)
@@ -428,11 +500,13 @@ def _render_estoque_preview() -> None:
 
 
 def render_home_wizard() -> None:
-    operation = _preferred_operation_from_models()
+    operation = _selected_operation()
     _render_step_header()
     step = _current_step()
     if step == STEP_MODELO:
         _render_model_step()
+    elif step == STEP_OPERACAO:
+        _render_operation_step()
     elif step == STEP_PRECIFICACAO:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
