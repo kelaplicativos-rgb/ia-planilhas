@@ -34,7 +34,7 @@ def _query_urls_default() -> str:
 
 
 def _current_site_operation() -> str:
-    for key in ('tipo_operacao_site', 'operacao_final', 'tipo_operacao_final'):
+    for key in ('tipo_operacao_site', 'operacao_final', 'tipo_operacao_final', 'home_slim_flow_operation'):
         value = str(st.session_state.get(key) or '').strip().lower()
         if value in {'cadastro', 'estoque'}:
             return value
@@ -42,6 +42,28 @@ def _current_site_operation() -> str:
     if flow in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
         return 'estoque'
     return 'cadastro'
+
+
+def _site_df_key(operation: str) -> str:
+    return f'df_site_bruto_{operation}'
+
+
+def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
+    st.session_state[_site_df_key(operation)] = df_site
+    st.session_state['df_site_bruto'] = df_site  # compatibilidade com módulos antigos
+    other = 'estoque' if operation == 'cadastro' else 'cadastro'
+    st.session_state.pop(_site_df_key(other), None)
+
+
+def _get_site_df(operation: str) -> pd.DataFrame | None:
+    df_current = st.session_state.get(_site_df_key(operation))
+    if isinstance(df_current, pd.DataFrame):
+        return df_current
+    df_legacy = st.session_state.get('df_site_bruto')
+    legacy_operation = str(st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site') or '').strip().lower()
+    if legacy_operation == operation and isinstance(df_legacy, pd.DataFrame):
+        return df_legacy
+    return None
 
 
 def _has_columns(columns: list[str] | None) -> bool:
@@ -65,12 +87,12 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
-def _render_urls_input() -> str:
+def _render_urls_input(operation: str) -> str:
     return st.text_area(
         'Links do fornecedor',
         value=_query_urls_default(),
         height=120,
-        key='urls_site',
+        key=f'urls_site_{operation}',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
         help='Cole um ou mais links: categoria, busca ou produtos individuais.',
     )
@@ -102,7 +124,7 @@ def _run_site_capture(
         progress_callback=make_site_progress_callback(progress_bar, status_box),
     )
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
-    st.session_state['df_site_bruto'] = df_site
+    _store_site_df(operation, df_site)
     st.session_state['operation_site'] = operation
     st.session_state['tipo_operacao_site'] = operation
     st.session_state['operacao_final'] = operation
@@ -126,16 +148,16 @@ def render_site_panel() -> None:
 
     config_for_site_operation(operation)
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
-    raw_urls = _render_urls_input()
+    raw_urls = _render_urls_input(operation)
 
     button_label = 'Buscar no site e gerar origem de estoque' if operation == 'estoque' else 'Buscar no site e gerar origem de cadastro'
     button_disabled = operation == 'estoque' and not _has_columns(requested_columns)
     if button_disabled:
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
 
-    if st.button(button_label, use_container_width=True, disabled=button_disabled):
+    if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
-    df_site_bruto = st.session_state.get('df_site_bruto')
+    df_site_bruto = _get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         render_site_source_summary(df_site_bruto, operation, show_history=False)
