@@ -18,11 +18,7 @@ def _label(operation: str) -> str:
 
 
 def _mark_site_as_inline_source(normalized: str) -> None:
-    """A busca por site vira origem interna, mas permanece na Home unica.
-
-    Nao ativa painel secundario e nao muda a tela para outro fluxo. A Home
-    detecta a origem salva e renderiza mapeamento/preview logo abaixo.
-    """
+    """A busca por site vira origem interna para o fluxo atual."""
     st.session_state['tipo_operacao'] = normalized
     st.session_state['operacao_final'] = normalized
     st.session_state['tipo_operacao_final'] = normalized
@@ -72,6 +68,24 @@ def save_site_source(
     _mark_site_as_inline_source(normalized)
 
 
+def render_site_source_summary(
+    df_site: pd.DataFrame,
+    operation: str = 'cadastro',
+    *,
+    show_history: bool = False,
+) -> None:
+    """Resumo leve para o Wizard: sem mapeamento, preview final ou download final."""
+    if not isinstance(df_site, pd.DataFrame) or df_site.empty:
+        return
+    label = _label(operation)
+    st.success(f'Origem de {label} criada com {len(df_site)} produto(s) e {len(df_site.columns)} coluna(s).')
+    st.caption('Continue para a próxima etapa. O mapeamento, preview e download final ficam separados no Wizard.')
+    with st.expander('Conferir uma amostra da origem por site', expanded=False):
+        st.dataframe(df_site.head(20).fillna('').astype(str), use_container_width=True)
+    if show_history:
+        render_site_progress_history()
+
+
 def render_generated_site_actions(
     df_site: pd.DataFrame,
     raw_urls: str,
@@ -81,6 +95,7 @@ def render_generated_site_actions(
     df_modelo: pd.DataFrame | None,
     operation: str = 'cadastro',
 ) -> None:
+    """Compatibilidade com telas antigas: salva origem e mostra download bruto opcional."""
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
 
@@ -89,7 +104,7 @@ def render_generated_site_actions(
     config = config_for_site_operation(normalized)
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
 
-    st.success(f'Origem de {label} criada com sucesso. Siga para o mapeamento abaixo.')
+    st.success(f'Origem de {label} criada com sucesso. Siga para a próxima etapa.')
     render_site_progress_history()
 
     st.download_button(
