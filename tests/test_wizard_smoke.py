@@ -77,6 +77,18 @@ def test_file_origin_does_not_reuse_old_site_origin() -> None:
     assert 'upload = render_estoque_upload(model_loaded)' in estoque_steps
 
 
+def test_site_origin_uses_empty_upload_result() -> None:
+    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
+    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+
+    assert 'def _empty_upload_result() -> SmartUploadResult:' in cadastro_steps
+    assert 'def _empty_upload_result() -> SmartUploadResult:' in estoque_steps
+    assert 'if site_origin:\n        upload = _empty_upload_result()' in cadastro_steps
+    assert 'if site_origin:\n        upload = _empty_upload_result()' in estoque_steps
+    assert 'source_file=None' in cadastro_steps
+    assert 'source_file=None' in estoque_steps
+
+
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
     steps = importlib.import_module('bling_app_zero.ui.cadastro_wizard_steps')
     st = importlib.import_module('streamlit')
