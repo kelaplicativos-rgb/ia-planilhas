@@ -7,12 +7,14 @@ from typing import Callable, Iterable
 import pandas as pd
 
 from bling_app_zero.core.column_contract import RequestedField, build_contract
-from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.fast_site_scraper.extractors import (
     extract_brand,
+    extract_caracteristicas,
     extract_category,
     extract_code,
     extract_description,
+    extract_description_complementar,
+    extract_ficha_tecnica,
     extract_gtin,
     extract_images,
     extract_price,
@@ -45,7 +47,23 @@ def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> No
 def _default_columns(operation: str) -> list[str]:
     if operation == 'estoque':
         return ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)']
-    return ['URL', 'Código', 'SKU', 'GTIN', 'Descrição', 'Nome', 'Preço', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens', 'Imagens', 'Marca', 'Categoria']
+    return [
+        'URL',
+        'Código',
+        'SKU',
+        'GTIN',
+        'Descrição',
+        'Descrição complementar',
+        'Características',
+        'Ficha técnica',
+        'Nome',
+        'Preço',
+        'Preço unitário (OBRIGATÓRIO)',
+        'URL Imagens',
+        'Imagens',
+        'Marca',
+        'Categoria',
+    ]
 
 
 def _needed_kinds(contract: list[RequestedField]) -> set[str]:
@@ -59,7 +77,6 @@ def _important_kinds(contract: list[RequestedField]) -> set[str]:
     kinds = {field.kind for field in contract if field.kind != 'custom'}
     if 'codigo' in kinds or 'id_produto' in kinds:
         kinds.add('gtin')
-    # Campos de preenchimento padrão não devem travar parada inteligente.
     kinds -= {'deposito', 'data', 'observacao'}
     return kinds or {'url'}
 
@@ -71,8 +88,14 @@ def _value_for_kind(product: FastProductData, kind: str) -> str:
         return product.codigo or product.gtin
     if kind == 'gtin':
         return product.gtin
-    if kind in {'descricao', 'nome_apoio'}:
+    if kind in {'descricao', 'descricao_curta', 'nome_apoio'}:
         return product.descricao
+    if kind == 'descricao_complementar':
+        return product.descricao_complementar
+    if kind == 'ficha_tecnica':
+        return product.ficha_tecnica
+    if kind == 'caracteristicas':
+        return product.caracteristicas
     if kind in {'preco_unitario', 'preco_custo'}:
         return product.preco
     if kind == 'estoque':
@@ -87,8 +110,19 @@ def _value_for_kind(product: FastProductData, kind: str) -> str:
 
 
 def _has_useful_data(product: FastProductData, needed: set[str]) -> bool:
-    """Evita linhas vazias quando a página falha e o modelo não pediu URL."""
-    if any([product.codigo, product.gtin, product.descricao, product.preco, product.estoque, product.imagem, product.marca, product.categoria]):
+    if any([
+        product.codigo,
+        product.gtin,
+        product.descricao,
+        product.descricao_complementar,
+        product.ficha_tecnica,
+        product.caracteristicas,
+        product.preco,
+        product.estoque,
+        product.imagem,
+        product.marca,
+        product.categoria,
+    ]):
         return True
     return 'url' in needed and bool(product.url)
 
@@ -122,6 +156,9 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[FastProductData, float, boo
         'codigo': '',
         'gtin': '',
         'descricao': '',
+        'descricao_complementar': '',
+        'ficha_tecnica': '',
+        'caracteristicas': '',
         'preco': '',
         'estoque': '',
         'imagem': '',
@@ -135,8 +172,14 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[FastProductData, float, boo
         data['codigo'] = extract_code(page)
     if 'gtin' in needed:
         data['gtin'] = extract_gtin(page)
-    if 'descricao' in needed or 'nome_apoio' in needed:
+    if 'descricao' in needed or 'descricao_curta' in needed or 'nome_apoio' in needed:
         data['descricao'] = extract_description(page)
+    if 'descricao_complementar' in needed:
+        data['descricao_complementar'] = extract_description_complementar(page)
+    if 'ficha_tecnica' in needed:
+        data['ficha_tecnica'] = extract_ficha_tecnica(page)
+    if 'caracteristicas' in needed:
+        data['caracteristicas'] = extract_caracteristicas(page)
     if 'preco_unitario' in needed or 'preco_custo' in needed:
         data['preco'] = extract_price(page)
     if 'estoque' in needed:
