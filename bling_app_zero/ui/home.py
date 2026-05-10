@@ -186,11 +186,6 @@ def _render_inline_data_entry(origin: str) -> None:
         render_site_panel()
         df_site_source = get_site_source_for_operation(operation)
         if df_site_source is not None:
-            _render_section_card(
-                'Mapeamento e download',
-                'Origem do site pronta',
-                'A busca por site virou uma origem interna. O mapeamento, preview e CSV final aparecem logo abaixo, sem trocar de tela.',
-            )
             _render_operation_panel(operation)
         return
 
