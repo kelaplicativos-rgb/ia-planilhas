@@ -11,7 +11,9 @@ from bling_app_zero.ui.cadastro_sources import (
     select_cadastro_model,
     select_estoque_model_for_cadastro,
 )
+from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
+from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
 CADASTRO_ORIGEM_KEY = 'cadastro_wizard_df_origem'
@@ -26,6 +28,25 @@ def _valid_df(df: object) -> bool:
 
 def _valid_model(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
+def _is_site_origin() -> bool:
+    return str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '').strip().lower() == 'site'
+
+
+def _empty_upload_result() -> SmartUploadResult:
+    return SmartUploadResult(
+        source_file=None,
+        source_df=None,
+        model_file=None,
+        model_df=None,
+        cadastro_model_file=None,
+        cadastro_model_df=get_home_cadastro_model(),
+        estoque_model_file=None,
+        estoque_model_df=get_home_estoque_model(),
+        attachments=[],
+        ignored_files=[],
+    )
 
 
 def _source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFrame | None:
@@ -92,7 +113,10 @@ def render_cadastro_entrada_step() -> None:
     st.caption('Carregue somente a origem do fornecedor nesta etapa. O mapeamento, preview e download ficam nas próximas telas.')
 
     df_origem_site = get_site_source_for_operation('cadastro')
-    upload = render_cadastro_source_upload(df_origem_site)
+    if _is_site_origin():
+        upload = _empty_upload_result()
+    else:
+        upload = render_cadastro_source_upload(df_origem_site)
     df_origem = _source_dataframe(df_origem_site, upload)
     _clear_cadastro_outputs_if_source_changed(df_origem)
 
@@ -104,10 +128,12 @@ def render_cadastro_entrada_step() -> None:
         st.success(f'Origem de cadastro carregada com {len(df_origem)} produto(s) e {len(df_origem.columns)} coluna(s).')
         with st.expander('Conferir origem carregada', expanded=False):
             preview_df('Origem do cadastro', df_origem)
+    elif _is_site_origin():
+        st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
     else:
-        st.info('Envie a origem do fornecedor ou use a busca por site antes de continuar.')
+        st.info('Envie a origem do fornecedor antes de continuar.')
 
     if _valid_model(df_modelo):
         st.caption(f'Modelo de cadastro detectado com {len(df_modelo.columns)} coluna(s).')
