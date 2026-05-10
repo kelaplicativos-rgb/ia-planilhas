@@ -111,7 +111,8 @@ def render_estoque_entrada_step() -> None:
         st.success('Modelo de estoque carregado. Agora informe a origem escolhida.')
 
     df_origem_site = get_estoque_site_source()
-    if _is_site_origin():
+    site_origin = _is_site_origin()
+    if site_origin:
         upload = _empty_upload_result()
     else:
         upload = render_estoque_upload(model_loaded)
@@ -123,11 +124,13 @@ def render_estoque_entrada_step() -> None:
 
     deposito = st.text_input('Nome do depósito', value=st.session_state.get(ESTOQUE_DEPOSITO_KEY, 'Não definido'), key=ESTOQUE_DEPOSITO_KEY)
 
-    if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
+    if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty and site_origin:
+        st.success('Origem de estoque por site pronta. Continue para gerar o preview.')
+    elif isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
         st.success(f'Origem de estoque criada pelo site com {len(df_origem_site)} linha(s).')
         with st.expander('Conferir origem de estoque do site', expanded=False):
             preview_df('Origem de estoque criada pelo site', df_origem_site)
-    elif _is_site_origin():
+    elif site_origin:
         st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
     else:
         source_files = source_files_from_upload(upload)
