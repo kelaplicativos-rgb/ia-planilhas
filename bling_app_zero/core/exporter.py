@@ -58,6 +58,21 @@ DEFAULT_MEASURES_CM = {
 
 DEFAULT_SUPPLIER = 'Não definido'
 DEFAULT_MEASURE_UNIT = 'Centímetro'
+SUPPLIER_INVALID_KEYS = {
+    '',
+    'nan',
+    'none',
+    'null',
+    'na',
+    'n/a',
+    'nao informado',
+    'naoinformado',
+    'sem informacao',
+    'seminformacao',
+    'indefinido',
+    'undefined',
+}
+SUPPLIER_CODE_RE = re.compile(r'^[A-Za-z]{0,6}\d+[A-Za-z0-9._/-]*$')
 
 
 def _looks_like_image_column(column: object) -> bool:
@@ -110,6 +125,22 @@ def _is_empty_text(value: object) -> bool:
         return True
     key = normalize_key(text)
     return key in {'nan', 'none', 'null', 'na', 'n/a', 'nao informado', 'naoinformado', 'sem informacao', 'seminformacao'}
+
+
+def _is_invalid_supplier_value(value: object) -> bool:
+    text = clean_cell(value).strip()
+    key = normalize_key(text)
+    if key in SUPPLIER_INVALID_KEYS:
+        return True
+    if len(text) <= 2:
+        return True
+    if text.startswith(('http://', 'https://')):
+        return True
+    if SUPPLIER_CODE_RE.match(text):
+        return True
+    if re.search(r'\d', text) and not re.search(r'[A-Za-zÀ-ÿ]{3,}\s+[A-Za-zÀ-ÿ]{2,}', text):
+        return True
+    return False
 
 
 def _is_empty_measure(value: object) -> bool:
@@ -281,7 +312,9 @@ def _fill_default_supplier(out: pd.DataFrame) -> pd.DataFrame:
     for column in out.columns:
         if not _looks_like_supplier_column(column):
             continue
-        out[column] = out[column].apply(lambda value: supplier_default if _is_empty_text(value) else clean_cell(value))
+        out[column] = out[column].apply(
+            lambda value: supplier_default if _is_invalid_supplier_value(value) else clean_cell(value)
+        )
 
     return out
 
