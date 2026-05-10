@@ -14,6 +14,13 @@ from bling_app_zero.ui.cadastro_wizard_steps import (
     render_cadastro_mapeamento_step,
     render_cadastro_preview_step,
 )
+from bling_app_zero.ui.estoque_wizard_steps import (
+    estoque_context_ready,
+    estoque_output_ready,
+    render_estoque_entrada_step,
+    render_estoque_gerar_step,
+    render_estoque_preview_step,
+)
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
     render_home_pricing_config_form,
@@ -35,6 +42,7 @@ STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_MAPEAMENTO = 'mapeamento'
+STEP_GERAR_ESTOQUE = 'gerar_estoque'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
@@ -48,7 +56,14 @@ CADASTRO_STEPS = [
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
-ESTOQUE_STEPS = [STEP_MODELO, STEP_PRECIFICACAO, STEP_ORIGEM, STEP_PROCESSAR]
+ESTOQUE_STEPS = [
+    STEP_MODELO,
+    STEP_PRECIFICACAO,
+    STEP_ORIGEM,
+    STEP_ENTRADA,
+    STEP_GERAR_ESTOQUE,
+    STEP_PREVIEW,
+]
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
@@ -56,6 +71,7 @@ STEP_LABELS = {
     STEP_ORIGEM: 'Origem',
     STEP_ENTRADA: 'Entrada',
     STEP_MAPEAMENTO: 'Mapeamento',
+    STEP_GERAR_ESTOQUE: 'Gerar',
     STEP_PREVIEW: 'Preview',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
@@ -103,7 +119,7 @@ def _current_step() -> str:
     steps = _active_steps()
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
     if step not in steps:
-        step = STEP_ORIGEM if step in CADASTRO_STEPS + ESTOQUE_STEPS and STEP_ORIGEM in steps else STEP_MODELO
+        step = STEP_ORIGEM if step in set(CADASTRO_STEPS + ESTOQUE_STEPS) and STEP_ORIGEM in steps else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
 
@@ -150,8 +166,14 @@ def _reset_wizard() -> None:
         'cadastro_wizard_df_para_mapear',
         'cadastro_wizard_df_modelo',
         'cadastro_wizard_df_modelo_estoque',
+        'estoque_wizard_upload',
+        'estoque_wizard_df_origem_site',
+        'estoque_wizard_df_modelo',
         'df_final_cadastro',
         'mapping_cadastro',
+        'estoque_multi_outputs',
+        'df_final_estoque',
+        'mapping_estoque',
     ]:
         st.session_state.pop(key, None)
     _go_to_step(STEP_MODELO)
@@ -335,11 +357,7 @@ def _render_process_step() -> None:
 
     operation_label = 'Estoque' if operation == 'estoque' else 'Cadastro'
     origin_label = 'site/link' if origin == 'site' else 'planilha/arquivo'
-    _render_section_card(
-        'Etapa 4',
-        f'{operation_label} por {origin_label}',
-        'Nesta fase o sistema carrega apenas o módulo escolhido.',
-    )
+    _render_section_card('Etapa', f'{operation_label} por {origin_label}', 'Nesta fase o sistema carrega apenas o módulo escolhido.')
 
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
@@ -350,15 +368,6 @@ def _render_process_step() -> None:
             _render_operation_panel(operation)
     else:
         _render_operation_panel(operation)
-
-    st.divider()
-    col_back, col_reset = st.columns(2)
-    with col_back:
-        if st.button('Voltar para origem', use_container_width=True, key='wizard_process_back'):
-            _go_to_step(STEP_ORIGEM)
-    with col_reset:
-        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_process_reset'):
-            _reset_wizard()
 
 
 def _render_cadastro_entrada() -> None:
@@ -392,7 +401,34 @@ def _render_cadastro_download() -> None:
             _reset_wizard()
 
 
+def _render_estoque_entrada() -> None:
+    origin = _current_origin_choice()
+    if origin == 'site':
+        from bling_app_zero.ui.site_panel import render_site_panel
+
+        render_site_panel()
+    render_estoque_entrada_step()
+    _render_nav_buttons(allow_next=estoque_context_ready())
+
+
+def _render_estoque_gerar() -> None:
+    render_estoque_gerar_step()
+    _render_nav_buttons(allow_next=estoque_output_ready())
+
+
+def _render_estoque_preview() -> None:
+    render_estoque_preview_step()
+    col_back, col_reset = st.columns(2)
+    with col_back:
+        if st.button('Voltar para gerar estoque', use_container_width=True, key='wizard_estoque_preview_back'):
+            _go_to_step(STEP_GERAR_ESTOQUE)
+    with col_reset:
+        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_preview_reset'):
+            _reset_wizard()
+
+
 def render_home_wizard() -> None:
+    operation = _preferred_operation_from_models()
     _render_step_header()
     step = _current_step()
     if step == STEP_MODELO:
@@ -401,13 +437,19 @@ def render_home_wizard() -> None:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
-    elif step == STEP_ENTRADA:
+    elif operation == 'cadastro' and step == STEP_ENTRADA:
         _render_cadastro_entrada()
-    elif step == STEP_MAPEAMENTO:
+    elif operation == 'cadastro' and step == STEP_MAPEAMENTO:
         _render_cadastro_mapeamento()
-    elif step == STEP_PREVIEW:
+    elif operation == 'cadastro' and step == STEP_PREVIEW:
         _render_cadastro_preview()
-    elif step == STEP_DOWNLOAD:
+    elif operation == 'cadastro' and step == STEP_DOWNLOAD:
         _render_cadastro_download()
+    elif operation == 'estoque' and step == STEP_ENTRADA:
+        _render_estoque_entrada()
+    elif operation == 'estoque' and step == STEP_GERAR_ESTOQUE:
+        _render_estoque_gerar()
+    elif operation == 'estoque' and step == STEP_PREVIEW:
+        _render_estoque_preview()
     else:
         _render_process_step()
