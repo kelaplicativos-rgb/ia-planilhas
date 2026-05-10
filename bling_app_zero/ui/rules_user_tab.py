@@ -8,7 +8,18 @@ EDIT_ICON = '✏️'
 DELETE_ICON = '🗑️'
 SYSTEM_BADGE = '🧩 Padrão'
 USER_BADGE = '👤 Usuário'
+NOTICE_KEY = 'rules_tab_notice'
 CRITICAL_SYSTEM_COLUMNS = {'unidade', 'unidade de medida', 'altura', 'largura', 'profundidade', 'comprimento'}
+
+
+def _notice(message: str) -> None:
+    st.session_state[NOTICE_KEY] = message
+
+
+def _render_notice() -> None:
+    message = st.session_state.pop(NOTICE_KEY, '')
+    if message:
+        st.caption(f'✅ {message}')
 
 
 def _rule_key(rule: dict, index: int) -> str:
@@ -66,7 +77,7 @@ def _render_edit_mode(rule: dict, index: int, suffix: str, edit_key: str, target
                 return
             update_custom_rule(index, new_target, new_value, False)
             st.session_state[edit_key] = False
-            st.success('Regra atualizada.')
+            _notice('Regra atualizada.')
             st.rerun()
 
         if col_cancel.button('Cancelar', use_container_width=True, key=f'cancel_edit_{suffix}'):
@@ -101,7 +112,7 @@ def _render_rule_row(rule: dict, index: int) -> None:
         col_delete.caption('🔒')
     elif col_delete.button(DELETE_ICON, key=f'delete_rule_{index}_{suffix}', help='Excluir regra'):
         remove_custom_rule(index)
-        st.success('Regra excluída.')
+        _notice('Regra excluída.')
         st.rerun()
 
 
@@ -116,7 +127,7 @@ def _render_new_rule_form() -> None:
                 st.warning('Informe o nome da coluna.')
                 return
             add_custom_rule(column_name, column_name, fill_value, False)
-            st.success('Regra adicionada.')
+            _notice('Regra adicionada.')
             st.rerun()
 
 
@@ -126,6 +137,7 @@ def render_user_rules_tab() -> None:
 
     st.markdown(f'##### Regras salvas ({len(custom_rules)})')
     st.caption('Regras escrevem valores em colunas do CSV final.')
+    _render_notice()
 
     if custom_rules:
         for index, rule in enumerate(custom_rules):
