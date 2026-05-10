@@ -9,6 +9,7 @@ from bling_app_zero.core.pricing import apply_pricing, calculate_price, to_numbe
 from bling_app_zero.engines.cadastro_engine import run_cadastro_engine
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError, run_estoque_engine
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
+from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.ui.site_models import requested_columns_for_site_capture
 
 
@@ -106,6 +107,27 @@ class TestFluxosPrincipais(unittest.TestCase):
         self.assertEqual(list(df.columns), ['URL'])
         self.assertEqual(len(df), 2)
         self.assertTrue(df['URL'].str.startswith('https://').all())
+
+    def test_roteador_site_separa_cadastro_e_estoque(self) -> None:
+        cadastro = run_site_operation_engine(
+            operation='cadastro',
+            raw_urls='https://fornecedor.com/produto-1',
+            requested_columns=['URL'],
+            max_pages=1,
+            max_products=1,
+        )
+        estoque_sem_contrato = run_site_operation_engine(
+            operation='estoque',
+            raw_urls='https://fornecedor.com/produto-1',
+            requested_columns=None,
+            max_pages=1,
+            max_products=1,
+        )
+
+        self.assertEqual(list(cadastro.columns), ['URL'])
+        self.assertEqual(len(cadastro), 1)
+        self.assertEqual(list(estoque_sem_contrato.columns), [])
+        self.assertEqual(len(estoque_sem_contrato), 0)
 
     def test_exportador_limpa_gtin_invalido_e_preserva_separador_de_imagens(self) -> None:
         df = pd.DataFrame(

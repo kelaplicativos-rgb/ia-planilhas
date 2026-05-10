@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
+from bling_app_zero.engines.site_operations import run_site_operation_engine
+from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
 from bling_app_zero.ui.site_models import requested_columns_for_site_capture
 
 
@@ -49,6 +52,70 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(len(df), 2)
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
         self.assertEqual(df.loc[1, 'URL'], 'https://fornecedor.com/p/2')
+
+    def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
+        with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
+            df = run_site_operation_engine(
+                operation='cadastro',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'],
+                max_pages=1,
+                max_products=1,
+            )
+
+        self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'])
+        self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
+
+    def test_motor_estoque_sem_contrato_nao_cai_no_cadastro(self) -> None:
+        df = run_site_operation_engine(
+            operation='estoque',
+            raw_urls='https://fornecedor.com/p/1',
+            requested_columns=None,
+            max_pages=1,
+            max_products=1,
+        )
+
+        self.assertEqual(list(df.columns), [])
+        self.assertEqual(len(df), 0)
+
+    def test_motores_deduplicam_colunas_do_contrato(self) -> None:
+        with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
+            cadastro = run_site_operation_engine(
+                operation='cadastro',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'URL', 'Descrição', 'Descrição'],
+                max_pages=1,
+                max_products=1,
+            )
+            estoque = run_site_operation_engine(
+                operation='estoque',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['Código', 'Código', 'Balanço (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'],
+                max_pages=1,
+                max_products=1,
+            )
+
+        self.assertEqual(list(cadastro.columns), ['URL', 'Descrição'])
+        self.assertEqual(list(estoque.columns), ['Código', 'Balanço (OBRIGATÓRIO)'])
+
+    def test_plano_de_submotores_muda_por_operacao(self) -> None:
+        cadastro_plan = build_submotor_plan(
+            'cadastro',
+            ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens', 'Categoria'],
+        )
+        estoque_plan = build_submotor_plan(
+            'estoque',
+            ['Código', 'Balanço (OBRIGATÓRIO)'],
+        )
+
+        self.assertEqual(cadastro_plan.operation, 'cadastro')
+        self.assertIn('preco', cadastro_plan.active)
+        self.assertIn('imagens', cadastro_plan.active)
+        self.assertIn('categoria', cadastro_plan.active)
+        self.assertEqual(estoque_plan.operation, 'estoque')
+        self.assertIn('identificacao', estoque_plan.active)
+        self.assertIn('estoque', estoque_plan.active)
+        self.assertNotIn('imagens', estoque_plan.active)
 
 
 if __name__ == '__main__':
