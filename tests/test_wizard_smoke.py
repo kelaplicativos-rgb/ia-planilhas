@@ -1,26 +1,36 @@
 from __future__ import annotations
 
+import csv
 import importlib
+from io import StringIO
 
 import pandas as pd
 
 
-CRITICAL_MODULES = [
+LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.estoque_wizard_steps',
     'bling_app_zero.ui.cadastro_mapping',
-    'bling_app_zero.ui.site_panel',
-    'bling_app_zero.ui.site_outputs',
     'bling_app_zero.flows.site_as_source',
     'bling_app_zero.ui.wizard_state_guard',
     'bling_app_zero.core.exporter',
     'bling_app_zero.core.gtin',
 ]
 
+SITE_CRITICAL_MODULES = [
+    'bling_app_zero.ui.site_panel',
+    'bling_app_zero.ui.site_outputs',
+]
 
-def test_critical_wizard_modules_import() -> None:
-    for module_name in CRITICAL_MODULES:
+
+def test_light_critical_wizard_modules_import() -> None:
+    for module_name in LIGHT_CRITICAL_MODULES:
+        importlib.import_module(module_name)
+
+
+def test_site_critical_modules_import_without_running_scraper() -> None:
+    for module_name in SITE_CRITICAL_MODULES:
         importlib.import_module(module_name)
 
 
@@ -46,13 +56,15 @@ def test_exporter_uses_bling_csv_contract() -> None:
     )
     csv_bytes = to_bling_csv_bytes(df)
     text = csv_bytes.decode('utf-8-sig')
+    rows = list(csv.reader(StringIO(text), delimiter=';'))
 
-    assert ';' in text
-    assert ',' not in text.splitlines()[0]
-    assert 'https://a.com/1.jpg|https://a.com/2.jpg' in text
+    assert len(rows) == 2
+    header = rows[0]
+    values = rows[1]
+    row = dict(zip(header, values))
 
-    body = text.splitlines()[1]
-    columns = text.splitlines()[0].split(';')
-    values = body.split(';')
-    row = dict(zip(columns, values))
+    assert 'Descrição' in header
+    assert 'GTIN/EAN' in header
+    assert 'URL imagens externas' in header
     assert row['GTIN/EAN'] == ''
+    assert row['URL imagens externas'] == 'https://a.com/1.jpg|https://a.com/2.jpg'
