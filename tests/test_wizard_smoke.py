@@ -150,6 +150,17 @@ def test_cadastro_download_only_happens_on_download_step() -> None:
     assert "preview_df('🧾 CADASTRO · Preview final', df_final)" in before_download_step
 
 
+def test_estoque_download_only_happens_on_download_step() -> None:
+    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+
+    before_download_step = estoque_steps.split('def render_estoque_download_step()', 1)[0]
+    download_step = estoque_steps.split('def render_estoque_download_step()', 1)[1]
+
+    assert 'render_stock_downloads()' not in before_download_step
+    assert 'render_stock_downloads()' in download_step
+    assert 'render_stock_preview()' in before_download_step
+
+
 def test_mapping_css_uses_existing_theme_variables() -> None:
     mapping_css = Path('bling_app_zero/ui/layout/mapping.py').read_text(encoding='utf-8')
 
