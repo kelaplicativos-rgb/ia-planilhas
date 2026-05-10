@@ -5,17 +5,7 @@ from collections.abc import Callable, Iterable
 import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
-
-
-def _clean_columns(columns: Iterable[str] | None) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for column in columns or []:
-        text = str(column).strip()
-        if text and text not in seen:
-            cleaned.append(text)
-            seen.add(text)
-    return cleaned
+from bling_app_zero.engines.site_operations.contracts import estoque_columns
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -42,7 +32,7 @@ def run_estoque_site_engine(
     solicitadas. Se a coluna não for encontrada no site, fica vazia.
     Sem contrato/modelo, não tenta adivinhar e não reaproveita colunas de cadastro.
     """
-    columns = _clean_columns(requested_columns)
+    columns = estoque_columns(requested_columns)
     if not columns:
         _emit(progress_callback, {
             'stage': 'Modelo obrigatório',
