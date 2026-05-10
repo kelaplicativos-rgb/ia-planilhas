@@ -20,15 +20,19 @@ ESTOQUE_UPLOAD_KEY = 'estoque_wizard_upload'
 ESTOQUE_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_MODELO_KEY = 'estoque_wizard_df_modelo'
 ESTOQUE_DEPOSITO_KEY = 'estoque_nome_deposito'
+ESTOQUE_DEPOSITO_SIGNATURE_KEY = 'estoque_deposito_signature_atual'
 
 
 def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
     return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
 
 
+def _deposito_value() -> str:
+    return str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip()
+
+
 def _valid_deposito() -> bool:
-    deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip()
-    return bool(deposito)
+    return bool(_deposito_value())
 
 
 def _is_site_origin() -> bool:
@@ -59,18 +63,34 @@ def _current_source_signature(df_origem_site: pd.DataFrame | None, upload) -> st
     return 'upload:' + '|'.join(names + sizes)
 
 
-def _clear_estoque_outputs_if_source_changed(df_origem_site: pd.DataFrame | None, upload) -> None:
-    signature = _current_source_signature(df_origem_site, upload)
-    previous = st.session_state.get(ESTOQUE_SOURCE_SIGNATURE_KEY)
-    if previous == signature:
-        return
+def _clear_estoque_outputs() -> None:
     for key in [
         'estoque_multi_outputs',
         'df_final_estoque',
         'mapping_estoque',
     ]:
         st.session_state.pop(key, None)
+
+
+def _clear_estoque_outputs_if_source_changed(df_origem_site: pd.DataFrame | None, upload) -> None:
+    signature = _current_source_signature(df_origem_site, upload)
+    previous = st.session_state.get(ESTOQUE_SOURCE_SIGNATURE_KEY)
+    if previous == signature:
+        return
+    _clear_estoque_outputs()
     st.session_state[ESTOQUE_SOURCE_SIGNATURE_KEY] = signature
+
+
+def _clear_estoque_outputs_if_deposito_changed(deposito: str) -> None:
+    signature = str(deposito or '').strip()
+    previous = st.session_state.get(ESTOQUE_DEPOSITO_SIGNATURE_KEY)
+    if previous is None:
+        st.session_state[ESTOQUE_DEPOSITO_SIGNATURE_KEY] = signature
+        return
+    if previous == signature:
+        return
+    _clear_estoque_outputs()
+    st.session_state[ESTOQUE_DEPOSITO_SIGNATURE_KEY] = signature
 
 
 def _store_estoque_context(upload, df_origem_site: pd.DataFrame | None, df_modelo: pd.DataFrame | None) -> None:
@@ -102,9 +122,28 @@ def estoque_output_ready() -> bool:
     return isinstance(df_final, pd.DataFrame) and not df_final.empty
 
 
+def _render_deposito_input() -> str:
+    current = st.session_state.get(ESTOQUE_DEPOSITO_KEY, 'Não definido')
+    deposito = st.text_input(
+        'Nome do depósito que será gravado no CSV',
+        value=current,
+        key=ESTOQUE_DEPOSITO_KEY,
+        help='Este valor será aplicado em toda coluna de depósito do modelo de estoque do Bling.',
+    )
+    deposito = str(deposito or '').strip()
+    _clear_estoque_outputs_if_deposito_changed(deposito)
+    if deposito:
+        st.success(f'Depósito definido para o CSV: {deposito}')
+    else:
+        st.error('Informe o nome do depósito antes de continuar.')
+    return deposito
+
+
 def render_estoque_entrada_step() -> None:
     st.markdown('### Entrada do estoque')
     st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. Preview e download ficam separados nas próximas etapas.')
+
+    deposito = _render_deposito_input()
 
     model_loaded = home_estoque_model_loaded()
     if model_loaded:
@@ -122,8 +161,6 @@ def render_estoque_entrada_step() -> None:
     render_estoque_model_contract(df_modelo)
     _store_estoque_context(upload, df_origem_site, df_modelo)
 
-    deposito = st.text_input('Nome do depósito', value=st.session_state.get(ESTOQUE_DEPOSITO_KEY, 'Não definido'), key=ESTOQUE_DEPOSITO_KEY)
-
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty and site_origin:
         st.success('Origem de estoque por site pronta. Continue para gerar o preview.')
     elif site_origin:
@@ -139,8 +176,6 @@ def render_estoque_entrada_step() -> None:
         st.error('Envie o modelo de estoque do Bling antes de continuar.')
     elif not str(deposito or '').strip():
         st.error('Informe o nome do depósito antes de continuar.')
-    else:
-        st.caption(f'Depósito definido: {deposito}')
 
 
 def render_estoque_gerar_step() -> None:
@@ -150,7 +185,9 @@ def render_estoque_gerar_step() -> None:
     upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
     df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
-    deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip() or 'Não definido'
+    deposito = _deposito_value() or 'Não definido'
+
+    st.info(f'Depósito que será aplicado no CSV: {deposito}')
 
     if not _valid_model(df_modelo):
         st.error('Modelo de estoque ausente. Volte para a entrada.')
