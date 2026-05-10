@@ -5,7 +5,7 @@ from typing import Callable
 import pandas as pd
 
 from bling_app_zero.core.exporter import sanitize_for_bling
-from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
+from bling_app_zero.engines.site_operations import run_site_operation_engine
 
 
 VALID_OPERATIONS = {'cadastro', 'estoque'}
@@ -34,14 +34,14 @@ def run_pipeline(
     if progress_callback:
         progress_callback({
             'stage': 'Preparando',
-            'message': 'Preparando busca completa no fornecedor...',
+            'message': 'Preparando motor separado por operacao...',
             'progress': 0.02,
         })
 
-    df_result = run_fast_site_scraper(
+    df_result = run_site_operation_engine(
+        operation=selected_operation,
         raw_urls=raw_urls,
         requested_columns=requested_columns,
-        operation=selected_operation,
         max_pages=selected_max_pages,
         max_products=selected_max_products,
         stop_early=not bool(all_products),
@@ -49,7 +49,7 @@ def run_pipeline(
     )
 
     if progress_callback:
-        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados no padrão do Bling...', 'progress': 0.96})
+        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados no padrao do Bling...', 'progress': 0.96})
     safe = sanitize_for_bling(df_result)
     if progress_callback:
         progress_callback({'stage': 'Pronto', 'message': f'{len(safe)} produto(s) preparados na origem.', 'progress': 1.0})
