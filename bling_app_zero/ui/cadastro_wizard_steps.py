@@ -20,6 +20,14 @@ CADASTRO_MODELO_KEY = 'cadastro_wizard_df_modelo'
 CADASTRO_MODELO_ESTOQUE_KEY = 'cadastro_wizard_df_modelo_estoque'
 
 
+def _valid_df(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty
+
+
+def _valid_model(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
 def _source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFrame | None:
     if isinstance(df_origem_site, pd.DataFrame):
         return df_origem_site
@@ -53,22 +61,30 @@ def _store_cadastro_context(
     df_modelo: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
 ) -> None:
-    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
+    if _valid_df(df_origem):
         st.session_state[CADASTRO_ORIGEM_KEY] = df_origem
-    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns):
+    else:
+        st.session_state.pop(CADASTRO_ORIGEM_KEY, None)
+    if _valid_model(df_modelo):
         st.session_state[CADASTRO_MODELO_KEY] = df_modelo
-    if isinstance(df_modelo_estoque, pd.DataFrame) and len(df_modelo_estoque.columns):
+    else:
+        st.session_state.pop(CADASTRO_MODELO_KEY, None)
+    if _valid_model(df_modelo_estoque):
         st.session_state[CADASTRO_MODELO_ESTOQUE_KEY] = df_modelo_estoque
+    else:
+        st.session_state.pop(CADASTRO_MODELO_ESTOQUE_KEY, None)
 
 
 def cadastro_context_ready() -> bool:
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
-    return isinstance(df_origem, pd.DataFrame) and not df_origem.empty
+    df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
+    return _valid_df(df_origem) and _valid_model(df_modelo)
 
 
 def cadastro_mapping_ready() -> bool:
     df_final = st.session_state.get('df_final_cadastro')
-    return isinstance(df_final, pd.DataFrame) and not df_final.empty
+    mapping = st.session_state.get('mapping_cadastro')
+    return _valid_df(df_final) and isinstance(mapping, dict) and bool(mapping)
 
 
 def render_cadastro_entrada_step() -> None:
@@ -84,18 +100,22 @@ def render_cadastro_entrada_step() -> None:
     df_modelo_estoque = select_estoque_model_for_cadastro(upload)
     _store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
-    if isinstance(df_origem, pd.DataFrame) and not df_origem.empty:
+    if _valid_df(df_origem):
         st.success(f'Origem de cadastro carregada com {len(df_origem)} produto(s) e {len(df_origem.columns)} coluna(s).')
         with st.expander('Conferir origem carregada', expanded=False):
             preview_df('Origem do cadastro', df_origem)
-        if isinstance(df_modelo, pd.DataFrame):
-            st.caption(f'Modelo de cadastro detectado com {len(df_modelo.columns)} coluna(s).')
-        if isinstance(df_modelo_estoque, pd.DataFrame):
-            st.caption(f'Modelo de estoque também detectado com {len(df_modelo_estoque.columns)} coluna(s).')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
     else:
         st.info('Envie a origem do fornecedor ou use a busca por site antes de continuar.')
+
+    if _valid_model(df_modelo):
+        st.caption(f'Modelo de cadastro detectado com {len(df_modelo.columns)} coluna(s).')
+    else:
+        st.error('Modelo de cadastro do Bling ausente. Volte na etapa Modelo e envie o modelo correto antes de continuar.')
+
+    if _valid_model(df_modelo_estoque):
+        st.caption(f'Modelo de estoque também detectado com {len(df_modelo_estoque.columns)} coluna(s).')
 
 
 def render_cadastro_mapeamento_step() -> None:
@@ -105,8 +125,11 @@ def render_cadastro_mapeamento_step() -> None:
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
-    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+    if not _valid_df(df_origem):
         st.warning('Nenhuma origem de cadastro carregada. Volte para a etapa Entrada.')
+        return
+    if not _valid_model(df_modelo):
+        st.warning('Modelo de cadastro ausente. Volte para a etapa Modelo.')
         return
 
     df_para_mapear = render_cadastro_pricing(df_origem)
@@ -123,7 +146,7 @@ def render_cadastro_preview_step() -> None:
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro', {})
 
-    if not isinstance(df_final, pd.DataFrame) or df_final.empty:
+    if not _valid_df(df_final):
         st.warning('O preview ainda não foi gerado. Volte para o mapeamento e confirme os campos.')
         return
 
@@ -136,7 +159,7 @@ def render_cadastro_download_step() -> None:
     st.caption('Última etapa: baixe somente o CSV final de cadastro pronto para o Bling.')
 
     df_final = st.session_state.get('df_final_cadastro')
-    if not isinstance(df_final, pd.DataFrame) or df_final.empty:
+    if not _valid_df(df_final):
         st.warning('Ainda não há CSV final de cadastro. Volte para o preview.')
         return
 
