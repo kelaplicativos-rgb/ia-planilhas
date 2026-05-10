@@ -4,11 +4,10 @@ import streamlit as st
 
 
 def inject_sidebar_tools_theme() -> None:
-    """Complemento visual da sidebar usando as variáveis do tema global.
+    """Tema oficial da barra lateral técnica.
 
-    Este arquivo não cria um tema paralelo. Ele apenas aplica acabamento nos
-    módulos técnicos que ficam dentro da sidebar, reaproveitando as variáveis
-    definidas em bling_app_zero.ui.layout.theme.
+    Centraliza o visual da sidebar e dos campos de regras. Este arquivo deve ser
+    o único responsável pela borda/fundo padrão das ferramentas laterais.
     """
     st.markdown(
         """
@@ -109,104 +108,28 @@ def inject_sidebar_tools_theme() -> None:
             box-shadow: none !important;
         }
 
-        .bling-rule-pro-card {
-            margin: 0.48rem 0 0.72rem 0 !important;
-            padding: 0.72rem 0.72rem 0.22rem 0.72rem !important;
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) {
+            padding: 0.72rem 0.72rem 0.42rem 0.72rem !important;
+            margin: 0.55rem 0 0.78rem 0 !important;
+            border: 1px solid rgba(37, 99, 235, 0.20) !important;
+            border-left: 4px solid rgba(37, 99, 235, 0.72) !important;
             border-radius: 16px !important;
-            border: 1px solid rgba(37, 99, 235, 0.12) !important;
-            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,251,255,0.95)) !important;
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035) !important;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.96)) !important;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045) !important;
         }
 
-        .bling-rule-pro-head {
-            display: flex !important;
-            align-items: flex-start !important;
-            justify-content: space-between !important;
-            gap: 0.65rem !important;
-            margin-bottom: 0.52rem !important;
-        }
-
-        .bling-rule-pro-label {
-            color: var(--bling-muted) !important;
-            font-size: 0.68rem !important;
-            font-weight: 760 !important;
-            line-height: 1.1 !important;
-            text-transform: uppercase !important;
-            letter-spacing: 0.04em !important;
-            margin-bottom: 0.18rem !important;
-        }
-
-        .bling-rule-pro-title {
-            color: var(--bling-text) !important;
-            font-size: 0.98rem !important;
-            font-weight: 880 !important;
-            line-height: 1.15 !important;
-            letter-spacing: -0.01em !important;
-        }
-
-        .bling-rule-pro-badge {
-            flex: 0 0 auto !important;
-            padding: 0.18rem 0.48rem !important;
-            border-radius: 999px !important;
-            font-size: 0.68rem !important;
-            font-weight: 820 !important;
-            line-height: 1.15 !important;
-            border: 1px solid rgba(37, 99, 235, 0.14) !important;
-            background: rgba(37, 99, 235, 0.08) !important;
-            color: var(--bling-primary-dark) !important;
-        }
-
-        .bling-rule-pro-badge.is-muted {
-            border-color: rgba(100, 116, 139, 0.18) !important;
-            background: rgba(100, 116, 139, 0.08) !important;
-            color: var(--bling-muted) !important;
-        }
-
-        .bling-rule-pro-card label,
-        .bling-rule-pro-card div[data-testid="stWidgetLabel"] p {
-            font-size: 0.76rem !important;
-            color: var(--bling-muted) !important;
-            font-weight: 720 !important;
-            line-height: 1.16 !important;
-        }
-
-        .bling-rule-pro-card div[data-testid="stTextInput"] {
-            margin-top: -0.28rem !important;
-        }
-
-        .bling-rule-pro-card input {
-            min-height: 38px !important;
-            font-size: 0.92rem !important;
-            font-weight: 650 !important;
-            color: var(--bling-text) !important;
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) input {
+            min-height: 39px !important;
             border-radius: 12px !important;
-            border: 1px solid rgba(37, 99, 235, 0.18) !important;
+            border: 1px solid rgba(37, 99, 235, 0.26) !important;
             background: #ffffff !important;
+            color: var(--bling-text) !important;
+            font-size: 0.93rem !important;
+            font-weight: 650 !important;
         }
 
-        .bling-rule-pro-card div[data-testid="stToggle"] {
-            margin: -0.15rem 0 0.18rem 0 !important;
-        }
-
-        .bling-rule-pro-card div[data-testid="stToggle"] label {
-            gap: 0.42rem !important;
-        }
-
-        @media (max-width: 760px) {
-            .bling-rule-pro-card {
-                padding: 0.66rem 0.66rem 0.2rem 0.66rem !important;
-                border-radius: 15px !important;
-                margin-bottom: 0.62rem !important;
-            }
-
-            .bling-rule-pro-title {
-                font-size: 0.94rem !important;
-            }
-
-            .bling-rule-pro-badge {
-                font-size: 0.64rem !important;
-                padding: 0.16rem 0.42rem !important;
-            }
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) div[data-testid="stToggle"] {
+            margin-top: -0.12rem !important;
         }
         </style>
         """,
