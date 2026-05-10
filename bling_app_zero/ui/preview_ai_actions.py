@@ -94,11 +94,11 @@ def _render_multitask_box(op: str, signature: str) -> str:
             height=96,
             placeholder='Ex: crie títulos para produtos sem nome, melhore descrições vazias e sugira NCM onde estiver vazio.',
         )
-        with st.expander('Exemplos rápidos', expanded=False):
-            for index, example in enumerate(EXAMPLE_TASKS, start=1):
-                if st.button(example, use_container_width=True, key=_state_key(op, signature, f'example_{index}')):
-                    st.session_state[task_key] = example
-                    st.rerun()
+        st.caption('Exemplos rápidos')
+        for index, example in enumerate(EXAMPLE_TASKS, start=1):
+            if st.button(example, use_container_width=True, key=_state_key(op, signature, f'example_{index}')):
+                st.session_state[task_key] = example
+                st.rerun()
         st.caption('Proteção ativa: a IA não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs.')
     return str(custom_task or '').strip()
 
