@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
+from bling_app_zero.engines.fast_site_scraper.block_scraper import scrape_product_blocks
 from bling_app_zero.engines.fast_site_scraper.models import FastProductPage
 from bling_app_zero.engines.fast_site_scraper.page_parser import soup_from_page
 from bling_app_zero.engines.real_stock_detector import OUT_STOCK_TERMS, detect_real_stock
@@ -45,6 +46,19 @@ def _clean_price(value: object) -> str:
     return match.group(1) if match else text[:40]
 
 
+def _join_unique(values: list[str], limit: int = 5000) -> str:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = clean_cell(value)
+        key = normalize_key(text)
+        if not text or not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return ' • '.join(result)[:limit]
+
+
 def extract_url(page: FastProductPage) -> str:
     product = _first_product(page)
     return clean_cell(product.get('url') or page.url) if product else page.url
@@ -53,7 +67,7 @@ def extract_url(page: FastProductPage) -> str:
 def extract_description(page: FastProductPage) -> str:
     product = _first_product(page)
     if product:
-        value = clean_cell(product.get('name') or product.get('description') or '')
+        value = clean_cell(product.get('name') or '')
         if value:
             return value[:240]
     soup = soup_from_page(page)
@@ -69,6 +83,29 @@ def extract_description(page: FastProductPage) -> str:
     if soup.title:
         return clean_cell(soup.title.get_text(' ', strip=True))[:240]
     return ''
+
+
+def extract_description_complementar(page: FastProductPage) -> str:
+    product = _first_product(page)
+    jsonld_description = clean_cell(product.get('description') or '') if product else ''
+    blocks = scrape_product_blocks(page)
+    title_key = normalize_key(extract_description(page))
+    values: list[str] = []
+    for value in [blocks.complementary_description, blocks.attributes, blocks.technical_sheet, jsonld_description]:
+        text = clean_cell(value)
+        if text and normalize_key(text) != title_key:
+            values.append(text)
+    return _join_unique(values, limit=5000)
+
+
+def extract_ficha_tecnica(page: FastProductPage) -> str:
+    blocks = scrape_product_blocks(page)
+    return clean_cell(blocks.technical_sheet or blocks.attributes or blocks.all_blocks)[:3500]
+
+
+def extract_caracteristicas(page: FastProductPage) -> str:
+    blocks = scrape_product_blocks(page)
+    return clean_cell(blocks.attributes or blocks.complementary_description or blocks.all_blocks)[:3500]
 
 
 def extract_brand(page: FastProductPage) -> str:
