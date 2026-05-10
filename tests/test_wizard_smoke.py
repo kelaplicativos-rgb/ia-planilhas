@@ -88,6 +88,18 @@ def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
     assert 'mapping_estoque' in estoque_keys
 
 
+def test_mapping_stays_paginated_for_mobile_performance() -> None:
+    mapping = importlib.import_module('bling_app_zero.ui.cadastro_mapping')
+    mapping_source = Path('bling_app_zero/ui/cadastro_mapping.py').read_text(encoding='utf-8')
+
+    assert mapping.MAPPING_PAGE_SIZE == 12
+    assert 'def _visible_targets(' in mapping_source
+    assert 'MAPPING_PAGE_SIZE' in mapping_source
+    assert "f'Bloco {idx + 1} de {total_pages}'" in mapping_source
+    assert 'st.selectbox(' in mapping_source
+    assert 'Os demais continuam salvos e entram no CSV final.' in mapping_source
+
+
 def test_file_origin_does_not_reuse_old_site_origin() -> None:
     cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
     estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
