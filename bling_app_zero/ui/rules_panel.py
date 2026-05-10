@@ -8,6 +8,7 @@ from bling_app_zero.core.user_rules import (
     remove_custom_rule,
     reset_user_rules,
     set_user_rules,
+    update_custom_rule,
 )
 
 
@@ -37,15 +38,51 @@ def _render_saved_column_rules(rules: dict) -> None:
             value = str(rule.get('fill_value', '')).strip()
             rule_suffix = _rule_key(rule, index)
 
-            col_text, col_remove = st.columns([0.72, 0.28])
-            with col_text:
-                st.caption(f'**Coluna:** {target}')
-                st.caption(f'**Valor:** {value if value else "(vazio)"}')
-            with col_remove:
-                if st.button('Excluir', use_container_width=True, key=f'delete_saved_column_rule_{index}_{rule_suffix}'):
-                    remove_custom_rule(index)
-                    st.success('Regra excluída.')
-                    st.rerun()
+            edit_mode = bool(st.session_state.get(f'edit_rule_{rule_suffix}', False))
+
+            with st.container(border=True):
+                if edit_mode:
+                    new_target = st.text_input(
+                        'Nome da coluna',
+                        value=target,
+                        key=f'edit_target_{rule_suffix}',
+                    )
+                    new_value = st.text_input(
+                        'Valor predefinido',
+                        value=value,
+                        key=f'edit_value_{rule_suffix}',
+                    )
+
+                    col_save, col_cancel = st.columns(2)
+
+                    with col_save:
+                        if st.button('Salvar edição', use_container_width=True, key=f'save_edit_{rule_suffix}'):
+                            update_custom_rule(index, new_target, new_value, False)
+                            st.session_state[f'edit_rule_{rule_suffix}'] = False
+                            st.success('Regra atualizada.')
+                            st.rerun()
+
+                    with col_cancel:
+                        if st.button('Cancelar', use_container_width=True, key=f'cancel_edit_{rule_suffix}'):
+                            st.session_state[f'edit_rule_{rule_suffix}'] = False
+                            st.rerun()
+
+                else:
+                    st.caption(f'**Coluna:** {target}')
+                    st.caption(f'**Valor:** {value if value else "(vazio)"}')
+
+                    col_edit, col_delete = st.columns(2)
+
+                    with col_edit:
+                        if st.button('Editar', use_container_width=True, key=f'edit_button_{rule_suffix}'):
+                            st.session_state[f'edit_rule_{rule_suffix}'] = True
+                            st.rerun()
+
+                    with col_delete:
+                        if st.button('Excluir', use_container_width=True, key=f'delete_saved_column_rule_{index}_{rule_suffix}'):
+                            remove_custom_rule(index)
+                            st.success('Regra excluída.')
+                            st.rerun()
 
 
 def _render_new_column_rule_form() -> None:
