@@ -32,12 +32,13 @@ FIELD_ALIASES = {
     'ncm': ['ncm'],
     'deposito': ['deposito', 'depósito', 'local estoque', 'almoxarifado'],
     'observacao': ['observacao', 'observação', 'obs', 'detalhes', 'informacoes', 'informações'],
+    'fornecedor': ['fornecedor', 'nome fornecedor', 'nome do fornecedor', 'supplier'],
     'custom': [
         'cest', 'ipi', 'classe enquadramento ipi', 'classe de enquadramento do ipi',
         'cross docking', 'cross-docking', 'frete gratis', 'frete grátis', 'garantia',
         'origem', 'unidade', 'peso bruto', 'peso liquido', 'peso líquido', 'altura',
         'largura', 'profundidade', 'comprimento', 'volumes', 'situacao', 'situação',
-        'fornecedor', 'codigo fornecedor', 'código fornecedor', 'cód no fornecedor',
+        'codigo fornecedor', 'código fornecedor', 'cód no fornecedor',
     ],
 }
 
@@ -45,6 +46,7 @@ RISKY_TARGET_TERMS = [
     'altura', 'largura', 'profundidade', 'peso', 'comprimento', 'unidade', 'origem',
     'cest', 'ipi', 'classe enquadramento', 'cross docking', 'clonar dados', 'frete gratis',
     'frete grátis', 'garantia', 'condicao', 'condição', 'situacao', 'situação', 'tipo item',
+    'fornecedor', 'nome fornecedor', 'nome do fornecedor',
 ]
 
 PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
@@ -54,6 +56,9 @@ SAFE_CONSTANTS = {
     'cross docking': '0',
     'frete gratis': 'NÃO',
     'frete grátis': 'NÃO',
+    'fornecedor': 'Não definido',
+    'nome fornecedor': 'Não definido',
+    'nome do fornecedor': 'Não definido',
 }
 
 
@@ -166,6 +171,8 @@ def _content_score(target_kind: str, source: str, profile: dict[str, float | str
 
     if target_kind == source_kind and target_kind != 'custom':
         return 60
+    if target_kind == 'fornecedor':
+        return 70 if text >= 0.60 and numeric < 0.10 and url == 0 and avg_len <= 45 and unique <= 0.50 else -200
     if target_kind == 'custom':
         return 25 if has_values else 5
     if target_kind in {'codigo', 'id_produto'}:
@@ -196,6 +203,9 @@ def _content_score(target_kind: str, source: str, profile: dict[str, float | str
 def _best_candidate(df: pd.DataFrame, target: str, source_columns: list[str], used: set[str]) -> Candidate:
     target_kind = _target_kind(target)
 
+    if target_kind == 'fornecedor':
+        return Candidate('', 0)
+
     for source in source_columns:
         if source in used:
             continue
@@ -221,6 +231,11 @@ def _force_exact_matches_first(mapping: dict[str, str], source_columns: list[str
     out = dict(mapping or {})
     used = {value for value in out.values() if value}
     for target in target_columns:
+        if _target_kind(target) == 'fornecedor':
+            if out.get(target):
+                used.discard(out.get(target, ''))
+            out[target] = ''
+            continue
         current = out.get(target, '')
         if current and _is_exact_or_equivalent(target, current):
             continue
@@ -247,6 +262,9 @@ def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_
     used = {source for source in mapping.values() if source}
 
     for target in target_columns:
+        if _target_kind(target) == 'fornecedor':
+            mapping[target] = ''
+            continue
         current = mapping.get(target, '')
         if current:
             if _is_exact_or_equivalent(target, current):
