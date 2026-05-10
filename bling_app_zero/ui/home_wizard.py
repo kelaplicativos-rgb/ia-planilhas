@@ -122,12 +122,14 @@ def _available_operations() -> list[str]:
         operations.append('cadastro')
     if _has_estoque_model():
         operations.append('estoque')
-    return operations or ['cadastro']
+    return operations
 
 
 def _selected_operation() -> str:
     operation = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
     available = _available_operations()
+    if not available:
+        return ''
     if operation not in available:
         operation = available[0]
         st.session_state[FLOW_OPERATION_KEY] = operation
@@ -137,13 +139,18 @@ def _selected_operation() -> str:
 
 
 def _active_steps() -> list[str]:
-    return CADASTRO_STEPS if _selected_operation() == 'cadastro' else ESTOQUE_STEPS
+    operation = _selected_operation()
+    if operation == 'estoque':
+        return ESTOQUE_STEPS
+    return CADASTRO_STEPS
 
 
 def _current_step() -> str:
     steps = _active_steps()
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
-    if step not in steps:
+    if not _has_home_models():
+        step = STEP_MODELO
+    elif step not in steps:
         step = STEP_OPERACAO if step in ALL_STEPS and STEP_OPERACAO in steps else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
@@ -326,6 +333,10 @@ def _render_operation_step() -> None:
         'O que você quer fazer?',
         'Escolha explicitamente o fluxo. O sistema não vai mais adivinhar cadastro ou estoque apenas pelo modelo carregado.',
     )
+    if not available:
+        st.warning('Envie um modelo do Bling antes de escolher a operação.')
+        _render_nav_buttons(allow_next=False)
+        return
     labels = [labels_by_value[value] for value in available]
     current = _selected_operation()
     index = available.index(current) if current in available else 0
@@ -500,9 +511,9 @@ def _render_estoque_preview() -> None:
 
 
 def render_home_wizard() -> None:
-    operation = _selected_operation()
     _render_step_header()
     step = _current_step()
+    operation = _selected_operation()
     if step == STEP_MODELO:
         _render_model_step()
     elif step == STEP_OPERACAO:
