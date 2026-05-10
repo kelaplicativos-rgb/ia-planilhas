@@ -148,6 +148,14 @@ def test_mapping_css_uses_existing_theme_variables() -> None:
     assert '--bling-success-text' in mapping_css
 
 
+def test_download_final_uses_official_exporter() -> None:
+    home_shared = Path('bling_app_zero/ui/home_shared.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.core.exporter import to_bling_csv_bytes' in home_shared
+    assert 'data=to_bling_csv_bytes(df)' in home_shared
+    assert '.to_csv(' not in home_shared
+
+
 def test_gtin_invalid_values_are_cleaned() -> None:
     from bling_app_zero.core.gtin import clean_gtin
 
