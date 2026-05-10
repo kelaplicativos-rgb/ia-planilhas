@@ -19,6 +19,11 @@ def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
     return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
 
 
+def _valid_deposito() -> bool:
+    deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip()
+    return bool(deposito)
+
+
 def _current_source_signature(df_origem_site: pd.DataFrame | None, upload) -> str:
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
         return 'site:' + df_signature(df_origem_site)
@@ -50,6 +55,8 @@ def _store_estoque_context(upload, df_origem_site: pd.DataFrame | None, df_model
         st.session_state.pop(ESTOQUE_ORIGEM_SITE_KEY, None)
     if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns):
         st.session_state[ESTOQUE_MODELO_KEY] = df_modelo
+    else:
+        st.session_state.pop(ESTOQUE_MODELO_KEY, None)
 
 
 def estoque_context_ready() -> bool:
@@ -58,7 +65,7 @@ def estoque_context_ready() -> bool:
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
     has_site = isinstance(df_site, pd.DataFrame) and not df_site.empty
     has_upload = bool(upload is not None and source_files_from_upload(upload))
-    return (has_site or has_upload) and _valid_model(df_modelo)
+    return (has_site or has_upload) and _valid_model(df_modelo) and _valid_deposito()
 
 
 def estoque_output_ready() -> bool:
@@ -100,7 +107,9 @@ def render_estoque_entrada_step() -> None:
 
     if not _valid_model(df_modelo):
         st.error('Envie o modelo de estoque do Bling antes de continuar.')
-    elif deposito:
+    elif not str(deposito or '').strip():
+        st.error('Informe o nome do depósito antes de continuar.')
+    else:
         st.caption(f'Depósito definido: {deposito}')
 
 
@@ -111,10 +120,13 @@ def render_estoque_gerar_step() -> None:
     upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
     df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
-    deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or 'Não definido')
+    deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip() or 'Não definido'
 
     if not _valid_model(df_modelo):
         st.error('Modelo de estoque ausente. Volte para a entrada.')
+        return
+    if not _valid_deposito():
+        st.error('Nome do depósito ausente. Volte para a entrada.')
         return
 
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
