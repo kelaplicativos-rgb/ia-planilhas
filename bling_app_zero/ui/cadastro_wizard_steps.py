@@ -13,6 +13,7 @@ from bling_app_zero.ui.cadastro_sources import (
 )
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
+from bling_app_zero.ui.preview_ai_actions import render_preview_ai_actions
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
@@ -240,6 +241,7 @@ def render_cadastro_preview_step() -> None:
 
     show_mapping(mapping, operation='cadastro')
     preview_df('🧾 CADASTRO · Preview final', df_final)
+    render_preview_ai_actions(df_final, 'cadastro')
 
 
 def render_cadastro_download_step() -> None:
