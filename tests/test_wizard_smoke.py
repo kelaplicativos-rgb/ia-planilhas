@@ -67,6 +67,16 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_MAPEAMENTO == 'mapeamento'
 
 
+def test_file_origin_does_not_reuse_old_site_origin() -> None:
+    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
+    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+
+    assert "df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None" in cadastro_steps
+    assert 'upload = render_cadastro_source_upload(None)' in cadastro_steps
+    assert 'df_origem_site = get_estoque_site_source() if site_origin else None' in estoque_steps
+    assert 'upload = render_estoque_upload(model_loaded)' in estoque_steps
+
+
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
     steps = importlib.import_module('bling_app_zero.ui.cadastro_wizard_steps')
     st = importlib.import_module('streamlit')
