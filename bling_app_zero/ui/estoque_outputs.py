@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
+from bling_app_zero.ui.preview_ai_actions import render_preview_ai_actions
 
 
 def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
@@ -112,6 +113,7 @@ def render_stock_preview() -> None:
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
                 preview_df('📦 ESTOQUE · Preview final', df_final)
+                render_preview_ai_actions(df_final, 'estoque')
             else:
                 st.warning('Não foi possível montar o preview desta origem.')
 
