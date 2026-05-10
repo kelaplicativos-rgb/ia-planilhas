@@ -7,6 +7,9 @@ from bling_app_zero.core.user_rules import add_custom_rule, get_user_rules, remo
 EDIT_ICON = '✏️'
 DELETE_ICON = '🗑️'
 
+SYSTEM_BADGE = '🧩 Padrão do sistema'
+USER_BADGE = '👤 Personalizada'
+
 
 def _rule_key(rule: dict, index: int) -> str:
     target = str(rule.get('target_column', '')).strip().lower()
@@ -15,14 +18,25 @@ def _rule_key(rule: dict, index: int) -> str:
     return safe or str(index)
 
 
+def _rule_badge(rule: dict) -> str:
+    source = str(rule.get('source') or 'user').strip().lower()
+    return SYSTEM_BADGE if source == 'system' else USER_BADGE
+
+
+def _is_system_rule(rule: dict) -> bool:
+    return str(rule.get('source') or '').strip().lower() == 'system'
+
+
 def _render_rule_row(rule: dict, index: int) -> None:
     target = str(rule.get('target_column', '')).strip()
     value = str(rule.get('fill_value', '')).strip()
     suffix = _rule_key(rule, index)
     edit_key = f'edit_rule_{suffix}'
+    is_system_rule = _is_system_rule(rule)
 
     if st.session_state.get(edit_key, False):
         with st.container(border=True):
+            st.caption(_rule_badge(rule))
             col_target, col_value = st.columns([0.55, 0.45])
             new_target = col_target.text_input('Coluna', value=target, key=f'edit_target_{suffix}')
             new_value = col_value.text_input('Valor', value=value, key=f'edit_value_{suffix}')
@@ -37,30 +51,41 @@ def _render_rule_row(rule: dict, index: int) -> None:
                 st.rerun()
         return
 
-    col_name, col_value, col_edit, col_delete = st.columns([0.42, 0.38, 0.10, 0.10])
+    col_name, col_value, col_badge, col_edit, col_delete = st.columns([0.32, 0.28, 0.22, 0.09, 0.09])
+
     col_name.caption('Coluna')
     col_name.markdown(f'**{target}**')
+
     col_value.caption('Valor')
     col_value.markdown(value if value else '—')
+
+    col_badge.caption('Tipo')
+    col_badge.caption(_rule_badge(rule))
 
     if col_edit.button(EDIT_ICON, key=f'edit_button_{suffix}', help='Editar regra'):
         st.session_state[edit_key] = True
         st.rerun()
-    if col_delete.button(DELETE_ICON, key=f'delete_rule_{index}_{suffix}', help='Excluir regra'):
-        remove_custom_rule(index)
-        st.success('Regra excluída.')
-        st.rerun()
+
+    if is_system_rule:
+        col_delete.caption('🔒')
+    else:
+        if col_delete.button(DELETE_ICON, key=f'delete_rule_{index}_{suffix}', help='Excluir regra'):
+            remove_custom_rule(index)
+            st.success('Regra excluída.')
+            st.rerun()
 
 
 def _render_new_rule_form() -> None:
     with st.expander('Adicionar nova regra', expanded=False):
         target_column = st.text_input('Nome da coluna', key='custom_rule_target_column', placeholder='Ex: Itens por caixa')
         fill_value = st.text_input('Valor predefinido', key='custom_rule_fill_value', placeholder='Ex: 1')
+
         if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
             column_name = target_column.strip()
             if not column_name:
                 st.warning('Informe o nome da coluna.')
                 return
+
             add_custom_rule(column_name, column_name, fill_value, False)
             st.success('Regra adicionada.')
             st.rerun()
