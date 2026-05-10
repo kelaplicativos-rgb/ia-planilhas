@@ -98,3 +98,42 @@ Ele pode rodar automaticamente em push/PR para `main` e também manualmente em:
 ```text
 Actions → Wizard Smoke Tests → Run workflow
 ```
+
+## Troubleshooting do GitHub Actions
+
+Se o workflow não aparecer ou o botão `Run workflow` não estiver disponível, verifique:
+
+```text
+Settings → Actions → General
+```
+
+E confirme que o repositório permite execução de workflows.
+
+Configuração sugerida:
+
+```text
+Allow all actions and reusable workflows
+```
+
+Depois salve e volte em:
+
+```text
+Actions → Wizard Smoke Tests → Run workflow
+```
+
+Se o workflow aparecer, mas falhar, abra a execução e veja o passo:
+
+```text
+Run Wizard smoke tests
+```
+
+Os logs desse passo indicam exatamente qual contrato quebrou, por exemplo:
+
+- import de módulo;
+- ordem do Wizard;
+- separação site/arquivo;
+- confirmação do mapeamento;
+- download fora da etapa final;
+- CSV/GTIN/exportador.
+
+Observação: alguns conectores podem não listar execuções de Actions mesmo quando o workflow existe no GitHub. Nesse caso, a conferência deve ser feita diretamente pela aba `Actions` do repositório.
