@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from bling_app_zero.core.user_rules import (
@@ -22,7 +24,7 @@ def _notice(message: str) -> None:
 def _render_notice() -> None:
     message = st.session_state.pop(NOTICE_KEY, '')
     if message:
-        st.caption(f'✅ {message}')
+        st.success(message)
 
 
 def _rule_id(rule: dict, index: int) -> str:
@@ -66,6 +68,44 @@ def _rule_label(rule: dict) -> str:
     return f'{target} = {suffix}'
 
 
+def _rule_icon(target: str) -> str:
+    key = str(target or '').strip().lower()
+    if 'fornecedor' in key:
+        return '🏷️'
+    if 'unidade' in key:
+        return '📏'
+    if 'ncm' in key:
+        return '🧾'
+    if 'marca' in key:
+        return '🏭'
+    return '⚙️'
+
+
+def _status_badge(enabled: bool) -> str:
+    return 'Ativo' if enabled else 'Inativo'
+
+
+def _render_rule_header(target: str, enabled: bool, subtitle: str) -> None:
+    icon = _rule_icon(target)
+    safe_target = html.escape(str(target or 'Coluna sem nome'))
+    safe_subtitle = html.escape(str(subtitle or ''))
+    status = _status_badge(enabled)
+    status_class = 'is-active' if enabled else 'is-muted'
+    st.markdown(
+        f"""
+        <div class="bling-rule-card-head">
+            <div class="bling-rule-card-icon">{icon}</div>
+            <div class="bling-rule-card-copy">
+                <div class="bling-rule-card-title">{safe_target}</div>
+                <div class="bling-rule-card-subtitle">{safe_subtitle}</div>
+            </div>
+            <div class="bling-rule-card-badge {status_class}">{status}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_rule_toggle(rule: dict, index: int) -> None:
     rule_id = _rule_id(rule, index)
     enabled = bool(rule.get('enabled', True))
@@ -89,28 +129,35 @@ def _render_system_rule_value_editor(rule: dict, index: int) -> None:
     current_value = str(rule.get('fill_value') or '')
     enabled = bool(rule.get('enabled', True))
 
-    st.caption(f'Coluna final: {target}')
-    new_enabled = st.toggle(
-        'Ativar preenchimento',
-        value=enabled,
-        key=f'system_rule_enabled_{rule_id}',
-        help='Quando ligado, esse padrão será aplicado no CSV final.',
-    )
-    if new_enabled != enabled:
-        set_custom_rule_enabled(rule_id, new_enabled)
-        _notice('Padrão atualizado.')
-        st.rerun()
+    with st.container(border=True):
+        _render_rule_header(target, enabled, 'Preenchimento automático no CSV final')
 
-    new_value = st.text_input(
-        'Valor para preencher',
-        value=current_value,
-        key=f'system_rule_value_{rule_id}',
-        help='Edite somente o valor. O cabeçalho da coluna final fica travado.',
-    )
-    if str(new_value) != current_value:
-        update_custom_rule_by_id(rule_id, target, str(new_value), bool(rule.get('only_when_empty', False)))
-        _notice('Valor padrão atualizado.')
-        st.rerun()
+        col_toggle, col_value = st.columns([0.38, 0.62])
+        with col_toggle:
+            new_enabled = st.toggle(
+                'Ativar',
+                value=enabled,
+                key=f'system_rule_enabled_{rule_id}',
+                help='Quando ligado, esse padrão será aplicado no CSV final.',
+            )
+        with col_value:
+            new_value = st.text_input(
+                'Valor padrão',
+                value=current_value,
+                key=f'system_rule_value_{rule_id}',
+                help='Edite somente o valor. O cabeçalho da coluna final fica travado.',
+                placeholder='Ex: Não definido',
+            )
+
+        if new_enabled != enabled:
+            set_custom_rule_enabled(rule_id, new_enabled)
+            _notice('Padrão atualizado.')
+            st.rerun()
+
+        if str(new_value) != current_value:
+            update_custom_rule_by_id(rule_id, target, str(new_value), bool(rule.get('only_when_empty', False)))
+            _notice('Valor padrão atualizado.')
+            st.rerun()
 
 
 def _start_edit_rule(rule_id: str, rule: dict) -> None:
@@ -161,8 +208,8 @@ def _render_edit_form(rule: dict, rule_id: str) -> None:
 
 
 def _render_system_rules(system_rules: list[dict]) -> None:
-    st.markdown('##### Padrões')
-    st.caption('Cabeçalho travado. Edite apenas o valor que será preenchido na coluna final.')
+    st.markdown('##### Padrões automáticos')
+    st.caption('Defina valores fixos para colunas comuns. O nome da coluna fica travado; você altera só o valor aplicado no CSV final.')
 
     visible_rules = _visible_system_rules(system_rules)
     if not visible_rules:
@@ -170,8 +217,7 @@ def _render_system_rules(system_rules: list[dict]) -> None:
         return
 
     for index, rule in enumerate(visible_rules):
-        with st.container(border=True):
-            _render_system_rule_value_editor(rule, index)
+        _render_system_rule_value_editor(rule, index)
 
 
 def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
@@ -192,20 +238,21 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
                 _render_edit_form(rule, rule_id)
             continue
 
-        col_toggle, col_edit, col_delete = st.columns([0.62, 0.19, 0.19])
-        with col_toggle:
-            _render_rule_toggle(rule, index)
-        with col_edit:
-            st.write('')
-            if st.button('✏️', key=f'edit_rule_compact_{rule_id}', help='Editar regra'):
-                _start_edit_rule(rule_id, rule)
-        with col_delete:
-            st.write('')
-            if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra'):
-                remove_custom_rule_by_id(rule_id)
-                st.session_state.pop(EDIT_RULE_KEY, None)
-                _notice('Regra excluída.')
-                st.rerun()
+        with st.container(border=True):
+            col_toggle, col_edit, col_delete = st.columns([0.62, 0.19, 0.19])
+            with col_toggle:
+                _render_rule_toggle(rule, index)
+            with col_edit:
+                st.write('')
+                if st.button('✏️', key=f'edit_rule_compact_{rule_id}', help='Editar regra'):
+                    _start_edit_rule(rule_id, rule)
+            with col_delete:
+                st.write('')
+                if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra'):
+                    remove_custom_rule_by_id(rule_id)
+                    st.session_state.pop(EDIT_RULE_KEY, None)
+                    _notice('Regra excluída.')
+                    st.rerun()
 
 
 def _render_new_rule_form() -> None:
@@ -250,7 +297,7 @@ def render_user_rules_tab() -> None:
     user_rules = [rule for rule in custom_rules if not _is_system_rule(rule)]
 
     st.markdown('##### Regras')
-    st.caption('Liga ou desliga preenchimentos automáticos do CSV final.')
+    st.caption('Controle os preenchimentos automáticos que entram no CSV final.')
     _render_notice()
 
     _render_system_rules(system_rules)
