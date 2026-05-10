@@ -27,52 +27,51 @@ def _render_saved_column_rules(rules: dict) -> None:
 
     with st.expander(f'📌 Regras para colunas salvas ({len(custom_rules)})', expanded=False):
         if not custom_rules:
-            st.caption('Nenhuma regra de coluna criada ainda.')
+            st.caption('Nenhuma regra criada ainda.')
             return
 
-        st.caption('Toda regra salva pode ser excluída a qualquer momento.')
+        st.caption('Essas regras entram no CSV final antes do download quando a coluna existir no modelo.')
 
         for index, rule in enumerate(custom_rules):
             target = str(rule.get('target_column', '')).strip()
             value = str(rule.get('fill_value', '')).strip()
-            only_when_empty = bool(rule.get('only_when_empty', True))
             rule_suffix = _rule_key(rule, index)
 
             col_text, col_remove = st.columns([0.72, 0.28])
             with col_text:
-                st.caption(f'**{target}** → {value if value else "(vazio)"}')
-                if only_when_empty:
-                    st.caption('Aplicar somente quando estiver vazio.')
+                st.caption(f'**Coluna:** {target}')
+                st.caption(f'**Valor:** {value if value else "(vazio)"}')
             with col_remove:
-                if st.button('Excluir regra', use_container_width=True, key=f'delete_saved_column_rule_{index}_{rule_suffix}'):
+                if st.button('Excluir', use_container_width=True, key=f'delete_saved_column_rule_{index}_{rule_suffix}'):
                     remove_custom_rule(index)
                     st.success('Regra excluída.')
                     st.rerun()
 
 
 def _render_new_column_rule_form() -> None:
-    st.markdown('##### Criar regra para coluna')
-    st.caption('Informe exatamente o cabeçalho da coluna final e o valor que deve entrar antes do download.')
+    st.markdown('##### Criar regra por coluna')
+    st.caption('Digite o cabeçalho exato da coluna final e o valor fixo que deve sair no CSV.')
 
     target_column = st.text_input(
-        'Nome da coluna / cabeçalho',
+        'Nome da coluna',
         key='custom_rule_target_column',
         placeholder='Ex: Itens por caixa',
-        help='Digite o nome da coluna como aparece no modelo/CSV final.',
+        help='Digite o cabeçalho como ele aparece no modelo/CSV final.',
     )
     fill_value = st.text_input(
         'Valor predefinido',
         key='custom_rule_fill_value',
         placeholder='Ex: 1',
-        help='Esse valor será usado nessa coluna quando ela existir no CSV final.',
+        help='Esse valor será aplicado nessa coluna antes do download final.',
     )
 
-    if st.button('Salvar regra de coluna', use_container_width=True, key='add_custom_rule_button'):
-        if not target_column.strip():
-            st.warning('Informe o nome da coluna/cabeçalho.')
+    if st.button('Salvar regra', use_container_width=True, key='add_custom_rule_button'):
+        column_name = target_column.strip()
+        if not column_name:
+            st.warning('Informe o nome da coluna.')
             return
-        add_custom_rule(target_column, target_column, fill_value, True)
-        st.success('Regra de coluna salva.')
+        add_custom_rule(column_name, column_name, fill_value, False)
+        st.success('Regra salva.')
         st.rerun()
 
 
@@ -81,8 +80,8 @@ def render_rules_panel() -> None:
     rules = get_user_rules()
 
     with st.sidebar:
-        with st.expander('⚙️ Padrões e regras do CSV final', expanded=False):
-            st.caption('Use regras simples para preencher colunas específicas antes do download final.')
+        with st.expander('⚙️ Regras do CSV final', expanded=False):
+            st.caption('Crie regras simples para preencher colunas específicas antes do download.')
 
             _render_new_column_rule_form()
             _render_saved_column_rules(get_user_rules())
