@@ -6,6 +6,7 @@ from bling_app_zero.core.user_rules import (
     add_custom_rule,
     get_user_rules,
     remove_custom_rule_by_id,
+    reset_user_rules,
     set_custom_rule_enabled,
 )
 
@@ -95,26 +96,35 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
 
 
 def _render_new_rule_form() -> None:
-    with st.expander('Adicionar regra', expanded=False):
-        target_column = st.text_input(
-            'Coluna',
-            key='custom_rule_target_column',
-            placeholder='Ex: Itens por caixa',
-        )
-        fill_value = st.text_input(
-            'Valor',
-            key='custom_rule_fill_value',
-            placeholder='Ex: 1',
-        )
+    st.markdown('##### Nova regra')
+    target_column = st.text_input(
+        'Coluna',
+        key='custom_rule_target_column',
+        placeholder='Ex: Itens por caixa',
+    )
+    fill_value = st.text_input(
+        'Valor',
+        key='custom_rule_fill_value',
+        placeholder='Ex: 1',
+    )
 
-        if st.button('Adicionar', use_container_width=True, key='add_custom_rule_button'):
-            column_name = target_column.strip()
-            if not column_name:
-                st.warning('Informe a coluna.')
-                return
-            add_custom_rule(column_name, column_name, fill_value, False)
-            _notice('Regra adicionada.')
-            st.rerun()
+    if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
+        column_name = target_column.strip()
+        if not column_name:
+            st.warning('Informe a coluna.')
+            return
+        add_custom_rule(column_name, column_name, fill_value, False)
+        st.session_state['custom_rule_target_column'] = ''
+        st.session_state['custom_rule_fill_value'] = ''
+        _notice('Regra adicionada.')
+        st.rerun()
+
+
+def _render_footer_actions() -> None:
+    if st.button('Restaurar padrão', use_container_width=True, key='reset_user_rules_footer'):
+        reset_user_rules()
+        _notice('Regras restauradas para o padrão.')
+        st.rerun()
 
 
 def render_user_rules_tab() -> None:
@@ -132,3 +142,5 @@ def render_user_rules_tab() -> None:
     _render_custom_rules(user_rules, len(system_rules))
     st.divider()
     _render_new_rule_form()
+    st.divider()
+    _render_footer_actions()
