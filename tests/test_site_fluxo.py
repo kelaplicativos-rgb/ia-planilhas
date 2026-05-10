@@ -5,6 +5,7 @@ import unittest
 import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
+from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.ui.site_models import requested_columns_for_site_capture
 
 
@@ -49,6 +50,30 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(len(df), 2)
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
         self.assertEqual(df.loc[1, 'URL'], 'https://fornecedor.com/p/2')
+
+    def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
+        df = run_site_operation_engine(
+            operation='cadastro',
+            raw_urls='https://fornecedor.com/p/1',
+            requested_columns=['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'],
+            max_pages=1,
+            max_products=1,
+        )
+
+        self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'])
+        self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
+
+    def test_motor_estoque_sem_contrato_nao_cai_no_cadastro(self) -> None:
+        df = run_site_operation_engine(
+            operation='estoque',
+            raw_urls='https://fornecedor.com/p/1',
+            requested_columns=None,
+            max_pages=1,
+            max_products=1,
+        )
+
+        self.assertEqual(list(df.columns), ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
+        self.assertEqual(len(df), 0)
 
 
 if __name__ == '__main__':
