@@ -67,6 +67,20 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_MAPEAMENTO == 'mapeamento'
 
 
+def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
+    steps = importlib.import_module('bling_app_zero.ui.cadastro_wizard_steps')
+    st = importlib.import_module('streamlit')
+    monkeypatch.setattr(st, 'session_state', {}, raising=False)
+
+    st.session_state['df_final_cadastro'] = pd.DataFrame([{'Descrição': 'Produto teste'}])
+    st.session_state['mapping_cadastro'] = {'Descrição': 'Nome'}
+
+    assert steps.cadastro_mapping_ready() is False
+
+    st.session_state['cadastro_mapping_confirmed'] = True
+    assert steps.cadastro_mapping_ready() is True
+
+
 def test_mapping_css_uses_existing_theme_variables() -> None:
     mapping_css = Path('bling_app_zero/ui/layout/mapping.py').read_text(encoding='utf-8')
 
