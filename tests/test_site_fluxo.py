@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -52,13 +53,14 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(df.loc[1, 'URL'], 'https://fornecedor.com/p/2')
 
     def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
-        df = run_site_operation_engine(
-            operation='cadastro',
-            raw_urls='https://fornecedor.com/p/1',
-            requested_columns=['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'],
-            max_pages=1,
-            max_products=1,
-        )
+        with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
+            df = run_site_operation_engine(
+                operation='cadastro',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'],
+                max_pages=1,
+                max_products=1,
+            )
 
         self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'])
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
