@@ -9,10 +9,8 @@ from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 
 
 VALID_OPERATIONS = {'cadastro', 'estoque'}
-DEFAULT_MAX_PAGES = 120
-DEFAULT_MAX_PRODUCTS = 300
-HARD_MAX_PAGES = 250
-HARD_MAX_PRODUCTS = 600
+ALL_PAGES_LIMIT = 1_000_000
+ALL_PRODUCTS_LIMIT = 1_000_000
 
 
 def _normalize_operation(operation: str | None) -> str:
@@ -20,34 +18,23 @@ def _normalize_operation(operation: str | None) -> str:
     return value if value in VALID_OPERATIONS else 'cadastro'
 
 
-def _safe_limit(value: int | None, default: int, hard_max: int) -> int:
-    try:
-        number = int(value or default)
-    except Exception:
-        number = default
-    if number <= 0:
-        number = default
-    return max(1, min(number, hard_max))
-
-
 def run_pipeline(
     raw_urls: str,
     requested_columns: list[str] | None = None,
     all_products: bool = True,
-    max_pages: int = DEFAULT_MAX_PAGES,
-    max_products: int = DEFAULT_MAX_PRODUCTS,
+    max_pages: int = ALL_PAGES_LIMIT,
+    max_products: int = ALL_PRODUCTS_LIMIT,
     operation: str = 'cadastro',
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    _ = all_products
     selected_operation = _normalize_operation(operation)
-    safe_max_pages = _safe_limit(max_pages, DEFAULT_MAX_PAGES, HARD_MAX_PAGES)
-    safe_max_products = _safe_limit(max_products, DEFAULT_MAX_PRODUCTS, HARD_MAX_PRODUCTS)
+    selected_max_pages = max(max_pages or 0, ALL_PAGES_LIMIT) if all_products else max_pages
+    selected_max_products = max(max_products or 0, ALL_PRODUCTS_LIMIT) if all_products else max_products
 
     if progress_callback:
         progress_callback({
             'stage': 'Preparando',
-            'message': f'Preparando busca segura: até {safe_max_pages} página(s) e {safe_max_products} produto(s).',
+            'message': 'Preparando busca completa no fornecedor...',
             'progress': 0.02,
         })
 
@@ -55,8 +42,9 @@ def run_pipeline(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         operation=selected_operation,
-        max_pages=safe_max_pages,
-        max_products=safe_max_products,
+        max_pages=selected_max_pages,
+        max_products=selected_max_products,
+        stop_early=not bool(all_products),
         progress_callback=progress_callback,
     )
 
