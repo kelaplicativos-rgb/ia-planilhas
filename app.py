@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_skin import inject_sidebar_skin
 
 
-APP_VERSION = '3.5.7-BLINGFIX-SIDEBAR-SKIN'
+APP_VERSION = '3.5.8-BLINGFIX-THEME-BRIDGE'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
