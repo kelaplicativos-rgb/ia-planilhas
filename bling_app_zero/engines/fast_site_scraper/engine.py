@@ -27,14 +27,17 @@ from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.page_parser import parse_product_page
 from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls
 
-MAX_WORKERS = 48
+MAX_WORKERS = 12
+BATCH_SIZE = 24
+FETCH_TIMEOUT_SECONDS = 6
+RUN_TIME_BUDGET_SECONDS = 210
 SLOW_LINK_SECONDS = 6.0
-SMART_COMPLETE_TARGET = 180
-SMART_STOP_MIN_PROCESSED = 120
-SMART_STOP_COMPLETE_RATIO = 0.72
-SMART_STOP_NO_GAIN_WINDOW = 80
-SMART_STOP_MIN_FOUND = 60
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 3
+SMART_COMPLETE_TARGET = 220
+SMART_STOP_MIN_PROCESSED = 160
+SMART_STOP_COMPLETE_RATIO = 0.78
+SMART_STOP_NO_GAIN_WINDOW = 90
+SMART_STOP_MIN_FOUND = 80
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 2
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -44,6 +47,19 @@ def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> No
         progress_callback(payload)
     except Exception:
         pass
+
+
+def _time_left(started_at: float) -> float:
+    return RUN_TIME_BUDGET_SECONDS - (time.perf_counter() - started_at)
+
+
+def _budget_exceeded(started_at: float, safety_margin: float = 12.0) -> bool:
+    return _time_left(started_at) <= safety_margin
+
+
+def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
 
 
 def _default_columns(operation: str) -> list[str]:
@@ -146,7 +162,7 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float
     if needed <= {'url'}:
         return url, _url_only_row(url), time.perf_counter() - started, False
 
-    html = fetch_live(url, timeout=8)
+    html = fetch_live(url, timeout=FETCH_TIMEOUT_SECONDS)
     if not html:
         product = FastProductData(url=url)
         return url, product, time.perf_counter() - started, True
@@ -203,6 +219,7 @@ def _enhance_products_sequentially(
     products_by_url: list[tuple[str, FastProductData]],
     needed: set[str],
     progress_callback: Callable[[dict], None] | None,
+    started_at: float,
 ) -> tuple[list[FastProductData], int]:
     """Aplica DevTools em fila, com limite baixo, nunca dentro das threads HTTP."""
     if not needed.intersection({'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}):
@@ -213,6 +230,9 @@ def _enhance_products_sequentially(
     total_candidates = sum(1 for _, product in products_by_url if needs_rendered_fallback(product, needed))
 
     for url, product in products_by_url:
+        if _budget_exceeded(started_at, safety_margin=18.0):
+            enhanced_products.append(product)
+            continue
         if used < DEVTOOLS_FALLBACK_MAX_PER_RUN and needs_rendered_fallback(product, needed):
             _emit(progress_callback, {
                 'stage': 'Reforço DevTools',
@@ -268,6 +288,115 @@ def _should_stop_early(
     return False, ''
 
 
+def _run_http_batches(
+    *,
+    urls: list[str],
+    needed: set[str],
+    important: set[str],
+    progress_callback: Callable[[dict], None] | None,
+    started_at: float,
+) -> tuple[list[tuple[str, FastProductData]], int, int, int, str, list[dict[str, object]]]:
+    products_by_url: list[tuple[str, FastProductData]] = []
+    errors = 0
+    complete_count = 0
+    last_gain_at = 0
+    stop_reason = ''
+    slow_links: list[dict[str, object]] = []
+    total = len(urls)
+    processed = 0
+    last_emit = time.perf_counter()
+
+    for batch_index, batch_urls in enumerate(_chunks(urls, BATCH_SIZE), start=1):
+        if _budget_exceeded(started_at):
+            stop_reason = 'Tempo seguro da execução atingido. A origem foi montada com os produtos coletados antes de o Streamlit reiniciar.'
+            break
+
+        workers = max(1, min(MAX_WORKERS, len(batch_urls)))
+        _emit(progress_callback, {
+            'stage': 'Lendo produtos',
+            'message': f'Lote {batch_index}: lendo {len(batch_urls)} produto(s). Total lido: {processed}/{total}.',
+            'progress': 0.28 + (0.58 * (processed / max(total, 1))),
+            'processed': processed,
+            'total': total,
+            'found': len(products_by_url),
+            'complete': complete_count,
+            'errors': errors,
+            'workers': workers,
+        })
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_scrape_one, url, needed): url for url in batch_urls}
+            for future in as_completed(futures):
+                processed += 1
+                try:
+                    url, product, elapsed, failed = future.result()
+                    if failed:
+                        errors += 1
+                    if elapsed >= SLOW_LINK_SECONDS:
+                        slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
+                    if _has_useful_data(product, needed):
+                        products_by_url.append((url, product))
+                        last_gain_at = processed
+                        if _is_complete_product(product, important):
+                            complete_count += 1
+                except Exception:
+                    errors += 1
+
+                should_stop, reason = _should_stop_early(
+                    processed=processed,
+                    products=[product for _, product in products_by_url],
+                    complete_count=complete_count,
+                    last_gain_at=last_gain_at,
+                )
+                if should_stop:
+                    stop_reason = reason
+                    for pending in futures:
+                        if not pending.done():
+                            pending.cancel()
+                    _emit(progress_callback, {
+                        'stage': 'Busca suficiente',
+                        'message': stop_reason,
+                        'progress': 0.86,
+                        'processed': processed,
+                        'total': total,
+                        'found': len(products_by_url),
+                        'complete': complete_count,
+                        'errors': errors,
+                        'devtools': 0,
+                        'slow_links': slow_links[-5:],
+                    })
+                    break
+
+                now = time.perf_counter()
+                if now - last_emit >= 0.5 or processed == total:
+                    ratio = processed / max(total, 1)
+                    _emit(progress_callback, {
+                        'stage': 'Lendo produtos',
+                        'message': f'{processed}/{total} produto(s) lido(s).',
+                        'progress': 0.28 + (0.58 * ratio),
+                        'processed': processed,
+                        'total': total,
+                        'found': len(products_by_url),
+                        'complete': complete_count,
+                        'errors': errors,
+                        'devtools': 0,
+                        'slow_links': slow_links[-5:],
+                    })
+                    last_emit = now
+
+                if _budget_exceeded(started_at):
+                    stop_reason = 'Tempo seguro da execução atingido. A origem foi montada com os produtos coletados antes de o Streamlit reiniciar.'
+                    for pending in futures:
+                        if not pending.done():
+                            pending.cancel()
+                    break
+
+        if stop_reason:
+            break
+
+    return products_by_url, processed, complete_count, errors, stop_reason, slow_links
+
+
 def run_fast_site_scraper(
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
@@ -309,8 +438,9 @@ def run_fast_site_scraper(
         })
         return pd.DataFrame(columns=columns)
 
+    urls = urls[:max_products]
     if needed <= {'url'}:
-        rows = [_to_contract_row(_url_only_row(url), contract) for url in urls[:max_products]]
+        rows = [_to_contract_row(_url_only_row(url), contract) for url in urls]
         _emit(progress_callback, {
             'stage': 'Pronto',
             'message': f'{len(rows)} link(s) preparados para a origem.',
@@ -321,87 +451,24 @@ def run_fast_site_scraper(
         })
         return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
-    products_by_url: list[tuple[str, FastProductData]] = []
-    errors = 0
-    complete_count = 0
-    last_gain_at = 0
-    stop_reason = ''
-    slow_links: list[dict[str, object]] = []
-    workers = max(1, min(MAX_WORKERS, len(urls)))
-    total = len(urls[:max_products])
-    processed = 0
-    last_emit = time.perf_counter()
-
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo até {total} produto(s). O DevTools entra depois, em fila, só se faltar descrição rica.',
+        'message': f'Lendo até {len(urls)} produto(s) em lotes seguros de {BATCH_SIZE}.',
         'progress': 0.28,
         'processed': 0,
-        'total': total,
-        'workers': workers,
+        'total': len(urls),
+        'workers': MAX_WORKERS,
     })
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_scrape_one, url, needed): url for url in urls[:max_products]}
-        for future in as_completed(futures):
-            processed += 1
-            try:
-                url, product, elapsed, failed = future.result()
-                if failed:
-                    errors += 1
-                if elapsed >= SLOW_LINK_SECONDS:
-                    slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
-                if _has_useful_data(product, needed):
-                    products_by_url.append((url, product))
-                    last_gain_at = processed
-                    if _is_complete_product(product, important):
-                        complete_count += 1
-            except Exception:
-                errors += 1
+    products_by_url, processed, complete_count, errors, stop_reason, slow_links = _run_http_batches(
+        urls=urls,
+        needed=needed,
+        important=important,
+        progress_callback=progress_callback,
+        started_at=total_started,
+    )
 
-            should_stop, reason = _should_stop_early(
-                processed=processed,
-                products=[product for _, product in products_by_url],
-                complete_count=complete_count,
-                last_gain_at=last_gain_at,
-            )
-            if should_stop:
-                stop_reason = reason
-                for pending in futures:
-                    if not pending.done():
-                        pending.cancel()
-                _emit(progress_callback, {
-                    'stage': 'Busca suficiente',
-                    'message': stop_reason,
-                    'progress': 0.86,
-                    'processed': processed,
-                    'total': total,
-                    'found': len(products_by_url),
-                    'complete': complete_count,
-                    'errors': errors,
-                    'devtools': 0,
-                    'slow_links': slow_links[-5:],
-                })
-                break
-
-            now = time.perf_counter()
-            if now - last_emit >= 0.5 or processed == total:
-                ratio = processed / max(total, 1)
-                _emit(progress_callback, {
-                    'stage': 'Lendo produtos',
-                    'message': f'{processed}/{total} produto(s) lido(s).',
-                    'progress': 0.28 + (0.58 * ratio),
-                    'processed': processed,
-                    'total': total,
-                    'found': len(products_by_url),
-                    'complete': complete_count,
-                    'errors': errors,
-                    'devtools': 0,
-                    'slow_links': slow_links[-5:],
-                })
-                last_emit = now
-
-    products, rendered_fallbacks = _enhance_products_sequentially(products_by_url, needed, progress_callback)
+    products, rendered_fallbacks = _enhance_products_sequentially(products_by_url, needed, progress_callback, total_started)
 
     rows = [_to_contract_row(product, contract) for product in products]
     final_message = f'Montando origem com {len(rows)} produto(s).'
