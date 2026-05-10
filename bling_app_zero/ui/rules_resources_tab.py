@@ -4,17 +4,18 @@ import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
 
+WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
+
 
 def _bool_label(value: bool) -> str:
     return 'Sim' if value else 'Não'
 
 
 def _save_if_changed(original: dict, updated: dict) -> None:
-    watched = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
-    changed = any(bool(original.get(key, True)) != bool(updated.get(key, True)) for key in watched)
+    changed = any(bool(original.get(key, True)) != bool(updated.get(key, True)) for key in WATCHED_RESOURCES)
     if changed:
         set_user_rules(updated)
-        st.success('Recursos atualizados automaticamente.')
+        st.session_state['resources_saved_notice'] = True
         st.rerun()
 
 
@@ -24,6 +25,9 @@ def render_resources_tab() -> None:
 
     st.markdown('##### Recursos automáticos')
     st.caption('Recursos são motores internos. O usuário só liga ou desliga.')
+
+    if st.session_state.pop('resources_saved_notice', False):
+        st.caption('✅ Recursos atualizados.')
 
     updated['clean_invalid_gtin'] = st.toggle(
         f'Limpar GTIN inválido: {_bool_label(bool(updated.get("clean_invalid_gtin", True)))}',
@@ -52,9 +56,9 @@ def render_resources_tab() -> None:
 
     _save_if_changed(original, updated)
 
-    st.caption('Alterações nos recursos são salvas automaticamente.')
+    st.caption('Alterações são salvas automaticamente.')
 
     if st.button('Restaurar padrão', use_container_width=True, key='reset_user_resources'):
         reset_user_rules()
-        st.success('Padrão restaurado.')
+        st.session_state['resources_saved_notice'] = True
         st.rerun()
