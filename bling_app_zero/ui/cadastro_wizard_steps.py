@@ -112,11 +112,12 @@ def render_cadastro_entrada_step() -> None:
     st.markdown('### Entrada do cadastro')
     st.caption('Carregue somente a origem do fornecedor nesta etapa. O mapeamento, preview e download ficam nas próximas telas.')
 
-    df_origem_site = get_site_source_for_operation('cadastro')
-    if _is_site_origin():
+    site_origin = _is_site_origin()
+    df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None
+    if site_origin:
         upload = _empty_upload_result()
     else:
-        upload = render_cadastro_source_upload(df_origem_site)
+        upload = render_cadastro_source_upload(None)
     df_origem = _source_dataframe(df_origem_site, upload)
     _clear_cadastro_outputs_if_source_changed(df_origem)
 
@@ -124,11 +125,13 @@ def render_cadastro_entrada_step() -> None:
     df_modelo_estoque = select_estoque_model_for_cadastro(upload)
     _store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
-    if _valid_df(df_origem):
+    if _valid_df(df_origem) and site_origin:
+        st.success('Origem de cadastro por site pronta. Continue para o mapeamento.')
+    elif _valid_df(df_origem):
         st.success(f'Origem de cadastro carregada com {len(df_origem)} produto(s) e {len(df_origem.columns)} coluna(s).')
         with st.expander('Conferir origem carregada', expanded=False):
             preview_df('Origem do cadastro', df_origem)
-    elif _is_site_origin():
+    elif site_origin:
         st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
