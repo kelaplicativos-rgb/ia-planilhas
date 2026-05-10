@@ -18,8 +18,17 @@ class RequestedField:
 
 KIND_SYNONYMS = {
     'id_produto': ['id produto', 'id', 'identificador'],
-    'codigo': ['codigo produto', 'codigo', 'cod produto', 'sku', 'referencia', 'ref'],
+    'codigo': ['codigo produto', 'codigo', 'cod produto', 'sku', 'referencia', 'ref', 'modelo'],
     'gtin': ['gtin', 'ean', 'codigo de barras', 'barcode'],
+    'descricao_complementar': [
+        'descricao complementar', 'descrição complementar', 'descricao completa', 'descrição completa',
+        'descricao longa', 'descrição longa', 'descricao detalhada', 'descrição detalhada',
+        'descricao do produto no fornecedor', 'descrição do produto no fornecedor',
+        'informacoes adicionais', 'informações adicionais', 'caracteristicas', 'características',
+        'especificacoes', 'especificações', 'ficha tecnica', 'ficha técnica',
+        'detalhes do produto', 'detalhes', 'sobre o produto', 'conteudo do produto',
+    ],
+    'descricao_curta': ['descricao curta', 'descrição curta', 'resumo', 'titulo curto', 'nome curto'],
     'descricao': ['descricao produto', 'descricao', 'nome produto', 'titulo', 'nome', 'produto'],
     'deposito': ['deposito', 'almoxarifado', 'local estoque'],
     'estoque': ['balanco', 'estoque', 'quantidade', 'saldo', 'qtd'],
