@@ -24,7 +24,7 @@ def render_resources_tab() -> None:
     updated = dict(original)
 
     st.markdown('##### Recursos automáticos')
-    st.caption('Recursos são motores internos. O usuário só liga ou desliga.')
+    st.caption('Recursos processam e tratam os dados antes do download final. O usuário só liga ou desliga.')
 
     if st.session_state.pop('resources_saved_notice', False):
         st.caption('✅ Recursos atualizados.')
