@@ -9,7 +9,8 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 3
+RULES_SCHEMA_VERSION = 4
+REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 
 
 def _make_rule_id(source: str, target_column: str) -> str:
@@ -33,9 +34,7 @@ def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
 
 DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
     _system_rule('Fornecedor', 'Não definido'),
-    _system_rule('Nome fornecedor', 'Não definido'),
     _system_rule('Unidade', 'UN'),
-    _system_rule('Unidade de medida', 'UN'),
     _system_rule('Altura', '2'),
     _system_rule('Largura', '11'),
     _system_rule('Profundidade', '18'),
@@ -98,10 +97,20 @@ def _safe_text(value: Any, fallback: str = '') -> str:
     return text if text else fallback
 
 
+def _column_key(value: Any) -> str:
+    return _safe_text(value).lower()
+
+
 def _default_source_for_column(target_column: str) -> str:
     key = target_column.strip().lower()
     system_keys = {str(rule.get('target_column', '')).strip().lower() for rule in DEFAULT_CUSTOM_RULES}
     return 'system' if key in system_keys else 'user'
+
+
+def _is_removed_system_rule(rule: dict[str, Any]) -> bool:
+    source = _safe_text(rule.get('source')).lower()
+    column = _column_key(rule.get('target_column'))
+    return source == 'system' and column in REMOVED_SYSTEM_RULE_COLUMNS
 
 
 def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -123,7 +132,7 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
     rule['id'] = _safe_text(rule.get('id'), _make_rule_id(rule['source'], rule['target_column']))
 
-    if not rule['target_column']:
+    if not rule['target_column'] or _is_removed_system_rule(rule):
         return None
     return rule
 
@@ -153,7 +162,7 @@ def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
 
 
 def _merge_missing_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged = [dict(rule) for rule in custom_rules]
+    merged = [dict(rule) for rule in custom_rules if not _is_removed_system_rule(dict(rule))]
     existing = {str(rule.get('target_column', '')).strip().lower() for rule in merged}
     for default_rule in DEFAULT_CUSTOM_RULES:
         key = str(default_rule.get('target_column', '')).strip().lower()
