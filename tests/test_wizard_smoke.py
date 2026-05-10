@@ -139,6 +139,17 @@ def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> Non
     assert steps.cadastro_mapping_ready() is True
 
 
+def test_cadastro_download_only_happens_on_download_step() -> None:
+    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
+
+    before_download_step = cadastro_steps.split('def render_cadastro_download_step()', 1)[0]
+    download_step = cadastro_steps.split('def render_cadastro_download_step()', 1)[1]
+
+    assert 'download_final(' not in before_download_step
+    assert "download_final(df_final, 'cadastro', 'cadastro_wizard')" in download_step
+    assert "preview_df('🧾 CADASTRO · Preview final', df_final)" in before_download_step
+
+
 def test_mapping_css_uses_existing_theme_variables() -> None:
     mapping_css = Path('bling_app_zero/ui/layout/mapping.py').read_text(encoding='utf-8')
 
