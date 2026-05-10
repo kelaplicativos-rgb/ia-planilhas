@@ -6,11 +6,18 @@ import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 
-ESTOQUE_FALLBACK_COLUMNS = ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)']
-
 
 def _clean_columns(columns: Iterable[str] | None) -> list[str]:
     return [str(column).strip() for column in (columns or []) if str(column).strip()]
+
+
+def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(payload)
+    except Exception:
+        pass
 
 
 def run_estoque_site_engine(
@@ -26,10 +33,16 @@ def run_estoque_site_engine(
 
     Estoque deve obedecer ao contrato do modelo: buscar somente as colunas
     solicitadas. Se a coluna não for encontrada no site, fica vazia.
+    Sem contrato/modelo, não tenta adivinhar e não reaproveita colunas de cadastro.
     """
     columns = _clean_columns(requested_columns)
     if not columns:
-        return pd.DataFrame(columns=ESTOQUE_FALLBACK_COLUMNS)
+        _emit(progress_callback, {
+            'stage': 'Modelo obrigatório',
+            'message': 'Estoque por site exige modelo/contrato de colunas. Nenhuma captura foi executada.',
+            'progress': 1.0,
+        })
+        return pd.DataFrame()
 
     return run_fast_site_scraper(
         raw_urls=raw_urls,
