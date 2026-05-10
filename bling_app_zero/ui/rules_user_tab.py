@@ -13,6 +13,43 @@ from bling_app_zero.core.user_rules import (
 NOTICE_KEY = 'rules_notice_clean'
 
 
+def _inject_rules_style() -> None:
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) {
+            padding: 0.72rem 0.72rem 0.42rem 0.72rem !important;
+            margin: 0.55rem 0 0.78rem 0 !important;
+            border: 1px solid rgba(37, 99, 235, 0.20) !important;
+            border-left: 4px solid rgba(37, 99, 235, 0.72) !important;
+            border-radius: 16px !important;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.96)) !important;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045) !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) input {
+            min-height: 39px !important;
+            border-radius: 12px !important;
+            border: 1px solid rgba(37, 99, 235, 0.26) !important;
+            background: #ffffff !important;
+            color: var(--bling-text) !important;
+            font-size: 0.93rem !important;
+            font-weight: 650 !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) p {
+            margin-bottom: 0.12rem !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(input[id*="rule_value_"]) div[data-testid="stToggle"] {
+            margin-top: -0.12rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _notice(text: str) -> None:
     st.session_state[NOTICE_KEY] = text
 
@@ -80,10 +117,20 @@ def _render_rule_card(rule: dict, index: int) -> None:
     current_enabled = bool(rule.get('enabled', True))
     only_empty = bool(rule.get('only_when_empty', False))
 
-    with st.container(border=True):
+    with st.container():
         st.markdown(f'**{target}**')
-        value = st.text_input('Valor aplicado', value=current_value, key=f'rule_value_{rule_id}')
-        enabled = st.toggle('Aplicar no arquivo final', value=current_enabled, key=f'rule_enabled_{rule_id}')
+        value = st.text_input(
+            'valor',
+            value=current_value,
+            key=f'rule_value_{rule_id}',
+            placeholder='Digite o valor padrão',
+            label_visibility='collapsed',
+        )
+        enabled = st.toggle(
+            'Aplicar no arquivo final',
+            value=current_enabled,
+            key=f'rule_enabled_{rule_id}',
+        )
 
     _save_value(rule_id, target, current_value, value, only_empty)
     _save_enabled(rule_id, current_enabled, enabled)
@@ -126,6 +173,7 @@ def _render_new_rule() -> None:
 
 
 def render_user_rules_tab() -> None:
+    _inject_rules_style()
     rules = get_user_rules()
     all_rules = list(rules.get('custom_rules', []))
     system_rules = [rule for rule in all_rules if _is_system(rule)]
