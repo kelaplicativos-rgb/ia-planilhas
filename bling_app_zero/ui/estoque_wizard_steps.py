@@ -11,7 +11,9 @@ from bling_app_zero.ui.estoque_outputs import (
     render_stock_preview,
 )
 from bling_app_zero.ui.estoque_sources import get_estoque_site_source, render_estoque_upload, source_files_from_upload
+from bling_app_zero.ui.home_models import get_home_estoque_model
 from bling_app_zero.ui.home_shared import df_signature, preview_df
+from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 ESTOQUE_SOURCE_SIGNATURE_KEY = 'estoque_source_signature_atual'
 ESTOQUE_UPLOAD_KEY = 'estoque_wizard_upload'
@@ -27,6 +29,25 @@ def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
 def _valid_deposito() -> bool:
     deposito = str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip()
     return bool(deposito)
+
+
+def _is_site_origin() -> bool:
+    return str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '').strip().lower() == 'site'
+
+
+def _empty_upload_result() -> SmartUploadResult:
+    return SmartUploadResult(
+        source_file=None,
+        source_df=None,
+        model_file=None,
+        model_df=get_home_estoque_model(),
+        cadastro_model_file=None,
+        cadastro_model_df=None,
+        estoque_model_file=None,
+        estoque_model_df=get_home_estoque_model(),
+        attachments=[],
+        ignored_files=[],
+    )
 
 
 def _current_source_signature(df_origem_site: pd.DataFrame | None, upload) -> str:
@@ -87,10 +108,13 @@ def render_estoque_entrada_step() -> None:
 
     model_loaded = home_estoque_model_loaded()
     if model_loaded:
-        st.success('Modelo de estoque carregado. Agora envie a origem do fornecedor ou use a busca por site.')
+        st.success('Modelo de estoque carregado. Agora informe a origem escolhida.')
 
-    upload = render_estoque_upload(model_loaded)
     df_origem_site = get_estoque_site_source()
+    if _is_site_origin():
+        upload = _empty_upload_result()
+    else:
+        upload = render_estoque_upload(model_loaded)
     _clear_estoque_outputs_if_source_changed(df_origem_site, upload)
 
     df_modelo = select_estoque_model(upload)
@@ -103,6 +127,8 @@ def render_estoque_entrada_step() -> None:
         st.success(f'Origem de estoque criada pelo site com {len(df_origem_site)} linha(s).')
         with st.expander('Conferir origem de estoque do site', expanded=False):
             preview_df('Origem de estoque criada pelo site', df_origem_site)
+    elif _is_site_origin():
+        st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
     else:
         source_files = source_files_from_upload(upload)
         if source_files:
