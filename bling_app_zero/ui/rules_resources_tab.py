@@ -3,12 +3,13 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
+from bling_app_zero.ui.sidebar_skin import sidebar_header, sidebar_mini_label, sidebar_pills
 
 WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
 
 
 def _bool_label(value: bool) -> str:
-    return 'Sim' if value else 'Não'
+    return 'Ativo' if value else 'Desligado'
 
 
 def _save_if_changed(original: dict, updated: dict) -> None:
@@ -19,35 +20,54 @@ def _save_if_changed(original: dict, updated: dict) -> None:
         st.rerun()
 
 
+def _resource_toggle(label: str, description: str, value: bool, key: str) -> bool:
+    with st.container(border=True):
+        sidebar_mini_label(label)
+        st.caption(description)
+        sidebar_pills((_bool_label(value), value))
+        return st.toggle(
+            f'{label}: {_bool_label(value)}',
+            value=value,
+            key=key,
+            label_visibility='collapsed',
+        )
+
+
 def render_resources_tab() -> None:
     original = get_user_rules()
     updated = dict(original)
 
-    st.markdown('##### Recursos automáticos')
-    st.caption('Recursos processam e tratam os dados antes do download final. O usuário só liga ou desliga.')
+    sidebar_header(
+        'Recursos automáticos',
+        'Tratamentos fixos aplicados antes do download final do CSV.',
+    )
 
     if st.session_state.pop('resources_saved_notice', False):
         st.caption('✅ Recursos atualizados.')
 
-    updated['clean_invalid_gtin'] = st.toggle(
-        f'Limpar GTIN inválido: {_bool_label(bool(updated.get("clean_invalid_gtin", True)))}',
-        value=bool(updated.get('clean_invalid_gtin', True)),
-        key='resource_clean_invalid_gtin',
+    updated['clean_invalid_gtin'] = _resource_toggle(
+        'Limpar GTIN inválido',
+        'Quando o GTIN não for válido, o campo sai vazio no CSV final.',
+        bool(updated.get('clean_invalid_gtin', True)),
+        'resource_clean_invalid_gtin',
     )
-    updated['normalize_image_separator'] = st.toggle(
-        f'Separar imagens por |: {_bool_label(bool(updated.get("normalize_image_separator", True)))}',
-        value=bool(updated.get('normalize_image_separator', True)),
-        key='resource_normalize_images',
+    updated['normalize_image_separator'] = _resource_toggle(
+        'Separar imagens por |',
+        'Mantém múltiplas imagens no padrão aceito pelo Bling.',
+        bool(updated.get('normalize_image_separator', True)),
+        'resource_normalize_images',
     )
-    updated['auto_product_code'] = st.toggle(
-        f'Gerar código automático: {_bool_label(bool(updated.get("auto_product_code", True)))}',
-        value=bool(updated.get('auto_product_code', True)),
-        key='rule_auto_product_code',
+    updated['auto_product_code'] = _resource_toggle(
+        'Gerar código automático',
+        'Cria código quando a origem não trouxe SKU ou código.',
+        bool(updated.get('auto_product_code', True)),
+        'rule_auto_product_code',
     )
-    updated['unique_product_code'] = st.toggle(
-        f'Evitar código duplicado: {_bool_label(bool(updated.get("unique_product_code", True)))}',
-        value=bool(updated.get('unique_product_code', True)),
-        key='rule_unique_product_code',
+    updated['unique_product_code'] = _resource_toggle(
+        'Evitar código duplicado',
+        'Ajusta códigos repetidos antes do download.',
+        bool(updated.get('unique_product_code', True)),
+        'rule_unique_product_code',
     )
 
     updated['invalid_gtin_mode'] = 'limpar'
@@ -56,9 +76,10 @@ def render_resources_tab() -> None:
 
     _save_if_changed(original, updated)
 
+    st.divider()
     st.caption('Alterações são salvas automaticamente.')
 
-    if st.button('Restaurar padrão', use_container_width=True, key='reset_user_resources'):
+    if st.button('↩️ Restaurar recursos padrão', use_container_width=True, key='reset_user_resources'):
         reset_user_rules()
         st.session_state['resources_saved_notice'] = True
         st.rerun()
