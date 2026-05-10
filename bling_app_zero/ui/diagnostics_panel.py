@@ -9,6 +9,7 @@ except Exception:
     validate_openai_connection = None
 
 from bling_app_zero.flows.simulation import run_all_simulations, run_engine_inventory
+from bling_app_zero.ui.blingbrain_panel import render_blingbrain_panel
 
 
 def _render_openai_validation() -> None:
@@ -65,6 +66,7 @@ def render_diagnostics_panel() -> None:
         with st.expander('Ferramentas de conferência', expanded=False):
             st.caption('Use esta área para testar rapidamente os fluxos principais sem precisar importar arquivos reais.')
             _render_openai_validation()
+            render_blingbrain_panel()
             _render_engine_inventory()
 
             if st.button('Conferir fluxos principais', use_container_width=True, key='run_blingflow_simulation'):
