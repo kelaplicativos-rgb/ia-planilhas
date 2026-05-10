@@ -9,19 +9,29 @@ def _bool_label(value: bool) -> str:
     return 'Sim' if value else 'Não'
 
 
+def _save_if_changed(original: dict, updated: dict) -> None:
+    watched = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
+    changed = any(bool(original.get(key, True)) != bool(updated.get(key, True)) for key in watched)
+    if changed:
+        set_user_rules(updated)
+        st.success('Recursos atualizados automaticamente.')
+        st.rerun()
+
+
 def render_resources_tab() -> None:
-    updated = dict(get_user_rules())
+    original = get_user_rules()
+    updated = dict(original)
 
     st.markdown('##### Recursos automáticos')
     st.caption('Recursos são motores internos. O usuário só liga ou desliga.')
 
     updated['clean_invalid_gtin'] = st.toggle(
-        'Limpar GTIN inválido',
+        f'Limpar GTIN inválido: {_bool_label(bool(updated.get("clean_invalid_gtin", True)))}',
         value=bool(updated.get('clean_invalid_gtin', True)),
         key='resource_clean_invalid_gtin',
     )
     updated['normalize_image_separator'] = st.toggle(
-        'Separar imagens por |',
+        f'Separar imagens por |: {_bool_label(bool(updated.get("normalize_image_separator", True)))}',
         value=bool(updated.get('normalize_image_separator', True)),
         key='resource_normalize_images',
     )
@@ -38,16 +48,13 @@ def render_resources_tab() -> None:
 
     updated['invalid_gtin_mode'] = 'limpar'
     updated['image_separator'] = '|'
-    updated['custom_rules'] = get_user_rules().get('custom_rules', [])
+    updated['custom_rules'] = original.get('custom_rules', [])
 
-    col_save, col_reset = st.columns(2)
-    with col_save:
-        if st.button('Salvar', use_container_width=True, key='save_user_resources'):
-            set_user_rules(updated)
-            st.success('Recursos atualizados.')
-            st.rerun()
-    with col_reset:
-        if st.button('Restaurar', use_container_width=True, key='reset_user_resources'):
-            reset_user_rules()
-            st.success('Padrão restaurado.')
-            st.rerun()
+    _save_if_changed(original, updated)
+
+    st.caption('Alterações nos recursos são salvas automaticamente.')
+
+    if st.button('Restaurar padrão', use_container_width=True, key='reset_user_resources'):
+        reset_user_rules()
+        st.success('Padrão restaurado.')
+        st.rerun()
