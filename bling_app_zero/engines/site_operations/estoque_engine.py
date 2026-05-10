@@ -8,7 +8,14 @@ from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 
 
 def _clean_columns(columns: Iterable[str] | None) -> list[str]:
-    return [str(column).strip() for column in (columns or []) if str(column).strip()]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for column in columns or []:
+        text = str(column).strip()
+        if text and text not in seen:
+            cleaned.append(text)
+            seen.add(text)
+    return cleaned
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
