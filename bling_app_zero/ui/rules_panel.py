@@ -11,19 +11,22 @@ def render_rules_panel() -> None:
     """Orquestra Regras e Recursos do CSV final com sidebar padronizada."""
     with st.sidebar:
         with st.expander('⚙️ Regras e recursos', expanded=False):
-            sidebar_header(
-                'CSV final padronizado',
-                'Controle os preenchimentos, tratamentos automáticos e regras personalizadas sem alterar o fluxo principal.',
-            )
-            section = st.radio(
-                'Área',
-                ['Regras', 'Recursos'],
-                horizontal=True,
-                label_visibility='collapsed',
-                key='rules_panel_section_selector',
-            )
+            with st.container():
+                sidebar_header(
+                    'CSV final padronizado',
+                    'Controle preenchimentos, tratamentos automáticos e regras personalizadas sem alterar o fluxo principal.',
+                )
+                section = st.radio(
+                    'Escolha o painel',
+                    ['Regras', 'Recursos'],
+                    horizontal=False,
+                    label_visibility='collapsed',
+                    key='rules_panel_section_selector',
+                )
 
-            if section == 'Recursos':
-                render_resources_tab()
-            else:
-                render_user_rules_tab()
+                st.divider()
+
+                if section == 'Recursos':
+                    render_resources_tab()
+                else:
+                    render_user_rules_tab()
