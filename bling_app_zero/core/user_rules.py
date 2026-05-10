@@ -242,13 +242,24 @@ def update_custom_rule_by_id(rule_id: str, target_column: str, fill_value: str, 
                 'target_column': target_column,
                 'fill_value': fill_value,
                 'only_when_empty': only_when_empty,
-                'enabled': True,
+                'enabled': bool(old_rule.get('enabled', True)),
                 'source': old_rule.get('source') or 'user',
             }
         )
         if rule:
             custom_rules[index] = rule
         break
+    current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
+def set_custom_rule_enabled(rule_id: str, enabled: bool) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = list(current.get('custom_rules', []))
+    for rule in custom_rules:
+        if str(rule.get('id')) == str(rule_id):
+            rule['enabled'] = bool(enabled)
+            break
     current['custom_rules'] = custom_rules
     return set_user_rules(current)
 
