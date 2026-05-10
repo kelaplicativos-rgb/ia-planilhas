@@ -63,11 +63,10 @@ def _render_rule_toggle(rule: dict, index: int) -> None:
 
 
 def _render_system_rules(system_rules: list[dict]) -> None:
-    st.markdown('##### Padrões do sistema')
-    st.caption('Regras padrão preenchem campos importantes antes do download final. O usuário só liga ou desliga.')
+    st.markdown('##### Padrões')
 
     if not system_rules:
-        st.caption('Nenhuma regra padrão carregada.')
+        st.caption('Nenhum padrão carregado.')
         return
 
     for index, rule in enumerate(system_rules):
@@ -75,11 +74,10 @@ def _render_system_rules(system_rules: list[dict]) -> None:
 
 
 def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
-    st.markdown('##### Regras personalizadas')
-    st.caption('Regras criadas manualmente para preencher colunas específicas do CSV final.')
+    st.markdown('##### Personalizadas')
 
     if not user_rules:
-        st.caption('Nenhuma regra personalizada criada ainda.')
+        st.caption('Nenhuma regra personalizada.')
         return
 
     for offset, rule in enumerate(user_rules):
@@ -97,22 +95,22 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
 
 
 def _render_new_rule_form() -> None:
-    with st.expander('Adicionar regra personalizada', expanded=False):
+    with st.expander('Adicionar regra', expanded=False):
         target_column = st.text_input(
-            'Nome da coluna',
+            'Coluna',
             key='custom_rule_target_column',
             placeholder='Ex: Itens por caixa',
         )
         fill_value = st.text_input(
-            'Valor predefinido',
+            'Valor',
             key='custom_rule_fill_value',
             placeholder='Ex: 1',
         )
 
-        if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
+        if st.button('Adicionar', use_container_width=True, key='add_custom_rule_button'):
             column_name = target_column.strip()
             if not column_name:
-                st.warning('Informe o nome da coluna.')
+                st.warning('Informe a coluna.')
                 return
             add_custom_rule(column_name, column_name, fill_value, False)
             _notice('Regra adicionada.')
@@ -125,8 +123,8 @@ def render_user_rules_tab() -> None:
     system_rules = [rule for rule in custom_rules if _is_system_rule(rule)]
     user_rules = [rule for rule in custom_rules if not _is_system_rule(rule)]
 
-    st.markdown('##### Regras automáticas')
-    st.caption('Regras processam e completam dados antes do download final. O usuário só liga ou desliga.')
+    st.markdown('##### Regras')
+    st.caption('Liga ou desliga preenchimentos automáticos do CSV final.')
     _render_notice()
 
     _render_system_rules(system_rules)
