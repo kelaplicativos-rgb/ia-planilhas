@@ -10,7 +10,23 @@ O smoke test não tenta simular toda a interface do Streamlit. Ele valida contra
 
 ### Imports críticos
 
-Garante que os módulos principais do Wizard, site, exportação e GTIN importam sem quebrar.
+Garante que os módulos principais do app, Home, Wizard, site, exportação e GTIN importam sem quebrar.
+
+### Entrada do Streamlit
+
+Protege o ponto de entrada do app para garantir que o deploy continue abrindo o Wizard novo:
+
+```text
+app.py
+↓
+render_home()
+↓
+home.py
+↓
+run_wizard_state_guard()
+↓
+render_home_wizard()
+```
 
 ### Ordem dos fluxos
 
