@@ -7,6 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.debug import add_debug, render_debug_panel
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
 from bling_app_zero.ui.rules_panel import render_rules_panel
 
 
@@ -57,6 +58,7 @@ def render_sidebar_tools() -> None:
     - core/debug.py
     - rules_panel.py
     """
+    inject_sidebar_tools_theme()
     _render_sidebar_header()
     for name, renderer in SIDEBAR_TOOLS:
         _render_sidebar_tool(name, renderer)
