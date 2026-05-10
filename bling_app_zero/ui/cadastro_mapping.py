@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-import math
 
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.ai_mapping_assistant import ai_mapping_enabled, apply_ai_mapping_assist, merge_ai_suggestions
+from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_confidence import confidence_for_mapping, resolved_empty_confidence, sort_targets_by_confidence
-from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
+from bling_app_zero.core.mapping_super_assistant import safe_default_for_target, super_auto_map_columns
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.engines.cadastro_engine import default_model
 from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
@@ -20,7 +20,6 @@ from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview,
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
-MAPPING_PAGE_SIZE = 12
 CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
 CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
 MAPPING_WIDGET_PREFIXES = (
@@ -123,26 +122,52 @@ def _ordered_targets_once(order_key: str, target_columns: list[str], confidence:
     return order
 
 
-def _visible_targets(mapping_key: str, ordered_targets: list[str]) -> list[str]:
-    total = len(ordered_targets)
-    if total <= MAPPING_PAGE_SIZE:
-        return ordered_targets
-    total_pages = max(1, math.ceil(total / MAPPING_PAGE_SIZE))
-    options = [f'Bloco {idx + 1} de {total_pages}' for idx in range(total_pages)]
-    page_key = f'{mapping_key}_page'
-    selected = st.selectbox(
-        'Campos do mapeamento',
-        options,
-        index=min(int(st.session_state.get(f'{page_key}__idx', 0) or 0), total_pages - 1),
-        key=page_key,
-        help='Para deixar a tela leve, o sistema mostra poucos campos por vez.',
+def _required_targets(target_columns: list[str]) -> set[str]:
+    return {field.original for field in build_contract(target_columns) if field.required}
+
+
+def _filter_targets(
+    mapping_key: str,
+    ordered_targets: list[str],
+    confidence: dict[str, dict[str, object]],
+    required_targets: set[str],
+) -> list[str]:
+    levels = {target: str(confidence.get(target, {}).get('level') or '') for target in ordered_targets}
+    problem_targets = [target for target in ordered_targets if levels.get(target) in {'vermelho', 'amarelo'}]
+    required = [target for target in ordered_targets if target in required_targets]
+
+    col_filter, col_search = st.columns([1, 1])
+    with col_filter:
+        mode = st.radio(
+            'Visualização do mapeamento',
+            ['Correções necessárias', 'Obrigatórios', 'Todos os campos'],
+            horizontal=True,
+            key=f'{mapping_key}_view_mode',
+        )
+    with col_search:
+        search = st.text_input(
+            'Buscar campo do Bling',
+            value='',
+            key=f'{mapping_key}_search',
+            placeholder='Ex: preço, fornecedor, GTIN, imagem...',
+        )
+
+    if mode == 'Obrigatórios':
+        selected = required
+    elif mode == 'Todos os campos':
+        selected = ordered_targets
+    else:
+        selected = problem_targets or required
+
+    search_key = normalize_key(search)
+    if search_key:
+        selected = [target for target in ordered_targets if search_key in normalize_key(target)]
+
+    st.caption(
+        f'Mostrando {len(selected)} de {len(ordered_targets)} campo(s). '
+        'Campos verdes ficam salvos e não precisam aparecer o tempo todo.'
     )
-    page_index = options.index(selected) if selected in options else 0
-    st.session_state[f'{page_key}__idx'] = page_index
-    start = page_index * MAPPING_PAGE_SIZE
-    end = start + MAPPING_PAGE_SIZE
-    st.caption(f'Mostrando campos {start + 1} a {min(end, total)} de {total}. Os demais continuam salvos e entram no CSV final.')
-    return ordered_targets[start:end]
+    return selected
 
 
 def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
@@ -150,7 +175,7 @@ def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
     for key in list(st.session_state.keys()):
         text = str(key)
         if text.startswith(MAPPING_WIDGET_PREFIXES) and not text.startswith(active_mapping_key):
-            st.session_state.pop(key, None)
+            st.session_state.pop(text, None)
 
 
 def _clear_mapping_widgets(mapping_key: str) -> None:
@@ -210,6 +235,10 @@ def _force_price_suggestion(target: str, source_columns: list[str], suggested: s
 def _build_super_mapping(df_source: pd.DataFrame, model: pd.DataFrame, source_columns: list[str]) -> dict[str, str]:
     auto_mapping = super_auto_map_columns(df_source, model)
     for target, selected in list(auto_mapping.items()):
+        default_value = safe_default_for_target(target)
+        if default_value:
+            auto_mapping[target] = ''
+            continue
         auto_mapping[target] = _force_price_suggestion(target, source_columns, selected)
     return auto_mapping
 
@@ -221,6 +250,15 @@ def _fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     for column in out.columns:
         if 'deposito' in normalize_key(column):
             out[column] = deposito
+    return out
+
+
+def _apply_safe_defaults(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for column in out.columns:
+        default_value = safe_default_for_target(str(column))
+        if default_value:
+            out[column] = out[column].apply(lambda value: default_value if not str(value or '').strip() else value)
     return out
 
 
@@ -268,22 +306,29 @@ def _render_mapping_select(
     raw_before = st.session_state.get(widget_key, suggested)
     info_before = _confidence_for_selection(df_source, target, raw_before, widget_key)
     label = _signal_label(target, info_before)
+    default_value = safe_default_for_target(target)
     with st.container(border=True):
         render_mapping_title(label)
-        selected_raw = st.selectbox(
-            target,
-            options,
-            index=_default_index(options, suggested, widget_key),
-            key=widget_key,
-            label_visibility='collapsed',
-        )
-        if selected_raw == EMPTY_LEAVE_OPTION:
-            st.session_state[f'{widget_key}__empty_resolved'] = True
+        if default_value:
+            st.text_input(target, value=default_value, disabled=True, key=f'{widget_key}_default', label_visibility='collapsed')
+            st.caption('Campo protegido: preenchido automaticamente para evitar mapeamento errado.')
+            selected = ''
+            info_after = {'level': 'verde', 'emoji': '🟢', 'label': 'padrão seguro', 'score': 100, 'order': 2}
         else:
-            st.session_state.pop(f'{widget_key}__empty_resolved', None)
-        selected = _option_value(selected_raw)
-        info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
-        _render_mapping_preview(df_source, selected)
+            selected_raw = st.selectbox(
+                target,
+                options,
+                index=_default_index(options, suggested, widget_key),
+                key=widget_key,
+                label_visibility='collapsed',
+            )
+            if selected_raw == EMPTY_LEAVE_OPTION:
+                st.session_state[f'{widget_key}__empty_resolved'] = True
+            else:
+                st.session_state.pop(f'{widget_key}__empty_resolved', None)
+            selected = _option_value(selected_raw)
+            info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
+            _render_mapping_preview(df_source, selected)
     return selected, info_after
 
 
@@ -310,17 +355,21 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA nos campos em dúvida')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
+    required_targets = _required_targets(target_columns)
+    visible_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
-    for target in _visible_targets(mapping_key, ordered_targets):
+    for target in visible_targets:
         target_index = target_index_by_name.get(target, len(edited_mapping))
         selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
-    df_preview_manual = sanitize_for_bling(apply_mapping(df_source, model, edited_mapping))
+    df_preview_manual = apply_mapping(df_source, model, edited_mapping)
+    df_preview_manual = _apply_safe_defaults(df_preview_manual)
+    df_preview_manual = sanitize_for_bling(df_preview_manual)
     st.session_state['df_final_cadastro'] = df_preview_manual
     st.session_state['mapping_cadastro'] = edited_mapping
     used_values = [value for value in edited_mapping.values() if value]
@@ -370,10 +419,12 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA no estoque')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
+    required_targets = _required_targets(target_columns)
+    visible_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
-    for target in _visible_targets(mapping_key, ordered_targets):
+    for target in visible_targets:
         target_index = target_index_by_name.get(target, len(edited_mapping))
         target_key = normalize_key(target)
         widget_key = _target_widget_key(mapping_key, target_index)
