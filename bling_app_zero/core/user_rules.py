@@ -69,18 +69,21 @@ def _safe_text(value: Any, fallback: str = '') -> str:
 def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
+
     rule = dict(CUSTOM_RULE_KEYS)
     for key in rule:
         if key in raw:
             rule[key] = raw[key]
 
-    rule['condition'] = _safe_text(rule.get('condition'))
+    # Novo modelo: regra direta por cabeçalho/coluna.
+    # Mantém as chaves antigas para não quebrar o restante do sistema.
     rule['target_column'] = _safe_text(rule.get('target_column'))
     rule['fill_value'] = _safe_text(rule.get('fill_value'))
+    rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
     rule['only_when_empty'] = bool(rule.get('only_when_empty', True))
     rule['enabled'] = bool(rule.get('enabled', True))
 
-    if not rule['condition'] or not rule['target_column']:
+    if not rule['target_column']:
         return None
     return rule
 
@@ -89,21 +92,17 @@ def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[str] = set()
     for item in raw:
         rule = normalize_custom_rule(item)
         if not rule:
             continue
-        key = (
-            rule['condition'].lower(),
-            rule['target_column'].lower(),
-            rule['fill_value'].lower(),
-        )
+        key = rule['target_column'].lower()
         if key in seen:
             continue
         seen.add(key)
         normalized.append(rule)
-    return normalized[:30]
+    return normalized[:60]
 
 
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -153,14 +152,15 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
     custom_rules = list(current.get('custom_rules', []))
     rule = normalize_custom_rule(
         {
-            'condition': condition,
-            'target_column': target_column,
+            'condition': target_column or condition,
+            'target_column': target_column or condition,
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
             'enabled': True,
         }
     )
     if rule:
+        custom_rules = [r for r in custom_rules if str(r.get('target_column', '')).strip().lower() != rule['target_column'].lower()]
         custom_rules.append(rule)
     current['custom_rules'] = custom_rules
     return set_user_rules(current)
