@@ -6,7 +6,7 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
-STATE_GUARD_VERSION = '2026-05-09-wizard-pro-2'
+STATE_GUARD_VERSION = '2026-05-09-wizard-pro-3'
 
 VALID_STEPS = {
     'modelo',
@@ -65,6 +65,8 @@ SITE_OUTPUT_KEYS_BY_OPERATION = {
         'df_origem_cadastro_precificada',
         'cadastro_wizard_df_origem',
         'cadastro_wizard_df_para_mapear',
+        'cadastro_mapping_confirmed',
+        'cadastro_mapping_confirmed_signature',
     ],
     'estoque': [
         'estoque_multi_outputs',
