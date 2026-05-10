@@ -26,7 +26,13 @@ CADASTRO_DEFAULT_COLUMNS = [
 
 
 def _clean_columns(columns: Iterable[str] | None) -> list[str]:
-    cleaned = [str(column).strip() for column in (columns or []) if str(column).strip()]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for column in columns or []:
+        text = str(column).strip()
+        if text and text not in seen:
+            cleaned.append(text)
+            seen.add(text)
     return cleaned or CADASTRO_DEFAULT_COLUMNS.copy()
 
 
