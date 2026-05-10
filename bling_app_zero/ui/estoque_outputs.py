@@ -16,6 +16,16 @@ def _show_missing_model_warning() -> None:
     st.error('Envie o modelo de estoque do Bling antes de gerar o CSV. O sistema só preenche as colunas existentes nesse modelo.')
 
 
+def _stock_results() -> list[dict[str, object]]:
+    results = st.session_state.get('estoque_multi_outputs', [])
+    return results if isinstance(results, list) else []
+
+
+def _download_name(index: object, name: str, df_final: pd.DataFrame) -> str:
+    safe_name = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in str(name or 'estoque'))[:60]
+    return f'estoque_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
+
+
 def build_stock_outputs_from_dataframe(
     df_origem: pd.DataFrame,
     df_modelo: pd.DataFrame | None,
@@ -82,13 +92,14 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
         st.session_state.pop('mapping_estoque', None)
 
 
-def render_stock_outputs() -> None:
-    results = st.session_state.get('estoque_multi_outputs', [])
+def render_stock_preview() -> None:
+    results = _stock_results()
     if not results:
+        st.warning('Nenhum preview de estoque foi gerado ainda.')
         return
 
-    st.markdown('#### 📦 Arquivo final de ESTOQUE')
-    st.caption('Baixe aqui somente o CSV de atualização de estoque. Cada origem gera um CSV separado.')
+    st.markdown('#### 📦 Preview final de ESTOQUE')
+    st.caption('Confira os dados antes de baixar. O download fica na próxima etapa.')
 
     for result in results:
         index = result.get('index')
@@ -96,11 +107,36 @@ def render_stock_outputs() -> None:
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
 
-        with st.expander(f'📦 ESTOQUE · CSV {index}: {name}', expanded=index == 1):
+        with st.expander(f'📦 ESTOQUE · Preview {index}: {name}', expanded=index == 1):
             if isinstance(mapping, dict):
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
                 preview_df('📦 ESTOQUE · Preview final', df_final)
-                download_final(df_final, 'estoque', f'estoque_{index}_{name}_{len(df_final)}_{len(df_final.columns)}')
             else:
-                st.warning('Não foi possível montar o CSV desta origem.')
+                st.warning('Não foi possível montar o preview desta origem.')
+
+
+def render_stock_downloads() -> None:
+    results = _stock_results()
+    if not results:
+        st.warning('Nenhum CSV de estoque foi gerado ainda.')
+        return
+
+    st.markdown('#### 📥 Download de ESTOQUE')
+    st.caption('Baixe aqui somente o CSV final de atualização de estoque. Cada origem gera um CSV separado.')
+
+    for result in results:
+        index = result.get('index')
+        name = str(result.get('name') or f'origem_{index}')
+        df_final = result.get('df_final')
+        if not isinstance(df_final, pd.DataFrame):
+            st.warning(f'Não foi possível baixar a origem {index}: {name}.')
+            continue
+        st.markdown(f'**CSV {index}: {name}**')
+        download_final(df_final, 'estoque', _download_name(index, name, df_final))
+
+
+def render_stock_outputs() -> None:
+    """Compatibilidade com telas antigas: preview + download juntos."""
+    render_stock_preview()
+    render_stock_downloads()
