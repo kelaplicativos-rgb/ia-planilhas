@@ -67,6 +67,27 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_MAPEAMENTO == 'mapeamento'
 
 
+def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
+    guard = importlib.import_module('bling_app_zero.ui.wizard_state_guard')
+
+    assert guard.SITE_RAW_BY_OPERATION['cadastro'] == 'df_site_bruto_cadastro'
+    assert guard.SITE_RAW_BY_OPERATION['estoque'] == 'df_site_bruto_estoque'
+    assert guard.SITE_INTERNAL_BY_OPERATION['cadastro'] == 'df_origem_site_como_planilha_cadastro'
+    assert guard.SITE_INTERNAL_BY_OPERATION['estoque'] == 'df_origem_site_como_planilha_estoque'
+
+    cadastro_keys = set(guard.SITE_OUTPUT_KEYS_BY_OPERATION['cadastro'])
+    estoque_keys = set(guard.SITE_OUTPUT_KEYS_BY_OPERATION['estoque'])
+
+    assert 'df_final_cadastro' in cadastro_keys
+    assert 'mapping_cadastro' in cadastro_keys
+    assert 'mapping_confidence_cadastro' in cadastro_keys
+    assert 'cadastro_mapping_confirmed' in cadastro_keys
+    assert 'cadastro_mapping_confirmed_signature' in cadastro_keys
+    assert 'estoque_multi_outputs' in estoque_keys
+    assert 'df_final_estoque' in estoque_keys
+    assert 'mapping_estoque' in estoque_keys
+
+
 def test_file_origin_does_not_reuse_old_site_origin() -> None:
     cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
     estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
