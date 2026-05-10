@@ -6,6 +6,14 @@ from dataclasses import dataclass
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_source_for_operation
+from bling_app_zero.ui.cadastro_wizard_steps import (
+    cadastro_context_ready,
+    cadastro_mapping_ready,
+    render_cadastro_download_step,
+    render_cadastro_entrada_step,
+    render_cadastro_mapeamento_step,
+    render_cadastro_preview_step,
+)
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
     render_home_pricing_config_form,
@@ -25,13 +33,31 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_MODELO = 'modelo'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
+STEP_ENTRADA = 'entrada'
+STEP_MAPEAMENTO = 'mapeamento'
+STEP_PREVIEW = 'preview'
+STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
-STEPS = [STEP_MODELO, STEP_PRECIFICACAO, STEP_ORIGEM, STEP_PROCESSAR]
+CADASTRO_STEPS = [
+    STEP_MODELO,
+    STEP_PRECIFICACAO,
+    STEP_ORIGEM,
+    STEP_ENTRADA,
+    STEP_MAPEAMENTO,
+    STEP_PREVIEW,
+    STEP_DOWNLOAD,
+]
+ESTOQUE_STEPS = [STEP_MODELO, STEP_PRECIFICACAO, STEP_ORIGEM, STEP_PROCESSAR]
+
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
+    STEP_ENTRADA: 'Entrada',
+    STEP_MAPEAMENTO: 'Mapeamento',
+    STEP_PREVIEW: 'Preview',
+    STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
 }
 
@@ -41,6 +67,7 @@ class WizardNav:
     current: str
     index: int
     total: int
+    steps: list[str]
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -68,16 +95,22 @@ def _preferred_operation_from_models() -> str:
     return 'cadastro'
 
 
+def _active_steps() -> list[str]:
+    return CADASTRO_STEPS if _preferred_operation_from_models() == 'cadastro' else ESTOQUE_STEPS
+
+
 def _current_step() -> str:
+    steps = _active_steps()
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
-    if step not in STEPS:
-        step = STEP_MODELO
+    if step not in steps:
+        step = STEP_ORIGEM if step in CADASTRO_STEPS + ESTOQUE_STEPS and STEP_ORIGEM in steps else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
 
 
 def _go_to_step(step: str) -> None:
-    if step not in STEPS:
+    steps = _active_steps()
+    if step not in steps:
         step = STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     try:
@@ -88,17 +121,19 @@ def _go_to_step(step: str) -> None:
 
 
 def _next_step() -> None:
+    steps = _active_steps()
     step = _current_step()
-    index = STEPS.index(step)
-    if index < len(STEPS) - 1:
-        _go_to_step(STEPS[index + 1])
+    index = steps.index(step)
+    if index < len(steps) - 1:
+        _go_to_step(steps[index + 1])
 
 
 def _previous_step() -> None:
+    steps = _active_steps()
     step = _current_step()
-    index = STEPS.index(step)
+    index = steps.index(step)
     if index > 0:
-        _go_to_step(STEPS[index - 1])
+        _go_to_step(steps[index - 1])
 
 
 def _reset_wizard() -> None:
@@ -111,6 +146,12 @@ def _reset_wizard() -> None:
         'origem_tipo',
         'tipo_operacao_site',
         'operation_site',
+        'cadastro_wizard_df_origem',
+        'cadastro_wizard_df_para_mapear',
+        'cadastro_wizard_df_modelo',
+        'cadastro_wizard_df_modelo_estoque',
+        'df_final_cadastro',
+        'mapping_cadastro',
     ]:
         st.session_state.pop(key, None)
     _go_to_step(STEP_MODELO)
@@ -130,27 +171,30 @@ def _render_section_card(kicker: str, title: str, text: str) -> None:
 
 
 def _render_step_header() -> WizardNav:
+    steps = _active_steps()
     current = _current_step()
-    index = STEPS.index(current)
-    total = len(STEPS)
+    index = steps.index(current)
+    total = len(steps)
     percent = int(((index + 1) / total) * 100)
     labels = []
-    for i, step in enumerate(STEPS):
+    for i, step in enumerate(steps):
         prefix = '●' if i == index else '✓' if i < index else '○'
         labels.append(f'{prefix} {STEP_LABELS[step]}')
     st.progress((index + 1) / total, text=f'Etapa {index + 1} de {total} · {STEP_LABELS[current]} · {percent}%')
     st.caption('  ·  '.join(labels))
-    return WizardNav(current=current, index=index, total=total)
+    return WizardNav(current=current, index=index, total=total, steps=steps)
 
 
 def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar') -> None:
+    steps = _active_steps()
     col_back, col_next = st.columns(2)
     with col_back:
-        disabled = STEPS.index(_current_step()) == 0
+        disabled = steps.index(_current_step()) == 0
         if st.button('Voltar', use_container_width=True, disabled=disabled, key=f'wizard_back_{_current_step()}'):
             _previous_step()
     with col_next:
-        if st.button(next_label, use_container_width=True, disabled=not allow_next, key=f'wizard_next_{_current_step()}'):
+        is_last = steps.index(_current_step()) == len(steps) - 1
+        if not is_last and st.button(next_label, use_container_width=True, disabled=not allow_next, key=f'wizard_next_{_current_step()}'):
             _next_step()
 
 
@@ -294,7 +338,7 @@ def _render_process_step() -> None:
     _render_section_card(
         'Etapa 4',
         f'{operation_label} por {origin_label}',
-        'Nesta fase o sistema carrega apenas o módulo escolhido. A próxima refatoração dividirá esta etapa em entrada, mapeamento, preview e download.',
+        'Nesta fase o sistema carrega apenas o módulo escolhido.',
     )
 
     if origin == 'site':
@@ -317,6 +361,37 @@ def _render_process_step() -> None:
             _reset_wizard()
 
 
+def _render_cadastro_entrada() -> None:
+    origin = _current_origin_choice()
+    if origin == 'site':
+        from bling_app_zero.ui.site_panel import render_site_panel
+
+        render_site_panel()
+    render_cadastro_entrada_step()
+    _render_nav_buttons(allow_next=cadastro_context_ready())
+
+
+def _render_cadastro_mapeamento() -> None:
+    render_cadastro_mapeamento_step()
+    _render_nav_buttons(allow_next=cadastro_mapping_ready())
+
+
+def _render_cadastro_preview() -> None:
+    render_cadastro_preview_step()
+    _render_nav_buttons(allow_next=cadastro_mapping_ready())
+
+
+def _render_cadastro_download() -> None:
+    render_cadastro_download_step()
+    col_back, col_reset = st.columns(2)
+    with col_back:
+        if st.button('Voltar para preview', use_container_width=True, key='wizard_download_back'):
+            _go_to_step(STEP_PREVIEW)
+    with col_reset:
+        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset'):
+            _reset_wizard()
+
+
 def render_home_wizard() -> None:
     _render_step_header()
     step = _current_step()
@@ -326,5 +401,13 @@ def render_home_wizard() -> None:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
+    elif step == STEP_ENTRADA:
+        _render_cadastro_entrada()
+    elif step == STEP_MAPEAMENTO:
+        _render_cadastro_mapeamento()
+    elif step == STEP_PREVIEW:
+        _render_cadastro_preview()
+    elif step == STEP_DOWNLOAD:
+        _render_cadastro_download()
     else:
         _render_process_step()
