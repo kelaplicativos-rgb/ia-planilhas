@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import streamlit as st
 
-from bling_app_zero.flows.site_as_source import get_site_source_for_operation
 from bling_app_zero.ui.cadastro_wizard_steps import (
     cadastro_context_ready,
     cadastro_mapping_ready,
@@ -199,11 +198,14 @@ def _reset_outputs_for_operation_change() -> None:
         'cadastro_wizard_df_para_mapear',
         'cadastro_wizard_df_modelo',
         'cadastro_wizard_df_modelo_estoque',
+        'cadastro_mapping_confirmed',
+        'cadastro_mapping_confirmed_signature',
         'estoque_wizard_upload',
         'estoque_wizard_df_origem_site',
         'estoque_wizard_df_modelo',
         'df_final_cadastro',
         'mapping_cadastro',
+        'mapping_confidence_cadastro',
         'estoque_multi_outputs',
         'df_final_estoque',
         'mapping_estoque',
