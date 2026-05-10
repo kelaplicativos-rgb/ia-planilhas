@@ -24,6 +24,13 @@ TARGET_DF_KEYS = {
     'estoque': 'df_final_estoque',
 }
 
+EXAMPLE_TASKS = [
+    'Crie títulos para produtos que estão sem nome.',
+    'Padronize os títulos com marca + modelo quando essas informações existirem.',
+    'Melhore as descrições complementares vazias ou muito curtas.',
+    'Sugira NCM para produtos que estão com NCM vazio.',
+]
+
 
 def _operation_label(operation: str) -> str:
     return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'ARQUIVO')
@@ -76,11 +83,31 @@ def _render_suggestions_editor(suggestions_df: pd.DataFrame, editor_key: str) ->
     )
 
 
+def _render_multitask_box(op: str, signature: str) -> str:
+    task_key = _state_key(op, signature, 'custom_task')
+    with st.expander('🧠 Multitarefa da IA', expanded=True):
+        st.caption('Peça uma ação livre para a IA executar na planilha final. Ela vai gerar sugestões por linha e você confirma antes de aplicar.')
+        custom_task = st.text_area(
+            'O que você quer que a IA faça na planilha?',
+            value=st.session_state.get(task_key, ''),
+            key=task_key,
+            height=96,
+            placeholder='Ex: crie títulos para produtos sem nome, melhore descrições vazias e sugira NCM onde estiver vazio.',
+        )
+        with st.expander('Exemplos rápidos', expanded=False):
+            for index, example in enumerate(EXAMPLE_TASKS, start=1):
+                if st.button(example, use_container_width=True, key=_state_key(op, signature, f'example_{index}')):
+                    st.session_state[task_key] = example
+                    st.rerun()
+        st.caption('Proteção ativa: a IA não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs.')
+    return str(custom_task or '').strip()
+
+
 def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
     """IA funcional no preview final.
 
-    Revisa título, descrição complementar e NCM, mostra antes/depois e só aplica
-    no DataFrame final depois de confirmação do usuário.
+    Revisa título, descrição complementar, NCM e também aceita um pedido livre
+    multitarefa para gerar sugestões editáveis antes de aplicar no CSV final.
     """
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         return
@@ -97,7 +124,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         <div class="bling-inline-card">
             <div class="bling-flow-card-kicker">IA de catálogo</div>
             <div class="bling-flow-card-title">Revisar produtos com IA</div>
-            <p class="bling-flow-card-text">Reformule títulos, melhore descrições complementares e sugira NCM antes do download final.</p>
+            <p class="bling-flow-card-text">Reformule títulos, melhore descrições complementares, sugira NCM e peça tarefas livres antes do download final.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -109,7 +136,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     if ai_ready():
         st.success('IA conectada. As sugestões serão geradas com OpenAI.')
     else:
-        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas NCM por IA precisa da chave configurada.')
+        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas NCM e multitarefa livre precisam da chave configurada.')
 
     _render_detected_columns(df_final)
 
@@ -120,6 +147,8 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         use_description = st.checkbox('Descrições complementares', value=True, key=_state_key(op, signature, 'use_description'))
     with col3:
         use_ncm = st.checkbox('NCM vazio', value=True, key=_state_key(op, signature, 'use_ncm'))
+
+    custom_task = _render_multitask_box(op, signature)
 
     max_rows = st.slider(
         'Quantidade máxima de produtos para revisar por execução',
@@ -136,6 +165,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
                 df_final,
                 actions={'title': use_title, 'description': use_description, 'ncm': use_ncm},
                 max_rows=max_rows,
+                custom_task=custom_task,
             )
         st.session_state[suggestions_key] = suggestions_to_dataframe(suggestions)
         st.session_state[status_key] = status
