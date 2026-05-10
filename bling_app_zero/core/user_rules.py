@@ -10,34 +10,37 @@ except Exception:  # pragma: no cover
 
 RULES_SESSION_KEY = 'bling_user_rules'
 
+# REGRAS = valores escritos em colunas do CSV final.
+# Essas linhas nascem como se o usuário já tivesse cadastrado e podem ser editadas/excluídas no rules_panel.py.
 DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
-    {
-        'condition': 'Fornecedor',
-        'target_column': 'Fornecedor',
-        'fill_value': 'Não definido',
-        'only_when_empty': False,
-        'enabled': True,
-    },
-    {
-        'condition': 'Unidade',
-        'target_column': 'Unidade',
-        'fill_value': 'UN',
-        'only_when_empty': False,
-        'enabled': True,
-    },
+    {'condition': 'Fornecedor', 'target_column': 'Fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Nome fornecedor', 'target_column': 'Nome fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Unidade', 'target_column': 'Unidade', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Unidade de medida', 'target_column': 'Unidade de medida', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Altura', 'target_column': 'Altura', 'fill_value': '2', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Largura', 'target_column': 'Largura', 'fill_value': '11', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Profundidade', 'target_column': 'Profundidade', 'fill_value': '18', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Comprimento', 'target_column': 'Comprimento', 'fill_value': '18', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Itens por caixa', 'target_column': 'Itens por caixa', 'fill_value': '1', 'only_when_empty': False, 'enabled': True},
 ]
 
 DEFAULT_RULES: dict[str, Any] = {
+    # Compatibilidade com exportador antigo.
     'supplier_default': 'Não definido',
     'measure_unit_default': 'UN',
     'height_default': '2',
     'width_default': '11',
     'depth_default': '18',
     'length_default': '18',
+
+    # RECURSOS = processamento automático do CSV final. Usuário liga/desliga; não cria novos.
+    'clean_invalid_gtin': True,
+    'normalize_image_separator': True,
     'invalid_gtin_mode': 'limpar',
     'image_separator': '|',
     'auto_product_code': True,
     'unique_product_code': True,
+
     'custom_rules': DEFAULT_CUSTOM_RULES,
 }
 
@@ -59,10 +62,10 @@ class RuleOption:
 
 
 RULE_OPTIONS: list[RuleOption] = [
-    RuleOption('invalid_gtin_mode', 'GTIN inválido', 'Recurso: limpar e deixar vazio antes do download final.', DEFAULT_RULES['invalid_gtin_mode']),
-    RuleOption('image_separator', 'Separador de imagens', 'Recurso: normaliza múltiplas imagens no CSV final.', DEFAULT_RULES['image_separator']),
-    RuleOption('auto_product_code', 'Gerar código quando vazio', 'Recurso: gera SKU/código automático quando o campo estiver vazio.', DEFAULT_RULES['auto_product_code']),
-    RuleOption('unique_product_code', 'Evitar código duplicado', 'Recurso: ajusta códigos repetidos para ficarem únicos.', DEFAULT_RULES['unique_product_code']),
+    RuleOption('clean_invalid_gtin', 'Limpar GTIN inválido', 'GTIN fora do padrão sai vazio antes do download final.', DEFAULT_RULES['clean_invalid_gtin']),
+    RuleOption('normalize_image_separator', 'Separar imagens por |', 'Múltiplas imagens saem como img1|img2|img3.', DEFAULT_RULES['normalize_image_separator']),
+    RuleOption('auto_product_code', 'Gerar código quando vazio', 'Gera SKU/código automático quando o campo estiver vazio.', DEFAULT_RULES['auto_product_code']),
+    RuleOption('unique_product_code', 'Evitar código duplicado', 'Ajusta códigos repetidos para ficarem únicos.', DEFAULT_RULES['unique_product_code']),
 ]
 
 
@@ -111,7 +114,7 @@ def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         normalized.append(rule)
-    return normalized[:60]
+    return normalized[:80]
 
 
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -128,10 +131,12 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
     rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
 
+    rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
+    rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
     rules['invalid_gtin_mode'] = 'limpar'
+    rules['image_separator'] = '|'
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
     rules['unique_product_code'] = bool(rules.get('unique_product_code', True))
-    rules['image_separator'] = '|'
     rules['custom_rules'] = normalize_custom_rules(rules.get('custom_rules'))
     return rules
 
