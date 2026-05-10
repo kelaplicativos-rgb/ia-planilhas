@@ -6,9 +6,10 @@ import streamlit as st
 
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
+from bling_app_zero.ui.sidebar_skin import inject_sidebar_skin
 
 
-APP_VERSION = '3.5.6-BLINGFIX-SIDEBAR-TOOLS'
+APP_VERSION = '3.5.7-BLINGFIX-SIDEBAR-SKIN'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -94,6 +95,7 @@ def main() -> None:
         initial_sidebar_state='collapsed',
     )
     _inject_streamlit_toolbar_fix()
+    inject_sidebar_skin()
 
     add_debug(f'Aplicacao iniciada | versao {APP_VERSION}', origin='APP')
 
