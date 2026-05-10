@@ -146,6 +146,22 @@ def _render_new_rule_form() -> None:
             st.rerun()
 
 
+def _render_rules_group(title: str, rules: list[dict], start_index: int, empty_message: str) -> None:
+    """Renderiza grupos de regras sem usar st.expander.
+
+    Este painel já fica dentro de um expander em rules_panel.py.
+    O Streamlit não permite expander dentro de expander, então aqui usamos
+    containers comuns para evitar StreamlitAPIException.
+    """
+    st.markdown(f'##### {title}')
+    with st.container(border=True):
+        if rules:
+            for offset, rule in enumerate(rules):
+                _render_rule_card(rule, start_index + offset)
+        else:
+            st.caption(empty_message)
+
+
 def render_user_rules_tab() -> None:
     rules = get_user_rules()
     custom_rules = list(rules.get('custom_rules', []))
@@ -158,16 +174,16 @@ def render_user_rules_tab() -> None:
 
     _render_new_rule_form()
 
-    with st.expander(f'🧩 Padrões do sistema ({len(system_rules)})', expanded=True):
-        if system_rules:
-            for index, rule in enumerate(system_rules):
-                _render_rule_card(rule, index)
-        else:
-            st.info('Nenhuma regra padrão carregada.')
+    _render_rules_group(
+        f'🧩 Padrões do sistema ({len(system_rules)})',
+        system_rules,
+        0,
+        'Nenhuma regra padrão carregada.',
+    )
 
-    with st.expander(f'👤 Regras personalizadas ({len(user_rules)})', expanded=True):
-        if user_rules:
-            for index, rule in enumerate(user_rules):
-                _render_rule_card(rule, index + len(system_rules))
-        else:
-            st.caption('Nenhuma regra personalizada criada ainda.')
+    _render_rules_group(
+        f'👤 Regras personalizadas ({len(user_rules)})',
+        user_rules,
+        len(system_rules),
+        'Nenhuma regra personalizada criada ainda.',
+    )
