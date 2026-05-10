@@ -22,6 +22,8 @@ CADASTRO_MODELO_KEY = 'cadastro_wizard_df_modelo'
 CADASTRO_MODELO_ESTOQUE_KEY = 'cadastro_wizard_df_modelo_estoque'
 CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
 CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
+CADASTRO_EXPECTED_ROWS_KEY = 'cadastro_wizard_expected_source_rows'
+CADASTRO_EXPECTED_SIGNATURE_KEY = 'cadastro_wizard_expected_source_signature'
 
 
 def _valid_df(df: object) -> bool:
@@ -81,6 +83,44 @@ def _clear_cadastro_outputs_if_source_changed(df_origem: pd.DataFrame | None) ->
     st.session_state[CADASTRO_SOURCE_SIGNATURE_KEY] = signature
 
 
+def _store_expected_source_rows(df_origem: pd.DataFrame | None) -> None:
+    if not _valid_df(df_origem):
+        st.session_state.pop(CADASTRO_EXPECTED_ROWS_KEY, None)
+        st.session_state.pop(CADASTRO_EXPECTED_SIGNATURE_KEY, None)
+        return
+    st.session_state[CADASTRO_EXPECTED_ROWS_KEY] = int(len(df_origem))
+    st.session_state[CADASTRO_EXPECTED_SIGNATURE_KEY] = df_signature(df_origem)
+
+
+def _expected_source_rows() -> int:
+    try:
+        return int(st.session_state.get(CADASTRO_EXPECTED_ROWS_KEY) or 0)
+    except Exception:
+        return 0
+
+
+def _row_count_matches_source(df_final: pd.DataFrame | None) -> bool:
+    expected = _expected_source_rows()
+    if expected <= 0:
+        return True
+    return isinstance(df_final, pd.DataFrame) and len(df_final) == expected
+
+
+def _render_row_count_blocker(df_final: pd.DataFrame | None) -> bool:
+    expected = _expected_source_rows()
+    current = len(df_final) if isinstance(df_final, pd.DataFrame) else 0
+    if expected <= 0 or current == expected:
+        return False
+    st.error(
+        f'Proteção ativada: a origem tem {expected} produto(s), mas o arquivo final tem {current}. '
+        'Volte para Entrada, confira a origem por site e refaça/confirmar o mapeamento antes de baixar.'
+    )
+    st.caption('O sistema bloqueou o avanço para evitar perda silenciosa de produtos no CSV final.')
+    st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+    st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
+    return True
+
+
 def _store_cadastro_context(
     df_origem: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
@@ -88,8 +128,10 @@ def _store_cadastro_context(
 ) -> None:
     if _valid_df(df_origem):
         st.session_state[CADASTRO_ORIGEM_KEY] = df_origem
+        _store_expected_source_rows(df_origem)
     else:
         st.session_state.pop(CADASTRO_ORIGEM_KEY, None)
+        _store_expected_source_rows(None)
     if _valid_model(df_modelo):
         st.session_state[CADASTRO_MODELO_KEY] = df_modelo
     else:
@@ -110,7 +152,7 @@ def cadastro_mapping_ready() -> bool:
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro')
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
-    return _valid_df(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
+    return _valid_df(df_final) and _row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
 
 
 def render_cadastro_entrada_step() -> None:
@@ -131,7 +173,7 @@ def render_cadastro_entrada_step() -> None:
     _store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
     if _valid_df(df_origem) and site_origin:
-        st.success('Origem de cadastro por site pronta. Continue para o mapeamento.')
+        st.success(f'Origem de cadastro por site pronta com {len(df_origem)} produto(s). Continue para o mapeamento.')
     elif _valid_df(df_origem):
         st.success(f'Origem de cadastro carregada com {len(df_origem)} produto(s) e {len(df_origem.columns)} coluna(s).')
         with st.expander('Conferir origem carregada', expanded=False):
@@ -166,6 +208,9 @@ def render_cadastro_mapeamento_step() -> None:
         st.warning('Modelo de cadastro ausente. Volte para a etapa Modelo.')
         return
 
+    _store_expected_source_rows(df_origem)
+    st.caption(f'Origem em uso no mapeamento: {len(df_origem)} produto(s).')
+
     df_para_mapear = render_cadastro_pricing(df_origem)
     df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
     if isinstance(df_para_mapear, pd.DataFrame):
@@ -173,6 +218,10 @@ def render_cadastro_mapeamento_step() -> None:
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço do Bling.')
     render_manual_mapping(df_para_mapear, df_modelo)
+
+    df_final = st.session_state.get('df_final_cadastro')
+    if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
+        _render_row_count_blocker(df_final)
 
 
 def render_cadastro_preview_step() -> None:
@@ -186,6 +235,9 @@ def render_cadastro_preview_step() -> None:
         st.warning('O preview ainda não foi gerado. Volte para o mapeamento e confirme os campos.')
         return
 
+    if _render_row_count_blocker(df_final):
+        return
+
     show_mapping(mapping, operation='cadastro')
     preview_df('🧾 CADASTRO · Preview final', df_final)
 
@@ -197,6 +249,9 @@ def render_cadastro_download_step() -> None:
     df_final = st.session_state.get('df_final_cadastro')
     if not _valid_df(df_final):
         st.warning('Ainda não há CSV final de cadastro. Volte para o preview.')
+        return
+
+    if _render_row_count_blocker(df_final):
         return
 
     download_final(df_final, 'cadastro', 'cadastro_wizard')
