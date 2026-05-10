@@ -83,6 +83,36 @@ def _render_rule_toggle(rule: dict, index: int) -> None:
         st.rerun()
 
 
+def _render_system_rule_value_editor(rule: dict, index: int) -> None:
+    rule_id = _rule_id(rule, index)
+    target = str(rule.get('target_column') or '').strip() or 'Coluna sem nome'
+    current_value = str(rule.get('fill_value') or '')
+    enabled = bool(rule.get('enabled', True))
+
+    st.caption(f'Coluna final: {target}')
+    new_enabled = st.toggle(
+        'Ativar preenchimento',
+        value=enabled,
+        key=f'system_rule_enabled_{rule_id}',
+        help='Quando ligado, esse padrão será aplicado no CSV final.',
+    )
+    if new_enabled != enabled:
+        set_custom_rule_enabled(rule_id, new_enabled)
+        _notice('Padrão atualizado.')
+        st.rerun()
+
+    new_value = st.text_input(
+        'Valor para preencher',
+        value=current_value,
+        key=f'system_rule_value_{rule_id}',
+        help='Edite somente o valor. O cabeçalho da coluna final fica travado.',
+    )
+    if str(new_value) != current_value:
+        update_custom_rule_by_id(rule_id, target, str(new_value), bool(rule.get('only_when_empty', False)))
+        _notice('Valor padrão atualizado.')
+        st.rerun()
+
+
 def _start_edit_rule(rule_id: str, rule: dict) -> None:
     st.session_state[EDIT_RULE_KEY] = rule_id
     st.session_state[f'edit_rule_target_{rule_id}'] = str(rule.get('target_column') or '')
@@ -132,6 +162,7 @@ def _render_edit_form(rule: dict, rule_id: str) -> None:
 
 def _render_system_rules(system_rules: list[dict]) -> None:
     st.markdown('##### Padrões')
+    st.caption('Cabeçalho travado. Edite apenas o valor que será preenchido na coluna final.')
 
     visible_rules = _visible_system_rules(system_rules)
     if not visible_rules:
@@ -139,7 +170,8 @@ def _render_system_rules(system_rules: list[dict]) -> None:
         return
 
     for index, rule in enumerate(visible_rules):
-        _render_rule_toggle(rule, index)
+        with st.container(border=True):
+            _render_system_rule_value_editor(rule, index)
 
 
 def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
