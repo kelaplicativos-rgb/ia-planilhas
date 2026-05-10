@@ -20,6 +20,8 @@ CADASTRO_ORIGEM_KEY = 'cadastro_wizard_df_origem'
 CADASTRO_ORIGEM_PRICED_KEY = 'cadastro_wizard_df_para_mapear'
 CADASTRO_MODELO_KEY = 'cadastro_wizard_df_modelo'
 CADASTRO_MODELO_ESTOQUE_KEY = 'cadastro_wizard_df_modelo_estoque'
+CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
+CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
 
 
 def _valid_df(df: object) -> bool:
@@ -72,6 +74,8 @@ def _clear_cadastro_outputs_if_source_changed(df_origem: pd.DataFrame | None) ->
         'mapping_estoque_from_cadastro',
         'mapping_confidence_estoque_from_cadastro',
         CADASTRO_ORIGEM_PRICED_KEY,
+        CADASTRO_MAPPING_CONFIRMED_KEY,
+        CADASTRO_MAPPING_SIGNATURE_KEY,
     ]:
         st.session_state.pop(key, None)
     st.session_state[CADASTRO_SOURCE_SIGNATURE_KEY] = signature
@@ -105,7 +109,8 @@ def cadastro_context_ready() -> bool:
 def cadastro_mapping_ready() -> bool:
     df_final = st.session_state.get('df_final_cadastro')
     mapping = st.session_state.get('mapping_cadastro')
-    return _valid_df(df_final) and isinstance(mapping, dict) and bool(mapping)
+    confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
+    return _valid_df(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
 
 
 def render_cadastro_entrada_step() -> None:
