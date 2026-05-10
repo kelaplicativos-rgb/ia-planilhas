@@ -48,18 +48,10 @@ def _rule_label(rule: dict) -> str:
     return f'{target}: {suffix}'
 
 
-def _render_rule_toggle(rule: dict, index: int, compact: bool = False) -> None:
+def _toggle_rule(rule: dict, index: int) -> None:
     rule_id = _rule_id(rule, index)
     enabled = bool(rule.get('enabled', True))
     label = _rule_label(rule)
-
-    if compact:
-        sidebar_mini_label(label)
-        sidebar_pills((_bool_label(enabled), enabled))
-    else:
-        with st.container(border=True):
-            sidebar_mini_label(label)
-            sidebar_pills((_bool_label(enabled), enabled))
 
     new_enabled = st.toggle(
         f'{label}: {_bool_label(enabled)}',
@@ -73,6 +65,25 @@ def _render_rule_toggle(rule: dict, index: int, compact: bool = False) -> None:
         st.rerun()
 
 
+def _render_rule_card(rule: dict, index: int) -> None:
+    enabled = bool(rule.get('enabled', True))
+    label = _rule_label(rule)
+
+    with st.container(border=True):
+        sidebar_mini_label(label)
+        sidebar_pills((_bool_label(enabled), enabled))
+        _toggle_rule(rule, index)
+
+
+def _render_rule_compact(rule: dict, index: int) -> None:
+    enabled = bool(rule.get('enabled', True))
+    label = _rule_label(rule)
+
+    sidebar_mini_label(label)
+    sidebar_pills((_bool_label(enabled), enabled))
+    _toggle_rule(rule, index)
+
+
 def _render_system_rules(system_rules: list[dict]) -> None:
     sidebar_header('Padrões do sistema', 'Preenchimentos seguros que podem ser ativados ou desativados.')
 
@@ -81,7 +92,7 @@ def _render_system_rules(system_rules: list[dict]) -> None:
         return
 
     for index, rule in enumerate(system_rules):
-        _render_rule_toggle(rule, index)
+        _render_rule_card(rule, index)
 
 
 def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
@@ -97,7 +108,7 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
         with st.container(border=True):
             col_toggle, col_delete = st.columns([0.78, 0.22])
             with col_toggle:
-                _render_rule_toggle(rule, index, compact=True)
+                _render_rule_compact(rule, index)
             with col_delete:
                 st.write('')
                 if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra personalizada'):
