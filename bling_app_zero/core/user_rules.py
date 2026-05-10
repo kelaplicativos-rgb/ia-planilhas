@@ -10,9 +10,26 @@ except Exception:  # pragma: no cover
 
 RULES_SESSION_KEY = 'bling_user_rules'
 
+DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
+    {
+        'condition': 'Fornecedor',
+        'target_column': 'Fornecedor',
+        'fill_value': 'Não definido',
+        'only_when_empty': False,
+        'enabled': True,
+    },
+    {
+        'condition': 'Unidade',
+        'target_column': 'Unidade',
+        'fill_value': 'UN',
+        'only_when_empty': False,
+        'enabled': True,
+    },
+]
+
 DEFAULT_RULES: dict[str, Any] = {
     'supplier_default': 'Não definido',
-    'measure_unit_default': 'Centímetro',
+    'measure_unit_default': 'UN',
     'height_default': '2',
     'width_default': '11',
     'depth_default': '18',
@@ -21,7 +38,7 @@ DEFAULT_RULES: dict[str, Any] = {
     'image_separator': '|',
     'auto_product_code': True,
     'unique_product_code': True,
-    'custom_rules': [],
+    'custom_rules': DEFAULT_CUSTOM_RULES,
 }
 
 CUSTOM_RULE_KEYS = {
@@ -42,22 +59,16 @@ class RuleOption:
 
 
 RULE_OPTIONS: list[RuleOption] = [
-    RuleOption('supplier_default', 'Fornecedor padrão', 'Usado quando a coluna de fornecedor vier vazia.', DEFAULT_RULES['supplier_default']),
-    RuleOption('measure_unit_default', 'Unidade de medida padrão', 'Usada quando existir coluna de unidade de medida.', DEFAULT_RULES['measure_unit_default']),
-    RuleOption('height_default', 'Altura padrão', 'Usada quando altura vier vazia ou zero.', DEFAULT_RULES['height_default']),
-    RuleOption('width_default', 'Largura padrão', 'Usada quando largura vier vazia ou zero.', DEFAULT_RULES['width_default']),
-    RuleOption('depth_default', 'Profundidade padrão', 'Usada quando profundidade vier vazia ou zero.', DEFAULT_RULES['depth_default']),
-    RuleOption('length_default', 'Comprimento padrão', 'Usado quando comprimento vier vazio ou zero.', DEFAULT_RULES['length_default']),
-    RuleOption('invalid_gtin_mode', 'GTIN inválido', 'Modo atual: limpar e deixar vazio.', DEFAULT_RULES['invalid_gtin_mode']),
-    RuleOption('image_separator', 'Separador de imagens', 'Separador usado no CSV final.', DEFAULT_RULES['image_separator']),
-    RuleOption('auto_product_code', 'Gerar código quando vazio', 'Gera SKU/código automático quando o campo estiver vazio.', DEFAULT_RULES['auto_product_code']),
-    RuleOption('unique_product_code', 'Evitar código duplicado', 'Ajusta códigos repetidos para ficarem únicos.', DEFAULT_RULES['unique_product_code']),
+    RuleOption('invalid_gtin_mode', 'GTIN inválido', 'Recurso: limpar e deixar vazio antes do download final.', DEFAULT_RULES['invalid_gtin_mode']),
+    RuleOption('image_separator', 'Separador de imagens', 'Recurso: normaliza múltiplas imagens no CSV final.', DEFAULT_RULES['image_separator']),
+    RuleOption('auto_product_code', 'Gerar código quando vazio', 'Recurso: gera SKU/código automático quando o campo estiver vazio.', DEFAULT_RULES['auto_product_code']),
+    RuleOption('unique_product_code', 'Evitar código duplicado', 'Recurso: ajusta códigos repetidos para ficarem únicos.', DEFAULT_RULES['unique_product_code']),
 ]
 
 
 def default_rules() -> dict[str, Any]:
     rules = dict(DEFAULT_RULES)
-    rules['custom_rules'] = []
+    rules['custom_rules'] = [dict(rule) for rule in DEFAULT_CUSTOM_RULES]
     return rules
 
 
@@ -75,8 +86,6 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         if key in raw:
             rule[key] = raw[key]
 
-    # Regra direta por cabeçalho/coluna.
-    # Mantém as chaves antigas para não quebrar o restante do sistema.
     rule['target_column'] = _safe_text(rule.get('target_column'))
     rule['fill_value'] = _safe_text(rule.get('fill_value'))
     rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
