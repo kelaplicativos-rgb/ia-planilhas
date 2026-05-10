@@ -76,6 +76,17 @@ def inject_sidebar_skin() -> None:
             border-bottom: 1px solid var(--bling-border) !important;
         }
 
+        section[data-testid="stSidebar"] details[open] > div {
+            padding: 0.68rem 0.74rem 0.82rem 0.74rem !important;
+            overflow-x: hidden !important;
+        }
+
+        section[data-testid="stSidebar"] details[open] > div > div,
+        section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
+            gap: 0.42rem !important;
+            overflow-x: hidden !important;
+        }
+
         section[data-testid="stSidebar"] input,
         section[data-testid="stSidebar"] textarea,
         section[data-testid="stSidebar"] [data-baseweb="input"] {
@@ -118,13 +129,26 @@ def inject_sidebar_skin() -> None:
             transform: translateY(-1px) !important;
         }
 
+        section[data-testid="stSidebar"] [data-testid="stRadio"] {
+            padding: 0.12rem 0 !important;
+        }
+
+        section[data-testid="stSidebar"] [data-testid="stRadio"] > div {
+            gap: 0.14rem !important;
+        }
+
         section[data-testid="stSidebar"] [data-testid="stRadio"] label,
         section[data-testid="stSidebar"] [data-testid="stToggle"] label {
             color: var(--bling-text) !important;
             font-weight: 720 !important;
-            font-size: 0.78rem !important;
-            line-height: 1.24 !important;
+            font-size: 0.76rem !important;
+            line-height: 1.22 !important;
             white-space: normal !important;
+        }
+
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label > div,
+        section[data-testid="stSidebar"] [data-testid="stToggle"] label > div {
+            min-width: 0 !important;
         }
 
         section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
@@ -134,36 +158,36 @@ def inject_sidebar_skin() -> None:
 
         section[data-testid="stSidebar"] hr {
             border-color: rgba(37, 99, 235, 0.12) !important;
-            margin: 0.65rem 0 !important;
+            margin: 0.55rem 0 !important;
         }
 
         .bling-sidebar-title {
-            font-size: 0.80rem;
+            font-size: 0.78rem;
             line-height: 1.18;
             font-weight: 880;
-            letter-spacing: -0.012em;
+            letter-spacing: -0.01em;
             color: var(--bling-text) !important;
-            margin: 0 0 0.16rem 0;
+            margin: 0 0 0.14rem 0;
             max-width: 100%;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
         }
 
         .bling-sidebar-subtitle {
-            font-size: 0.70rem;
+            font-size: 0.68rem;
             line-height: 1.30;
             color: var(--bling-muted) !important;
-            margin: 0 0 0.48rem 0;
+            margin: 0 0 0.42rem 0;
             max-width: 100%;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
         }
 
         .bling-sidebar-pill-row {
             display: flex;
-            gap: 0.28rem;
+            gap: 0.26rem;
             flex-wrap: wrap;
-            margin: 0.26rem 0 0.48rem 0;
+            margin: 0.22rem 0 0.42rem 0;
             max-width: 100%;
             overflow-x: hidden;
         }
@@ -173,16 +197,16 @@ def inject_sidebar_skin() -> None:
             align-items: center;
             max-width: 100%;
             border-radius: 999px;
-            padding: 0.14rem 0.42rem;
+            padding: 0.14rem 0.40rem;
             border: 1px solid rgba(37, 99, 235, 0.14);
             background: rgba(37, 99, 235, 0.10);
             color: var(--bling-primary-dark) !important;
-            font-size: 0.62rem;
+            font-size: 0.61rem;
             line-height: 1.15;
             font-weight: 800;
             white-space: normal;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
         }
 
         .bling-sidebar-pill.on {
@@ -198,14 +222,14 @@ def inject_sidebar_skin() -> None:
         }
 
         .bling-sidebar-mini-label {
-            font-size: 0.68rem;
+            font-size: 0.66rem;
             line-height: 1.18;
             font-weight: 860;
             color: var(--bling-primary-dark) !important;
             margin-bottom: 0.18rem;
             max-width: 100%;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
         }
         </style>
         """,
