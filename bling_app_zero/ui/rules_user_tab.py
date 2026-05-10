@@ -9,6 +9,7 @@ from bling_app_zero.core.user_rules import (
     reset_user_rules,
     set_custom_rule_enabled,
 )
+from bling_app_zero.ui.sidebar_skin import sidebar_header, sidebar_mini_label, sidebar_pills
 
 NOTICE_KEY = 'rules_tab_notice'
 
@@ -24,7 +25,7 @@ def _render_notice() -> None:
 
 
 def _bool_label(value: bool) -> str:
-    return 'Sim' if value else 'Não'
+    return 'Ativa' if value else 'Desativada'
 
 
 def _rule_id(rule: dict, index: int) -> str:
@@ -47,15 +48,24 @@ def _rule_label(rule: dict) -> str:
     return f'{target}: {suffix}'
 
 
-def _render_rule_toggle(rule: dict, index: int) -> None:
+def _render_rule_toggle(rule: dict, index: int, compact: bool = False) -> None:
     rule_id = _rule_id(rule, index)
     enabled = bool(rule.get('enabled', True))
-    label = f'{_rule_label(rule)}: {_bool_label(enabled)}'
+    label = _rule_label(rule)
+
+    if compact:
+        sidebar_mini_label(label)
+        sidebar_pills((_bool_label(enabled), enabled))
+    else:
+        with st.container(border=True):
+            sidebar_mini_label(label)
+            sidebar_pills((_bool_label(enabled), enabled))
 
     new_enabled = st.toggle(
-        label,
+        f'{label}: {_bool_label(enabled)}',
         value=enabled,
         key=f'rule_enabled_compact_{rule_id}',
+        label_visibility='collapsed',
     )
     if new_enabled != enabled:
         set_custom_rule_enabled(rule_id, new_enabled)
@@ -64,7 +74,7 @@ def _render_rule_toggle(rule: dict, index: int) -> None:
 
 
 def _render_system_rules(system_rules: list[dict]) -> None:
-    st.markdown('##### Padrões')
+    sidebar_header('Padrões do sistema', 'Preenchimentos seguros que podem ser ativados ou desativados.')
 
     if not system_rules:
         st.caption('Nenhum padrão carregado.')
@@ -75,7 +85,7 @@ def _render_system_rules(system_rules: list[dict]) -> None:
 
 
 def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
-    st.markdown('##### Personalizadas')
+    sidebar_header('Personalizadas', 'Regras criadas manualmente para preencher campos específicos.')
 
     if not user_rules:
         st.caption('Nenhuma regra personalizada.')
@@ -84,19 +94,20 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
     for offset, rule in enumerate(user_rules):
         index = start_index + offset
         rule_id = _rule_id(rule, index)
-        col_toggle, col_delete = st.columns([0.82, 0.18])
-        with col_toggle:
-            _render_rule_toggle(rule, index)
-        with col_delete:
-            st.write('')
-            if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra'):
-                remove_custom_rule_by_id(rule_id)
-                _notice('Regra excluída.')
-                st.rerun()
+        with st.container(border=True):
+            col_toggle, col_delete = st.columns([0.78, 0.22])
+            with col_toggle:
+                _render_rule_toggle(rule, index, compact=True)
+            with col_delete:
+                st.write('')
+                if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra personalizada'):
+                    remove_custom_rule_by_id(rule_id)
+                    _notice('Regra excluída.')
+                    st.rerun()
 
 
 def _render_new_rule_form() -> None:
-    st.markdown('##### Nova regra')
+    sidebar_header('Adicionar regra', 'Crie uma regra personalizada com a mesma skin dos padrões.')
     target_column = st.text_input(
         'Coluna',
         key='custom_rule_target_column',
@@ -108,7 +119,7 @@ def _render_new_rule_form() -> None:
         placeholder='Ex: 1',
     )
 
-    if st.button('Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
+    if st.button('➕ Adicionar regra', use_container_width=True, key='add_custom_rule_button'):
         column_name = target_column.strip()
         if not column_name:
             st.warning('Informe a coluna.')
@@ -121,7 +132,7 @@ def _render_new_rule_form() -> None:
 
 
 def _render_footer_actions() -> None:
-    if st.button('Restaurar padrão', use_container_width=True, key='reset_user_rules_footer'):
+    if st.button('↩️ Restaurar regras padrão', use_container_width=True, key='reset_user_rules_footer'):
         reset_user_rules()
         _notice('Regras restauradas para o padrão.')
         st.rerun()
@@ -133,8 +144,7 @@ def render_user_rules_tab() -> None:
     system_rules = [rule for rule in custom_rules if _is_system_rule(rule)]
     user_rules = [rule for rule in custom_rules if not _is_system_rule(rule)]
 
-    st.markdown('##### Regras')
-    st.caption('Liga ou desliga preenchimentos automáticos do CSV final.')
+    sidebar_header('Regras de preenchimento', 'Controle o que entra automaticamente no CSV final.')
     _render_notice()
 
     _render_system_rules(system_rules)
