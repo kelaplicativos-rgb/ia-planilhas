@@ -8,7 +8,7 @@ from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
 
 
-APP_VERSION = '3.5.5-BLINGPERF-FAST-START'
+APP_VERSION = '3.5.6-BLINGFIX-SIDEBAR-TOOLS'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -75,19 +75,15 @@ def _register_critical_error(exc: Exception) -> str:
 
 
 def _render_sidebar_tools() -> None:
-    with st.sidebar:
-        show_tools = st.toggle('Mostrar ferramentas técnicas', value=False, key='show_sidebar_tools')
-
-    if not show_tools:
-        return
-
     from bling_app_zero.core.debug import render_debug_panel
     from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
     from bling_app_zero.ui.rules_panel import render_rules_panel
 
-    render_rules_panel()
+    # Ferramentas sempre disponíveis na lateral.
+    # Em celular, diagnóstico/IA e logs ficam acima das regras do CSV.
     render_diagnostics_panel()
     render_debug_panel()
+    render_rules_panel()
 
 
 def main() -> None:
