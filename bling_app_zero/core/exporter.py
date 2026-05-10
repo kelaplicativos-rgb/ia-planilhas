@@ -340,17 +340,6 @@ def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
     return ''
 
 
-def _row_matches_condition(out: pd.DataFrame, row_index: int, condition: str) -> bool:
-    condition_key = normalize_key(condition)
-    if not condition_key:
-        return False
-    values = []
-    for column in out.columns:
-        values.append(clean_cell(out.at[row_index, column]) if row_index in out.index else '')
-    row_text = normalize_key(' '.join(values))
-    return condition_key in row_text
-
-
 def _apply_custom_rules(out: pd.DataFrame) -> pd.DataFrame:
     if out is None or out.empty:
         return out
@@ -365,15 +354,12 @@ def _apply_custom_rules(out: pd.DataFrame) -> pd.DataFrame:
         target_column = _target_column_by_rule(out, str(rule.get('target_column', '')))
         if not target_column:
             continue
-        condition = str(rule.get('condition', ''))
         fill_value = clean_cell(rule.get('fill_value', ''))
-        only_when_empty = bool(rule.get('only_when_empty', True))
-        for row_index in out.index:
-            if not _row_matches_condition(out, row_index, condition):
-                continue
-            if only_when_empty and not _is_empty_text(out.at[row_index, target_column]):
-                continue
-            out.at[row_index, target_column] = fill_value
+        only_when_empty = bool(rule.get('only_when_empty', False))
+        if only_when_empty:
+            out[target_column] = out[target_column].apply(lambda value: fill_value if _is_empty_text(value) else clean_cell(value))
+        else:
+            out[target_column] = fill_value
     return out
 
 
