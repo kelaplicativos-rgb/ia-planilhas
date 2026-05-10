@@ -67,6 +67,20 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_MAPEAMENTO == 'mapeamento'
 
 
+def test_home_wizard_reset_clears_mapping_and_outputs() -> None:
+    home_wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+
+    assert 'def _reset_outputs_for_operation_change() -> None:' in home_wizard
+    assert "'cadastro_mapping_confirmed'" in home_wizard
+    assert "'cadastro_mapping_confirmed_signature'" in home_wizard
+    assert "'df_final_cadastro'" in home_wizard
+    assert "'mapping_cadastro'" in home_wizard
+    assert "'mapping_confidence_cadastro'" in home_wizard
+    assert "'estoque_multi_outputs'" in home_wizard
+    assert "'df_final_estoque'" in home_wizard
+    assert "'mapping_estoque'" in home_wizard
+
+
 def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
     guard = importlib.import_module('bling_app_zero.ui.wizard_state_guard')
 
