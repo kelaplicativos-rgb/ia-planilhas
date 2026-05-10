@@ -89,7 +89,7 @@ def cadastro_mapping_ready() -> bool:
 
 def render_cadastro_entrada_step() -> None:
     st.markdown('### Entrada do cadastro')
-    st.caption('Nesta tela entra somente a origem do cadastro. O mapeamento e o download ficam nas próximas etapas.')
+    st.caption('Carregue somente a origem do fornecedor nesta etapa. O mapeamento, preview e download ficam nas próximas telas.')
 
     df_origem_site = get_site_source_for_operation('cadastro')
     upload = render_cadastro_source_upload(df_origem_site)
@@ -120,7 +120,7 @@ def render_cadastro_entrada_step() -> None:
 
 def render_cadastro_mapeamento_step() -> None:
     st.markdown('### Mapeamento do cadastro')
-    st.caption('Aqui só aparece o mapeamento. Preview final e download ficam separados para deixar a tela leve.')
+    st.caption('Conferência das colunas. Preview final e download ficam separados para deixar esta tela mais leve.')
 
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
@@ -136,6 +136,8 @@ def render_cadastro_mapeamento_step() -> None:
     df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
     if isinstance(df_para_mapear, pd.DataFrame):
         st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_para_mapear
+    if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
+        st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço do Bling.')
     render_manual_mapping(df_para_mapear, df_modelo)
 
 
