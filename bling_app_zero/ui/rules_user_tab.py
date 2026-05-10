@@ -23,8 +23,9 @@ def _render_rule_row(rule: dict, index: int) -> None:
 
     if st.session_state.get(edit_key, False):
         with st.container(border=True):
-            new_target = st.text_input('Coluna', value=target, key=f'edit_target_{suffix}')
-            new_value = st.text_input('Valor', value=value, key=f'edit_value_{suffix}')
+            col_target, col_value = st.columns([0.55, 0.45])
+            new_target = col_target.text_input('Coluna', value=target, key=f'edit_target_{suffix}')
+            new_value = col_value.text_input('Valor', value=value, key=f'edit_value_{suffix}')
             col_save, col_cancel = st.columns(2)
             if col_save.button('Salvar', use_container_width=True, key=f'save_edit_{suffix}'):
                 update_custom_rule(index, new_target, new_value, False)
@@ -36,10 +37,12 @@ def _render_rule_row(rule: dict, index: int) -> None:
                 st.rerun()
         return
 
-    col_info, col_edit, col_delete = st.columns([0.74, 0.13, 0.13])
-    with col_info:
-        st.markdown(f'**{target}**')
-        st.caption(f'Valor: {value if value else "(vazio)"}')
+    col_name, col_value, col_edit, col_delete = st.columns([0.42, 0.38, 0.10, 0.10])
+    col_name.caption('Coluna')
+    col_name.markdown(f'**{target}**')
+    col_value.caption('Valor')
+    col_value.markdown(value if value else '—')
+
     if col_edit.button(EDIT_ICON, key=f'edit_button_{suffix}', help='Editar regra'):
         st.session_state[edit_key] = True
         st.rerun()
@@ -68,7 +71,7 @@ def render_user_rules_tab() -> None:
     custom_rules = list(rules.get('custom_rules', []))
 
     st.markdown(f'##### Regras salvas ({len(custom_rules)})')
-    st.caption('Cada regra preenche uma coluna do CSV final para todos os produtos.')
+    st.caption('Preenche colunas do CSV final para todos os produtos.')
 
     if custom_rules:
         for index, rule in enumerate(custom_rules):
