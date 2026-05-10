@@ -6,7 +6,6 @@ import streamlit as st
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, normalize_site_operation
 from bling_app_zero.ui.home_models import save_home_models
-from bling_app_zero.ui.home_shared import preview_df
 from bling_app_zero.ui.site_progress import render_site_progress_history
 
 
@@ -90,16 +89,15 @@ def render_generated_site_actions(
     config = config_for_site_operation(normalized)
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
 
-    st.success(f'Origem de {label} criada com sucesso.')
-    st.caption('A busca por site foi convertida em origem interna. O mapeamento, preview e download aparecem abaixo na mesma página.')
+    st.success(f'Origem de {label} criada com sucesso. Siga para o mapeamento abaixo.')
     render_site_progress_history()
-    preview_df(f'Origem criada para {label}', df_site)
 
     st.download_button(
-        f'Baixar origem de {label}',
+        f'Baixar origem bruta de {label}',
         data=source_csv_bytes(df_site),
         file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
+        help='Opcional: baixa apenas a origem bruta capturada no site, não é o CSV final do Bling.',
     )
