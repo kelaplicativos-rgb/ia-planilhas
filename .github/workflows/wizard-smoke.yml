@@ -31,4 +31,4 @@ jobs:
 
       - name: Run smoke tests
         run: |
-          pytest -q tests/test_wizard_smoke.py
+          pytest
