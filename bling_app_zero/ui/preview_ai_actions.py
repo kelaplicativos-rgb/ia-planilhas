@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ai_tools import build_blingbrain_response
+from bling_app_zero.ai_tools.product_ai_reviewer import (
+    ai_ready,
+    apply_product_ai_suggestions,
+    detect_product_columns,
+    generate_product_ai_suggestions,
+    suggestions_to_dataframe,
+)
 from bling_app_zero.core.debug import add_debug
-from bling_app_zero.ui.home_shared import df_signature
+from bling_app_zero.ui.home_shared import df_signature, preview_df
 
-
-DEFAULT_PROMPTS = {
-    'cadastro': 'Revisar descrições, títulos, GTIN, NCM e campos vazios antes do download final.',
-    'estoque': 'Conferir produto, depósito, quantidade, códigos e campos vazios antes do download final.',
-}
 
 OPERATION_LABELS = {
     'cadastro': 'CADASTRO',
     'estoque': 'ESTOQUE',
+}
+
+TARGET_DF_KEYS = {
+    'cadastro': 'df_final_cadastro',
+    'estoque': 'df_final_estoque',
 }
 
 
@@ -27,56 +31,56 @@ def _operation_label(operation: str) -> str:
 
 def _state_key(operation: str, signature: str, suffix: str) -> str:
     op = str(operation or 'arquivo').strip().lower() or 'arquivo'
-    return f'preview_ai_{op}_{signature}_{suffix}'
+    safe_signature = str(signature).replace(' ', '_').replace(':', '_').replace('|', '_')[:120]
+    return f'preview_ai_{op}_{safe_signature}_{suffix}'
 
 
-def _column_summary(df: pd.DataFrame) -> str:
-    columns = [str(column) for column in df.columns]
-    if len(columns) <= 12:
-        return ', '.join(columns)
-    return ', '.join(columns[:12]) + f' ... +{len(columns) - 12} coluna(s)'
+def _render_detected_columns(df: pd.DataFrame) -> None:
+    columns = detect_product_columns(df)
+    detected = {
+        'Título/Nome': columns.get('title') or '(não encontrada)',
+        'Descrição complementar': columns.get('description') or '(não encontrada)',
+        'NCM': columns.get('ncm') or '(não encontrada)',
+        'Código/SKU apoio': columns.get('sku') or '(não encontrada)',
+        'Marca apoio': columns.get('brand') or '(não encontrada)',
+        'Categoria apoio': columns.get('category') or '(não encontrada)',
+    }
+    with st.expander('Colunas que a IA vai usar', expanded=False):
+        st.dataframe(pd.DataFrame([detected]).astype(str), use_container_width=True, height=90)
 
 
-def _empty_cells_summary(df: pd.DataFrame) -> str:
-    if df.empty:
-        return 'sem dados'
-    sample = df.head(200).copy()
-    empty_counts: list[str] = []
-    for column in sample.columns:
-        series = sample[column]
-        normalized = series.fillna('').astype(str).str.strip()
-        count = int(normalized.isin(['', 'nan', 'None', 'none', '<NA>']).sum())
-        if count > 0:
-            empty_counts.append(f'{column}: {count}')
-    if not empty_counts:
-        return 'nenhum vazio relevante na amostra'
-    return '; '.join(empty_counts[:8])
+def _store_applied_df(operation: str, df_applied: pd.DataFrame) -> None:
+    op = str(operation or '').strip().lower()
+    target_key = TARGET_DF_KEYS.get(op)
+    if target_key:
+        st.session_state[target_key] = df_applied
+    if op == 'estoque':
+        outputs = st.session_state.get('estoque_multi_outputs')
+        if isinstance(outputs, list) and outputs:
+            outputs[0]['df_final'] = df_applied
+            st.session_state['estoque_multi_outputs'] = outputs
 
 
-def _build_context_prompt(df: pd.DataFrame, operation: str, user_prompt: str) -> str:
-    label = _operation_label(operation)
-    return (
-        f'{user_prompt}\n\n'
-        f'Contexto do preview final de {label}: '
-        f'{len(df)} linha(s), {len(df.columns)} coluna(s). '
-        f'Colunas: {_column_summary(df)}. '
-        f'Campos vazios na amostra: {_empty_cells_summary(df)}.'
+def _render_suggestions_editor(suggestions_df: pd.DataFrame, editor_key: str) -> pd.DataFrame:
+    disabled_columns = ['Linha', 'Produto', 'Campo', 'Coluna', 'Original', 'Motivo']
+    return st.data_editor(
+        suggestions_df,
+        use_container_width=True,
+        hide_index=True,
+        disabled=disabled_columns,
+        column_config={
+            'Aplicar': st.column_config.CheckboxColumn('Aplicar', help='Marque as sugestões que devem entrar no CSV final.'),
+            'Sugestão IA': st.column_config.TextColumn('Sugestão IA', help='Você pode ajustar o texto antes de aplicar.'),
+        },
+        key=editor_key,
     )
 
 
-def _render_ai_result(result: Any) -> None:
-    st.success(result.title)
-    st.caption(result.safety)
-    st.markdown('**Plano da IA para este preview:**')
-    for step in result.steps:
-        st.markdown(f'- {step}')
-
-
 def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
-    """Botão de IA no preview final.
+    """IA funcional no preview final.
 
-    A primeira versão é segura: ela analisa o contexto do preview final e mostra
-    o plano de revisão, sem alterar o DataFrame nem o CSV automaticamente.
+    Revisa título, descrição complementar e NCM, mostra antes/depois e só aplica
+    no DataFrame final depois de confirmação do usuário.
     """
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         return
@@ -84,39 +88,89 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     op = str(operation or 'arquivo').strip().lower() or 'arquivo'
     label = _operation_label(op)
     signature = df_signature(df_final)
-    prompt_key = _state_key(op, signature, 'prompt')
-    result_key = _state_key(op, signature, 'result')
+    suggestions_key = _state_key(op, signature, 'suggestions')
+    status_key = _state_key(op, signature, 'status')
+    editor_key = _state_key(op, signature, 'editor')
 
     st.markdown(
         """
         <div class="bling-inline-card">
-            <div class="bling-flow-card-kicker">IA no preview final</div>
-            <div class="bling-flow-card-title">Executar conferência com IA</div>
-            <p class="bling-flow-card-text">Use a IA para revisar o arquivo final antes do download, sem alterar o CSV automaticamente.</p>
+            <div class="bling-flow-card-kicker">IA de catálogo</div>
+            <div class="bling-flow-card-title">Revisar produtos com IA</div>
+            <p class="bling-flow-card-text">Reformule títulos, melhore descrições complementares e sugira NCM antes do download final.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    default_prompt = DEFAULT_PROMPTS.get(op, 'Conferir o arquivo final antes do download.')
-    prompt = st.text_area(
-        f'O que a IA deve conferir no preview de {label}?',
-        value=st.session_state.get(prompt_key, default_prompt),
-        key=prompt_key,
-        height=78,
-        help='A IA gera uma conferência segura. O CSV só será alterado quando existir uma ação confirmada pelo usuário.',
+    if op != 'cadastro':
+        st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
+
+    if ai_ready():
+        st.success('IA conectada. As sugestões serão geradas com OpenAI.')
+    else:
+        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas NCM por IA precisa da chave configurada.')
+
+    _render_detected_columns(df_final)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        use_title = st.checkbox('Títulos', value=True, key=_state_key(op, signature, 'use_title'))
+    with col2:
+        use_description = st.checkbox('Descrições complementares', value=True, key=_state_key(op, signature, 'use_description'))
+    with col3:
+        use_ncm = st.checkbox('NCM vazio', value=True, key=_state_key(op, signature, 'use_ncm'))
+
+    max_rows = st.slider(
+        'Quantidade máxima de produtos para revisar por execução',
+        min_value=10,
+        max_value=200,
+        value=min(60, max(10, len(df_final))),
+        step=10,
+        key=_state_key(op, signature, 'max_rows'),
     )
 
     if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, key=_state_key(op, signature, 'run')):
-        context_prompt = _build_context_prompt(df_final, op, prompt)
-        st.session_state[result_key] = build_blingbrain_response(context_prompt, etapa='preview final', operacao=op)
-        add_debug(f'IA executada no preview final de {label}.', origin='PREVIEW_IA', level='INFO')
+        with st.spinner('IA revisando produtos do preview final...'):
+            suggestions, status = generate_product_ai_suggestions(
+                df_final,
+                actions={'title': use_title, 'description': use_description, 'ncm': use_ncm},
+                max_rows=max_rows,
+            )
+        st.session_state[suggestions_key] = suggestions_to_dataframe(suggestions)
+        st.session_state[status_key] = status
+        add_debug(f'IA de catálogo executada no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
         st.rerun()
 
-    result = st.session_state.get(result_key)
-    if result is not None:
-        with st.expander(f'🤖 Resultado da IA · Preview final de {label}', expanded=True):
-            _render_ai_result(result)
+    status = st.session_state.get(status_key)
+    if status:
+        st.caption(str(status))
+
+    suggestions_df = st.session_state.get(suggestions_key)
+    if not isinstance(suggestions_df, pd.DataFrame):
+        return
+
+    if suggestions_df.empty:
+        st.info('A IA não encontrou alterações seguras para aplicar neste preview final.')
+        return
+
+    st.markdown('##### Antes/depois sugerido pela IA')
+    edited = _render_suggestions_editor(suggestions_df, editor_key)
+
+    preview_applied = apply_product_ai_suggestions(df_final, edited)
+    with st.expander('Prévia do CSV final se aplicar as sugestões marcadas', expanded=False):
+        preview_df(f'Prévia com IA · {label}', preview_applied)
+
+    apply_count = int(edited['Aplicar'].sum()) if 'Aplicar' in edited.columns else 0
+    if st.button(f'✅ Aplicar {apply_count} sugestão(ões) no CSV final', use_container_width=True, key=_state_key(op, signature, 'apply')):
+        if apply_count <= 0:
+            st.warning('Nenhuma sugestão marcada para aplicar.')
+            return
+        df_applied = apply_product_ai_suggestions(df_final, edited)
+        _store_applied_df(op, df_applied)
+        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas no CSV final de {label}.', origin='PREVIEW_IA', level='INFO')
+        st.success('Sugestões aplicadas no CSV final. Confira novamente o preview antes de baixar.')
+        st.rerun()
 
 
 __all__ = ['render_preview_ai_actions']
