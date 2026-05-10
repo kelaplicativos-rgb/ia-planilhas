@@ -1,6 +1,7 @@
 name: Wizard Smoke Tests
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
