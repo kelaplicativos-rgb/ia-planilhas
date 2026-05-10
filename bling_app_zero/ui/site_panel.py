@@ -12,7 +12,7 @@ from bling_app_zero.ui.site_models import (
     render_optional_site_model_upload,
     requested_columns_for_site_capture,
 )
-from bling_app_zero.ui.site_outputs import render_generated_site_actions, save_site_source
+from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
 from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_site_progress
 
 ALL_PAGES_LIMIT = 1_000_000
@@ -42,10 +42,6 @@ def _current_site_operation() -> str:
     if flow in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
         return 'estoque'
     return 'cadastro'
-
-
-def _operation_label(operation: str) -> str:
-    return 'estoque' if operation == 'estoque' else 'cadastro'
 
 
 def _has_columns(columns: list[str] | None) -> bool:
@@ -116,14 +112,13 @@ def _run_site_capture(
 
 def render_site_panel() -> None:
     operation = _current_site_operation()
-    _ = _operation_label(operation)
 
     st.markdown(
         """
         <section class="bling-flow-card bling-inline-card">
             <div class="bling-flow-card-kicker">Entrada por site</div>
             <h2 class="bling-flow-card-title">Cole os links do fornecedor</h2>
-            <p class="bling-flow-card-text">A captura acontece aqui mesmo. Depois da busca, o mapeamento, preview e download aparecem logo abaixo.</p>
+            <p class="bling-flow-card-text">A captura acontece aqui. Depois continue para a próxima etapa do Wizard.</p>
         </section>
         """,
         unsafe_allow_html=True,
@@ -143,12 +138,4 @@ def render_site_panel() -> None:
 
     df_site_bruto = st.session_state.get('df_site_bruto')
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        render_generated_site_actions(
-            df_site_bruto,
-            raw_urls,
-            requested_columns,
-            df_modelo_cadastro,
-            df_modelo_estoque,
-            df_modelo,
-            operation,
-        )
+        render_site_source_summary(df_site_bruto, operation, show_history=False)
