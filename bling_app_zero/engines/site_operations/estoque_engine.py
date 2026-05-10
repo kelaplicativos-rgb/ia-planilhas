@@ -6,6 +6,7 @@ import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 from bling_app_zero.engines.site_operations.contracts import estoque_columns
+from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -41,6 +42,13 @@ def run_estoque_site_engine(
         })
         return pd.DataFrame()
 
+    plan = build_submotor_plan('estoque', columns)
+    _emit(progress_callback, {
+        'stage': 'Motor de estoque',
+        'message': f'Submotores ativos: {plan.summary}.',
+        'progress': 0.04,
+        'submotors': plan.active,
+    })
     return run_fast_site_scraper(
         raw_urls=raw_urls,
         requested_columns=columns,
