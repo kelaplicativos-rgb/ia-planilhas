@@ -38,6 +38,27 @@ def _is_system_rule(rule: dict) -> bool:
     return str(rule.get('source') or '').strip().lower() == 'system'
 
 
+def _system_display_group(rule: dict) -> str:
+    target = str(rule.get('target_column') or '').strip().lower()
+    if target in {'fornecedor', 'nome fornecedor', 'nome do fornecedor'}:
+        return 'fornecedor'
+    if target in {'unidade', 'unidade de medida', 'unidade medida'}:
+        return 'unidade'
+    return target
+
+
+def _visible_system_rules(system_rules: list[dict]) -> list[dict]:
+    visible: list[dict] = []
+    seen: set[str] = set()
+    for rule in system_rules:
+        group = _system_display_group(rule)
+        if group in seen:
+            continue
+        seen.add(group)
+        visible.append(rule)
+    return visible
+
+
 def _rule_label(rule: dict) -> str:
     target = str(rule.get('target_column') or '').strip() or 'Coluna sem nome'
     value = str(rule.get('fill_value') or '').strip()
@@ -112,11 +133,12 @@ def _render_edit_form(rule: dict, rule_id: str) -> None:
 def _render_system_rules(system_rules: list[dict]) -> None:
     st.markdown('##### Padrões')
 
-    if not system_rules:
+    visible_rules = _visible_system_rules(system_rules)
+    if not visible_rules:
         st.caption('Nenhum padrão carregado.')
         return
 
-    for index, rule in enumerate(system_rules):
+    for index, rule in enumerate(visible_rules):
         _render_rule_toggle(rule, index)
 
 
@@ -201,7 +223,7 @@ def render_user_rules_tab() -> None:
 
     _render_system_rules(system_rules)
     st.divider()
-    _render_custom_rules(user_rules, len(system_rules))
+    _render_custom_rules(user_rules, len(_visible_system_rules(system_rules)))
     st.divider()
     _render_new_rule_form()
     st.divider()
