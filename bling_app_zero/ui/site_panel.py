@@ -50,7 +50,7 @@ def _site_df_key(operation: str) -> str:
 
 def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
     st.session_state[_site_df_key(operation)] = df_site
-    st.session_state['df_site_bruto'] = df_site  # compatibilidade com módulos antigos
+    st.session_state['df_site_bruto'] = df_site  # compatibilidade com modulos antigos
     other = 'estoque' if operation == 'cadastro' else 'cadastro'
     st.session_state.pop(_site_df_key(other), None)
 
@@ -70,6 +70,12 @@ def _has_columns(columns: list[str] | None) -> bool:
     return bool([str(column).strip() for column in (columns or [])])
 
 
+def _operation_badge(operation: str) -> str:
+    if operation == 'estoque':
+        return 'Motor ativo: ESTOQUE POR SITE - somente colunas do modelo de estoque.'
+    return 'Motor ativo: CADASTRO POR SITE - origem completa para cadastro de produtos.'
+
+
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
     upload = render_optional_site_model_upload(operation)
     df_modelo_cadastro = choose_site_cadastro_model_df(upload)
@@ -80,9 +86,9 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     if requested_columns:
         show_contract(requested_columns)
     elif operation == 'estoque':
-        st.error('Para estoque por site, envie primeiro o modelo de estoque do Bling. A busca só será feita nas colunas desse modelo.')
+        st.error('Para estoque por site, envie primeiro o modelo de estoque do Bling. A busca so sera feita nas colunas desse modelo.')
     else:
-        st.info('Sem modelo desta operação. Vou capturar os campos principais e deixar vazio o que não encontrar.')
+        st.info('Sem modelo desta operacao. Vou capturar os campos principais e deixar vazio o que nao encontrar.')
 
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
@@ -107,7 +113,7 @@ def _run_site_capture(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     if operation == 'estoque' and not _has_columns(requested_columns):
-        st.error('Busca bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
+        st.error('Busca bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serao preenchidas.')
         return
 
     reset_site_progress()
@@ -134,26 +140,28 @@ def _run_site_capture(
 
 def render_site_panel() -> None:
     operation = _current_site_operation()
+    config = config_for_site_operation(operation)
 
     st.markdown(
         """
         <section class="bling-flow-card bling-inline-card">
             <div class="bling-flow-card-kicker">Entrada por site</div>
             <h2 class="bling-flow-card-title">Cole os links do fornecedor</h2>
-            <p class="bling-flow-card-text">A captura acontece aqui. Depois continue para a próxima etapa do Wizard.</p>
+            <p class="bling-flow-card-text">A captura acontece aqui. Depois continue para a proxima etapa do Wizard.</p>
         </section>
         """,
         unsafe_allow_html=True,
     )
+    st.info(_operation_badge(operation))
+    st.caption(config.description)
 
-    config_for_site_operation(operation)
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
 
     button_label = 'Buscar no site e gerar origem de estoque' if operation == 'estoque' else 'Buscar no site e gerar origem de cadastro'
     button_disabled = operation == 'estoque' and not _has_columns(requested_columns)
     if button_disabled:
-        st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
+        st.caption('O botao sera liberado quando o modelo de estoque estiver carregado.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
