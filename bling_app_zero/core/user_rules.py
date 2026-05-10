@@ -9,21 +9,42 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
+RULES_SCHEMA_VERSION = 3
 
-# REGRAS = valores escritos em colunas do CSV final.
+
+def _make_rule_id(source: str, target_column: str) -> str:
+    safe = ''.join(ch if ch.isalnum() else '_' for ch in str(target_column).strip().lower())
+    safe = '_'.join(part for part in safe.split('_') if part)
+    prefix = 'sys' if source == 'system' else 'usr'
+    return f'{prefix}_{safe or "rule"}'[:96]
+
+
+def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
+    return {
+        'id': _make_rule_id('system', target_column),
+        'condition': target_column,
+        'target_column': target_column,
+        'fill_value': fill_value,
+        'only_when_empty': False,
+        'enabled': True,
+        'source': 'system',
+    }
+
+
 DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
-    {'condition': 'Fornecedor', 'target_column': 'Fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Nome fornecedor', 'target_column': 'Nome fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Unidade', 'target_column': 'Unidade', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Unidade de medida', 'target_column': 'Unidade de medida', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Altura', 'target_column': 'Altura', 'fill_value': '2', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Largura', 'target_column': 'Largura', 'fill_value': '11', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Profundidade', 'target_column': 'Profundidade', 'fill_value': '18', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Comprimento', 'target_column': 'Comprimento', 'fill_value': '18', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
-    {'condition': 'Itens por caixa', 'target_column': 'Itens por caixa', 'fill_value': '1', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    _system_rule('Fornecedor', 'Não definido'),
+    _system_rule('Nome fornecedor', 'Não definido'),
+    _system_rule('Unidade', 'UN'),
+    _system_rule('Unidade de medida', 'UN'),
+    _system_rule('Altura', '2'),
+    _system_rule('Largura', '11'),
+    _system_rule('Profundidade', '18'),
+    _system_rule('Comprimento', '18'),
+    _system_rule('Itens por caixa', '1'),
 ]
 
 DEFAULT_RULES: dict[str, Any] = {
+    'schema_version': RULES_SCHEMA_VERSION,
     'supplier_default': 'Não definido',
     'measure_unit_default': 'UN',
     'height_default': '2',
@@ -40,6 +61,7 @@ DEFAULT_RULES: dict[str, Any] = {
 }
 
 CUSTOM_RULE_KEYS = {
+    'id': '',
     'condition': '',
     'target_column': '',
     'fill_value': '',
@@ -96,8 +118,10 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
     rule['only_when_empty'] = bool(rule.get('only_when_empty', False))
     rule['enabled'] = bool(rule.get('enabled', True))
+
     source = _safe_text(rule.get('source'))
     rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
+    rule['id'] = _safe_text(rule.get('id'), _make_rule_id(rule['source'], rule['target_column']))
 
     if not rule['target_column']:
         return None
@@ -108,17 +132,35 @@ def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     normalized: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen_columns: set[str] = set()
+    seen_ids: set[str] = set()
     for item in raw:
         rule = normalize_custom_rule(item)
         if not rule:
             continue
-        key = rule['target_column'].lower()
-        if key in seen:
+        column_key = rule['target_column'].lower()
+        if column_key in seen_columns:
             continue
-        seen.add(key)
+        rule_id = str(rule.get('id') or _make_rule_id(rule.get('source', 'user'), rule['target_column']))
+        if rule_id in seen_ids:
+            suffix = len(seen_ids) + 1
+            rule_id = f'{rule_id}_{suffix}'[:96]
+            rule['id'] = rule_id
+        seen_columns.add(column_key)
+        seen_ids.add(rule_id)
         normalized.append(rule)
     return normalized[:80]
+
+
+def _merge_missing_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = [dict(rule) for rule in custom_rules]
+    existing = {str(rule.get('target_column', '')).strip().lower() for rule in merged}
+    for default_rule in DEFAULT_CUSTOM_RULES:
+        key = str(default_rule.get('target_column', '')).strip().lower()
+        if key and key not in existing:
+            merged.append(dict(default_rule))
+            existing.add(key)
+    return normalize_custom_rules(merged)
 
 
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -128,6 +170,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
             if key in raw:
                 rules[key] = raw[key]
 
+    rules['schema_version'] = RULES_SCHEMA_VERSION
     rules['supplier_default'] = _safe_text(rules.get('supplier_default'), DEFAULT_RULES['supplier_default'])
     rules['measure_unit_default'] = _safe_text(rules.get('measure_unit_default'), DEFAULT_RULES['measure_unit_default'])
     rules['height_default'] = _safe_text(rules.get('height_default'), DEFAULT_RULES['height_default'])
@@ -140,7 +183,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['image_separator'] = '|'
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
     rules['unique_product_code'] = bool(rules.get('unique_product_code', True))
-    rules['custom_rules'] = normalize_custom_rules(rules.get('custom_rules'))
+    rules['custom_rules'] = _merge_missing_default_rules(normalize_custom_rules(rules.get('custom_rules')))
     return rules
 
 
@@ -167,10 +210,12 @@ def reset_user_rules() -> dict[str, Any]:
 def add_custom_rule(condition: str, target_column: str, fill_value: str, only_when_empty: bool = False) -> dict[str, Any]:
     current = get_user_rules()
     custom_rules = list(current.get('custom_rules', []))
+    target = target_column or condition
     rule = normalize_custom_rule(
         {
-            'condition': target_column or condition,
-            'target_column': target_column or condition,
+            'id': _make_rule_id('user', target),
+            'condition': target,
+            'target_column': target,
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
             'enabled': True,
@@ -184,47 +229,51 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
     return set_user_rules(current)
 
 
+def update_custom_rule_by_id(rule_id: str, target_column: str, fill_value: str, only_when_empty: bool = False) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = list(current.get('custom_rules', []))
+    for index, old_rule in enumerate(custom_rules):
+        if str(old_rule.get('id')) != str(rule_id):
+            continue
+        rule = normalize_custom_rule(
+            {
+                'id': old_rule.get('id') or rule_id,
+                'condition': target_column,
+                'target_column': target_column,
+                'fill_value': fill_value,
+                'only_when_empty': only_when_empty,
+                'enabled': True,
+                'source': old_rule.get('source') or 'user',
+            }
+        )
+        if rule:
+            custom_rules[index] = rule
+        break
+    current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
+def remove_custom_rule_by_id(rule_id: str) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = [rule for rule in current.get('custom_rules', []) if str(rule.get('id')) != str(rule_id)]
+    current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
 def update_custom_rule(index: int, target_column: str, fill_value: str, only_when_empty: bool = False) -> dict[str, Any]:
     current = get_user_rules()
     custom_rules = list(current.get('custom_rules', []))
     if not 0 <= index < len(custom_rules):
         return set_user_rules(current)
-
-    old_source = str(custom_rules[index].get('source') or 'user')
-    rule = normalize_custom_rule(
-        {
-            'condition': target_column,
-            'target_column': target_column,
-            'fill_value': fill_value,
-            'only_when_empty': only_when_empty,
-            'enabled': True,
-            'source': old_source,
-        }
-    )
-    if not rule:
-        return set_user_rules(current)
-
-    custom_rules[index] = rule
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in custom_rules:
-        key = str(item.get('target_column', '')).strip().lower()
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-
-    current['custom_rules'] = deduped
-    return set_user_rules(current)
+    return update_custom_rule_by_id(str(custom_rules[index].get('id')), target_column, fill_value, only_when_empty)
 
 
 def remove_custom_rule(index: int) -> dict[str, Any]:
     current = get_user_rules()
     custom_rules = list(current.get('custom_rules', []))
-    if 0 <= index < len(custom_rules):
-        custom_rules.pop(index)
-    current['custom_rules'] = custom_rules
-    return set_user_rules(current)
+    if not 0 <= index < len(custom_rules):
+        return set_user_rules(current)
+    return remove_custom_rule_by_id(str(custom_rules[index].get('id')))
 
 
 def measure_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str, str]:
