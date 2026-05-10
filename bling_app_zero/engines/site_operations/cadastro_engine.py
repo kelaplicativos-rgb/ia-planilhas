@@ -5,35 +5,7 @@ from collections.abc import Callable, Iterable
 import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
-
-CADASTRO_DEFAULT_COLUMNS = [
-    'URL',
-    'Código',
-    'SKU',
-    'GTIN',
-    'Descrição',
-    'Descrição complementar',
-    'Características',
-    'Ficha técnica',
-    'Nome',
-    'Preço',
-    'Preço unitário (OBRIGATÓRIO)',
-    'URL Imagens',
-    'Imagens',
-    'Marca',
-    'Categoria',
-]
-
-
-def _clean_columns(columns: Iterable[str] | None) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for column in columns or []:
-        text = str(column).strip()
-        if text and text not in seen:
-            cleaned.append(text)
-            seen.add(text)
-    return cleaned or CADASTRO_DEFAULT_COLUMNS.copy()
+from bling_app_zero.engines.site_operations.contracts import cadastro_columns
 
 
 def run_cadastro_site_engine(
@@ -51,7 +23,7 @@ def run_cadastro_site_engine(
     imagens, GTIN, marca, categoria e dados ricos quando o modelo pedir.
     Este motor nunca deve aplicar regra específica de estoque.
     """
-    columns = _clean_columns(requested_columns)
+    columns = cadastro_columns(requested_columns)
     return run_fast_site_scraper(
         raw_urls=raw_urls,
         requested_columns=columns,
