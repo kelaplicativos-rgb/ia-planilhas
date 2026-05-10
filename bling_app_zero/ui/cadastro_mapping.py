@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -17,6 +19,24 @@ from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview,
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
+MAPPING_WIDGET_PREFIXES = (
+    'cad_map_',
+    'stk_map_',
+    'cadastro_manual_mapping_',
+    'estoque_manual_mapping_from_cadastro_',
+)
+
+
+def _short_hash(value: str, size: int = 12) -> str:
+    return hashlib.sha1(str(value or '').encode('utf-8', errors='ignore')).hexdigest()[:size]
+
+
+def _mapping_base(prefix: str, signature: str) -> str:
+    return f'{prefix}{_short_hash(signature)}'
+
+
+def _target_widget_key(mapping_key: str, target_index: int) -> str:
+    return f'{mapping_key}_f{target_index:03d}'
 
 
 def _option_value(value: str | None) -> str:
@@ -99,6 +119,20 @@ def _ordered_targets_once(order_key: str, target_columns: list[str], confidence:
     return order
 
 
+def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
+    """Remove widgets antigos que causam erro frontend em trocas de origem/modelo."""
+    for key in list(st.session_state.keys()):
+        text = str(key)
+        if text.startswith(MAPPING_WIDGET_PREFIXES) and not text.startswith(active_mapping_key):
+            st.session_state.pop(key, None)
+
+
+def _clear_mapping_widgets(mapping_key: str) -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(f'{mapping_key}_'):
+            st.session_state.pop(key, None)
+
+
 def _current_confidence_from_widgets(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -106,8 +140,8 @@ def _current_confidence_from_widgets(
     mapping_key: str,
 ) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
-    for target in target_columns:
-        widget_key = f'{mapping_key}_{target}'
+    for index, target in enumerate(target_columns):
+        widget_key = _target_widget_key(mapping_key, index)
         selected = st.session_state.get(widget_key, current_mapping.get(target, ''))
         result[target] = _confidence_for_selection(df_source, target, selected, widget_key)
     return result
@@ -136,12 +170,6 @@ def _fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     return out
 
 
-def _clear_mapping_widgets(mapping_key: str) -> None:
-    for key in list(st.session_state.keys()):
-        if str(key).startswith(f'{mapping_key}_'):
-            st.session_state.pop(key, None)
-
-
 def _apply_ai_to_session_mapping(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -157,7 +185,7 @@ def _apply_ai_to_session_mapping(
         return
     st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
     _clear_mapping_widgets(mapping_key)
-    st.session_state.pop(f'{mapping_key}__order', None)
+    st.session_state.pop(f'{mapping_key}_order', None)
     st.success(f'IA ajustou {result.applied} campo(s) com segurança.')
     st.rerun()
 
@@ -166,18 +194,19 @@ def _render_ai_button(df_source: pd.DataFrame, target_columns: list[str], curren
     if not ai_mapping_enabled():
         st.caption('IA opcional inativa. Configure OPENAI_API_KEY para receber ajuda nos campos em dúvida.')
         return
-    if st.button(label, use_container_width=True):
+    if st.button(label, use_container_width=True, key=f'{mapping_key}_ai'):
         _apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
 
 
 def _render_mapping_select(
     df_source: pd.DataFrame,
     target: str,
+    target_index: int,
     suggested: str,
     mapping_key: str,
     options: list[str],
 ) -> tuple[str, dict[str, object]]:
-    widget_key = f'{mapping_key}_{target}'
+    widget_key = _target_widget_key(mapping_key, target_index)
     if widget_key in st.session_state:
         suggested = _option_value(st.session_state.get(widget_key, suggested))
     raw_before = st.session_state.get(widget_key, suggested)
@@ -209,8 +238,9 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     target_columns = [str(column) for column in model.columns]
     options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
-    mapping_key = f'cadastro_manual_mapping_{signature}'
-    order_key = f'{mapping_key}__order'
+    mapping_key = _mapping_base('cad_map_', signature)
+    order_key = f'{mapping_key}_order'
+    _clear_stale_mapping_widgets(mapping_key)
     if mapping_key not in st.session_state:
         st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
         st.session_state.pop(order_key, None)
@@ -222,10 +252,12 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA nos campos em dúvida')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
+    target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
     for target in ordered_targets:
-        selected, info_after = _render_mapping_select(df_source, target, current_mapping.get(target, ''), mapping_key, options)
+        target_index = target_index_by_name.get(target, len(edited_mapping))
+        selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
     st.session_state[mapping_key] = edited_mapping
@@ -239,10 +271,10 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.warning('A mesma coluna da origem foi usada em mais de um campo: ' + ', '.join(duplicated))
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar prévia do cadastro', use_container_width=True):
+        if st.button('Atualizar prévia do cadastro', use_container_width=True, key=f'{mapping_key}_refresh'):
             st.rerun()
     with col_b:
-        if st.button('Refazer sugestões automáticas', use_container_width=True):
+        if st.button('Refazer sugestões automáticas', use_container_width=True, key=f'{mapping_key}_reset'):
             st.session_state[mapping_key] = _build_super_mapping(df_source, model, source_columns)
             st.session_state.pop('df_final_cadastro', None)
             st.session_state.pop('mapping_cadastro', None)
@@ -259,8 +291,9 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     target_columns = [str(column) for column in model.columns]
     options = [EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
-    mapping_key = f'estoque_manual_mapping_from_cadastro_{signature}'
-    order_key = f'{mapping_key}__order'
+    mapping_key = _mapping_base('stk_map_', signature)
+    order_key = f'{mapping_key}_order'
+    _clear_stale_mapping_widgets(mapping_key)
     if mapping_key not in st.session_state:
         auto_mapping = super_auto_map_columns(df_source, model)
         for target in target_columns:
@@ -276,19 +309,21 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     _render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA no estoque')
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
+    target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {}
     edited_confidence: dict[str, dict[str, object]] = {}
     for target in ordered_targets:
+        target_index = target_index_by_name.get(target, len(edited_mapping))
         target_key = normalize_key(target)
-        widget_key = f'{mapping_key}_{target}'
+        widget_key = _target_widget_key(mapping_key, target_index)
         if 'deposito' in target_key:
             with st.container(border=True):
                 render_mapping_title('🟢 ' + target)
-                st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_deposito_visual', label_visibility='collapsed')
+                st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_dep', label_visibility='collapsed')
             edited_mapping[target] = ''
             edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': 'pronto', 'score': 100, 'order': 2}
             continue
-        selected, info_after = _render_mapping_select(df_source, target, current_mapping.get(target, ''), mapping_key, options)
+        selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
     st.session_state[mapping_key] = edited_mapping
@@ -304,10 +339,10 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar prévia do estoque', use_container_width=True):
+        if st.button('Atualizar prévia do estoque', use_container_width=True, key=f'{mapping_key}_refresh'):
             st.rerun()
     with col_b:
-        if st.button('Refazer sugestões do estoque', use_container_width=True):
+        if st.button('Refazer sugestões do estoque', use_container_width=True, key=f'{mapping_key}_reset'):
             st.session_state.pop(mapping_key, None)
             st.session_state.pop('df_final_estoque_from_cadastro', None)
             st.session_state.pop('mapping_estoque_from_cadastro', None)
@@ -330,7 +365,7 @@ def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Data
     mapping_estoque = st.session_state.get('mapping_estoque_from_cadastro', {})
     df_final_estoque = st.session_state.get('df_final_estoque_from_cadastro')
     if isinstance(mapping_estoque, dict):
-        show_mapping(mapping_estoque)
+        show_mapping(mapping_estoque, operation='estoque')
     if isinstance(df_final_estoque, pd.DataFrame):
-        preview_df('Preview final do estoque', df_final_estoque)
+        preview_df('📦 ESTOQUE · Preview final', df_final_estoque)
         download_final(df_final_estoque, 'estoque', 'estoque_from_cadastro')
