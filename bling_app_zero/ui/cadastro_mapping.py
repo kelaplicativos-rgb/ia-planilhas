@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 
 import pandas as pd
 import streamlit as st
@@ -19,6 +20,7 @@ from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview,
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
+MAPPING_PAGE_SIZE = 12
 MAPPING_WIDGET_PREFIXES = (
     'cad_map_',
     'stk_map_',
@@ -117,6 +119,28 @@ def _ordered_targets_once(order_key: str, target_columns: list[str], confidence:
     order = sort_targets_by_confidence(valid_targets, confidence)
     st.session_state[order_key] = order
     return order
+
+
+def _visible_targets(mapping_key: str, ordered_targets: list[str]) -> list[str]:
+    total = len(ordered_targets)
+    if total <= MAPPING_PAGE_SIZE:
+        return ordered_targets
+    total_pages = max(1, math.ceil(total / MAPPING_PAGE_SIZE))
+    options = [f'Bloco {idx + 1} de {total_pages}' for idx in range(total_pages)]
+    page_key = f'{mapping_key}_page'
+    selected = st.selectbox(
+        'Campos do mapeamento',
+        options,
+        index=min(int(st.session_state.get(f'{page_key}__idx', 0) or 0), total_pages - 1),
+        key=page_key,
+        help='Para deixar a tela leve, o sistema mostra poucos campos por vez.',
+    )
+    page_index = options.index(selected) if selected in options else 0
+    st.session_state[f'{page_key}__idx'] = page_index
+    start = page_index * MAPPING_PAGE_SIZE
+    end = start + MAPPING_PAGE_SIZE
+    st.caption(f'Mostrando campos {start + 1} a {min(end, total)} de {total}. Os demais continuam salvos e entram no CSV final.')
+    return ordered_targets[start:end]
 
 
 def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
@@ -253,9 +277,9 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
-    edited_mapping: dict[str, str] = {}
-    edited_confidence: dict[str, dict[str, object]] = {}
-    for target in ordered_targets:
+    edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
+    edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
+    for target in _visible_targets(mapping_key, ordered_targets):
         target_index = target_index_by_name.get(target, len(edited_mapping))
         selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
@@ -310,9 +334,9 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
-    edited_mapping: dict[str, str] = {}
-    edited_confidence: dict[str, dict[str, object]] = {}
-    for target in ordered_targets:
+    edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
+    edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
+    for target in _visible_targets(mapping_key, ordered_targets):
         target_index = target_index_by_name.get(target, len(edited_mapping))
         target_key = normalize_key(target)
         widget_key = _target_widget_key(mapping_key, target_index)
