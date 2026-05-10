@@ -68,38 +68,22 @@ def _rule_label(rule: dict) -> str:
     return f'{target} = {suffix}'
 
 
-def _rule_icon(target: str) -> str:
-    key = str(target or '').strip().lower()
-    if 'fornecedor' in key:
-        return '🏷️'
-    if 'unidade' in key:
-        return '📏'
-    if 'ncm' in key:
-        return '🧾'
-    if 'marca' in key:
-        return '🏭'
-    return '⚙️'
-
-
 def _status_badge(enabled: bool) -> str:
     return 'Ativo' if enabled else 'Inativo'
 
 
-def _render_rule_header(target: str, enabled: bool, subtitle: str) -> None:
-    icon = _rule_icon(target)
+def _render_system_rule_header(target: str, enabled: bool) -> None:
     safe_target = html.escape(str(target or 'Coluna sem nome'))
-    safe_subtitle = html.escape(str(subtitle or ''))
     status = _status_badge(enabled)
     status_class = 'is-active' if enabled else 'is-muted'
     st.markdown(
         f"""
-        <div class="bling-rule-card-head">
-            <div class="bling-rule-card-icon">{icon}</div>
-            <div class="bling-rule-card-copy">
-                <div class="bling-rule-card-title">{safe_target}</div>
-                <div class="bling-rule-card-subtitle">{safe_subtitle}</div>
+        <div class="bling-rule-pro-head">
+            <div>
+                <div class="bling-rule-pro-label">Coluna final</div>
+                <div class="bling-rule-pro-title">{safe_target}</div>
             </div>
-            <div class="bling-rule-card-badge {status_class}">{status}</div>
+            <div class="bling-rule-pro-badge {status_class}">{status}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -129,35 +113,34 @@ def _render_system_rule_value_editor(rule: dict, index: int) -> None:
     current_value = str(rule.get('fill_value') or '')
     enabled = bool(rule.get('enabled', True))
 
-    with st.container(border=True):
-        _render_rule_header(target, enabled, 'Preenchimento automático no CSV final')
+    st.markdown('<div class="bling-rule-pro-card">', unsafe_allow_html=True)
+    _render_system_rule_header(target, enabled)
 
-        col_toggle, col_value = st.columns([0.38, 0.62])
-        with col_toggle:
-            new_enabled = st.toggle(
-                'Ativar',
-                value=enabled,
-                key=f'system_rule_enabled_{rule_id}',
-                help='Quando ligado, esse padrão será aplicado no CSV final.',
-            )
-        with col_value:
-            new_value = st.text_input(
-                'Valor padrão',
-                value=current_value,
-                key=f'system_rule_value_{rule_id}',
-                help='Edite somente o valor. O cabeçalho da coluna final fica travado.',
-                placeholder='Ex: Não definido',
-            )
+    new_enabled = st.toggle(
+        'Aplicar preenchimento automático',
+        value=enabled,
+        key=f'system_rule_enabled_{rule_id}',
+        help='Quando ligado, esse padrão será aplicado no CSV final.',
+    )
 
-        if new_enabled != enabled:
-            set_custom_rule_enabled(rule_id, new_enabled)
-            _notice('Padrão atualizado.')
-            st.rerun()
+    new_value = st.text_input(
+        'Valor aplicado na coluna final',
+        value=current_value,
+        key=f'system_rule_value_{rule_id}',
+        help='Edite somente o valor. O cabeçalho da coluna final fica travado.',
+        placeholder='Ex: Não definido',
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        if str(new_value) != current_value:
-            update_custom_rule_by_id(rule_id, target, str(new_value), bool(rule.get('only_when_empty', False)))
-            _notice('Valor padrão atualizado.')
-            st.rerun()
+    if new_enabled != enabled:
+        set_custom_rule_enabled(rule_id, new_enabled)
+        _notice('Padrão atualizado.')
+        st.rerun()
+
+    if str(new_value) != current_value:
+        update_custom_rule_by_id(rule_id, target, str(new_value), bool(rule.get('only_when_empty', False)))
+        _notice('Valor padrão atualizado.')
+        st.rerun()
 
 
 def _start_edit_rule(rule_id: str, rule: dict) -> None:
@@ -175,15 +158,15 @@ def _cancel_edit_rule(rule_id: str) -> None:
 
 
 def _render_edit_form(rule: dict, rule_id: str) -> None:
-    st.caption('Editando regra personalizada')
+    st.caption('Editar regra personalizada')
     new_target = st.text_input(
-        'Coluna',
+        'Coluna final',
         key=f'edit_rule_target_{rule_id}',
         placeholder='Ex: Tipo',
         help='Informe somente o nome da coluna do modelo final.',
     )
     new_value = st.text_input(
-        'Valor',
+        'Valor aplicado',
         key=f'edit_rule_value_{rule_id}',
         placeholder='Ex: Produto',
         help='Informe o valor que será aplicado nessa coluna.',
@@ -209,7 +192,7 @@ def _render_edit_form(rule: dict, rule_id: str) -> None:
 
 def _render_system_rules(system_rules: list[dict]) -> None:
     st.markdown('##### Padrões automáticos')
-    st.caption('Defina valores fixos para colunas comuns. O nome da coluna fica travado; você altera só o valor aplicado no CSV final.')
+    st.caption('Valores fixos aplicados ao CSV final. A coluna fica travada; você altera somente o valor.')
 
     visible_rules = _visible_system_rules(system_rules)
     if not visible_rules:
@@ -244,11 +227,11 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
                 _render_rule_toggle(rule, index)
             with col_edit:
                 st.write('')
-                if st.button('✏️', key=f'edit_rule_compact_{rule_id}', help='Editar regra'):
+                if st.button('Editar', key=f'edit_rule_compact_{rule_id}', help='Editar regra'):
                     _start_edit_rule(rule_id, rule)
             with col_delete:
                 st.write('')
-                if st.button('🗑️', key=f'delete_rule_compact_{rule_id}', help='Excluir regra'):
+                if st.button('Excluir', key=f'delete_rule_compact_{rule_id}', help='Excluir regra'):
                     remove_custom_rule_by_id(rule_id)
                     st.session_state.pop(EDIT_RULE_KEY, None)
                     _notice('Regra excluída.')
@@ -258,13 +241,13 @@ def _render_custom_rules(user_rules: list[dict], start_index: int) -> None:
 def _render_new_rule_form() -> None:
     st.markdown('##### Nova regra')
     target_column = st.text_input(
-        'Coluna',
+        'Coluna final',
         key='custom_rule_target_column',
         placeholder='Ex: Tipo',
         help='Informe somente o nome da coluna do modelo final.',
     )
     fill_value = st.text_input(
-        'Valor',
+        'Valor aplicado',
         key='custom_rule_fill_value',
         placeholder='Ex: Produto',
         help='Informe o valor que será aplicado nessa coluna.',
