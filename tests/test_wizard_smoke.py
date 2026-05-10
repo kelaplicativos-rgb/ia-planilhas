@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib
 from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 
@@ -32,6 +33,15 @@ def test_light_critical_wizard_modules_import() -> None:
 def test_site_critical_modules_import_without_running_scraper() -> None:
     for module_name in SITE_CRITICAL_MODULES:
         importlib.import_module(module_name)
+
+
+def test_mapping_css_uses_existing_theme_variables() -> None:
+    mapping_css = Path('bling_app_zero/ui/layout/mapping.py').read_text(encoding='utf-8')
+
+    assert '--bling-panel' not in mapping_css
+    assert 'var(--bling-success)' not in mapping_css
+    assert '--bling-surface' in mapping_css
+    assert '--bling-success-text' in mapping_css
 
 
 def test_gtin_invalid_values_are_cleaned() -> None:
