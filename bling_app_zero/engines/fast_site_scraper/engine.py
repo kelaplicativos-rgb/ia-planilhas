@@ -34,7 +34,7 @@ SMART_STOP_MIN_PROCESSED = 120
 SMART_STOP_COMPLETE_RATIO = 0.72
 SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 3
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -141,19 +141,15 @@ def _url_only_row(url: str) -> FastProductData:
     return FastProductData(url=url)
 
 
-def _scrape_one(url: str, needed: set[str], allow_devtools: bool = True) -> tuple[FastProductData, float, bool, bool]:
+def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float, bool]:
     started = time.perf_counter()
-    used_devtools = False
     if needed <= {'url'}:
-        return _url_only_row(url), time.perf_counter() - started, False, used_devtools
+        return url, _url_only_row(url), time.perf_counter() - started, False
 
     html = fetch_live(url, timeout=8)
     if not html:
         product = FastProductData(url=url)
-        if allow_devtools and needs_rendered_fallback(product, needed):
-            product = enhance_with_rendered_page(url, product, needed)
-            used_devtools = True
-        return product, time.perf_counter() - started, not product.descricao and not product.descricao_complementar, used_devtools
+        return url, product, time.perf_counter() - started, True
 
     page = parse_product_page(url, html)
 
@@ -200,14 +196,39 @@ def _scrape_one(url: str, needed: set[str], allow_devtools: bool = True) -> tupl
     if not data['codigo'] and data['gtin']:
         data['codigo'] = data['gtin']
 
-    product = FastProductData(**data)
-    if allow_devtools and needs_rendered_fallback(product, needed):
-        enhanced = enhance_with_rendered_page(url, product, needed)
-        if enhanced != product:
-            product = enhanced
-            used_devtools = True
+    return url, FastProductData(**data), time.perf_counter() - started, False
 
-    return product, time.perf_counter() - started, False, used_devtools
+
+def _enhance_products_sequentially(
+    products_by_url: list[tuple[str, FastProductData]],
+    needed: set[str],
+    progress_callback: Callable[[dict], None] | None,
+) -> tuple[list[FastProductData], int]:
+    """Aplica DevTools em fila, com limite baixo, nunca dentro das threads HTTP."""
+    if not needed.intersection({'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}):
+        return [product for _, product in products_by_url], 0
+
+    enhanced_products: list[FastProductData] = []
+    used = 0
+    total_candidates = sum(1 for _, product in products_by_url if needs_rendered_fallback(product, needed))
+
+    for url, product in products_by_url:
+        if used < DEVTOOLS_FALLBACK_MAX_PER_RUN and needs_rendered_fallback(product, needed):
+            _emit(progress_callback, {
+                'stage': 'Reforço DevTools',
+                'message': f'Reforçando descrição rica {used + 1}/{min(total_candidates, DEVTOOLS_FALLBACK_MAX_PER_RUN)} sem paralelo.',
+                'progress': 0.89,
+                'devtools': used,
+            })
+            enhanced = enhance_with_rendered_page(url, product, needed)
+            if enhanced != product:
+                product = enhanced
+                used += 1
+            else:
+                used += 1
+        enhanced_products.append(product)
+
+    return enhanced_products, used
 
 
 def _to_contract_row(product: FastProductData, contract: list[RequestedField]) -> dict[str, str]:
@@ -300,10 +321,9 @@ def run_fast_site_scraper(
         })
         return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
-    products: list[FastProductData] = []
+    products_by_url: list[tuple[str, FastProductData]] = []
     errors = 0
     complete_count = 0
-    rendered_fallbacks = 0
     last_gain_at = 0
     stop_reason = ''
     slow_links: list[dict[str, object]] = []
@@ -314,7 +334,7 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo até {total} produto(s). Se faltar descrição rica, o motor DevTools reforça os primeiros casos.',
+        'message': f'Lendo até {total} produto(s). O DevTools entra depois, em fila, só se faltar descrição rica.',
         'progress': 0.28,
         'processed': 0,
         'total': total,
@@ -322,23 +342,17 @@ def run_fast_site_scraper(
     })
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {}
-        for index, url in enumerate(urls[:max_products]):
-            allow_devtools = index < DEVTOOLS_FALLBACK_MAX_PER_RUN
-            futures[executor.submit(_scrape_one, url, needed, allow_devtools)] = url
+        futures = {executor.submit(_scrape_one, url, needed): url for url in urls[:max_products]}
         for future in as_completed(futures):
-            url = futures[future]
             processed += 1
             try:
-                product, elapsed, failed, used_devtools = future.result()
+                url, product, elapsed, failed = future.result()
                 if failed:
                     errors += 1
-                if used_devtools:
-                    rendered_fallbacks += 1
                 if elapsed >= SLOW_LINK_SECONDS:
                     slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
                 if _has_useful_data(product, needed):
-                    products.append(product)
+                    products_by_url.append((url, product))
                     last_gain_at = processed
                     if _is_complete_product(product, important):
                         complete_count += 1
@@ -347,7 +361,7 @@ def run_fast_site_scraper(
 
             should_stop, reason = _should_stop_early(
                 processed=processed,
-                products=products,
+                products=[product for _, product in products_by_url],
                 complete_count=complete_count,
                 last_gain_at=last_gain_at,
             )
@@ -359,13 +373,13 @@ def run_fast_site_scraper(
                 _emit(progress_callback, {
                     'stage': 'Busca suficiente',
                     'message': stop_reason,
-                    'progress': 0.88,
+                    'progress': 0.86,
                     'processed': processed,
                     'total': total,
-                    'found': len(products),
+                    'found': len(products_by_url),
                     'complete': complete_count,
                     'errors': errors,
-                    'devtools': rendered_fallbacks,
+                    'devtools': 0,
                     'slow_links': slow_links[-5:],
                 })
                 break
@@ -375,22 +389,24 @@ def run_fast_site_scraper(
                 ratio = processed / max(total, 1)
                 _emit(progress_callback, {
                     'stage': 'Lendo produtos',
-                    'message': f'{processed}/{total} produto(s) lido(s). DevTools usado em {rendered_fallbacks}.',
-                    'progress': 0.28 + (0.60 * ratio),
+                    'message': f'{processed}/{total} produto(s) lido(s).',
+                    'progress': 0.28 + (0.58 * ratio),
                     'processed': processed,
                     'total': total,
-                    'found': len(products),
+                    'found': len(products_by_url),
                     'complete': complete_count,
                     'errors': errors,
-                    'devtools': rendered_fallbacks,
+                    'devtools': 0,
                     'slow_links': slow_links[-5:],
                 })
                 last_emit = now
 
+    products, rendered_fallbacks = _enhance_products_sequentially(products_by_url, needed, progress_callback)
+
     rows = [_to_contract_row(product, contract) for product in products]
     final_message = f'Montando origem com {len(rows)} produto(s).'
     if rendered_fallbacks:
-        final_message = f'{final_message} DevTools reforçou {rendered_fallbacks} página(s).'
+        final_message = f'{final_message} DevTools reforçou {rendered_fallbacks} página(s), em fila.'
     if stop_reason:
         final_message = f'{final_message} {stop_reason}'
     _emit(progress_callback, {
