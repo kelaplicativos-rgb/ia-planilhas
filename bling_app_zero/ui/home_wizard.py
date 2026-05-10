@@ -17,6 +17,7 @@ from bling_app_zero.ui.cadastro_wizard_steps import (
 from bling_app_zero.ui.estoque_wizard_steps import (
     estoque_context_ready,
     estoque_output_ready,
+    render_estoque_download_step,
     render_estoque_entrada_step,
     render_estoque_gerar_step,
     render_estoque_preview_step,
@@ -66,6 +67,7 @@ ESTOQUE_STEPS = [
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
     STEP_PREVIEW,
+    STEP_DOWNLOAD,
 ]
 ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
 
@@ -418,41 +420,6 @@ def _render_origin_step() -> None:
     _render_nav_buttons(allow_next=bool(_current_origin_choice()))
 
 
-def _render_operation_panel(operation: str) -> None:
-    if operation == 'estoque':
-        from bling_app_zero.ui.estoque_panel import render_estoque_panel
-
-        render_estoque_panel()
-        return
-
-    from bling_app_zero.ui.cadastro_panel_modular import render_cadastro_panel
-
-    render_cadastro_panel()
-
-
-def _render_process_step() -> None:
-    origin = _current_origin_choice()
-    operation = _selected_operation()
-    if not origin:
-        st.warning('Escolha a origem dos dados antes de processar.')
-        _render_nav_buttons(allow_next=False)
-        return
-
-    operation_label = 'Estoque' if operation == 'estoque' else 'Cadastro'
-    origin_label = 'site/link' if origin == 'site' else 'planilha/arquivo'
-    _render_section_card('Etapa', f'{operation_label} por {origin_label}', 'Nesta fase o sistema carrega apenas o módulo escolhido.')
-
-    if origin == 'site':
-        from bling_app_zero.ui.site_panel import render_site_panel
-
-        render_site_panel()
-        df_site_source = get_site_source_for_operation(operation)
-        if df_site_source is not None:
-            _render_operation_panel(operation)
-    else:
-        _render_operation_panel(operation)
-
-
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
     if origin == 'site':
@@ -501,12 +468,17 @@ def _render_estoque_gerar() -> None:
 
 def _render_estoque_preview() -> None:
     render_estoque_preview_step()
+    _render_nav_buttons(allow_next=estoque_output_ready())
+
+
+def _render_estoque_download() -> None:
+    render_estoque_download_step()
     col_back, col_reset = st.columns(2)
     with col_back:
-        if st.button('Voltar para gerar estoque', use_container_width=True, key='wizard_estoque_preview_back'):
-            _go_to_step(STEP_GERAR_ESTOQUE)
+        if st.button('Voltar para preview', use_container_width=True, key='wizard_estoque_download_back'):
+            _go_to_step(STEP_PREVIEW)
     with col_reset:
-        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_preview_reset'):
+        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_download_reset'):
             _reset_wizard()
 
 
@@ -536,5 +508,8 @@ def render_home_wizard() -> None:
         _render_estoque_gerar()
     elif operation == 'estoque' and step == STEP_PREVIEW:
         _render_estoque_preview()
+    elif operation == 'estoque' and step == STEP_DOWNLOAD:
+        _render_estoque_download()
     else:
-        _render_process_step()
+        st.warning('Etapa inválida. Volte para o início do fluxo.')
+        _render_nav_buttons(allow_next=False)
