@@ -4,7 +4,12 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.estoque_models import home_estoque_model_loaded, render_estoque_model_contract, select_estoque_model
-from bling_app_zero.ui.estoque_outputs import build_stock_outputs, build_stock_outputs_from_dataframe, render_stock_outputs
+from bling_app_zero.ui.estoque_outputs import (
+    build_stock_outputs,
+    build_stock_outputs_from_dataframe,
+    render_stock_downloads,
+    render_stock_preview,
+)
 from bling_app_zero.ui.estoque_sources import get_estoque_site_source, render_estoque_upload, source_files_from_upload
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 
@@ -78,7 +83,7 @@ def estoque_output_ready() -> bool:
 
 def render_estoque_entrada_step() -> None:
     st.markdown('### Entrada do estoque')
-    st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. O preview/download ficam nas próximas etapas.')
+    st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. Preview e download ficam separados nas próximas etapas.')
 
     model_loaded = home_estoque_model_loaded()
     if model_loaded:
@@ -115,7 +120,7 @@ def render_estoque_entrada_step() -> None:
 
 def render_estoque_gerar_step() -> None:
     st.markdown('### Gerar estoque')
-    st.caption('Nesta etapa o sistema monta o CSV de estoque. O download fica separado na próxima tela.')
+    st.caption('Nesta etapa o sistema monta o CSV de estoque. O preview e o download ficam nas próximas telas.')
 
     upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
     df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
@@ -142,14 +147,24 @@ def render_estoque_gerar_step() -> None:
         return
 
     if estoque_output_ready():
-        st.success('Preview de estoque gerado. Continue para conferir e baixar.')
+        st.success('Estoque gerado. Continue para conferir o preview final.')
 
 
 def render_estoque_preview_step() -> None:
-    st.markdown('### Preview e download do estoque')
-    st.caption('Confira e baixe somente o CSV final de atualização de estoque.')
+    st.markdown('### Preview final do estoque')
+    st.caption('Confira os dados antes de baixar. O download fica na próxima etapa.')
 
     if not estoque_output_ready():
         st.warning('O preview de estoque ainda não foi gerado. Volte para Gerar estoque.')
         return
-    render_stock_outputs()
+    render_stock_preview()
+
+
+def render_estoque_download_step() -> None:
+    st.markdown('### Download do estoque')
+    st.caption('Última etapa: baixe somente o CSV final de atualização de estoque.')
+
+    if not estoque_output_ready():
+        st.warning('Ainda não há CSV de estoque. Volte para o preview.')
+        return
+    render_stock_downloads()
