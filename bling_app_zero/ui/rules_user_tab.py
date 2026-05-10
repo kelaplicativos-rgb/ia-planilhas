@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.core.user_rules import add_custom_rule, get_user_rules, remove_custom_rule, update_custom_rule
+from bling_app_zero.core.user_rules import (
+    add_custom_rule,
+    get_user_rules,
+    remove_custom_rule_by_id,
+    set_custom_rule_enabled,
+    update_custom_rule_by_id,
+)
 
 EDIT_ICON = '✏️'
 DELETE_ICON = '🗑️'
-SYSTEM_BADGE = '🧩 Padrão'
-USER_BADGE = '👤 Usuário'
 NOTICE_KEY = 'rules_tab_notice'
 CRITICAL_SYSTEM_COLUMNS = {'unidade', 'unidade de medida', 'altura', 'largura', 'profundidade', 'comprimento'}
 
@@ -22,16 +26,12 @@ def _render_notice() -> None:
         st.caption(f'✅ {message}')
 
 
-def _rule_key(rule: dict, index: int) -> str:
+def _rule_id(rule: dict, index: int) -> str:
+    value = str(rule.get('id') or '').strip()
+    if value:
+        return value
     target = str(rule.get('target_column', '')).strip().lower()
-    value = str(rule.get('fill_value', '')).strip().lower()
-    safe = ''.join(ch if ch.isalnum() else '_' for ch in f'{target}_{value}')[:80]
-    return safe or str(index)
-
-
-def _rule_badge(rule: dict) -> str:
-    source = str(rule.get('source') or 'user').strip().lower()
-    return SYSTEM_BADGE if source == 'system' else USER_BADGE
+    return f'rule_{index}_{target}'
 
 
 def _is_system_rule(rule: dict) -> bool:
@@ -62,62 +62,77 @@ def _validate_rule_edit(rule: dict, target: str, value: str) -> str:
     return ''
 
 
-def _render_edit_mode(rule: dict, index: int, suffix: str, edit_key: str, target: str, value: str) -> None:
-    with st.container(border=True):
-        st.caption(_rule_badge(rule))
-        col_target, col_value = st.columns([0.55, 0.45])
-        new_target = col_target.text_input('Coluna', value=target, key=f'edit_target_{suffix}')
-        new_value = col_value.text_input('Valor', value=value, key=f'edit_value_{suffix}')
-        col_save, col_cancel = st.columns(2)
+def _render_edit_card(rule: dict, rule_id: str, edit_key: str) -> None:
+    target = str(rule.get('target_column', '')).strip()
+    value = str(rule.get('fill_value', '')).strip()
 
-        if col_save.button('Salvar', use_container_width=True, key=f'save_edit_{suffix}'):
+    with st.container(border=True):
+        st.caption('Editando regra')
+        col_target, col_value = st.columns([0.55, 0.45])
+        new_target = col_target.text_input('Coluna', value=target, key=f'edit_target_{rule_id}')
+        new_value = col_value.text_input('Valor', value=value, key=f'edit_value_{rule_id}')
+
+        col_save, col_cancel = st.columns(2)
+        if col_save.button('Salvar', use_container_width=True, key=f'save_edit_{rule_id}'):
             error = _validate_rule_edit(rule, new_target, new_value)
             if error:
                 st.warning(error)
                 return
-            update_custom_rule(index, new_target, new_value, False)
+            update_custom_rule_by_id(rule_id, new_target, new_value, False)
             st.session_state[edit_key] = False
             _notice('Regra atualizada.')
             st.rerun()
 
-        if col_cancel.button('Cancelar', use_container_width=True, key=f'cancel_edit_{suffix}'):
+        if col_cancel.button('Cancelar', use_container_width=True, key=f'cancel_edit_{rule_id}'):
             st.session_state[edit_key] = False
             st.rerun()
 
 
-def _render_rule_row(rule: dict, index: int) -> None:
+def _render_rule_card(rule: dict, index: int) -> None:
     target = str(rule.get('target_column', '')).strip()
     value = str(rule.get('fill_value', '')).strip()
-    suffix = _rule_key(rule, index)
-    edit_key = f'edit_rule_{suffix}'
-    is_system_rule = _is_system_rule(rule)
+    rule_id = _rule_id(rule, index)
+    edit_key = f'edit_rule_{rule_id}'
+    is_system = _is_system_rule(rule)
+    enabled = bool(rule.get('enabled', True))
 
     if st.session_state.get(edit_key, False):
-        _render_edit_mode(rule, index, suffix, edit_key, target, value)
+        _render_edit_card(rule, rule_id, edit_key)
         return
 
-    col_name, col_value, col_badge, col_edit, col_delete = st.columns([0.33, 0.29, 0.20, 0.09, 0.09])
-    col_name.caption('Coluna')
-    col_name.markdown(f'**{target}**')
-    col_value.caption('Valor')
-    col_value.markdown(value if value else '—')
-    col_badge.caption('Tipo')
-    col_badge.caption(_rule_badge(rule))
+    with st.container(border=True):
+        col_main, col_actions = st.columns([0.72, 0.28])
+        with col_main:
+            badge = '🧩 Padrão do sistema' if is_system else '👤 Personalizada'
+            status = 'Ativa' if enabled else 'Inativa'
+            st.caption(f'{badge} • {status}')
+            st.markdown(f'**{target}**')
+            st.caption(f'Preencher com: {value if value else "(vazio)"}')
 
-    if col_edit.button(EDIT_ICON, key=f'edit_button_{suffix}', help='Editar regra'):
-        st.session_state[edit_key] = True
-        st.rerun()
+        with col_actions:
+            new_enabled = st.toggle('Ativa', value=enabled, key=f'enabled_{rule_id}')
+            if new_enabled != enabled:
+                set_custom_rule_enabled(rule_id, new_enabled)
+                _notice('Status da regra atualizado.')
+                st.rerun()
 
-    if is_system_rule:
-        col_delete.caption('🔒')
-    elif col_delete.button(DELETE_ICON, key=f'delete_rule_{index}_{suffix}', help='Excluir regra'):
-        remove_custom_rule(index)
-        _notice('Regra excluída.')
-        st.rerun()
+            col_edit, col_delete = st.columns(2)
+            if col_edit.button(EDIT_ICON, key=f'edit_button_{rule_id}', help='Editar regra'):
+                st.session_state[edit_key] = True
+                st.rerun()
+
+            if is_system:
+                col_delete.caption('🔒')
+            elif col_delete.button(DELETE_ICON, key=f'delete_rule_{rule_id}', help='Excluir regra'):
+                remove_custom_rule_by_id(rule_id)
+                _notice('Regra excluída.')
+                st.rerun()
 
 
 def _render_new_rule_form() -> None:
-    with st.expander('Adicionar nova regra', expanded=False):
+    with st.container(border=True):
+        st.markdown('##### Nova regra personalizada')
+        st.caption('Crie uma regra para preencher uma coluna específica antes do download final.')
         target_column = st.text_input('Nome da coluna', key='custom_rule_target_column', placeholder='Ex: Itens por caixa')
         fill_value = st.text_input('Valor predefinido', key='custom_rule_fill_value', placeholder='Ex: 1')
 
@@ -134,15 +149,25 @@ def _render_new_rule_form() -> None:
 def render_user_rules_tab() -> None:
     rules = get_user_rules()
     custom_rules = list(rules.get('custom_rules', []))
+    system_rules = [rule for rule in custom_rules if _is_system_rule(rule)]
+    user_rules = [rule for rule in custom_rules if not _is_system_rule(rule)]
 
-    st.markdown(f'##### Regras salvas ({len(custom_rules)})')
+    st.markdown('##### Regras')
     st.caption('Regras escrevem valores em colunas do CSV final.')
     _render_notice()
 
-    if custom_rules:
-        for index, rule in enumerate(custom_rules):
-            _render_rule_row(rule, index)
-    else:
-        st.info('Nenhuma regra criada ainda.')
-
     _render_new_rule_form()
+
+    with st.expander(f'🧩 Padrões do sistema ({len(system_rules)})', expanded=True):
+        if system_rules:
+            for index, rule in enumerate(system_rules):
+                _render_rule_card(rule, index)
+        else:
+            st.info('Nenhuma regra padrão carregada.')
+
+    with st.expander(f'👤 Regras personalizadas ({len(user_rules)})', expanded=True):
+        if user_rules:
+            for index, rule in enumerate(user_rules):
+                _render_rule_card(rule, index + len(system_rules))
+        else:
+            st.caption('Nenhuma regra personalizada criada ainda.')
