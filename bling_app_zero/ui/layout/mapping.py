@@ -15,12 +15,12 @@ def inject_mapping_css() -> None:
             max-width: 100% !important;
             box-sizing: border-box !important;
             overflow: visible !important;
-            border-radius: var(--bling-radius-md) !important;
-            border: 1px solid var(--bling-border) !important;
-            background: var(--bling-panel) !important;
+            border-radius: var(--bling-radius-md, 14px) !important;
+            border: 1px solid var(--bling-border, rgba(37, 99, 235, 0.14)) !important;
+            background: var(--bling-surface, #ffffff) !important;
             padding: 16px 12px 13px 12px !important;
             margin: 0.55rem 0 0.78rem 0 !important;
-            box-shadow: var(--bling-shadow-soft) !important;
+            box-shadow: var(--bling-shadow-soft, 0 8px 22px rgba(15, 23, 42, 0.045)) !important;
             min-height: 100px !important;
             height: auto !important;
         }
@@ -38,7 +38,7 @@ def inject_mapping_css() -> None:
             font-size: 0.85rem;
             line-height: 1.26;
             font-weight: 820;
-            color: var(--bling-text) !important;
+            color: var(--bling-text, #0f172a) !important;
             margin: 0 0 6px 0 !important;
             padding: 0 !important;
             text-align: left;
@@ -47,9 +47,9 @@ def inject_mapping_css() -> None:
             hyphens: none;
         }
 
-        .bling-map-title-red { color: var(--bling-danger) !important; }
-        .bling-map-title-yellow { color: var(--bling-warning) !important; }
-        .bling-map-title-green { color: var(--bling-success) !important; }
+        .bling-map-title-red { color: var(--bling-danger, #dc2626) !important; }
+        .bling-map-title-yellow { color: var(--bling-warning, #ca8a04) !important; }
+        .bling-map-title-green { color: var(--bling-success-text, #166534) !important; }
 
         .bling-map-title-text {
             display: inline;
