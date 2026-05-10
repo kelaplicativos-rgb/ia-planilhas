@@ -23,17 +23,37 @@ def append_site_progress(payload: dict) -> None:
     st.session_state[PROGRESS_LAST_KEY] = item
 
 
+def _safe_cell(value: object) -> str:
+    if value is None:
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except Exception:
+        pass
+    return str(value)
+
+
+def _safe_progress_dataframe(rows: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    for column in df.columns:
+        df[column] = df[column].map(_safe_cell).astype(str)
+    return df
+
+
 def progress_rows(log: list[dict]) -> list[dict]:
     return [
         {
-            'Hora': item.get('time', ''),
-            'Etapa': item.get('stage', ''),
-            'Mensagem': item.get('message', ''),
-            'Links': item.get('urls_found', item.get('total', '')),
-            'Processados': item.get('processed', ''),
-            'Produtos': item.get('found', ''),
-            'Falhas': item.get('errors', ''),
-            'Tempo': item.get('total_seconds', item.get('discovery_seconds', '')),
+            'Hora': _safe_cell(item.get('time', '')),
+            'Etapa': _safe_cell(item.get('stage', '')),
+            'Mensagem': _safe_cell(item.get('message', '')),
+            'Links': _safe_cell(item.get('urls_found', item.get('total', ''))),
+            'Processados': _safe_cell(item.get('processed', '')),
+            'Produtos': _safe_cell(item.get('found', '')),
+            'Falhas': _safe_cell(item.get('errors', '')),
+            'Tempo': _safe_cell(item.get('total_seconds', item.get('discovery_seconds', ''))),
         }
         for item in log
     ]
@@ -49,6 +69,13 @@ def _render_progress_metrics(payload: dict) -> None:
     col_d.metric('Falhas', int(payload.get('errors') or 0))
 
 
+def _render_progress_table(log: list[dict], height: int) -> None:
+    rows = progress_rows(log)
+    if not rows:
+        return
+    st.dataframe(_safe_progress_dataframe(rows), use_container_width=True, height=height)
+
+
 def render_sidebar_progress_details(payload: dict) -> None:
     """Mostra o andamento da busca por site na barra lateral."""
     log = st.session_state.get(PROGRESS_LOG_KEY) or []
@@ -57,7 +84,7 @@ def render_sidebar_progress_details(payload: dict) -> None:
         _render_progress_metrics(payload)
         if log:
             st.markdown('##### Histórico da busca')
-            st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=260)
+            _render_progress_table(log, height=260)
 
 
 def make_site_progress_callback(progress_bar, status_box):
@@ -79,4 +106,4 @@ def render_site_progress_history() -> None:
         return
     with st.sidebar:
         st.markdown('##### Histórico da busca')
-        st.dataframe(pd.DataFrame(progress_rows(log)), use_container_width=True, height=280)
+        _render_progress_table(log, height=280)
