@@ -11,36 +11,31 @@ except Exception:  # pragma: no cover
 RULES_SESSION_KEY = 'bling_user_rules'
 
 # REGRAS = valores escritos em colunas do CSV final.
-# Essas linhas nascem como se o usuário já tivesse cadastrado e podem ser editadas/excluídas no rules_panel.py.
 DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
-    {'condition': 'Fornecedor', 'target_column': 'Fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Nome fornecedor', 'target_column': 'Nome fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Unidade', 'target_column': 'Unidade', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Unidade de medida', 'target_column': 'Unidade de medida', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Altura', 'target_column': 'Altura', 'fill_value': '2', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Largura', 'target_column': 'Largura', 'fill_value': '11', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Profundidade', 'target_column': 'Profundidade', 'fill_value': '18', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Comprimento', 'target_column': 'Comprimento', 'fill_value': '18', 'only_when_empty': False, 'enabled': True},
-    {'condition': 'Itens por caixa', 'target_column': 'Itens por caixa', 'fill_value': '1', 'only_when_empty': False, 'enabled': True},
+    {'condition': 'Fornecedor', 'target_column': 'Fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Nome fornecedor', 'target_column': 'Nome fornecedor', 'fill_value': 'Não definido', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Unidade', 'target_column': 'Unidade', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Unidade de medida', 'target_column': 'Unidade de medida', 'fill_value': 'UN', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Altura', 'target_column': 'Altura', 'fill_value': '2', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Largura', 'target_column': 'Largura', 'fill_value': '11', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Profundidade', 'target_column': 'Profundidade', 'fill_value': '18', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Comprimento', 'target_column': 'Comprimento', 'fill_value': '18', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
+    {'condition': 'Itens por caixa', 'target_column': 'Itens por caixa', 'fill_value': '1', 'only_when_empty': False, 'enabled': True, 'source': 'system'},
 ]
 
 DEFAULT_RULES: dict[str, Any] = {
-    # Compatibilidade com exportador antigo.
     'supplier_default': 'Não definido',
     'measure_unit_default': 'UN',
     'height_default': '2',
     'width_default': '11',
     'depth_default': '18',
     'length_default': '18',
-
-    # RECURSOS = processamento automático do CSV final. Usuário liga/desliga; não cria novos.
     'clean_invalid_gtin': True,
     'normalize_image_separator': True,
     'invalid_gtin_mode': 'limpar',
     'image_separator': '|',
     'auto_product_code': True,
     'unique_product_code': True,
-
     'custom_rules': DEFAULT_CUSTOM_RULES,
 }
 
@@ -50,6 +45,7 @@ CUSTOM_RULE_KEYS = {
     'fill_value': '',
     'only_when_empty': False,
     'enabled': True,
+    'source': 'user',
 }
 
 
@@ -80,6 +76,12 @@ def _safe_text(value: Any, fallback: str = '') -> str:
     return text if text else fallback
 
 
+def _default_source_for_column(target_column: str) -> str:
+    key = target_column.strip().lower()
+    system_keys = {str(rule.get('target_column', '')).strip().lower() for rule in DEFAULT_CUSTOM_RULES}
+    return 'system' if key in system_keys else 'user'
+
+
 def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
@@ -94,6 +96,8 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
     rule['only_when_empty'] = bool(rule.get('only_when_empty', False))
     rule['enabled'] = bool(rule.get('enabled', True))
+    source = _safe_text(rule.get('source'))
+    rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
 
     if not rule['target_column']:
         return None
@@ -130,7 +134,6 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['width_default'] = _safe_text(rules.get('width_default'), DEFAULT_RULES['width_default'])
     rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
     rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
-
     rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
     rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
     rules['invalid_gtin_mode'] = 'limpar'
@@ -171,6 +174,7 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
             'enabled': True,
+            'source': 'user',
         }
     )
     if rule:
@@ -186,6 +190,7 @@ def update_custom_rule(index: int, target_column: str, fill_value: str, only_whe
     if not 0 <= index < len(custom_rules):
         return set_user_rules(current)
 
+    old_source = str(custom_rules[index].get('source') or 'user')
     rule = normalize_custom_rule(
         {
             'condition': target_column,
@@ -193,6 +198,7 @@ def update_custom_rule(index: int, target_column: str, fill_value: str, only_whe
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
             'enabled': True,
+            'source': old_source,
         }
     )
     if not rule:
