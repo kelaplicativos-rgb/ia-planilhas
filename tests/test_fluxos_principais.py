@@ -76,6 +76,14 @@ class TestFluxosPrincipais(unittest.TestCase):
         with self.assertRaises(MissingEstoqueModelError):
             run_estoque_engine(origem, None, deposito='Loja Principal')
 
+    def test_estoque_preenche_deposito_em_qualquer_coluna_de_deposito(self) -> None:
+        origem = pd.DataFrame({'codigo': ['ABC-1'], 'quantidade': ['3']})
+        modelo = pd.DataFrame(columns=['Código', 'Nome do depósito', 'Balanço (OBRIGATÓRIO)'])
+
+        final, _ = run_estoque_engine(origem, modelo, deposito='Galpão Central')
+
+        self.assertEqual(final.loc[0, 'Nome do depósito'], 'Galpão Central')
+
     def test_site_estoque_so_usa_colunas_do_modelo_solicitado(self) -> None:
         modelo_estoque = pd.DataFrame(columns=['Código', 'Balanço (OBRIGATÓRIO)'])
         modelo_cadastro = pd.DataFrame(columns=['Descrição', 'Preço de venda', 'URL Imagens'])
