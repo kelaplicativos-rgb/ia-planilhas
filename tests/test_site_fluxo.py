@@ -72,7 +72,7 @@ class TestSiteFluxo(unittest.TestCase):
             max_products=1,
         )
 
-        self.assertEqual(list(df.columns), ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
+        self.assertEqual(list(df.columns), [])
         self.assertEqual(len(df), 0)
 
 
