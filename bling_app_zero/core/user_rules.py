@@ -28,7 +28,7 @@ CUSTOM_RULE_KEYS = {
     'condition': '',
     'target_column': '',
     'fill_value': '',
-    'only_when_empty': True,
+    'only_when_empty': False,
     'enabled': True,
 }
 
@@ -75,12 +75,12 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         if key in raw:
             rule[key] = raw[key]
 
-    # Novo modelo: regra direta por cabeçalho/coluna.
+    # Regra direta por cabeçalho/coluna.
     # Mantém as chaves antigas para não quebrar o restante do sistema.
     rule['target_column'] = _safe_text(rule.get('target_column'))
     rule['fill_value'] = _safe_text(rule.get('fill_value'))
     rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
-    rule['only_when_empty'] = bool(rule.get('only_when_empty', True))
+    rule['only_when_empty'] = bool(rule.get('only_when_empty', False))
     rule['enabled'] = bool(rule.get('enabled', True))
 
     if not rule['target_column']:
@@ -147,7 +147,7 @@ def reset_user_rules() -> dict[str, Any]:
     return set_user_rules(default_rules())
 
 
-def add_custom_rule(condition: str, target_column: str, fill_value: str, only_when_empty: bool = True) -> dict[str, Any]:
+def add_custom_rule(condition: str, target_column: str, fill_value: str, only_when_empty: bool = False) -> dict[str, Any]:
     current = get_user_rules()
     custom_rules = list(current.get('custom_rules', []))
     rule = normalize_custom_rule(
@@ -163,6 +163,38 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
         custom_rules = [r for r in custom_rules if str(r.get('target_column', '')).strip().lower() != rule['target_column'].lower()]
         custom_rules.append(rule)
     current['custom_rules'] = custom_rules
+    return set_user_rules(current)
+
+
+def update_custom_rule(index: int, target_column: str, fill_value: str, only_when_empty: bool = False) -> dict[str, Any]:
+    current = get_user_rules()
+    custom_rules = list(current.get('custom_rules', []))
+    if not 0 <= index < len(custom_rules):
+        return set_user_rules(current)
+
+    rule = normalize_custom_rule(
+        {
+            'condition': target_column,
+            'target_column': target_column,
+            'fill_value': fill_value,
+            'only_when_empty': only_when_empty,
+            'enabled': True,
+        }
+    )
+    if not rule:
+        return set_user_rules(current)
+
+    custom_rules[index] = rule
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in custom_rules:
+        key = str(item.get('target_column', '')).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    current['custom_rules'] = deduped
     return set_user_rules(current)
 
 
