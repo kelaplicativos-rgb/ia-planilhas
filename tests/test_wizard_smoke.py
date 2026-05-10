@@ -89,6 +89,21 @@ def test_site_origin_uses_empty_upload_result() -> None:
     assert 'source_file=None' in estoque_steps
 
 
+def test_site_origin_is_stored_by_operation() -> None:
+    site_panel = Path('bling_app_zero/ui/site_panel.py').read_text(encoding='utf-8')
+    site_as_source = Path('bling_app_zero/flows/site_as_source.py').read_text(encoding='utf-8')
+
+    assert "return f'df_site_bruto_{operation}'" in site_panel
+    assert "st.session_state[_site_df_key(operation)] = df_site" in site_panel
+    assert "other = 'estoque' if operation == 'cadastro' else 'cadastro'" in site_panel
+    assert "st.session_state.pop(_site_df_key(other), None)" in site_panel
+
+    assert "return f'{SITE_SOURCE_KEY}_{_op_key(operation)}'" in site_as_source
+    assert "return f'{SITE_RAW_LEGACY_KEY}_{_op_key(operation)}'" in site_as_source
+    assert "st.session_state[_raw_source_key(normalized)]" in site_as_source
+    assert "st.session_state.pop(_raw_source_key(other), None)" in site_as_source
+
+
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
     steps = importlib.import_module('bling_app_zero.ui.cadastro_wizard_steps')
     st = importlib.import_module('streamlit')
