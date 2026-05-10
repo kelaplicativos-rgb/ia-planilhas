@@ -19,6 +19,7 @@ GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ACTIVE_KEY = 'home_slim_active_panel'
+LEGACY_ORIGIN_RADIO_KEY = 'frontpage_origin_radio'
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -102,6 +103,24 @@ def _current_origin_choice() -> str:
     return ''
 
 
+def _clear_legacy_origin_widget_state(operation: str) -> None:
+    """Evita estado visual antigo do Streamlit após mudança das opções.
+
+    O erro frontend "Bad 'setIn' index" aparece quando o navegador mantém um
+    estado de widget antigo incompatível com a árvore atual. Separar a chave por
+    operação e remover a chave antiga força o Streamlit a montar o rádio limpo.
+    """
+    st.session_state.pop(LEGACY_ORIGIN_RADIO_KEY, None)
+    valid_keys = {
+        f'frontpage_origin_radio_{operation}',
+        'home_pricing_enabled_toggle',
+    }
+    for key in list(st.session_state.keys()):
+        text = str(key)
+        if text.startswith('frontpage_origin_radio') and text not in valid_keys:
+            st.session_state.pop(key, None)
+
+
 def _render_pricing_frontpage() -> None:
     _render_section_card(
         'Precificação',
@@ -122,6 +141,7 @@ def _render_pricing_frontpage() -> None:
 
 def _render_origin_frontpage() -> str:
     operation = _preferred_operation_from_models()
+    _clear_legacy_origin_widget_state(operation)
     operation_label = 'atualização de estoque' if operation == 'estoque' else 'cadastro de produtos'
     _render_section_card(
         'Origem dos dados',
@@ -143,7 +163,7 @@ def _render_origin_frontpage() -> str:
         'Origem dos dados',
         labels,
         index=index,
-        key='frontpage_origin_radio',
+        key=f'frontpage_origin_radio_{operation}',
         label_visibility='collapsed',
     )
 
