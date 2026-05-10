@@ -78,20 +78,21 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(len(df), 0)
 
     def test_motores_deduplicam_colunas_do_contrato(self) -> None:
-        cadastro = run_site_operation_engine(
-            operation='cadastro',
-            raw_urls='https://fornecedor.com/p/1',
-            requested_columns=['URL', 'URL', 'Descrição', 'Descrição'],
-            max_pages=1,
-            max_products=1,
-        )
-        estoque = run_site_operation_engine(
-            operation='estoque',
-            raw_urls='https://fornecedor.com/p/1',
-            requested_columns=['Código', 'Código', 'Balanço (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'],
-            max_pages=1,
-            max_products=1,
-        )
+        with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
+            cadastro = run_site_operation_engine(
+                operation='cadastro',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'URL', 'Descrição', 'Descrição'],
+                max_pages=1,
+                max_products=1,
+            )
+            estoque = run_site_operation_engine(
+                operation='estoque',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['Código', 'Código', 'Balanço (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'],
+                max_pages=1,
+                max_products=1,
+            )
 
         self.assertEqual(list(cadastro.columns), ['URL', 'Descrição'])
         self.assertEqual(list(estoque.columns), ['Código', 'Balanço (OBRIGATÓRIO)'])
