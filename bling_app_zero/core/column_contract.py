@@ -16,31 +16,53 @@ class RequestedField:
     required: bool = False
 
 
+# Colunas do modelo do Bling que NÃO devem ser preenchidas por chute de site.
+# Se o site não trouxer um dado explicitamente confiável para elas, ficam vazias.
+STRICT_EMPTY_TERMS = [
+    'unidade', 'ncm', 'origem', 'ipi', 'valor ipi', 'situacao', 'situação',
+    'fornecedor', 'localizacao', 'localização', 'estoque maximo', 'estoque máximo',
+    'estoque minimo', 'estoque mínimo', 'peso liquido', 'peso líquido', 'peso bruto',
+    'largura', 'altura', 'profundidade', 'comprimento', 'data validade',
+    'itens p caixa', 'itens por caixa', 'produto variacao', 'produto variação',
+    'tipo producao', 'tipo produção', 'classe de enquadramento', 'lista de servicos',
+    'lista de serviços', 'tipo do item', 'grupo de tags', 'tags', 'tributos',
+    'codigo pai', 'código pai', 'codigo integracao', 'código integração',
+    'grupo de produtos', 'cest', 'volumes', 'cross docking', 'cross-docking',
+    'meses garantia', 'clonar dados do pai', 'condicao do produto', 'condição do produto',
+    'frete gratis', 'frete grátis', 'numero fci', 'número fci', 'video', 'vídeo',
+    'unidade de medida', 'preco de compra', 'preço de compra', 'valor base icms',
+    'valor icms', 'icms proprio', 'icms próprio',
+]
+
 KIND_SYNONYMS = {
-    'id_produto': ['id produto', 'id', 'identificador'],
-    'codigo': ['codigo produto', 'codigo', 'cod produto', 'sku', 'referencia', 'ref', 'modelo'],
-    'gtin': ['gtin', 'ean', 'codigo de barras', 'barcode'],
+    'id_produto': ['id produto', 'identificador do produto'],
+    'codigo': ['codigo produto', 'código produto', 'codigo', 'código', 'cod produto', 'sku', 'referencia', 'referência'],
+    'gtin': ['gtin', 'ean', 'codigo de barras', 'código de barras', 'barcode'],
     'descricao_complementar': [
-        'descricao complementar', 'descrição complementar', 'descricao completa', 'descrição completa',
-        'descricao longa', 'descrição longa', 'descricao detalhada', 'descrição detalhada',
+        'descricao complementar', 'descrição complementar',
+        'descricao completa', 'descrição completa',
+        'descricao longa', 'descrição longa',
+        'descricao detalhada', 'descrição detalhada',
         'descricao do produto no fornecedor', 'descrição do produto no fornecedor',
-        'informacoes adicionais', 'informações adicionais', 'caracteristicas', 'características',
-        'especificacoes', 'especificações', 'ficha tecnica', 'ficha técnica',
-        'detalhes do produto', 'detalhes', 'sobre o produto', 'conteudo do produto',
+        'informacoes adicionais', 'informações adicionais',
+        'caracteristicas', 'características',
+        'especificacoes', 'especificações',
+        'ficha tecnica', 'ficha técnica',
+        'detalhes do produto', 'sobre o produto', 'conteudo do produto', 'conteúdo do produto',
     ],
-    'descricao_curta': ['descricao curta', 'descrição curta', 'resumo', 'titulo curto', 'nome curto'],
-    'descricao': ['descricao produto', 'descricao', 'nome produto', 'titulo', 'nome', 'produto'],
-    'deposito': ['deposito', 'almoxarifado', 'local estoque'],
-    'estoque': ['balanco', 'estoque', 'quantidade', 'saldo', 'qtd'],
-    'preco_custo': ['preco de custo', 'preco custo', 'valor custo', 'custo'],
-    'preco_unitario': ['preco unitario', 'preco de venda', 'preco venda', 'valor unitario', 'valor venda', 'preco', 'valor'],
-    'observacao': ['observacao', 'obs', 'comentario'],
+    'descricao_curta': ['descricao curta', 'descrição curta', 'resumo do produto', 'titulo curto', 'título curto', 'nome curto'],
+    'descricao': ['descricao produto', 'descrição produto', 'descricao', 'descrição', 'nome produto', 'nome do produto', 'titulo', 'título'],
+    'deposito': ['deposito', 'depósito', 'almoxarifado', 'local estoque'],
+    'estoque': ['balanco', 'balanço', 'estoque', 'quantidade', 'saldo', 'qtd'],
+    'preco_custo': ['preco de custo', 'preço de custo', 'preco custo', 'preço custo', 'valor custo'],
+    'preco_unitario': ['preco unitario', 'preço unitário', 'preco de venda', 'preço de venda', 'preco venda', 'preço venda', 'valor unitario', 'valor unitário', 'valor venda', 'preco', 'preço'],
+    'observacao': ['observacao', 'observação', 'obs', 'comentario', 'comentário'],
     'data': ['data', 'dt'],
-    'url': ['url', 'link', 'pagina'],
-    'nome_apoio': ['nome apoio', 'apoio', 'nome auxiliar'],
-    'imagem': ['imagem', 'imagens', 'url imagens', 'foto', 'fotos'],
+    'url': ['url', 'link', 'pagina', 'página', 'link externo'],
+    'nome_apoio': ['nome apoio', 'nome auxiliar'],
+    'imagem': ['imagem', 'imagens', 'url imagens', 'url imagens externas', 'foto', 'fotos'],
     'marca': ['marca', 'fabricante'],
-    'categoria': ['categoria', 'departamento'],
+    'categoria': ['categoria', 'categoria do produto', 'departamento'],
     'ncm': ['ncm'],
 }
 
@@ -52,10 +74,17 @@ def _clean_column_key(column_name: str) -> str:
     return key
 
 
+def _is_strict_empty_column(key: str) -> bool:
+    return any(normalize_key(term) in key for term in STRICT_EMPTY_TERMS)
+
+
 def infer_kind(column_name: str) -> str:
-    """Detecta o tipo da coluna priorizando nomes mais específicos."""
+    """Detecta o tipo da coluna sem chutar em colunas sensíveis do Bling."""
     key = _clean_column_key(column_name)
     if not key:
+        return 'custom'
+
+    if _is_strict_empty_column(key):
         return 'custom'
 
     best_kind = 'custom'
@@ -72,8 +101,8 @@ def infer_kind(column_name: str) -> str:
                 score = 1000 + len(syn)
             elif syn in key:
                 score = 500 + len(syn)
-            elif key in syn:
-                score = 300 + len(key)
+            # Não usamos mais "key in syn" para evitar que palavras genéricas
+            # como fornecedor/produto/valor virem descrição/preço por engano.
 
             if score > best_score:
                 best_score = score
