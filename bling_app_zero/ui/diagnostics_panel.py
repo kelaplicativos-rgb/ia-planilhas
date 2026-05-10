@@ -63,7 +63,7 @@ def _render_engine_inventory() -> None:
 def render_diagnostics_panel() -> None:
     with st.sidebar:
         with st.expander('Ferramentas de conferência', expanded=False):
-            st.caption('Use esta área para testar rapidamente os fluxos principais sem precisar importar arquivos reais.')
+            st.caption('Teste rápido dos fluxos principais sem importar arquivos reais.')
             _render_openai_validation()
             _render_engine_inventory()
 
