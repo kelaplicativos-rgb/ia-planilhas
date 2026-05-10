@@ -9,6 +9,8 @@ import pandas as pd
 
 
 LIGHT_CRITICAL_MODULES = [
+    'app',
+    'bling_app_zero.ui.home',
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.estoque_wizard_steps',
@@ -50,6 +52,18 @@ EXPECTED_ESTOQUE_STEPS = [
 def test_light_critical_wizard_modules_import() -> None:
     for module_name in LIGHT_CRITICAL_MODULES:
         importlib.import_module(module_name)
+
+
+def test_streamlit_entrypoint_uses_home_wizard() -> None:
+    app_source = Path('app.py').read_text(encoding='utf-8')
+    home_source = Path('bling_app_zero/ui/home.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.home import render_home' in app_source
+    assert 'render_home()' in app_source
+    assert 'from bling_app_zero.ui.home_wizard import render_home_wizard' in home_source
+    assert 'from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard' in home_source
+    assert 'run_wizard_state_guard()' in home_source
+    assert 'render_home_wizard()' in home_source
 
 
 def test_site_critical_modules_import_without_running_scraper() -> None:
