@@ -9,6 +9,7 @@ from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
 from bling_app_zero.engines.fast_site_scraper.block_scraper import scrape_product_blocks
 from bling_app_zero.engines.fast_site_scraper.models import FastProductPage
 from bling_app_zero.engines.fast_site_scraper.page_parser import soup_from_page
+from bling_app_zero.engines.fast_site_scraper.text_cleaner import clean_product_description
 from bling_app_zero.engines.real_stock_detector import OUT_STOCK_TERMS, detect_real_stock
 
 
@@ -88,24 +89,30 @@ def extract_description(page: FastProductPage) -> str:
 def extract_description_complementar(page: FastProductPage) -> str:
     product = _first_product(page)
     jsonld_description = clean_cell(product.get('description') or '') if product else ''
+    title = extract_description(page)
+    title_key = normalize_key(title)
     blocks = scrape_product_blocks(page)
-    title_key = normalize_key(extract_description(page))
     values: list[str] = []
     for value in [blocks.complementary_description, blocks.attributes, blocks.technical_sheet, jsonld_description]:
         text = clean_cell(value)
         if text and normalize_key(text) != title_key:
             values.append(text)
-    return _join_unique(values, limit=5000)
+    raw = _join_unique(values, limit=5000)
+    return clean_product_description(raw, title=title, limit=1600)
 
 
 def extract_ficha_tecnica(page: FastProductPage) -> str:
+    title = extract_description(page)
     blocks = scrape_product_blocks(page)
-    return clean_cell(blocks.technical_sheet or blocks.attributes or blocks.all_blocks)[:3500]
+    raw = clean_cell(blocks.technical_sheet or blocks.attributes or blocks.all_blocks)[:3500]
+    return clean_product_description(raw, title=title, limit=1400)
 
 
 def extract_caracteristicas(page: FastProductPage) -> str:
+    title = extract_description(page)
     blocks = scrape_product_blocks(page)
-    return clean_cell(blocks.attributes or blocks.complementary_description or blocks.all_blocks)[:3500]
+    raw = clean_cell(blocks.attributes or blocks.complementary_description or blocks.all_blocks)[:3500]
+    return clean_product_description(raw, title=title, limit=1400)
 
 
 def extract_brand(page: FastProductPage) -> str:
