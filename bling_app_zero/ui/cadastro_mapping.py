@@ -370,7 +370,6 @@ def _render_mapping_select(
         render_mapping_title(label)
         if default_value:
             st.text_input(target, value=default_value, disabled=True, key=f'{widget_key}_default', label_visibility='collapsed')
-            st.caption('Campo protegido: preenchido automaticamente para evitar mapeamento errado.')
             selected = ''
             info_after = {'level': 'verde', 'emoji': '🟢', 'label': 'padrão seguro', 'score': 100, 'order': 2}
         else:
