@@ -343,15 +343,34 @@ def _render_operation_step() -> None:
     }
     _render_section_card(
         'Etapa 2',
-        'O que você quer fazer?',
-        'Escolha explicitamente o fluxo. O sistema não vai mais adivinhar cadastro ou estoque apenas pelo modelo carregado.',
+        'Operação reconhecida pelo modelo',
+        'Quando o modelo enviado for oficial de estoque, o sistema seleciona automaticamente Atualizar estoque. Se houver os dois modelos, você ainda pode escolher manualmente.',
     )
     if not available:
         st.warning('Envie um modelo do Bling antes de escolher a operação.')
         _render_nav_buttons(allow_next=False)
         return
-    labels = [labels_by_value[value] for value in available]
+
     current = _selected_operation()
+    if len(available) == 1:
+        selected = available[0]
+        if current != selected:
+            st.session_state[FLOW_OPERATION_KEY] = selected
+            st.session_state['operacao_final'] = selected
+            st.session_state['tipo_operacao_final'] = selected
+        st.success(f'Fluxo reconhecido automaticamente: {labels_by_value[selected]}')
+        if selected == 'estoque':
+            st.caption('Modelo de saldo/estoque detectado: o próximo fluxo será de atualização de estoque.')
+        else:
+            st.caption('Modelo de cadastro detectado: o próximo fluxo será de cadastro de produtos.')
+        try:
+            st.query_params['operacao'] = selected
+        except Exception:
+            pass
+        _render_nav_buttons(allow_next=True, next_label='Continuar no fluxo reconhecido')
+        return
+
+    labels = [labels_by_value[value] for value in available]
     index = available.index(current) if current in available else 0
     choice_label = st.radio(
         'Operação',
