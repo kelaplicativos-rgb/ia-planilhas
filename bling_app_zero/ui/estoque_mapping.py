@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bling_app_zero.ui.shared_mapping import render_shared_stock_mapping
+
 
 def render_manual_estoque_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None, deposito: str) -> None:
-    """Entrada compartilhada do mapeamento de estoque.
+    """Entrada oficial do mapeamento de estoque.
 
-    O mapeador oficial e mais completo continua sendo o de cadastro. O estoque
-    usa esse mesmo motor, passando apenas o depósito como valor fixo do fluxo.
-    Assim, cadastro e estoque não evoluem em caminhos diferentes.
+    O estoque usa o mapeador compartilhado, baseado no motor potente do cadastro,
+    para evitar dois mapeadores evoluindo separados e quebrando comportamento.
     """
-    from bling_app_zero.ui.cadastro_mapping import render_manual_stock_mapping
+    render_shared_stock_mapping(df_source, df_modelo, deposito)
 
-    render_manual_stock_mapping(df_source, df_modelo, deposito)
+
+__all__ = ['render_manual_estoque_mapping']
