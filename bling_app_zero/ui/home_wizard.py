@@ -501,7 +501,7 @@ def render_home_wizard() -> None:
         _render_model_step()
     elif step == STEP_OPERACAO:
         _render_operation_step()
-    elif step == STEP_PRECIFICACACAO:
+    elif step == STEP_PRECIFICACAO:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
