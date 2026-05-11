@@ -287,9 +287,8 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out[col] = out[col].apply(clean_cell)
 
-    out = _fill_default_measures(out)
-    out = _fill_measure_unit(out)
-    out = _fill_default_supplier(out)
+    # BLINGFIX: não aplicar padrões fixos por fora da sidebar/regras.
+    # Fornecedor, unidade e medidas só serão preenchidos por regras customizadas habilitadas.
     out = _apply_custom_rules(out)
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
