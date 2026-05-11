@@ -20,6 +20,10 @@ NEW_RULE_VALUE_KEY = 'new_rule_value'
 NEW_RULE_CLEAR_PENDING_KEY = 'new_rule_clear_pending'
 EDITING_RULE_ID_KEY = 'rules_panel_editing_rule_id'
 
+RESOURCE_MANAGED_RULES = {
+    ('fornecedor', 'não definido'),
+}
+
 
 def _notice(text: str) -> None:
     st.session_state[NOTICE_KEY] = text
@@ -42,9 +46,17 @@ def _safe_rule_id(rule: dict[str, Any], index: int) -> str:
     return str(rule.get('id') or f'rule_{index}')
 
 
+def _rule_text(value: object) -> str:
+    return str(value or '').strip()
+
+
+def _rule_key(value: object) -> str:
+    return _rule_text(value).lower()
+
+
 def _rule_label(rule: dict[str, Any]) -> str:
-    column = str(rule.get('target_column') or rule.get('condition') or 'Coluna').strip()
-    value = str(rule.get('fill_value') or '').strip()
+    column = _rule_text(rule.get('target_column') or rule.get('condition') or 'Coluna')
+    value = _rule_text(rule.get('fill_value'))
     if value:
         return f'{column} vazio → {value}'
     return f'{column} vazio → vazio'
@@ -58,8 +70,19 @@ def _all_custom_rules() -> list[dict[str, Any]]:
     return [dict(rule) for rule in custom_rules]
 
 
+def _is_resource_managed_rule(rule: dict[str, Any]) -> bool:
+    column = _rule_key(rule.get('target_column') or rule.get('condition'))
+    value = _rule_key(rule.get('fill_value'))
+    source = _rule_key(rule.get('source'))
+    return source == 'system' or (column, value) in RESOURCE_MANAGED_RULES
+
+
 def _editable_rules() -> list[dict[str, Any]]:
-    return [rule for rule in _all_custom_rules() if bool(rule.get('enabled', False))]
+    return [
+        rule
+        for rule in _all_custom_rules()
+        if bool(rule.get('enabled', False)) and not _is_resource_managed_rule(rule)
+    ]
 
 
 def _enable_rule_by_target(target_column: str) -> None:
