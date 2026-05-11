@@ -27,6 +27,9 @@ def inject_unified_light_layout(force: bool = False) -> None:
             --bling-success-bg: #ecfdf5;
             --bling-success-text: #166534;
             --bling-warning: #ca8a04;
+            --bling-warning-bg: #fff7ed;
+            --bling-warning-border: rgba(251, 146, 60, 0.34);
+            --bling-warning-text: #9a3412;
             --bling-danger: #dc2626;
             --bling-radius-xl: 24px;
             --bling-radius-lg: 18px;
@@ -255,8 +258,48 @@ def inject_unified_light_layout(force: bool = False) -> None:
         .stAlert,
         div[data-testid="stAlert"] {
             border-radius: 16px !important;
-            border: 1px solid rgba(37, 99, 235, 0.10) !important;
             box-shadow: none !important;
+        }
+
+        div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]),
+        div[data-testid="stAlert"]:has(svg[data-testid="stIconMaterial"]),
+        .stAlert:has([data-testid="stAlertContentWarning"]) {
+            background: var(--bling-warning-bg) !important;
+            border: 1px solid var(--bling-warning-border) !important;
+            color: var(--bling-warning-text) !important;
+        }
+
+        div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) *,
+        .stAlert:has([data-testid="stAlertContentWarning"]) * {
+            color: var(--bling-warning-text) !important;
+        }
+
+        .bling-blocked-next-card {
+            width: 100% !important;
+            box-sizing: border-box !important;
+            margin: 0.55rem 0 0 0 !important;
+            padding: 0.78rem 0.82rem !important;
+            border-radius: 16px !important;
+            background: linear-gradient(135deg, #fff7ed, #fffbeb) !important;
+            border: 1px solid var(--bling-warning-border) !important;
+            color: var(--bling-warning-text) !important;
+            box-shadow: 0 8px 20px rgba(251, 146, 60, 0.10) !important;
+        }
+
+        .bling-blocked-next-title {
+            color: var(--bling-warning-text) !important;
+            font-size: 0.88rem !important;
+            font-weight: 880 !important;
+            line-height: 1.25 !important;
+            margin: 0 0 0.24rem 0 !important;
+        }
+
+        .bling-blocked-next-text {
+            color: #9a3412 !important;
+            font-size: 0.82rem !important;
+            font-weight: 650 !important;
+            line-height: 1.38 !important;
+            margin: 0 !important;
         }
 
         .stButton > button,
@@ -279,6 +322,30 @@ def inject_unified_light_layout(force: bool = False) -> None:
             background: var(--bling-surface-soft) !important;
             box-shadow: 0 10px 22px rgba(37, 99, 235, 0.10) !important;
             transform: translateY(-1px) !important;
+        }
+
+        .stButton > button:disabled,
+        .stButton > button[disabled],
+        .stDownloadButton > button:disabled,
+        .stDownloadButton > button[disabled] {
+            cursor: not-allowed !important;
+            opacity: 1 !important;
+            color: #9a3412 !important;
+            background: linear-gradient(135deg, #fff7ed, #fffbeb) !important;
+            border: 1px solid var(--bling-warning-border) !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+
+        .stButton > button:disabled:hover,
+        .stButton > button[disabled]:hover,
+        .stDownloadButton > button:disabled:hover,
+        .stDownloadButton > button[disabled]:hover {
+            color: #9a3412 !important;
+            background: linear-gradient(135deg, #fff7ed, #fffbeb) !important;
+            border: 1px solid var(--bling-warning-border) !important;
+            box-shadow: none !important;
+            transform: none !important;
         }
 
         button[kind="primary"],
@@ -378,6 +445,19 @@ def inject_unified_light_layout(force: bool = False) -> None:
             .bling-home-button-center {
                 width: min(100%, 260px) !important;
                 margin-top: 0.68rem !important;
+            }
+
+            .bling-blocked-next-card {
+                padding: 0.72rem 0.74rem !important;
+                border-radius: 14px !important;
+            }
+
+            .bling-blocked-next-title {
+                font-size: 0.82rem !important;
+            }
+
+            .bling-blocked-next-text {
+                font-size: 0.78rem !important;
             }
 
             div[data-testid="stFileUploader"] section {
