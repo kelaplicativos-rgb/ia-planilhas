@@ -148,7 +148,7 @@ def _safe_row_data(row: pd.Series, max_columns: int = 36) -> dict[str, str]:
     return data
 
 
-def _rows_payload(df: pd.DataFrame, columns: dict[str, str], max_rows: int, include_custom_task_rows: bool = False) -> list[dict[str, Any]]:
+def _rows_payload(df: pd.DataFrame, columns: dict[str, str], max_rows: int, include_custom_task_rows: bool = False, include_grammar_rows: bool = False) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for index, row in df.head(max_rows).iterrows():
         title = _value(row, columns.get('title', ''))
@@ -157,7 +157,8 @@ def _rows_payload(df: pd.DataFrame, columns: dict[str, str], max_rows: int, incl
         needs_title = bool(columns.get('title')) and not title
         needs_description = bool(columns.get('description')) and (not description or len(description) < 35)
         needs_ncm = bool(columns.get('ncm')) and not ncm
-        if not include_custom_task_rows and not (needs_title or needs_description or needs_ncm):
+        has_text_to_review = bool(include_grammar_rows and (title or description))
+        if not include_custom_task_rows and not has_text_to_review and not (needs_title or needs_description or needs_ncm):
             continue
         payload.append({
             'row_index': int(index),
@@ -167,7 +168,7 @@ def _rows_payload(df: pd.DataFrame, columns: dict[str, str], max_rows: int, incl
             'title': title,
             'description': description,
             'ncm': ncm,
-            'needs': {'title': needs_title, 'description': needs_description, 'ncm': needs_ncm},
+            'needs': {'title': needs_title, 'description': needs_description, 'ncm': needs_ncm, 'grammar': has_text_to_review},
             'row_data': _safe_row_data(row),
         })
     return payload
@@ -196,6 +197,10 @@ def _normalize_suggestions(raw: list[dict[str, Any]], df: pd.DataFrame, columns:
         if row_index not in df.index:
             continue
         field = str(item.get('field') or '').strip().lower()
+        if field == 'grammar_title':
+            field = 'title'
+        if field == 'grammar_description':
+            field = 'description'
         column = _resolve_ai_column(item, field, columns, df)
         if not column:
             continue
@@ -223,7 +228,8 @@ def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], acti
     if not api_key:
         return []
     clean_task = clean_cell(custom_task)
-    rows = _rows_payload(df, columns, max_rows=max_rows, include_custom_task_rows=bool(clean_task))
+    wants_grammar = bool(actions.get('grammar'))
+    rows = _rows_payload(df, columns, max_rows=max_rows, include_custom_task_rows=bool(clean_task), include_grammar_rows=wants_grammar)
     if not rows:
         return []
     enabled_actions = [name for name, enabled in actions.items() if enabled]
@@ -235,6 +241,7 @@ def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], acti
         'Melhore dados de produtos sem inventar especificações técnicas. Use somente dados da linha fornecida. '
         'Para NCM, gere apenas sugestão de 8 dígitos quando houver contexto suficiente. '
         'Nunca altere preço, GTIN/EAN, estoque, depósito, código/SKU, ID, imagens ou URLs. '
+        'Quando a ação grammar estiver ligada, corrija apenas ortografia, acentos, pontuação, capitalização e gramática do título e da descrição, sem mudar o sentido comercial do produto. '
         'Quando receber tarefa livre, converta em sugestões linha a linha, sempre apontando uma coluna existente e segura.'
     )
     user = {
@@ -245,12 +252,13 @@ def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], acti
         'rules': [
             'title: reformular ou criar título curto, claro e comercial, sem inventar voltagem, cor, tamanho ou compatibilidade.',
             'description: melhorar descrição complementar com texto limpo, profissional e fiel ao conteúdo existente.',
+            'grammar: corrigir somente ortografia e gramática de title e description existentes, sem criar características novas.',
             'ncm: sugerir NCM de 8 dígitos somente quando estiver vazio e houver contexto mínimo.',
             'multitarefa: atender o pedido livre do usuário somente em colunas editáveis e existentes.',
             'Retorne apenas JSON.',
         ],
         'rows': rows,
-        'output_schema': {'suggestions': [{'row_index': 0, 'field': 'title | description | ncm | multitarefa', 'column': 'obrigatório para multitarefa; opcional para title/description/ncm', 'suggested': 'texto sugerido ou NCM de 8 dígitos', 'reason': 'motivo curto'}]},
+        'output_schema': {'suggestions': [{'row_index': 0, 'field': 'title | description | grammar_title | grammar_description | ncm | multitarefa', 'column': 'obrigatório para multitarefa; opcional para title/description/ncm', 'suggested': 'texto sugerido ou NCM de 8 dígitos', 'reason': 'motivo curto'}]},
     }
     payload = {'model': _model_name(), 'temperature': 0.2, 'response_format': {'type': 'json_object'}, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(user, ensure_ascii=False)}]}
     response = httpx.post(OPENAI_CHAT_URL, headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}, json=payload, timeout=60)
@@ -287,7 +295,7 @@ def _fallback_suggestions(df: pd.DataFrame, columns: dict[str, str], actions: di
 def generate_product_ai_suggestions(df: pd.DataFrame, *, actions: dict[str, bool] | None = None, max_rows: int = MAX_ROWS_PER_RUN, custom_task: str = '') -> tuple[list[ProductAISuggestion], str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return [], 'Sem dados finais para revisar.'
-    selected_actions = actions or {'title': True, 'description': True, 'ncm': True}
+    selected_actions = actions or {'title': True, 'description': True, 'ncm': True, 'grammar': False}
     clean_task = clean_cell(custom_task)
     columns = detect_product_columns(df)
     if not any(columns.get(key) for key in ['title', 'description', 'ncm']) and not clean_task:
@@ -306,8 +314,8 @@ def generate_product_ai_suggestions(df: pd.DataFrame, *, actions: dict[str, bool
     local = _fallback_suggestions(df, columns, selected_actions, max_rows=max_rows)
     if local:
         return local, 'OPENAI_API_KEY não configurada. Mostrei sugestões locais seguras.'
-    if clean_task:
-        return [], 'OPENAI_API_KEY não configurada. A multitarefa com pedido livre precisa da IA conectada.'
+    if clean_task or bool(selected_actions.get('grammar')):
+        return [], 'OPENAI_API_KEY não configurada. Ortografia/gramática e multitarefa livre precisam da IA conectada.'
     return [], 'OPENAI_API_KEY não configurada e não encontrei sugestões locais seguras.'
 
 
