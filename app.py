@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.14-BLINGFIX-MODELO-UPLOAD-CARD'
+APP_VERSION = '3.5.15-BLINGFIX-SIDEBAR-CLOSE-BUTTON'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -50,17 +50,52 @@ def _inject_streamlit_toolbar_fix() -> None:
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
-            z-index: 999998 !important;
+            z-index: 1000002 !important;
+            overflow: visible !important;
         }
 
+        section[data-testid="stSidebar"] * {
+            pointer-events: auto !important;
+        }
+
+        section[data-testid="stSidebar"] button,
+        section[data-testid="stSidebar"] button[kind="header"],
+        section[data-testid="stSidebar"] button[data-testid="baseButton-header"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+        section[data-testid="stSidebar"] [data-testid="collapsedControl"],
         button[kind="header"],
         button[data-testid="collapsedControl"],
-        [data-testid="collapsedControl"] {
+        button[data-testid="baseButton-header"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        button[aria-label*="sidebar" i],
+        button[title*="sidebar" i] {
             display: flex !important;
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
-            z-index: 1000001 !important;
+            z-index: 1000005 !important;
+        }
+
+        section[data-testid="stSidebar"] button[kind="header"],
+        section[data-testid="stSidebar"] button[data-testid="baseButton-header"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+        section[data-testid="stSidebar"] button[aria-label*="sidebar" i],
+        section[data-testid="stSidebar"] button[title*="sidebar" i] {
+            position: sticky !important;
+            top: 0.45rem !important;
+            margin-left: auto !important;
+            margin-right: 0.35rem !important;
+            width: 2.25rem !important;
+            min-width: 2.25rem !important;
+            height: 2.25rem !important;
+            min-height: 2.25rem !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 999px !important;
+            background: rgba(255, 255, 255, 0.96) !important;
+            border: 1px solid rgba(37, 99, 235, 0.18) !important;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10) !important;
         }
 
         .bling-wizard-progress-card {
