@@ -157,14 +157,16 @@ def _filter_targets(
     required_targets: set[str],
 ) -> list[str]:
     levels = {target: str(confidence.get(target, {}).get('level') or '') for target in ordered_targets}
-    problem_targets = [target for target in ordered_targets if levels.get(target) in {'vermelho', 'amarelo'}]
+    red_targets = [target for target in ordered_targets if levels.get(target) == 'vermelho']
+    yellow_targets = [target for target in ordered_targets if levels.get(target) == 'amarelo']
+    green_targets = [target for target in ordered_targets if levels.get(target) == 'verde']
     required = [target for target in ordered_targets if target in required_targets]
 
     col_filter, col_search = st.columns([1, 1])
     with col_filter:
         mode = st.radio(
             'Visualização do mapeamento',
-            ['Correções necessárias', 'Obrigatórios', 'Todos os campos'],
+            ['Todos', '🔴 Vermelhos', '🟡 Amarelos', '🟢 Verdes', 'Obrigatórios'],
             horizontal=True,
             key=f'{mapping_key}_view_mode',
         )
@@ -176,20 +178,24 @@ def _filter_targets(
             placeholder='Ex: preço, fornecedor, GTIN, imagem...',
         )
 
-    if mode == 'Obrigatórios':
+    if mode == '🔴 Vermelhos':
+        selected = red_targets
+    elif mode == '🟡 Amarelos':
+        selected = yellow_targets
+    elif mode == '🟢 Verdes':
+        selected = green_targets
+    elif mode == 'Obrigatórios':
         selected = required
-    elif mode == 'Todos os campos':
-        selected = ordered_targets
     else:
-        selected = problem_targets or required
+        selected = ordered_targets
 
     search_key = normalize_key(search)
     if search_key:
-        selected = [target for target in ordered_targets if search_key in normalize_key(target)]
+        selected = [target for target in selected if search_key in normalize_key(target)]
 
     st.caption(
         f'Mostrando {len(selected)} de {len(ordered_targets)} campo(s). '
-        'Campos verdes ficam salvos e não precisam aparecer o tempo todo.'
+        f'🔴 {len(red_targets)} · 🟡 {len(yellow_targets)} · 🟢 {len(green_targets)} · Obrigatórios {len(required)}.'
     )
     return selected
 
