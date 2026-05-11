@@ -122,12 +122,12 @@ def _run_stock_site_capture(
         progress_callback=make_site_progress_callback(progress_bar, status_box),
     )
     save_site_source(
-        df_site,
-        raw_urls,
-        requested_columns,
-        cadastro_model_df=None,
-        estoque_model_df=df_modelo_estoque,
-        operation_model_df=df_modelo_estoque,
+        df_site=df_site,
+        raw_urls=raw_urls,
+        requested_columns=requested_columns,
+        df_modelo_cadastro=None,
+        df_modelo_estoque=df_modelo_estoque,
+        df_modelo=df_modelo_estoque,
         operation=OPERATION,
     )
     _store_stock_site_df(df_site)
