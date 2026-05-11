@@ -140,6 +140,12 @@ def _run_site_capture(
 
 def render_site_panel() -> None:
     operation = _current_site_operation()
+    if operation == 'estoque':
+        from bling_app_zero.ui.estoque_site_panel import render_estoque_site_panel
+
+        render_estoque_site_panel()
+        return
+
     config = config_for_site_operation(operation)
 
     st.markdown(
