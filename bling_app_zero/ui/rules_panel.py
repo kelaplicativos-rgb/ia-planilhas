@@ -62,15 +62,6 @@ def _editable_rules() -> list[dict[str, Any]]:
     return [rule for rule in _all_custom_rules() if bool(rule.get('enabled', False))]
 
 
-def _has_enabled_rule_for_column(target_column: str) -> bool:
-    target = str(target_column or '').strip().lower()
-    for rule in _editable_rules():
-        column = str(rule.get('target_column') or rule.get('condition') or '').strip().lower()
-        if column == target:
-            return True
-    return False
-
-
 def _enable_rule_by_target(target_column: str) -> None:
     target = str(target_column or '').strip().lower()
     for rule in _all_custom_rules():
@@ -78,13 +69,6 @@ def _enable_rule_by_target(target_column: str) -> None:
         if column == target:
             set_custom_rule_enabled(str(rule.get('id')), True)
             return
-
-
-def _add_supplier_default_rule() -> None:
-    add_custom_rule('Fornecedor', 'Fornecedor', 'Não definido', True)
-    _enable_rule_by_target('Fornecedor')
-    _notice('Regra de fornecedor padrão adicionada. Ela só preenche quando o campo estiver vazio.')
-    st.rerun()
 
 
 def _add_new_rule_from_fields(target: object, value: object) -> None:
@@ -168,19 +152,10 @@ def _render_rules_list() -> None:
         _render_rule_item(rule, index)
 
 
-def _render_supplier_quick_rule() -> None:
-    if _has_enabled_rule_for_column('Fornecedor'):
-        st.caption('Fornecedor padrão já configurado nas regras existentes.')
-        return
-    if st.button('Fornecedor vazio → Não definido', use_container_width=True, key='add_supplier_default_rule'):
-        _add_supplier_default_rule()
-
-
 def _render_new_rule() -> None:
     _prepare_new_rule_fields()
     st.markdown('##### Nova regra')
-    st.caption('Regras manuais não usam IA e devem completar lacunas sem sobrescrever o mapeamento.')
-    _render_supplier_quick_rule()
+    st.caption('Regras manuais completam lacunas sem sobrescrever o mapeamento.')
 
     target = st.text_input('Coluna', key=NEW_RULE_TARGET_KEY, placeholder='Ex: Fornecedor')
     value = st.text_input('Valor', key=NEW_RULE_VALUE_KEY, placeholder='Ex: Não definido')
