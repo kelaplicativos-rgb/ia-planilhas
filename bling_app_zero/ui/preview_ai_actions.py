@@ -14,10 +14,14 @@ from bling_app_zero.core.ai_resource_rules import (
     AI_RESOURCE_DESCRIPTION_SIZE,
     AI_RESOURCE_IMPROVE_CATALOG_TEXT,
     AI_RESOURCE_LIMIT_TITLE_60,
+    AI_RESOURCE_MARKETPLACE_TEXT_GUARD,
+    AI_RESOURCE_ORTHOGRAPHY_GRAMMAR,
+    AI_RESOURCE_OUT_OF_CONTEXT_FILTER,
     AI_RESOURCE_SUGGEST_NCM,
     get_ai_resources,
 )
 from bling_app_zero.core.debug import add_debug
+from bling_app_zero.core.marketplace_text_guard import alerts_to_dataframe, analyze_marketplace_text
 from bling_app_zero.core.text import clean_cell
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 
@@ -82,6 +86,7 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
 
     resources = get_ai_resources()
     text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
+    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
     ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
     limit_title = bool(resources.get(AI_RESOURCE_LIMIT_TITLE_60, True))
     description_size = str(resources.get(AI_RESOURCE_DESCRIPTION_SIZE, 'media') or 'media')
@@ -89,7 +94,7 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
 
     out = suggestions_df.copy()
     if 'Campo' in out.columns:
-        if not text_enabled:
+        if not text_enabled and not grammar_enabled:
             out = out[~out['Campo'].astype(str).str.lower().isin(['title', 'description'])]
         if not ncm_enabled:
             out = out[out['Campo'].astype(str).str.lower() != 'ncm']
@@ -100,9 +105,9 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
     def _adjust(row: pd.Series) -> str:
         field = str(row.get('Campo') or '').strip().lower()
         suggestion = clean_cell(row.get('Sugestão IA', ''))
-        if field == 'title' and text_enabled and limit_title:
+        if field == 'title' and (text_enabled or grammar_enabled) and limit_title:
             return _truncate_text(suggestion, 60)
-        if field == 'description' and text_enabled:
+        if field == 'description' and (text_enabled or grammar_enabled):
             return _truncate_text(suggestion, description_limit)
         return suggestion
 
@@ -122,6 +127,23 @@ def _render_detected_columns(df: pd.DataFrame) -> None:
     }
     with st.expander('Colunas que a IA vai usar', expanded=False):
         st.dataframe(pd.DataFrame([detected]).astype(str), use_container_width=True, height=90)
+
+
+def _render_marketplace_guard_alerts(df_final: pd.DataFrame, resources: dict) -> None:
+    alerts = analyze_marketplace_text(df_final, resources)
+    guard_enabled = bool(resources.get(AI_RESOURCE_MARKETPLACE_TEXT_GUARD, False))
+    context_enabled = bool(resources.get(AI_RESOURCE_OUT_OF_CONTEXT_FILTER, False))
+    if not guard_enabled and not context_enabled:
+        return
+    if not alerts:
+        st.success('Blindagem marketplace: nenhum termo proibido/sensível ou descrição fora de contexto foi detectado no preview final.')
+        return
+
+    alerts_df = alerts_to_dataframe(alerts)
+    st.warning(f'Blindagem marketplace encontrou {len(alerts_df)} alerta(s). Revise antes de baixar o CSV final.')
+    with st.expander('⚠️ Alertas de palavras proibidas e descrição fora de contexto', expanded=True):
+        st.dataframe(alerts_df.astype(str), use_container_width=True, height=260)
+        st.caption('Por segurança, o sistema apenas alerta. Use a IA de catálogo ou edite o mapeamento para corrigir antes do download.')
 
 
 def _store_applied_df(operation: str, df_applied: pd.DataFrame) -> None:
@@ -194,6 +216,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     editor_key = _state_key(op, signature, 'editor')
     resources = get_ai_resources()
     text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
+    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
     ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
     total_rows = int(len(df_final))
 
@@ -202,47 +225,52 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         <div class="bling-inline-card">
             <div class="bling-flow-card-kicker">IA de catálogo</div>
             <div class="bling-flow-card-title">Revisar produtos com IA</div>
-            <p class="bling-flow-card-text">Reformule títulos, melhore descrições complementares, sugira NCM e peça tarefas livres antes do download final.</p>
+            <p class="bling-flow-card-text">Reformule títulos, corrija ortografia e gramática, melhore descrições complementares, sugira NCM e peça tarefas livres antes do download final.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    _render_marketplace_guard_alerts(df_final, resources)
+
     if op != 'cadastro':
         st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
 
-    if not text_enabled and not ncm_enabled:
+    if not text_enabled and not grammar_enabled and not ncm_enabled:
         st.info('Recursos com IA estão desligados na sidebar. Ligue pelo menos um recurso em “Recursos com IA” para gerar sugestões automáticas.')
 
     if ai_ready():
         st.success('IA conectada. As sugestões serão geradas com OpenAI.')
     else:
-        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas NCM e multitarefa livre precisam da chave configurada.')
+        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas ortografia/gramática, NCM e multitarefa livre precisam da chave configurada.')
 
     _render_detected_columns(df_final)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         use_title = st.checkbox('Títulos', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_title'))
     with col2:
         use_description = st.checkbox('Descrições complementares', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_description'))
     with col3:
+        use_grammar = st.checkbox('Ortografia/gramática', value=grammar_enabled, disabled=not grammar_enabled, key=_state_key(op, signature, 'use_grammar'))
+    with col4:
         use_ncm = st.checkbox('NCM vazio', value=ncm_enabled, disabled=not ncm_enabled, key=_state_key(op, signature, 'use_ncm'))
 
     use_title = bool(use_title and text_enabled)
     use_description = bool(use_description and text_enabled)
+    use_grammar = bool(use_grammar and grammar_enabled)
     use_ncm = bool(use_ncm and ncm_enabled)
 
     custom_task = _render_multitask_box(op, signature)
 
     st.info(f'A próxima execução da IA vai analisar todas as {total_rows} linha(s) do preview final.')
 
-    can_run = bool(use_title or use_description or use_ncm or custom_task)
+    can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task)
     if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
         with st.spinner(f'IA revisando {total_rows} produto(s) do preview final...'):
             suggestions, status = generate_product_ai_suggestions(
                 df_final,
-                actions={'title': use_title, 'description': use_description, 'ncm': use_ncm},
+                actions={'title': use_title, 'description': use_description, 'grammar': use_grammar, 'ncm': use_ncm},
                 max_rows=total_rows,
                 custom_task=custom_task,
             )
