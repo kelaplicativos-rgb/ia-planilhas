@@ -241,7 +241,7 @@ def _render_pending_notice(message: str | None = None) -> None:
     st.markdown(
         f"""
         <div class="bling-pending-next-card" role="status" aria-live="polite">
-            <div class="bling-pending-next-title">Próximo passo em espera</div>
+            <div class="bling-pending-next-title">⚠️ Etapa bloqueada</div>
             <div class="bling-pending-next-text">{safe_message}</div>
         </div>
         """,
@@ -278,6 +278,18 @@ def _render_step_header() -> WizardNav:
     return WizardNav(current=current, index=index, total=total, steps=steps)
 
 
+def _render_blocked_next_slot(pending_message: str | None = None) -> None:
+    st.markdown(
+        """
+        <div class="bling-disabled-next-placeholder" aria-hidden="true">
+            Continuação bloqueada
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _render_pending_notice(pending_message)
+
+
 def _render_nav_buttons(
     *,
     allow_next: bool = True,
@@ -298,13 +310,7 @@ def _render_nav_buttons(
             if st.button(next_label, use_container_width=True, key=f'wizard_next_{_current_step()}'):
                 _next_step()
         else:
-            st.button(
-                'Continuar',
-                use_container_width=True,
-                disabled=True,
-                key=f'wizard_next_waiting_{_current_step()}',
-            )
-            _render_pending_notice(pending_message)
+            _render_blocked_next_slot(pending_message)
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
@@ -366,7 +372,7 @@ def _render_model_step() -> None:
         st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
     _render_nav_buttons(
         allow_next=has_model,
-        pending_message='Envie pelo menos um modelo do Bling para liberar o botão Continuar.',
+        pending_message='Envie pelo menos um modelo do Bling para liberar o avanço.',
     )
 
 
