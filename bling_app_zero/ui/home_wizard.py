@@ -83,7 +83,7 @@ STEP_LABELS = {
     STEP_PROCESSAR: 'Processar',
 }
 
-DEFAULT_BLOCKED_MESSAGE = 'Conclua o requisito desta etapa para liberar o avanço.'
+DEFAULT_PENDING_MESSAGE = 'Complete esta etapa para liberar o avanço.'
 
 
 @dataclass(frozen=True)
@@ -236,13 +236,13 @@ def _render_section_card(kicker: str, title: str, text: str) -> None:
     )
 
 
-def _render_blocked_notice(message: str | None = None) -> None:
-    safe_message = html.escape(str(message or DEFAULT_BLOCKED_MESSAGE))
+def _render_pending_notice(message: str | None = None) -> None:
+    safe_message = html.escape(str(message or DEFAULT_PENDING_MESSAGE))
     st.markdown(
         f"""
-        <div class="bling-blocked-next-card" role="alert" aria-live="polite">
-            <div class="bling-blocked-next-title">⚠️ Etapa bloqueada</div>
-            <div class="bling-blocked-next-text">{safe_message}</div>
+        <div class="bling-pending-next-card" role="status" aria-live="polite">
+            <div class="bling-pending-next-title">Próximo passo em espera</div>
+            <div class="bling-pending-next-text">{safe_message}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -282,7 +282,7 @@ def _render_nav_buttons(
     *,
     allow_next: bool = True,
     next_label: str = 'Continuar',
-    blocked_message: str | None = None,
+    pending_message: str | None = None,
 ) -> None:
     steps = _active_steps()
     col_back, col_next = st.columns(2)
@@ -299,12 +299,12 @@ def _render_nav_buttons(
                 _next_step()
         else:
             st.button(
-                '🔒 Bloqueado',
+                'Continuar',
                 use_container_width=True,
                 disabled=True,
-                key=f'wizard_next_blocked_{_current_step()}',
+                key=f'wizard_next_waiting_{_current_step()}',
             )
-            _render_blocked_notice(blocked_message)
+            _render_pending_notice(pending_message)
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
@@ -366,7 +366,7 @@ def _render_model_step() -> None:
         st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
     _render_nav_buttons(
         allow_next=has_model,
-        blocked_message='Envie pelo menos um modelo do Bling. Sem o modelo, o sistema não sabe quais colunas precisa preencher.',
+        pending_message='Envie pelo menos um modelo do Bling para liberar o botão Continuar.',
     )
 
 
@@ -385,7 +385,7 @@ def _render_operation_step() -> None:
         st.warning('Envie um modelo do Bling antes de escolher a operação.')
         _render_nav_buttons(
             allow_next=False,
-            blocked_message='Envie o modelo do Bling para liberar a escolha da operação.',
+            pending_message='Envie o modelo do Bling para liberar a escolha da operação.',
         )
         return
 
@@ -430,7 +430,7 @@ def _render_operation_step() -> None:
         pass
     _render_nav_buttons(
         allow_next=bool(selected),
-        blocked_message='Selecione se o fluxo é Cadastro de produtos ou Atualização de estoque.',
+        pending_message='Selecione se o fluxo é Cadastro de produtos ou Atualização de estoque.',
     )
 
 
@@ -490,7 +490,7 @@ def _render_origin_step() -> None:
         _sync_flow_state(choice, operation)
     _render_nav_buttons(
         allow_next=bool(_current_origin_choice()),
-        blocked_message='Escolha a origem dos dados para liberar a próxima etapa.',
+        pending_message='Escolha a origem dos dados para liberar a próxima etapa.',
     )
 
 
@@ -503,7 +503,7 @@ def _render_cadastro_entrada() -> None:
     render_cadastro_entrada_step()
     _render_nav_buttons(
         allow_next=cadastro_context_ready(),
-        blocked_message='Carregue ou capture os dados dos produtos antes de continuar para o mapeamento.',
+        pending_message='Carregue ou capture os dados dos produtos antes de continuar para o mapeamento.',
     )
 
 
@@ -511,7 +511,7 @@ def _render_cadastro_mapeamento() -> None:
     render_cadastro_mapeamento_step()
     _render_nav_buttons(
         allow_next=cadastro_mapping_ready(),
-        blocked_message='Revise e confirme o mapeamento obrigatório antes de abrir o preview final.',
+        pending_message='Revise e confirme o mapeamento obrigatório antes de abrir o preview final.',
     )
 
 
@@ -519,7 +519,7 @@ def _render_cadastro_preview() -> None:
     render_cadastro_preview_step()
     _render_nav_buttons(
         allow_next=cadastro_mapping_ready(),
-        blocked_message='O preview depende de um mapeamento confirmado e válido.',
+        pending_message='O preview depende de um mapeamento confirmado e válido.',
     )
 
 
@@ -543,7 +543,7 @@ def _render_estoque_entrada() -> None:
     render_estoque_entrada_step()
     _render_nav_buttons(
         allow_next=estoque_context_ready(),
-        blocked_message='Informe a entrada necessária do estoque antes de gerar o resultado.',
+        pending_message='Informe a entrada necessária do estoque antes de gerar o resultado.',
     )
 
 
@@ -551,7 +551,7 @@ def _render_estoque_gerar() -> None:
     render_estoque_gerar_step()
     _render_nav_buttons(
         allow_next=estoque_output_ready(),
-        blocked_message='Gere o arquivo de estoque antes de ir para o preview.',
+        pending_message='Gere o arquivo de estoque antes de ir para o preview.',
     )
 
 
@@ -559,7 +559,7 @@ def _render_estoque_preview() -> None:
     render_estoque_preview_step()
     _render_nav_buttons(
         allow_next=estoque_output_ready(),
-        blocked_message='O preview de estoque depende de um resultado gerado com sucesso.',
+        pending_message='O preview de estoque depende de um resultado gerado com sucesso.',
     )
 
 
@@ -606,5 +606,5 @@ def render_home_wizard() -> None:
         st.warning('Etapa inválida. Volte para o início do fluxo.')
         _render_nav_buttons(
             allow_next=False,
-            blocked_message='Etapa inválida detectada. Volte para ajustar o fluxo antes de continuar.',
+            pending_message='Volte para ajustar o fluxo antes de continuar.',
         )
