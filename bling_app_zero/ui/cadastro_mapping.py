@@ -24,6 +24,7 @@ MANUAL_MAPPING_VALUE = '__BLING_MANUAL_FIXED_VALUE__'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
 CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
 CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
+MAPPING_PAGE_SIZE = 12
 MAPPING_WIDGET_PREFIXES = (
     'cad_map_',
     'stk_map_',
@@ -198,6 +199,34 @@ def _filter_targets(
         f'🔴 {len(red_targets)} · 🟡 {len(yellow_targets)} · 🟢 {len(green_targets)} · Obrigatórios {len(required)}.'
     )
     return selected
+
+
+def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
+    """Mostra o mapeamento em blocos leves sem perder os campos não visíveis."""
+    if len(targets) <= MAPPING_PAGE_SIZE:
+        return targets
+
+    total_pages = (len(targets) + MAPPING_PAGE_SIZE - 1) // MAPPING_PAGE_SIZE
+    page_options = [f'Bloco {idx + 1} de {total_pages}' for idx in range(total_pages)]
+    selected_page = st.selectbox(
+        'Bloco de campos',
+        page_options,
+        index=0,
+        key=f'{mapping_key}_page',
+        help='Mostra poucos campos por vez para deixar o mapeamento mais leve no celular.',
+    )
+    try:
+        page_index = page_options.index(str(selected_page))
+    except ValueError:
+        page_index = 0
+
+    start = page_index * MAPPING_PAGE_SIZE
+    end = min(start + MAPPING_PAGE_SIZE, len(targets))
+    st.caption(
+        f'Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
+        'Os demais continuam salvos e entram no CSV final.'
+    )
+    return targets[start:end]
 
 
 def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
@@ -431,7 +460,8 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     required_targets = _required_targets(target_columns)
-    visible_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
+    filtered_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
+    visible_targets = _visible_targets(mapping_key, filtered_targets)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
@@ -497,7 +527,8 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     current_confidence = _current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = _ordered_targets_once(order_key, target_columns, current_confidence)
     required_targets = _required_targets(target_columns)
-    visible_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
+    filtered_targets = _filter_targets(mapping_key, ordered_targets, current_confidence, required_targets)
+    visible_targets = _visible_targets(mapping_key, filtered_targets)
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
