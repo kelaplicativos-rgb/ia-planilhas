@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.measurements import NORMALIZE_MEASURES_RESOURCE_KEY
-from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
+from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
 
 WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
 
@@ -20,50 +20,57 @@ def _save_if_changed(original: dict, updated: dict) -> None:
         st.rerun()
 
 
-def _render_measure_normalizer_toggle() -> None:
-    current = bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, False))
-    st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = st.toggle(
-        f'Normalizar medidas para metro: {_bool_label(current)}',
-        value=current,
-        key='resource_normalize_measures_toggle',
-        help='Quando ligado, somente colunas de dimensão como Altura, Largura, Comprimento e Profundidade convertem 18 para 0,018 e 676 para 0,676 no CSV final.',
+def _resource_toggle(label: str, value: bool, key: str, help_text: str | None = None) -> bool:
+    return st.toggle(
+        f'{label}: {_bool_label(value)}',
+        value=value,
+        key=key,
+        help=help_text,
     )
-    if st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY]:
-        st.caption('📏 Ativo: 18 → 0,018 | 676 → 0,676 | 0,676 permanece 0,676')
-    else:
-        st.caption('📏 Desligado: as medidas saem exatamente como chegaram no fluxo.')
+
+
+def _render_measure_normalizer_toggle() -> None:
+    if NORMALIZE_MEASURES_RESOURCE_KEY not in st.session_state:
+        st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = True
+
+    current = bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, True))
+    st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = _resource_toggle(
+        'Normalizar medidas para metro',
+        current,
+        'resource_normalize_measures_toggle',
+        'Quando ligado, somente colunas de dimensão como Altura, Largura, Comprimento e Profundidade convertem 18 para 0,018 e 676 para 0,676 no CSV final.',
+    )
 
 
 def render_resources_tab() -> None:
     original = get_user_rules()
     updated = dict(original)
 
-    st.markdown('##### Recursos automáticos')
-    st.caption('Recursos processam e tratam os dados antes do download final. O usuário só liga ou desliga.')
+    st.caption('Tratamentos automáticos aplicados antes do download final.')
 
     if st.session_state.pop('resources_saved_notice', False):
         st.caption('✅ Recursos atualizados.')
 
-    updated['clean_invalid_gtin'] = st.toggle(
-        f'Limpar GTIN inválido: {_bool_label(bool(updated.get("clean_invalid_gtin", True)))}',
-        value=bool(updated.get('clean_invalid_gtin', True)),
-        key='resource_clean_invalid_gtin',
+    updated['clean_invalid_gtin'] = _resource_toggle(
+        'Limpar GTIN inválido',
+        bool(updated.get('clean_invalid_gtin', True)),
+        'resource_clean_invalid_gtin',
     )
-    updated['normalize_image_separator'] = st.toggle(
-        f'Separar imagens por |: {_bool_label(bool(updated.get("normalize_image_separator", True)))}',
-        value=bool(updated.get('normalize_image_separator', True)),
-        key='resource_normalize_images',
+    updated['normalize_image_separator'] = _resource_toggle(
+        'Separar imagens por |',
+        bool(updated.get('normalize_image_separator', True)),
+        'resource_normalize_images',
     )
     _render_measure_normalizer_toggle()
-    updated['auto_product_code'] = st.toggle(
-        f'Gerar código automático: {_bool_label(bool(updated.get("auto_product_code", True)))}',
-        value=bool(updated.get('auto_product_code', True)),
-        key='rule_auto_product_code',
+    updated['auto_product_code'] = _resource_toggle(
+        'Gerar código automático',
+        bool(updated.get('auto_product_code', True)),
+        'rule_auto_product_code',
     )
-    updated['unique_product_code'] = st.toggle(
-        f'Evitar código duplicado: {_bool_label(bool(updated.get("unique_product_code", True)))}',
-        value=bool(updated.get('unique_product_code', True)),
-        key='rule_unique_product_code',
+    updated['unique_product_code'] = _resource_toggle(
+        'Evitar código duplicado',
+        bool(updated.get('unique_product_code', True)),
+        'rule_unique_product_code',
     )
 
     updated['invalid_gtin_mode'] = 'limpar'
@@ -71,11 +78,3 @@ def render_resources_tab() -> None:
     updated['custom_rules'] = original.get('custom_rules', [])
 
     _save_if_changed(original, updated)
-
-    st.caption('Alterações são salvas automaticamente.')
-
-    if st.button('Restaurar padrão', use_container_width=True, key='reset_user_resources'):
-        st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = False
-        reset_user_rules()
-        st.session_state['resources_saved_notice'] = True
-        st.rerun()
