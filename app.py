@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.13-BLINGFIX-MODELO-CARD-UNICO'
+APP_VERSION = '3.5.14-BLINGFIX-MODELO-UPLOAD-CARD'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -99,6 +99,39 @@ def _inject_streamlit_toolbar_fix() -> None:
             white-space: normal !important;
         }
 
+        .bling-model-step-card {
+            margin-bottom: 0 !important;
+            border-bottom-left-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+            border-bottom: 0 !important;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045) !important;
+        }
+
+        .bling-model-upload-anchor {
+            height: 0.35rem !important;
+        }
+
+        .bling-model-step-card + div[data-testid="stFileUploader"],
+        .bling-model-step-card ~ div[data-testid="stFileUploader"]:first-of-type {
+            width: min(100%, 760px) !important;
+            margin: 0 auto 1rem auto !important;
+            padding: 0 1.15rem 1.15rem 1.15rem !important;
+            border: 1px solid rgba(37, 99, 235, 0.14) !important;
+            border-top: 0 !important;
+            border-bottom-left-radius: 24px !important;
+            border-bottom-right-radius: 24px !important;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.94)) !important;
+            box-shadow: 0 16px 42px rgba(15, 23, 42, 0.065) !important;
+            box-sizing: border-box !important;
+        }
+
+        .bling-model-step-card + div[data-testid="stFileUploader"] section,
+        .bling-model-step-card ~ div[data-testid="stFileUploader"]:first-of-type section {
+            margin-top: 0 !important;
+            border-radius: 18px !important;
+            background: rgba(255,255,255,0.82) !important;
+        }
+
         @media (max-width: 760px) {
             .bling-wizard-progress-card {
                 padding: 0.9rem 0.85rem 0.85rem 0.85rem !important;
@@ -107,6 +140,16 @@ def _inject_streamlit_toolbar_fix() -> None:
             .bling-wizard-progress-title,
             .bling-wizard-steps-line {
                 font-size: 0.78rem !important;
+            }
+
+            .bling-model-step-card + div[data-testid="stFileUploader"],
+            .bling-model-step-card ~ div[data-testid="stFileUploader"]:first-of-type {
+                width: 100% !important;
+                margin-left: 0 !important;
+                margin-right: 0 !important;
+                padding: 0 0.92rem 0.92rem 0.92rem !important;
+                border-bottom-left-radius: 20px !important;
+                border-bottom-right-radius: 20px !important;
             }
         }
         </style>
