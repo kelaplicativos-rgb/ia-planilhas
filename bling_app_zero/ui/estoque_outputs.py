@@ -6,7 +6,6 @@ import streamlit as st
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
-from bling_app_zero.ui.preview_ai_actions import render_preview_ai_actions
 
 
 def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
@@ -40,8 +39,8 @@ def build_stock_outputs_from_dataframe(
     run_estoque_pipeline = load_estoque_pipeline()
     try:
         df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
-    except MissingEstoqueModelError:
-        _show_missing_model_warning()
+    except MissingEstoqueModelError as exc:
+        st.error(str(exc))
         return
 
     result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
@@ -70,8 +69,8 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
 
         try:
             df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
-        except MissingEstoqueModelError:
-            _show_missing_model_warning()
+        except MissingEstoqueModelError as exc:
+            st.error(str(exc))
             return
 
         results.append(
@@ -113,7 +112,6 @@ def render_stock_preview() -> None:
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
                 preview_df('📦 ESTOQUE · Preview final', df_final)
-                render_preview_ai_actions(df_final, 'estoque')
             else:
                 st.warning('Não foi possível montar o preview desta origem.')
 
