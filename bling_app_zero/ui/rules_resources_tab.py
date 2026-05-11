@@ -8,6 +8,7 @@ from bling_app_zero.core.user_rules import add_custom_rule, get_user_rules, set_
 WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
 SUPPLIER_DEFAULT_COLUMN = 'Fornecedor'
 SUPPLIER_DEFAULT_VALUE = 'Não definido'
+SUPPLIER_RESOURCE_BOOTSTRAP_KEY = 'resource_supplier_default_bootstrapped'
 
 
 def _bool_label(value: bool) -> str:
@@ -35,7 +36,8 @@ def _supplier_rule_id() -> str:
     rules = get_user_rules()
     for rule in rules.get('custom_rules', []):
         column = str(rule.get('target_column') or rule.get('condition') or '').strip().lower()
-        if column == SUPPLIER_DEFAULT_COLUMN.lower():
+        value = str(rule.get('fill_value') or '').strip().lower()
+        if column == SUPPLIER_DEFAULT_COLUMN.lower() and value == SUPPLIER_DEFAULT_VALUE.lower():
             return str(rule.get('id') or '')
     return ''
 
@@ -50,6 +52,24 @@ def _supplier_rule_enabled() -> bool:
     return False
 
 
+def _ensure_supplier_default_rule_enabled_once() -> None:
+    """Recursos automáticos devem nascer ligados por padrão.
+
+    Este bootstrap roda uma vez por sessão para criar/ativar o recurso padrão de
+    fornecedor. Depois disso, se o usuário desligar o toggle, a escolha dele é
+    respeitada durante a sessão.
+    """
+    if bool(st.session_state.get(SUPPLIER_RESOURCE_BOOTSTRAP_KEY, False)):
+        return
+    st.session_state[SUPPLIER_RESOURCE_BOOTSTRAP_KEY] = True
+    rule_id = _supplier_rule_id()
+    if not rule_id:
+        add_custom_rule(SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_VALUE, True)
+        rule_id = _supplier_rule_id()
+    if rule_id and not _supplier_rule_enabled():
+        set_custom_rule_enabled(rule_id, True)
+
+
 def _set_supplier_default_enabled(enabled: bool) -> None:
     rule_id = _supplier_rule_id()
     if not rule_id:
@@ -62,6 +82,7 @@ def _set_supplier_default_enabled(enabled: bool) -> None:
 
 
 def _render_supplier_default_toggle() -> None:
+    _ensure_supplier_default_rule_enabled_once()
     current = _supplier_rule_enabled()
     selected = _resource_toggle(
         'Fornecedor vazio → Não definido',
