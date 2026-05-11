@@ -21,6 +21,13 @@ ESTOQUE_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_MODELO_KEY = 'estoque_wizard_df_modelo'
 ESTOQUE_DEPOSITO_KEY = 'estoque_nome_deposito'
 ESTOQUE_DEPOSITO_SIGNATURE_KEY = 'estoque_deposito_signature_atual'
+ESTOQUE_DEPOSITO_ALIAS_KEYS = [
+    ESTOQUE_DEPOSITO_KEY,
+    'deposito_estoque',
+    'nome_deposito_estoque',
+    'estoque_deposito',
+    'nome_deposito',
+]
 BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/importador.saldos.estoque.php'
 
 
@@ -28,8 +35,29 @@ def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
     return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
 
 
+def _normalize_deposito(value: object) -> str:
+    text = str(value or '').strip()
+    if text.lower() in {'não definido', 'nao definido', 'undefined', 'none', 'null'}:
+        return ''
+    return text
+
+
+def _store_deposito_value(deposito: str) -> None:
+    clean = _normalize_deposito(deposito)
+    st.session_state[ESTOQUE_DEPOSITO_KEY] = clean
+    for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
+        if key != ESTOQUE_DEPOSITO_KEY and key in st.session_state:
+            st.session_state[key] = clean
+
+
 def _deposito_value() -> str:
-    return str(st.session_state.get(ESTOQUE_DEPOSITO_KEY) or '').strip()
+    for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
+        value = _normalize_deposito(st.session_state.get(key))
+        if value:
+            if key != ESTOQUE_DEPOSITO_KEY:
+                _store_deposito_value(value)
+            return value
+    return ''
 
 
 def _valid_deposito() -> bool:
@@ -83,7 +111,7 @@ def _clear_estoque_outputs_if_source_changed(df_origem_site: pd.DataFrame | None
 
 
 def _clear_estoque_outputs_if_deposito_changed(deposito: str) -> None:
-    signature = str(deposito or '').strip()
+    signature = _normalize_deposito(deposito)
     previous = st.session_state.get(ESTOQUE_DEPOSITO_SIGNATURE_KEY)
     if previous is None:
         st.session_state[ESTOQUE_DEPOSITO_SIGNATURE_KEY] = signature
@@ -124,19 +152,29 @@ def estoque_output_ready() -> bool:
 
 
 def _render_deposito_input() -> str:
-    current = st.session_state.get(ESTOQUE_DEPOSITO_KEY, 'Não definido')
+    current = _deposito_value()
     deposito = st.text_input(
         'Nome do depósito que será gravado no CSV',
         value=current,
         key=ESTOQUE_DEPOSITO_KEY,
+        placeholder='Ex: Principal, Loja 1, Galpão Central',
         help='Este valor será aplicado em toda coluna de depósito do modelo de estoque do Bling.',
     )
-    deposito = str(deposito or '').strip()
+    deposito = _normalize_deposito(deposito)
+    _store_deposito_value(deposito)
     _clear_estoque_outputs_if_deposito_changed(deposito)
     if deposito:
         st.success(f'Depósito definido para o CSV: {deposito}')
     else:
-        st.error('Informe o nome do depósito antes de continuar.')
+        st.error('Informe o nome real do depósito antes de continuar. Não use “Não definido” nesta etapa.')
+    return deposito
+
+
+def _render_deposito_missing_recovery() -> str:
+    st.warning('O nome do depósito não chegou nesta etapa. Informe abaixo para gerar o estoque sem voltar no fluxo.')
+    deposito = _render_deposito_input()
+    if not deposito:
+        st.error('Geração bloqueada: o CSV de estoque precisa do depósito para preencher o modelo do Bling.')
     return deposito
 
 
@@ -175,7 +213,7 @@ def render_estoque_entrada_step() -> None:
 
     if not _valid_model(df_modelo):
         st.error('Envie o modelo de estoque do Bling antes de continuar.')
-    elif not str(deposito or '').strip():
+    elif not deposito:
         st.error('Informe o nome do depósito antes de continuar.')
 
 
@@ -186,15 +224,20 @@ def render_estoque_gerar_step() -> None:
     upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
     df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
-    deposito = _deposito_value() or 'Não definido'
+    deposito = _deposito_value()
 
-    st.info(f'Depósito que será aplicado no CSV: {deposito}')
+    if deposito:
+        st.success(f'Depósito que será aplicado no CSV: {deposito}')
+    else:
+        deposito = _render_deposito_missing_recovery()
+        if not deposito:
+            return
 
     if not _valid_model(df_modelo):
         st.error('Modelo de estoque ausente. Volte para a entrada.')
         return
     if not _valid_deposito():
-        st.error('Nome do depósito ausente. Volte para a entrada.')
+        st.error('Nome do depósito ausente. Informe o depósito para continuar.')
         return
 
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
