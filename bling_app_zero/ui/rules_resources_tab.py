@@ -5,7 +5,7 @@ import streamlit as st
 from bling_app_zero.core.measurements import NORMALIZE_MEASURES_RESOURCE_KEY
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
 
-WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
+WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator']
 
 
 def _bool_label(value: bool) -> str:
@@ -46,7 +46,7 @@ def render_resources_tab() -> None:
     original = get_user_rules()
     updated = dict(original)
 
-    st.caption('Tratamentos automáticos aplicados antes do download final.')
+    st.caption('Tratamentos aplicados antes do download final. O sistema não cria ID, SKU, código ou qualquer dado inventado.')
 
     if st.session_state.pop('resources_saved_notice', False):
         st.caption('✅ Recursos atualizados.')
@@ -62,17 +62,9 @@ def render_resources_tab() -> None:
         'resource_normalize_images',
     )
     _render_measure_normalizer_toggle()
-    updated['auto_product_code'] = _resource_toggle(
-        'Gerar código automático',
-        bool(updated.get('auto_product_code', True)),
-        'rule_auto_product_code',
-    )
-    updated['unique_product_code'] = _resource_toggle(
-        'Evitar código duplicado',
-        bool(updated.get('unique_product_code', True)),
-        'rule_unique_product_code',
-    )
 
+    updated['auto_product_code'] = False
+    updated['unique_product_code'] = False
     updated['invalid_gtin_mode'] = 'limpar'
     updated['image_separator'] = '|'
     updated['custom_rules'] = get_user_rules().get('custom_rules', [])
