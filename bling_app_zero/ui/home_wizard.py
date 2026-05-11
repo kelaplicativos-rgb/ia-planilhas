@@ -241,7 +241,6 @@ def _render_pending_notice(message: str | None = None) -> None:
     st.markdown(
         f"""
         <div class="bling-pending-next-card" role="status" aria-live="polite">
-            <div class="bling-pending-next-title">Etapa bloqueada</div>
             <div class="bling-pending-next-text">{safe_message}</div>
         </div>
         """,
