@@ -3,14 +3,16 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.cadastro_mapping import render_manual_stock_mapping
 from bling_app_zero.ui.estoque_models import home_estoque_model_loaded, render_estoque_model_contract, select_estoque_model
-from bling_app_zero.ui.estoque_outputs import (
-    build_stock_outputs,
-    build_stock_outputs_from_dataframe,
-    render_stock_downloads,
-    render_stock_preview,
+from bling_app_zero.ui.estoque_outputs import render_stock_downloads, render_stock_preview
+from bling_app_zero.ui.estoque_sources import (
+    file_name,
+    get_estoque_site_source,
+    render_estoque_upload,
+    safe_read_source,
+    source_files_from_upload,
 )
-from bling_app_zero.ui.estoque_sources import get_estoque_site_source, render_estoque_upload, source_files_from_upload
 from bling_app_zero.ui.home_models import get_home_estoque_model
 from bling_app_zero.ui.home_shared import df_signature
 from bling_app_zero.ui.smart_upload import SmartUploadResult
@@ -43,7 +45,6 @@ def _normalize_deposito(value: object) -> str:
 
 
 def _store_deposito_value(deposito: str, *, write_primary: bool = True) -> None:
-    """Salva o depósito sem quebrar o contrato de widgets do Streamlit."""
     clean = _normalize_deposito(deposito)
     if write_primary:
         st.session_state[ESTOQUE_DEPOSITO_KEY] = clean
@@ -99,6 +100,9 @@ def _clear_estoque_outputs() -> None:
         'estoque_multi_outputs',
         'df_final_estoque',
         'mapping_estoque',
+        'df_final_estoque_from_cadastro',
+        'mapping_estoque_from_cadastro',
+        'mapping_confidence_estoque_from_cadastro',
     ]:
         st.session_state.pop(key, None)
 
@@ -158,39 +162,43 @@ def _generated_output_ready() -> bool:
 
 
 def estoque_output_ready() -> bool:
-    """Libera navegação quando o contexto está pronto.
+    return _generated_output_ready()
 
-    O usuário não precisa apertar um botão separado para gerar preview. A geração
-    acontece automaticamente ao abrir Preview ou Download.
-    """
-    return _generated_output_ready() or estoque_context_ready()
+
+def _current_stock_source() -> tuple[pd.DataFrame | None, str]:
+    df_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
+    if isinstance(df_site, pd.DataFrame) and not df_site.empty:
+        return df_site, 'Origem criada pelo site'
+
+    upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
+    files = source_files_from_upload(upload)
+    if not files:
+        return None, ''
+    if len(files) > 1:
+        st.warning('Mapeamento manual de estoque usa uma origem por vez. Para múltiplos arquivos, gere um CSV por arquivo.')
+    first_file = files[0]
+    df_file = safe_read_source(first_file)
+    if isinstance(df_file, pd.DataFrame) and not df_file.empty:
+        return df_file, file_name(first_file)
+    return None, ''
+
+
+def _sync_manual_stock_output(name: str) -> bool:
+    df_final = st.session_state.get('df_final_estoque_from_cadastro')
+    mapping = st.session_state.get('mapping_estoque_from_cadastro', {})
+    if not isinstance(df_final, pd.DataFrame) or df_final.empty:
+        return False
+    result = {'index': 1, 'name': name or 'Origem de estoque', 'df_final': df_final, 'mapping': mapping if isinstance(mapping, dict) else {}}
+    st.session_state['estoque_multi_outputs'] = [result]
+    st.session_state['df_final_estoque'] = df_final
+    st.session_state['mapping_estoque'] = result['mapping']
+    return True
 
 
 def _build_stock_outputs_if_possible() -> bool:
     if _generated_output_ready():
         return True
-
-    upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
-    df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
-    df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
-    deposito = _deposito_value()
-
-    if not deposito:
-        st.error('Nome do depósito ausente. Informe o depósito para gerar o estoque.')
-        return False
-    if not _valid_model(df_modelo):
-        st.error('Modelo de estoque ausente. Volte para a entrada.')
-        return False
-
-    if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
-        build_stock_outputs_from_dataframe(df_origem_site, df_modelo, deposito, name='Origem criada pelo site')
-    elif upload is not None and source_files_from_upload(upload):
-        build_stock_outputs(upload, df_modelo, deposito)
-    else:
-        st.warning('Nenhuma origem de estoque carregada. Volte para a entrada.')
-        return False
-
-    return _generated_output_ready()
+    return _sync_manual_stock_output('Origem de estoque')
 
 
 def _render_deposito_input() -> str:
@@ -225,7 +233,7 @@ def _render_deposito_missing_recovery() -> str:
 
 def render_estoque_entrada_step() -> None:
     st.markdown('### Entrada do estoque')
-    st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. Preview e download ficam separados nas próximas etapas.')
+    st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. O mapeamento, preview e download ficam nas próximas etapas.')
 
     deposito = _render_deposito_input()
 
@@ -235,10 +243,7 @@ def render_estoque_entrada_step() -> None:
 
     site_origin = _is_site_origin()
     df_origem_site = get_estoque_site_source() if site_origin else None
-    if site_origin:
-        upload = _empty_upload_result()
-    else:
-        upload = render_estoque_upload(model_loaded)
+    upload = _empty_upload_result() if site_origin else render_estoque_upload(model_loaded)
     _clear_estoque_outputs_if_source_changed(df_origem_site, upload)
 
     df_modelo = select_estoque_model(upload)
@@ -246,7 +251,7 @@ def render_estoque_entrada_step() -> None:
     _store_estoque_context(upload, df_origem_site, df_modelo)
 
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty and site_origin:
-        st.success('Origem de estoque por site pronta. Continue para gerar o arquivo final.')
+        st.success('Origem de estoque por site pronta. Continue para conferir o mapeamento.')
     elif site_origin:
         st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
     else:
@@ -263,13 +268,12 @@ def render_estoque_entrada_step() -> None:
 
 
 def render_estoque_gerar_step() -> None:
-    st.markdown('### Gerar estoque')
-    st.caption('Nesta etapa você confirma a origem. O sistema pode gerar o arquivo automaticamente no Preview ou no Download.')
+    st.markdown('### Mapeamento do estoque')
+    st.caption('O estoque agora usa o mesmo padrão de conferência manual do cadastro. Nada deve ser criado sem você ver o mapeamento.')
 
-    upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
-    df_origem_site = st.session_state.get(ESTOQUE_ORIGEM_SITE_KEY)
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
     deposito = _deposito_value()
+    df_origem, source_name = _current_stock_source()
 
     if deposito:
         st.success(f'Depósito que será aplicado no CSV: {deposito}')
@@ -281,25 +285,15 @@ def render_estoque_gerar_step() -> None:
     if not _valid_model(df_modelo):
         st.error('Modelo de estoque ausente. Volte para a entrada.')
         return
-    if not _valid_deposito():
-        st.error('Nome do depósito ausente. Informe o depósito para continuar.')
-        return
-
-    if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
-        st.info('Origem de estoque veio da busca por site.')
-    elif upload is not None and source_files_from_upload(upload):
-        st.info('Origem de estoque veio de arquivo enviado.')
-    else:
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         st.warning('Nenhuma origem de estoque carregada. Volte para a entrada.')
         return
 
-    st.caption('Você pode continuar para o Preview. O arquivo será gerado automaticamente ao abrir a próxima etapa.')
-    if st.button('Gerar agora nesta etapa', use_container_width=True, key='wizard_gerar_estoque_manual'):
-        if _build_stock_outputs_if_possible():
-            st.success('Estoque gerado. Continue para conferir o preview final.')
+    st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
+    render_manual_stock_mapping(df_origem, df_modelo, deposito)
 
-    if _generated_output_ready():
-        st.success('Estoque já gerado. Continue para conferir o preview final.')
+    if _sync_manual_stock_output(source_name):
+        st.success('Mapeamento de estoque gerado. Continue para conferir o preview final.')
 
 
 def render_estoque_preview_step() -> None:
@@ -307,7 +301,7 @@ def render_estoque_preview_step() -> None:
     st.caption('Confira os dados antes de baixar. O download fica na próxima etapa.')
 
     if not _build_stock_outputs_if_possible():
-        st.warning('Ainda não foi possível gerar o preview de estoque. Volte para Entrada e confira origem, modelo e depósito.')
+        st.warning('O preview de estoque ainda não foi gerado. Volte para o mapeamento do estoque.')
         return
     render_stock_preview()
 
@@ -317,7 +311,7 @@ def render_estoque_download_step() -> None:
     st.caption('Última etapa: baixe somente o CSV final de atualização de estoque.')
 
     if not _build_stock_outputs_if_possible():
-        st.warning('Ainda não há CSV de estoque. Volte para Entrada e confira origem, modelo e depósito.')
+        st.warning('Ainda não há CSV de estoque. Volte para o mapeamento do estoque.')
         return
     render_stock_downloads()
 
