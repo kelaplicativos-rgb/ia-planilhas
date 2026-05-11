@@ -83,6 +83,8 @@ STEP_LABELS = {
     STEP_PROCESSAR: 'Processar',
 }
 
+DEFAULT_BLOCKED_MESSAGE = 'Conclua o requisito desta etapa para liberar o avanço.'
+
 
 @dataclass(frozen=True)
 class WizardNav:
@@ -234,6 +236,19 @@ def _render_section_card(kicker: str, title: str, text: str) -> None:
     )
 
 
+def _render_blocked_notice(message: str | None = None) -> None:
+    safe_message = html.escape(str(message or DEFAULT_BLOCKED_MESSAGE))
+    st.markdown(
+        f"""
+        <div class="bling-blocked-next-card" role="alert" aria-live="polite">
+            <div class="bling-blocked-next-title">⚠️ Etapa bloqueada</div>
+            <div class="bling-blocked-next-text">{safe_message}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_step_header() -> WizardNav:
     steps = _active_steps()
     current = _current_step()
@@ -263,7 +278,12 @@ def _render_step_header() -> WizardNav:
     return WizardNav(current=current, index=index, total=total, steps=steps)
 
 
-def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar') -> None:
+def _render_nav_buttons(
+    *,
+    allow_next: bool = True,
+    next_label: str = 'Continuar',
+    blocked_message: str | None = None,
+) -> None:
     steps = _active_steps()
     col_back, col_next = st.columns(2)
     with col_back:
@@ -272,8 +292,19 @@ def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar
             _previous_step()
     with col_next:
         is_last = steps.index(_current_step()) == len(steps) - 1
-        if not is_last and st.button(next_label, use_container_width=True, disabled=not allow_next, key=f'wizard_next_{_current_step()}'):
-            _next_step()
+        if is_last:
+            return
+        if allow_next:
+            if st.button(next_label, use_container_width=True, key=f'wizard_next_{_current_step()}'):
+                _next_step()
+        else:
+            st.button(
+                '🔒 Bloqueado',
+                use_container_width=True,
+                disabled=True,
+                key=f'wizard_next_blocked_{_current_step()}',
+            )
+            _render_blocked_notice(blocked_message)
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
@@ -330,9 +361,13 @@ def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
     render_home_bling_models()
-    _render_nav_buttons(allow_next=_has_home_models())
-    if not _has_home_models():
-        st.info('Envie pelo menos um modelo do Bling para continuar com segurança.')
+    has_model = _has_home_models()
+    if not has_model:
+        st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
+    _render_nav_buttons(
+        allow_next=has_model,
+        blocked_message='Envie pelo menos um modelo do Bling. Sem o modelo, o sistema não sabe quais colunas precisa preencher.',
+    )
 
 
 def _render_operation_step() -> None:
@@ -348,7 +383,10 @@ def _render_operation_step() -> None:
     )
     if not available:
         st.warning('Envie um modelo do Bling antes de escolher a operação.')
-        _render_nav_buttons(allow_next=False)
+        _render_nav_buttons(
+            allow_next=False,
+            blocked_message='Envie o modelo do Bling para liberar a escolha da operação.',
+        )
         return
 
     current = _selected_operation()
@@ -390,7 +428,10 @@ def _render_operation_step() -> None:
         st.query_params['operacao'] = selected
     except Exception:
         pass
-    _render_nav_buttons(allow_next=bool(selected))
+    _render_nav_buttons(
+        allow_next=bool(selected),
+        blocked_message='Selecione se o fluxo é Cadastro de produtos ou Atualização de estoque.',
+    )
 
 
 def _render_pricing_step() -> None:
@@ -447,7 +488,10 @@ def _render_origin_step() -> None:
     if choice_label is not None:
         choice = values[labels.index(choice_label)]
         _sync_flow_state(choice, operation)
-    _render_nav_buttons(allow_next=bool(_current_origin_choice()))
+    _render_nav_buttons(
+        allow_next=bool(_current_origin_choice()),
+        blocked_message='Escolha a origem dos dados para liberar a próxima etapa.',
+    )
 
 
 def _render_cadastro_entrada() -> None:
@@ -457,17 +501,26 @@ def _render_cadastro_entrada() -> None:
 
         render_site_panel()
     render_cadastro_entrada_step()
-    _render_nav_buttons(allow_next=cadastro_context_ready())
+    _render_nav_buttons(
+        allow_next=cadastro_context_ready(),
+        blocked_message='Carregue ou capture os dados dos produtos antes de continuar para o mapeamento.',
+    )
 
 
 def _render_cadastro_mapeamento() -> None:
     render_cadastro_mapeamento_step()
-    _render_nav_buttons(allow_next=cadastro_mapping_ready())
+    _render_nav_buttons(
+        allow_next=cadastro_mapping_ready(),
+        blocked_message='Revise e confirme o mapeamento obrigatório antes de abrir o preview final.',
+    )
 
 
 def _render_cadastro_preview() -> None:
     render_cadastro_preview_step()
-    _render_nav_buttons(allow_next=cadastro_mapping_ready())
+    _render_nav_buttons(
+        allow_next=cadastro_mapping_ready(),
+        blocked_message='O preview depende de um mapeamento confirmado e válido.',
+    )
 
 
 def _render_cadastro_download() -> None:
@@ -488,17 +541,26 @@ def _render_estoque_entrada() -> None:
 
         render_site_panel()
     render_estoque_entrada_step()
-    _render_nav_buttons(allow_next=estoque_context_ready())
+    _render_nav_buttons(
+        allow_next=estoque_context_ready(),
+        blocked_message='Informe a entrada necessária do estoque antes de gerar o resultado.',
+    )
 
 
 def _render_estoque_gerar() -> None:
     render_estoque_gerar_step()
-    _render_nav_buttons(allow_next=estoque_output_ready())
+    _render_nav_buttons(
+        allow_next=estoque_output_ready(),
+        blocked_message='Gere o arquivo de estoque antes de ir para o preview.',
+    )
 
 
 def _render_estoque_preview() -> None:
     render_estoque_preview_step()
-    _render_nav_buttons(allow_next=estoque_output_ready())
+    _render_nav_buttons(
+        allow_next=estoque_output_ready(),
+        blocked_message='O preview de estoque depende de um resultado gerado com sucesso.',
+    )
 
 
 def _render_estoque_download() -> None:
@@ -542,4 +604,7 @@ def render_home_wizard() -> None:
         _render_estoque_download()
     else:
         st.warning('Etapa inválida. Volte para o início do fluxo.')
-        _render_nav_buttons(allow_next=False)
+        _render_nav_buttons(
+            allow_next=False,
+            blocked_message='Etapa inválida detectada. Volte para ajustar o fluxo antes de continuar.',
+        )
