@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -47,6 +48,39 @@ class TestEstoqueFluxo(unittest.TestCase):
         self.assertEqual(final.loc[0, 'Código'], 'P001')
         self.assertEqual(final.loc[0, 'Balanço (OBRIGATÓRIO)'], '')
         self.assertEqual(mapping['Balanço (OBRIGATÓRIO)'], '')
+
+    def test_simulacao_estoque_arquivo_e_site_usam_mesmo_contrato_do_bling(self) -> None:
+        modelo = pd.DataFrame(columns=['Código', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
+        origem_arquivo = pd.DataFrame({'SKU': ['ARQ-001'], 'Quantidade': ['8'], 'Produto': ['Produto arquivo']})
+        origem_site = pd.DataFrame({'Código': ['SITE-001'], 'Estoque': ['3'], 'Nome': ['Produto site'], 'Preço': ['50,00']})
+
+        final_arquivo, mapping_arquivo = run_estoque_engine(origem_arquivo, modelo, deposito='Central')
+        final_site, mapping_site = run_estoque_engine(origem_site, modelo, deposito='Central')
+
+        self.assertEqual(list(final_arquivo.columns), list(modelo.columns))
+        self.assertEqual(list(final_site.columns), list(modelo.columns))
+        self.assertEqual(final_arquivo.loc[0, 'Código'], 'ARQ-001')
+        self.assertEqual(final_site.loc[0, 'Código'], 'SITE-001')
+        self.assertEqual(final_arquivo.loc[0, 'Depósito (OBRIGATÓRIO)'], 'Central')
+        self.assertEqual(final_site.loc[0, 'Depósito (OBRIGATÓRIO)'], 'Central')
+        self.assertEqual(final_arquivo.loc[0, 'Balanço (OBRIGATÓRIO)'], '8')
+        self.assertEqual(final_site.loc[0, 'Balanço (OBRIGATÓRIO)'], '3')
+        self.assertNotIn('Produto', final_arquivo.columns)
+        self.assertNotIn('Nome', final_site.columns)
+        self.assertNotIn('Preço', final_site.columns)
+        self.assertEqual(mapping_arquivo['Balanço (OBRIGATÓRIO)'], 'Quantidade')
+        self.assertEqual(mapping_site['Balanço (OBRIGATÓRIO)'], 'Estoque')
+
+    def test_estoque_site_panel_usa_assinatura_atual_do_save_site_source(self) -> None:
+        source = Path('bling_app_zero/ui/estoque_site_panel.py').read_text(encoding='utf-8')
+
+        self.assertIn('save_site_source(', source)
+        self.assertIn('df_modelo_cadastro=None', source)
+        self.assertIn('df_modelo_estoque=df_modelo_estoque', source)
+        self.assertIn('df_modelo=df_modelo_estoque', source)
+        self.assertNotIn('cadastro_model_df=', source)
+        self.assertNotIn('estoque_model_df=', source)
+        self.assertNotIn('operation_model_df=', source)
 
 
 if __name__ == '__main__':
