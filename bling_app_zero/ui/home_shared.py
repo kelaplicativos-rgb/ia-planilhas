@@ -211,21 +211,31 @@ def show_contract(columns: list[str]) -> None:
         _render_contract_body(columns)
 
 
+def _render_mapping_body(mapping: dict[str, str]) -> None:
+    st.dataframe(
+        pd.DataFrame([
+            {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
+            for key, value in mapping.items()
+        ]).astype(str),
+        use_container_width=True,
+        height=260,
+    )
+
+
 def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
     if not mapping:
         return
     label = 'Como os campos foram preenchidos'
     if operation:
         label = f'{_operation_badge(operation)} · Como os campos foram preenchidos'
-    with st.expander(label, expanded=False):
-        st.dataframe(
-            pd.DataFrame([
-                {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
-                for key, value in mapping.items()
-            ]).astype(str),
-            use_container_width=True,
-            height=260,
-        )
+    try:
+        with st.expander(label, expanded=False):
+            _render_mapping_body(mapping)
+    except StreamlitAPIException as exc:
+        if 'Expanders may not be nested' not in str(exc):
+            raise
+        st.markdown(f'##### {label}')
+        _render_mapping_body(mapping)
 
 
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
@@ -239,7 +249,14 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     errors = validate_final_df(df, operation)
     if errors:
-        with st.expander(f'{_operation_badge(operation)} · Conferência antes do download', expanded=True):
+        try:
+            with st.expander(f'{_operation_badge(operation)} · Conferência antes do download', expanded=True):
+                for error in errors:
+                    st.warning(error)
+        except StreamlitAPIException as exc:
+            if 'Expanders may not be nested' not in str(exc):
+                raise
+            st.markdown(f'##### {_operation_badge(operation)} · Conferência antes do download')
             for error in errors:
                 st.warning(error)
 
