@@ -25,6 +25,7 @@ CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
 CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
 CADASTRO_EXPECTED_ROWS_KEY = 'cadastro_wizard_expected_source_rows'
 CADASTRO_EXPECTED_SIGNATURE_KEY = 'cadastro_wizard_expected_source_signature'
+BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/importador.produtos.php'
 
 
 def _valid_df(df: object) -> bool:
@@ -257,3 +258,11 @@ def render_cadastro_download_step() -> None:
         return
 
     download_final(df_final, 'cadastro', 'cadastro_wizard')
+
+    st.markdown('#### Próximo passo no Bling')
+    st.caption('Depois de baixar o CSV, abra direto o importador de produtos do Bling e envie o arquivo gerado.')
+    st.link_button(
+        '🔗 Abrir importador de produtos no Bling',
+        BLING_IMPORTADOR_PRODUTOS_URL,
+        use_container_width=True,
+    )
