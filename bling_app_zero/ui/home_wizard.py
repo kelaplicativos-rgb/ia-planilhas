@@ -241,7 +241,7 @@ def _render_pending_notice(message: str | None = None) -> None:
     st.markdown(
         f"""
         <div class="bling-pending-next-card" role="status" aria-live="polite">
-            <div class="bling-pending-next-title">⚠️ Etapa bloqueada</div>
+            <div class="bling-pending-next-title">Etapa bloqueada</div>
             <div class="bling-pending-next-text">{safe_message}</div>
         </div>
         """,
@@ -279,14 +279,6 @@ def _render_step_header() -> WizardNav:
 
 
 def _render_blocked_next_slot(pending_message: str | None = None) -> None:
-    st.markdown(
-        """
-        <div class="bling-disabled-next-placeholder" aria-hidden="true">
-            Continuação bloqueada
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
     _render_pending_notice(pending_message)
 
 
