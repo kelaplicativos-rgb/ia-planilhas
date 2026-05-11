@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.18-BLINGFIX-SHARED-MAPPING'
+APP_VERSION = '3.5.19-BLINGCLEAN-MAPPING-PAGINADO'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
