@@ -240,12 +240,26 @@ def _render_step_header() -> WizardNav:
     index = steps.index(current)
     total = len(steps)
     percent = int(((index + 1) / total) * 100)
+    progress_width = max(1, min(100, percent))
     labels = []
     for i, step in enumerate(steps):
         prefix = '●' if i == index else '✓' if i < index else '○'
         labels.append(f'{prefix} {STEP_LABELS[step]}')
-    st.progress((index + 1) / total, text=f'Etapa {index + 1} de {total} · {STEP_LABELS[current]} · {percent}%')
-    st.caption('  ·  '.join(labels))
+
+    label_text = html.escape('  ·  '.join(labels))
+    progress_text = html.escape(f'Etapa {index + 1} de {total} · {STEP_LABELS[current]} · {percent}%')
+    st.markdown(
+        f"""
+        <section class="bling-flow-card bling-wizard-progress-card" aria-label="Progresso do fluxo">
+            <div class="bling-wizard-progress-title">{progress_text}</div>
+            <div class="bling-wizard-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent}">
+                <div class="bling-wizard-progress-fill" style="width:{progress_width}%"></div>
+            </div>
+            <div class="bling-wizard-steps-line">{label_text}</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
     return WizardNav(current=current, index=index, total=total, steps=steps)
 
 
