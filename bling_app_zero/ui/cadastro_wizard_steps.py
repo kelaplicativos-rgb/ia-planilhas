@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_source_for_operation
-from bling_app_zero.ui.cadastro_mapping import render_manual_mapping
 from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.cadastro_sources import (
     render_cadastro_source_upload,
@@ -14,6 +13,7 @@ from bling_app_zero.ui.cadastro_sources import (
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df, show_mapping
 from bling_app_zero.ui.preview_ai_actions import render_preview_ai_actions
+from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
@@ -229,7 +229,7 @@ def render_cadastro_mapeamento_step() -> None:
         st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_para_mapear
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço do Bling.')
-    render_manual_mapping(df_para_mapear, df_modelo)
+    render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
     df_final = _enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
