@@ -14,6 +14,7 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.estoque_wizard_steps',
+    'bling_app_zero.ui.shared_mapping',
     'bling_app_zero.ui.cadastro_mapping',
     'bling_app_zero.flows.site_as_source',
     'bling_app_zero.ui.wizard_state_guard',
