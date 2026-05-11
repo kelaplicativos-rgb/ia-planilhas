@@ -3,12 +3,9 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.measurements import NORMALIZE_MEASURES_RESOURCE_KEY
-from bling_app_zero.core.user_rules import add_custom_rule, get_user_rules, set_custom_rule_enabled, set_user_rules
+from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
 
 WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
-SUPPLIER_DEFAULT_COLUMN = 'Fornecedor'
-SUPPLIER_DEFAULT_VALUE = 'Não definido'
-SUPPLIER_RESOURCE_BOOTSTRAP_KEY = 'resource_supplier_default_bootstrapped'
 
 
 def _bool_label(value: bool) -> str:
@@ -30,68 +27,6 @@ def _resource_toggle(label: str, value: bool, key: str, help_text: str | None = 
         key=key,
         help=help_text,
     )
-
-
-def _supplier_rule_id() -> str:
-    rules = get_user_rules()
-    for rule in rules.get('custom_rules', []):
-        column = str(rule.get('target_column') or rule.get('condition') or '').strip().lower()
-        value = str(rule.get('fill_value') or '').strip().lower()
-        if column == SUPPLIER_DEFAULT_COLUMN.lower() and value == SUPPLIER_DEFAULT_VALUE.lower():
-            return str(rule.get('id') or '')
-    return ''
-
-
-def _supplier_rule_enabled() -> bool:
-    rules = get_user_rules()
-    for rule in rules.get('custom_rules', []):
-        column = str(rule.get('target_column') or rule.get('condition') or '').strip().lower()
-        value = str(rule.get('fill_value') or '').strip().lower()
-        if column == SUPPLIER_DEFAULT_COLUMN.lower() and value == SUPPLIER_DEFAULT_VALUE.lower():
-            return bool(rule.get('enabled', False))
-    return False
-
-
-def _ensure_supplier_default_rule_enabled_once() -> None:
-    """Recursos automáticos devem nascer ligados por padrão.
-
-    Este bootstrap roda uma vez por sessão para criar/ativar o recurso padrão de
-    fornecedor. Depois disso, se o usuário desligar o toggle, a escolha dele é
-    respeitada durante a sessão.
-    """
-    if bool(st.session_state.get(SUPPLIER_RESOURCE_BOOTSTRAP_KEY, False)):
-        return
-    st.session_state[SUPPLIER_RESOURCE_BOOTSTRAP_KEY] = True
-    rule_id = _supplier_rule_id()
-    if not rule_id:
-        add_custom_rule(SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_VALUE, True)
-        rule_id = _supplier_rule_id()
-    if rule_id and not _supplier_rule_enabled():
-        set_custom_rule_enabled(rule_id, True)
-
-
-def _set_supplier_default_enabled(enabled: bool) -> None:
-    rule_id = _supplier_rule_id()
-    if not rule_id:
-        add_custom_rule(SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_COLUMN, SUPPLIER_DEFAULT_VALUE, True)
-        rule_id = _supplier_rule_id()
-    if rule_id:
-        set_custom_rule_enabled(rule_id, enabled)
-        st.session_state['resources_saved_notice'] = True
-        st.rerun()
-
-
-def _render_supplier_default_toggle() -> None:
-    _ensure_supplier_default_rule_enabled_once()
-    current = _supplier_rule_enabled()
-    selected = _resource_toggle(
-        'Fornecedor vazio → Não definido',
-        current,
-        'resource_supplier_default_rule',
-        'Quando ligado, preenche a coluna Fornecedor com “Não definido” somente quando ela estiver vazia. Não sobrescreve o mapeamento.',
-    )
-    if selected != current:
-        _set_supplier_default_enabled(selected)
 
 
 def _render_measure_normalizer_toggle() -> None:
@@ -137,7 +72,6 @@ def render_resources_tab() -> None:
         bool(updated.get('unique_product_code', True)),
         'rule_unique_product_code',
     )
-    _render_supplier_default_toggle()
 
     updated['invalid_gtin_mode'] = 'limpar'
     updated['image_separator'] = '|'
