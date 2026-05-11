@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.measurements import NORMALIZE_MEASURES_RESOURCE_KEY
 from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
 
 WATCHED_RESOURCES = ['clean_invalid_gtin', 'normalize_image_separator', 'auto_product_code', 'unique_product_code']
@@ -17,6 +18,20 @@ def _save_if_changed(original: dict, updated: dict) -> None:
         set_user_rules(updated)
         st.session_state['resources_saved_notice'] = True
         st.rerun()
+
+
+def _render_measure_normalizer_toggle() -> None:
+    current = bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, False))
+    st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = st.toggle(
+        f'Normalizar medidas para metro: {_bool_label(current)}',
+        value=current,
+        key='resource_normalize_measures_toggle',
+        help='Quando ligado, somente colunas de dimensão como Altura, Largura, Comprimento e Profundidade convertem 18 para 0,018 e 676 para 0,676 no CSV final.',
+    )
+    if st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY]:
+        st.caption('📏 Ativo: 18 → 0,018 | 676 → 0,676 | 0,676 permanece 0,676')
+    else:
+        st.caption('📏 Desligado: as medidas saem exatamente como chegaram no fluxo.')
 
 
 def render_resources_tab() -> None:
@@ -39,6 +54,7 @@ def render_resources_tab() -> None:
         value=bool(updated.get('normalize_image_separator', True)),
         key='resource_normalize_images',
     )
+    _render_measure_normalizer_toggle()
     updated['auto_product_code'] = st.toggle(
         f'Gerar código automático: {_bool_label(bool(updated.get("auto_product_code", True)))}',
         value=bool(updated.get('auto_product_code', True)),
@@ -59,6 +75,7 @@ def render_resources_tab() -> None:
     st.caption('Alterações são salvas automaticamente.')
 
     if st.button('Restaurar padrão', use_container_width=True, key='reset_user_resources'):
+        st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = False
         reset_user_rules()
         st.session_state['resources_saved_notice'] = True
         st.rerun()
