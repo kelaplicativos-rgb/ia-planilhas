@@ -52,6 +52,8 @@ STOCK_FORBIDDEN_COLUMN_HINTS = (
     'fornecedor',
 )
 
+MINIMUM_STOCK_REQUIRED_HINTS = ('balanco', 'saldo', 'estoque', 'quantidade', 'qtd')
+
 
 def _valid_model(df_model: pd.DataFrame | None) -> bool:
     return isinstance(df_model, pd.DataFrame) and len(df_model.columns) > 0
@@ -69,14 +71,31 @@ def _is_allowed_stock_column(column: str) -> bool:
     return any(hint in key for hint in STOCK_ALLOWED_COLUMN_HINTS)
 
 
-def _protect_stock_mapping(mapping: dict[str, str]) -> dict[str, str]:
-    """Remove restos de cadastro do fluxo de estoque.
+def _prune_stock_model(model: pd.DataFrame) -> pd.DataFrame:
+    """Remove colunas de cadastro/comerciais antes do motor de estoque.
 
-    Atualização de estoque não deve preencher preço, custo, categoria, imagem,
-    GTIN, observação ou campos comerciais, mesmo quando uma planilha/modelo
-    misturado trouxer essas colunas. Esses campos ficam vazios para impedir que
-    o motor antigo de cadastro interfira no CSV de estoque.
+    O fluxo de atualização de estoque não deve carregar preço, custo,
+    observação, imagens, GTIN, categoria, medidas ou fornecedor para o preview
+    nem para o CSV. Se o usuário anexar um modelo misturado, o motor corta essas
+    colunas e trabalha somente com o contrato real de estoque.
     """
+    columns = [column for column in model.columns if _is_allowed_stock_column(str(column))]
+    if not columns:
+        raise MissingEstoqueModelError(
+            'Modelo de estoque inválido. Envie um modelo com colunas de código, depósito e saldo/balanço/quantidade.'
+        )
+    return model.loc[:, columns].copy().fillna('')
+
+
+def _has_stock_quantity_column(model: pd.DataFrame) -> bool:
+    for column in model.columns:
+        key = normalize_key(column)
+        if any(hint in key for hint in MINIMUM_STOCK_REQUIRED_HINTS):
+            return True
+    return False
+
+
+def _protect_stock_mapping(mapping: dict[str, str]) -> dict[str, str]:
     protected: dict[str, str] = {}
     for target, source in mapping.items():
         protected[str(target)] = str(source or '') if _is_allowed_stock_column(str(target)) else ''
@@ -100,7 +119,13 @@ def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = 
             'Modelo de estoque do Bling não carregado. Envie o modelo para gerar somente as colunas solicitadas.'
         )
 
-    model = df_model.copy().fillna('')
+    raw_model = df_model.copy().fillna('')
+    model = _prune_stock_model(raw_model)
+    if not _has_stock_quantity_column(model):
+        raise MissingEstoqueModelError(
+            'Modelo de estoque inválido. Não encontrei coluna de saldo, balanço, estoque ou quantidade.'
+        )
+
     source = df_source.copy().fillna('') if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     raw_mapping = super_auto_map_columns(source, model)
     mapping = _protect_stock_mapping(raw_mapping)
