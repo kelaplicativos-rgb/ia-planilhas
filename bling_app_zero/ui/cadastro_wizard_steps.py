@@ -36,6 +36,16 @@ def _valid_model(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
 
 
+def _enforce_cadastro_model_columns(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Mantém o cadastro fiel ao modelo anexado na primeira etapa."""
+    df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
+    if not isinstance(df_final, pd.DataFrame) or not _valid_model(df_modelo):
+        return df_final
+    fixed = df_final.reindex(columns=list(df_modelo.columns), fill_value='')
+    st.session_state['df_final_cadastro'] = fixed
+    return fixed
+
+
 def _is_site_origin() -> bool:
     return str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '').strip().lower() == 'site'
 
@@ -151,7 +161,7 @@ def cadastro_context_ready() -> bool:
 
 
 def cadastro_mapping_ready() -> bool:
-    df_final = st.session_state.get('df_final_cadastro')
+    df_final = _enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     mapping = st.session_state.get('mapping_cadastro')
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
     return _valid_df(df_final) and _row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
@@ -221,7 +231,7 @@ def render_cadastro_mapeamento_step() -> None:
         st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço do Bling.')
     render_manual_mapping(df_para_mapear, df_modelo)
 
-    df_final = st.session_state.get('df_final_cadastro')
+    df_final = _enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
         _render_row_count_blocker(df_final)
 
@@ -230,7 +240,7 @@ def render_cadastro_preview_step() -> None:
     st.markdown('### Preview final do cadastro')
     st.caption('Confira o CSV final antes de baixar. Esta tela não reabre o mapeamento para evitar carga desnecessária.')
 
-    df_final = st.session_state.get('df_final_cadastro')
+    df_final = _enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     mapping = st.session_state.get('mapping_cadastro', {})
 
     if not _valid_df(df_final):
@@ -249,7 +259,7 @@ def render_cadastro_download_step() -> None:
     st.markdown('### Download do cadastro')
     st.caption('Última etapa: baixe somente o CSV final de cadastro pronto para o Bling.')
 
-    df_final = st.session_state.get('df_final_cadastro')
+    df_final = _enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     if not _valid_df(df_final):
         st.warning('Ainda não há CSV final de cadastro. Volte para o preview.')
         return
