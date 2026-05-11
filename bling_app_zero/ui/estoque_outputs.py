@@ -136,9 +136,3 @@ def render_stock_downloads() -> None:
             continue
         st.markdown(f'**CSV {index}: {name}**')
         download_final(df_final, 'estoque', _download_name(index, name, df_final))
-
-
-def render_stock_outputs() -> None:
-    """Compatibilidade com telas antigas: preview + download juntos."""
-    render_stock_preview()
-    render_stock_downloads()
