@@ -9,7 +9,7 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 4
+RULES_SCHEMA_VERSION = 5
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 
 
@@ -27,7 +27,7 @@ def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
         'target_column': target_column,
         'fill_value': fill_value,
         'only_when_empty': False,
-        'enabled': True,
+        'enabled': False,
         'source': 'system',
     }
 
@@ -65,7 +65,7 @@ CUSTOM_RULE_KEYS = {
     'target_column': '',
     'fill_value': '',
     'only_when_empty': False,
-    'enabled': True,
+    'enabled': False,
     'source': 'user',
 }
 
@@ -101,6 +101,15 @@ def _column_key(value: Any) -> str:
     return _safe_text(value).lower()
 
 
+def _safe_schema_version(raw: dict[str, Any] | None) -> int:
+    if not isinstance(raw, dict):
+        return 0
+    try:
+        return int(raw.get('schema_version') or 0)
+    except Exception:
+        return 0
+
+
 def _default_source_for_column(target_column: str) -> str:
     key = target_column.strip().lower()
     system_keys = {str(rule.get('target_column', '')).strip().lower() for rule in DEFAULT_CUSTOM_RULES}
@@ -111,6 +120,16 @@ def _is_removed_system_rule(rule: dict[str, Any]) -> bool:
     source = _safe_text(rule.get('source')).lower()
     column = _column_key(rule.get('target_column'))
     return source == 'system' and column in REMOVED_SYSTEM_RULE_COLUMNS
+
+
+def _disable_all_auto_fill_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mantém os recursos ativos, mas deixa todo preenchimento automático desligado."""
+    disabled: list[dict[str, Any]] = []
+    for rule in custom_rules:
+        current = dict(rule)
+        current['enabled'] = False
+        disabled.append(current)
+    return disabled
 
 
 def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -126,7 +145,7 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     rule['fill_value'] = _safe_text(rule.get('fill_value'))
     rule['condition'] = _safe_text(rule.get('condition'), rule['target_column'])
     rule['only_when_empty'] = bool(rule.get('only_when_empty', False))
-    rule['enabled'] = bool(rule.get('enabled', True))
+    rule['enabled'] = bool(rule.get('enabled', False))
 
     source = _safe_text(rule.get('source'))
     rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
@@ -173,6 +192,7 @@ def _merge_missing_default_rules(custom_rules: list[dict[str, Any]]) -> list[dic
 
 
 def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
+    incoming_schema_version = _safe_schema_version(raw)
     rules = default_rules()
     if isinstance(raw, dict):
         for key in rules:
@@ -193,6 +213,10 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
     rules['unique_product_code'] = bool(rules.get('unique_product_code', True))
     rules['custom_rules'] = _merge_missing_default_rules(normalize_custom_rules(rules.get('custom_rules')))
+
+    if incoming_schema_version < RULES_SCHEMA_VERSION:
+        rules['custom_rules'] = _disable_all_auto_fill_rules(rules['custom_rules'])
+
     return rules
 
 
@@ -227,7 +251,7 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
             'target_column': target,
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
-            'enabled': True,
+            'enabled': False,
             'source': 'user',
         }
     )
@@ -251,7 +275,7 @@ def update_custom_rule_by_id(rule_id: str, target_column: str, fill_value: str, 
                 'target_column': target_column,
                 'fill_value': fill_value,
                 'only_when_empty': only_when_empty,
-                'enabled': bool(old_rule.get('enabled', True)),
+                'enabled': bool(old_rule.get('enabled', False)),
                 'source': old_rule.get('source') or 'user',
             }
         )
