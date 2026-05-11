@@ -42,6 +42,16 @@ def _state_key(operation: str, signature: str, suffix: str) -> str:
     return f'preview_ai_{op}_{safe_signature}_{suffix}'
 
 
+def _set_custom_task(task_key: str, example: str) -> None:
+    """Atualiza a tarefa antes do próximo rerun do Streamlit.
+
+    Não podemos modificar diretamente uma chave usada por widget depois que o
+    widget já foi instanciado na mesma execução. Por isso os botões de exemplo
+    usam callback, que roda antes da reconstrução da tela.
+    """
+    st.session_state[task_key] = example
+
+
 def _render_detected_columns(df: pd.DataFrame) -> None:
     columns = detect_product_columns(df)
     detected = {
@@ -85,20 +95,26 @@ def _render_suggestions_editor(suggestions_df: pd.DataFrame, editor_key: str) ->
 
 def _render_multitask_box(op: str, signature: str) -> str:
     task_key = _state_key(op, signature, 'custom_task')
+    if task_key not in st.session_state:
+        st.session_state[task_key] = ''
+
     with st.expander('🧠 Multitarefa da IA', expanded=True):
         st.caption('Peça uma ação livre para a IA executar na planilha final. Ela vai gerar sugestões por linha e você confirma antes de aplicar.')
         custom_task = st.text_area(
             'O que você quer que a IA faça na planilha?',
-            value=st.session_state.get(task_key, ''),
             key=task_key,
             height=96,
             placeholder='Ex: crie títulos para produtos sem nome, melhore descrições vazias e sugira NCM onde estiver vazio.',
         )
         st.caption('Exemplos rápidos')
         for index, example in enumerate(EXAMPLE_TASKS, start=1):
-            if st.button(example, use_container_width=True, key=_state_key(op, signature, f'example_{index}')):
-                st.session_state[task_key] = example
-                st.rerun()
+            st.button(
+                example,
+                use_container_width=True,
+                key=_state_key(op, signature, f'example_{index}'),
+                on_click=_set_custom_task,
+                args=(task_key, example),
+            )
         st.caption('Proteção ativa: a IA não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs.')
     return str(custom_task or '').strip()
 
