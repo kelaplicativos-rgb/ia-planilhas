@@ -18,7 +18,9 @@ from bling_app_zero.ui.home_shared import df_signature, download_final, preview_
 from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_preview, render_mapping_title
 
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
+MANUAL_WRITE_OPTION = '— escrever valor fixo —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
+MANUAL_MAPPING_VALUE = '__BLING_MANUAL_FIXED_VALUE__'
 PRICE_TARGET_ALIASES = ['Preço de venda', 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preço', 'Valor']
 CADASTRO_MAPPING_CONFIRMED_KEY = 'cadastro_mapping_confirmed'
 CADASTRO_MAPPING_SIGNATURE_KEY = 'cadastro_mapping_confirmed_signature'
@@ -42,15 +44,25 @@ def _target_widget_key(mapping_key: str, target_index: int) -> str:
     return f'{mapping_key}_f{target_index:03d}'
 
 
+def _manual_value_key(widget_key: str) -> str:
+    return f'{widget_key}__manual_value'
+
+
+def _is_manual_value(value: str | None) -> bool:
+    return str(value or '').strip() == MANUAL_MAPPING_VALUE
+
+
 def _option_value(value: str | None) -> str:
     text = str(value or '').strip()
-    if text in {EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION}:
+    if text in {EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION, MANUAL_MAPPING_VALUE}:
         return ''
     return text
 
 
 def _display_option(value: str | None) -> str:
     text = str(value or '').strip()
+    if _is_manual_value(text):
+        return MANUAL_WRITE_OPTION
     return text if text else EMPTY_LEAVE_OPTION
 
 
@@ -58,7 +70,17 @@ def _is_explicit_empty(widget_key: str, value: str | None) -> bool:
     return str(value or '').strip() == EMPTY_LEAVE_OPTION or bool(st.session_state.get(f'{widget_key}__empty_resolved'))
 
 
+def _is_explicit_manual(widget_key: str, value: str | None) -> bool:
+    return str(value or '').strip() == MANUAL_WRITE_OPTION or bool(st.session_state.get(f'{widget_key}__manual_resolved')) or _is_manual_value(value)
+
+
+def _manual_confidence() -> dict[str, object]:
+    return {'level': 'verde', 'emoji': '🟢', 'label': 'valor fixo', 'score': 100, 'order': 2}
+
+
 def _confidence_for_selection(df_source: pd.DataFrame, target: str, selected: str, widget_key: str) -> dict[str, object]:
+    if _is_explicit_manual(widget_key, selected):
+        return _manual_confidence()
     if _is_explicit_empty(widget_key, selected):
         return resolved_empty_confidence()
     return confidence_for_mapping(df_source, target, _option_value(selected))
@@ -77,6 +99,8 @@ def _estoque_model(df_modelo: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _default_index(options: list[str], value: str, widget_key: str | None = None) -> int:
+    if widget_key and st.session_state.get(f'{widget_key}__manual_resolved'):
+        return options.index(MANUAL_WRITE_OPTION) if MANUAL_WRITE_OPTION in options else 0
     if widget_key and st.session_state.get(f'{widget_key}__empty_resolved'):
         return options.index(EMPTY_LEAVE_OPTION) if EMPTY_LEAVE_OPTION in options else 0
     display = _display_option(value)
@@ -198,13 +222,24 @@ def _current_confidence_from_widgets(
     return result
 
 
-def _mapping_signature(mapping: dict[str, str], df_final: pd.DataFrame) -> str:
+def _manual_values_for_signature(mapping: dict[str, str], target_columns: list[str], mapping_key: str) -> list[str]:
+    parts: list[str] = []
+    for index, target in enumerate(target_columns):
+        if _is_manual_value(mapping.get(target, '')):
+            widget_key = _target_widget_key(mapping_key, index)
+            parts.append(f'{target}:{st.session_state.get(_manual_value_key(widget_key), "")}')
+    return parts
+
+
+def _mapping_signature(mapping: dict[str, str], df_final: pd.DataFrame, target_columns: list[str] | None = None, mapping_key: str = '') -> str:
     parts = [f'{key}={mapping.get(key, "")}' for key in sorted(mapping)]
+    if target_columns and mapping_key:
+        parts.extend(_manual_values_for_signature(mapping, target_columns, mapping_key))
     return _short_hash('|'.join(parts) + ':' + df_signature(df_final), size=16)
 
 
-def _invalidate_confirmation_if_changed(mapping: dict[str, str], df_final: pd.DataFrame) -> str:
-    signature = _mapping_signature(mapping, df_final)
+def _invalidate_confirmation_if_changed(mapping: dict[str, str], df_final: pd.DataFrame, target_columns: list[str], mapping_key: str) -> str:
+    signature = _mapping_signature(mapping, df_final, target_columns, mapping_key)
     confirmed_signature = st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY)
     if confirmed_signature and confirmed_signature != signature:
         st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
@@ -212,8 +247,8 @@ def _invalidate_confirmation_if_changed(mapping: dict[str, str], df_final: pd.Da
     return signature
 
 
-def _render_confirm_mapping_button(mapping: dict[str, str], df_final: pd.DataFrame, mapping_key: str) -> None:
-    signature = _invalidate_confirmation_if_changed(mapping, df_final)
+def _render_confirm_mapping_button(mapping: dict[str, str], df_final: pd.DataFrame, mapping_key: str, target_columns: list[str]) -> None:
+    signature = _invalidate_confirmation_if_changed(mapping, df_final, target_columns, mapping_key)
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY)) and st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY) == signature
     if confirmed:
         st.success('Mapeamento confirmado. Você já pode continuar para o preview final.')
@@ -262,6 +297,17 @@ def _apply_safe_defaults(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _apply_manual_fixed_values(df: pd.DataFrame, mapping: dict[str, str], target_columns: list[str], mapping_key: str) -> pd.DataFrame:
+    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for index, target in enumerate(target_columns):
+        if not _is_manual_value(mapping.get(target, '')) or target not in out.columns:
+            continue
+        widget_key = _target_widget_key(mapping_key, index)
+        manual_value = str(st.session_state.get(_manual_value_key(widget_key), '') or '')
+        out[target] = manual_value
+    return out
+
+
 def _apply_ai_to_session_mapping(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -292,6 +338,18 @@ def _render_ai_button(df_source: pd.DataFrame, target_columns: list[str], curren
         _apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
 
 
+def _render_manual_value_input(target: str, widget_key: str) -> str:
+    value_key = _manual_value_key(widget_key)
+    manual_value = st.text_input(
+        f'Valor fixo para {target}',
+        value=str(st.session_state.get(value_key, '') or ''),
+        key=value_key,
+        placeholder='Digite o valor que será repetido no arquivo final',
+    )
+    st.caption('Valor fixo: será aplicado em todas as linhas desta coluna no preview e no download final.')
+    return str(manual_value or '')
+
+
 def _render_mapping_select(
     df_source: pd.DataFrame,
     target: str,
@@ -302,7 +360,8 @@ def _render_mapping_select(
 ) -> tuple[str, dict[str, object]]:
     widget_key = _target_widget_key(mapping_key, target_index)
     if widget_key in st.session_state:
-        suggested = _option_value(st.session_state.get(widget_key, suggested))
+        widget_value = st.session_state.get(widget_key, suggested)
+        suggested = MANUAL_MAPPING_VALUE if widget_value == MANUAL_WRITE_OPTION else _option_value(widget_value)
     raw_before = st.session_state.get(widget_key, suggested)
     info_before = _confidence_for_selection(df_source, target, raw_before, widget_key)
     label = _signal_label(target, info_before)
@@ -322,13 +381,24 @@ def _render_mapping_select(
                 key=widget_key,
                 label_visibility='collapsed',
             )
-            if selected_raw == EMPTY_LEAVE_OPTION:
+            if selected_raw == MANUAL_WRITE_OPTION:
+                st.session_state[f'{widget_key}__manual_resolved'] = True
+                st.session_state.pop(f'{widget_key}__empty_resolved', None)
+                _render_manual_value_input(target, widget_key)
+                selected = MANUAL_MAPPING_VALUE
+            elif selected_raw == EMPTY_LEAVE_OPTION:
                 st.session_state[f'{widget_key}__empty_resolved'] = True
+                st.session_state.pop(f'{widget_key}__manual_resolved', None)
+                selected = ''
             else:
                 st.session_state.pop(f'{widget_key}__empty_resolved', None)
-            selected = _option_value(selected_raw)
+                st.session_state.pop(f'{widget_key}__manual_resolved', None)
+                selected = _option_value(selected_raw)
             info_after = _confidence_for_selection(df_source, target, selected_raw, widget_key)
-            _render_mapping_preview(df_source, selected)
+            if selected == MANUAL_MAPPING_VALUE:
+                info_after = _manual_confidence()
+            else:
+                _render_mapping_preview(df_source, selected)
     return selected, info_after
 
 
@@ -337,7 +407,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     model = _cadastro_model(df_modelo)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
-    options = [EMPTY_LEAVE_OPTION] + source_columns
+    options = [MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
     mapping_key = _mapping_base('cad_map_', signature)
     order_key = f'{mapping_key}_order'
@@ -348,7 +418,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
         st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     st.markdown('#### 2. Conferir campos do cadastro')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto ou vazio confirmado')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado')
     with st.expander('Ver origem antes de preencher', expanded=False):
         preview_df('Origem para conferir', df_source)
     current_mapping = dict(st.session_state.get(mapping_key, {}))
@@ -367,16 +437,18 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         edited_confidence[target] = info_after
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
-    df_preview_manual = apply_mapping(df_source, model, edited_mapping)
+    mapping_for_apply = {target: value for target, value in edited_mapping.items() if not _is_manual_value(value)}
+    df_preview_manual = apply_mapping(df_source, model, mapping_for_apply)
+    df_preview_manual = _apply_manual_fixed_values(df_preview_manual, edited_mapping, target_columns, mapping_key)
     df_preview_manual = _apply_safe_defaults(df_preview_manual)
     df_preview_manual = sanitize_for_bling(df_preview_manual)
     st.session_state['df_final_cadastro'] = df_preview_manual
     st.session_state['mapping_cadastro'] = edited_mapping
-    used_values = [value for value in edited_mapping.values() if value]
+    used_values = [value for value in edited_mapping.values() if value and not _is_manual_value(value)]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
         st.warning('A mesma coluna da origem foi usada em mais de um campo: ' + ', '.join(duplicated))
-    _render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key)
+    _render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key, target_columns)
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button('Atualizar prévia do cadastro', use_container_width=True, key=f'{mapping_key}_refresh'):
@@ -399,7 +471,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     model = _estoque_model(df_modelo_estoque)
     source_columns = [str(column) for column in df_source.columns]
     target_columns = [str(column) for column in model.columns]
-    options = [EMPTY_LEAVE_OPTION] + source_columns
+    options = [MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
     signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
     mapping_key = _mapping_base('stk_map_', signature)
     order_key = f'{mapping_key}_order'
@@ -412,7 +484,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state[mapping_key] = auto_mapping
         st.session_state.pop(order_key, None)
     st.markdown('##### Conferir campos do estoque')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto ou vazio confirmado')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
     current_mapping = dict(st.session_state.get(mapping_key, {}))
@@ -440,12 +512,14 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         edited_confidence[target] = info_after
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_estoque_from_cadastro'] = edited_confidence
-    df_preview_manual = apply_mapping(df_source, model, edited_mapping)
+    mapping_for_apply = {target: value for target, value in edited_mapping.items() if not _is_manual_value(value)}
+    df_preview_manual = apply_mapping(df_source, model, mapping_for_apply)
+    df_preview_manual = _apply_manual_fixed_values(df_preview_manual, edited_mapping, target_columns, mapping_key)
     df_preview_manual = _fill_deposito_manual(df_preview_manual, deposito)
     df_preview_manual = sanitize_for_bling(df_preview_manual)
     st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
     st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
-    used_values = [value for value in edited_mapping.values() if value]
+    used_values = [value for value in edited_mapping.values() if value and not _is_manual_value(value)]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
     if duplicated:
         st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
