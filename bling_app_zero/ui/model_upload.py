@@ -15,7 +15,19 @@ MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
 STOCK_REQUIRED_DEPOSIT_TERMS = ['deposito', 'deposito obrigatorio']
 STOCK_REQUIRED_BALANCE_TERMS = ['balanco', 'balanco obrigatorio', 'saldo', 'quantidade', 'estoque']
 STOCK_IDENTIFIER_TERMS = ['id produto', 'codigo produto', 'codigo', 'gtin', 'descricao produto', 'descricao']
-CADASTRO_STRONG_TERMS = ['ncm', 'marca', 'categoria', 'descricao complementar', 'descricao curta', 'unidade']
+CADASTRO_REQUIRED_TERMS = ['codigo', 'descricao', 'preco']
+CADASTRO_STRONG_TERMS = [
+    'ncm',
+    'marca',
+    'categoria',
+    'descricao complementar',
+    'descricao curta',
+    'unidade',
+    'gtin ean',
+    'url imagens externas',
+    'codigo pai',
+    'grupo de produtos',
+]
 
 
 @dataclass
@@ -70,6 +82,12 @@ def _has_any_column(df: pd.DataFrame | None, terms: list[str]) -> bool:
     return any(any(term and term in column for column in columns) for term in normalized_terms)
 
 
+def _has_all_column_groups(df: pd.DataFrame | None, terms: list[str]) -> bool:
+    columns = _columns(df)
+    normalized_terms = [_normalize_text(term) for term in terms]
+    return all(any(term and term in column for column in columns) for term in normalized_terms)
+
+
 def _official_stock_model(file: Any, df: pd.DataFrame | None) -> bool:
     """Reconhece os modelos oficiais de saldo/estoque do Bling.
 
@@ -94,6 +112,29 @@ def _official_stock_model(file: Any, df: pd.DataFrame | None) -> bool:
     return False
 
 
+def _official_cadastro_model(file: Any, df: pd.DataFrame | None) -> bool:
+    """Reconhece os modelos oficiais de cadastro/produtos do Bling.
+
+    O modelo de cadastro pode ter uma coluna "Estoque", mas não tem o par
+    obrigatorio "Deposito" + "Balanco". Por isso ele deve ser classificado como
+    cadastro quando aparecer com colunas fortes de produto.
+    """
+    if _official_stock_model(file, df):
+        return False
+
+    name = _normalize_text(_file_name(file))
+    columns = _column_text(df)
+    if not columns:
+        return False
+
+    name_says_product = any(term in name for term in ['produto', 'produtos', 'cadastro', 'modelo', 'bling'])
+    has_required_base = _has_all_column_groups(df, CADASTRO_REQUIRED_TERMS)
+    has_product_taxonomy = _has_any_column(df, ['ncm', 'marca', 'categoria'])
+    has_product_extra = _has_any_column(df, ['descricao complementar', 'descricao curta', 'url imagens externas', 'gtin ean'])
+
+    return has_required_base and (name_says_product or has_product_taxonomy or has_product_extra)
+
+
 def _score_cadastro_model(file: Any, df: pd.DataFrame | None) -> int:
     if _official_stock_model(file, df):
         return 0
@@ -101,14 +142,16 @@ def _score_cadastro_model(file: Any, df: pd.DataFrame | None) -> int:
     name = _normalize_text(_file_name(file))
     columns = _column_text(df)
     score = 0
-    if any(term in name for term in ['modelo', 'bling', 'cadastro', 'produto', 'layout', 'importacao']):
+    if _official_cadastro_model(file, df):
+        score += 180
+    if any(term in name for term in ['modelo', 'bling', 'cadastro', 'produto', 'produtos', 'layout', 'importacao']):
         score += 35
     if any(term in columns for term in ['gtin', 'ean', 'preco', 'descricao', 'ncm', 'marca', 'categoria']):
         score += 70
     if any(term in columns for term in CADASTRO_STRONG_TERMS):
         score += 35
     if any(term in columns for term in ['deposito', 'balanco', 'saldo estoque']):
-        score -= 70
+        score -= 120
     return score
 
 
@@ -117,13 +160,16 @@ def _score_estoque_model(file: Any, df: pd.DataFrame | None) -> int:
     columns = _column_text(df)
     score = 0
     if _official_stock_model(file, df):
-        score += 160
-    if any(term in name for term in ['modelo', 'bling', 'estoque', 'saldo', 'layout', 'importacao']):
-        score += 35
-    if any(term in columns for term in ['deposito', 'balanco', 'estoque', 'quantidade', 'saldo']):
-        score += 80
-    if any(term in columns for term in ['id produto', 'codigo produto', 'descricao produto']):
-        score += 25
+        score += 180
+    else:
+        if _official_cadastro_model(file, df):
+            return 0
+        if any(term in name for term in ['estoque', 'saldo']):
+            score += 35
+        if any(term in columns for term in ['deposito', 'balanco', 'saldo']):
+            score += 80
+        if any(term in columns for term in ['id produto', 'codigo produto', 'descricao produto']):
+            score += 25
     return score
 
 
@@ -138,7 +184,7 @@ def _pick_cadastro(loaded: list[tuple[Any, pd.DataFrame | None]]) -> tuple[Any |
 
 
 def _pick_estoque(loaded: list[tuple[Any, pd.DataFrame | None]], used_file: Any | None) -> tuple[Any | None, pd.DataFrame | None]:
-    candidates = [item for item in loaded if item[0] is not used_file] or loaded
+    candidates = [item for item in loaded if item[0] is not used_file]
     if not candidates:
         return None, None
     file, df = max(candidates, key=lambda item: _score_estoque_model(item[0], item[1]))
