@@ -51,15 +51,9 @@ RISKY_TARGET_TERMS = [
 
 PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
 
-SAFE_CONSTANTS = {
-    'clonar dados do pai': 'NÃO',
-    'cross docking': '0',
-    'frete gratis': 'NÃO',
-    'frete grátis': 'NÃO',
-    'fornecedor': 'Não definido',
-    'nome fornecedor': 'Não definido',
-    'nome do fornecedor': 'Não definido',
-}
+# BLINGFIX: padrões fixos removidos do motor de mapeamento.
+# A sidebar/regras do usuário deve ser a única origem de preenchimento automático.
+SAFE_CONSTANTS: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -285,8 +279,9 @@ def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_
 
 
 def safe_default_for_target(target: str) -> str:
-    key = normalize_key(target)
-    for term, value in SAFE_CONSTANTS.items():
-        if term in key:
-            return value
+    """Padrões automáticos fixos desativados.
+
+    Campos como Fornecedor, Cross-Docking, Clonar dados do pai e Cód no fornecedor
+    não devem aparecer como protegidos/preenchidos automaticamente no mapeamento.
+    """
     return ''
