@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import html
-
 import pandas as pd
 import streamlit as st
 
@@ -75,25 +73,12 @@ def _render_loaded_summary() -> None:
         st.success('Modelos carregados: ' + ' + '.join(parts))
 
 
-def _render_model_card() -> None:
-    kicker = html.escape('Modelo do Bling')
-    title = html.escape('Envie o modelo')
-    text = html.escape('Cadastro, estoque ou ambos. Ele define exatamente quais colunas serão preenchidas.')
-    st.markdown(
-        f"""
-        <section class="bling-flow-card bling-model-card">
-            <div class="bling-flow-card-kicker">{kicker}</div>
-            <h2 class="bling-flow-card-title">{title}</h2>
-            <p class="bling-flow-card-text">{text}</p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render_home_bling_models() -> None:
-    _render_model_card()
+    """Renderiza somente o upload dos modelos.
 
+    O card de titulo desta etapa fica no wizard. Este módulo não cria outro card
+    para evitar duplicidade visual entre "Modelo do Bling" e "Envie o modelo".
+    """
     upload = render_model_upload_box(
         title='Modelos do Bling',
         operation='cadastro',
