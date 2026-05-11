@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
+from bling_app_zero.core.measurements import normalize_measure_columns, normalize_measures_resource_enabled
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules, measure_defaults_from_rules
 
@@ -286,6 +287,9 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].apply(normalize_image_urls)
         else:
             out[col] = out[col].apply(clean_cell)
+
+    if normalize_measures_resource_enabled(False):
+        out = normalize_measure_columns(out)
 
     # BLINGFIX: não aplicar padrões fixos por fora da sidebar/regras.
     # Fornecedor, unidade e medidas só serão preenchidos por regras customizadas habilitadas.
