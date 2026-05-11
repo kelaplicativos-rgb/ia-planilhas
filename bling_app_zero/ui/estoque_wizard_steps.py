@@ -42,11 +42,19 @@ def _normalize_deposito(value: object) -> str:
     return text
 
 
-def _store_deposito_value(deposito: str) -> None:
+def _store_deposito_value(deposito: str, *, write_primary: bool = True) -> None:
+    """Salva o depósito sem quebrar o contrato de widgets do Streamlit.
+
+    O Streamlit não permite alterar st.session_state[ESTOQUE_DEPOSITO_KEY]
+    depois que o text_input com essa mesma key já foi instanciado no rerun.
+    Por isso, quando a chamada vem depois do widget, write_primary=False e
+    apenas as chaves auxiliares são sincronizadas.
+    """
     clean = _normalize_deposito(deposito)
-    st.session_state[ESTOQUE_DEPOSITO_KEY] = clean
+    if write_primary:
+        st.session_state[ESTOQUE_DEPOSITO_KEY] = clean
     for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
-        if key != ESTOQUE_DEPOSITO_KEY and key in st.session_state:
+        if key != ESTOQUE_DEPOSITO_KEY and (key in st.session_state or clean):
             st.session_state[key] = clean
 
 
@@ -54,8 +62,8 @@ def _deposito_value() -> str:
     for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
         value = _normalize_deposito(st.session_state.get(key))
         if value:
-            if key != ESTOQUE_DEPOSITO_KEY:
-                _store_deposito_value(value)
+            if key != ESTOQUE_DEPOSITO_KEY and ESTOQUE_DEPOSITO_KEY not in st.session_state:
+                _store_deposito_value(value, write_primary=True)
             return value
     return ''
 
@@ -153,6 +161,9 @@ def estoque_output_ready() -> bool:
 
 def _render_deposito_input() -> str:
     current = _deposito_value()
+    if ESTOQUE_DEPOSITO_KEY not in st.session_state:
+        st.session_state[ESTOQUE_DEPOSITO_KEY] = current
+
     deposito = st.text_input(
         'Nome do depósito que será gravado no CSV',
         value=current,
@@ -161,7 +172,7 @@ def _render_deposito_input() -> str:
         help='Este valor será aplicado em toda coluna de depósito do modelo de estoque do Bling.',
     )
     deposito = _normalize_deposito(deposito)
-    _store_deposito_value(deposito)
+    _store_deposito_value(deposito, write_primary=False)
     _clear_estoque_outputs_if_deposito_changed(deposito)
     if deposito:
         st.success(f'Depósito definido para o CSV: {deposito}')
