@@ -21,9 +21,9 @@ def _stock_results() -> list[dict[str, object]]:
     return results if isinstance(results, list) else []
 
 
-def _download_name(index: object, name: str, df_final: pd.DataFrame) -> str:
+def _download_key(index: object, name: str, df_final: pd.DataFrame) -> str:
     safe_name = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in str(name or 'estoque'))[:60]
-    return f'estoque_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
+    return f'estoque_final_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
 
 
 def build_stock_outputs_from_dataframe(
@@ -35,14 +35,12 @@ def build_stock_outputs_from_dataframe(
     if not _valid_model(df_modelo):
         _show_missing_model_warning()
         return
-
     run_estoque_pipeline = load_estoque_pipeline()
     try:
         df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
     except MissingEstoqueModelError as exc:
         st.error(str(exc))
         return
-
     result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
     st.session_state['estoque_multi_outputs'] = [result]
     st.session_state['df_final_estoque'] = df_final
@@ -53,37 +51,23 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
     if not _valid_model(df_modelo):
         _show_missing_model_warning()
         return
-
     source_files = source_files_from_upload(upload)
     if not source_files:
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.')
         return
-
     run_estoque_pipeline = load_estoque_pipeline()
     results: list[dict[str, object]] = []
-
     for index, file in enumerate(source_files, start=1):
         df_origem = safe_read_source(file)
         if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
             continue
-
         try:
             df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
         except MissingEstoqueModelError as exc:
             st.error(str(exc))
             return
-
-        results.append(
-            {
-                'index': index,
-                'name': file_name(file),
-                'df_final': df_final,
-                'mapping': mapping,
-            }
-        )
-
+        results.append({'index': index, 'name': file_name(file), 'df_final': df_final, 'mapping': mapping})
     st.session_state['estoque_multi_outputs'] = results
-
     if results:
         st.session_state['df_final_estoque'] = results[0]['df_final']
         st.session_state['mapping_estoque'] = results[0]['mapping']
@@ -97,21 +81,17 @@ def render_stock_preview() -> None:
     if not results:
         st.warning('Nenhum preview de estoque foi gerado ainda.')
         return
-
-    st.markdown('#### 📦 Preview final de ESTOQUE')
-    st.caption('Confira os dados antes de baixar. O download fica na próxima etapa.')
-
+    st.markdown('#### Conferência final do estoque')
+    st.caption('Confira o arquivo final antes do download. Esta tela pertence somente ao fluxo novo de atualização de estoque.')
     for result in results:
         index = result.get('index')
-        name = str(result.get('name') or f'origem_{index}')
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
-
-        with st.expander(f'📦 ESTOQUE · Preview {index}: {name}', expanded=index == 1):
+        with st.expander(f'Origem {index} · conferência do estoque', expanded=index == 1):
             if isinstance(mapping, dict):
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
-                preview_df('📦 ESTOQUE · Preview final', df_final)
+                preview_df('Arquivo final de estoque', df_final)
             else:
                 st.warning('Não foi possível montar o preview desta origem.')
 
@@ -121,10 +101,7 @@ def render_stock_downloads() -> None:
     if not results:
         st.warning('Nenhum CSV de estoque foi gerado ainda.')
         return
-
-    st.markdown('#### 📥 Download de ESTOQUE')
-    st.caption('Baixe aqui somente o CSV final de atualização de estoque. Cada origem gera um CSV separado.')
-
+    st.caption('Baixe somente o CSV final de atualização de estoque. Cada origem válida gera um arquivo separado.')
     for result in results:
         index = result.get('index')
         name = str(result.get('name') or f'origem_{index}')
@@ -132,5 +109,5 @@ def render_stock_downloads() -> None:
         if not isinstance(df_final, pd.DataFrame):
             st.warning(f'Não foi possível baixar a origem {index}: {name}.')
             continue
-        st.markdown(f'**CSV {index}: {name}**')
-        download_final(df_final, 'estoque', _download_name(index, name, df_final))
+        st.markdown(f'**Origem {index}**')
+        download_final(df_final, 'estoque', _download_key(index, name, df_final))
