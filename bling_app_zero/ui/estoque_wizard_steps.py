@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.cadastro_mapping import render_manual_stock_mapping
+from bling_app_zero.ui.estoque_mapping import render_manual_estoque_mapping
 from bling_app_zero.ui.estoque_models import home_estoque_model_loaded, render_estoque_model_contract, select_estoque_model
 from bling_app_zero.ui.estoque_outputs import render_stock_downloads, render_stock_preview
 from bling_app_zero.ui.estoque_sources import (
@@ -269,7 +269,7 @@ def render_estoque_entrada_step() -> None:
 
 def render_estoque_gerar_step() -> None:
     st.markdown('### Mapeamento do estoque')
-    st.caption('O estoque agora usa o mesmo padrão de conferência manual do cadastro. Nada deve ser criado sem você ver o mapeamento.')
+    st.caption('Mapeamento manual exclusivo de estoque. Nada deve ser criado sem você ver o campo correspondente.')
 
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
     deposito = _deposito_value()
@@ -290,7 +290,7 @@ def render_estoque_gerar_step() -> None:
         return
 
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
-    render_manual_stock_mapping(df_origem, df_modelo, deposito)
+    render_manual_estoque_mapping(df_origem, df_modelo, deposito)
 
     if _sync_manual_stock_output(source_name):
         st.success('Mapeamento de estoque gerado. Continue para conferir o preview final.')
