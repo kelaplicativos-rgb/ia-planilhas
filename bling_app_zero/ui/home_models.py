@@ -10,6 +10,7 @@ from bling_app_zero.ui.model_upload import render_model_upload_box
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
 HOME_HAS_MODELS_KEY = 'home_modelos_bling_ok'
+FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 
 GLOBAL_CADASTRO_MODEL_KEYS = [
     'df_modelo_cadastro',
@@ -36,12 +37,34 @@ def _save_model(key: str, df: pd.DataFrame | None, aliases: list[str]) -> None:
         st.session_state[alias] = copied.copy().fillna('')
 
 
+def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_model_df: pd.DataFrame | None) -> None:
+    has_cadastro = isinstance(cadastro_model_df, pd.DataFrame)
+    has_estoque = isinstance(estoque_model_df, pd.DataFrame)
+
+    if has_estoque and not has_cadastro:
+        operation = 'estoque'
+    elif has_cadastro and not has_estoque:
+        operation = 'cadastro'
+    else:
+        return
+
+    st.session_state[FLOW_OPERATION_KEY] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['home_detected_operation'] = operation
+    try:
+        st.query_params['operacao'] = operation
+    except Exception:
+        pass
+
+
 def save_home_models(
     cadastro_model_df: pd.DataFrame | None = None,
     estoque_model_df: pd.DataFrame | None = None,
 ) -> None:
     _save_model(HOME_CADASTRO_MODEL_KEY, cadastro_model_df, GLOBAL_CADASTRO_MODEL_KEYS)
     _save_model(HOME_ESTOQUE_MODEL_KEY, estoque_model_df, GLOBAL_ESTOQUE_MODEL_KEYS)
+    _sync_detected_operation(cadastro_model_df, estoque_model_df)
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
 
 
