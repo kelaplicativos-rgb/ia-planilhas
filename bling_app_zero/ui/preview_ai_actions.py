@@ -162,7 +162,7 @@ def _render_multitask_box(op: str, signature: str) -> str:
             'O que você quer que a IA faça na planilha?',
             key=task_key,
             height=96,
-            placeholder='Ex: crie títulos para produtos sem nome, melhore descrições vazias e sugira NCM onde estiver vazio.',
+            placeholder='Ex: reformule todos os títulos dos produtos com no máximo 60 caracteres.',
         )
         st.caption('Exemplos rápidos')
         for index, example in enumerate(EXAMPLE_TASKS, start=1):
@@ -195,6 +195,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     resources = get_ai_resources()
     text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
     ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
+    total_rows = int(len(df_final))
 
     st.markdown(
         """
@@ -234,27 +235,20 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
 
     custom_task = _render_multitask_box(op, signature)
 
-    max_rows = st.slider(
-        'Quantidade máxima de produtos para revisar por execução',
-        min_value=10,
-        max_value=200,
-        value=min(60, max(10, len(df_final))),
-        step=10,
-        key=_state_key(op, signature, 'max_rows'),
-    )
+    st.info(f'A próxima execução da IA vai analisar todas as {total_rows} linha(s) do preview final.')
 
     can_run = bool(use_title or use_description or use_ncm or custom_task)
     if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
-        with st.spinner('IA revisando produtos do preview final...'):
+        with st.spinner(f'IA revisando {total_rows} produto(s) do preview final...'):
             suggestions, status = generate_product_ai_suggestions(
                 df_final,
                 actions={'title': use_title, 'description': use_description, 'ncm': use_ncm},
-                max_rows=max_rows,
+                max_rows=total_rows,
                 custom_task=custom_task,
             )
         st.session_state[suggestions_key] = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
         st.session_state[status_key] = status
-        add_debug(f'IA de catálogo executada no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
+        add_debug(f'IA de catálogo executada em todas as {total_rows} linha(s) do preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
         st.rerun()
 
     status = st.session_state.get(status_key)
