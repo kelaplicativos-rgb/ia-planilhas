@@ -10,7 +10,15 @@ from bling_app_zero.ai_tools.product_ai_reviewer import (
     generate_product_ai_suggestions,
     suggestions_to_dataframe,
 )
+from bling_app_zero.core.ai_resource_rules import (
+    AI_RESOURCE_DESCRIPTION_SIZE,
+    AI_RESOURCE_IMPROVE_CATALOG_TEXT,
+    AI_RESOURCE_LIMIT_TITLE_60,
+    AI_RESOURCE_SUGGEST_NCM,
+    get_ai_resources,
+)
 from bling_app_zero.core.debug import add_debug
+from bling_app_zero.core.text import clean_cell
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 
 
@@ -31,6 +39,12 @@ EXAMPLE_TASKS = [
     'Sugira NCM para produtos que estão com NCM vazio.',
 ]
 
+DESCRIPTION_LIMITS = {
+    'pequena': 220,
+    'media': 520,
+    'grande': 1000,
+}
+
 
 def _operation_label(operation: str) -> str:
     return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'ARQUIVO')
@@ -50,6 +64,50 @@ def _set_custom_task(task_key: str, example: str) -> None:
     usam callback, que roda antes da reconstrução da tela.
     """
     st.session_state[task_key] = example
+
+
+def _truncate_text(value: object, limit: int) -> str:
+    text = clean_cell(value)
+    if limit <= 0 or len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    if ' ' in cut:
+        cut = cut.rsplit(' ', 1)[0].rstrip()
+    return cut
+
+
+def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(suggestions_df, pd.DataFrame) or suggestions_df.empty:
+        return suggestions_df
+
+    resources = get_ai_resources()
+    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
+    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
+    limit_title = bool(resources.get(AI_RESOURCE_LIMIT_TITLE_60, True))
+    description_size = str(resources.get(AI_RESOURCE_DESCRIPTION_SIZE, 'media') or 'media')
+    description_limit = DESCRIPTION_LIMITS.get(description_size, DESCRIPTION_LIMITS['media'])
+
+    out = suggestions_df.copy()
+    if 'Campo' in out.columns:
+        if not text_enabled:
+            out = out[~out['Campo'].astype(str).str.lower().isin(['title', 'description'])]
+        if not ncm_enabled:
+            out = out[out['Campo'].astype(str).str.lower() != 'ncm']
+
+    if out.empty or 'Sugestão IA' not in out.columns or 'Campo' not in out.columns:
+        return out
+
+    def _adjust(row: pd.Series) -> str:
+        field = str(row.get('Campo') or '').strip().lower()
+        suggestion = clean_cell(row.get('Sugestão IA', ''))
+        if field == 'title' and text_enabled and limit_title:
+            return _truncate_text(suggestion, 60)
+        if field == 'description' and text_enabled:
+            return _truncate_text(suggestion, description_limit)
+        return suggestion
+
+    out['Sugestão IA'] = out.apply(_adjust, axis=1)
+    return out.reset_index(drop=True)
 
 
 def _render_detected_columns(df: pd.DataFrame) -> None:
@@ -134,6 +192,9 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     suggestions_key = _state_key(op, signature, 'suggestions')
     status_key = _state_key(op, signature, 'status')
     editor_key = _state_key(op, signature, 'editor')
+    resources = get_ai_resources()
+    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
+    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
 
     st.markdown(
         """
@@ -149,6 +210,9 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     if op != 'cadastro':
         st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
 
+    if not text_enabled and not ncm_enabled:
+        st.info('Recursos com IA estão desligados na sidebar. Ligue pelo menos um recurso em “Recursos com IA” para gerar sugestões automáticas.')
+
     if ai_ready():
         st.success('IA conectada. As sugestões serão geradas com OpenAI.')
     else:
@@ -158,11 +222,15 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        use_title = st.checkbox('Títulos', value=True, key=_state_key(op, signature, 'use_title'))
+        use_title = st.checkbox('Títulos', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_title'))
     with col2:
-        use_description = st.checkbox('Descrições complementares', value=True, key=_state_key(op, signature, 'use_description'))
+        use_description = st.checkbox('Descrições complementares', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_description'))
     with col3:
-        use_ncm = st.checkbox('NCM vazio', value=True, key=_state_key(op, signature, 'use_ncm'))
+        use_ncm = st.checkbox('NCM vazio', value=ncm_enabled, disabled=not ncm_enabled, key=_state_key(op, signature, 'use_ncm'))
+
+    use_title = bool(use_title and text_enabled)
+    use_description = bool(use_description and text_enabled)
+    use_ncm = bool(use_ncm and ncm_enabled)
 
     custom_task = _render_multitask_box(op, signature)
 
@@ -175,7 +243,8 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         key=_state_key(op, signature, 'max_rows'),
     )
 
-    if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, key=_state_key(op, signature, 'run')):
+    can_run = bool(use_title or use_description or use_ncm or custom_task)
+    if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
         with st.spinner('IA revisando produtos do preview final...'):
             suggestions, status = generate_product_ai_suggestions(
                 df_final,
@@ -183,7 +252,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
                 max_rows=max_rows,
                 custom_task=custom_task,
             )
-        st.session_state[suggestions_key] = suggestions_to_dataframe(suggestions)
+        st.session_state[suggestions_key] = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
         st.session_state[status_key] = status
         add_debug(f'IA de catálogo executada no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
         st.rerun()
@@ -196,8 +265,11 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     if not isinstance(suggestions_df, pd.DataFrame):
         return
 
+    suggestions_df = _apply_ai_resource_policy_to_dataframe(suggestions_df)
+    st.session_state[suggestions_key] = suggestions_df
+
     if suggestions_df.empty:
-        st.info('A IA não encontrou alterações seguras para aplicar neste preview final.')
+        st.info('A IA não encontrou alterações seguras para aplicar neste preview final ou os recursos correspondentes estão desligados na sidebar.')
         return
 
     st.markdown('##### Antes/depois sugerido pela IA')
