@@ -4,7 +4,26 @@ import re
 from typing import Any
 
 VALID_GTIN_LENGTHS = {8, 12, 13, 14}
-INVALID_GS1_PREFIXES = {'020', '040', '200', '201', '202', '203', '204', '205', '206', '207', '208', '209', '687'}
+
+# Prefixos que não devem ser enviados no CSV final como GTIN/EAN real.
+# Mesmo quando o dígito verificador passa matematicamente, o Bling valida o
+# prefixo GS1 e rejeita códigos não cadastrados/privados/reservados.
+INVALID_GS1_PREFIXES = {
+    '020',
+    '040',
+    '200',
+    '201',
+    '202',
+    '203',
+    '204',
+    '205',
+    '206',
+    '207',
+    '208',
+    '209',
+    '687',
+    '782',
+}
 
 
 def only_digits(value: Any) -> str:
