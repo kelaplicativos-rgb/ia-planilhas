@@ -9,8 +9,9 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 5
+RULES_SCHEMA_VERSION = 6
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
+REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
 
 
 def _make_rule_id(source: str, target_column: str) -> str:
@@ -33,7 +34,6 @@ def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
 
 
 DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
-    _system_rule('Fornecedor', 'Não definido'),
     _system_rule('Unidade', 'UN'),
     _system_rule('Altura', '2'),
     _system_rule('Largura', '11'),
@@ -44,7 +44,6 @@ DEFAULT_CUSTOM_RULES: list[dict[str, Any]] = [
 
 DEFAULT_RULES: dict[str, Any] = {
     'schema_version': RULES_SCHEMA_VERSION,
-    'supplier_default': 'Não definido',
     'measure_unit_default': 'UN',
     'height_default': '2',
     'width_default': '11',
@@ -119,7 +118,14 @@ def _default_source_for_column(target_column: str) -> str:
 def _is_removed_system_rule(rule: dict[str, Any]) -> bool:
     source = _safe_text(rule.get('source')).lower()
     column = _column_key(rule.get('target_column'))
-    return source == 'system' and column in REMOVED_SYSTEM_RULE_COLUMNS
+    value = _column_key(rule.get('fill_value'))
+    return source == 'system' and (column in REMOVED_SYSTEM_RULE_COLUMNS or (column, value) in REMOVED_SYSTEM_RULE_PAIRS)
+
+
+def _is_removed_supplier_default_rule(rule: dict[str, Any]) -> bool:
+    column = _column_key(rule.get('target_column') or rule.get('condition'))
+    value = _column_key(rule.get('fill_value'))
+    return (column, value) in REMOVED_SYSTEM_RULE_PAIRS
 
 
 def _disable_all_auto_fill_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -151,7 +157,7 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
     rule['id'] = _safe_text(rule.get('id'), _make_rule_id(rule['source'], rule['target_column']))
 
-    if not rule['target_column'] or _is_removed_system_rule(rule):
+    if not rule['target_column'] or _is_removed_system_rule(rule) or _is_removed_supplier_default_rule(rule):
         return None
     return rule
 
@@ -181,7 +187,7 @@ def normalize_custom_rules(raw: Any) -> list[dict[str, Any]]:
 
 
 def _merge_missing_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged = [dict(rule) for rule in custom_rules if not _is_removed_system_rule(dict(rule))]
+    merged = [dict(rule) for rule in custom_rules if not _is_removed_system_rule(dict(rule)) and not _is_removed_supplier_default_rule(dict(rule))]
     existing = {str(rule.get('target_column', '')).strip().lower() for rule in merged}
     for default_rule in DEFAULT_CUSTOM_RULES:
         key = str(default_rule.get('target_column', '')).strip().lower()
@@ -200,7 +206,6 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
                 rules[key] = raw[key]
 
     rules['schema_version'] = RULES_SCHEMA_VERSION
-    rules['supplier_default'] = _safe_text(rules.get('supplier_default'), DEFAULT_RULES['supplier_default'])
     rules['measure_unit_default'] = _safe_text(rules.get('measure_unit_default'), DEFAULT_RULES['measure_unit_default'])
     rules['height_default'] = _safe_text(rules.get('height_default'), DEFAULT_RULES['height_default'])
     rules['width_default'] = _safe_text(rules.get('width_default'), DEFAULT_RULES['width_default'])
