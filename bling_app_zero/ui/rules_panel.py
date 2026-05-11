@@ -20,7 +20,6 @@ def _show_notice() -> None:
 
 def _render_new_rule() -> None:
     st.markdown('##### Nova regra')
-    st.caption('Crie apenas regras manuais que você realmente quer aplicar no CSV final.')
 
     target = st.text_input(
         'Coluna',
@@ -48,15 +47,9 @@ def _render_new_rule() -> None:
 
 
 def render_rules_panel() -> None:
-    """Renderiza somente Recursos e Nova regra na sidebar.
-
-    BLINGFIX: removido o bloco de regras/padrões automáticos da interface para
-    evitar poluição visual. As regras do sistema continuam existindo no motor,
-    mas não aparecem mais como cards editáveis na lateral.
-    """
+    """Renderiza somente Recursos e Nova regra na sidebar."""
     with st.sidebar:
         with st.expander('Recursos do CSV final', expanded=False):
-            st.markdown('##### Recursos')
             render_resources_tab()
             st.divider()
             _show_notice()
