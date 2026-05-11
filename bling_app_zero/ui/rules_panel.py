@@ -32,12 +32,6 @@ def _show_notice() -> None:
 
 
 def _prepare_new_rule_fields() -> None:
-    """Limpa campos antes dos widgets serem instanciados.
-
-    Streamlit não permite alterar st.session_state de uma key usada por widget
-    depois que o widget já foi criado na mesma execução. Por isso a limpeza fica
-    pendente e é aplicada no começo do próximo render.
-    """
     if not bool(st.session_state.pop(NEW_RULE_CLEAR_PENDING_KEY, False)):
         return
     st.session_state[NEW_RULE_TARGET_KEY] = ''
@@ -56,18 +50,32 @@ def _rule_label(rule: dict[str, Any]) -> str:
     return f'{column} vazio → vazio'
 
 
-def _editable_rules() -> list[dict[str, Any]]:
+def _all_custom_rules() -> list[dict[str, Any]]:
     rules = get_user_rules()
     custom_rules = rules.get('custom_rules', [])
     if not isinstance(custom_rules, list):
         return []
-    return [dict(rule) for rule in custom_rules if bool(rule.get('enabled', False))]
+    return [dict(rule) for rule in custom_rules]
+
+
+def _editable_rules() -> list[dict[str, Any]]:
+    return [rule for rule in _all_custom_rules() if bool(rule.get('enabled', False))]
+
+
+def _has_enabled_rule_for_column(target_column: str) -> bool:
+    target = str(target_column or '').strip().lower()
+    for rule in _editable_rules():
+        column = str(rule.get('target_column') or rule.get('condition') or '').strip().lower()
+        if column == target:
+            return True
+    return False
 
 
 def _enable_rule_by_target(target_column: str) -> None:
-    rules = get_user_rules()
-    for rule in rules.get('custom_rules', []):
-        if str(rule.get('target_column', '')).strip().lower() == target_column.strip().lower():
+    target = str(target_column or '').strip().lower()
+    for rule in _all_custom_rules():
+        column = str(rule.get('target_column', '')).strip().lower()
+        if column == target:
             set_custom_rule_enabled(str(rule.get('id')), True)
             return
 
@@ -85,7 +93,6 @@ def _add_new_rule_from_fields(target: object, value: object) -> None:
     if not target_text:
         st.warning('Informe a coluna da nova regra.')
         return
-
     add_custom_rule(target_text, target_text, value_text, True)
     _enable_rule_by_target(target_text)
     st.session_state[NEW_RULE_CLEAR_PENDING_KEY] = True
@@ -130,16 +137,8 @@ def _render_rule_item(rule: dict[str, Any], index: int) -> None:
 
     st.divider()
     if is_editing:
-        column = st.text_input(
-            'Coluna da regra',
-            value=str(rule.get('target_column') or rule.get('condition') or ''),
-            key=f'rule_edit_column_{rule_id}',
-        )
-        value = st.text_input(
-            'Valor predefinido',
-            value=str(rule.get('fill_value') or ''),
-            key=f'rule_edit_value_{rule_id}',
-        )
+        column = st.text_input('Coluna da regra', value=str(rule.get('target_column') or rule.get('condition') or ''), key=f'rule_edit_column_{rule_id}')
+        value = st.text_input('Valor predefinido', value=str(rule.get('fill_value') or ''), key=f'rule_edit_value_{rule_id}')
         col_save, col_cancel = st.columns(2)
         with col_save:
             if st.button('Salvar', use_container_width=True, key=f'rule_save_{rule_id}'):
@@ -149,60 +148,52 @@ def _render_rule_item(rule: dict[str, Any], index: int) -> None:
                 _cancel_edit_rule()
         return
 
-    col_text, col_edit, col_delete = st.columns([6, 1, 1])
-    with col_text:
-        st.caption(_rule_label(rule))
+    st.caption(_rule_label(rule))
+    col_edit, col_delete = st.columns(2)
     with col_edit:
-        if st.button('✏️', key=f'rule_edit_{rule_id}', help='Editar regra'):
+        if st.button('✏️ Editar', use_container_width=True, key=f'rule_edit_{rule_id}', help='Editar regra'):
             _start_edit_rule(rule_id)
     with col_delete:
-        if st.button('🗑️', key=f'rule_delete_{rule_id}', help='Excluir regra'):
+        if st.button('🗑️ Excluir', use_container_width=True, key=f'rule_delete_{rule_id}', help='Excluir regra'):
             _delete_rule(rule_id)
 
 
 def _render_rules_list() -> None:
     rules = _editable_rules()
+    st.markdown('##### Regras existentes')
     if not rules:
         st.caption('Nenhuma regra manual ativa ainda.')
         return
-    st.markdown('##### Regras existentes')
     for index, rule in enumerate(rules):
         _render_rule_item(rule, index)
 
 
-def _render_new_rule() -> None:
-    _prepare_new_rule_fields()
-
-    st.markdown('##### Nova regra')
-    st.caption('Regras manuais não usam IA e devem completar lacunas sem sobrescrever o mapeamento.')
-
+def _render_supplier_quick_rule() -> None:
+    if _has_enabled_rule_for_column('Fornecedor'):
+        st.caption('Fornecedor padrão já configurado nas regras existentes.')
+        return
     if st.button('Fornecedor vazio → Não definido', use_container_width=True, key='add_supplier_default_rule'):
         _add_supplier_default_rule()
 
-    target = st.text_input(
-        'Coluna',
-        key=NEW_RULE_TARGET_KEY,
-        placeholder='Ex: Fornecedor',
-    )
-    value = st.text_input(
-        'Valor',
-        key=NEW_RULE_VALUE_KEY,
-        placeholder='Ex: Não definido',
-    )
 
+def _render_new_rule() -> None:
+    _prepare_new_rule_fields()
+    st.markdown('##### Nova regra')
+    st.caption('Regras manuais não usam IA e devem completar lacunas sem sobrescrever o mapeamento.')
+    _render_supplier_quick_rule()
+
+    target = st.text_input('Coluna', key=NEW_RULE_TARGET_KEY, placeholder='Ex: Fornecedor')
+    value = st.text_input('Valor', key=NEW_RULE_VALUE_KEY, placeholder='Ex: Não definido')
     if st.button('Adicionar regra', use_container_width=True, key='add_rule_clean'):
         _add_new_rule_from_fields(target, value)
 
 
 def render_rules_panel() -> None:
-    """Renderiza recursos, IA e regras manuais na sidebar."""
     with st.sidebar:
         with st.expander('Recursos do CSV final', expanded=False):
             render_resources_tab()
-
         with st.expander('Recursos com IA', expanded=False):
             render_ai_resources_tab()
-
         with st.expander('Regras manuais', expanded=False):
             _show_notice()
             _render_rules_list()
