@@ -359,8 +359,6 @@ def _render_model_step() -> None:
 
     render_home_bling_models()
     has_model = _has_home_models()
-    if not has_model:
-        st.warning('Envie pelo menos um modelo do Bling para continuar com segurança.')
     _render_nav_buttons(
         allow_next=has_model,
         pending_message='Envie pelo menos um modelo do Bling para liberar o avanço.',
@@ -379,7 +377,6 @@ def _render_operation_step() -> None:
         'Quando o modelo enviado for oficial de estoque, o sistema seleciona automaticamente Atualizar estoque. Se houver os dois modelos, você ainda pode escolher manualmente.',
     )
     if not available:
-        st.warning('Envie um modelo do Bling antes de escolher a operação.')
         _render_nav_buttons(
             allow_next=False,
             pending_message='Envie o modelo do Bling para liberar a escolha da operação.',
