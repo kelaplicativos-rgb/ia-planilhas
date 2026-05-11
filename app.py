@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.11-BLINGFIX-WIZARD-CARD-UNICO'
+APP_VERSION = '3.5.12-BLINGFIX-RECURSOS-PADRAO-SIM'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
