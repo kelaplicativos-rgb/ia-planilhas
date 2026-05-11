@@ -21,6 +21,7 @@ ESTOQUE_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_MODELO_KEY = 'estoque_wizard_df_modelo'
 ESTOQUE_DEPOSITO_KEY = 'estoque_nome_deposito'
 ESTOQUE_DEPOSITO_SIGNATURE_KEY = 'estoque_deposito_signature_atual'
+BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/importador.saldos.estoque.php'
 
 
 def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
@@ -230,3 +231,11 @@ def render_estoque_download_step() -> None:
         st.warning('Ainda não há CSV de estoque. Volte para o preview.')
         return
     render_stock_downloads()
+
+    st.markdown('#### Próximo passo no Bling')
+    st.caption('Depois de baixar o CSV, abra direto o importador de saldos de estoque do Bling e envie o arquivo gerado.')
+    st.link_button(
+        '🔗 Abrir importador de estoque no Bling',
+        BLING_IMPORTADOR_ESTOQUE_URL,
+        use_container_width=True,
+    )
