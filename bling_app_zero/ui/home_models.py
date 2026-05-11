@@ -37,15 +37,22 @@ def _save_model(key: str, df: pd.DataFrame | None, aliases: list[str]) -> None:
         st.session_state[alias] = copied.copy().fillna('')
 
 
+def _forget_model(key: str, aliases: list[str]) -> None:
+    st.session_state.pop(key, None)
+    for alias in aliases:
+        st.session_state.pop(alias, None)
+
+
 def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_model_df: pd.DataFrame | None) -> None:
-    has_cadastro = isinstance(cadastro_model_df, pd.DataFrame)
-    has_estoque = isinstance(estoque_model_df, pd.DataFrame)
+    has_cadastro = isinstance(cadastro_model_df, pd.DataFrame) and len(cadastro_model_df.columns) > 0
+    has_estoque = isinstance(estoque_model_df, pd.DataFrame) and len(estoque_model_df.columns) > 0
 
     if has_estoque and not has_cadastro:
         operation = 'estoque'
     elif has_cadastro and not has_estoque:
         operation = 'cadastro'
     else:
+        st.session_state.pop('home_detected_operation', None)
         return
 
     st.session_state[FLOW_OPERATION_KEY] = operation
@@ -62,9 +69,20 @@ def save_home_models(
     cadastro_model_df: pd.DataFrame | None = None,
     estoque_model_df: pd.DataFrame | None = None,
 ) -> None:
-    _save_model(HOME_CADASTRO_MODEL_KEY, cadastro_model_df, GLOBAL_CADASTRO_MODEL_KEYS)
-    _save_model(HOME_ESTOQUE_MODEL_KEY, estoque_model_df, GLOBAL_ESTOQUE_MODEL_KEYS)
-    _sync_detected_operation(cadastro_model_df, estoque_model_df)
+    cadastro = _copy_df(cadastro_model_df)
+    estoque = _copy_df(estoque_model_df)
+
+    if cadastro is not None:
+        _save_model(HOME_CADASTRO_MODEL_KEY, cadastro, GLOBAL_CADASTRO_MODEL_KEYS)
+    else:
+        _forget_model(HOME_CADASTRO_MODEL_KEY, GLOBAL_CADASTRO_MODEL_KEYS)
+
+    if estoque is not None:
+        _save_model(HOME_ESTOQUE_MODEL_KEY, estoque, GLOBAL_ESTOQUE_MODEL_KEYS)
+    else:
+        _forget_model(HOME_ESTOQUE_MODEL_KEY, GLOBAL_ESTOQUE_MODEL_KEYS)
+
+    _sync_detected_operation(cadastro, estoque)
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
 
 
@@ -129,8 +147,13 @@ def render_home_bling_models() -> None:
         caption=None,
     )
 
-    cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
-    estoque_model = upload.estoque_model_df
+    # Importante: nao usar upload.model_df como fallback de cadastro.
+    # Quando o arquivo enviado e um modelo oficial de estoque, model_df tambem aponta
+    # para estoque. O fallback antigo fazia o mesmo arquivo virar cadastro + estoque,
+    # impedindo a escolha automatica de "Atualizar estoque" na etapa 2.
+    cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
+    estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
+
     if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
         save_home_models(cadastro_model, estoque_model)
 
