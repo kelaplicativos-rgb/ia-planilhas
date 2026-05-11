@@ -329,11 +329,6 @@ def _clear_legacy_origin_widget_state(operation: str) -> None:
 def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
-    _render_section_card(
-        'Etapa 1',
-        'Modelo do Bling',
-        'Envie o modelo de cadastro, estoque ou ambos. O sistema usa esse modelo como contrato das colunas que podem ser preenchidas.',
-    )
     render_home_bling_models()
     _render_nav_buttons(allow_next=_has_home_models())
     if not _has_home_models():
@@ -506,7 +501,7 @@ def render_home_wizard() -> None:
         _render_model_step()
     elif step == STEP_OPERACAO:
         _render_operation_step()
-    elif step == STEP_PRECIFICACAO:
+    elif step == STEP_PRECIFICACACAO:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
