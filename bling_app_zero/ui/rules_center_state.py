@@ -50,11 +50,10 @@ def auto_save_rules_if_changed(rules: dict[str, Any], previous_signature: str) -
         details={
             'ready_key': RULES_CENTER_READY_KEY,
             'ready': True,
-            'effect': 'mapping_rule_badges_recomputed_immediately',
+            'effect': 'saved_without_forced_rerun_to_keep_scroll_position',
             'responsible_file': 'bling_app_zero/ui/rules_center_state.py',
         },
     )
-    st.rerun()
 
 
 def mark_rules_ready(rules: dict[str, Any], *, source: str) -> dict[str, Any]:
