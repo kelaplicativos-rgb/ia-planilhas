@@ -1,46 +1,14 @@
 from __future__ import annotations
 
 from bling_app_zero.features.contracts import FeatureDefinition
+from bling_app_zero.features.download_pipeline import DOWNLOAD_FEATURES
 
 RESPONSIBLE_FILE = 'bling_app_zero/features/registry.py'
 
 # Registry oficial de recursos plugáveis.
 # Regra: recurso novo deve entrar aqui com key, contrato, escopo, estágio e arquivo dono.
 # Evite ligar recurso novo diretamente no app.py, home_wizard.py ou exporter.py sem contrato.
-FEATURE_REGISTRY: tuple[FeatureDefinition, ...] = (
-    FeatureDefinition(
-        key='clean_invalid_gtin',
-        title='Limpar GTIN inválido',
-        description='Remove GTIN/EAN fora dos tamanhos aceitos antes do CSV final.',
-        scope='global',
-        stage='download',
-        status='stable',
-        state_key='clean_invalid_gtin',
-        provides=('gtin_sanitizado',),
-        owner_file='bling_app_zero/core/exporter.py',
-    ),
-    FeatureDefinition(
-        key='normalize_image_separator',
-        title='Separar imagens por |',
-        description='Garante que múltiplas URLs de imagens saiam separadas por barra vertical no CSV.',
-        scope='cadastro',
-        stage='download',
-        status='stable',
-        state_key='normalize_image_separator',
-        provides=('imagens_normalizadas',),
-        owner_file='bling_app_zero/core/exporter.py',
-    ),
-    FeatureDefinition(
-        key='normalize_measures_to_meters',
-        title='Normalizar medidas para metro',
-        description='Converte medidas como altura, largura e comprimento para o padrão esperado pelo Bling.',
-        scope='cadastro',
-        stage='download',
-        status='beta',
-        state_key='normalize_measures_to_meters',
-        provides=('medidas_normalizadas',),
-        owner_file='bling_app_zero/core/exporter.py',
-    ),
+SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
     FeatureDefinition(
         key='site_cadastro_engine',
         title='Motor de cadastro por site',
@@ -76,6 +44,11 @@ FEATURE_REGISTRY: tuple[FeatureDefinition, ...] = (
         provides=('session_state_clean', 'cache_clean'),
         owner_file='bling_app_zero/ui/system_reboot.py',
     ),
+)
+
+FEATURE_REGISTRY: tuple[FeatureDefinition, ...] = (
+    *DOWNLOAD_FEATURES,
+    *SITE_AND_SYSTEM_FEATURES,
 )
 
 
