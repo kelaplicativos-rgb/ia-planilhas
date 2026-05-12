@@ -52,6 +52,7 @@ def inject_mapping_css() -> None:
         .bling-map-title-red { color: var(--bling-danger, #dc2626) !important; }
         .bling-map-title-yellow { color: var(--bling-warning, #ca8a04) !important; }
         .bling-map-title-green { color: var(--bling-success-text, #166534) !important; }
+        .bling-map-title-purple { color: #7e22ce !important; }
 
         .bling-map-title-text {
             display: inline;
@@ -122,6 +123,11 @@ def inject_mapping_css() -> None:
         div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-green) + div div[data-baseweb="select"] > div {
             background: rgba(240, 253, 244, 0.82) !important;
             border-color: rgba(22, 163, 74, 0.22) !important;
+        }
+
+        div[data-testid="stVerticalBlock"] > div:has(.bling-map-title-purple) + div div[data-baseweb="select"] > div {
+            background: rgba(250, 245, 255, 0.86) !important;
+            border-color: rgba(126, 34, 206, 0.24) !important;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-baseweb="select"] span {
@@ -221,6 +227,8 @@ def render_mapping_title(target_label: str) -> None:
         status_class = ' bling-map-title-yellow'
     elif raw.startswith('🟢'):
         status_class = ' bling-map-title-green'
+    elif raw.startswith('🟣'):
+        status_class = ' bling-map-title-purple'
     st.markdown(
         f'<div class="bling-map-title{status_class}"><span class="bling-map-title-text">{safe}</span><span class="bling-map-help">?</span></div>',
         unsafe_allow_html=True,
