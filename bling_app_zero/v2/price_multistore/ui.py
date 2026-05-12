@@ -4,9 +4,9 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
-from bling_app_zero.v2.price_multistore.flow import multistore_result_to_csv, run_multistore_price_flow
-from bling_app_zero.v2.price_multistore.matcher import find_column
+from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
 from bling_app_zero.v2.store_profiles import build_store_profile
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
@@ -112,7 +112,7 @@ def render_price_multistore_v2() -> None:
         st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
         st.download_button(
             'Baixar CSV para Importar e Atualizar Vínculo Produtos Multilojas',
-            data=multistore_result_to_csv(type('Result', (), {'ok': True, 'payload': type('Payload', (), {'df': result_df})()})()),
+            data=to_csv_bytes(result_df),
             file_name='bling_precos_multilojas.csv',
             mime='text/csv; charset=utf-8',
             use_container_width=True,
