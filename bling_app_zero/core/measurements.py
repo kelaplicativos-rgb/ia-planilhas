@@ -8,6 +8,8 @@ import pandas as pd
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 NORMALIZE_MEASURES_RESOURCE_KEY = 'resource_normalize_measures_to_meters'
+CENTRAL_RULES_SESSION_KEY = 'bling_user_rules'
+CENTRAL_NORMALIZE_MEASURES_KEY = 'normalize_measures_to_meters'
 
 _MEASURE_TERMS = {
     'altura',
@@ -33,10 +35,17 @@ _NEGATIVE_TERMS = {
 
 
 def normalize_measures_resource_enabled(default: bool = False) -> bool:
-    """Lê o recurso da sessão sem obrigar os módulos core a dependerem da UI."""
+    """Lê o recurso pela mesma chave central que o exportador usa.
+
+    Mantém compatibilidade com a chave antiga da UI para sessões abertas antes
+    deste BLINGSCAN, mas a fonte principal passa a ser bling_user_rules.
+    """
     try:
         import streamlit as st
 
+        rules = st.session_state.get(CENTRAL_RULES_SESSION_KEY)
+        if isinstance(rules, dict) and CENTRAL_NORMALIZE_MEASURES_KEY in rules:
+            return bool(rules.get(CENTRAL_NORMALIZE_MEASURES_KEY, default))
         return bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, default))
     except Exception:
         return bool(default)
