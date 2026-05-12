@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import html
-from dataclasses import dataclass
-
 import streamlit as st
 
 from bling_app_zero.ui.cadastro_wizard_steps import (
@@ -26,72 +23,36 @@ from bling_app_zero.ui.home_pricing_config import (
     render_home_pricing_config_form,
     set_home_pricing_config,
 )
-
-HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
-HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
-GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
-GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
-FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
-FLOW_OPERATION_KEY = 'home_slim_flow_operation'
-FLOW_ACTIVE_KEY = 'home_slim_active_panel'
-LEGACY_ORIGIN_RADIO_KEY = 'frontpage_origin_radio'
-WIZARD_STEP_KEY = 'bling_wizard_step'
-
-STEP_MODELO = 'modelo'
-STEP_OPERACAO = 'operacao'
-STEP_PRECIFICACAO = 'precificacao'
-STEP_ORIGEM = 'origem'
-STEP_ENTRADA = 'entrada'
-STEP_MAPEAMENTO = 'mapeamento'
-STEP_GERAR_ESTOQUE = 'gerar_estoque'
-STEP_PREVIEW = 'preview'
-STEP_DOWNLOAD = 'download'
-STEP_PROCESSAR = 'processar'
-
-CADASTRO_STEPS = [
-    STEP_MODELO,
-    STEP_OPERACAO,
-    STEP_PRECIFICACAO,
-    STEP_ORIGEM,
-    STEP_ENTRADA,
-    STEP_MAPEAMENTO,
-    STEP_PREVIEW,
+from bling_app_zero.ui.home_wizard_constants import (
+    ALL_STEPS,
+    CADASTRO_STEPS,
+    ESTOQUE_STEPS,
+    FLOW_ACTIVE_KEY,
+    FLOW_OPERATION_KEY,
+    FLOW_ORIGIN_KEY,
+    GLOBAL_CADASTRO_MODEL_KEYS,
+    GLOBAL_ESTOQUE_MODEL_KEYS,
+    HOME_CADASTRO_MODEL_KEY,
+    HOME_ESTOQUE_MODEL_KEY,
+    LEGACY_ORIGIN_RADIO_KEY,
+    RESET_OUTPUT_KEYS,
     STEP_DOWNLOAD,
-]
-ESTOQUE_STEPS = [
-    STEP_MODELO,
-    STEP_OPERACAO,
-    STEP_PRECIFICACAO,
-    STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
+    STEP_MAPEAMENTO,
+    STEP_MODELO,
+    STEP_OPERACAO,
+    STEP_ORIGEM,
+    STEP_PRECIFICACAO,
     STEP_PREVIEW,
-    STEP_DOWNLOAD,
-]
-ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
-
-STEP_LABELS = {
-    STEP_MODELO: 'Modelo',
-    STEP_OPERACAO: 'Operação',
-    STEP_PRECIFICACAO: 'Preço',
-    STEP_ORIGEM: 'Origem',
-    STEP_ENTRADA: 'Entrada',
-    STEP_MAPEAMENTO: 'Mapeamento',
-    STEP_GERAR_ESTOQUE: 'Gerar',
-    STEP_PREVIEW: 'Preview',
-    STEP_DOWNLOAD: 'Download',
-    STEP_PROCESSAR: 'Processar',
-}
-
-DEFAULT_PENDING_MESSAGE = 'Complete esta etapa para liberar o avanço.'
-
-
-@dataclass(frozen=True)
-class WizardNav:
-    current: str
-    index: int
-    total: int
-    steps: list[str]
+    WIZARD_STEP_KEY,
+    WizardNav,
+)
+from bling_app_zero.ui.home_wizard_ui import (
+    render_pending_notice,
+    render_section_card,
+    render_step_header,
+)
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -188,30 +149,7 @@ def _previous_step() -> None:
 
 
 def _reset_outputs_for_operation_change() -> None:
-    for key in [
-        FLOW_ORIGIN_KEY,
-        FLOW_ACTIVE_KEY,
-        'origem_final',
-        'origem_dados',
-        'origem_tipo',
-        'tipo_operacao_site',
-        'operation_site',
-        'cadastro_wizard_df_origem',
-        'cadastro_wizard_df_para_mapear',
-        'cadastro_wizard_df_modelo',
-        'cadastro_wizard_df_modelo_estoque',
-        'cadastro_mapping_confirmed',
-        'cadastro_mapping_confirmed_signature',
-        'estoque_wizard_upload',
-        'estoque_wizard_df_origem_site',
-        'estoque_wizard_df_modelo',
-        'df_final_cadastro',
-        'mapping_cadastro',
-        'mapping_confidence_cadastro',
-        'estoque_multi_outputs',
-        'df_final_estoque',
-        'mapping_estoque',
-    ]:
+    for key in RESET_OUTPUT_KEYS:
         st.session_state.pop(key, None)
 
 
@@ -223,63 +161,8 @@ def _reset_wizard() -> None:
     _go_to_step(STEP_MODELO)
 
 
-def _render_section_card(kicker: str, title: str, text: str) -> None:
-    st.markdown(
-        f"""
-        <section class="bling-flow-card">
-            <div class="bling-flow-card-kicker">{html.escape(kicker)}</div>
-            <h2 class="bling-flow-card-title">{html.escape(title)}</h2>
-            <p class="bling-flow-card-text">{html.escape(text)}</p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_pending_notice(message: str | None = None) -> None:
-    safe_message = html.escape(str(message or DEFAULT_PENDING_MESSAGE))
-    st.markdown(
-        f"""
-        <div class="bling-pending-next-card" role="status" aria-live="polite">
-            <div class="bling-pending-next-text">{safe_message}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _render_step_header() -> WizardNav:
-    steps = _active_steps()
-    current = _current_step()
-    index = steps.index(current)
-    total = len(steps)
-    percent = int(((index + 1) / total) * 100)
-    progress_width = max(1, min(100, percent))
-    labels = []
-    for i, step in enumerate(steps):
-        prefix = '●' if i == index else '✓' if i < index else '○'
-        labels.append(f'{prefix} {STEP_LABELS[step]}')
-
-    label_text = html.escape('  ·  '.join(labels))
-    progress_text = html.escape(f'Etapa {index + 1} de {total} · {STEP_LABELS[current]} · {percent}%')
-    st.markdown(
-        f"""
-        <section class="bling-flow-card bling-wizard-progress-card" aria-label="Progresso do fluxo">
-            <div class="bling-wizard-progress-title">{progress_text}</div>
-            <div class="bling-wizard-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent}">
-                <div class="bling-wizard-progress-fill" style="width:{progress_width}%"></div>
-            </div>
-            <div class="bling-wizard-steps-line">{label_text}</div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-    return WizardNav(current=current, index=index, total=total, steps=steps)
-
-
-def _render_blocked_next_slot(pending_message: str | None = None) -> None:
-    """Mantido por compatibilidade; o aviso bloqueado agora fica acima dos botões."""
-    return None
+    return render_step_header(steps=_active_steps(), current=_current_step())
 
 
 def _render_nav_buttons(
@@ -294,7 +177,7 @@ def _render_nav_buttons(
     is_last = current_index == len(steps) - 1
 
     if not allow_next and not is_last:
-        _render_pending_notice(pending_message)
+        render_pending_notice(pending_message)
 
     col_back, col_next = st.columns(2)
     with col_back:
@@ -378,7 +261,7 @@ def _render_operation_step() -> None:
         'cadastro': '🧾 Cadastrar produtos no Bling',
         'estoque': '📦 Atualizar estoque no Bling',
     }
-    _render_section_card(
+    render_section_card(
         'Etapa 2',
         'Operação reconhecida pelo modelo',
         'Quando o modelo enviado for oficial de estoque, o sistema seleciona automaticamente Atualizar estoque. Se houver os dois modelos, você ainda pode escolher manualmente.',
@@ -436,7 +319,7 @@ def _render_operation_step() -> None:
 
 
 def _render_pricing_step() -> None:
-    _render_section_card(
+    render_section_card(
         'Etapa 3',
         'Precificação opcional',
         'Ative somente se quiser calcular preço de venda antes do mapeamento. Esta etapa vale para cadastro e estoque. Se não precisar, pule esta etapa.',
@@ -458,7 +341,7 @@ def _render_origin_step() -> None:
     operation = _selected_operation()
     _clear_legacy_origin_widget_state(operation)
     operation_label = 'atualização de estoque' if operation == 'estoque' else 'cadastro de produtos'
-    _render_section_card(
+    render_section_card(
         'Etapa 4',
         'Origem dos dados',
         f'Escolha como os produtos entram no fluxo de {operation_label}. A próxima tela carrega somente o módulo necessário.',
