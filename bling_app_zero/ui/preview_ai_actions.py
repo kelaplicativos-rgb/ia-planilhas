@@ -10,16 +10,6 @@ from bling_app_zero.ai_tools.product_ai_reviewer import (
     detect_product_columns,
     suggestions_to_dataframe,
 )
-from bling_app_zero.core.ai_resource_rules import (
-    AI_RESOURCE_DESCRIPTION_SIZE,
-    AI_RESOURCE_IMPROVE_CATALOG_TEXT,
-    AI_RESOURCE_LIMIT_TITLE_60,
-    AI_RESOURCE_MARKETPLACE_TEXT_GUARD,
-    AI_RESOURCE_ORTHOGRAPHY_GRAMMAR,
-    AI_RESOURCE_OUT_OF_CONTEXT_FILTER,
-    AI_RESOURCE_SUGGEST_NCM,
-    get_ai_resources,
-)
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.core.marketplace_text_guard import alerts_to_dataframe, analyze_marketplace_text
 from bling_app_zero.core.text import clean_cell
@@ -47,6 +37,15 @@ DESCRIPTION_LIMITS = {
     'pequena': 220,
     'media': 520,
     'grande': 1000,
+}
+
+DEFAULT_PREVIEW_AI_POLICY = {
+    'limit_title_60': True,
+    'description_size': 'media',
+    'marketplace_text_guard': False,
+    'out_of_context_filter': False,
+    'blocked_terms': '',
+    'context_filter_terms': '',
 }
 
 
@@ -78,12 +77,8 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
     if not isinstance(suggestions_df, pd.DataFrame) or suggestions_df.empty:
         return suggestions_df
 
-    resources = get_ai_resources()
-    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False)) or True
-    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False)) or True
-    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False)) or True
-    limit_title = bool(resources.get(AI_RESOURCE_LIMIT_TITLE_60, True))
-    description_size = str(resources.get(AI_RESOURCE_DESCRIPTION_SIZE, 'media') or 'media')
+    limit_title = bool(DEFAULT_PREVIEW_AI_POLICY['limit_title_60'])
+    description_size = str(DEFAULT_PREVIEW_AI_POLICY['description_size'])
     description_limit = DESCRIPTION_LIMITS.get(description_size, DESCRIPTION_LIMITS['media'])
 
     out = suggestions_df.copy()
@@ -93,9 +88,9 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
     def _adjust(row: pd.Series) -> str:
         field = str(row.get('Campo') or '').strip().lower()
         suggestion = clean_cell(row.get('Sugestão IA', ''))
-        if field == 'title' and text_enabled and limit_title:
+        if field == 'title' and limit_title:
             return _truncate_text(suggestion, 60)
-        if field == 'description' and text_enabled:
+        if field == 'description':
             return _truncate_text(suggestion, description_limit)
         return suggestion
 
@@ -119,8 +114,8 @@ def _render_detected_columns(df: pd.DataFrame) -> None:
 
 def _render_marketplace_guard_alerts(df_final: pd.DataFrame, resources: dict) -> None:
     alerts = analyze_marketplace_text(df_final, resources)
-    guard_enabled = bool(resources.get(AI_RESOURCE_MARKETPLACE_TEXT_GUARD, False))
-    context_enabled = bool(resources.get(AI_RESOURCE_OUT_OF_CONTEXT_FILTER, False))
+    guard_enabled = bool(resources.get('marketplace_text_guard', False))
+    context_enabled = bool(resources.get('out_of_context_filter', False))
     if not guard_enabled and not context_enabled:
         return
     if not alerts:
@@ -234,11 +229,8 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     status_key = _state_key(op, signature, 'status')
     editor_key = _state_key(op, signature, 'editor')
     offset_key = _state_key(op, signature, 'offset')
-    resources = get_ai_resources()
+    resources = dict(DEFAULT_PREVIEW_AI_POLICY)
     total_rows = int(len(df_final))
-    text_enabled_default = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, True))
-    grammar_enabled_default = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
-    ncm_enabled_default = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, True))
 
     st.markdown(
         """
@@ -266,13 +258,13 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     st.markdown('##### O que a IA deve fazer agora?')
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        use_title = st.checkbox('Títulos', value=text_enabled_default, key=_state_key(op, signature, 'use_title'))
+        use_title = st.checkbox('Títulos', value=True, key=_state_key(op, signature, 'use_title'))
     with col2:
-        use_description = st.checkbox('Descrições', value=text_enabled_default, key=_state_key(op, signature, 'use_description'))
+        use_description = st.checkbox('Descrições', value=True, key=_state_key(op, signature, 'use_description'))
     with col3:
-        use_grammar = st.checkbox('Ortografia', value=grammar_enabled_default, key=_state_key(op, signature, 'use_grammar'))
+        use_grammar = st.checkbox('Ortografia', value=False, key=_state_key(op, signature, 'use_grammar'))
     with col4:
-        use_ncm = st.checkbox('NCM vazio', value=ncm_enabled_default, key=_state_key(op, signature, 'use_ncm'))
+        use_ncm = st.checkbox('NCM vazio', value=True, key=_state_key(op, signature, 'use_ncm'))
 
     custom_task = _render_multitask_box(op, signature)
 
@@ -308,7 +300,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     else:
         st.info(f'A próxima execução da IA começa na linha 1 e pode analisar até {int(max_rows_run)} de {total_rows} linha(s).')
 
-    col_reset, col_space = st.columns([1, 2])
+    col_reset, _ = st.columns([1, 2])
     with col_reset:
         if st.button('Reiniciar IA', use_container_width=True, key=_state_key(op, signature, 'reset_ai')):
             st.session_state[offset_key] = 0
