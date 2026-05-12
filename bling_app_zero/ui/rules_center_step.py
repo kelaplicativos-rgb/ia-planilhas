@@ -34,7 +34,7 @@ def _confirm_and_continue(rules: dict) -> None:
 def render_rules_center_step() -> None:
     st.markdown('### Regras e Padrões')
     st.caption('Central visível do fluxo. Regras importantes não ficam escondidas em caixas recolhidas.')
-    st.info('Regra principal: mapeamento/manual ganha. Padrões só completam células vazias depois do mapeamento.')
+    st.info('Valores definidos aqui funcionam como padrão de segurança: só serão aplicados quando a coluna existir e não houver valor real vindo da planilha, do site, do XML/PDF ou do mapeamento manual. Se houver valor real, ele tem prioridade.')
 
     original_rules = get_user_rules()
     previous_signature = rules_signature(original_rules)
@@ -50,7 +50,6 @@ def render_rules_center_step() -> None:
         if st.button('Salvar regras desta sessão', use_container_width=True, key='rules_center_save'):
             mark_rules_ready(rules, source='save_button')
             st.success('Regras e padrões salvos para esta sessão.')
-            st.rerun()
     with col_reset:
         if st.button('Restaurar padrões', use_container_width=True, key='rules_center_reset'):
             normalized = reset_user_rules()
