@@ -12,19 +12,21 @@ RULES_CENTER_READY_KEY = 'rules_center_reviewed'
 RULES_CENTER_ADVANCED_KEY = 'rules_center_advanced_to_next_step'
 
 PROTECTION_FIELDS = [
-    ('clean_invalid_gtin', 'Limpar GTIN inválido', 'GTIN fora do padrão sai vazio no arquivo final.'),
-    ('normalize_image_separator', 'Separar imagens por |', 'Múltiplas imagens saem como img1|img2|img3.'),
-    ('normalize_measures_to_meters', 'Normalizar medidas', 'Padroniza altura, largura, profundidade e comprimento no formato esperado.'),
-    ('auto_product_code', 'Gerar código quando vazio', 'Preenche código/SKU somente quando o campo estiver vazio.'),
-    ('unique_product_code', 'Evitar código duplicado', 'Ajusta códigos repetidos quando o recurso estiver ativo.'),
+    ('clean_invalid_gtin', 'GTIN inválido', 'GTIN fora do padrão sai vazio no arquivo final.'),
+    ('normalize_image_separator', 'Imagens por |', 'Múltiplas imagens saem como img1|img2|img3.'),
+    ('auto_product_code', 'Código automático', 'Preenche código/SKU somente quando o campo estiver vazio.'),
+    ('unique_product_code', 'Código único', 'Ajusta códigos repetidos quando o recurso estiver ativo.'),
 ]
 
-DEFAULT_FIELDS = [
+MEASURE_DEFAULT_FIELDS = [
+    ('A', 'Altura', 'height_default', '2'),
+    ('L', 'Largura', 'width_default', '11'),
+    ('P', 'Profundidade', 'depth_default', '18'),
+    ('C', 'Comprimento', 'length_default', '18'),
+]
+
+BASIC_DEFAULT_FIELDS = [
     ('Unidade', 'measure_unit_default', 'UN'),
-    ('Altura', 'height_default', '2'),
-    ('Largura', 'width_default', '11'),
-    ('Profundidade', 'depth_default', '18'),
-    ('Comprimento', 'length_default', '18'),
     ('Itens por caixa', 'box_items_default', '1'),
 ]
 
@@ -36,7 +38,6 @@ EXTRA_DEFAULT_RULES = [
     ('Frete Grátis', 'Não'),
     ('Informações Adicionais', ''),
     ('Situação', 'Ativo'),
-    ('Unidade de medida', 'Centímetro'),
     ('Vídeo', ''),
     ('Volumes', '1'),
 ]
@@ -46,6 +47,20 @@ def _rule_id(target_column: str) -> str:
     safe = ''.join(ch if ch.isalnum() else '_' for ch in str(target_column).strip().lower())
     safe = '_'.join(part for part in safe.split('_') if part)
     return f'sys_{safe or "rule"}'[:96]
+
+
+def _clean_number_text(value: Any, fallback: str = '') -> str:
+    text = str(value if value is not None else '').strip().replace(',', '.')
+    if not text:
+        return fallback
+    try:
+        number = float(text)
+    except Exception:
+        return text.replace('.', ',')
+    if number.is_integer():
+        return str(int(number))
+    formatted = f'{number:.3f}'.rstrip('0').rstrip('.')
+    return formatted.replace('.', ',')
 
 
 def _custom_rules_by_column(rules: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -97,44 +112,83 @@ def _upsert_system_rule(custom_rules: list[dict[str, Any]], target_column: str, 
 
 def _render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
     st.markdown('#### Proteções do CSV final')
-    st.caption('Nada aqui usa IA. São recursos objetivos de limpeza e segurança do arquivo final.')
+    st.caption('Proteções técnicas já nascem ativas. Não alteram dados manuais, só limpam o CSV final.')
     updated = dict(rules)
-    for key, label, help_text in PROTECTION_FIELDS:
-        updated[key] = st.toggle(label, value=bool(updated.get(key, False)), help=help_text, key=f'rules_center_{key}')
+    cols = st.columns(4)
+    for index, (key, label, help_text) in enumerate(PROTECTION_FIELDS):
+        with cols[index % 4]:
+            updated[key] = st.toggle(label, value=bool(updated.get(key, True)), help=help_text, key=f'rules_center_{key}')
+    updated['normalize_measures_to_meters'] = False
     updated['invalid_gtin_mode'] = 'limpar'
     updated['image_separator'] = '|'
     return updated
 
 
-def _render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
-    st.markdown('#### Padrões internos')
-    st.caption('Esses valores só entram quando a coluna existir e a célula estiver vazia depois do mapeamento manual.')
+def _render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    st.markdown('#### Medidas padrão do produto')
+    st.caption('Use números simples em centímetros. Exemplo: 2, 11 e 18. O sistema não transforma 18 em 0,018.')
     updated = dict(rules)
-    custom_rules = list(updated.get('custom_rules', []) or [])
-    custom_by_column = _custom_rules_by_column(updated)
+    custom_by_column = _custom_rules_by_column({'custom_rules': custom_rules})
 
-    for label, key, fallback in DEFAULT_FIELDS:
+    measure_enabled = st.toggle(
+        'Usar medidas padrão quando a coluna existir e estiver vazia',
+        value=True,
+        key='rules_center_measure_defaults_enabled',
+    )
+
+    cols = st.columns(5)
+    for index, (short_label, target_label, key, fallback) in enumerate(MEASURE_DEFAULT_FIELDS):
+        current_value = _clean_number_text(updated.get(key), fallback)
+        with cols[index]:
+            value = st.text_input(short_label, value=current_value, key=f'rules_center_measure_value_{key}', help=target_label)
+        value = _clean_number_text(value, fallback)
+        updated[key] = value
+        custom_rules = _upsert_system_rule(custom_rules, target_label, value, measure_enabled)
+
+    with cols[4]:
+        st.text_input('Unidade', value='Centímetro', disabled=True, key='rules_center_measure_unit_visible')
+    updated['measure_unit_name_default'] = 'Centímetro'
+    updated['normalize_measures_to_meters'] = False
+    return updated, custom_rules
+
+
+def _render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    updated = dict(rules)
+    custom_by_column = _custom_rules_by_column({'custom_rules': custom_rules})
+    cols = st.columns(2)
+    for index, (label, key, fallback) in enumerate(BASIC_DEFAULT_FIELDS):
         current_value = str(updated.get(key) or fallback)
         rule = custom_by_column.get(label.lower(), {})
-        col_enabled, col_value = st.columns([0.34, 0.66])
-        with col_enabled:
-            enabled = st.toggle(f'Usar {label}', value=bool(rule.get('enabled', False)), key=f'rules_center_default_enabled_{key}')
-        with col_value:
-            value = st.text_input(label, value=current_value, key=f'rules_center_default_value_{key}')
+        with cols[index % 2]:
+            enabled = st.toggle(f'Usar {label}', value=bool(rule.get('enabled', True)), key=f'rules_center_basic_enabled_{key}')
+            value = st.text_input(label, value=current_value, key=f'rules_center_basic_value_{key}')
         updated[key] = value
         custom_rules = _upsert_system_rule(custom_rules, label, value, enabled)
+    return updated, custom_rules
 
-    st.markdown('#### Padrões finais opcionais')
-    for target, fallback in EXTRA_DEFAULT_RULES:
+
+def _render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    with st.expander('Mostrar padrões finais opcionais', expanded=False):
+        st.caption('São campos extras do modelo Bling. Só preenchem se a coluna existir e estiver vazia.')
         custom_by_column = _custom_rules_by_column({'custom_rules': custom_rules})
-        rule = custom_by_column.get(target.lower(), {})
-        col_enabled, col_value = st.columns([0.34, 0.66])
-        with col_enabled:
-            enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', False)), key=f'rules_center_extra_enabled_{_rule_id(target)}')
-        with col_value:
-            value = st.text_input(target, value=str(rule.get('fill_value') if rule else fallback), key=f'rules_center_extra_value_{_rule_id(target)}')
-        custom_rules = _upsert_system_rule(custom_rules, target, value, enabled)
+        for row_start in range(0, len(EXTRA_DEFAULT_RULES), 2):
+            cols = st.columns(2)
+            for col_index, (target, fallback) in enumerate(EXTRA_DEFAULT_RULES[row_start:row_start + 2]):
+                rule = custom_by_column.get(target.lower(), {})
+                with cols[col_index]:
+                    enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', True)), key=f'rules_center_extra_enabled_{_rule_id(target)}')
+                    value = st.text_input(target, value=str(rule.get('fill_value') if rule else fallback), key=f'rules_center_extra_value_{_rule_id(target)}')
+                custom_rules = _upsert_system_rule(custom_rules, target, value, enabled)
+    return custom_rules
 
+
+def _render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(rules)
+    custom_rules = list(updated.get('custom_rules', []) or [])
+    updated, custom_rules = _render_measure_rules(updated, custom_rules)
+    st.divider()
+    updated, custom_rules = _render_basic_defaults(updated, custom_rules)
+    custom_rules = _render_extra_default_rules(custom_rules)
     updated['custom_rules'] = custom_rules
     return updated
 
@@ -192,7 +246,7 @@ def _confirm_and_continue(rules: dict[str, Any]) -> None:
 
 def render_rules_center_step() -> None:
     st.markdown('### Regras e Padrões')
-    st.caption('Central visível do fluxo. Regras importantes não ficam mais escondidas na sidebar.')
+    st.caption('Central visível do fluxo. Regras importantes não ficam escondidas na sidebar.')
     st.info('Regra principal: mapeamento/manual ganha. Padrões só completam células vazias depois do mapeamento.')
 
     rules = get_user_rules()
