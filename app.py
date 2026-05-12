@@ -9,7 +9,7 @@ from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.21-BLINGCLEAN-PRICING-ESTOQUE'
+APP_VERSION = '3.5.22-BLINGMODULAR-WIZARD-ALERTS'
 
 
 def _inject_streamlit_toolbar_fix() -> None:
@@ -98,6 +98,60 @@ def _inject_streamlit_toolbar_fix() -> None:
             box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10) !important;
         }
 
+        .bling-alert-card {
+            width: 100% !important;
+            box-sizing: border-box !important;
+            display: flex !important;
+            align-items: flex-start !important;
+            gap: 0.75rem !important;
+            padding: 0.9rem 1rem !important;
+            margin: 0.85rem 0 1rem 0 !important;
+            border-radius: 18px !important;
+            font-size: 0.95rem !important;
+            line-height: 1.45 !important;
+            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.07) !important;
+        }
+
+        .bling-alert-warning,
+        .bling-pending-next-card {
+            background: linear-gradient(135deg, #fff7ed, #ffedd5) !important;
+            border: 1px solid rgba(251, 146, 60, 0.42) !important;
+            color: #7c2d12 !important;
+        }
+
+        .bling-alert-icon {
+            flex: 0 0 auto !important;
+            width: 2rem !important;
+            height: 2rem !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 999px !important;
+            background: rgba(255, 255, 255, 0.68) !important;
+            border: 1px solid rgba(251, 146, 60, 0.32) !important;
+        }
+
+        .bling-alert-content {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 0.14rem !important;
+        }
+
+        .bling-alert-content strong,
+        .bling-pending-next-text {
+            color: #9a3412 !important;
+            font-weight: 850 !important;
+        }
+
+        .bling-alert-content span {
+            color: #7c2d12 !important;
+            font-weight: 650 !important;
+        }
+
+        .bling-next-empty-slot {
+            min-height: 2.75rem !important;
+        }
+
         .bling-wizard-progress-card {
             padding: 1rem 1rem 0.95rem 1rem !important;
             margin-bottom: 1rem !important;
@@ -168,6 +222,12 @@ def _inject_streamlit_toolbar_fix() -> None:
         }
 
         @media (max-width: 760px) {
+            .bling-alert-card {
+                padding: 0.82rem 0.85rem !important;
+                border-radius: 16px !important;
+                font-size: 0.88rem !important;
+            }
+
             .bling-wizard-progress-card {
                 padding: 0.9rem 0.85rem 0.85rem 0.85rem !important;
             }
