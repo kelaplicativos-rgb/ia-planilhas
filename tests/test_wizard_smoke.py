@@ -12,6 +12,7 @@ LIGHT_CRITICAL_MODULES = [
     'app',
     'bling_app_zero.ui.home',
     'bling_app_zero.ui.home_wizard',
+    'bling_app_zero.ui.rules_center_step',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.cadastro_wizard_state',
     'bling_app_zero.ui.cadastro_entry_step',
@@ -50,6 +51,7 @@ EXPECTED_CADASTRO_STEPS = [
     'operacao',
     'precificacao',
     'origem',
+    'regras',
     'entrada',
     'mapeamento',
     'preview',
@@ -61,6 +63,7 @@ EXPECTED_ESTOQUE_STEPS = [
     'operacao',
     'precificacao',
     'origem',
+    'regras',
     'entrada',
     'gerar_estoque',
     'preview',
@@ -98,20 +101,38 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_DOWNLOAD == 'download'
     assert wizard.STEP_GERAR_ESTOQUE == 'gerar_estoque'
     assert wizard.STEP_MAPEAMENTO == 'mapeamento'
+    assert wizard.STEP_REGRAS == 'regras'
+
+
+def test_rules_center_is_plugged_into_wizard() -> None:
+    constants = Path('bling_app_zero/ui/home_wizard_constants.py').read_text(encoding='utf-8')
+    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+    rules_step = Path('bling_app_zero/ui/rules_center_step.py').read_text(encoding='utf-8')
+
+    assert "STEP_REGRAS = 'regras'" in constants
+    assert 'STEP_REGRAS,' in constants
+    assert "STEP_REGRAS: 'Regras'" in constants
+    assert 'from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_center_ready' in wizard
+    assert 'elif step == STEP_REGRAS:' in wizard
+    assert 'render_rules_center_step()' in wizard
+    assert 'allow_next=rules_center_ready()' in wizard
+    assert 'Regra principal: mapeamento/manual ganha' in rules_step
 
 
 def test_home_wizard_reset_clears_mapping_and_outputs() -> None:
     home_wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+    constants = Path('bling_app_zero/ui/home_wizard_constants.py').read_text(encoding='utf-8')
 
     assert 'def _reset_outputs_for_operation_change() -> None:' in home_wizard
-    assert "'cadastro_mapping_confirmed'" in home_wizard
-    assert "'cadastro_mapping_confirmed_signature'" in home_wizard
-    assert "'df_final_cadastro'" in home_wizard
-    assert "'mapping_cadastro'" in home_wizard
-    assert "'mapping_confidence_cadastro'" in home_wizard
-    assert "'estoque_multi_outputs'" in home_wizard
-    assert "'df_final_estoque'" in home_wizard
-    assert "'mapping_estoque'" in home_wizard
+    assert "'rules_center_reviewed'" in constants
+    assert "'cadastro_mapping_confirmed'" in constants
+    assert "'cadastro_mapping_confirmed_signature'" in constants
+    assert "'df_final_cadastro'" in constants
+    assert "'mapping_cadastro'" in constants
+    assert "'mapping_confidence_cadastro'" in constants
+    assert "'estoque_multi_outputs'" in constants
+    assert "'df_final_estoque'" in constants
+    assert "'mapping_estoque'" in constants
 
 
 def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
