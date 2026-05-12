@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.app_config import APP_VERSION, PAGE_CONFIG
 from bling_app_zero.core.app_errors import register_critical_error
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
@@ -9,16 +10,8 @@ from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.25-BLINGCLEAN-MODULAR-APP'
-
-
 def main() -> None:
-    st.set_page_config(
-        page_title='IA Planilhas → Bling',
-        page_icon='🚀',
-        layout='wide',
-        initial_sidebar_state='collapsed',
-    )
+    st.set_page_config(**PAGE_CONFIG)
     inject_streamlit_toolbar_fix()
 
     add_debug(f'Aplicacao iniciada | versao {APP_VERSION}', origin='APP')
