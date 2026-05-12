@@ -6,18 +6,20 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
-STATE_GUARD_VERSION = '2026-05-09-wizard-pro-3'
+STATE_GUARD_VERSION = '2026-05-12-wizard-regras-guard-1'
 
 VALID_STEPS = {
     'modelo',
     'operacao',
     'precificacao',
     'origem',
+    'regras',
     'entrada',
     'mapeamento',
     'gerar_estoque',
     'preview',
     'download',
+    'processar',
 }
 VALID_OPERATIONS = {'cadastro', 'estoque'}
 VALID_ORIGINS = {'arquivo', 'site'}
@@ -151,6 +153,8 @@ def run_wizard_state_guard(force: bool = False) -> None:
 
     Preserva dados importantes do fluxo atual e remove resultados cruzados entre
     cadastro e estoque, principalmente origem por site salva com operação antiga.
+    A etapa ``regras`` é uma etapa oficial do wizard e nunca deve ser normalizada
+    para ``modelo`` pelo guard.
     """
     current_version = st.session_state.get(STATE_GUARD_VERSION_KEY)
     if force or current_version != STATE_GUARD_VERSION:
