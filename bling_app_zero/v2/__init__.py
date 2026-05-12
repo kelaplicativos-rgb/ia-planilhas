@@ -9,16 +9,15 @@ from bling_app_zero.v2.contracts import (
     StoreProfile,
     TablePayload,
 )
-from bling_app_zero.v2.module_kernel import ModuleKernel, build_default_kernel
+from bling_app_zero.v2.runner import V2Runner
 
 __all__ = [
     'BlingOperation',
     'BlingStage',
-    'ModuleKernel',
     'ModuleResult',
     'ModuleSpec',
     'SheetAdapterSpec',
     'StoreProfile',
     'TablePayload',
-    'build_default_kernel',
+    'V2Runner',
 ]
