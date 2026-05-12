@@ -115,7 +115,7 @@ def render_rules_panel() -> None:
         show_inline_center = False
 
     with st.sidebar:
-        with st.expander('Regras e padrões', expanded=True):
+        with st.expander('Regras e padrões', expanded=False):
             _render_rules_summary(rules, active_rules, active_protections)
 
             if show_inline_center:
