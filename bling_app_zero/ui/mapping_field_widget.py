@@ -36,6 +36,14 @@ def render_selected_column_preview(df_source: pd.DataFrame, selected_column: str
 
 def signal_label(target: str, info: dict[str, object]) -> str:
     emoji = str(info.get('emoji') or '🔴')
+    label = str(info.get('label') or '').strip()
+    score = info.get('score')
+    if emoji == '🟢' and label == '100% exato':
+        return f'{emoji} {target} · 100% exato'
+    if emoji == '🟡' and isinstance(score, int):
+        return f'{emoji} {target} · conferir ({score}%)'
+    if label and emoji != '🔴':
+        return f'{emoji} {target} · {label}'
     return f'{emoji} {target}'
 
 
@@ -74,7 +82,15 @@ def render_mapping_select(
         if default_value:
             st.text_input(target, value=default_value, disabled=True, key=f'{widget_key}_default', label_visibility='collapsed')
             selected = ''
-            info_after = {'level': 'verde', 'emoji': '🟢', 'label': 'padrão seguro', 'score': 100, 'order': 2}
+            info_after = {
+                'level': 'verde',
+                'emoji': '🟢',
+                'label': 'padrão seguro confirmado',
+                'score': 100,
+                'order': 2,
+                'strict': True,
+                'system_default': True,
+            }
         else:
             selected_raw = st.selectbox(
                 target,
