@@ -8,7 +8,7 @@ from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.user_rules import get_user_rules
 
 SIDEBAR_RULE_DOT = '🟣'
-SIDEBAR_RULE_LABEL = 'regra/recurso do sidebar'
+SIDEBAR_RULE_LABEL = 'preenchido por regra/recurso'
 
 INTERNAL_DEFAULT_TARGETS = {
     'unidade',
@@ -141,19 +141,24 @@ def has_sidebar_rule(target: object, target_keys: set[str] | None = None) -> boo
 
 
 def append_sidebar_rule_dot(label: str, target_keys: set[str] | None = None) -> str:
+    """Troca o farol principal por lilás quando o campo é resolvido por regra/recurso.
+
+    A bolinha lilás não deve aparecer ao lado da verde/amarela/vermelha. Ela é o
+    próprio status visual para campos preenchidos ou tratados por regra/recurso.
+    """
     text = str(label or '').strip()
-    if SIDEBAR_RULE_DOT in text:
-        return text
     target = text
-    for prefix in ('🔴', '🟡', '🟢'):
+    for prefix in ('🔴', '🟡', '🟢', SIDEBAR_RULE_DOT):
         if target.startswith(prefix):
             target = target[len(prefix):].strip()
             break
-    if has_sidebar_rule(target, target_keys):
-        if text.startswith(('🔴', '🟡', '🟢')):
-            return f'{text[:1]} {SIDEBAR_RULE_DOT} {text[1:].strip()}'
-        return f'{SIDEBAR_RULE_DOT} {text}'
-    return text
+
+    if not has_sidebar_rule(target, target_keys):
+        return text
+
+    if text.startswith(('🔴', '🟡', '🟢', SIDEBAR_RULE_DOT)):
+        return f'{SIDEBAR_RULE_DOT} {target}'
+    return f'{SIDEBAR_RULE_DOT} {text}'
 
 
 __all__ = [
