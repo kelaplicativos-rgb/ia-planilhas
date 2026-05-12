@@ -87,29 +87,25 @@ def _is_empty(value: Any) -> bool:
     }
 
 
-def _sidebar_config() -> dict[str, Any]:
-    """Lê somente a configuração já inicializada pelo sidebar.
+def get_post_mapping_defaults_config() -> dict[str, Any]:
+    """Retorna a configuração visível dos padrões finais.
 
-    Se o painel do sidebar ainda não gravou a configuração na sessão, o core não
-    aplica padrões por conta própria. Isso evita regra oculta/fantasma.
+    A configuração inicia com o sistema porque estes padrões são prioridade para
+    um CSV saudável. Ela continua editável e desligável no sidebar.
     """
+    config = dict(DEFAULT_POST_MAPPING_CONFIG)
     if st is None:
-        config = dict(DEFAULT_POST_MAPPING_CONFIG)
-        config['enabled'] = False
         return config
 
     raw = st.session_state.get(POST_MAPPING_DEFAULTS_SESSION_KEY)
-    if not isinstance(raw, dict):
-        config = dict(DEFAULT_POST_MAPPING_CONFIG)
-        config['enabled'] = False
-        return config
+    if isinstance(raw, dict):
+        for key in config:
+            if key in raw:
+                config[key] = raw[key]
 
-    config = dict(DEFAULT_POST_MAPPING_CONFIG)
-    for key in config:
-        if key in raw:
-            config[key] = raw[key]
     config['enabled'] = bool(config.get('enabled', True))
     config['short_description_from_complement'] = bool(config.get('short_description_from_complement', True))
+    st.session_state[POST_MAPPING_DEFAULTS_SESSION_KEY] = config
     return config
 
 
@@ -143,11 +139,11 @@ def _apply_short_description_link(out: pd.DataFrame, config: dict[str, Any]) -> 
 
 
 def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None = None) -> pd.DataFrame:
-    """Aplica somente padrões visíveis no sidebar após o mapeamento manual.
+    """Aplica padrões visíveis no sidebar após o mapeamento manual.
 
     Regra principal:
-    - se o painel do sidebar ainda não inicializou essa regra, nada é aplicado;
-    - se o usuário desligar no sidebar, nada é aplicado;
+    - inicia ligado com o sistema por ser prioridade de qualidade do CSV;
+    - o usuário pode desligar no sidebar;
     - se a coluna não existir, nada é criado;
     - se o usuário mapeou/preencheu valor, nada é sobrescrito;
     - se a coluna existir e estiver vazia, recebe o padrão configurado no sidebar.
@@ -155,7 +151,7 @@ def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None =
     if df is None or df.empty:
         return df
 
-    config = _sidebar_config()
+    config = get_post_mapping_defaults_config()
     if not bool(config.get('enabled', True)):
         return df
 
@@ -174,4 +170,5 @@ __all__ = [
     'DEFAULT_POST_MAPPING_CONFIG',
     'POST_MAPPING_DEFAULTS_SESSION_KEY',
     'apply_post_mapping_defaults',
+    'get_post_mapping_defaults_config',
 ]
