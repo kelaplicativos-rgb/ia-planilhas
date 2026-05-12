@@ -19,6 +19,13 @@ def _feature_default_enabled(feature: FeatureDefinition) -> bool:
     return feature.status in {'stable', 'beta'}
 
 
+def _feature_is_enabled(feature: FeatureDefinition) -> bool:
+    default = _feature_default_enabled(feature)
+    if feature.enabled_key in st.session_state:
+        return bool(st.session_state.get(feature.enabled_key, default))
+    return is_feature_enabled(feature.key, default=default)
+
+
 def _scope_matches(feature: FeatureDefinition, operation: str) -> bool:
     normalized = str(operation or 'global').strip().lower()
     return feature.scope == 'global' or feature.scope == normalized
@@ -38,7 +45,7 @@ def active_features(*, operation: FeatureScope | str = 'global', stage: FeatureS
             continue
         if not _stage_matches(feature, str(stage)):
             continue
-        if not is_feature_enabled(feature.key, default=_feature_default_enabled(feature)):
+        if not _feature_is_enabled(feature):
             continue
         selected.append(feature)
     return selected
@@ -56,7 +63,7 @@ def build_feature_context(
     state = {
         key: value
         for key, value in st.session_state.items()
-        if str(key).startswith('feature_') or str(key).endswith('_enabled')
+        if str(key).startswith('feature_') or str(key).endswith('_enabled') or str(key) in {'clean_invalid_gtin', 'normalize_image_separator', 'normalize_measures_to_meters', 'unique_product_code'}
     }
     return FeatureContext(
         operation=str(operation or 'global'),
