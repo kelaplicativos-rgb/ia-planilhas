@@ -38,8 +38,8 @@ def signal_label(target: str, info: dict[str, object]) -> str:
     emoji = str(info.get('emoji') or '🔴')
     label = str(info.get('label') or '').strip()
     score = info.get('score')
-    if emoji == '🟢' and label == '100% exato':
-        return f'{emoji} {target} · 100% exato'
+    if emoji == '🟢' and label == '100% bit a bit':
+        return f'{emoji} {target} · 100% bit a bit'
     if emoji == '🟡' and isinstance(score, int):
         return f'{emoji} {target} · conferir ({score}%)'
     if label and emoji != '🔴':
