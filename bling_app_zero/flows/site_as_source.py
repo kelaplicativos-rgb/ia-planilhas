@@ -14,6 +14,15 @@ SITE_RAW_LEGACY_KEY = 'df_site_bruto'
 SITE_RAW_OPERATION_KEY = 'operation_site'
 SITE_RAW_OPERATION_TYPE_KEY = 'tipo_operacao_site'
 
+CADASTRO_WIZARD_ORIGEM_KEY = 'cadastro_wizard_df_origem'
+CADASTRO_WIZARD_PARA_MAPEAR_KEY = 'cadastro_wizard_df_para_mapear'
+CADASTRO_WIZARD_MODELO_KEY = 'cadastro_wizard_df_modelo'
+CADASTRO_WIZARD_MODELO_ESTOQUE_KEY = 'cadastro_wizard_df_modelo_estoque'
+CADASTRO_EXPECTED_ROWS_KEY = 'cadastro_wizard_expected_source_rows'
+CADASTRO_EXPECTED_SIGNATURE_KEY = 'cadastro_wizard_expected_source_signature'
+ESTOQUE_WIZARD_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
+ESTOQUE_WIZARD_MODELO_KEY = 'estoque_wizard_df_modelo'
+
 PLANILHA_SOURCE_KEYS = [
     'df_origem',
     'df_origem_cadastro',
@@ -69,6 +78,18 @@ def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
+def _df_signature(df: pd.DataFrame | None) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 'empty'
+    try:
+        columns = '|'.join(map(str, df.columns))
+        shape = f'{len(df)}x{len(df.columns)}'
+        sample = pd.util.hash_pandas_object(df.head(200).astype(str), index=True).sum()
+        return f'{shape}:{columns}:{sample}'
+    except Exception:
+        return f'{len(df)}x{len(df.columns)}'
+
+
 def _clear_output_cache_for_operation(operation: str) -> None:
     normalized = _normalize_operation(operation)
     keys = []
@@ -82,6 +103,9 @@ def _clear_output_cache_for_operation(operation: str) -> None:
             'df_final_estoque_from_cadastro',
             'mapping_estoque_from_cadastro',
             'mapping_confidence_estoque_from_cadastro',
+            CADASTRO_WIZARD_PARA_MAPEAR_KEY,
+            'cadastro_mapping_confirmed',
+            'cadastro_mapping_confirmed_signature',
         ])
     else:
         keys.extend([
@@ -131,6 +155,50 @@ def _mirror_as_uploaded_planilha(
     st.session_state['tipo_operacao'] = normalized
     st.session_state['operacao_final'] = normalized
     st.session_state['tipo_operacao_final'] = normalized
+
+
+def _mirror_to_wizard_keys(
+    *,
+    source_df: pd.DataFrame,
+    operation: str,
+    cadastro_model_df: pd.DataFrame | None,
+    estoque_model_df: pd.DataFrame | None,
+    operation_model_df: pd.DataFrame | None,
+) -> None:
+    """Ponte BLINGFIX: captura por site precisa alimentar as chaves do Wizard atual."""
+    normalized = _normalize_operation(operation)
+    origem = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
+    cadastro_model = _copy_df(cadastro_model_df)
+    estoque_model = _copy_df(estoque_model_df)
+    operation_model = _copy_df(operation_model_df)
+
+    if normalized == 'cadastro':
+        if cadastro_model is None:
+            cadastro_model = operation_model
+        st.session_state[CADASTRO_WIZARD_ORIGEM_KEY] = origem.copy().fillna('')
+        # Esta chave é recriada depois pela precificação/mapeamento quando houver preço calculado.
+        # Aqui ela também serve como origem pronta para diagnóstico e para não deixar o Wizard sem contexto.
+        st.session_state[CADASTRO_WIZARD_PARA_MAPEAR_KEY] = origem.copy().fillna('')
+        st.session_state[CADASTRO_EXPECTED_ROWS_KEY] = int(len(origem))
+        st.session_state[CADASTRO_EXPECTED_SIGNATURE_KEY] = _df_signature(origem)
+        if cadastro_model is not None:
+            st.session_state[CADASTRO_WIZARD_MODELO_KEY] = cadastro_model.copy().fillna('')
+        if estoque_model is not None:
+            st.session_state[CADASTRO_WIZARD_MODELO_ESTOQUE_KEY] = estoque_model.copy().fillna('')
+        st.session_state.pop(ESTOQUE_WIZARD_ORIGEM_SITE_KEY, None)
+    else:
+        if estoque_model is None:
+            estoque_model = operation_model
+        st.session_state[ESTOQUE_WIZARD_ORIGEM_SITE_KEY] = origem.copy().fillna('')
+        if estoque_model is not None:
+            st.session_state[ESTOQUE_WIZARD_MODELO_KEY] = estoque_model.copy().fillna('')
+
+    st.session_state['site_capture_result_ready'] = bool(not origem.empty)
+    st.session_state['site_capture_finished'] = True
+    st.session_state['site_capture_error'] = ''
+    st.session_state['site_capture_operation'] = normalized
+    st.session_state['site_capture_rows'] = int(len(origem))
+    st.session_state['site_capture_columns'] = int(len(origem.columns))
 
 
 def set_site_source_as_planilha(
@@ -183,6 +251,13 @@ def set_site_source_as_planilha(
         operation=normalized,
         cadastro_model_df=cadastro_model,
         estoque_model_df=estoque_model,
+    )
+    _mirror_to_wizard_keys(
+        source_df=source_df,
+        operation=normalized,
+        cadastro_model_df=cadastro_model,
+        estoque_model_df=estoque_model,
+        operation_model_df=operation_model,
     )
 
 
@@ -244,6 +319,14 @@ def clear_site_source(operation: str | None = None) -> None:
             *ESTOQUE_SOURCE_KEYS,
             *PLANILHA_MODEL_CADASTRO_KEYS,
             *PLANILHA_MODEL_ESTOQUE_KEYS,
+            CADASTRO_WIZARD_ORIGEM_KEY,
+            CADASTRO_WIZARD_PARA_MAPEAR_KEY,
+            CADASTRO_WIZARD_MODELO_KEY,
+            CADASTRO_WIZARD_MODELO_ESTOQUE_KEY,
+            CADASTRO_EXPECTED_ROWS_KEY,
+            CADASTRO_EXPECTED_SIGNATURE_KEY,
+            ESTOQUE_WIZARD_ORIGEM_SITE_KEY,
+            ESTOQUE_WIZARD_MODELO_KEY,
             'origem_dados',
             'origem_tipo',
             'origem_planilha_via_site',
@@ -251,6 +334,12 @@ def clear_site_source(operation: str | None = None) -> None:
             'tipo_operacao',
             'operacao_final',
             'tipo_operacao_final',
+            'site_capture_running',
+            'site_capture_finished',
+            'site_capture_result_ready',
+            'site_capture_error',
+            'site_capture_rows',
+            'site_capture_columns',
         ]:
             st.session_state.pop(key, None)
 
