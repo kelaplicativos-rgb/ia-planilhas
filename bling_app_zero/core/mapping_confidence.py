@@ -27,11 +27,11 @@ CUSTOM_EQUIVALENT_TERMS = {
 
 
 def resolved_empty_confidence() -> dict[str, object]:
-    return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': 'vazio confirmado', 'order': 2}
+    return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': 'vazio confirmado', 'order': 2, 'strict': True}
 
 
 def pending_confidence() -> dict[str, object]:
-    return {'score': 0, 'level': 'vermelho', 'emoji': '🔴', 'label': 'precisa escolher', 'order': 0}
+    return {'score': 0, 'level': 'vermelho', 'emoji': '🔴', 'label': 'precisa escolher', 'order': 0, 'strict': False}
 
 
 def _values(df: pd.DataFrame, column: str, limit: int = 80) -> list[str]:
@@ -92,8 +92,14 @@ def _custom_equivalent(target: str, source: str) -> bool:
     return False
 
 
-def _exact_normalized_match(target: str, source: str) -> bool:
-    return bool(_compact_key(target) and _compact_key(target) == _compact_key(source))
+def _bit_to_bit_match(target: str, source: str) -> bool:
+    """Retorna True somente para igualdade literal do nome da coluna.
+
+    Esta é a regra visual da bolinha verde em mapeamento automático:
+    verde = 100% bit a bit. Não normaliza acento, maiúscula/minúscula,
+    hífen, espaço, parênteses ou qualquer caractere escondido.
+    """
+    return str(target) == str(source)
 
 
 def _manual_like_valid(target: str, source: str, profile: dict[str, float | str]) -> bool:
@@ -177,9 +183,11 @@ def _content_score(target: str, source: str, profile: dict[str, float | str]) ->
 
 def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
     if level_hint == 'verde':
-        return {'score': max(score, 100), 'level': 'verde', 'emoji': '🟢', 'label': 'pronto', 'order': 2}
-    if score >= 82:
-        return {'score': score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'conferir', 'order': 1}
+        return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': '100% bit a bit', 'order': 2, 'strict': True}
+
+    safe_score = min(max(int(score), 0), 99)
+    if safe_score >= 82:
+        return {'score': safe_score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'conferir', 'order': 1, 'strict': False}
     return pending_confidence()
 
 
@@ -196,7 +204,7 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
 
     score = _name_score(target, source) + _content_score(target, source, profile)
 
-    if _exact_normalized_match(target, source):
+    if _bit_to_bit_match(target, source):
         return _confidence(score, 'verde')
 
     return _confidence(score)
