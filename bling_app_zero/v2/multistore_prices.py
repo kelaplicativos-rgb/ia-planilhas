@@ -5,7 +5,8 @@ import pandas as pd
 from bling_app_zero.v2.contracts import ModuleResult, ModuleSpec, TablePayload
 from bling_app_zero.v2.price_math import calculate_marketplace_price, calculate_promo_price, money_ptbr
 
-PRICE_COLUMN_CANDIDATES = ('Custo', 'Preco de custo', 'Preço de custo', 'Preco Custo', 'Preço Custo', 'Preco', 'Preço')
+INTERNAL_COST_COLUMN = '_v2_custo_base'
+PRICE_COLUMN_CANDIDATES = (INTERNAL_COST_COLUMN, 'Custo', 'Preco de custo', 'Preço de custo', 'Preco Custo', 'Preço Custo')
 REQUIRED_ID_COLUMNS = ('IdProduto', 'ID na Loja')
 PRICE_OUTPUT_COLUMNS = ('Preco', 'Preço')
 PROMO_OUTPUT_COLUMNS = ('Preco Promocional', 'Preço Promocional')
@@ -28,8 +29,11 @@ def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str,
     for required in REQUIRED_ID_COLUMNS:
         if not _find_column(df, (required,)):
             errors.append(f'Coluna obrigatoria ausente: {required}')
-    if not _find_column(df, PRICE_COLUMN_CANDIDATES):
+    cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
+    if not cost_col:
         errors.append('Coluna de custo/preco base ausente.')
+    elif not any(str(value or '').strip() for value in df[cost_col].tolist()):
+        errors.append('Coluna de custo/preco base esta vazia.')
     if not (_find_column(df, PRICE_OUTPUT_COLUMNS) or _find_column(df, PROMO_OUTPUT_COLUMNS)):
         errors.append('Modelo precisa ter coluna Preco ou Preco Promocional.')
     return not errors, tuple(errors)
@@ -79,9 +83,9 @@ MULTISTORE_PRICE_SPEC = ModuleSpec(
     operation='preco',
     stage='calculate',
     version='2.0.0',
-    depends_on=('store_profile', 'modelo_multiloja'),
+    depends_on=('store_profile', 'modelo_multiloja', 'custo_base'),
     provides=('preco_multiloja_calculado',),
     runner=run_multistore_price_calculator,
 )
 
-__all__ = ['MULTISTORE_PRICE_SPEC', 'run_multistore_price_calculator', 'validate_multistore_payload']
+__all__ = ['INTERNAL_COST_COLUMN', 'MULTISTORE_PRICE_SPEC', 'run_multistore_price_calculator', 'validate_multistore_payload']
