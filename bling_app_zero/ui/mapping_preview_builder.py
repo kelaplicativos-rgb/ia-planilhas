@@ -56,7 +56,7 @@ def build_cadastro_preview(
     preview = apply_mapping(df_source, model, mapping_for_apply)
     preview = apply_manual_fixed_values(preview, mapping, target_columns, mapping_key)
     preview = apply_safe_defaults(preview)
-    return sanitize_for_bling(preview)
+    return sanitize_for_bling(preview, operation='cadastro')
 
 
 def build_estoque_preview(
@@ -71,7 +71,7 @@ def build_estoque_preview(
     preview = apply_mapping(df_source, model, mapping_for_apply)
     preview = apply_manual_fixed_values(preview, mapping, target_columns, mapping_key)
     preview = fill_deposito_manual(preview, deposito)
-    return sanitize_for_bling(preview)
+    return sanitize_for_bling(preview, operation='estoque')
 
 
 __all__ = [
