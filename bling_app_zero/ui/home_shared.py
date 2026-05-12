@@ -11,6 +11,7 @@ from streamlit.errors import StreamlitAPIException
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.validators import validate_final_df
 
 PREVIEW_ROWS = 50
@@ -132,9 +133,10 @@ def df_signature(df: pd.DataFrame) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str) -> bytes:
+def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str, rules_sig: str) -> bytes:
     _ = operation
     _ = signature
+    _ = rules_sig
     return to_bling_csv_bytes(df)
 
 
@@ -165,13 +167,6 @@ def _download_label(operation: str) -> str:
 
 
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    """Normaliza preview para evitar erros repetidos do Arrow no Streamlit.
-
-    Alguns crawlers podem devolver colunas object misturando texto, listas,
-    números e valores vazios. O Streamlit tenta serializar isso em Arrow e
-    gera avisos repetidos. Para preview, tudo vira string segura sem alterar o
-    DataFrame usado no processamento/exportação.
-    """
     if df is None or df.empty:
         return df
     out = df.head(PREVIEW_ROWS).copy()
@@ -261,7 +256,8 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
                 st.warning(error)
 
     signature = df_signature(df)
-    csv_bytes = _csv_bytes_cached(df.copy(), operation, signature)
+    rules_sig = rules_signature()
+    csv_bytes = _csv_bytes_cached(df.copy(), operation, signature, rules_sig)
 
     st.download_button(
         _download_label(operation),
@@ -269,7 +265,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         file_name=filename_for_operation(operation),
         mime='text/csv; charset=utf-8',
         use_container_width=True,
-        key=f'download_{key}_{signature}',
+        key=f'download_{key}_{signature}_{rules_sig}',
     )
 
 
