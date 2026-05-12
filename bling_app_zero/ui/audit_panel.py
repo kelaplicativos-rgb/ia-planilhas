@@ -95,7 +95,7 @@ def render_audit_panel() -> None:
     events = get_audit_events()
     compact_events = _compact_events(events)
     with st.sidebar:
-        with st.expander('Audit trail operacional', expanded=True):
+        with st.expander('Audit trail operacional', expanded=False):
             st.caption('Registra movimentos importantes da sessão: cliques, etapas, ações, downloads e decisões do fluxo.')
             st.caption(f'Sessão auditável: `{get_audit_session_id()}`')
             st.caption(f'{len(events)} evento(s) bruto(s) · {len(compact_events)} evento(s) no compacto.')
