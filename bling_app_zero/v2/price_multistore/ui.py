@@ -161,7 +161,6 @@ def _render_ready_result(result_df: pd.DataFrame) -> None:
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key=widget_key('multistore_download'),
-        on_click='ignore',
     )
     _render_bling_import_actions()
 
