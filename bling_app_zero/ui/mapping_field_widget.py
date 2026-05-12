@@ -35,15 +35,13 @@ def render_selected_column_preview(df_source: pd.DataFrame, selected_column: str
 
 
 def signal_label(target: str, info: dict[str, object]) -> str:
-    emoji = str(info.get('emoji') or '🔴')
-    label = str(info.get('label') or '').strip()
-    score = info.get('score')
-    if emoji == '🟢' and label == '100% bit a bit':
-        return f'{emoji} {target} · 100% bit a bit'
-    if emoji == '🟡' and isinstance(score, int):
-        return f'{emoji} {target} · conferir ({score}%)'
-    if label and emoji != '🔴':
-        return f'{emoji} {target} · {label}'
+    """Título visual limpo do campo no mapeamento.
+
+    BLINGCLEAN: remove textos poluídos como "100% bit a bit", "vazio confirmado",
+    "valor fixo confirmado" e percentuais. O cartão deve mostrar só o farol e o
+    nome da coluna do Bling.
+    """
+    emoji = str(info.get('emoji') or '🔴').strip() or '🔴'
     return f'{emoji} {target}'
 
 
@@ -55,7 +53,6 @@ def render_manual_value_input(target: str, widget_key: str) -> str:
         key=value_key,
         placeholder='Digite o valor que será repetido no arquivo final',
     )
-    st.caption('Valor fixo: será aplicado em todas as linhas desta coluna no preview e no download final.')
     return str(manual_value or '')
 
 
@@ -85,7 +82,7 @@ def render_mapping_select(
             info_after = {
                 'level': 'verde',
                 'emoji': '🟢',
-                'label': 'padrão seguro confirmado',
+                'label': '',
                 'score': 100,
                 'order': 2,
                 'strict': True,
