@@ -140,15 +140,6 @@ def _disable_all_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
     return updated
 
 
-def _default_rules_enabled_default(custom_rules: list[dict[str, Any]]) -> bool:
-    custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
-    for target, _fallback in _all_default_targets():
-        rule = custom_by_column.get(target.lower(), {})
-        if bool(rule.get('enabled', False)):
-            return True
-    return False
-
-
 def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
     st.markdown('#### Proteções do CSV final')
     st.caption('Ligue ou desligue os recursos que tratam o arquivo final.')
@@ -298,13 +289,13 @@ def render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
     custom_rules = list(updated.get('custom_rules', []) or [])
 
     if DEFAULT_RULES_ENABLED_KEY not in st.session_state:
-        st.session_state[DEFAULT_RULES_ENABLED_KEY] = _default_rules_enabled_default(custom_rules)
+        st.session_state[DEFAULT_RULES_ENABLED_KEY] = False
 
     master_enabled = bool(st.session_state.get(DEFAULT_RULES_ENABLED_KEY, False))
     expander_label = f'{DEFAULT_RULES_EXPANDER_LABEL} · {"ligado" if master_enabled else "desligado"}'
 
     try:
-        with st.expander(expander_label, expanded=master_enabled):
+        with st.expander(expander_label, expanded=False):
             master_enabled = st.toggle(
                 'Usar regras opcionais de preenchimento',
                 value=master_enabled,
