@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import html
-
 import pandas as pd
 import streamlit as st
 
@@ -116,28 +114,16 @@ def _render_loaded_summary() -> None:
         st.success('Modelos carregados: ' + ' + '.join(parts))
 
 
-def _open_model_card() -> None:
-    kicker = html.escape('Etapa 1')
-    title = html.escape('Modelo do Bling')
-    text = html.escape(
+def render_home_bling_models() -> None:
+    """Conteúdo da etapa Modelo do Bling.
+
+    O card visual externo fica no wizard para que explicação, upload, alerta
+    e navegação fiquem no mesmo bloco, sem partes soltas na tela mobile.
+    """
+    st.markdown('#### Modelo do Bling')
+    st.caption(
         'Envie o modelo de cadastro, estoque ou ambos. O sistema usa esse arquivo como contrato das colunas que podem ser preenchidas.'
     )
-    st.markdown(
-        f"""
-        <section class="bling-flow-card bling-model-step-card">
-            <div class="bling-flow-card-kicker">{kicker}</div>
-            <h2 class="bling-flow-card-title">{title}</h2>
-            <p class="bling-flow-card-text">{text}</p>
-            <div class="bling-model-upload-anchor"></div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_home_bling_models() -> None:
-    """Renderiza a etapa 1 como um único bloco visual."""
-    _open_model_card()
 
     upload = render_model_upload_box(
         title='Modelos do Bling',
