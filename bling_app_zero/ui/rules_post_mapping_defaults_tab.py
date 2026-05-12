@@ -4,24 +4,7 @@ from typing import Any
 
 import streamlit as st
 
-POST_MAPPING_DEFAULTS_SESSION_KEY = 'bling_post_mapping_defaults'
-
-DEFAULT_POST_MAPPING_CONFIG: dict[str, Any] = {
-    'enabled': True,
-    'category_default': '',
-    'clone_parent_default': 'Não',
-    'product_condition_default': 'Novo',
-    'short_description_from_complement': True,
-    'description_complement_default': '',
-    'free_shipping_default': 'Não',
-    'additional_info_default': '',
-    'box_items_default': '1',
-    'situation_default': 'Ativo',
-    'unit_default': 'UN',
-    'measure_unit_name_default': 'Centímetro',
-    'video_default': '',
-    'volumes_default': '1',
-}
+from bling_app_zero.core.post_mapping_defaults import DEFAULT_POST_MAPPING_CONFIG, POST_MAPPING_DEFAULTS_SESSION_KEY
 
 
 def _text(value: object, fallback: str = '') -> str:
@@ -53,6 +36,9 @@ def set_post_mapping_defaults_config(config: dict[str, Any]) -> dict[str, Any]:
                 current[key] = config[key]
     current['enabled'] = bool(current.get('enabled', True))
     current['short_description_from_complement'] = bool(current.get('short_description_from_complement', True))
+    for key, fallback in DEFAULT_POST_MAPPING_CONFIG.items():
+        if isinstance(fallback, str):
+            current[key] = _text(current.get(key), fallback)
     st.session_state[POST_MAPPING_DEFAULTS_SESSION_KEY] = current
     return current
 
@@ -99,8 +85,6 @@ def render_post_mapping_defaults_tab() -> None:
 
 
 __all__ = [
-    'DEFAULT_POST_MAPPING_CONFIG',
-    'POST_MAPPING_DEFAULTS_SESSION_KEY',
     'get_post_mapping_defaults_config',
     'render_post_mapping_defaults_tab',
     'set_post_mapping_defaults_config',
