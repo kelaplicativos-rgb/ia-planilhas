@@ -7,10 +7,13 @@ from bling_app_zero.v2.bling_links import BLING_MULTISTORE_PRICE_IMPORT_URL
 from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
+from bling_app_zero.v2.price_multistore.matcher import find_best_identifier
 from bling_app_zero.v2.store_profiles import build_store_profile
 from bling_app_zero.v2.table_io import load_table
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
+
+MARKETPLACE_OPTIONS = ['mercado_livre', 'shopee', 'amazon', 'b2w', 'olist', 'madeira_madeira', 'magazine_luiza', 'via_varejo', 'carrefour', 'outro']
 
 
 def _read(uploaded_file) -> pd.DataFrame | None:
@@ -26,8 +29,8 @@ def _read(uploaded_file) -> pd.DataFrame | None:
 def _cost_column_options(df: pd.DataFrame | None) -> list[str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
-    preferred = []
-    others = []
+    preferred: list[str] = []
+    others: list[str] = []
     hints = ('custo', 'preco de custo', 'preço de custo', 'valor custo', 'valor compra', 'preco compra', 'preço compra')
     blocked = ('idproduto', 'id produto', 'id na loja', 'id loja', 'sku', 'codigo', 'código', 'descricao', 'descrição', 'nome')
     for column in [str(column) for column in df.columns]:
@@ -52,6 +55,17 @@ def _render_alert(message: str) -> None:
     )
 
 
+def _render_info(message: str) -> None:
+    st.markdown(
+        f"""
+        <div style="background:#f8fafc;border:1px solid #cbd5e1;color:#334155;border-radius:16px;padding:.9rem 1rem;font-weight:650;">
+            {message}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_bling_import_link() -> None:
     st.markdown(
         f"""
@@ -67,57 +81,88 @@ def _render_bling_import_link() -> None:
     )
 
 
+def _format_marketplace(value: str) -> str:
+    labels = {
+        'mercado_livre': 'Mercado Livre',
+        'shopee': 'Shopee',
+        'amazon': 'Amazon',
+        'b2w': 'B2W / Americanas',
+        'olist': 'Olist',
+        'madeira_madeira': 'Madeira Madeira',
+        'magazine_luiza': 'Magazine Luiza',
+        'via_varejo': 'Via Varejo',
+        'carrefour': 'Carrefour',
+        'outro': 'Outro marketplace',
+    }
+    return labels.get(value, value.replace('_', ' ').title())
+
+
+def _render_flow_explanation() -> None:
+    _render_info(
+        'Este fluxo atualiza preços de produtos já vinculados a uma loja/marketplace no Bling. '
+        'Você envia a planilha multiloja do Bling e uma planilha com Preço de custo. '
+        'O sistema cruza os produtos, calcula os novos preços e gera o CSV pronto para importar.'
+    )
+
+
+def _render_match_summary(model_df: pd.DataFrame | None, source_df: pd.DataFrame | None) -> None:
+    if not isinstance(model_df, pd.DataFrame) or model_df.empty or not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        _render_alert('O cruzamento será liberado depois que as duas planilhas forem anexadas.')
+        return
+    kind, model_col, source_col = find_best_identifier(model_df, source_df)
+    if kind and model_col and source_col:
+        st.success(f'Cruzamento sugerido: {model_col} ↔ {source_col}')
+        st.caption('O sistema usará esse identificador para buscar o custo da origem e preencher o modelo multiloja do Bling.')
+    else:
+        _render_alert('Não encontrei automaticamente um identificador igual entre as duas planilhas. Verifique se ambas têm IdProduto, ID na Loja, SKU/Código, GTIN ou Descrição.')
+
+
 def render_price_multistore_v2() -> None:
     st.markdown('## 🏬 Atualizar Preços Multiloja')
-    st.caption('Fluxo V2 independente: modelo multiloja do Bling + origem de custo + calculadora por marketplace.')
+    _render_flow_explanation()
 
-    st.markdown('### 1. Modelo multiloja do Bling')
-    st.caption('Anexe a planilha exportada do Bling para vínculo/preços multiloja. Ela será a estrutura final do CSV.')
-    model_upload = st.file_uploader('Planilha modelo do Bling para vínculo multiloja', type=['csv', 'xlsx', 'xls'], key='v2_multistore_model_upload')
+    st.markdown('### Etapa 1 · Loja / marketplace')
+    channel = st.selectbox('Qual loja/marketplace você quer atualizar?', MARKETPLACE_OPTIONS, format_func=_format_marketplace, key='v2_multistore_channel')
+    c_store_1, c_store_2 = st.columns(2)
+    store_name = c_store_1.text_input('Nome da loja no Bling', value=_format_marketplace(channel), key='v2_multistore_store_name')
+    store_id = c_store_2.text_input('ID da loja no Bling, se houver', value='', key='v2_multistore_store_id')
+    st.caption('Trabalhe com um marketplace por vez para evitar mistura de taxas, anúncios e IDs na Loja.')
+
+    st.markdown('### Etapa 2 · Planilha do Bling')
+    st.caption('Envie a planilha exportada do Bling para atualizar preços multiloja. Essa planilha será preenchida e enviada de volta ao Bling.')
+    model_upload = st.file_uploader('Planilha 1 — Modelo Multiloja do Bling', type=['csv', 'xlsx', 'xls'], key='v2_multistore_model_upload')
     model_df = _read(model_upload)
     if isinstance(model_df, pd.DataFrame):
         detection = detect_multistore_model(model_df)
         if detection.is_multistore:
-            st.success(f'{detection.message} Confiança: {detection.confidence:.0%}')
-            st.dataframe(model_df.head(20), use_container_width=True, height=220)
+            st.success(f'Modelo multiloja reconhecido · {len(model_df)} linha(s) × {len(model_df.columns)} coluna(s).')
+            st.dataframe(model_df.head(12), use_container_width=True, height=180)
         else:
             _render_alert(detection.message + ' Faltando: ' + ', '.join(detection.missing))
             return
     else:
-        _render_alert('Anexe primeiro a planilha exportada do Bling para vínculo multiloja.')
+        _render_alert('Anexe a Planilha 1 do Bling para continuar.')
         return
 
-    st.markdown('### 2. Marketplace / Loja')
-    channel = st.selectbox('Marketplace', ['mercado_livre', 'shopee', 'amazon', 'outro'], format_func=lambda x: x.replace('_', ' ').title(), key='v2_multistore_channel')
-    store_name = st.text_input('Nome da loja no Bling', value=channel.replace('_', ' ').title(), key='v2_multistore_store_name')
-    store_id = st.text_input('ID da loja no Bling, se houver', value='', key='v2_multistore_store_id')
-
-    st.markdown('### 3. Origem de custo')
-    st.caption('Obrigatório: anexe a planilha de cadastro/produtos que contém o Preço de custo. O modelo multiloja não deve ser usado como custo.')
-    source_upload = st.file_uploader('Planilha de cadastro/produtos com Preço de custo', type=['csv', 'xlsx', 'xls'], key='v2_multistore_source_upload')
+    st.markdown('### Etapa 3 · Custo dos produtos')
+    st.caption('Envie a planilha de cadastro/produtos que contém o Preço de custo. Ela não será enviada ao Bling; serve apenas para calcular.')
+    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls'], key='v2_multistore_source_upload')
     source_df = _read(source_upload)
     if isinstance(source_df, pd.DataFrame) and not source_df.empty:
-        st.success(f'Origem de custo carregada: {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
+        st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
         st.dataframe(source_df.head(12), use_container_width=True, height=180)
     else:
-        _render_alert('Para calcular Preços Multiloja, anexe a planilha de cadastro/produtos com Preço de custo.')
+        _render_alert('Para calcular, anexe a planilha de cadastro/produtos com Preço de custo.')
 
+    st.markdown('### Etapa 4 · Cruzamento')
+    _render_match_summary(model_df, source_df)
     cost_options = _cost_column_options(source_df)
-    source_cost_column = st.selectbox('Coluna de Preço de custo na origem', cost_options, key='v2_multistore_cost_column') if cost_options else ''
+    source_cost_column = st.selectbox('Qual coluna da origem tem o Preço de custo?', cost_options, key='v2_multistore_cost_column') if cost_options else ''
     can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
 
-    st.markdown('### 4. Calculadora')
-    calculator_mode = st.radio(
-        'Modo da calculadora',
-        ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'],
-        horizontal=True,
-        key='v2_multistore_calculator_mode_label',
-    )
-    mode_map = {
-        'Lucro nominal': 'nominal_profit',
-        'Margem de contribuição': 'contribution_margin',
-        'Preço fixo': 'fixed_sale_price',
-    }
+    st.markdown('### Etapa 5 · Calculadora')
+    calculator_mode = st.radio('Como deseja calcular?', ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'], horizontal=True, key='v2_multistore_calculator_mode_label')
+    mode_map = {'Lucro nominal': 'nominal_profit', 'Margem de contribuição': 'contribution_margin', 'Preço fixo': 'fixed_sale_price'}
     calculator_mode_key = mode_map[calculator_mode]
 
     c1, c2, c3, c4 = st.columns(4)
@@ -128,15 +173,15 @@ def render_price_multistore_v2() -> None:
 
     c5, c6, c7, c8 = st.columns(4)
     if calculator_mode_key == 'nominal_profit':
-        desired_nominal_profit = c5.number_input('Lucro nominal R$', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_nominal_profit')
+        desired_nominal_profit = c5.number_input('Quero ganhar R$', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_nominal_profit')
         desired_margin = 0.0
         desired_sale_price = 0.0
     elif calculator_mode_key == 'contribution_margin':
-        desired_margin = c5.number_input('Margem desejada %', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_margin')
+        desired_margin = c5.number_input('Quero margem de %', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_margin')
         desired_nominal_profit = 0.0
         desired_sale_price = 0.0
     else:
-        desired_sale_price = c5.number_input('Preço fixo R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_desired_sale_price')
+        desired_sale_price = c5.number_input('Quero vender por R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_desired_sale_price')
         desired_nominal_profit = 0.0
         desired_margin = 0.0
     supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, value=15.0, step=1.0, key='v2_multistore_supplier_term')
@@ -162,7 +207,7 @@ def render_price_multistore_v2() -> None:
     if not can_generate:
         _render_alert('A geração fica bloqueada até carregar a origem de custo e selecionar a coluna de Preço de custo.')
 
-    if st.button('Gerar planilha de preços multilojas', use_container_width=True, key='v2_multistore_generate', disabled=not can_generate):
+    if st.button('Gerar prévia de preços', use_container_width=True, key='v2_multistore_generate', disabled=not can_generate):
         result = run_multistore_price_flow(model_df, profile, source_df, source_cost_column, pricing_rules)
         st.session_state['v2_multistore_last_ok'] = result.ok
         st.session_state['v2_multistore_last_message'] = result.message
@@ -183,11 +228,12 @@ def render_price_multistore_v2() -> None:
 
     result_df = st.session_state.get('v2_multistore_result_df')
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        st.markdown('### 5. Preview final')
+        st.markdown('### Etapa 6 · Conferência')
         preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
         st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
+        st.markdown('### Etapa 7 · Download e importação')
         st.download_button(
-            'Baixar CSV para Importar e Atualizar Vínculo Produtos Multilojas',
+            'Baixar CSV limpo para o Bling',
             data=to_csv_bytes(result_df),
             file_name='bling_precos_multilojas.csv',
             mime='text/csv; charset=utf-8',
