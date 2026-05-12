@@ -9,7 +9,7 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 6
+RULES_SCHEMA_VERSION = 7
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
 
@@ -27,7 +27,7 @@ def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
         'condition': target_column,
         'target_column': target_column,
         'fill_value': fill_value,
-        'only_when_empty': False,
+        'only_when_empty': True,
         'enabled': False,
         'source': 'system',
     }
@@ -49,6 +49,8 @@ DEFAULT_RULES: dict[str, Any] = {
     'width_default': '11',
     'depth_default': '18',
     'length_default': '18',
+    'box_items_default': '1',
+    'normalize_measures_to_meters': True,
     'clean_invalid_gtin': True,
     'normalize_image_separator': True,
     'invalid_gtin_mode': 'limpar',
@@ -155,6 +157,8 @@ def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
 
     source = _safe_text(rule.get('source'))
     rule['source'] = source if source in {'system', 'user'} else _default_source_for_column(rule['target_column'])
+    if rule['source'] == 'system':
+        rule['only_when_empty'] = True
     rule['id'] = _safe_text(rule.get('id'), _make_rule_id(rule['source'], rule['target_column']))
 
     if not rule['target_column'] or _is_removed_system_rule(rule) or _is_removed_supplier_default_rule(rule):
@@ -211,6 +215,8 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['width_default'] = _safe_text(rules.get('width_default'), DEFAULT_RULES['width_default'])
     rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
     rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
+    rules['box_items_default'] = _safe_text(rules.get('box_items_default'), DEFAULT_RULES['box_items_default'])
+    rules['normalize_measures_to_meters'] = bool(rules.get('normalize_measures_to_meters', True))
     rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
     rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
     rules['invalid_gtin_mode'] = 'limpar'
@@ -332,6 +338,7 @@ def measure_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str
         'largura': str(current['width_default']),
         'profundidade': str(current['depth_default']),
         'comprimento': str(current['length_default']),
+        'itens_por_caixa': str(current['box_items_default']),
     }
 
 
