@@ -201,13 +201,22 @@ def _filter_targets(
     return selected
 
 
+def _mapping_page_key(mapping_key: str) -> str:
+    return f'{mapping_key}_page_index'
+
+
+def _mapping_page_meta_key(mapping_key: str) -> str:
+    return f'{mapping_key}_page_meta'
+
+
 def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
     """Mostra o mapeamento em blocos leves sem perder os campos não visíveis."""
     if len(targets) <= MAPPING_PAGE_SIZE:
+        st.session_state.pop(_mapping_page_meta_key(mapping_key), None)
         return targets
 
     total_pages = (len(targets) + MAPPING_PAGE_SIZE - 1) // MAPPING_PAGE_SIZE
-    page_key = f'{mapping_key}_page_index'
+    page_key = _mapping_page_key(mapping_key)
     try:
         page_index = int(st.session_state.get(page_key, 0) or 0)
     except Exception:
@@ -221,33 +230,36 @@ def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
         f'Bloco {page_index + 1} de {total_pages} · Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
         'Os demais continuam salvos e entram no CSV final.'
     )
+    st.session_state[_mapping_page_meta_key(mapping_key)] = {
+        'page_index': page_index,
+        'total_pages': total_pages,
+    }
+    return targets[start:end]
 
-    col_prev, col_mid, col_next = st.columns([1, 1, 1])
+
+def _render_mapping_page_arrows(mapping_key: str) -> None:
+    meta = st.session_state.get(_mapping_page_meta_key(mapping_key))
+    if not isinstance(meta, dict):
+        return
+    page_key = _mapping_page_key(mapping_key)
+    page_index = int(meta.get('page_index') or 0)
+    total_pages = max(1, int(meta.get('total_pages') or 1))
+
+    st.markdown('<div style="height:.15rem"></div>', unsafe_allow_html=True)
+    col_prev, col_mid, col_next = st.columns([1, 2, 1])
     with col_prev:
-        if st.button(
-            '⬅️ Campos anteriores',
-            use_container_width=True,
-            disabled=page_index <= 0,
-            key=f'{mapping_key}_page_prev',
-        ):
+        if st.button('←', use_container_width=True, disabled=page_index <= 0, key=f'{mapping_key}_page_prev'):
             st.session_state[page_key] = max(0, page_index - 1)
             st.rerun()
     with col_mid:
         st.markdown(
-            f'<div style="text-align:center; padding-top:.65rem; color:#64748b; font-weight:700;">{page_index + 1}/{total_pages}</div>',
+            f'<div style="text-align:center; padding-top:.55rem; color:#64748b; font-size:.86rem; font-weight:700;">{page_index + 1}/{total_pages}</div>',
             unsafe_allow_html=True,
         )
     with col_next:
-        if st.button(
-            'Próximos campos ➡️',
-            use_container_width=True,
-            disabled=page_index >= total_pages - 1,
-            key=f'{mapping_key}_page_next',
-        ):
+        if st.button('→', use_container_width=True, disabled=page_index >= total_pages - 1, key=f'{mapping_key}_page_next'):
             st.session_state[page_key] = min(total_pages - 1, page_index + 1)
             st.rerun()
-
-    return targets[start:end]
 
 
 def _clear_stale_mapping_widgets(active_mapping_key: str) -> None:
@@ -491,6 +503,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
+    _render_mapping_page_arrows(mapping_key)
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
     mapping_for_apply = {target: value for target, value in edited_mapping.items() if not _is_manual_value(value)}
@@ -567,6 +580,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         selected, info_after = _render_mapping_select(df_source, target, target_index, current_mapping.get(target, ''), mapping_key, options)
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
+    _render_mapping_page_arrows(mapping_key)
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_estoque_from_cadastro'] = edited_confidence
     mapping_for_apply = {target: value for target, value in edited_mapping.items() if not _is_manual_value(value)}
