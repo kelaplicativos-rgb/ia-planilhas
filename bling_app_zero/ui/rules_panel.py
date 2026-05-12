@@ -4,192 +4,74 @@ from typing import Any
 
 import streamlit as st
 
-from bling_app_zero.core.user_rules import (
-    add_custom_rule,
-    get_user_rules,
-    remove_custom_rule_by_id,
-    set_custom_rule_enabled,
-    update_custom_rule_by_id,
-)
-from bling_app_zero.ui.rules_resources_tab import render_resources_tab
+from bling_app_zero.core.user_rules import get_user_rules
+from bling_app_zero.ui.home_wizard_constants import STEP_REGRAS, WIZARD_STEP_KEY
 
-NOTICE_KEY = 'rules_panel_notice'
-NEW_RULE_TARGET_KEY = 'new_rule_target'
-NEW_RULE_VALUE_KEY = 'new_rule_value'
-NEW_RULE_CLEAR_PENDING_KEY = 'new_rule_clear_pending'
-EDITING_RULE_ID_KEY = 'rules_panel_editing_rule_id'
 
-RESOURCE_MANAGED_RULES = {
-    ('fornecedor', 'não definido'),
+PROTECTION_LABELS = {
+    'clean_invalid_gtin': 'GTIN inválido',
+    'normalize_image_separator': 'Imagens por |',
+    'normalize_measures_to_meters': 'Medidas',
+    'auto_product_code': 'Código automático',
+    'unique_product_code': 'Código único',
 }
 
 
-def _notice(text: str) -> None:
-    st.session_state[NOTICE_KEY] = text
-
-
-def _show_notice() -> None:
-    text = st.session_state.pop(NOTICE_KEY, '')
-    if text:
-        st.caption(f'✅ {text}')
-
-
-def _prepare_new_rule_fields() -> None:
-    if not bool(st.session_state.pop(NEW_RULE_CLEAR_PENDING_KEY, False)):
-        return
-    st.session_state[NEW_RULE_TARGET_KEY] = ''
-    st.session_state[NEW_RULE_VALUE_KEY] = ''
-
-
-def _safe_rule_id(rule: dict[str, Any], index: int) -> str:
-    return str(rule.get('id') or f'rule_{index}')
-
-
-def _rule_text(value: object) -> str:
-    return str(value or '').strip()
-
-
-def _rule_key(value: object) -> str:
-    return _rule_text(value).lower()
-
-
-def _rule_label(rule: dict[str, Any]) -> str:
-    column = _rule_text(rule.get('target_column') or rule.get('condition') or 'Coluna')
-    value = _rule_text(rule.get('fill_value'))
-    if value:
-        return f'{column} vazio → {value}'
-    return f'{column} vazio → vazio'
-
-
-def _all_custom_rules() -> list[dict[str, Any]]:
-    rules = get_user_rules()
+def _active_custom_rules(rules: dict[str, Any]) -> list[dict[str, Any]]:
     custom_rules = rules.get('custom_rules', [])
     if not isinstance(custom_rules, list):
         return []
-    return [dict(rule) for rule in custom_rules]
+    return [dict(rule) for rule in custom_rules if isinstance(rule, dict) and bool(rule.get('enabled', False))]
 
 
-def _is_resource_managed_rule(rule: dict[str, Any]) -> bool:
-    column = _rule_key(rule.get('target_column') or rule.get('condition'))
-    value = _rule_key(rule.get('fill_value'))
-    source = _rule_key(rule.get('source'))
-    return source == 'system' or (column, value) in RESOURCE_MANAGED_RULES
+def _active_protection_labels(rules: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for key, label in PROTECTION_LABELS.items():
+        if bool(rules.get(key, False)):
+            labels.append(label)
+    return labels
 
 
-def _editable_rules() -> list[dict[str, Any]]:
-    return [
-        rule
-        for rule in _all_custom_rules()
-        if bool(rule.get('enabled', False)) and not _is_resource_managed_rule(rule)
-    ]
-
-
-def _enable_rule_by_target(target_column: str) -> None:
-    target = str(target_column or '').strip().lower()
-    for rule in _all_custom_rules():
-        column = str(rule.get('target_column', '')).strip().lower()
-        if column == target:
-            set_custom_rule_enabled(str(rule.get('id')), True)
-            return
-
-
-def _add_new_rule_from_fields(target: object, value: object) -> None:
-    target_text = str(target or '').strip()
-    value_text = str(value or '').strip()
-    if not target_text:
-        st.warning('Informe a coluna da nova regra.')
-        return
-    add_custom_rule(target_text, target_text, value_text, True)
-    _enable_rule_by_target(target_text)
-    st.session_state[NEW_RULE_CLEAR_PENDING_KEY] = True
-    _notice('Nova regra adicionada. Ela só preenche quando a coluna estiver vazia.')
+def _go_to_rules_step() -> None:
+    st.session_state[WIZARD_STEP_KEY] = STEP_REGRAS
     st.rerun()
-
-
-def _start_edit_rule(rule_id: str) -> None:
-    st.session_state[EDITING_RULE_ID_KEY] = rule_id
-    st.rerun()
-
-
-def _cancel_edit_rule() -> None:
-    st.session_state.pop(EDITING_RULE_ID_KEY, None)
-    st.rerun()
-
-
-def _delete_rule(rule_id: str) -> None:
-    remove_custom_rule_by_id(rule_id)
-    st.session_state.pop(EDITING_RULE_ID_KEY, None)
-    _notice('Regra excluída.')
-    st.rerun()
-
-
-def _save_rule_edit(rule_id: str, column: object, value: object) -> None:
-    column_text = str(column or '').strip()
-    value_text = str(value or '').strip()
-    if not column_text:
-        st.warning('Informe a coluna da regra.')
-        return
-    update_custom_rule_by_id(rule_id, column_text, value_text, True)
-    set_custom_rule_enabled(rule_id, True)
-    st.session_state.pop(EDITING_RULE_ID_KEY, None)
-    _notice('Regra atualizada.')
-    st.rerun()
-
-
-def _render_rule_item(rule: dict[str, Any], index: int) -> None:
-    rule_id = _safe_rule_id(rule, index)
-    editing_id = str(st.session_state.get(EDITING_RULE_ID_KEY) or '')
-    is_editing = editing_id == rule_id
-
-    st.divider()
-    if is_editing:
-        column = st.text_input('Coluna da regra', value=str(rule.get('target_column') or rule.get('condition') or ''), key=f'rule_edit_column_{rule_id}')
-        value = st.text_input('Valor predefinido', value=str(rule.get('fill_value') or ''), key=f'rule_edit_value_{rule_id}')
-        col_save, col_cancel = st.columns(2)
-        with col_save:
-            if st.button('Salvar', use_container_width=True, key=f'rule_save_{rule_id}'):
-                _save_rule_edit(rule_id, column, value)
-        with col_cancel:
-            if st.button('Cancelar', use_container_width=True, key=f'rule_cancel_{rule_id}'):
-                _cancel_edit_rule()
-        return
-
-    st.caption(_rule_label(rule))
-    col_edit, col_delete = st.columns(2)
-    with col_edit:
-        if st.button('✏️ Editar', use_container_width=True, key=f'rule_edit_{rule_id}', help='Editar regra'):
-            _start_edit_rule(rule_id)
-    with col_delete:
-        if st.button('🗑️ Excluir', use_container_width=True, key=f'rule_delete_{rule_id}', help='Excluir regra'):
-            _delete_rule(rule_id)
-
-
-def _render_rules_list() -> None:
-    rules = _editable_rules()
-    st.markdown('##### Regras existentes')
-    if not rules:
-        st.caption('Nenhuma regra manual ativa ainda.')
-        return
-    for index, rule in enumerate(rules):
-        _render_rule_item(rule, index)
-
-
-def _render_new_rule() -> None:
-    _prepare_new_rule_fields()
-    st.markdown('##### Nova regra')
-    st.caption('Regras manuais completam lacunas sem sobrescrever o mapeamento.')
-
-    target = st.text_input('Coluna', key=NEW_RULE_TARGET_KEY, placeholder='Ex: Fornecedor')
-    value = st.text_input('Valor', key=NEW_RULE_VALUE_KEY, placeholder='Ex: Não definido')
-    if st.button('Adicionar regra', use_container_width=True, key='add_rule_clean'):
-        _add_new_rule_from_fields(target, value)
 
 
 def render_rules_panel() -> None:
+    """Resumo lateral das regras.
+
+    A edição real agora fica na etapa Regras e Padrões do fluxo.
+    A sidebar não deve mais alterar regras para evitar regra duplicada/fantasma.
+    """
+    rules = get_user_rules()
+    active_rules = _active_custom_rules(rules)
+    active_protections = _active_protection_labels(rules)
+
     with st.sidebar:
-        with st.expander('Recursos do CSV final', expanded=False):
-            render_resources_tab()
-        with st.expander('Regras manuais', expanded=False):
-            _show_notice()
-            _render_rules_list()
-            _render_new_rule()
+        with st.expander('Regras e padrões', expanded=False):
+            st.caption('Resumo somente leitura. Edite tudo na etapa Regras do fluxo.')
+            st.metric('Padrões ativos', len(active_rules))
+            st.metric('Proteções ativas', len(active_protections))
+
+            if active_protections:
+                st.caption('Proteções: ' + ', '.join(active_protections))
+            else:
+                st.caption('Nenhuma proteção ativa.')
+
+            if active_rules:
+                preview = []
+                for rule in active_rules[:6]:
+                    column = str(rule.get('target_column') or rule.get('condition') or 'Coluna').strip()
+                    value = str(rule.get('fill_value') or '').strip()
+                    preview.append(f'{column}: {value if value else "vazio"}')
+                st.caption('Padrões: ' + ' · '.join(preview))
+                if len(active_rules) > 6:
+                    st.caption(f'+ {len(active_rules) - 6} outro(s) padrão(ões).')
+            else:
+                st.caption('Nenhum padrão ativo.')
+
+            if st.button('Abrir Central de Regras', use_container_width=True, key='sidebar_open_rules_center'):
+                _go_to_rules_step()
+
+
+__all__ = ['render_rules_panel']
