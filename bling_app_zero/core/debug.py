@@ -44,6 +44,24 @@ PRIVATE_KEY_HINTS = (
 )
 
 
+def _log_key() -> str:
+    try:
+        from bling_app_zero.v2.session_store import state_key
+
+        return state_key('logs')
+    except Exception:
+        return LOG_SESSION_KEY
+
+
+def _debug_open_key() -> str:
+    try:
+        from bling_app_zero.v2.session_store import state_key
+
+        return state_key('debug_home_area_open')
+    except Exception:
+        return DEBUG_HOME_OPEN_KEY
+
+
 def _safe_text(value: Any, limit: int = 4000) -> str:
     text = str(value or '').replace('\x00', '').strip()
     if len(text) > limit:
@@ -188,7 +206,8 @@ def add_debug(
     if file_name:
         caller['arquivo'] = _short_path(file_name)
 
-    logs = list(st.session_state.get(LOG_SESSION_KEY, []))
+    key = _log_key()
+    logs = list(st.session_state.get(key, []))
     logs.append(
         {
             'hora': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -202,7 +221,7 @@ def add_debug(
             'mensagem': _safe_text(message or ''),
         }
     )
-    st.session_state[LOG_SESSION_KEY] = logs[-MAX_LOG_ITEMS:]
+    st.session_state[key] = logs[-MAX_LOG_ITEMS:]
 
 
 def _logs_to_text(logs: list[dict[str, Any]]) -> str:
@@ -251,8 +270,9 @@ def _logs_to_text(logs: list[dict[str, Any]]) -> str:
 
 
 def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
+    key = _log_key()
     if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
-        st.session_state[LOG_SESSION_KEY] = []
+        st.session_state[key] = []
         st.success('Logs limpos.')
         st.rerun()
 
@@ -315,7 +335,7 @@ def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> No
 
 
 def _render_debug_content(prefix: str = 'debug') -> None:
-    logs = list(st.session_state.get(LOG_SESSION_KEY, []))
+    logs = list(st.session_state.get(_log_key(), []))
     _render_debug_actions(logs, prefix=prefix)
 
     if not logs:
@@ -327,12 +347,13 @@ def _render_debug_content(prefix: str = 'debug') -> None:
 
 
 def render_debug_compact_button() -> None:
+    key = _debug_open_key()
     if st.button('⚙️', key='open_debug_home_area', help='Logs técnicos'):
-        st.session_state[DEBUG_HOME_OPEN_KEY] = not bool(st.session_state.get(DEBUG_HOME_OPEN_KEY, False))
+        st.session_state[key] = not bool(st.session_state.get(key, False))
 
 
 def render_debug_home_area() -> None:
-    if not st.session_state.get(DEBUG_HOME_OPEN_KEY, False):
+    if not st.session_state.get(_debug_open_key(), False):
         return
 
     with st.container(border=True):
