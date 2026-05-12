@@ -14,8 +14,17 @@ from bling_app_zero.v2.table_io import load_table
 from bling_app_zero.v2.user_context import get_user_context
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
+PRICE_MULTISTORE_OPERATION_QP = 'price_multistore_v2'
 
 MARKETPLACE_OPTIONS = ['mercado_livre', 'shopee', 'amazon', 'b2w', 'olist', 'madeira_madeira', 'magazine_luiza', 'via_varejo', 'carrefour', 'outro']
+
+
+def _keep_multistore_route_alive() -> None:
+    """Mantém a tela multiloja como rota ativa mesmo após reruns do Streamlit."""
+    try:
+        st.query_params['operation_v2'] = PRICE_MULTISTORE_OPERATION_QP
+    except Exception:
+        pass
 
 
 def _read(uploaded_file) -> pd.DataFrame | None:
@@ -72,7 +81,7 @@ def _render_bling_import_link() -> None:
     st.markdown(
         f"""
         <div style="margin-top:.75rem;background:#ecfdf5;border:1px solid #bbf7d0;color:#14532d;border-radius:16px;padding:.9rem 1rem;font-weight:700;">
-            ✅ Depois de baixar o CSV limpo, clique abaixo para abrir o importador direto no Bling.
+            ✅ CSV pronto. Depois de baixar, use o botão abaixo para abrir o importador direto no Bling.
             <br>
             <a href="{BLING_MULTISTORE_PRICE_IMPORT_URL}" target="_blank" rel="noopener noreferrer" style="color:#047857;font-weight:900;text-decoration:none;">
                 Abrir importador de preços multilojas no Bling ↗
@@ -81,6 +90,18 @@ def _render_bling_import_link() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_bling_import_actions() -> None:
+    _render_bling_import_link()
+    try:
+        st.link_button(
+            'Abrir importador do Bling agora ↗',
+            BLING_MULTISTORE_PRICE_IMPORT_URL,
+            use_container_width=True,
+        )
+    except Exception:
+        st.markdown(f'[Abrir importador do Bling agora ↗]({BLING_MULTISTORE_PRICE_IMPORT_URL})')
 
 
 def _format_marketplace(value: str) -> str:
@@ -121,7 +142,32 @@ def _render_match_summary(model_df: pd.DataFrame | None, source_df: pd.DataFrame
         _render_alert('Não encontrei automaticamente um identificador igual entre as duas planilhas. Verifique se ambas têm IdProduto, ID na Loja, SKU/Código, GTIN ou Descrição.')
 
 
+def _render_ready_result(result_df: pd.DataFrame) -> None:
+    _keep_multistore_route_alive()
+    st.markdown('### Etapa 6 · Conferência')
+    preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
+    st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
+
+    st.markdown('### Etapa 7 · Download e importação')
+    _render_info('Primeiro baixe o CSV. O link do Bling fica fixo nesta etapa e não deve mais sumir depois do download.')
+    _render_bling_import_actions()
+
+    csv_bytes = to_csv_bytes(result_df)
+    set_state('multistore_result_csv_bytes', csv_bytes)
+    st.download_button(
+        'Baixar CSV limpo para o Bling',
+        data=csv_bytes,
+        file_name='bling_precos_multilojas.csv',
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=widget_key('multistore_download'),
+        on_click='ignore',
+    )
+    _render_bling_import_actions()
+
+
 def render_price_multistore_v2() -> None:
+    _keep_multistore_route_alive()
     st.markdown('## 🏬 Atualizar Preços Multiloja')
     _render_flow_explanation()
 
@@ -145,6 +191,10 @@ def render_price_multistore_v2() -> None:
             _render_alert(detection.message + ' Faltando: ' + ', '.join(detection.missing))
             return
     else:
+        result_df = get_state('multistore_result_df')
+        if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+            _render_ready_result(result_df.copy().fillna(''))
+            return
         _render_alert('Anexe a Planilha 1 do Bling para continuar.')
         return
 
@@ -156,6 +206,10 @@ def render_price_multistore_v2() -> None:
         st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
         st.dataframe(source_df.head(12), use_container_width=True, height=180)
     else:
+        result_df = get_state('multistore_result_df')
+        if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+            _render_ready_result(result_df.copy().fillna(''))
+            return
         _render_alert('Para calcular, anexe a planilha de cadastro/produtos com Preço de custo.')
 
     st.markdown('### Etapa 4 · Cruzamento')
@@ -217,9 +271,14 @@ def render_price_multistore_v2() -> None:
         set_state('multistore_last_message', result.message)
         set_state('multistore_last_errors', list(result.errors))
         if result.ok:
-            set_state('multistore_result_df', result.payload.df.copy().fillna(''))
+            result_df = result.payload.df.copy().fillna('')
+            set_state('multistore_result_df', result_df)
+            set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
+            set_state('multistore_import_ready', True)
         else:
             pop_state('multistore_result_df', None)
+            pop_state('multistore_result_csv_bytes', None)
+            set_state('multistore_import_ready', False)
         st.rerun()
 
     if get_state('multistore_last_message'):
@@ -232,19 +291,7 @@ def render_price_multistore_v2() -> None:
 
     result_df = get_state('multistore_result_df')
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        st.markdown('### Etapa 6 · Conferência')
-        preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
-        st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
-        st.markdown('### Etapa 7 · Download e importação')
-        st.download_button(
-            'Baixar CSV limpo para o Bling',
-            data=to_csv_bytes(result_df),
-            file_name='bling_precos_multilojas.csv',
-            mime='text/csv; charset=utf-8',
-            use_container_width=True,
-            key=widget_key('multistore_download'),
-        )
-        _render_bling_import_link()
+        _render_ready_result(result_df.copy().fillna(''))
 
 
 __all__ = ['render_price_multistore_v2']
