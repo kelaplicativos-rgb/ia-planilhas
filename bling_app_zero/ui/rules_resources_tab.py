@@ -87,19 +87,27 @@ def _render_internal_defaults_summary(updated: dict[str, Any]) -> None:
     st.caption(f'Unidade {unit} · Medidas {height}/{width}/{depth}/{length} · Caixa {box}')
 
 
+def _render_internal_defaults_editor(updated: dict[str, Any]) -> None:
+    st.caption('Valores usados apenas como padrão. Não envolve IA.')
+    _text_input_default(updated, 'measure_unit_default', 'Unidade', 'resource_default_unit')
+    _text_input_default(updated, 'height_default', 'Altura', 'resource_default_height')
+    _text_input_default(updated, 'width_default', 'Largura', 'resource_default_width')
+    _text_input_default(updated, 'depth_default', 'Profundidade', 'resource_default_depth')
+    _text_input_default(updated, 'length_default', 'Comprimento', 'resource_default_length')
+    _text_input_default(updated, 'box_items_default', 'Itens por caixa', 'resource_default_box_items')
+
+
 def _render_internal_defaults(updated: dict[str, Any]) -> None:
     st.divider()
     st.markdown('##### Padrões internos')
     _render_internal_defaults_summary(updated)
-
-    with st.expander('Editar padrões internos', expanded=False):
-        st.caption('Valores usados apenas como padrão. Não envolve IA.')
-        _text_input_default(updated, 'measure_unit_default', 'Unidade', 'resource_default_unit')
-        _text_input_default(updated, 'height_default', 'Altura', 'resource_default_height')
-        _text_input_default(updated, 'width_default', 'Largura', 'resource_default_width')
-        _text_input_default(updated, 'depth_default', 'Profundidade', 'resource_default_depth')
-        _text_input_default(updated, 'length_default', 'Comprimento', 'resource_default_length')
-        _text_input_default(updated, 'box_items_default', 'Itens por caixa', 'resource_default_box_items')
+    show_editor = st.checkbox(
+        'Editar padrões internos',
+        value=False,
+        key='show_internal_defaults_editor',
+    )
+    if show_editor:
+        _render_internal_defaults_editor(updated)
 
 
 def render_resources_tab() -> None:
