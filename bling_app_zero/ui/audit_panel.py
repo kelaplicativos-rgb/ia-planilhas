@@ -90,57 +90,64 @@ def _render_recent_events(events: list[dict[str, Any]], compact: bool) -> None:
         )
 
 
-def render_audit_panel() -> None:
-    """Painel de auditoria operacional da sessão atual."""
+def render_audit_panel_body(source: str = 'maintenance_panel') -> None:
+    """Corpo do Audit trail para ser renderizado dentro da manutenção."""
     events = get_audit_events()
     compact_events = _compact_events(events)
+
+    st.markdown('###### Audit trail operacional')
+    st.caption('Registra movimentos importantes da sessão: cliques, etapas, ações, downloads e decisões do fluxo.')
+    st.caption(f'Sessão auditável: `{get_audit_session_id()}`')
+    st.caption(f'{len(events)} evento(s) bruto(s) · {len(compact_events)} evento(s) no compacto.')
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button('Limpar audit', use_container_width=True, key='audit_clear_events'):
+            clear_audit_events()
+            st.success('Audit trail limpo.')
+            st.rerun()
+    with col_b:
+        if st.button('Registrar marco', use_container_width=True, key='audit_manual_checkpoint'):
+            add_audit_event('manual_checkpoint', area='AUDIT', details={'source': source})
+            st.success('Marco registrado.')
+            st.rerun()
+
+    st.download_button(
+        'Baixar audit trail bruto',
+        data=audit_download_payload(),
+        file_name=AUDIT_EXPORT_FILENAME,
+        mime='application/x-ndjson; charset=utf-8',
+        use_container_width=True,
+        key=f'audit_download_raw_{len(events)}',
+        disabled=not bool(events),
+    )
+
+    st.download_button(
+        'Baixar audit compacto para análise',
+        data=_compact_download_payload(events),
+        file_name=AUDIT_COMPACT_EXPORT_FILENAME,
+        mime='application/x-ndjson; charset=utf-8',
+        use_container_width=True,
+        key=f'audit_download_compact_{len(compact_events)}',
+        disabled=not bool(events),
+    )
+
+    if events:
+        show = st.toggle('Ver últimos eventos', value=False, key='audit_show_recent')
+        if show:
+            compact_view = st.toggle(
+                'Ocultar repetições na visualização',
+                value=True,
+                key='audit_recent_compact_view',
+            )
+            _render_recent_events(events, compact=compact_view)
+
+
+def render_audit_panel() -> None:
+    """Compatibilidade: renderiza Audit como painel próprio quando chamado diretamente."""
     with st.sidebar:
         with st.expander('Audit trail operacional', expanded=False):
-            st.caption('Registra movimentos importantes da sessão: cliques, etapas, ações, downloads e decisões do fluxo.')
-            st.caption(f'Sessão auditável: `{get_audit_session_id()}`')
-            st.caption(f'{len(events)} evento(s) bruto(s) · {len(compact_events)} evento(s) no compacto.')
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button('Limpar audit', use_container_width=True, key='audit_clear_events'):
-                    clear_audit_events()
-                    st.success('Audit trail limpo.')
-                    st.rerun()
-            with col_b:
-                if st.button('Registrar marco', use_container_width=True, key='audit_manual_checkpoint'):
-                    add_audit_event('manual_checkpoint', area='AUDIT', details={'source': 'sidebar'})
-                    st.success('Marco registrado.')
-                    st.rerun()
-
-            st.download_button(
-                'Baixar audit trail bruto',
-                data=audit_download_payload(),
-                file_name=AUDIT_EXPORT_FILENAME,
-                mime='application/x-ndjson; charset=utf-8',
-                use_container_width=True,
-                key=f'audit_download_raw_{len(events)}',
-                disabled=not bool(events),
-            )
-
-            st.download_button(
-                'Baixar audit compacto para análise',
-                data=_compact_download_payload(events),
-                file_name=AUDIT_COMPACT_EXPORT_FILENAME,
-                mime='application/x-ndjson; charset=utf-8',
-                use_container_width=True,
-                key=f'audit_download_compact_{len(compact_events)}',
-                disabled=not bool(events),
-            )
-
-            if events:
-                show = st.toggle('Ver últimos eventos', value=False, key='audit_show_recent')
-                if show:
-                    compact_view = st.toggle(
-                        'Ocultar repetições na visualização',
-                        value=True,
-                        key='audit_recent_compact_view',
-                    )
-                    _render_recent_events(events, compact=compact_view)
+            render_audit_panel_body(source='sidebar_audit_panel')
 
 
-__all__ = ['render_audit_panel']
+__all__ = ['render_audit_panel', 'render_audit_panel_body']
