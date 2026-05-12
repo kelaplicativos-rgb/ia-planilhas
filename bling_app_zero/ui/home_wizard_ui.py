@@ -71,21 +71,23 @@ def render_pending_notice(message: str | None = None) -> None:
             line-height: 1.38;
             font-weight: 650;
         }}
-        .bling-next-empty-slot {{
+        .bling-next-blocked-slot {{
             width: 100%;
             min-height: 2.45rem;
             border-radius: 999px;
             background: #fff7ed;
             border: 1px dashed #fdba74;
+            color: #9a3412;
             display: flex;
             align-items: center;
             justify-content: center;
-        }}
-        .bling-next-empty-slot::before {{
-            content: 'Continuar bloqueado';
-            color: #9a3412;
             font-size: .86rem;
             font-weight: 850;
+            text-align: center;
+            user-select: none;
+        }}
+        .bling-next-blocked-slot::before {{
+            content: 'Etapa bloqueada';
         }}
         @media (max-width: 640px) {{
             .bling-alert-card {{
