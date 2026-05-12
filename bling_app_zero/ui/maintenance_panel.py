@@ -11,6 +11,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event, audit_download_payload, get_audit_events, get_audit_session_id
 from bling_app_zero.core.cache_control import clear_streamlit_cache
 from bling_app_zero.core.debug import LOG_SESSION_KEY
+from bling_app_zero.ui.audit_panel import render_audit_panel_body
 
 LOG_BUNDLE_FILENAME = 'bling_logs_completos.zip'
 SENSITIVE_KEYWORDS = (
@@ -249,6 +250,8 @@ def render_maintenance_panel() -> None:
             _render_cache_tools()
             st.divider()
             _render_log_tools()
+            st.divider()
+            render_audit_panel_body(source='maintenance_panel')
 
 
 __all__ = ['render_maintenance_panel']
