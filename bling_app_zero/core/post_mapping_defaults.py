@@ -88,14 +88,26 @@ def _is_empty(value: Any) -> bool:
 
 
 def _sidebar_config() -> dict[str, Any]:
-    config = dict(DEFAULT_POST_MAPPING_CONFIG)
+    """Lê somente a configuração já inicializada pelo sidebar.
+
+    Se o painel do sidebar ainda não gravou a configuração na sessão, o core não
+    aplica padrões por conta própria. Isso evita regra oculta/fantasma.
+    """
     if st is None:
+        config = dict(DEFAULT_POST_MAPPING_CONFIG)
+        config['enabled'] = False
         return config
+
     raw = st.session_state.get(POST_MAPPING_DEFAULTS_SESSION_KEY)
-    if isinstance(raw, dict):
-        for key in config:
-            if key in raw:
-                config[key] = raw[key]
+    if not isinstance(raw, dict):
+        config = dict(DEFAULT_POST_MAPPING_CONFIG)
+        config['enabled'] = False
+        return config
+
+    config = dict(DEFAULT_POST_MAPPING_CONFIG)
+    for key in config:
+        if key in raw:
+            config[key] = raw[key]
     config['enabled'] = bool(config.get('enabled', True))
     config['short_description_from_complement'] = bool(config.get('short_description_from_complement', True))
     return config
@@ -134,6 +146,7 @@ def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None =
     """Aplica somente padrões visíveis no sidebar após o mapeamento manual.
 
     Regra principal:
+    - se o painel do sidebar ainda não inicializou essa regra, nada é aplicado;
     - se o usuário desligar no sidebar, nada é aplicado;
     - se a coluna não existir, nada é criado;
     - se o usuário mapeou/preencheu valor, nada é sobrescrito;
