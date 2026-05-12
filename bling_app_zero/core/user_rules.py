@@ -9,7 +9,7 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 7
+RULES_SCHEMA_VERSION = 8
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
 
@@ -28,7 +28,7 @@ def _system_rule(target_column: str, fill_value: str) -> dict[str, Any]:
         'target_column': target_column,
         'fill_value': fill_value,
         'only_when_empty': True,
-        'enabled': False,
+        'enabled': True,
         'source': 'system',
     }
 
@@ -50,7 +50,7 @@ DEFAULT_RULES: dict[str, Any] = {
     'depth_default': '18',
     'length_default': '18',
     'box_items_default': '1',
-    'normalize_measures_to_meters': True,
+    'normalize_measures_to_meters': False,
     'clean_invalid_gtin': True,
     'normalize_image_separator': True,
     'invalid_gtin_mode': 'limpar',
@@ -130,14 +130,16 @@ def _is_removed_supplier_default_rule(rule: dict[str, Any]) -> bool:
     return (column, value) in REMOVED_SYSTEM_RULE_PAIRS
 
 
-def _disable_all_auto_fill_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Mantém os recursos ativos, mas deixa todo preenchimento automático desligado."""
-    disabled: list[dict[str, Any]] = []
+def _enable_system_auto_fill_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Nova regra visual: padrões principais já nascem ativos e editáveis."""
+    enabled: list[dict[str, Any]] = []
+    system_columns = {str(rule.get('target_column', '')).strip().lower() for rule in DEFAULT_CUSTOM_RULES}
     for rule in custom_rules:
         current = dict(rule)
-        current['enabled'] = False
-        disabled.append(current)
-    return disabled
+        if str(current.get('target_column', '')).strip().lower() in system_columns:
+            current['enabled'] = True
+        enabled.append(current)
+    return enabled
 
 
 def normalize_custom_rule(raw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -216,7 +218,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
     rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
     rules['box_items_default'] = _safe_text(rules.get('box_items_default'), DEFAULT_RULES['box_items_default'])
-    rules['normalize_measures_to_meters'] = bool(rules.get('normalize_measures_to_meters', True))
+    rules['normalize_measures_to_meters'] = False
     rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
     rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
     rules['invalid_gtin_mode'] = 'limpar'
@@ -226,7 +228,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['custom_rules'] = _merge_missing_default_rules(normalize_custom_rules(rules.get('custom_rules')))
 
     if incoming_schema_version < RULES_SCHEMA_VERSION:
-        rules['custom_rules'] = _disable_all_auto_fill_rules(rules['custom_rules'])
+        rules['custom_rules'] = _enable_system_auto_fill_rules(rules['custom_rules'])
 
     return rules
 
@@ -262,7 +264,7 @@ def add_custom_rule(condition: str, target_column: str, fill_value: str, only_wh
             'target_column': target,
             'fill_value': fill_value,
             'only_when_empty': only_when_empty,
-            'enabled': False,
+            'enabled': True,
             'source': 'user',
         }
     )
@@ -286,7 +288,7 @@ def update_custom_rule_by_id(rule_id: str, target_column: str, fill_value: str, 
                 'target_column': target_column,
                 'fill_value': fill_value,
                 'only_when_empty': only_when_empty,
-                'enabled': bool(old_rule.get('enabled', False)),
+                'enabled': bool(old_rule.get('enabled', True)),
                 'source': old_rule.get('source') or 'user',
             }
         )
