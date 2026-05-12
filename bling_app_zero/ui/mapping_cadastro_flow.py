@@ -84,7 +84,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
 
     st.markdown('#### 2. Conferir campos do cadastro')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado · 🟣 regra/recurso do sidebar')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado · 🟣 regra/recurso do fluxo')
     with st.expander('Ver origem antes de preencher', expanded=False):
         preview_df('Origem para conferir', df_source)
 
