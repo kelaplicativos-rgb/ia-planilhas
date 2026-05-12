@@ -9,6 +9,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.audit_panel import render_audit_panel
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+from bling_app_zero.ui.features_panel import render_features_panel
 from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
 from bling_app_zero.ui.maintenance_panel import render_maintenance_panel
 from bling_app_zero.ui.rules_panel import render_rules_panel
@@ -19,6 +20,7 @@ SIDEBAR_TOOL_KEY = 'sidebar_active_technical_tool'
 SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
+    ('Módulos e recursos', render_features_panel),
     ('Ferramentas de conferência', render_diagnostics_panel),
     ('Audit trail operacional', render_audit_panel),
     ('Manutenção do sistema', render_maintenance_panel),
@@ -33,7 +35,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
                 <div class="bling-sidebar-kicker">Painel técnico</div>
                 <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Conferência, audit trail, manutenção e regras do CSV em módulos separados.</div>
+                <div class="bling-sidebar-text">Módulos, conferência, audit trail, manutenção e regras do CSV em áreas separadas.</div>
             </section>
             """,
             unsafe_allow_html=True,
