@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
+from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.cache_control import clear_streamlit_cache
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
@@ -233,6 +235,18 @@ def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
         _render_mapping_body(mapping)
 
 
+def _after_final_download(operation: str, signature: str, rules_sig: str) -> None:
+    """Limpa caches ao concluir o download final para o próximo fluxo rodar liso."""
+    clear_streamlit_cache(reason=f'final_download:{operation}')
+    st.session_state['final_download_cache_cleaned'] = True
+    st.session_state['final_download_cache_cleaned_operation'] = operation
+    add_audit_event(
+        'final_download_cache_cleared',
+        area='CACHE',
+        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig},
+    )
+
+
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
         st.warning('Ainda não há dados finais para baixar.')
@@ -241,6 +255,9 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation_title = _operation_label(operation)
     st.markdown(f'##### {_operation_badge(operation)}')
     st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
+
+    if st.session_state.pop('final_download_cache_cleaned', False):
+        st.caption('✅ Cache limpo após o último download final. O próximo fluxo começa sem reaproveitar CSV antigo.')
 
     errors = validate_final_df(df, operation)
     if errors:
@@ -266,6 +283,8 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key=f'download_{key}_{signature}_{rules_sig}',
+        on_click=_after_final_download,
+        args=(operation, signature, rules_sig),
     )
 
 
