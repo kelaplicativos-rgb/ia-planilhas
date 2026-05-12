@@ -28,10 +28,13 @@ def _cost_column_options(df: pd.DataFrame | None) -> list[str]:
         return []
     preferred = []
     others = []
-    hints = ('custo', 'preco de custo', 'preço de custo', 'valor custo', 'valor compra')
+    hints = ('custo', 'preco de custo', 'preço de custo', 'valor custo', 'valor compra', 'preco compra', 'preço compra')
+    blocked = ('idproduto', 'id produto', 'id na loja', 'id loja', 'sku', 'codigo', 'código', 'descricao', 'descrição', 'nome')
     for column in [str(column) for column in df.columns]:
         lower = column.lower()
-        if any(hint in lower for hint in hints):
+        if any(term in lower for term in blocked):
+            others.append(column)
+        elif any(hint in lower for hint in hints):
             preferred.append(column)
         else:
             others.append(column)
@@ -65,10 +68,12 @@ def _render_bling_import_link() -> None:
 
 
 def render_price_multistore_v2() -> None:
-    st.markdown('## Atualizar preços multilojas')
-    st.caption('Fluxo V2 independente: um marketplace por vez, uma planilha modelo do Bling por vez.')
+    st.markdown('## 🏬 Atualizar Preços Multiloja')
+    st.caption('Fluxo V2 independente: modelo multiloja do Bling + origem de custo + calculadora por marketplace.')
 
-    model_upload = st.file_uploader('1. Anexe a planilha modelo do Bling para vínculo multiloja', type=['csv', 'xlsx', 'xls'], key='v2_multistore_model_upload')
+    st.markdown('### 1. Modelo multiloja do Bling')
+    st.caption('Anexe a planilha exportada do Bling para vínculo/preços multiloja. Ela será a estrutura final do CSV.')
+    model_upload = st.file_uploader('Planilha modelo do Bling para vínculo multiloja', type=['csv', 'xlsx', 'xls'], key='v2_multistore_model_upload')
     model_df = _read(model_upload)
     if isinstance(model_df, pd.DataFrame):
         detection = detect_multistore_model(model_df)
@@ -87,11 +92,19 @@ def render_price_multistore_v2() -> None:
     store_name = st.text_input('Nome da loja no Bling', value=channel.replace('_', ' ').title(), key='v2_multistore_store_name')
     store_id = st.text_input('ID da loja no Bling, se houver', value='', key='v2_multistore_store_id')
 
-    st.markdown('### 3. Origem do custo')
-    source_upload = st.file_uploader('Anexe a planilha de custo/origem, se o custo não estiver no modelo', type=['csv', 'xlsx', 'xls'], key='v2_multistore_source_upload')
+    st.markdown('### 3. Origem de custo')
+    st.caption('Obrigatório: anexe a planilha de cadastro/produtos que contém o Preço de custo. O modelo multiloja não deve ser usado como custo.')
+    source_upload = st.file_uploader('Planilha de cadastro/produtos com Preço de custo', type=['csv', 'xlsx', 'xls'], key='v2_multistore_source_upload')
     source_df = _read(source_upload)
-    cost_options = _cost_column_options(source_df) or _cost_column_options(model_df)
-    source_cost_column = st.selectbox('Coluna de custo/preço base', cost_options, key='v2_multistore_cost_column') if cost_options else ''
+    if isinstance(source_df, pd.DataFrame) and not source_df.empty:
+        st.success(f'Origem de custo carregada: {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
+        st.dataframe(source_df.head(12), use_container_width=True, height=180)
+    else:
+        _render_alert('Para calcular Preços Multiloja, anexe a planilha de cadastro/produtos com Preço de custo.')
+
+    cost_options = _cost_column_options(source_df)
+    source_cost_column = st.selectbox('Coluna de Preço de custo na origem', cost_options, key='v2_multistore_cost_column') if cost_options else ''
+    can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
 
     st.markdown('### 4. Calculadora')
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -110,9 +123,11 @@ def render_price_multistore_v2() -> None:
     }
     profile = build_store_profile(channel, store_id=store_id, name=store_name, overrides={'pricing_rules': pricing_rules})
 
-    if st.button('Gerar planilha de preços multilojas', use_container_width=True, key='v2_multistore_generate'):
-        source_for_flow = source_df if isinstance(source_df, pd.DataFrame) else model_df
-        result = run_multistore_price_flow(model_df, profile, source_for_flow, source_cost_column, pricing_rules)
+    if not can_generate:
+        _render_alert('A geração fica bloqueada até carregar a origem de custo e selecionar a coluna de Preço de custo.')
+
+    if st.button('Gerar planilha de preços multilojas', use_container_width=True, key='v2_multistore_generate', disabled=not can_generate):
+        result = run_multistore_price_flow(model_df, profile, source_df, source_cost_column, pricing_rules)
         st.session_state['v2_multistore_last_ok'] = result.ok
         st.session_state['v2_multistore_last_message'] = result.message
         st.session_state['v2_multistore_last_errors'] = list(result.errors)
