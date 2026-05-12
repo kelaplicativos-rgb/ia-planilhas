@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.v2.bling_links import BLING_MULTISTORE_PRICE_IMPORT_URL
 from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
@@ -42,6 +43,21 @@ def _render_alert(message: str) -> None:
         f"""
         <div style="background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;border-radius:16px;padding:.9rem 1rem;font-weight:700;">
             ⚠️ {message}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_bling_import_link() -> None:
+    st.markdown(
+        f"""
+        <div style="margin-top:.75rem;background:#ecfdf5;border:1px solid #bbf7d0;color:#14532d;border-radius:16px;padding:.9rem 1rem;font-weight:700;">
+            ✅ Depois de baixar o CSV limpo, clique abaixo para abrir o importador direto no Bling.
+            <br>
+            <a href="{BLING_MULTISTORE_PRICE_IMPORT_URL}" target="_blank" rel="noopener noreferrer" style="color:#047857;font-weight:900;text-decoration:none;">
+                Abrir importador de preços multilojas no Bling ↗
+            </a>
         </div>
         """,
         unsafe_allow_html=True,
@@ -127,7 +143,7 @@ def render_price_multistore_v2() -> None:
             use_container_width=True,
             key='v2_multistore_download',
         )
-        st.caption('Importe no Bling em: Configurações > Importação de Dados > Importar e Atualizar Vínculo Produtos Multilojas.')
+        _render_bling_import_link()
 
 
 __all__ = ['render_price_multistore_v2']
