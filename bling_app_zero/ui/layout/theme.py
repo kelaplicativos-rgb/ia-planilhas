@@ -27,7 +27,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             --bling-shadow: 0 16px 42px rgba(15, 23, 42, 0.065);
             --bling-shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.045);
             --bling-content-width: 980px;
-            --bling-mobile-bottom-safe: 7.6rem;
         }
 
         html,
@@ -43,7 +42,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
                 linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 100%) !important;
             -webkit-font-smoothing: antialiased !important;
             text-rendering: optimizeLegibility !important;
-            scroll-padding-bottom: var(--bling-mobile-bottom-safe) !important;
         }
 
         header[data-testid="stHeader"] {
@@ -300,26 +298,11 @@ def inject_unified_light_layout(force: bool = False) -> None:
         footer { visibility: hidden !important; }
 
         @media (max-width: 760px) {
-            html,
-            body,
-            [data-testid="stApp"],
-            [data-testid="stAppViewContainer"],
-            .stApp {
-                scroll-padding-bottom: var(--bling-mobile-bottom-safe) !important;
-            }
-
             .main .block-container,
             .block-container {
                 width: 100% !important;
                 max-width: 100vw !important;
-                padding: 3.15rem 0.9rem var(--bling-mobile-bottom-safe) 0.9rem !important;
-            }
-
-            .main .block-container::after,
-            .block-container::after {
-                content: "";
-                display: block;
-                height: 1.2rem;
+                padding: 3.15rem 0.9rem 1.2rem 0.9rem !important;
             }
 
             .bling-hero,
