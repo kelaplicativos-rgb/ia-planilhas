@@ -26,6 +26,18 @@ PRODUCT_CODE_COLUMN_TERMS = [
 
 PRODUCT_NAME_COLUMN_TERMS = ['descricao', 'descrição', 'nome', 'produto', 'titulo', 'título']
 
+EMPTY_RULE_MARKERS = {
+    'vazio',
+    '#vazio',
+    '__vazio__',
+    'em branco',
+    'embranco',
+    'branco',
+    'limpar',
+    'sem informacao',
+    'seminformacao',
+}
+
 DEFAULT_MEASURES_CM = {'altura': '2', 'largura': '11', 'profundidade': '18', 'comprimento': '18'}
 DEFAULT_SUPPLIER = 'Não definido'
 DEFAULT_MEASURE_UNIT = 'UN'
@@ -60,6 +72,10 @@ def _rules() -> dict[str, Any]:
 
 def _resource_enabled(key: str, default: bool = True) -> bool:
     return bool(_rules().get(key, default))
+
+
+def _is_empty_rule_marker(value: object) -> bool:
+    return normalize_key(clean_cell(value)) in EMPTY_RULE_MARKERS
 
 
 def _looks_like_image_column(column: object) -> bool:
@@ -256,7 +272,7 @@ def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
     return ''
 
 
-def _apply_custom_rules(out: pd.DataFrame) -> pd.DataFrame:
+def _apply_custom_rules(out: pd.DataFrame, *, force_empty_only: bool = False) -> pd.DataFrame:
     for rule in custom_rules_from_rules(_rules()):
         if not rule.get('enabled', True):
             continue
@@ -264,6 +280,14 @@ def _apply_custom_rules(out: pd.DataFrame) -> pd.DataFrame:
         if not target_column:
             continue
         fill_value = clean_cell(rule.get('fill_value', ''))
+        is_empty_marker = _is_empty_rule_marker(fill_value)
+        if force_empty_only and not is_empty_marker:
+            continue
+        if is_empty_marker:
+            out[target_column] = ''
+            continue
+        if force_empty_only:
+            continue
         only_when_empty = bool(rule.get('only_when_empty', False))
         if only_when_empty:
             out[target_column] = out[target_column].apply(lambda value: fill_value if _is_empty_text(value) else clean_cell(value))
@@ -294,11 +318,15 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
         out = normalize_measure_columns(out)
 
     # Regras manuais habilitadas continuam funcionando, mas respeitando only_when_empty quando marcado.
+    # Quando o valor da regra for VAZIO, EM BRANCO, LIMPAR ou #VAZIO, a coluna é limpa de verdade.
     out = _apply_custom_rules(out)
 
     # BLINGFIX: padrões finais pós-mapeamento.
     # Só preenche colunas existentes e vazias. Nunca sobrescreve valor mapeado/manual.
     out = apply_post_mapping_defaults(out, _rules())
+
+    # Garante que o comando VAZIO vença qualquer padrão final aplicado depois.
+    out = _apply_custom_rules(out, force_empty_only=True)
 
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
