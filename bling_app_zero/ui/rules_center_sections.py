@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import streamlit as st
+from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.rule_value_validator import rule_value_warning
 
@@ -35,7 +36,8 @@ EXTRA_DEFAULT_RULES = [
     ('Volumes', '1'),
 ]
 
-FINAL_DEFAULTS_OPEN_KEY = 'rules_center_final_defaults_open'
+DEFAULT_RULES_ENABLED_KEY = 'rules_center_default_rules_enabled'
+DEFAULT_RULES_EXPANDER_LABEL = 'Padrões opcionais do produto'
 
 
 def rule_id(target_column: str) -> str:
@@ -115,19 +117,36 @@ def upsert_system_rule(custom_rules: list[dict[str, Any]], target_column: str, f
     return updated
 
 
-def _disable_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _all_default_targets() -> list[tuple[str, str]]:
+    targets: list[tuple[str, str]] = [
+        ('Altura', '2'),
+        ('Largura', '11'),
+        ('Profundidade', '18'),
+        ('Comprimento', '18'),
+        ('Unidade das medidas', 'Centímetro'),
+    ]
+    targets.extend((label, fallback) for label, _key, fallback in BASIC_DEFAULT_FIELDS)
+    targets.extend(EXTRA_DEFAULT_RULES)
+    return targets
+
+
+def _disable_all_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     updated = list(custom_rules or [])
     custom_by_column = custom_rules_by_column({'custom_rules': updated})
-    for target, fallback in EXTRA_DEFAULT_RULES:
+    for target, fallback in _all_default_targets():
         rule = custom_by_column.get(target.lower(), {})
         value = _value_or_fallback(rule, fallback)
         updated = upsert_system_rule(updated, target, value, False)
     return updated
 
 
-def _toggle_final_defaults_panel() -> None:
-    current = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
-    st.session_state[FINAL_DEFAULTS_OPEN_KEY] = not current
+def _default_rules_enabled_default(custom_rules: list[dict[str, Any]]) -> bool:
+    custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
+    for target, _fallback in _all_default_targets():
+        rule = custom_by_column.get(target.lower(), {})
+        if bool(rule.get('enabled', False)):
+            return True
+    return False
 
 
 def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
@@ -144,34 +163,56 @@ def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     st.markdown('#### Medidas padrão do produto')
     st.caption('Campos editáveis com liga/desliga real. P/C alimenta Profundidade e Comprimento.')
     updated = dict(rules)
-    measure_enabled = st.toggle('Usar medidas padrão quando a coluna existir e estiver vazia', value=True, key='rules_center_measure_defaults_enabled')
-    unit_measure_enabled = st.toggle('Usar unidade das medidas', value=True, key='rules_center_measure_unit_enabled')
+    measure_enabled = st.toggle(
+        'Usar medidas padrão quando a coluna existir e estiver vazia',
+        value=bool(master_enabled),
+        disabled=not master_enabled,
+        key='rules_center_measure_defaults_enabled',
+    )
+    unit_measure_enabled = st.toggle(
+        'Usar unidade das medidas',
+        value=bool(master_enabled),
+        disabled=not master_enabled,
+        key='rules_center_measure_unit_enabled',
+    )
     cols = st.columns(4)
 
     for index, (short_label, target_label, key, fallback) in enumerate(MEASURE_DEFAULT_FIELDS):
         current_value = clean_number_text(updated.get(key), fallback)
         with cols[index]:
-            value = st.text_input(short_label, value=current_value, key=f'rules_center_measure_value_{key}', help=target_label)
+            value = st.text_input(
+                short_label,
+                value=current_value,
+                key=f'rules_center_measure_value_{key}',
+                help=target_label,
+                disabled=not master_enabled,
+            )
             render_rule_value_warning(target_label, value)
         value = clean_number_text(value, fallback)
         updated[key] = value
-        custom_rules = upsert_system_rule(custom_rules, target_label, value, measure_enabled)
+        custom_rules = upsert_system_rule(custom_rules, target_label, value, bool(master_enabled and measure_enabled))
 
     depth_value = clean_number_text(updated.get('depth_default'), '18')
     length_value = clean_number_text(updated.get('length_default'), depth_value or '18')
     pc_value = depth_value if depth_value == length_value else depth_value or length_value or '18'
     with cols[2]:
-        pc_value = st.text_input('P/C', value=pc_value, key='rules_center_measure_value_depth_length_default', help='Profundidade e Comprimento')
+        pc_value = st.text_input(
+            'P/C',
+            value=pc_value,
+            key='rules_center_measure_value_depth_length_default',
+            help='Profundidade e Comprimento',
+            disabled=not master_enabled,
+        )
         render_rule_value_warning('Profundidade/Comprimento', pc_value)
     pc_value = clean_number_text(pc_value, '18')
     updated['depth_default'] = pc_value
     updated['length_default'] = pc_value
-    custom_rules = upsert_system_rule(custom_rules, 'Profundidade', pc_value, measure_enabled)
-    custom_rules = upsert_system_rule(custom_rules, 'Comprimento', pc_value, measure_enabled)
+    custom_rules = upsert_system_rule(custom_rules, 'Profundidade', pc_value, bool(master_enabled and measure_enabled))
+    custom_rules = upsert_system_rule(custom_rules, 'Comprimento', pc_value, bool(master_enabled and measure_enabled))
 
     with cols[3]:
         unit_name = st.text_input(
@@ -179,15 +220,16 @@ def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any
             value=str(updated.get('measure_unit_name_default') or 'Centímetro'),
             key='rules_center_measure_unit_name_value',
             help='Unidade das dimensões: Centímetro, Metro, Milímetro ou VAZIO',
+            disabled=not master_enabled,
         )
         render_rule_value_warning('Unidade das medidas', unit_name)
     updated['measure_unit_name_default'] = str(unit_name or '').strip()
-    custom_rules = upsert_system_rule(custom_rules, 'Unidade das medidas', updated['measure_unit_name_default'], unit_measure_enabled)
+    custom_rules = upsert_system_rule(custom_rules, 'Unidade das medidas', updated['measure_unit_name_default'], bool(master_enabled and unit_measure_enabled))
     updated['normalize_measures_to_meters'] = False
     return updated, custom_rules
 
 
-def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     st.markdown('#### Padrões básicos')
     st.caption('Preenchem somente se a coluna existir e estiver vazia.')
     updated = dict(rules)
@@ -199,28 +241,21 @@ def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, An
         if rule:
             current_value = _value_or_fallback(rule, current_value)
         with cols[index % 2]:
-            enabled = st.toggle(f'Usar {label}', value=bool(rule.get('enabled', True)), key=f'rules_center_basic_enabled_{key}')
-            value = st.text_input(label, value=current_value, key=f'rules_center_basic_value_{key}')
+            enabled = st.toggle(
+                f'Usar {label}',
+                value=bool(master_enabled and rule.get('enabled', master_enabled)),
+                disabled=not master_enabled,
+                key=f'rules_center_basic_enabled_{key}',
+            )
+            value = st.text_input(label, value=current_value, key=f'rules_center_basic_value_{key}', disabled=not master_enabled)
             render_rule_value_warning(label, value)
         updated[key] = value
-        custom_rules = upsert_system_rule(custom_rules, label, value, enabled)
+        custom_rules = upsert_system_rule(custom_rules, label, value, bool(master_enabled and enabled))
     return updated, custom_rules
 
 
-def render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    header_col, button_col = st.columns([0.72, 0.28])
-    is_open = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
-    with header_col:
-        st.markdown('#### Padrões finais')
-    with button_col:
-        button_label = 'Ocultar padrões finais' if is_open else 'Usar padrões finais'
-        st.button(button_label, use_container_width=True, key='rules_center_toggle_final_defaults', on_click=_toggle_final_defaults_panel)
-
-    is_open = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
-    if not is_open:
-        st.caption('Opcional. Clique em “Usar padrões finais” para revisar Categoria, Condição, Frete Grátis e outros campos extras do modelo Bling.')
-        return _disable_extra_default_rules(custom_rules)
-
+def render_extra_default_rules(custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> list[dict[str, Any]]:
+    st.markdown('#### Padrões finais')
     st.caption('Campos extras do modelo Bling. Ficam visíveis para revisão e só preenchem células vazias.')
     custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
     for row_start in range(0, len(EXTRA_DEFAULT_RULES), 2):
@@ -228,21 +263,67 @@ def render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
         for col_index, (target, fallback) in enumerate(EXTRA_DEFAULT_RULES[row_start:row_start + 2]):
             rule = custom_by_column.get(target.lower(), {})
             with cols[col_index]:
-                enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', False)), key=f'rules_center_extra_enabled_{rule_id(target)}')
-                value = st.text_input(target, value=_value_or_fallback(rule, fallback), key=f'rules_center_extra_value_{rule_id(target)}')
+                enabled = st.toggle(
+                    f'Usar {target}',
+                    value=bool(master_enabled and rule.get('enabled', master_enabled)),
+                    disabled=not master_enabled,
+                    key=f'rules_center_extra_enabled_{rule_id(target)}',
+                )
+                value = st.text_input(
+                    target,
+                    value=_value_or_fallback(rule, fallback),
+                    key=f'rules_center_extra_value_{rule_id(target)}',
+                    disabled=not master_enabled,
+                )
                 render_rule_value_warning(target, value)
-            custom_rules = upsert_system_rule(custom_rules, target, value, enabled)
+            custom_rules = upsert_system_rule(custom_rules, target, value, bool(master_enabled and enabled))
     return custom_rules
+
+
+def _render_default_rules_body(updated: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not master_enabled:
+        st.caption('Regras opcionais desligadas. Medidas, padrões básicos e padrões finais não serão aplicados. As Proteções do CSV final continuam funcionando separadamente.')
+        return updated, _disable_all_default_rules(custom_rules)
+
+    updated, custom_rules = render_measure_rules(updated, custom_rules, master_enabled=True)
+    st.divider()
+    updated, custom_rules = render_basic_defaults(updated, custom_rules, master_enabled=True)
+    st.divider()
+    custom_rules = render_extra_default_rules(custom_rules, master_enabled=True)
+    return updated, custom_rules
 
 
 def render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
     updated = dict(rules)
     custom_rules = list(updated.get('custom_rules', []) or [])
-    updated, custom_rules = render_measure_rules(updated, custom_rules)
-    st.divider()
-    updated, custom_rules = render_basic_defaults(updated, custom_rules)
-    st.divider()
-    custom_rules = render_extra_default_rules(custom_rules)
+
+    if DEFAULT_RULES_ENABLED_KEY not in st.session_state:
+        st.session_state[DEFAULT_RULES_ENABLED_KEY] = _default_rules_enabled_default(custom_rules)
+
+    master_enabled = bool(st.session_state.get(DEFAULT_RULES_ENABLED_KEY, False))
+    expander_label = f'{DEFAULT_RULES_EXPANDER_LABEL} · {"ligado" if master_enabled else "desligado"}'
+
+    try:
+        with st.expander(expander_label, expanded=master_enabled):
+            master_enabled = st.toggle(
+                'Usar regras opcionais de preenchimento',
+                value=master_enabled,
+                key=DEFAULT_RULES_ENABLED_KEY,
+                help='Liga ou desliga Medidas padrão do produto, Padrões básicos e Padrões finais. Não altera as Proteções do CSV final.',
+            )
+            updated, custom_rules = _render_default_rules_body(updated, custom_rules, master_enabled)
+    except StreamlitAPIException as exc:
+        if 'Expanders may not be nested' not in str(exc):
+            raise
+        st.markdown(f'#### {expander_label}')
+        master_enabled = st.toggle(
+            'Usar regras opcionais de preenchimento',
+            value=master_enabled,
+            key=DEFAULT_RULES_ENABLED_KEY,
+            help='Liga ou desliga Medidas padrão do produto, Padrões básicos e Padrões finais. Não altera as Proteções do CSV final.',
+        )
+        updated, custom_rules = _render_default_rules_body(updated, custom_rules, master_enabled)
+
     updated['custom_rules'] = custom_rules
     return updated
 
