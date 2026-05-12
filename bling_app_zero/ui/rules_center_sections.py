@@ -35,6 +35,8 @@ EXTRA_DEFAULT_RULES = [
     ('Volumes', '1'),
 ]
 
+FINAL_DEFAULTS_OPEN_KEY = 'rules_center_final_defaults_open'
+
 
 def rule_id(target_column: str) -> str:
     safe = ''.join(ch if ch.isalnum() else '_' for ch in str(target_column).strip().lower())
@@ -111,6 +113,21 @@ def upsert_system_rule(custom_rules: list[dict[str, Any]], target_column: str, f
             }
         )
     return updated
+
+
+def _disable_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    updated = list(custom_rules or [])
+    custom_by_column = custom_rules_by_column({'custom_rules': updated})
+    for target, fallback in EXTRA_DEFAULT_RULES:
+        rule = custom_by_column.get(target.lower(), {})
+        value = _value_or_fallback(rule, fallback)
+        updated = upsert_system_rule(updated, target, value, False)
+    return updated
+
+
+def _toggle_final_defaults_panel() -> None:
+    current = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
+    st.session_state[FINAL_DEFAULTS_OPEN_KEY] = not current
 
 
 def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
@@ -191,7 +208,19 @@ def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, An
 
 
 def render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    st.markdown('#### Padrões finais')
+    header_col, button_col = st.columns([0.72, 0.28])
+    is_open = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
+    with header_col:
+        st.markdown('#### Padrões finais')
+    with button_col:
+        button_label = 'Ocultar padrões finais' if is_open else 'Usar padrões finais'
+        st.button(button_label, use_container_width=True, key='rules_center_toggle_final_defaults', on_click=_toggle_final_defaults_panel)
+
+    is_open = bool(st.session_state.get(FINAL_DEFAULTS_OPEN_KEY, False))
+    if not is_open:
+        st.caption('Opcional. Clique em “Usar padrões finais” para revisar Categoria, Condição, Frete Grátis e outros campos extras do modelo Bling.')
+        return _disable_extra_default_rules(custom_rules)
+
     st.caption('Campos extras do modelo Bling. Ficam visíveis para revisão e só preenchem células vazias.')
     custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
     for row_start in range(0, len(EXTRA_DEFAULT_RULES), 2):
@@ -199,7 +228,7 @@ def render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
         for col_index, (target, fallback) in enumerate(EXTRA_DEFAULT_RULES[row_start:row_start + 2]):
             rule = custom_by_column.get(target.lower(), {})
             with cols[col_index]:
-                enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', True)), key=f'rules_center_extra_enabled_{rule_id(target)}')
+                enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', False)), key=f'rules_center_extra_enabled_{rule_id(target)}')
                 value = st.text_input(target, value=_value_or_fallback(rule, fallback), key=f'rules_center_extra_value_{rule_id(target)}')
                 render_rule_value_warning(target, value)
             custom_rules = upsert_system_rule(custom_rules, target, value, enabled)
