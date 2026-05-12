@@ -46,6 +46,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_ORIGEM,
     STEP_PRECIFICACAO,
     STEP_PREVIEW,
+    STEP_REGRAS,
     WIZARD_STEP_KEY,
     WizardNav,
 )
@@ -54,6 +55,7 @@ from bling_app_zero.ui.home_wizard_ui import (
     render_section_card,
     render_step_header,
 )
+from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_center_ready
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -470,6 +472,15 @@ def _render_origin_step() -> None:
     )
 
 
+def _render_rules_step() -> None:
+    add_audit_event('rules_center_rendered', area='REGRAS', step=STEP_REGRAS, details={'operation': _selected_operation()})
+    render_rules_center_step()
+    _render_nav_buttons(
+        allow_next=rules_center_ready(),
+        pending_message='Confirme a Central de Regras e Padrões antes de continuar.',
+    )
+
+
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
     add_audit_event('cadastro_entry_rendered', area='CADASTRO', step=STEP_ENTRADA, details={'origin': origin})
@@ -584,6 +595,8 @@ def render_home_wizard() -> None:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
+    elif step == STEP_REGRAS:
+        _render_rules_step()
     elif operation == 'cadastro' and step == STEP_ENTRADA:
         _render_cadastro_entrada()
     elif operation == 'cadastro' and step == STEP_MAPEAMENTO:
