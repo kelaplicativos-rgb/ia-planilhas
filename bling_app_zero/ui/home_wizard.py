@@ -278,7 +278,8 @@ def _render_step_header() -> WizardNav:
 
 
 def _render_blocked_next_slot(pending_message: str | None = None) -> None:
-    _render_pending_notice(pending_message)
+    """Mantido por compatibilidade; o aviso bloqueado agora fica acima dos botões."""
+    return None
 
 
 def _render_nav_buttons(
@@ -288,20 +289,26 @@ def _render_nav_buttons(
     pending_message: str | None = None,
 ) -> None:
     steps = _active_steps()
+    current = _current_step()
+    current_index = steps.index(current)
+    is_last = current_index == len(steps) - 1
+
+    if not allow_next and not is_last:
+        _render_pending_notice(pending_message)
+
     col_back, col_next = st.columns(2)
     with col_back:
-        disabled = steps.index(_current_step()) == 0
-        if st.button('Voltar', use_container_width=True, disabled=disabled, key=f'wizard_back_{_current_step()}'):
+        disabled = current_index == 0
+        if st.button('Voltar', use_container_width=True, disabled=disabled, key=f'wizard_back_{current}'):
             _previous_step()
     with col_next:
-        is_last = steps.index(_current_step()) == len(steps) - 1
         if is_last:
             return
         if allow_next:
-            if st.button(next_label, use_container_width=True, key=f'wizard_next_{_current_step()}'):
+            if st.button(next_label, use_container_width=True, key=f'wizard_next_{current}'):
                 _next_step()
         else:
-            _render_blocked_next_slot(pending_message)
+            st.markdown('<div class="bling-next-empty-slot" aria-hidden="true"></div>', unsafe_allow_html=True)
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
