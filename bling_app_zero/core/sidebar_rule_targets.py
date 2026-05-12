@@ -80,20 +80,33 @@ def _rules() -> dict:
         return {}
 
 
+def _clean_target_label(target: object) -> str:
+    text = str(target or '').strip()
+    for prefix in ('🔴', '🟡', '🟢', SIDEBAR_RULE_DOT):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    for separator in ('·', '|'):
+        if separator in text:
+            text = text.split(separator, 1)[0].strip()
+    return text
+
+
 def _looks_like_image_target(target: object) -> bool:
-    key = normalize_key(target)
+    key = normalize_key(_clean_target_label(target))
     return any(normalize_key(term) in key for term in IMAGE_TARGET_TERMS)
 
 
 def _looks_like_code_target(target: object) -> bool:
-    key = normalize_key(target)
-    if not key or looks_like_gtin_column(target):
+    clean_target = _clean_target_label(target)
+    key = normalize_key(clean_target)
+    if not key or looks_like_gtin_column(clean_target):
         return False
     return key in {normalize_key(term) for term in CODE_TARGET_KEYS}
 
 
 def _looks_like_measure_target(target: object) -> bool:
-    key = normalize_key(target)
+    key = normalize_key(_clean_target_label(target))
     if not key:
         return False
     if any(term in key for term in MEASURE_NEGATIVE_TERMS):
@@ -107,18 +120,19 @@ def sidebar_rule_target_keys(target_columns: Iterable[object]) -> set[str]:
     post_mapping_targets = set(COLUMN_DEFAULT_KEY_BY_TARGET.keys())
 
     for target in target_columns:
-        key = normalize_key(target)
+        clean_target = _clean_target_label(target)
+        key = normalize_key(clean_target)
         if not key:
             continue
         if key in post_mapping_targets or key in INTERNAL_DEFAULT_TARGETS:
             targets.add(key)
-        if bool(rules.get('clean_invalid_gtin', True)) and looks_like_gtin_column(target):
+        if bool(rules.get('clean_invalid_gtin', True)) and looks_like_gtin_column(clean_target):
             targets.add(key)
-        if bool(rules.get('normalize_image_separator', True)) and _looks_like_image_target(target):
+        if bool(rules.get('normalize_image_separator', True)) and _looks_like_image_target(clean_target):
             targets.add(key)
-        if bool(rules.get('normalize_measures_to_meters', True)) and _looks_like_measure_target(target):
+        if bool(rules.get('normalize_measures_to_meters', True)) and _looks_like_measure_target(clean_target):
             targets.add(key)
-        if (bool(rules.get('auto_product_code', True)) or bool(rules.get('unique_product_code', True))) and _looks_like_code_target(target):
+        if (bool(rules.get('auto_product_code', True)) or bool(rules.get('unique_product_code', True))) and _looks_like_code_target(clean_target):
             targets.add(key)
 
     custom_rules = rules.get('custom_rules', [])
@@ -134,7 +148,7 @@ def sidebar_rule_target_keys(target_columns: Iterable[object]) -> set[str]:
 
 
 def has_sidebar_rule(target: object, target_keys: set[str] | None = None) -> bool:
-    key = normalize_key(target)
+    key = normalize_key(_clean_target_label(target))
     if target_keys is None:
         return key in sidebar_rule_target_keys([target])
     return key in target_keys
@@ -147,18 +161,16 @@ def append_sidebar_rule_dot(label: str, target_keys: set[str] | None = None) -> 
     próprio status visual para campos preenchidos ou tratados por regra/recurso.
     """
     text = str(label or '').strip()
-    target = text
-    for prefix in ('🔴', '🟡', '🟢', SIDEBAR_RULE_DOT):
-        if target.startswith(prefix):
-            target = target[len(prefix):].strip()
-            break
+    clean_target = _clean_target_label(text)
 
-    if not has_sidebar_rule(target, target_keys):
+    if not has_sidebar_rule(clean_target, target_keys):
         return text
 
-    if text.startswith(('🔴', '🟡', '🟢', SIDEBAR_RULE_DOT)):
-        return f'{SIDEBAR_RULE_DOT} {target}'
-    return f'{SIDEBAR_RULE_DOT} {text}'
+    suffix = ''
+    if '·' in text:
+        suffix = ' · ' + text.split('·', 1)[1].strip()
+
+    return f'{SIDEBAR_RULE_DOT} {clean_target}{suffix}'
 
 
 __all__ = [
