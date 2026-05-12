@@ -77,17 +77,29 @@ def _text_input_default(updated: dict[str, Any], field: str, label: str, key: st
     )
 
 
+def _render_internal_defaults_summary(updated: dict[str, Any]) -> None:
+    unit = text_value(updated.get('measure_unit_default'), DEFAULT_VALUES['measure_unit_default'])
+    height = text_value(updated.get('height_default'), DEFAULT_VALUES['height_default'])
+    width = text_value(updated.get('width_default'), DEFAULT_VALUES['width_default'])
+    depth = text_value(updated.get('depth_default'), DEFAULT_VALUES['depth_default'])
+    length = text_value(updated.get('length_default'), DEFAULT_VALUES['length_default'])
+    box = text_value(updated.get('box_items_default'), DEFAULT_VALUES['box_items_default'])
+    st.caption(f'Unidade {unit} · Medidas {height}/{width}/{depth}/{length} · Caixa {box}')
+
+
 def _render_internal_defaults(updated: dict[str, Any]) -> None:
     st.divider()
     st.markdown('##### Padrões internos')
-    st.caption('Valores usados pelo exportador quando o campo correspondente precisar de padrão. Não envolve IA.')
+    _render_internal_defaults_summary(updated)
 
-    _text_input_default(updated, 'measure_unit_default', 'Unidade', 'resource_default_unit')
-    _text_input_default(updated, 'height_default', 'Altura', 'resource_default_height')
-    _text_input_default(updated, 'width_default', 'Largura', 'resource_default_width')
-    _text_input_default(updated, 'depth_default', 'Profundidade', 'resource_default_depth')
-    _text_input_default(updated, 'length_default', 'Comprimento', 'resource_default_length')
-    _text_input_default(updated, 'box_items_default', 'Itens por caixa', 'resource_default_box_items')
+    with st.expander('Editar padrões internos', expanded=False):
+        st.caption('Valores usados apenas como padrão. Não envolve IA.')
+        _text_input_default(updated, 'measure_unit_default', 'Unidade', 'resource_default_unit')
+        _text_input_default(updated, 'height_default', 'Altura', 'resource_default_height')
+        _text_input_default(updated, 'width_default', 'Largura', 'resource_default_width')
+        _text_input_default(updated, 'depth_default', 'Profundidade', 'resource_default_depth')
+        _text_input_default(updated, 'length_default', 'Comprimento', 'resource_default_length')
+        _text_input_default(updated, 'box_items_default', 'Itens por caixa', 'resource_default_box_items')
 
 
 def render_resources_tab() -> None:
