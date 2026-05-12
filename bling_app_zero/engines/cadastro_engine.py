@@ -27,4 +27,4 @@ def run_cadastro_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None =
     source = df_source.copy().fillna('') if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     mapping = auto_map_columns(source, model)
     final = apply_mapping(source, model, mapping)
-    return sanitize_for_bling(final), mapping
+    return sanitize_for_bling(final, operation='cadastro'), mapping
