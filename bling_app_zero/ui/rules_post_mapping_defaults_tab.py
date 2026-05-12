@@ -51,36 +51,52 @@ def _text_input(config: dict[str, Any], key: str, label: str) -> None:
     )
 
 
+def _reset_to_system_defaults() -> None:
+    st.session_state[POST_MAPPING_DEFAULTS_SESSION_KEY] = dict(DEFAULT_POST_MAPPING_CONFIG)
+    st.success('Padrões finais restaurados.')
+    st.rerun()
+
+
+def _render_default_editor(config: dict[str, Any]) -> None:
+    with st.expander('Editar valores padrão', expanded=False):
+        st.caption('Valores aplicados apenas se a coluna existir e estiver vazia.')
+        _text_input(config, 'category_default', 'Categoria')
+        _text_input(config, 'clone_parent_default', 'Clonar dados do pai')
+        _text_input(config, 'product_condition_default', 'Condição do produto')
+        _text_input(config, 'description_complement_default', 'Descrição Complementar')
+        _text_input(config, 'free_shipping_default', 'Frete Grátis')
+        _text_input(config, 'additional_info_default', 'Informações Adicionais')
+        _text_input(config, 'box_items_default', 'Itens p/ caixa')
+        _text_input(config, 'situation_default', 'Situação')
+        _text_input(config, 'unit_default', 'Unidade')
+        _text_input(config, 'measure_unit_name_default', 'Unidade de medida')
+        _text_input(config, 'video_default', 'Vídeo')
+        _text_input(config, 'volumes_default', 'Volumes')
+        if st.button('Restaurar padrões do sistema', use_container_width=True, key='post_mapping_restore_defaults'):
+            _reset_to_system_defaults()
+
+
 def render_post_mapping_defaults_tab() -> None:
     st.divider()
     st.markdown('##### Padrões finais pós-mapeamento')
-    st.caption('Tudo aqui só vale se a coluna existir e estiver vazia depois do mapeamento manual. Nada sobrescreve valor do usuário.')
+    st.caption('Recomendado manter ligado. Completa somente campos vazios após o mapeamento manual.')
 
     config = get_post_mapping_defaults_config()
     config['enabled'] = st.checkbox(
-        'Aplicar estes padrões finais quando o campo estiver vazio',
+        'Ativar padrões finais',
         value=bool(config.get('enabled', True)),
         key='post_mapping_defaults_enabled',
+        help='Quando ligado, o sistema completa apenas colunas existentes e vazias no CSV final.',
     )
-
-    _text_input(config, 'category_default', 'Categoria')
-    _text_input(config, 'clone_parent_default', 'Clonar dados do pai')
-    _text_input(config, 'product_condition_default', 'Condição do produto')
     config['short_description_from_complement'] = st.checkbox(
-        'Descrição Curta: relacionar com Descrição Complementar quando estiver vazia',
+        'Descrição curta usa descrição complementar quando estiver vazia',
         value=bool(config.get('short_description_from_complement', True)),
         key='post_mapping_short_from_complement',
     )
-    _text_input(config, 'description_complement_default', 'Descrição Complementar')
-    _text_input(config, 'free_shipping_default', 'Frete Grátis')
-    _text_input(config, 'additional_info_default', 'Informações Adicionais')
-    _text_input(config, 'box_items_default', 'Itens p/ caixa')
-    _text_input(config, 'situation_default', 'Situação')
-    _text_input(config, 'unit_default', 'Unidade')
-    _text_input(config, 'measure_unit_name_default', 'Unidade de medida')
-    _text_input(config, 'video_default', 'Vídeo')
-    _text_input(config, 'volumes_default', 'Volumes')
 
+    status = 'Ativo' if config['enabled'] else 'Desativado'
+    st.caption(f'Status: {status} · Não sobrescreve valores preenchidos.')
+    _render_default_editor(config)
     set_post_mapping_defaults_config(config)
 
 
