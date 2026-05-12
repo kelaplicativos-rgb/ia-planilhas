@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ai_tools.product_ai_batch_runner import generate_product_ai_suggestions_batched
+from bling_app_zero.ai_tools.product_ai_batch_runner import DEFAULT_AI_BATCH_SIZE, generate_product_ai_suggestions_batched
 from bling_app_zero.ai_tools.product_ai_reviewer import (
     ai_ready,
     apply_product_ai_suggestions,
@@ -79,29 +79,23 @@ def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.D
         return suggestions_df
 
     resources = get_ai_resources()
-    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
-    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
-    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
+    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False)) or True
+    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False)) or True
+    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False)) or True
     limit_title = bool(resources.get(AI_RESOURCE_LIMIT_TITLE_60, True))
     description_size = str(resources.get(AI_RESOURCE_DESCRIPTION_SIZE, 'media') or 'media')
     description_limit = DESCRIPTION_LIMITS.get(description_size, DESCRIPTION_LIMITS['media'])
 
     out = suggestions_df.copy()
-    if 'Campo' in out.columns:
-        if not text_enabled and not grammar_enabled:
-            out = out[~out['Campo'].astype(str).str.lower().isin(['title', 'description'])]
-        if not ncm_enabled:
-            out = out[out['Campo'].astype(str).str.lower() != 'ncm']
-
     if out.empty or 'Sugestão IA' not in out.columns or 'Campo' not in out.columns:
         return out
 
     def _adjust(row: pd.Series) -> str:
         field = str(row.get('Campo') or '').strip().lower()
         suggestion = clean_cell(row.get('Sugestão IA', ''))
-        if field == 'title' and (text_enabled or grammar_enabled) and limit_title:
+        if field == 'title' and text_enabled and limit_title:
             return _truncate_text(suggestion, 60)
-        if field == 'description' and (text_enabled or grammar_enabled):
+        if field == 'description' and text_enabled:
             return _truncate_text(suggestion, description_limit)
         return suggestion
 
@@ -172,7 +166,7 @@ def _render_multitask_box(op: str, signature: str) -> str:
     if task_key not in st.session_state:
         st.session_state[task_key] = ''
 
-    with st.expander('🧠 Multitarefa da IA', expanded=True):
+    with st.expander('🧠 Multitarefa da IA', expanded=False):
         st.caption('Peça uma ação livre para a IA executar na planilha final. Ela vai gerar sugestões por linha e você confirma antes de aplicar.')
         custom_task = st.text_area(
             'O que você quer que a IA faça na planilha?',
@@ -217,6 +211,18 @@ def _progress_callback(progress_bar: object, status_box: object, counter_box: ob
     return _callback
 
 
+def _append_suggestions(existing: object, new_df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(existing, pd.DataFrame) or existing.empty:
+        return new_df
+    if not isinstance(new_df, pd.DataFrame) or new_df.empty:
+        return existing
+    combined = pd.concat([existing, new_df], ignore_index=True)
+    subset = [column for column in ['Linha', 'Campo', 'Coluna', 'Sugestão IA'] if column in combined.columns]
+    if subset:
+        combined = combined.drop_duplicates(subset=subset, keep='last')
+    return combined.reset_index(drop=True)
+
+
 def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         return
@@ -227,18 +233,19 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     suggestions_key = _state_key(op, signature, 'suggestions')
     status_key = _state_key(op, signature, 'status')
     editor_key = _state_key(op, signature, 'editor')
+    offset_key = _state_key(op, signature, 'offset')
     resources = get_ai_resources()
-    text_enabled = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False))
-    grammar_enabled = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
-    ncm_enabled = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, False))
     total_rows = int(len(df_final))
+    text_enabled_default = bool(resources.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, True))
+    grammar_enabled_default = bool(resources.get(AI_RESOURCE_ORTHOGRAPHY_GRAMMAR, False))
+    ncm_enabled_default = bool(resources.get(AI_RESOURCE_SUGGEST_NCM, True))
 
     st.markdown(
         """
         <div class="bling-inline-card">
             <div class="bling-flow-card-kicker">IA de catálogo</div>
             <div class="bling-flow-card-title">Revisar produtos com IA</div>
-            <p class="bling-flow-card-text">Reformule títulos, corrija ortografia e gramática, melhore descrições complementares, sugira NCM e peça tarefas livres antes do download final.</p>
+            <p class="bling-flow-card-text">Configure e execute a IA diretamente aqui no preview final. As sugestões aparecem para revisão antes de aplicar no CSV.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -249,9 +256,6 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     if op != 'cadastro':
         st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
 
-    if not text_enabled and not grammar_enabled and not ncm_enabled:
-        st.info('Recursos com IA estão desligados na sidebar. Ligue pelo menos um recurso em “Recursos com IA” para gerar sugestões automáticas.')
-
     if ai_ready():
         st.success('IA conectada. As sugestões serão geradas com OpenAI.')
     else:
@@ -259,40 +263,77 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
 
     _render_detected_columns(df_final)
 
+    st.markdown('##### O que a IA deve fazer agora?')
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        use_title = st.checkbox('Títulos', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_title'))
+        use_title = st.checkbox('Títulos', value=text_enabled_default, key=_state_key(op, signature, 'use_title'))
     with col2:
-        use_description = st.checkbox('Descrições complementares', value=text_enabled, disabled=not text_enabled, key=_state_key(op, signature, 'use_description'))
+        use_description = st.checkbox('Descrições', value=text_enabled_default, key=_state_key(op, signature, 'use_description'))
     with col3:
-        use_grammar = st.checkbox('Ortografia/gramática', value=grammar_enabled, disabled=not grammar_enabled, key=_state_key(op, signature, 'use_grammar'))
+        use_grammar = st.checkbox('Ortografia', value=grammar_enabled_default, key=_state_key(op, signature, 'use_grammar'))
     with col4:
-        use_ncm = st.checkbox('NCM vazio', value=ncm_enabled, disabled=not ncm_enabled, key=_state_key(op, signature, 'use_ncm'))
-
-    use_title = bool(use_title and text_enabled)
-    use_description = bool(use_description and text_enabled)
-    use_grammar = bool(use_grammar and grammar_enabled)
-    use_ncm = bool(use_ncm and ncm_enabled)
+        use_ncm = st.checkbox('NCM vazio', value=ncm_enabled_default, key=_state_key(op, signature, 'use_ncm'))
 
     custom_task = _render_multitask_box(op, signature)
 
-    st.info(f'A próxima execução da IA vai analisar todas as {total_rows} linha(s) do preview final.')
+    current_offset = int(st.session_state.get(offset_key, 0) or 0)
+    current_offset = max(0, min(current_offset, total_rows))
+    remaining = max(0, total_rows - current_offset)
 
-    can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task)
+    st.markdown('##### Controle de execução')
+    col_batch, col_limit = st.columns(2)
+    with col_batch:
+        batch_size = st.selectbox(
+            'Produtos por lote',
+            [5, 10, 20, 50],
+            index=1,
+            key=_state_key(op, signature, 'batch_size'),
+            help='Use 5 ou 10 quando a IA estiver dando timeout.',
+        )
+    with col_limit:
+        max_rows_run = st.number_input(
+            'Máximo nesta rodada',
+            min_value=5,
+            max_value=max(5, total_rows),
+            value=min(50, max(5, remaining or total_rows)),
+            step=5,
+            key=_state_key(op, signature, 'max_rows_run'),
+            help='Permite rodar em partes e continuar depois sem travar.',
+        )
+
+    if current_offset > 0 and current_offset < total_rows:
+        st.info(f'Continuação disponível: próxima execução começa em {current_offset + 1}/{total_rows}.')
+    elif current_offset >= total_rows:
+        st.success('Todas as linhas já passaram por esta execução da IA. Você pode reiniciar se quiser gerar novamente.')
+    else:
+        st.info(f'A próxima execução da IA começa na linha 1 e pode analisar até {int(max_rows_run)} de {total_rows} linha(s).')
+
+    col_reset, col_space = st.columns([1, 2])
+    with col_reset:
+        if st.button('Reiniciar IA', use_container_width=True, key=_state_key(op, signature, 'reset_ai')):
+            st.session_state[offset_key] = 0
+            st.session_state.pop(suggestions_key, None)
+            st.session_state.pop(status_key, None)
+            st.rerun()
+
+    can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task) and current_offset < total_rows
     if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
         progress_bar, status_box, counter_box = _make_preview_ai_progress()
-        suggestions, status = generate_product_ai_suggestions_batched(
+        suggestions, status, next_offset = generate_product_ai_suggestions_batched(
             df_final,
-            actions={'title': use_title, 'description': use_description, 'grammar': use_grammar, 'ncm': use_ncm},
-            max_rows=total_rows,
+            actions={'title': bool(use_title), 'description': bool(use_description), 'grammar': bool(use_grammar), 'ncm': bool(use_ncm)},
+            max_rows=int(max_rows_run),
             custom_task=custom_task,
-            batch_size=20,
+            batch_size=int(batch_size or DEFAULT_AI_BATCH_SIZE),
+            start_offset=current_offset,
             progress_callback=_progress_callback(progress_bar, status_box, counter_box),
         )
-        st.session_state[suggestions_key] = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
+        new_suggestions_df = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
+        st.session_state[suggestions_key] = _append_suggestions(st.session_state.get(suggestions_key), new_suggestions_df)
         st.session_state[status_key] = status
-        add_debug(f'IA de catálogo executada em todas as {total_rows} linha(s) do preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
-        st.success(f'IA concluiu a revisão de {total_rows} produto(s).')
+        st.session_state[offset_key] = next_offset
+        add_debug(f'IA de catálogo executada de {current_offset + 1} até {next_offset} de {total_rows} linha(s) no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
+        st.success(f'IA processou até {next_offset}/{total_rows} produto(s).')
         st.rerun()
 
     status = st.session_state.get(status_key)
@@ -307,7 +348,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     st.session_state[suggestions_key] = suggestions_df
 
     if suggestions_df.empty:
-        st.info('A IA não encontrou alterações seguras para aplicar neste preview final ou os recursos correspondentes estão desligados na sidebar.')
+        st.info('A IA não encontrou alterações seguras para aplicar nesta rodada.')
         return
 
     st.markdown('##### Antes/depois sugerido pela IA')
