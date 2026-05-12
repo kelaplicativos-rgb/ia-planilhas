@@ -209,6 +209,36 @@ def _mapping_page_meta_key(mapping_key: str) -> str:
     return f'{mapping_key}_page_meta'
 
 
+def _mapping_page_scroll_key(mapping_key: str) -> str:
+    return f'{mapping_key}_scroll_to_page_top'
+
+
+def _mapping_page_anchor_id(mapping_key: str) -> str:
+    return f'{mapping_key}_page_anchor'.replace('_', '-')
+
+
+def _render_mapping_page_scroll_anchor(mapping_key: str) -> None:
+    anchor_id = _mapping_page_anchor_id(mapping_key)
+    should_scroll = bool(st.session_state.pop(_mapping_page_scroll_key(mapping_key), False))
+    st.markdown(f'<div id="{anchor_id}" style="height:1px;"></div>', unsafe_allow_html=True)
+    if not should_scroll:
+        return
+    st.markdown(
+        f"""
+        <script>
+        setTimeout(function() {{
+            const doc = window.parent ? window.parent.document : document;
+            const el = doc.getElementById("{anchor_id}");
+            if (el) {{
+                el.scrollIntoView({{behavior: "smooth", block: "start"}});
+            }}
+        }}, 120);
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
     """Mostra o mapeamento em blocos leves sem perder os campos não visíveis."""
     if len(targets) <= MAPPING_PAGE_SIZE:
@@ -230,6 +260,7 @@ def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
         f'Bloco {page_index + 1} de {total_pages} · Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
         'Os demais continuam salvos e entram no CSV final.'
     )
+    _render_mapping_page_scroll_anchor(mapping_key)
     st.session_state[_mapping_page_meta_key(mapping_key)] = {
         'page_index': page_index,
         'total_pages': total_pages,
@@ -242,6 +273,7 @@ def _render_mapping_page_arrows(mapping_key: str) -> None:
     if not isinstance(meta, dict):
         return
     page_key = _mapping_page_key(mapping_key)
+    scroll_key = _mapping_page_scroll_key(mapping_key)
     page_index = int(meta.get('page_index') or 0)
     total_pages = max(1, int(meta.get('total_pages') or 1))
 
@@ -250,6 +282,7 @@ def _render_mapping_page_arrows(mapping_key: str) -> None:
     with col_prev:
         if st.button('←', use_container_width=True, disabled=page_index <= 0, key=f'{mapping_key}_page_prev'):
             st.session_state[page_key] = max(0, page_index - 1)
+            st.session_state[scroll_key] = True
             st.rerun()
     with col_mid:
         st.markdown(
@@ -259,6 +292,7 @@ def _render_mapping_page_arrows(mapping_key: str) -> None:
     with col_next:
         if st.button('→', use_container_width=True, disabled=page_index >= total_pages - 1, key=f'{mapping_key}_page_next'):
             st.session_state[page_key] = min(total_pages - 1, page_index + 1)
+            st.session_state[scroll_key] = True
             st.rerun()
 
 
@@ -591,7 +625,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
     st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
     used_values = [value for value in edited_mapping.values() if value and not _is_manual_value(value)]
-    duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
+    duplicated = sorted({value for value in used_values if value and used_values.count(value) > 1})
     if duplicated:
         st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
     col_a, col_b = st.columns(2)
