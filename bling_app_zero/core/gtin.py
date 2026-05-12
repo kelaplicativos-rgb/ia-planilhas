@@ -24,16 +24,21 @@ INVALID_GS1_PREFIXES = {
     '209',
     '651',
     '665',
+    '684',
     '687',
     '782',
     '852',
 }
 
-# Faixas internas/reservadas que não devem ser tratadas como GTIN/EAN público.
+# Faixas internas, reservadas ou sem atribuição pública segura para envio ao Bling.
+# A faixa 650-689 foi adicionada por erro real do Bling: 651, 665 e 684 rejeitados.
+# A faixa 851-857 cobre o caso 852 rejeitado, preservando 850, 858, 859 e 860.
 INVALID_GS1_PREFIX_RANGES: tuple[tuple[int, int], ...] = (
     (20, 29),
     (40, 49),
     (200, 299),
+    (650, 689),
+    (851, 857),
     (960, 969),
     (980, 984),
     (990, 999),
