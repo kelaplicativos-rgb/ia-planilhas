@@ -80,13 +80,7 @@ def _has_stock_quantity_column(model: pd.DataFrame) -> bool:
 
 
 def _protect_stock_mapping(mapping: dict[str, str], model: pd.DataFrame) -> dict[str, str]:
-    """Preserva o modelo anexado e bloqueia preenchimento indevido.
-
-    O CSV final de estoque deve manter exatamente as colunas e a ordem do
-    modelo anexado na primeira etapa. Campos comerciais ou de cadastro que
-    existirem nesse modelo permanecem no arquivo, mas ficam vazios para não
-    contaminar a atualização de estoque.
-    """
+    """Preserva o modelo anexado e bloqueia preenchimento indevido."""
     protected: dict[str, str] = {}
     for target in model.columns:
         target_text = str(target)
@@ -123,4 +117,4 @@ def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = 
     final = apply_mapping(source, model, mapping)
     final = final.reindex(columns=list(model.columns), fill_value='')
     final = _fill_deposito(final, deposito)
-    return sanitize_for_bling(final), mapping
+    return sanitize_for_bling(final, operation='estoque'), mapping
