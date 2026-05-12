@@ -34,10 +34,14 @@ def _active_protection_labels(rules: dict[str, Any]) -> list[str]:
     return labels
 
 
+def _main_flow_is_on_rules_step() -> bool:
+    return str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower() == STEP_REGRAS
+
+
 def _go_to_rules_step() -> None:
     st.session_state[WIZARD_STEP_KEY] = STEP_REGRAS
-    st.session_state['sidebar_open_rules_center_inline'] = True
     st.session_state['sidebar_rules_center_requested'] = True
+    st.session_state['sidebar_open_rules_center_inline'] = False
     add_audit_event(
         'sidebar_rules_center_opened',
         area='SIDEBAR',
@@ -45,7 +49,21 @@ def _go_to_rules_step() -> None:
         details={
             'target_step': STEP_REGRAS,
             'wizard_step_key': WIZARD_STEP_KEY,
-            'fallback_inline_sidebar': True,
+            'fallback_inline_sidebar': False,
+            'responsible_file': 'bling_app_zero/ui/rules_panel.py',
+        },
+    )
+    st.rerun()
+
+
+def _open_inline_rules_center() -> None:
+    st.session_state['sidebar_open_rules_center_inline'] = True
+    add_audit_event(
+        'sidebar_rules_center_inline_opened',
+        area='SIDEBAR',
+        step=str(st.session_state.get(WIZARD_STEP_KEY) or ''),
+        details={
+            'reason': 'manual_sidebar_fallback',
             'responsible_file': 'bling_app_zero/ui/rules_panel.py',
         },
     )
@@ -74,8 +92,15 @@ def _render_rules_summary(rules: dict[str, Any], active_rules: list[dict[str, An
     else:
         st.caption('Nenhum padrão ativo.')
 
-    if st.button('Abrir Central de Regras', use_container_width=True, key='sidebar_open_rules_center'):
+    if st.button('Abrir Central de Regras no fluxo', use_container_width=True, key='sidebar_open_rules_center'):
         _go_to_rules_step()
+
+    if not _main_flow_is_on_rules_step() and st.button(
+        'Abrir Central aqui na sidebar',
+        use_container_width=True,
+        key='sidebar_open_rules_center_inline_button',
+    ):
+        _open_inline_rules_center()
 
 
 def render_rules_panel() -> None:
@@ -85,13 +110,17 @@ def render_rules_panel() -> None:
     active_protections = _active_protection_labels(rules)
     show_inline_center = bool(st.session_state.get('sidebar_open_rules_center_inline', False))
 
+    if _main_flow_is_on_rules_step() and show_inline_center:
+        st.session_state['sidebar_open_rules_center_inline'] = False
+        show_inline_center = False
+
     with st.sidebar:
         with st.expander('Regras e padrões', expanded=True):
             _render_rules_summary(rules, active_rules, active_protections)
 
             if show_inline_center:
                 st.divider()
-                st.caption('Central aberta também aqui na sidebar para não depender da etapa atual do fluxo.')
+                st.caption('Central aberta aqui na sidebar como apoio rápido. No fluxo principal, use o botão acima.')
                 if st.button('Fechar central na sidebar', use_container_width=True, key='sidebar_close_rules_center_inline'):
                     st.session_state['sidebar_open_rules_center_inline'] = False
                     add_audit_event(
