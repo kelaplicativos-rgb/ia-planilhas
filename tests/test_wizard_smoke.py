@@ -148,6 +148,14 @@ def test_shared_mapping_uses_modular_flows() -> None:
     assert 'from bling_app_zero.ui.cadastro_mapping import' not in shared_mapping
 
 
+def test_project_no_longer_imports_legacy_cadastro_mapping() -> None:
+    forbidden = 'from bling_app_zero.ui.cadastro_mapping import'
+    for path in Path('bling_app_zero').rglob('*.py'):
+        if path.as_posix() == 'bling_app_zero/ui/cadastro_mapping.py':
+            continue
+        assert forbidden not in path.read_text(encoding='utf-8')
+
+
 def test_file_origin_does_not_reuse_old_site_origin() -> None:
     cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
     estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
