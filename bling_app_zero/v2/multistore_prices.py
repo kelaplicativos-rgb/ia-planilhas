@@ -21,6 +21,18 @@ REQUIRED_ID_COLUMNS = ('IdProduto', 'ID na Loja')
 PRICE_OUTPUT_COLUMNS = ('Preco', 'Preço')
 PROMO_OUTPUT_COLUMNS = ('Preco Promocional', 'Preço Promocional')
 
+SPECIAL_RULE_BY_CHANNEL = {
+    'mercado_livre': {'rule_type': 'meli_79', 'threshold': '79', 'fixed_fee': '5', 'capital_days': '10'},
+    'olist': {'rule_type': 'meli_100', 'threshold': '100', 'fixed_fee': '5', 'capital_days': '35'},
+    'madeira_madeira': {'rule_type': 'commission_on_freight', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'b2w': {'rule_type': 'b2w_40', 'threshold': '40', 'fixed_fee': '5', 'capital_days': '15'},
+    'via_varejo': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '27'},
+    'carrefour': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '27'},
+    'amazon': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'shopee': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'outro': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+}
+
 
 def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
     normalized = {str(column).strip().lower(): str(column) for column in df.columns}
@@ -50,9 +62,19 @@ def _inputs_for_cost(cost_value: object, rules: dict) -> CalculatorInputs:
 
 
 def _fee_rule(profile_channel: str, rules: dict) -> MarketplaceFeeRule:
+    channel = str(profile_channel or 'outro').strip().lower() or 'outro'
+    special = SPECIAL_RULE_BY_CHANNEL.get(channel, SPECIAL_RULE_BY_CHANNEL['outro'])
     fee_percent = _decimal_rule(rules, 'marketplace_fee_percent', rules.get('commission_percent', '0'))
-    variation = str(rules.get('marketplace_variation') or rules.get('variation') or profile_channel or 'Marketplace')
-    return MarketplaceFeeRule(str(profile_channel or 'marketplace'), variation, fee_percent)
+    variation = str(rules.get('marketplace_variation') or rules.get('variation') or channel.replace('_', ' ').title())
+    return MarketplaceFeeRule(
+        marketplace=channel,
+        variation=variation,
+        fee_percent=fee_percent,
+        rule_type=str(rules.get('marketplace_rule_type') or special['rule_type']),
+        capital_days=_decimal_rule(rules, 'marketplace_capital_days', special['capital_days']),
+        threshold=_decimal_rule(rules, 'marketplace_threshold', special['threshold']),
+        fixed_fee=_decimal_rule(rules, 'marketplace_fixed_fee', special['fixed_fee']),
+    )
 
 
 def _promo_price(sale_price: Decimal, rules: dict) -> Decimal:
@@ -124,6 +146,7 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
         if column in df.columns:
             df[column] = str(value)
 
+    fee_rule = _fee_rule(profile.channel, rules)
     return ModuleResult(
         True,
         payload.with_df(df, stage='calculate'),
@@ -133,7 +156,10 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
             'marketplace': profile.channel,
             'store_id': profile.store_id,
             'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
-            'marketplace_fee_percent': str(rules.get('marketplace_fee_percent') or rules.get('commission_percent') or '0'),
+            'marketplace_fee_percent': str(fee_rule.fee_percent),
+            'marketplace_rule_type': fee_rule.rule_type,
+            'marketplace_threshold': str(fee_rule.threshold),
+            'marketplace_fixed_fee': str(fee_rule.fixed_fee),
         },
     )
 
@@ -144,10 +170,10 @@ MULTISTORE_PRICE_SPEC = ModuleSpec(
     description='Calcula Preco e Preco Promocional para vinculo produtos multilojas com lucro nominal, margem ou preco fixo.',
     operation='preco',
     stage='calculate',
-    version='2.1.1',
+    version='2.1.2',
     depends_on=('store_profile', 'modelo_multiloja', 'custo_base'),
     provides=('preco_multiloja_calculado',),
     runner=run_multistore_price_calculator,
 )
 
-__all__ = ['INTERNAL_COST_COLUMN', 'MULTISTORE_PRICE_SPEC', 'run_multistore_price_calculator', 'validate_multistore_payload']
+__all__ = ['INTERNAL_COST_COLUMN', 'MULTISTORE_PRICE_SPEC', 'SPECIAL_RULE_BY_CHANNEL', 'run_multistore_price_calculator', 'validate_multistore_payload']
