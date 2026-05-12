@@ -8,8 +8,10 @@ from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
 from bling_app_zero.v2.price_multistore.matcher import find_best_identifier
+from bling_app_zero.v2.session_store import get_state, pop_state, set_state, widget_key
 from bling_app_zero.v2.store_profiles import build_store_profile
 from bling_app_zero.v2.table_io import load_table
+from bling_app_zero.v2.user_context import get_user_context
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
 
@@ -98,11 +100,13 @@ def _format_marketplace(value: str) -> str:
 
 
 def _render_flow_explanation() -> None:
+    context = get_user_context()
     _render_info(
         'Este fluxo atualiza preços de produtos já vinculados a uma loja/marketplace no Bling. '
         'Você envia a planilha multiloja do Bling e uma planilha com Preço de custo. '
         'O sistema cruza os produtos, calcula os novos preços e gera o CSV pronto para importar.'
     )
+    st.caption(f'Sessão isolada V2: {context.namespace}')
 
 
 def _render_match_summary(model_df: pd.DataFrame | None, source_df: pd.DataFrame | None) -> None:
@@ -122,15 +126,15 @@ def render_price_multistore_v2() -> None:
     _render_flow_explanation()
 
     st.markdown('### Etapa 1 · Loja / marketplace')
-    channel = st.selectbox('Qual loja/marketplace você quer atualizar?', MARKETPLACE_OPTIONS, format_func=_format_marketplace, key='v2_multistore_channel')
+    channel = st.selectbox('Qual loja/marketplace você quer atualizar?', MARKETPLACE_OPTIONS, format_func=_format_marketplace, key=widget_key('multistore_channel'))
     c_store_1, c_store_2 = st.columns(2)
-    store_name = c_store_1.text_input('Nome da loja no Bling', value=_format_marketplace(channel), key='v2_multistore_store_name')
-    store_id = c_store_2.text_input('ID da loja no Bling, se houver', value='', key='v2_multistore_store_id')
+    store_name = c_store_1.text_input('Nome da loja no Bling', value=_format_marketplace(channel), key=widget_key('multistore_store_name'))
+    store_id = c_store_2.text_input('ID da loja no Bling, se houver', value='', key=widget_key('multistore_store_id'))
     st.caption('Trabalhe com um marketplace por vez para evitar mistura de taxas, anúncios e IDs na Loja.')
 
     st.markdown('### Etapa 2 · Planilha do Bling')
     st.caption('Envie a planilha exportada do Bling para atualizar preços multiloja. Essa planilha será preenchida e enviada de volta ao Bling.')
-    model_upload = st.file_uploader('Planilha 1 — Modelo Multiloja do Bling', type=['csv', 'xlsx', 'xls'], key='v2_multistore_model_upload')
+    model_upload = st.file_uploader('Planilha 1 — Modelo Multiloja do Bling', type=['csv', 'xlsx', 'xls'], key=widget_key('multistore_model_upload'))
     model_df = _read(model_upload)
     if isinstance(model_df, pd.DataFrame):
         detection = detect_multistore_model(model_df)
@@ -146,7 +150,7 @@ def render_price_multistore_v2() -> None:
 
     st.markdown('### Etapa 3 · Custo dos produtos')
     st.caption('Envie a planilha de cadastro/produtos que contém o Preço de custo. Ela não será enviada ao Bling; serve apenas para calcular.')
-    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls'], key='v2_multistore_source_upload')
+    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls'], key=widget_key('multistore_source_upload'))
     source_df = _read(source_upload)
     if isinstance(source_df, pd.DataFrame) and not source_df.empty:
         st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
@@ -157,36 +161,36 @@ def render_price_multistore_v2() -> None:
     st.markdown('### Etapa 4 · Cruzamento')
     _render_match_summary(model_df, source_df)
     cost_options = _cost_column_options(source_df)
-    source_cost_column = st.selectbox('Qual coluna da origem tem o Preço de custo?', cost_options, key='v2_multistore_cost_column') if cost_options else ''
+    source_cost_column = st.selectbox('Qual coluna da origem tem o Preço de custo?', cost_options, key=widget_key('multistore_cost_column')) if cost_options else ''
     can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
 
     st.markdown('### Etapa 5 · Calculadora')
-    calculator_mode = st.radio('Como deseja calcular?', ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'], horizontal=True, key='v2_multistore_calculator_mode_label')
+    calculator_mode = st.radio('Como deseja calcular?', ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'], horizontal=True, key=widget_key('multistore_calculator_mode_label'))
     mode_map = {'Lucro nominal': 'nominal_profit', 'Margem de contribuição': 'contribution_margin', 'Preço fixo': 'fixed_sale_price'}
     calculator_mode_key = mode_map[calculator_mode]
 
     c1, c2, c3, c4 = st.columns(4)
-    marketplace_fee = c1.number_input('Taxa marketplace %', min_value=0.0, value=16.0 if channel == 'mercado_livre' else 14.0, step=0.5, key='v2_multistore_marketplace_fee')
-    tax = c2.number_input('Imposto %', min_value=0.0, value=8.0, step=0.5, key='v2_multistore_tax')
-    freight = c3.number_input('Frete R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_freight')
-    other_fees = c4.number_input('Outras taxas %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_other_fees')
+    marketplace_fee = c1.number_input('Taxa marketplace %', min_value=0.0, value=16.0 if channel == 'mercado_livre' else 14.0, step=0.5, key=widget_key('multistore_marketplace_fee'))
+    tax = c2.number_input('Imposto %', min_value=0.0, value=8.0, step=0.5, key=widget_key('multistore_tax'))
+    freight = c3.number_input('Frete R$', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_freight'))
+    other_fees = c4.number_input('Outras taxas %', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_other_fees'))
 
     c5, c6, c7, c8 = st.columns(4)
     if calculator_mode_key == 'nominal_profit':
-        desired_nominal_profit = c5.number_input('Quero ganhar R$', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_nominal_profit')
+        desired_nominal_profit = c5.number_input('Quero ganhar R$', min_value=0.0, value=15.0, step=0.5, key=widget_key('multistore_desired_nominal_profit'))
         desired_margin = 0.0
         desired_sale_price = 0.0
     elif calculator_mode_key == 'contribution_margin':
-        desired_margin = c5.number_input('Quero margem de %', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_margin')
+        desired_margin = c5.number_input('Quero margem de %', min_value=0.0, value=15.0, step=0.5, key=widget_key('multistore_desired_margin'))
         desired_nominal_profit = 0.0
         desired_sale_price = 0.0
     else:
-        desired_sale_price = c5.number_input('Quero vender por R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_desired_sale_price')
+        desired_sale_price = c5.number_input('Quero vender por R$', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_desired_sale_price'))
         desired_nominal_profit = 0.0
         desired_margin = 0.0
-    supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, value=15.0, step=1.0, key='v2_multistore_supplier_term')
-    stock_turnover = c7.number_input('Giro estoque (dias)', min_value=0.0, value=30.0, step=1.0, key='v2_multistore_stock_turnover')
-    promo = c8.number_input('Promo %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_promo')
+    supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, value=15.0, step=1.0, key=widget_key('multistore_supplier_term'))
+    stock_turnover = c7.number_input('Giro estoque (dias)', min_value=0.0, value=30.0, step=1.0, key=widget_key('multistore_stock_turnover'))
+    promo = c8.number_input('Promo %', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_promo'))
 
     pricing_rules = {
         'calculator_mode': calculator_mode_key,
@@ -207,26 +211,26 @@ def render_price_multistore_v2() -> None:
     if not can_generate:
         _render_alert('A geração fica bloqueada até carregar a origem de custo e selecionar a coluna de Preço de custo.')
 
-    if st.button('Gerar prévia de preços', use_container_width=True, key='v2_multistore_generate', disabled=not can_generate):
+    if st.button('Gerar prévia de preços', use_container_width=True, key=widget_key('multistore_generate'), disabled=not can_generate):
         result = run_multistore_price_flow(model_df, profile, source_df, source_cost_column, pricing_rules)
-        st.session_state['v2_multistore_last_ok'] = result.ok
-        st.session_state['v2_multistore_last_message'] = result.message
-        st.session_state['v2_multistore_last_errors'] = list(result.errors)
+        set_state('multistore_last_ok', result.ok)
+        set_state('multistore_last_message', result.message)
+        set_state('multistore_last_errors', list(result.errors))
         if result.ok:
-            st.session_state['v2_multistore_result_df'] = result.payload.df.copy().fillna('')
+            set_state('multistore_result_df', result.payload.df.copy().fillna(''))
         else:
-            st.session_state.pop('v2_multistore_result_df', None)
+            pop_state('multistore_result_df', None)
         st.rerun()
 
-    if st.session_state.get('v2_multistore_last_message'):
-        if st.session_state.get('v2_multistore_last_ok'):
-            st.success(st.session_state['v2_multistore_last_message'])
+    if get_state('multistore_last_message'):
+        if get_state('multistore_last_ok'):
+            st.success(get_state('multistore_last_message'))
         else:
-            _render_alert(st.session_state['v2_multistore_last_message'])
-            for error in st.session_state.get('v2_multistore_last_errors', []):
+            _render_alert(get_state('multistore_last_message'))
+            for error in get_state('multistore_last_errors', []):
                 st.caption(f'• {error}')
 
-    result_df = st.session_state.get('v2_multistore_result_df')
+    result_df = get_state('multistore_result_df')
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
         st.markdown('### Etapa 6 · Conferência')
         preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
@@ -238,7 +242,7 @@ def render_price_multistore_v2() -> None:
             file_name='bling_precos_multilojas.csv',
             mime='text/csv; charset=utf-8',
             use_container_width=True,
-            key='v2_multistore_download',
+            key=widget_key('multistore_download'),
         )
         _render_bling_import_link()
 
