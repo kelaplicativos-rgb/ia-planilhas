@@ -12,7 +12,6 @@ from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.features_panel import render_features_panel
 from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
 from bling_app_zero.ui.maintenance_panel import render_maintenance_panel
-from bling_app_zero.ui.rules_panel import render_rules_panel
 
 SidebarRenderer = Callable[[], None]
 
@@ -24,7 +23,6 @@ SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Ferramentas de conferência', render_diagnostics_panel),
     ('Audit trail operacional', render_audit_panel),
     ('Manutenção do sistema', render_maintenance_panel),
-    ('Regras e padrões', render_rules_panel),
 )
 
 
@@ -35,7 +33,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
                 <div class="bling-sidebar-kicker">Painel técnico</div>
                 <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Módulos, conferência, audit trail, manutenção e regras do CSV em áreas separadas.</div>
+                <div class="bling-sidebar-text">Módulos, conferência, audit trail e manutenção. Regras e padrões ficam somente no fluxo principal.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -69,18 +67,39 @@ def _ensure_sidebar_defaults() -> None:
         st.session_state[SIDEBAR_TOOL_KEY] = 'Ferramentas carregadas e recolhidas'
 
 
+def _clear_legacy_sidebar_rules_state() -> None:
+    """Remove sobras da antiga Central de Regras dentro da sidebar."""
+    legacy_keys = [
+        'sidebar_rules_center_requested',
+        'sidebar_open_rules_center_inline',
+    ]
+    removed: list[str] = []
+    for key in legacy_keys:
+        if key in st.session_state:
+            removed.append(key)
+            st.session_state.pop(key, None)
+    if removed:
+        add_audit_event(
+            'legacy_sidebar_rules_state_cleared',
+            area='SIDEBAR',
+            details={'removed_keys': removed, 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
+        )
+
+
 def render_sidebar_tools() -> None:
-    """Renderiza a sidebar técnica com todas as ferramentas carregadas e recolhidas por padrão."""
+    """Renderiza a sidebar técnica sem regras/editáveis duplicadas."""
     inject_sidebar_tools_theme()
     _ensure_sidebar_defaults()
+    _clear_legacy_sidebar_rules_state()
     _render_sidebar_header()
 
     add_audit_event(
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'all_tools_loaded_collapsed',
+            'mode': 'all_tools_loaded_collapsed_without_rules',
             'tools': [name for name, _ in SIDEBAR_TOOLS],
+            'rules_location': 'main_flow_only',
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
     )
