@@ -7,14 +7,13 @@ import pandas as pd
 from bling_app_zero.v2.contracts import ModuleResult, ModuleSpec, TablePayload
 from bling_app_zero.v2.marketplace_calculator import (
     CalculatorInputs,
+    D,
     MarketplaceFeeRule,
-    calculate_promo_price,
     money,
     price_by_contribution_margin,
     price_by_nominal_profit,
     simulate_by_fixed_sale_price,
 )
-from bling_app_zero.v2.price_math import D
 
 INTERNAL_COST_COLUMN = '_v2_custo_base'
 PRICE_COLUMN_CANDIDATES = (INTERNAL_COST_COLUMN, 'Custo', 'Preco de custo', 'Preço de custo', 'Preco Custo', 'Preço Custo')
@@ -32,7 +31,7 @@ def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
     return ''
 
 
-def _decimal_rule(rules: dict, key: str, default: str = '0') -> Decimal:
+def _decimal_rule(rules: dict, key: str, default: object = '0') -> Decimal:
     return D(rules.get(key, default))
 
 
@@ -56,6 +55,13 @@ def _fee_rule(profile_channel: str, rules: dict) -> MarketplaceFeeRule:
     return MarketplaceFeeRule(str(profile_channel or 'marketplace'), variation, fee_percent)
 
 
+def _promo_price(sale_price: Decimal, rules: dict) -> Decimal:
+    discount = _decimal_rule(rules, 'promo_discount_percent') / Decimal('100')
+    if discount <= 0:
+        return Decimal('0')
+    return sale_price * (Decimal('1') - discount)
+
+
 def _calculate_price_for_cost(cost_value: object, profile_channel: str, rules: dict) -> tuple[str, str]:
     inputs = _inputs_for_cost(cost_value, rules)
     rule = _fee_rule(profile_channel, rules)
@@ -68,8 +74,7 @@ def _calculate_price_for_cost(cost_value: object, profile_channel: str, rules: d
     else:
         result = price_by_nominal_profit(inputs, rule)
 
-    promo_discount = _decimal_rule(rules, 'promo_discount_percent')
-    promo_value = calculate_promo_price(result.sale_price, {'promo_discount_percent': promo_discount})
+    promo_value = _promo_price(result.sale_price, rules)
     return money(result.sale_price), money(promo_value) if promo_value else ''
 
 
@@ -139,7 +144,7 @@ MULTISTORE_PRICE_SPEC = ModuleSpec(
     description='Calcula Preco e Preco Promocional para vinculo produtos multilojas com lucro nominal, margem ou preco fixo.',
     operation='preco',
     stage='calculate',
-    version='2.1.0',
+    version='2.1.1',
     depends_on=('store_profile', 'modelo_multiloja', 'custo_base'),
     provides=('preco_multiloja_calculado',),
     runner=run_multistore_price_calculator,
