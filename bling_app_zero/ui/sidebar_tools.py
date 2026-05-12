@@ -7,7 +7,6 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
-from bling_app_zero.ui.audit_panel import render_audit_panel
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.features_panel import render_features_panel
 from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
@@ -21,7 +20,6 @@ SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Módulos e recursos', render_features_panel),
     ('Ferramentas de conferência', render_diagnostics_panel),
-    ('Audit trail operacional', render_audit_panel),
     ('Manutenção do sistema', render_maintenance_panel),
 )
 
@@ -33,7 +31,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
                 <div class="bling-sidebar-kicker">Painel técnico</div>
                 <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Módulos, conferência, audit trail e manutenção. Regras e padrões ficam somente no fluxo principal.</div>
+                <div class="bling-sidebar-text">Módulos, conferência, logs, audit trail e manutenção. Regras e padrões ficam somente no fluxo principal.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -97,9 +95,10 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'all_tools_loaded_collapsed_without_rules',
+            'mode': 'compact_tools_without_rules_or_separate_audit',
             'tools': [name for name, _ in SIDEBAR_TOOLS],
             'rules_location': 'main_flow_only',
+            'audit_location': 'maintenance_panel',
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
     )
