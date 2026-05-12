@@ -10,11 +10,13 @@ from bling_app_zero.ui.layout.components import (
 )
 from bling_app_zero.ui.layout.mapping import inject_mapping_css, render_mapping_preview, render_mapping_title
 from bling_app_zero.ui.layout.theme import inject_app_layout, inject_clean_home_css, inject_unified_light_layout
+from bling_app_zero.ui.layout.toolbar_fix import inject_streamlit_toolbar_fix
 
 __all__ = [
     'inject_app_layout',
     'inject_clean_home_css',
     'inject_unified_light_layout',
+    'inject_streamlit_toolbar_fix',
     'inject_mapping_css',
     'render_mapping_title',
     'render_mapping_preview',
