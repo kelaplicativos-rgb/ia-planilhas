@@ -61,8 +61,3 @@ def render_step_header(*, steps: list[str], current: str) -> WizardNav:
         unsafe_allow_html=True,
     )
     return WizardNav(current=current, index=index, total=total, steps=steps)
-
-
-def render_blocked_next_slot(pending_message: str | None = None) -> None:
-    """Mantido por compatibilidade; o aviso bloqueado fica acima dos botões."""
-    return None
