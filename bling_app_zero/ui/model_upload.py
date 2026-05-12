@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
@@ -59,10 +60,42 @@ def _file_ext(file: Any) -> str:
     return name.rsplit('.', 1)[-1] if '.' in name else ''
 
 
+def _file_audit_info(file: Any) -> dict[str, Any]:
+    return {
+        'name': _file_name(file),
+        'extension': _file_ext(file),
+        'size': getattr(file, 'size', None),
+        'type': getattr(file, 'type', None),
+    }
+
+
+def _df_audit_info(df: pd.DataFrame | None) -> dict[str, Any]:
+    if not isinstance(df, pd.DataFrame):
+        return {'valid': False}
+    return {
+        'valid': True,
+        'rows': int(len(df)),
+        'columns_count': int(len(df.columns)),
+        'columns': [str(column) for column in list(df.columns)[:80]],
+    }
+
+
 def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
-        return read_upload_fast(file)
-    except Exception:
+        df = read_upload_fast(file)
+        add_audit_event(
+            'model_file_read',
+            area='MODELO',
+            details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)},
+        )
+        return df
+    except Exception as exc:
+        add_audit_event(
+            'model_file_read_failed',
+            area='MODELO',
+            status='ERRO',
+            details={'file': _file_audit_info(file), 'error': str(exc)},
+        )
         return None
 
 
@@ -245,8 +278,30 @@ def render_model_upload_box(
     selected_files = list(files)
     supported_files = [file for file in selected_files if _file_ext(file) in MODEL_SPREADSHEET_TYPES]
     ignored_files = [file for file in selected_files if _file_ext(file) not in MODEL_SPREADSHEET_TYPES]
+    add_audit_event(
+        'model_upload_received',
+        area='MODELO',
+        details={
+            'title': title,
+            'operation': operation,
+            'key': key,
+            'required_model': required_model,
+            'caption': caption,
+            'file_count': len(selected_files),
+            'supported_count': len(supported_files),
+            'ignored_count': len(ignored_files),
+            'files': [_file_audit_info(file) for file in selected_files],
+            'ignored_files': [_file_audit_info(file) for file in ignored_files],
+        },
+    )
 
     if not supported_files:
+        add_audit_event(
+            'model_upload_without_supported_files',
+            area='MODELO',
+            status='BLOQUEADO',
+            details={'files': [_file_audit_info(file) for file in selected_files]},
+        )
         st.warning('Nenhuma planilha compatível encontrada.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
@@ -260,6 +315,19 @@ def render_model_upload_box(
         operation = 'cadastro'
 
     model_file, model_df = (estoque_file, estoque_df) if operation == 'estoque' else (cadastro_file, cadastro_df)
+    add_audit_event(
+        'model_upload_classified',
+        area='MODELO',
+        details={
+            'operation': operation,
+            'cadastro_file': _file_audit_info(cadastro_file) if cadastro_file else None,
+            'estoque_file': _file_audit_info(estoque_file) if estoque_file else None,
+            'selected_model_file': _file_audit_info(model_file) if model_file else None,
+            'cadastro_df': _df_audit_info(cadastro_df),
+            'estoque_df': _df_audit_info(estoque_df),
+            'selected_df': _df_audit_info(model_df),
+        },
+    )
     _render_detected_summary(supported_files, cadastro_file, estoque_file, cadastro_df, estoque_df)
 
     return ModelUploadResult(
