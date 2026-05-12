@@ -47,6 +47,27 @@ def _decimal_rule(rules: dict, key: str, default: object = '0') -> Decimal:
     return D(rules.get(key, default))
 
 
+def _is_positive_money(value: object) -> bool:
+    return D(value) > Decimal('0')
+
+
+def _valid_cost_mask(df: pd.DataFrame, cost_col: str) -> pd.Series:
+    if cost_col not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    return df[cost_col].apply(_is_positive_money)
+
+
+def _sample_invalid_cost_rows(df: pd.DataFrame, cost_col: str, limit: int = 10) -> tuple[str, ...]:
+    if cost_col not in df.columns:
+        return ()
+    mask = ~_valid_cost_mask(df, cost_col)
+    rows = [int(index) + 2 for index in df.index[mask].tolist()]
+    messages = [f'Custo vazio ou inválido na linha {row}.' for row in rows[:limit]]
+    if len(rows) > limit:
+        messages.append(f'Custo vazio ou inválido em mais {len(rows) - limit} linha(s).')
+    return tuple(messages)
+
+
 def _inputs_for_cost(cost_value: object, rules: dict) -> CalculatorInputs:
     return CalculatorInputs(
         tax_percent=_decimal_rule(rules, 'tax_percent'),
@@ -111,8 +132,11 @@ def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str,
     cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
     if not cost_col:
         errors.append('Coluna de custo/preco base ausente.')
-    elif not any(str(value or '').strip() for value in df[cost_col].tolist()):
-        errors.append('Coluna de custo/preco base esta vazia.')
+    else:
+        valid_costs = int(_valid_cost_mask(df, cost_col).sum())
+        if valid_costs <= 0:
+            errors.append('Nenhum custo/preco base valido foi encontrado para calcular.')
+            errors.extend(_sample_invalid_cost_rows(df, cost_col, limit=5))
     if not (_find_column(df, PRICE_OUTPUT_COLUMNS) or _find_column(df, PROMO_OUTPUT_COLUMNS)):
         errors.append('Modelo precisa ter coluna Preco ou Preco Promocional.')
     return not errors, tuple(errors)
@@ -129,6 +153,10 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
     price_col = _find_column(df, PRICE_OUTPUT_COLUMNS)
     promo_col = _find_column(df, PROMO_OUTPUT_COLUMNS)
+
+    valid_mask = _valid_cost_mask(df, cost_col)
+    skipped_rows = int((~valid_mask).sum())
+    df = df.loc[valid_mask].copy().fillna('')
 
     calculated_prices: list[str] = []
     promo_prices: list[str] = []
@@ -147,12 +175,17 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
             df[column] = str(value)
 
     fee_rule = _fee_rule(profile.channel, rules)
+    message = 'Precos multiloja calculados com calculadora profissional.'
+    if skipped_rows:
+        message += f' {skipped_rows} linha(s) sem custo valido foram ignoradas para evitar preco zerado.'
+
     return ModuleResult(
         True,
         payload.with_df(df, stage='calculate'),
-        'Precos multiloja calculados com calculadora profissional.',
+        message,
         metrics={
             'rows': len(df),
+            'skipped_rows_without_valid_cost': skipped_rows,
             'marketplace': profile.channel,
             'store_id': profile.store_id,
             'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
@@ -170,7 +203,7 @@ MULTISTORE_PRICE_SPEC = ModuleSpec(
     description='Calcula Preco e Preco Promocional para vinculo produtos multilojas com lucro nominal, margem ou preco fixo.',
     operation='preco',
     stage='calculate',
-    version='2.1.2',
+    version='2.1.3',
     depends_on=('store_profile', 'modelo_multiloja', 'custo_base'),
     provides=('preco_multiloja_calculado',),
     runner=run_multistore_price_calculator,
