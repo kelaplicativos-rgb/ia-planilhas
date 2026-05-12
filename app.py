@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.core.app_config import APP_VERSION, PAGE_CONFIG
-from bling_app_zero.core.app_errors import register_critical_error
+from bling_app_zero.core import APP_VERSION, PAGE_CONFIG, register_critical_error
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
