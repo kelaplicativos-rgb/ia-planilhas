@@ -4,6 +4,8 @@ import html
 
 import streamlit as st
 
+from bling_app_zero.ui.mapping_sidebar_rule_badge import with_sidebar_rule_badge
+
 
 def inject_mapping_css() -> None:
     """Ajustes especificos do mapeamento herdando o tema global."""
@@ -210,7 +212,7 @@ def inject_mapping_css() -> None:
 
 
 def render_mapping_title(target_label: str) -> None:
-    raw = str(target_label or '')
+    raw = with_sidebar_rule_badge(str(target_label or ''))
     safe = html.escape(raw)
     status_class = ''
     if raw.startswith('🔴'):
