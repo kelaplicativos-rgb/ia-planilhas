@@ -58,22 +58,21 @@ def _reset_to_system_defaults() -> None:
 
 
 def _render_default_editor(config: dict[str, Any]) -> None:
-    with st.expander('Editar valores padrão', expanded=False):
-        st.caption('Valores aplicados apenas se a coluna existir e estiver vazia.')
-        _text_input(config, 'category_default', 'Categoria')
-        _text_input(config, 'clone_parent_default', 'Clonar dados do pai')
-        _text_input(config, 'product_condition_default', 'Condição do produto')
-        _text_input(config, 'description_complement_default', 'Descrição Complementar')
-        _text_input(config, 'free_shipping_default', 'Frete Grátis')
-        _text_input(config, 'additional_info_default', 'Informações Adicionais')
-        _text_input(config, 'box_items_default', 'Itens p/ caixa')
-        _text_input(config, 'situation_default', 'Situação')
-        _text_input(config, 'unit_default', 'Unidade')
-        _text_input(config, 'measure_unit_name_default', 'Unidade de medida')
-        _text_input(config, 'video_default', 'Vídeo')
-        _text_input(config, 'volumes_default', 'Volumes')
-        if st.button('Restaurar padrões do sistema', use_container_width=True, key='post_mapping_restore_defaults'):
-            _reset_to_system_defaults()
+    st.caption('Valores aplicados apenas se a coluna existir e estiver vazia.')
+    _text_input(config, 'category_default', 'Categoria')
+    _text_input(config, 'clone_parent_default', 'Clonar dados do pai')
+    _text_input(config, 'product_condition_default', 'Condição do produto')
+    _text_input(config, 'description_complement_default', 'Descrição Complementar')
+    _text_input(config, 'free_shipping_default', 'Frete Grátis')
+    _text_input(config, 'additional_info_default', 'Informações Adicionais')
+    _text_input(config, 'box_items_default', 'Itens p/ caixa')
+    _text_input(config, 'situation_default', 'Situação')
+    _text_input(config, 'unit_default', 'Unidade')
+    _text_input(config, 'measure_unit_name_default', 'Unidade de medida')
+    _text_input(config, 'video_default', 'Vídeo')
+    _text_input(config, 'volumes_default', 'Volumes')
+    if st.button('Restaurar padrões do sistema', use_container_width=True, key='post_mapping_restore_defaults'):
+        _reset_to_system_defaults()
 
 
 def render_post_mapping_defaults_tab() -> None:
@@ -96,7 +95,13 @@ def render_post_mapping_defaults_tab() -> None:
 
     status = 'Ativo' if config['enabled'] else 'Desativado'
     st.caption(f'Status: {status} · Não sobrescreve valores preenchidos.')
-    _render_default_editor(config)
+    show_editor = st.checkbox(
+        'Editar valores padrão',
+        value=False,
+        key='show_post_mapping_defaults_editor',
+    )
+    if show_editor:
+        _render_default_editor(config)
     set_post_mapping_defaults_config(config)
 
 
