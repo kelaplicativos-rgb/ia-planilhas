@@ -50,7 +50,7 @@ def run_pipeline(
 
     if progress_callback:
         progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados no padrao do Bling...', 'progress': 0.96})
-    safe = sanitize_for_bling(df_result)
+    safe = sanitize_for_bling(df_result, operation=selected_operation)
     if progress_callback:
         progress_callback({'stage': 'Pronto', 'message': f'{len(safe)} produto(s) preparados na origem.', 'progress': 1.0})
     return safe
