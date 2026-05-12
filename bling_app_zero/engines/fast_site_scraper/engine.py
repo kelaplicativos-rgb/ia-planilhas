@@ -27,7 +27,9 @@ from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.page_parser import parse_product_page
 from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls
 
-MAX_WORKERS = 48
+# BLINGFIX: 48 workers era agressivo demais para sites reais e podia travar a captura
+# antes de salvar a origem no Wizard. Mantemos paralelismo, mas com limite seguro.
+MAX_WORKERS = 8
 SLOW_LINK_SECONDS = 6.0
 SMART_COMPLETE_TARGET = 180
 SMART_STOP_MIN_PROCESSED = 120
