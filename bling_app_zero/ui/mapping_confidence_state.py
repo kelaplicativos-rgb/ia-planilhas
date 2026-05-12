@@ -7,6 +7,15 @@ from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.mapping_confidence import confidence_for_mapping, resolved_empty_confidence, sort_targets_by_confidence
 from bling_app_zero.ui.mapping_widget_state import is_explicit_empty, is_explicit_manual, option_value, target_widget_key
 
+# BLINGFIX: além de colunas marcadas com * / OBRIGATÓRIO no modelo,
+# tratamos os campos essenciais do cadastro como obrigatórios visuais.
+# Isso evita o erro mostrado no mapeamento: "Obrigatórios 0" mesmo existindo
+# Descrição e Preço no modelo do Bling.
+ESSENTIAL_REQUIRED_KINDS = {
+    'descricao',
+    'preco_unitario',
+}
+
 
 def manual_confidence() -> dict[str, object]:
     return {
@@ -59,7 +68,11 @@ def ordered_targets_once(order_key: str, target_columns: list[str], confidence: 
 
 
 def required_targets(target_columns: list[str]) -> set[str]:
-    return {field.original for field in build_contract(target_columns) if field.required}
+    required: set[str] = set()
+    for field in build_contract(target_columns):
+        if field.required or field.kind in ESSENTIAL_REQUIRED_KINDS:
+            required.add(field.original)
+    return required
 
 
 __all__ = [
