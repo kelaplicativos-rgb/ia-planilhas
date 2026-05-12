@@ -9,7 +9,6 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.cache_control import clear_streamlit_cache
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
@@ -234,14 +233,31 @@ def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
         _render_mapping_body(mapping)
 
 
+def _preserve_flow_after_download(operation: str) -> None:
+    op = str(operation or '').strip().lower()
+    if op in {'cadastro', 'estoque'}:
+        st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+        st.session_state['home_slim_flow_operation'] = op
+        try:
+            st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        except Exception:
+            pass
+
+
 def _after_final_download(operation: str, signature: str, rules_sig: str) -> None:
-    """Limpa caches ao concluir o download final para o próximo fluxo rodar liso."""
-    clear_streamlit_cache(reason=f'final_download:{operation}')
-    st.session_state['final_download_cache_cleaned'] = True
-    st.session_state['final_download_cache_cleaned_operation'] = operation
+    """Registra o download sem limpar a sessão nem derrubar a navegação.
+
+    Antes esta função chamava clear_streamlit_cache(), que fazia limpeza de session_state
+    no clique do download. Isso podia apagar a operação ativa e mandar o usuário para a Home
+    antes de concluir a etapa/importação.
+    """
+    _preserve_flow_after_download(operation)
+    st.session_state['final_download_cache_cleaned'] = False
+    st.session_state['final_download_done'] = True
+    st.session_state['final_download_operation'] = operation
     add_audit_event(
-        'final_download_cache_cleared',
-        area='CACHE',
+        'final_download_completed_navigation_preserved',
+        area='DOWNLOAD',
         details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig},
     )
 
@@ -255,8 +271,8 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     st.markdown(f'##### {_operation_badge(operation)}')
     st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
 
-    if st.session_state.pop('final_download_cache_cleaned', False):
-        st.caption('✅ Cache limpo após o último download final. O próximo fluxo começa sem reaproveitar CSV antigo.')
+    if st.session_state.pop('final_download_done', False):
+        st.caption('✅ Download final concluído. A etapa atual foi preservada para você continuar a importação sem voltar para a Home.')
 
     errors = validate_final_df(df, operation)
     if errors:
