@@ -46,20 +46,20 @@ def _render_operation_choice() -> None:
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown('**🧾 Cadastrar produtos**')
-        st.caption('Fluxo atual para gerar CSV de cadastro de produtos no Bling.')
+        st.caption('Gerar CSV de cadastro de produtos para importar no Bling.')
         if st.button('Abrir cadastro', use_container_width=True, key='home_open_cadastro_flow'):
             st.session_state['home_slim_flow_operation'] = 'cadastro'
             _set_flow(FLOW_WIZARD)
     with c2:
         st.markdown('**📦 Atualizar estoque**')
-        st.caption('Fluxo atual para gerar CSV de atualização de saldo/depósito.')
+        st.caption('Gerar CSV de atualização de saldo e depósito para o Bling.')
         if st.button('Abrir estoque', use_container_width=True, key='home_open_estoque_flow'):
             st.session_state['home_slim_flow_operation'] = 'estoque'
             _set_flow(FLOW_WIZARD)
     with c3:
-        st.markdown('**🏬 Atualizar preços multilojas**')
-        st.caption('Novo fluxo V2 para marketplace, ID na Loja, preço e preço promocional.')
-        if st.button('Abrir preços multilojas V2', use_container_width=True, key='home_open_multistore_price_flow'):
+        st.markdown('**🏬 Atualizar Preços Multiloja**')
+        st.caption('Atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.')
+        if st.button('Atualizar preços', use_container_width=True, key='home_open_multistore_price_flow'):
             _set_flow(FLOW_PRICE_MULTISTORE)
 
 
