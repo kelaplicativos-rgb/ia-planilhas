@@ -24,10 +24,87 @@ def render_pending_notice(message: str | None = None) -> None:
     safe_message = html.escape(str(message or DEFAULT_PENDING_MESSAGE))
     st.markdown(
         f"""
-        <div class="bling-alert-card bling-alert-warning" role="status" aria-live="polite">
+        <style>
+        .bling-alert-card {{
+            display: flex;
+            align-items: flex-start;
+            gap: .78rem;
+            width: 100%;
+            border-radius: 18px;
+            padding: .92rem 1rem;
+            margin: .85rem 0 1rem 0;
+            box-shadow: 0 10px 24px rgba(146, 64, 14, .08);
+        }}
+        .bling-alert-warning {{
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            color: #7c2d12;
+        }}
+        .bling-alert-icon {{
+            flex: 0 0 auto;
+            width: 2.15rem;
+            height: 2.15rem;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #ffedd5;
+            border: 1px solid #fdba74;
+            font-size: 1.08rem;
+            line-height: 1;
+        }}
+        .bling-alert-content {{
+            display: flex;
+            flex-direction: column;
+            gap: .22rem;
+            min-width: 0;
+        }}
+        .bling-alert-content strong {{
+            color: #9a3412;
+            font-size: .92rem;
+            font-weight: 900;
+            letter-spacing: .01em;
+        }}
+        .bling-alert-content span {{
+            color: #7c2d12;
+            font-size: .9rem;
+            line-height: 1.38;
+            font-weight: 650;
+        }}
+        .bling-next-empty-slot {{
+            width: 100%;
+            min-height: 2.45rem;
+            border-radius: 999px;
+            background: #fff7ed;
+            border: 1px dashed #fdba74;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .bling-next-empty-slot::before {{
+            content: 'Continuar bloqueado';
+            color: #9a3412;
+            font-size: .86rem;
+            font-weight: 850;
+        }}
+        @media (max-width: 640px) {{
+            .bling-alert-card {{
+                border-radius: 16px;
+                padding: .82rem .9rem;
+            }}
+            .bling-alert-icon {{
+                width: 2rem;
+                height: 2rem;
+            }}
+            .bling-alert-content span {{
+                font-size: .86rem;
+            }}
+        }}
+        </style>
+        <div class="bling-alert-card bling-alert-warning" role="alert" aria-live="assertive">
             <div class="bling-alert-icon">⚠️</div>
             <div class="bling-alert-content">
-                <strong>Atenção</strong>
+                <strong>Etapa bloqueada</strong>
                 <span>{safe_message}</span>
             </div>
         </div>
