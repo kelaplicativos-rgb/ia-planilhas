@@ -8,6 +8,7 @@ import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.measurements import normalize_measure_columns, normalize_measures_resource_enabled
+from bling_app_zero.core.post_mapping_defaults import apply_post_mapping_defaults
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules, measure_defaults_from_rules
 
@@ -46,6 +47,7 @@ def _rules() -> dict[str, Any]:
             'width_default': DEFAULT_MEASURES_CM['largura'],
             'depth_default': DEFAULT_MEASURES_CM['profundidade'],
             'length_default': DEFAULT_MEASURES_CM['comprimento'],
+            'box_items_default': '1',
             'clean_invalid_gtin': True,
             'normalize_image_separator': True,
             'invalid_gtin_mode': 'limpar',
@@ -291,9 +293,13 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if normalize_measures_resource_enabled(False):
         out = normalize_measure_columns(out)
 
-    # BLINGFIX: não aplicar padrões fixos por fora da sidebar/regras.
-    # Fornecedor, unidade e medidas só serão preenchidos por regras customizadas habilitadas.
+    # Regras manuais habilitadas continuam funcionando, mas respeitando only_when_empty quando marcado.
     out = _apply_custom_rules(out)
+
+    # BLINGFIX: padrões finais pós-mapeamento.
+    # Só preenche colunas existentes e vazias. Nunca sobrescreve valor mapeado/manual.
+    out = apply_post_mapping_defaults(out, _rules())
+
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
