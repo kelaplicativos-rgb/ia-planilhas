@@ -16,6 +16,7 @@ from bling_app_zero.ui.rules_panel import render_rules_panel
 SidebarRenderer = Callable[[], None]
 
 SIDEBAR_TOOL_KEY = 'sidebar_active_technical_tool'
+SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Ferramentas de conferência', render_diagnostics_panel),
@@ -39,39 +40,6 @@ def _render_sidebar_header() -> None:
         )
 
 
-def _tool_names() -> list[str]:
-    return [name for name, _ in SIDEBAR_TOOLS]
-
-
-def _selected_tool_name() -> str:
-    names = _tool_names()
-    current = str(st.session_state.get(SIDEBAR_TOOL_KEY) or '')
-    if current in names:
-        return current
-    return names[-1]
-
-
-def _render_tool_selector() -> str:
-    names = _tool_names()
-    selected = _selected_tool_name()
-    with st.sidebar:
-        choice = st.selectbox(
-            'Abrir ferramenta',
-            names,
-            index=names.index(selected),
-            key=SIDEBAR_TOOL_KEY,
-            help='No celular, apenas uma ferramenta técnica é carregada por vez para evitar travamento visual.',
-        )
-    return str(choice)
-
-
-def _renderer_for(name: str) -> SidebarRenderer | None:
-    for tool_name, renderer in SIDEBAR_TOOLS:
-        if tool_name == name:
-            return renderer
-    return None
-
-
 def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
     """Executa uma ferramenta da sidebar sem deixar uma falha derrubar as demais."""
     try:
@@ -84,7 +52,7 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
             'sidebar_tool_failed',
             area='SIDEBAR',
             status='ERRO',
-            details={'tool': name, 'error': str(exc)},
+            details={'tool': name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
         with st.sidebar:
             with st.expander(f'{name} indisponível', expanded=True):
@@ -92,14 +60,31 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
                 st.caption('Baixe o log técnico e envie para o próximo BLINGFIX.')
 
 
+def _ensure_sidebar_defaults() -> None:
+    if SIDEBAR_TOOLS_OPEN_KEY not in st.session_state:
+        st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = True
+    if SIDEBAR_TOOL_KEY not in st.session_state:
+        st.session_state[SIDEBAR_TOOL_KEY] = 'Todas as ferramentas abertas'
+
+
 def render_sidebar_tools() -> None:
-    """Renderiza a sidebar técnica carregando somente a ferramenta escolhida."""
+    """Renderiza a sidebar técnica com todas as ferramentas abertas por padrão."""
     inject_sidebar_tools_theme()
+    _ensure_sidebar_defaults()
     _render_sidebar_header()
-    selected_name = _render_tool_selector()
-    renderer = _renderer_for(selected_name)
-    if renderer is not None:
-        _render_sidebar_tool(selected_name, renderer)
+
+    add_audit_event(
+        'sidebar_tools_rendered',
+        area='SIDEBAR',
+        details={
+            'mode': 'all_tools_open',
+            'tools': [name for name, _ in SIDEBAR_TOOLS],
+            'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
+        },
+    )
+
+    for name, renderer in SIDEBAR_TOOLS:
+        _render_sidebar_tool(name, renderer)
 
 
 __all__ = ['render_sidebar_tools']
