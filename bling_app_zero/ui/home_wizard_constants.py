@@ -16,6 +16,7 @@ STEP_MODELO = 'modelo'
 STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
+STEP_REGRAS = 'regras'
 STEP_ENTRADA = 'entrada'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_GERAR_ESTOQUE = 'gerar_estoque'
@@ -28,6 +29,7 @@ CADASTRO_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
+    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_MAPEAMENTO,
     STEP_PREVIEW,
@@ -39,6 +41,7 @@ ESTOQUE_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
+    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
     STEP_PREVIEW,
@@ -52,6 +55,7 @@ STEP_LABELS = {
     STEP_OPERACAO: 'Operação',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
+    STEP_REGRAS: 'Regras',
     STEP_ENTRADA: 'Entrada',
     STEP_MAPEAMENTO: 'Mapeamento',
     STEP_GERAR_ESTOQUE: 'Gerar',
@@ -70,6 +74,7 @@ RESET_OUTPUT_KEYS = [
     'origem_tipo',
     'tipo_operacao_site',
     'operation_site',
+    'rules_center_reviewed',
     'cadastro_wizard_df_origem',
     'cadastro_wizard_df_para_mapear',
     'cadastro_wizard_df_modelo',
