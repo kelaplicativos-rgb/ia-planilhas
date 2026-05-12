@@ -12,6 +12,28 @@ FILTER_GREEN = '🟢 Verdes'
 FILTER_REQUIRED = 'Obrigatórios'
 
 
+def _normalize_target_list(targets: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    """Remove duplicados preservando ordem.
+
+    BLINGFIX: o contador do topo do mapeamento precisa contar campos do Bling,
+    não ocorrências duplicadas vindas do estado/widget. Isso impede números
+    impossíveis como 56 verdes em uma tela com 9 campos.
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        text = str(target or '').strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def _level_for(confidence: dict[str, dict[str, object]], target: str) -> str:
+    return str(confidence.get(target, {}).get('level') or '').strip().lower()
+
+
 def filter_targets(
     mapping_key: str,
     ordered_targets: list[str],
@@ -20,10 +42,12 @@ def filter_targets(
     sidebar_rule_targets: set[str] | None = None,
 ) -> list[str]:
     sidebar_rule_targets = sidebar_rule_targets or set()
-    levels = {target: str(confidence.get(target, {}).get('level') or '') for target in ordered_targets}
-    red_targets = [target for target in ordered_targets if levels.get(target) == 'vermelho']
-    yellow_targets = [target for target in ordered_targets if levels.get(target) == 'amarelo']
-    green_targets = [target for target in ordered_targets if levels.get(target) == 'verde']
+    ordered_targets = _normalize_target_list(ordered_targets)
+    required_targets = {str(target).strip() for target in required_targets if str(target).strip()}
+
+    red_targets = [target for target in ordered_targets if _level_for(confidence, target) == 'vermelho']
+    yellow_targets = [target for target in ordered_targets if _level_for(confidence, target) == 'amarelo']
+    green_targets = [target for target in ordered_targets if _level_for(confidence, target) == 'verde']
     required = [target for target in ordered_targets if target in required_targets]
     sidebar_targets = filter_sidebar_rule_targets(ordered_targets, sidebar_rule_targets)
 
@@ -61,10 +85,16 @@ def filter_targets(
     if search_key:
         selected = [target for target in selected if search_key in normalize_key(target)]
 
+    red_count = len(red_targets)
+    yellow_count = len(yellow_targets)
+    green_count = len(green_targets)
+    purple_count = sidebar_rule_count(ordered_targets, sidebar_rule_targets)
+    required_count = len(required)
+
     st.caption(
         f'Mostrando {len(selected)} de {len(ordered_targets)} campo(s). '
-        f'🔴 {len(red_targets)} · 🟡 {len(yellow_targets)} · 🟢 {len(green_targets)} · '
-        f'🟣 {sidebar_rule_count(ordered_targets, sidebar_rule_targets)} · Obrigatórios {len(required)}.'
+        f'🔴 {red_count} · 🟡 {yellow_count} · 🟢 {green_count} · '
+        f'🟣 {purple_count} · Obrigatórios {required_count}.'
     )
     return selected
 
