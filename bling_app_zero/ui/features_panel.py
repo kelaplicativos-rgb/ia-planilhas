@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.features.registry import list_features
 from bling_app_zero.features.state import clear_feature_state, set_feature_enabled
+from bling_app_zero.features.validator import validate_feature_architecture
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/features_panel.py'
 STATUS_LABELS = {
@@ -38,6 +39,23 @@ def _feature_row(feature) -> dict[str, str]:
         'Status': STATUS_LABELS.get(feature.status, feature.status),
         'Arquivo dono': feature.owner_file,
     }
+
+
+def _render_architecture_status() -> None:
+    report = validate_feature_architecture()
+    if report.ok and not report.warnings:
+        st.success(f'Arquitetura modular OK · {report.total_features} módulo(s) registrado(s).')
+        return
+
+    if report.ok:
+        st.warning(f'Arquitetura modular com aviso(s) · {len(report.warnings)} aviso(s).')
+    else:
+        st.error(f'Arquitetura modular com erro(s) · {len(report.errors)} erro(s).')
+
+    with st.expander('Ver validação BLINGMODULE', expanded=not report.ok):
+        for issue in report.issues:
+            prefix = '❌' if issue.severity == 'erro' else '⚠️'
+            st.caption(f'{prefix} `{issue.feature}` · {issue.message}')
 
 
 def _render_feature_detail(feature) -> None:
@@ -77,6 +95,7 @@ def render_features_panel() -> None:
     with st.sidebar:
         with st.expander('Módulos e recursos', expanded=False):
             st.caption('Registry oficial BLINGMODULE: todo recurso novo deve ter contrato, estado e arquivo dono.')
+            _render_architecture_status()
             if not features:
                 st.info('Nenhum módulo registrado ainda.')
                 return
