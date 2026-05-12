@@ -92,6 +92,8 @@ def _rule_value_warning(target: str, value: Any) -> str:
         return '' if value_key in {'novo', 'usado', 'recondicionado'} else f'O valor "{text}" parece incoerente para {target}. Use Novo, Usado ou VAZIO.'
     if target_key == 'unidade':
         return f'O valor "{text}" parece incoerente para Unidade. Use algo como UN, PC, CX ou VAZIO.' if _is_number(text) or len(text) > 8 else ''
+    if target_key in {'unidade das medidas', 'unidade de medida', 'unidade medida'}:
+        return f'O valor "{text}" parece incoerente para Unidade das medidas. Use Centímetro, Metro, Milímetro ou VAZIO.' if _is_number(text) else ''
     if target_key == 'categoria':
         return f'O valor "{text}" parece incoerente para Categoria. Use nome de categoria ou VAZIO.' if _is_number(text) else ''
     if target_key in {'video', 'vídeo'}:
@@ -198,9 +200,10 @@ def _render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
 
 def _render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     st.markdown('#### Medidas padrão do produto')
-    st.caption('Use números simples em centímetros. Exemplo: 2, 11 e 18. O sistema não transforma 18 em 0,018.')
+    st.caption('Todos os campos desta regra são editáveis e têm liga/desliga real.')
     updated = dict(rules)
     measure_enabled = st.toggle('Usar medidas padrão quando a coluna existir e estiver vazia', value=True, key='rules_center_measure_defaults_enabled')
+    unit_measure_enabled = st.toggle('Usar unidade das medidas', value=True, key='rules_center_measure_unit_enabled')
     cols = st.columns(4)
     for index, (short_label, target_label, key, fallback) in enumerate(MEASURE_DEFAULT_FIELDS):
         current_value = _clean_number_text(updated.get(key), fallback)
@@ -222,8 +225,10 @@ def _render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, An
     custom_rules = _upsert_system_rule(custom_rules, 'Profundidade', pc_value, measure_enabled)
     custom_rules = _upsert_system_rule(custom_rules, 'Comprimento', pc_value, measure_enabled)
     with cols[3]:
-        st.text_input('Unidade', value='Centímetro', disabled=True, key='rules_center_measure_unit_visible')
-    updated['measure_unit_name_default'] = 'Centímetro'
+        unit_name = st.text_input('Unidade medidas', value=str(updated.get('measure_unit_name_default') or 'Centímetro'), key='rules_center_measure_unit_name_value', help='Unidade das dimensões: Centímetro, Metro, Milímetro ou VAZIO')
+        _render_rule_value_warning('Unidade das medidas', unit_name)
+    updated['measure_unit_name_default'] = str(unit_name or '').strip()
+    custom_rules = _upsert_system_rule(custom_rules, 'Unidade das medidas', updated['measure_unit_name_default'], unit_measure_enabled)
     updated['normalize_measures_to_meters'] = False
     return updated, custom_rules
 
