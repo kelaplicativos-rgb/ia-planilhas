@@ -24,14 +24,14 @@ BASIC_DEFAULT_FIELDS = [
 ]
 
 EXTRA_DEFAULT_RULES = [
-    ('Categoria', ''),
+    ('Categoria', 'Vazio'),
     ('Clonar dados do pai', 'Não'),
     ('Condição do produto', 'Novo'),
-    ('Descrição Complementar', ''),
+    ('Descrição Complementar', 'Vazio'),
     ('Frete Grátis', 'Não'),
-    ('Informações Adicionais', ''),
+    ('Informações Adicionais', 'Vazio'),
     ('Situação', 'Ativo'),
-    ('Vídeo', ''),
+    ('Vídeo', 'Vazio'),
     ('Volumes', '1'),
 ]
 
@@ -70,6 +70,11 @@ def custom_rules_by_column(rules: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if target:
             out[target.lower()] = dict(rule)
     return out
+
+
+def _value_or_fallback(rule: dict[str, Any], fallback: str) -> str:
+    value = str(rule.get('fill_value', '') if rule else '').strip()
+    return value if value else fallback
 
 
 def upsert_system_rule(custom_rules: list[dict[str, Any]], target_column: str, fill_value: str, enabled: bool) -> list[dict[str, Any]]:
@@ -174,6 +179,8 @@ def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, An
     for index, (label, key, fallback) in enumerate(BASIC_DEFAULT_FIELDS):
         current_value = str(updated.get(key) or fallback)
         rule = custom_by_column.get(label.lower(), {})
+        if rule:
+            current_value = _value_or_fallback(rule, current_value)
         with cols[index % 2]:
             enabled = st.toggle(f'Usar {label}', value=bool(rule.get('enabled', True)), key=f'rules_center_basic_enabled_{key}')
             value = st.text_input(label, value=current_value, key=f'rules_center_basic_value_{key}')
@@ -193,7 +200,7 @@ def render_extra_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
             rule = custom_by_column.get(target.lower(), {})
             with cols[col_index]:
                 enabled = st.toggle(f'Usar {target}', value=bool(rule.get('enabled', True)), key=f'rules_center_extra_enabled_{rule_id(target)}')
-                value = st.text_input(target, value=str(rule.get('fill_value') if rule else fallback), key=f'rules_center_extra_value_{rule_id(target)}')
+                value = st.text_input(target, value=_value_or_fallback(rule, fallback), key=f'rules_center_extra_value_{rule_id(target)}')
                 render_rule_value_warning(target, value)
             custom_rules = upsert_system_rule(custom_rules, target, value, enabled)
     return custom_rules
