@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 from typing import Any
@@ -9,7 +10,8 @@ import streamlit as st
 
 AUDIT_SESSION_KEY = 'audit_events'
 AUDIT_SESSION_ID_KEY = 'audit_session_id'
-AUDIT_MAX_ITEMS = 5000
+AUDIT_STATE_SNAPSHOT_KEY = 'audit_state_snapshot'
+AUDIT_MAX_ITEMS = 10000
 AUDIT_EXPORT_FILENAME = 'bling_audit_trail.jsonl'
 
 SENSITIVE_KEYWORDS = (
@@ -22,6 +24,21 @@ SENSITIVE_KEYWORDS = (
     'cookie',
     'api_key',
     'apikey',
+)
+
+IGNORED_STATE_KEYS = {
+    AUDIT_SESSION_KEY,
+    AUDIT_SESSION_ID_KEY,
+    AUDIT_STATE_SNAPSHOT_KEY,
+    'logs',
+    'debug_home_area_open',
+}
+
+IGNORED_STATE_PREFIXES = (
+    'audit_',
+    'debug_',
+    '_streamlit',
+    'FormSubmitter:',
 )
 
 
@@ -39,6 +56,11 @@ def _safe_text(value: Any, limit: int = 1200) -> str:
 def _is_sensitive_key(key: Any) -> bool:
     normalized = str(key or '').strip().lower()
     return any(word in normalized for word in SENSITIVE_KEYWORDS)
+
+
+def _should_ignore_state_key(key: Any) -> bool:
+    text = str(key or '')
+    return text in IGNORED_STATE_KEYS or any(text.startswith(prefix) for prefix in IGNORED_STATE_PREFIXES)
 
 
 def _sanitize(value: Any, *, depth: int = 0) -> Any:
@@ -68,6 +90,33 @@ def _sanitize(value: Any, *, depth: int = 0) -> Any:
     return _safe_text(value)
 
 
+def _fingerprint(value: Any) -> str:
+    try:
+        payload = json.dumps(_sanitize(value), ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:
+        payload = _safe_text(value, 2000)
+    return hashlib.sha256(payload.encode('utf-8', errors='ignore')).hexdigest()
+
+
+def _state_value_summary(value: Any) -> dict[str, Any]:
+    sanitized = _sanitize(value)
+    return {
+        'type': type(value).__name__,
+        'fingerprint': _fingerprint(value),
+        'value': sanitized,
+    }
+
+
+def _capture_state_snapshot() -> dict[str, dict[str, Any]]:
+    snapshot: dict[str, dict[str, Any]] = {}
+    for key, value in st.session_state.items():
+        if _should_ignore_state_key(key):
+            continue
+        safe_key = _safe_text(key, 160)
+        snapshot[safe_key] = _state_value_summary(value)
+    return snapshot
+
+
 def get_audit_session_id() -> str:
     current = st.session_state.get(AUDIT_SESSION_ID_KEY)
     if current:
@@ -85,12 +134,6 @@ def add_audit_event(
     status: str = 'INFO',
     details: dict[str, Any] | None = None,
 ) -> None:
-    """Registra um movimento auditável do usuário ou do fluxo.
-
-    Use esta função em botões, uploads, mudanças de etapa, downloads, capturas por site,
-    mapeamentos e confirmações importantes. O objetivo é reconstruir a jornada do usuário
-    dentro da sessão com o máximo de contexto seguro possível.
-    """
     events = list(st.session_state.get(AUDIT_SESSION_KEY, []))
     event = {
         'timestamp': _now_iso(),
@@ -103,6 +146,60 @@ def add_audit_event(
     }
     events.append(event)
     st.session_state[AUDIT_SESSION_KEY] = events[-AUDIT_MAX_ITEMS:]
+
+
+def audit_session_state_changes(stage: str = 'runtime') -> None:
+    """Registra alterações gerais no session_state entre um rerun e outro.
+
+    Este rastreador captura o máximo possível dos movimentos do usuário em widgets
+    Streamlit: campos preenchidos, valores apagados, números alterados, seleção de
+    opções, checkboxes/toggles, uploads e chaves criadas/removidas pelo fluxo.
+
+    Limitação natural do Streamlit: ele registra a mudança quando o app reroda
+    após a interação, não cada tecla pressionada em tempo real antes do rerun.
+    """
+    previous = st.session_state.get(AUDIT_STATE_SNAPSHOT_KEY)
+    current = _capture_state_snapshot()
+    if not isinstance(previous, dict):
+        st.session_state[AUDIT_STATE_SNAPSHOT_KEY] = current
+        add_audit_event('state_snapshot_initialized', area='AUDIT', details={'stage': stage, 'keys': len(current)})
+        return
+
+    previous_keys = set(previous.keys())
+    current_keys = set(current.keys())
+    added = sorted(current_keys - previous_keys)
+    removed = sorted(previous_keys - current_keys)
+    common = sorted(previous_keys & current_keys)
+
+    for key in added:
+        add_audit_event(
+            'field_added',
+            area='STATE',
+            details={'stage': stage, 'key': key, 'new': current.get(key)},
+        )
+    for key in removed:
+        add_audit_event(
+            'field_removed',
+            area='STATE',
+            details={'stage': stage, 'key': key, 'old': previous.get(key)},
+        )
+    for key in common:
+        old = previous.get(key, {})
+        new = current.get(key, {})
+        if old.get('fingerprint') == new.get('fingerprint'):
+            continue
+        add_audit_event(
+            'field_changed',
+            area='STATE',
+            details={
+                'stage': stage,
+                'key': key,
+                'old': old,
+                'new': new,
+            },
+        )
+
+    st.session_state[AUDIT_STATE_SNAPSHOT_KEY] = current
 
 
 def audit_button(label: str, *, key: str, area: str, step: str | None = None, **button_kwargs: Any) -> bool:
@@ -137,6 +234,7 @@ __all__ = [
     'add_audit_event',
     'audit_button',
     'audit_download_payload',
+    'audit_session_state_changes',
     'clear_audit_events',
     'get_audit_events',
     'get_audit_session_id',
