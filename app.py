@@ -5,11 +5,11 @@ import streamlit as st
 from bling_app_zero.core.app_errors import register_critical_error
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.ui.home import render_home
-from bling_app_zero.ui.layout.toolbar_fix import inject_streamlit_toolbar_fix
+from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 
-APP_VERSION = '3.5.24-BLINGMODULAR-APP'
+APP_VERSION = '3.5.25-BLINGCLEAN-MODULAR-APP'
 
 
 def main() -> None:
