@@ -386,6 +386,16 @@ def _render_nav_buttons(
             st.markdown('<div class="bling-next-blocked-slot" aria-hidden="true"></div>', unsafe_allow_html=True)
 
 
+def _render_nav_buttons_inside_current_card(
+    *,
+    allow_next: bool = True,
+    next_label: str = 'Continuar',
+    pending_message: str | None = None,
+) -> None:
+    """Mesmo comportamento da navegação, mas pensado para ficar dentro do card atual."""
+    _render_nav_buttons(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
+
+
 def _sync_flow_state(origin: str, operation: str) -> None:
     origin = 'arquivo' if origin == 'arquivo' else 'site'
     operation = 'estoque' if operation == 'estoque' else 'cadastro'
@@ -458,30 +468,31 @@ def _clear_legacy_origin_widget_state(operation: str) -> None:
 def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
-    render_home_bling_models()
-    has_model = _has_home_models()
-    add_audit_event(
-        'wizard_model_step_status',
-        area='WIZARD',
-        step=STEP_MODELO,
-        details={
-            'has_model': has_model,
-            'has_cadastro_model': _has_cadastro_model(),
-            'has_estoque_model': _has_estoque_model(),
-            'model_keys': _debug_state_keys([
-                HOME_CADASTRO_MODEL_KEY,
-                *GLOBAL_CADASTRO_MODEL_KEYS,
-                HOME_ESTOQUE_MODEL_KEY,
-                *GLOBAL_ESTOQUE_MODEL_KEYS,
-                'home_model_upload_bling',
-            ]),
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
-    _render_nav_buttons(
-        allow_next=has_model,
-        pending_message='Envie pelo menos um modelo do Bling para liberar o avanço.',
-    )
+    with st.container(border=True):
+        render_home_bling_models()
+        has_model = _has_home_models()
+        add_audit_event(
+            'wizard_model_step_status',
+            area='WIZARD',
+            step=STEP_MODELO,
+            details={
+                'has_model': has_model,
+                'has_cadastro_model': _has_cadastro_model(),
+                'has_estoque_model': _has_estoque_model(),
+                'model_keys': _debug_state_keys([
+                    HOME_CADASTRO_MODEL_KEY,
+                    *GLOBAL_CADASTRO_MODEL_KEYS,
+                    HOME_ESTOQUE_MODEL_KEY,
+                    *GLOBAL_ESTOQUE_MODEL_KEYS,
+                    'home_model_upload_bling',
+                ]),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        _render_nav_buttons_inside_current_card(
+            allow_next=has_model,
+            pending_message='Envie pelo menos um modelo do Bling para liberar o avanço.',
+        )
 
 
 def _render_operation_step() -> None:
