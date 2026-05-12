@@ -107,18 +107,54 @@ def render_price_multistore_v2() -> None:
     can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
 
     st.markdown('### 4. Calculadora')
-    c1, c2, c3, c4, c5 = st.columns(5)
-    commission = c1.number_input('Comissão %', min_value=0.0, value=16.0 if channel == 'mercado_livre' else 14.0, step=0.5, key='v2_multistore_commission')
-    fixed_fee = c2.number_input('Taxa fixa R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_fixed_fee')
-    tax = c3.number_input('Imposto %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_tax')
-    profit = c4.number_input('Lucro %', min_value=0.0, value=30.0, step=0.5, key='v2_multistore_profit')
-    promo = c5.number_input('Promo %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_promo')
+    calculator_mode = st.radio(
+        'Modo da calculadora',
+        ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'],
+        horizontal=True,
+        key='v2_multistore_calculator_mode_label',
+    )
+    mode_map = {
+        'Lucro nominal': 'nominal_profit',
+        'Margem de contribuição': 'contribution_margin',
+        'Preço fixo': 'fixed_sale_price',
+    }
+    calculator_mode_key = mode_map[calculator_mode]
+
+    c1, c2, c3, c4 = st.columns(4)
+    marketplace_fee = c1.number_input('Taxa marketplace %', min_value=0.0, value=16.0 if channel == 'mercado_livre' else 14.0, step=0.5, key='v2_multistore_marketplace_fee')
+    tax = c2.number_input('Imposto %', min_value=0.0, value=8.0, step=0.5, key='v2_multistore_tax')
+    freight = c3.number_input('Frete R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_freight')
+    other_fees = c4.number_input('Outras taxas %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_other_fees')
+
+    c5, c6, c7, c8 = st.columns(4)
+    if calculator_mode_key == 'nominal_profit':
+        desired_nominal_profit = c5.number_input('Lucro nominal R$', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_nominal_profit')
+        desired_margin = 0.0
+        desired_sale_price = 0.0
+    elif calculator_mode_key == 'contribution_margin':
+        desired_margin = c5.number_input('Margem desejada %', min_value=0.0, value=15.0, step=0.5, key='v2_multistore_desired_margin')
+        desired_nominal_profit = 0.0
+        desired_sale_price = 0.0
+    else:
+        desired_sale_price = c5.number_input('Preço fixo R$', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_desired_sale_price')
+        desired_nominal_profit = 0.0
+        desired_margin = 0.0
+    supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, value=15.0, step=1.0, key='v2_multistore_supplier_term')
+    stock_turnover = c7.number_input('Giro estoque (dias)', min_value=0.0, value=30.0, step=1.0, key='v2_multistore_stock_turnover')
+    promo = c8.number_input('Promo %', min_value=0.0, value=0.0, step=0.5, key='v2_multistore_promo')
 
     pricing_rules = {
-        'commission_percent': commission,
-        'fixed_fee': fixed_fee,
+        'calculator_mode': calculator_mode_key,
+        'marketplace_fee_percent': marketplace_fee,
+        'commission_percent': marketplace_fee,
         'tax_percent': tax,
-        'profit_percent': profit,
+        'freight_cost': freight,
+        'other_sale_fees_percent': other_fees,
+        'desired_nominal_profit': desired_nominal_profit,
+        'desired_contribution_margin_percent': desired_margin,
+        'desired_sale_price': desired_sale_price,
+        'supplier_term_days': supplier_term,
+        'stock_turnover_days': stock_turnover,
         'promo_discount_percent': promo,
     }
     profile = build_store_profile(channel, store_id=store_id, name=store_name, overrides={'pricing_rules': pricing_rules})
