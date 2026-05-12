@@ -3,11 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
 from bling_app_zero.v2.store_profiles import build_store_profile
+from bling_app_zero.v2.table_io import load_table
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
 
@@ -16,7 +16,7 @@ def _read(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
     try:
-        return read_uploaded_file(uploaded_file).fillna('')
+        return load_table(uploaded_file).fillna('')
     except Exception as exc:
         st.error(f'Não consegui ler a planilha: {exc}')
         return None
@@ -25,7 +25,16 @@ def _read(uploaded_file) -> pd.DataFrame | None:
 def _cost_column_options(df: pd.DataFrame | None) -> list[str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
-    return [str(column) for column in df.columns]
+    preferred = []
+    others = []
+    hints = ('custo', 'preco de custo', 'preço de custo', 'valor custo', 'valor compra')
+    for column in [str(column) for column in df.columns]:
+        lower = column.lower()
+        if any(hint in lower for hint in hints):
+            preferred.append(column)
+        else:
+            others.append(column)
+    return preferred + others
 
 
 def _render_alert(message: str) -> None:
