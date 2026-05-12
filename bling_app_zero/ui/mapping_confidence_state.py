@@ -9,7 +9,15 @@ from bling_app_zero.ui.mapping_widget_state import is_explicit_empty, is_explici
 
 
 def manual_confidence() -> dict[str, object]:
-    return {'level': 'verde', 'emoji': '🟢', 'label': 'valor fixo', 'score': 100, 'order': 2}
+    return {
+        'level': 'verde',
+        'emoji': '🟢',
+        'label': 'valor fixo confirmado',
+        'score': 100,
+        'order': 2,
+        'strict': True,
+        'manual': True,
+    }
 
 
 def confidence_for_selection(df_source: pd.DataFrame, target: str, selected: str, widget_key: str) -> dict[str, object]:
