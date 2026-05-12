@@ -64,13 +64,13 @@ def _result(flow: str, df: Any, message: str = 'OK') -> SimulationResult:
 def simulate_cadastro_planilha() -> SimulationResult:
     engine = get_engine('cadastro_planilha')
     df_final, _mapping = engine.run(_sample_source(), _cadastro_model())
-    return _result('Cadastro por arquivo', sanitize_for_bling(df_final), 'Cadastro gerou estrutura final')
+    return _result('Cadastro por arquivo', sanitize_for_bling(df_final, operation='cadastro'), 'Cadastro gerou estrutura final')
 
 
 def simulate_estoque_planilha() -> SimulationResult:
     engine = get_engine('estoque_planilha')
     df_final, _mapping = engine.run(_sample_source(), estoque_default_model(), deposito='Não definido')
-    return _result('Estoque por arquivo', sanitize_for_bling(df_final), 'Estoque gerou estrutura final')
+    return _result('Estoque por arquivo', sanitize_for_bling(df_final, operation='estoque'), 'Estoque gerou estrutura final')
 
 
 def _contract_dataframe(columns: list[str]) -> pd.DataFrame:
