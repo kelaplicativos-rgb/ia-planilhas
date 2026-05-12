@@ -15,7 +15,15 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.estoque_wizard_steps',
     'bling_app_zero.ui.shared_mapping',
-    'bling_app_zero.ui.cadastro_mapping',
+    'bling_app_zero.ui.mapping_cadastro_flow',
+    'bling_app_zero.ui.mapping_estoque_flow',
+    'bling_app_zero.ui.mapping_pagination',
+    'bling_app_zero.ui.mapping_filters',
+    'bling_app_zero.ui.mapping_field_widget',
+    'bling_app_zero.ui.mapping_preview_builder',
+    'bling_app_zero.ui.mapping_confirmation',
+    'bling_app_zero.ui.mapping_sidebar_rule_badge',
+    'bling_app_zero.core.sidebar_rule_targets',
     'bling_app_zero.flows.site_as_source',
     'bling_app_zero.ui.wizard_state_guard',
     'bling_app_zero.core.exporter',
@@ -118,15 +126,26 @@ def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
 
 
 def test_mapping_stays_paginated_for_mobile_performance() -> None:
-    mapping = importlib.import_module('bling_app_zero.ui.cadastro_mapping')
-    mapping_source = Path('bling_app_zero/ui/cadastro_mapping.py').read_text(encoding='utf-8')
+    constants = importlib.import_module('bling_app_zero.ui.mapping_constants')
+    pagination_source = Path('bling_app_zero/ui/mapping_pagination.py').read_text(encoding='utf-8')
+    field_widget_source = Path('bling_app_zero/ui/mapping_field_widget.py').read_text(encoding='utf-8')
+    filters_source = Path('bling_app_zero/ui/mapping_filters.py').read_text(encoding='utf-8')
 
-    assert mapping.MAPPING_PAGE_SIZE == 12
-    assert 'def _visible_targets(' in mapping_source
-    assert 'MAPPING_PAGE_SIZE' in mapping_source
-    assert "f'Bloco {idx + 1} de {total_pages}'" in mapping_source
-    assert 'st.selectbox(' in mapping_source
-    assert 'Os demais continuam salvos e entram no CSV final.' in mapping_source
+    assert constants.MAPPING_PAGE_SIZE == 12
+    assert 'def visible_targets(' in pagination_source
+    assert 'MAPPING_PAGE_SIZE' in pagination_source
+    assert "f'Bloco {page_index + 1} de {total_pages}'" in pagination_source
+    assert 'st.selectbox(' in field_widget_source
+    assert 'Os demais continuam salvos e entram no CSV final.' in pagination_source
+    assert '🟣 Regras/recursos' in filters_source
+
+
+def test_shared_mapping_uses_modular_flows() -> None:
+    shared_mapping = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.mapping_cadastro_flow import render_manual_mapping' in shared_mapping
+    assert 'from bling_app_zero.ui.mapping_estoque_flow import render_manual_stock_mapping' in shared_mapping
+    assert 'from bling_app_zero.ui.cadastro_mapping import' not in shared_mapping
 
 
 def test_file_origin_does_not_reuse_old_site_origin() -> None:
