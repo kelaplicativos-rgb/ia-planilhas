@@ -13,7 +13,17 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home',
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.cadastro_wizard_steps',
+    'bling_app_zero.ui.cadastro_wizard_state',
+    'bling_app_zero.ui.cadastro_entry_step',
+    'bling_app_zero.ui.cadastro_mapping_step',
+    'bling_app_zero.ui.cadastro_preview_step',
+    'bling_app_zero.ui.cadastro_download_step',
     'bling_app_zero.ui.estoque_wizard_steps',
+    'bling_app_zero.ui.estoque_wizard_state',
+    'bling_app_zero.ui.estoque_entry_step',
+    'bling_app_zero.ui.estoque_mapping_step',
+    'bling_app_zero.ui.estoque_preview_step',
+    'bling_app_zero.ui.estoque_download_step',
     'bling_app_zero.ui.shared_mapping',
     'bling_app_zero.ui.mapping_cadastro_flow',
     'bling_app_zero.ui.mapping_estoque_flow',
@@ -157,25 +167,25 @@ def test_project_no_longer_imports_legacy_cadastro_mapping() -> None:
 
 
 def test_file_origin_does_not_reuse_old_site_origin() -> None:
-    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
-    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+    cadastro_entry = Path('bling_app_zero/ui/cadastro_entry_step.py').read_text(encoding='utf-8')
+    estoque_entry = Path('bling_app_zero/ui/estoque_entry_step.py').read_text(encoding='utf-8')
 
-    assert "df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None" in cadastro_steps
-    assert 'upload = render_cadastro_source_upload(None)' in cadastro_steps
-    assert 'df_origem_site = get_estoque_site_source() if site_origin else None' in estoque_steps
-    assert 'upload = render_estoque_upload(model_loaded)' in estoque_steps
+    assert "df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None" in cadastro_entry
+    assert 'upload = empty_cadastro_upload_result() if site_origin else render_cadastro_source_upload(None)' in cadastro_entry
+    assert 'df_origem_site = get_estoque_site_source() if site_origin else None' in estoque_entry
+    assert 'upload = empty_estoque_upload_result() if site_origin else render_estoque_upload(model_loaded)' in estoque_entry
 
 
 def test_site_origin_uses_empty_upload_result() -> None:
-    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
-    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+    cadastro_entry = Path('bling_app_zero/ui/cadastro_entry_step.py').read_text(encoding='utf-8')
+    estoque_entry = Path('bling_app_zero/ui/estoque_entry_step.py').read_text(encoding='utf-8')
 
-    assert 'def _empty_upload_result() -> SmartUploadResult:' in cadastro_steps
-    assert 'def _empty_upload_result() -> SmartUploadResult:' in estoque_steps
-    assert 'if site_origin:\n        upload = _empty_upload_result()' in cadastro_steps
-    assert 'if site_origin:\n        upload = _empty_upload_result()' in estoque_steps
-    assert 'source_file=None' in cadastro_steps
-    assert 'source_file=None' in estoque_steps
+    assert 'def empty_cadastro_upload_result() -> SmartUploadResult:' in cadastro_entry
+    assert 'def empty_estoque_upload_result() -> SmartUploadResult:' in estoque_entry
+    assert 'upload = empty_cadastro_upload_result() if site_origin else render_cadastro_source_upload(None)' in cadastro_entry
+    assert 'upload = empty_estoque_upload_result() if site_origin else render_estoque_upload(model_loaded)' in estoque_entry
+    assert 'source_file=None' in cadastro_entry
+    assert 'source_file=None' in estoque_entry
 
 
 def test_site_origin_is_stored_by_operation() -> None:
@@ -208,25 +218,21 @@ def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> Non
 
 
 def test_cadastro_download_only_happens_on_download_step() -> None:
-    cadastro_steps = Path('bling_app_zero/ui/cadastro_wizard_steps.py').read_text(encoding='utf-8')
+    preview_step = Path('bling_app_zero/ui/cadastro_preview_step.py').read_text(encoding='utf-8')
+    download_step = Path('bling_app_zero/ui/cadastro_download_step.py').read_text(encoding='utf-8')
 
-    before_download_step = cadastro_steps.split('def render_cadastro_download_step()', 1)[0]
-    download_step = cadastro_steps.split('def render_cadastro_download_step()', 1)[1]
-
-    assert 'download_final(' not in before_download_step
+    assert 'download_final(' not in preview_step
     assert "download_final(df_final, 'cadastro', 'cadastro_wizard')" in download_step
-    assert "preview_df('🧾 CADASTRO · Preview final', df_final)" in before_download_step
+    assert "preview_df('🧾 CADASTRO · Preview final', df_final)" in preview_step
 
 
 def test_estoque_download_only_happens_on_download_step() -> None:
-    estoque_steps = Path('bling_app_zero/ui/estoque_wizard_steps.py').read_text(encoding='utf-8')
+    preview_step = Path('bling_app_zero/ui/estoque_preview_step.py').read_text(encoding='utf-8')
+    download_step = Path('bling_app_zero/ui/estoque_download_step.py').read_text(encoding='utf-8')
 
-    before_download_step = estoque_steps.split('def render_estoque_download_step()', 1)[0]
-    download_step = estoque_steps.split('def render_estoque_download_step()', 1)[1]
-
-    assert 'render_stock_downloads()' not in before_download_step
+    assert 'render_stock_downloads()' not in preview_step
     assert 'render_stock_downloads()' in download_step
-    assert 'render_stock_preview()' in before_download_step
+    assert 'render_stock_preview()' in preview_step
 
 
 def test_mapping_css_uses_existing_theme_variables() -> None:
