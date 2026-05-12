@@ -8,6 +8,7 @@ VALID_GTIN_LENGTHS = {8, 12, 13, 14}
 # Prefixos que não devem ser enviados no CSV final como GTIN/EAN real.
 # Mesmo quando o dígito verificador passa matematicamente, o Bling valida o
 # prefixo GS1 e rejeita códigos não cadastrados/privados/reservados.
+# Mantemos aqui os prefixos já confirmados em erros reais do Bling.
 INVALID_GS1_PREFIXES = {
     '020',
     '040',
@@ -21,9 +22,22 @@ INVALID_GS1_PREFIXES = {
     '207',
     '208',
     '209',
+    '651',
+    '665',
     '687',
     '782',
+    '852',
 }
+
+# Faixas internas/reservadas que não devem ser tratadas como GTIN/EAN público.
+INVALID_GS1_PREFIX_RANGES: tuple[tuple[int, int], ...] = (
+    (20, 29),
+    (40, 49),
+    (200, 299),
+    (960, 969),
+    (980, 984),
+    (990, 999),
+)
 
 
 def only_digits(value: Any) -> str:
@@ -50,15 +64,29 @@ def _has_valid_checksum(digits: str) -> bool:
     return calculated == expected
 
 
+def _prefix3(digits: str) -> str:
+    return digits[:3] if digits and len(digits) >= 3 else ''
+
+
+def _is_invalid_prefix_range(prefix3: str) -> bool:
+    if not prefix3.isdigit():
+        return True
+    value = int(prefix3)
+    return any(start <= value <= end for start, end in INVALID_GS1_PREFIX_RANGES)
+
+
 def _has_valid_gs1_prefix(digits: str) -> bool:
     if not digits or len(digits) < 3:
         return False
 
-    prefix3 = digits[:3]
+    if digits == '0' * len(digits):
+        return False
+
+    prefix3 = _prefix3(digits)
     if prefix3 in INVALID_GS1_PREFIXES:
         return False
 
-    if digits == '0' * len(digits):
+    if _is_invalid_prefix_range(prefix3):
         return False
 
     return True
