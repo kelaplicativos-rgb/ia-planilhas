@@ -136,10 +136,9 @@ def df_signature(df: pd.DataFrame) -> str:
 
 @st.cache_data(show_spinner=False)
 def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str, rules_sig: str) -> bytes:
-    _ = operation
     _ = signature
     _ = rules_sig
-    return to_bling_csv_bytes(df)
+    return to_bling_csv_bytes(df, operation=operation)
 
 
 def _kind_label(kind: str) -> str:
