@@ -4,12 +4,7 @@ import streamlit as st
 
 
 def inject_unified_light_layout(force: bool = False) -> None:
-    """Tema maestro global do sistema.
-
-    O Streamlit executa o script novamente a cada clique. Por isso o CSS precisa
-    ser reinjetado em todo rerun. Não usamos mais trava por session_state aqui,
-    pois ela fazia o app perder o tema depois de qualquer ação.
-    """
+    """Tema maestro global do sistema."""
     _ = force
     st.markdown(
         """
@@ -24,16 +19,11 @@ def inject_unified_light_layout(force: bool = False) -> None:
             --bling-primary: #2563eb;
             --bling-primary-dark: #1d4ed8;
             --bling-accent: #38bdf8;
-            --bling-success-bg: #ecfdf5;
-            --bling-success-text: #166534;
-            --bling-warning: #ca8a04;
-            --bling-warning-bg: #fffaf0;
-            --bling-warning-border: rgba(251, 191, 36, 0.28);
-            --bling-warning-text: #8a5a14;
-            --bling-danger: #dc2626;
+            --bling-warning-bg: #fff7ed;
+            --bling-warning-border: rgba(251, 146, 60, 0.42);
+            --bling-warning-text: #7c2d12;
             --bling-radius-xl: 24px;
             --bling-radius-lg: 18px;
-            --bling-radius-md: 14px;
             --bling-shadow: 0 16px 42px rgba(15, 23, 42, 0.065);
             --bling-shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.045);
             --bling-content-width: 980px;
@@ -88,16 +78,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             box-sizing: border-box !important;
         }
 
-        .main .block-container > div:first-child {
-            margin-top: 0 !important;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            overflow: visible !important;
-        }
-
         .bling-hero,
         .bling-flow-card,
         .bling-inline-card {
@@ -143,8 +123,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             font-size: 0.78rem !important;
             font-weight: 820 !important;
             line-height: 1.1 !important;
-            letter-spacing: 0 !important;
-            text-transform: none !important;
         }
 
         .bling-hero-title,
@@ -159,12 +137,12 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         .bling-hero-subtitle,
-        .bling-flow-card-text {
-            display: block !important;
-            margin: 0 !important;
-            max-width: 620px !important;
+        .bling-flow-card-text,
+        .bling-muted,
+        .bling-upload-caption,
+        div[data-testid="stCaptionContainer"],
+        div[data-testid="stMarkdownContainer"] p {
             color: var(--bling-muted) !important;
-            font-size: 0.98rem !important;
             line-height: 1.45 !important;
         }
 
@@ -190,32 +168,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             line-height: 1.22 !important;
         }
 
-        .bling-step-title {
-            font-size: 1.16rem !important;
-            position: relative !important;
-            padding-left: 0.78rem !important;
-            margin: 1rem 0 0.45rem 0 !important;
-        }
-
-        .bling-step-title::before {
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 0.3rem;
-            width: 4px;
-            height: 1.08rem;
-            border-radius: 999px;
-            background: linear-gradient(180deg, var(--bling-primary), var(--bling-accent));
-        }
-
-        .bling-muted,
-        .bling-upload-caption,
-        div[data-testid="stCaptionContainer"],
-        div[data-testid="stMarkdownContainer"] p {
-            color: var(--bling-muted) !important;
-            line-height: 1.45 !important;
-        }
-
         .bling-selected-flow-badge,
         .bling-home-pill {
             display: inline-flex !important;
@@ -230,17 +182,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             font-size: 0.84rem !important;
             font-weight: 820 !important;
             margin: 0 0 0.8rem 0 !important;
-        }
-
-        .bling-selected-flow-dot,
-        .bling-home-pill::before {
-            content: "";
-            display: inline-block !important;
-            width: 0.48rem !important;
-            height: 0.48rem !important;
-            border-radius: 999px !important;
-            background: var(--bling-accent) !important;
-            box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.14) !important;
         }
 
         .bling-compact-note,
@@ -273,37 +214,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             color: var(--bling-warning-text) !important;
         }
 
-        .bling-pending-next-card,
-        .bling-blocked-next-card {
-            width: 100% !important;
-            box-sizing: border-box !important;
-            margin: 0.45rem 0 0 0 !important;
-            padding: 0.62rem 0.72rem !important;
-            border-radius: 14px !important;
-            background: rgba(255, 250, 240, 0.72) !important;
-            border: 1px solid rgba(251, 191, 36, 0.20) !important;
-            color: #7c6a45 !important;
-            box-shadow: none !important;
-        }
-
-        .bling-pending-next-title,
-        .bling-blocked-next-title {
-            color: #7c6a45 !important;
-            font-size: 0.78rem !important;
-            font-weight: 760 !important;
-            line-height: 1.25 !important;
-            margin: 0 0 0.18rem 0 !important;
-        }
-
-        .bling-pending-next-text,
-        .bling-blocked-next-text {
-            color: #7c6a45 !important;
-            font-size: 0.76rem !important;
-            font-weight: 520 !important;
-            line-height: 1.35 !important;
-            margin: 0 !important;
-        }
-
         .stButton > button,
         .stDownloadButton > button,
         div[data-testid="stFileUploader"] button {
@@ -332,17 +242,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
         .stDownloadButton > button[disabled] {
             cursor: default !important;
             opacity: 0.72 !important;
-            color: #94a3b8 !important;
-            background: rgba(248, 250, 252, 0.82) !important;
-            border: 1px solid rgba(203, 213, 225, 0.72) !important;
-            box-shadow: none !important;
-            transform: none !important;
-        }
-
-        .stButton > button:disabled:hover,
-        .stButton > button[disabled]:hover,
-        .stDownloadButton > button:disabled:hover,
-        .stDownloadButton > button[disabled]:hover {
             color: #94a3b8 !important;
             background: rgba(248, 250, 252, 0.82) !important;
             border: 1px solid rgba(203, 213, 225, 0.72) !important;
@@ -447,22 +346,6 @@ def inject_unified_light_layout(force: bool = False) -> None:
             .bling-home-button-center {
                 width: min(100%, 260px) !important;
                 margin-top: 0.68rem !important;
-            }
-
-            .bling-pending-next-card,
-            .bling-blocked-next-card {
-                padding: 0.56rem 0.64rem !important;
-                border-radius: 12px !important;
-            }
-
-            .bling-pending-next-title,
-            .bling-blocked-next-title {
-                font-size: 0.74rem !important;
-            }
-
-            .bling-pending-next-text,
-            .bling-blocked-next-text {
-                font-size: 0.72rem !important;
             }
 
             div[data-testid="stFileUploader"] section {
