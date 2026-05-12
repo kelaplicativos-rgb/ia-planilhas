@@ -11,7 +11,6 @@ from bling_app_zero.core.user_rules import (
     set_custom_rule_enabled,
     update_custom_rule_by_id,
 )
-from bling_app_zero.ui.rules_ai_resources_tab import render_ai_resources_tab
 from bling_app_zero.ui.rules_resources_tab import render_resources_tab
 
 NOTICE_KEY = 'rules_panel_notice'
@@ -190,8 +189,6 @@ def render_rules_panel() -> None:
     with st.sidebar:
         with st.expander('Recursos do CSV final', expanded=False):
             render_resources_tab()
-        with st.expander('Recursos com IA', expanded=False):
-            render_ai_resources_tab()
         with st.expander('Regras manuais', expanded=False):
             _show_notice()
             _render_rules_list()
