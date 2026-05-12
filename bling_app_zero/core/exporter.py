@@ -9,6 +9,7 @@ import pandas as pd
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.measurements import normalize_measure_columns, normalize_measures_resource_enabled
 from bling_app_zero.core.post_mapping_defaults import apply_post_mapping_defaults
+from bling_app_zero.core.rule_value_validator import is_empty_rule_command
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules, measure_defaults_from_rules
 
@@ -25,18 +26,6 @@ PRODUCT_CODE_COLUMN_TERMS = [
 ]
 
 PRODUCT_NAME_COLUMN_TERMS = ['descricao', 'descrição', 'nome', 'produto', 'titulo', 'título']
-
-EMPTY_RULE_MARKERS = {
-    'vazio',
-    '#vazio',
-    '__vazio__',
-    'em branco',
-    'embranco',
-    'branco',
-    'limpar',
-    'sem informacao',
-    'seminformacao',
-}
 
 DEFAULT_MEASURES_CM = {'altura': '2', 'largura': '11', 'profundidade': '18', 'comprimento': '18'}
 DEFAULT_SUPPLIER = 'Não definido'
@@ -75,7 +64,7 @@ def _resource_enabled(key: str, default: bool = True) -> bool:
 
 
 def _is_empty_rule_marker(value: object) -> bool:
-    return normalize_key(clean_cell(value)) in EMPTY_RULE_MARKERS
+    return is_empty_rule_command(clean_cell(value))
 
 
 def _looks_like_image_column(column: object) -> bool:
@@ -238,32 +227,6 @@ def _ensure_unique_product_codes(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _fill_default_measures(out: pd.DataFrame) -> pd.DataFrame:
-    defaults = measure_defaults_from_rules(_rules())
-    for column in out.columns:
-        kind = _measure_kind(column)
-        if kind:
-            default_value = str(defaults.get(kind, DEFAULT_MEASURES_CM.get(kind, '')) or '')
-            out[column] = out[column].apply(lambda value: default_value if _is_empty_measure(value) else clean_cell(value))
-    return out
-
-
-def _fill_default_supplier(out: pd.DataFrame) -> pd.DataFrame:
-    supplier_default = str(_rules().get('supplier_default') or DEFAULT_SUPPLIER)
-    for column in out.columns:
-        if _looks_like_supplier_column(column):
-            out[column] = out[column].apply(lambda value: supplier_default if _is_invalid_supplier_value(value) else clean_cell(value))
-    return out
-
-
-def _fill_measure_unit(out: pd.DataFrame) -> pd.DataFrame:
-    measure_unit = str(_rules().get('measure_unit_default') or DEFAULT_MEASURE_UNIT)
-    for column in out.columns:
-        if _looks_like_measure_unit_column(column):
-            out[column] = out[column].apply(lambda value: measure_unit if _is_empty_text(value) else clean_cell(value))
-    return out
-
-
 def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
     target_key = normalize_key(target_column)
     for column in out.columns:
@@ -317,17 +280,9 @@ def sanitize_for_bling(df: pd.DataFrame) -> pd.DataFrame:
     if normalize_measures_resource_enabled(False):
         out = normalize_measure_columns(out)
 
-    # Regras manuais habilitadas continuam funcionando, mas respeitando only_when_empty quando marcado.
-    # Quando o valor da regra for VAZIO, EM BRANCO, LIMPAR ou #VAZIO, a coluna é limpa de verdade.
     out = _apply_custom_rules(out)
-
-    # BLINGFIX: padrões finais pós-mapeamento.
-    # Só preenche colunas existentes e vazias. Nunca sobrescreve valor mapeado/manual.
     out = apply_post_mapping_defaults(out, _rules())
-
-    # Garante que o comando VAZIO vença qualquer padrão final aplicado depois.
     out = _apply_custom_rules(out, force_empty_only=True)
-
     out = _ensure_unique_product_codes(out)
     return out.fillna('')
 
