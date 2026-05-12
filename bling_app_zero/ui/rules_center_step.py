@@ -26,8 +26,6 @@ PROTECTION_FIELDS = [
 MEASURE_DEFAULT_FIELDS = [
     ('A', 'Altura', 'height_default', '2'),
     ('L', 'Largura', 'width_default', '11'),
-    ('P', 'Profundidade', 'depth_default', '18'),
-    ('C', 'Comprimento', 'length_default', '18'),
 ]
 
 BASIC_DEFAULT_FIELDS = [
@@ -80,35 +78,25 @@ def _rule_value_warning(target: str, value: Any) -> str:
     target_key = normalize_key(target)
     text = str(value if value is not None else '').strip()
     value_key = normalize_key(text)
-
     if not text or _is_empty_command(text):
         return ''
-
     if any(term in target_key for term in ('altura', 'largura', 'profundidade', 'comprimento')):
         return '' if _is_number(text) else f'O valor "{text}" parece incoerente para {target}. Use número em centímetros ou VAZIO.'
-
     if target_key in {'itens por caixa', 'itens p caixa', 'itens p/ caixa', 'volumes'}:
         return '' if _is_number(text) else f'O valor "{text}" parece incoerente para {target}. Use número ou VAZIO.'
-
     if target_key in {'frete gratis', 'frete grátis', 'clonar dados do pai'}:
         return '' if value_key in {'sim', 'nao', 'não', 's', 'n'} else f'O valor "{text}" parece incoerente para {target}. Use Sim, Não ou VAZIO.'
-
     if target_key in {'situacao', 'situação'}:
         return '' if value_key in {'ativo', 'inativo', 'excluido', 'excluído'} else f'O valor "{text}" parece incoerente para {target}. Use Ativo, Inativo ou VAZIO.'
-
     if target_key in {'condicao do produto', 'condição do produto'}:
         return '' if value_key in {'novo', 'usado', 'recondicionado'} else f'O valor "{text}" parece incoerente para {target}. Use Novo, Usado ou VAZIO.'
-
     if target_key == 'unidade':
         return f'O valor "{text}" parece incoerente para Unidade. Use algo como UN, PC, CX ou VAZIO.' if _is_number(text) or len(text) > 8 else ''
-
     if target_key == 'categoria':
         return f'O valor "{text}" parece incoerente para Categoria. Use nome de categoria ou VAZIO.' if _is_number(text) else ''
-
     if target_key in {'video', 'vídeo'}:
         lower = text.lower()
         return '' if lower.startswith(('http://', 'https://')) else f'O valor "{text}" parece incoerente para Vídeo. Use URL ou VAZIO.'
-
     return ''
 
 
@@ -139,12 +127,7 @@ def _auto_save_rules_if_changed(rules: dict[str, Any], previous_signature: str) 
     st.session_state[RULES_CENTER_AUTOSAVE_SIGNATURE_KEY] = current_signature
     st.session_state[RULES_CENTER_READY_KEY] = True
     _clear_mapping_rule_cache()
-    add_audit_event(
-        'rules_center_autosaved_instant',
-        area='REGRAS',
-        step=str(st.session_state.get(WIZARD_STEP_KEY) or ''),
-        details={'ready_key': RULES_CENTER_READY_KEY, 'ready': True, 'effect': 'mapping_rule_badges_recomputed_immediately', 'responsible_file': 'bling_app_zero/ui/rules_center_step.py'},
-    )
+    add_audit_event('rules_center_autosaved_instant', area='REGRAS', step=str(st.session_state.get(WIZARD_STEP_KEY) or ''), details={'ready_key': RULES_CENTER_READY_KEY, 'ready': True, 'effect': 'mapping_rule_badges_recomputed_immediately', 'responsible_file': 'bling_app_zero/ui/rules_center_step.py'})
     st.rerun()
 
 
@@ -218,7 +201,7 @@ def _render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, An
     st.caption('Use números simples em centímetros. Exemplo: 2, 11 e 18. O sistema não transforma 18 em 0,018.')
     updated = dict(rules)
     measure_enabled = st.toggle('Usar medidas padrão quando a coluna existir e estiver vazia', value=True, key='rules_center_measure_defaults_enabled')
-    cols = st.columns(5)
+    cols = st.columns(4)
     for index, (short_label, target_label, key, fallback) in enumerate(MEASURE_DEFAULT_FIELDS):
         current_value = _clean_number_text(updated.get(key), fallback)
         with cols[index]:
@@ -227,7 +210,18 @@ def _render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, An
         value = _clean_number_text(value, fallback)
         updated[key] = value
         custom_rules = _upsert_system_rule(custom_rules, target_label, value, measure_enabled)
-    with cols[4]:
+    depth_value = _clean_number_text(updated.get('depth_default'), '18')
+    length_value = _clean_number_text(updated.get('length_default'), depth_value or '18')
+    pc_value = depth_value if depth_value == length_value else depth_value or length_value or '18'
+    with cols[2]:
+        pc_value = st.text_input('P/C', value=pc_value, key='rules_center_measure_value_depth_length_default', help='Profundidade e Comprimento')
+        _render_rule_value_warning('Profundidade/Comprimento', pc_value)
+    pc_value = _clean_number_text(pc_value, '18')
+    updated['depth_default'] = pc_value
+    updated['length_default'] = pc_value
+    custom_rules = _upsert_system_rule(custom_rules, 'Profundidade', pc_value, measure_enabled)
+    custom_rules = _upsert_system_rule(custom_rules, 'Comprimento', pc_value, measure_enabled)
+    with cols[3]:
         st.text_input('Unidade', value='Centímetro', disabled=True, key='rules_center_measure_unit_visible')
     updated['measure_unit_name_default'] = 'Centímetro'
     updated['normalize_measures_to_meters'] = False
