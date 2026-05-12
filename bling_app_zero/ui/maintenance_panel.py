@@ -58,7 +58,7 @@ def _render_log_tools() -> None:
 
 def render_maintenance_panel() -> None:
     with st.sidebar:
-        with st.expander('Manutenção do sistema', expanded=False):
+        with st.expander('Manutenção do sistema', expanded=True):
             _render_cache_tools()
             st.divider()
             _render_log_tools()
