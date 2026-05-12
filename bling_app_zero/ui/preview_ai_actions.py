@@ -3,11 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ai_tools.product_ai_batch_runner import generate_product_ai_suggestions_batched
 from bling_app_zero.ai_tools.product_ai_reviewer import (
     ai_ready,
     apply_product_ai_suggestions,
     detect_product_columns,
-    generate_product_ai_suggestions,
     suggestions_to_dataframe,
 )
 from bling_app_zero.core.ai_resource_rules import (
@@ -61,12 +61,6 @@ def _state_key(operation: str, signature: str, suffix: str) -> str:
 
 
 def _set_custom_task(task_key: str, example: str) -> None:
-    """Atualiza a tarefa antes do próximo rerun do Streamlit.
-
-    Não podemos modificar diretamente uma chave usada por widget depois que o
-    widget já foi instanciado na mesma execução. Por isso os botões de exemplo
-    usam callback, que roda antes da reconstrução da tela.
-    """
     st.session_state[task_key] = example
 
 
@@ -199,12 +193,31 @@ def _render_multitask_box(op: str, signature: str) -> str:
     return str(custom_task or '').strip()
 
 
-def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
-    """IA funcional no preview final.
+def _make_preview_ai_progress() -> tuple[object, object, object]:
+    progress_bar = st.progress(0, text='IA aguardando início...')
+    status_box = st.empty()
+    counter_box = st.empty()
+    return progress_bar, status_box, counter_box
 
-    Revisa título, descrição complementar, NCM e também aceita um pedido livre
-    multitarefa para gerar sugestões editáveis antes de aplicar no CSV final.
-    """
+
+def _progress_callback(progress_bar: object, status_box: object, counter_box: object):
+    def _callback(info: dict) -> None:
+        current = int(info.get('current') or 0)
+        total = max(1, int(info.get('total') or 1))
+        percent = int(info.get('percent') or 0)
+        message = str(info.get('message') or '')
+        stage = str(info.get('stage') or 'Processando')
+        progress = max(0.0, min(1.0, float(info.get('progress') or 0.0)))
+        progress_bar.progress(progress, text=f'{stage}: {current}/{total} produto(s) · {percent}%')
+        status_box.caption(message)
+        counter_box.markdown(
+            f'<div style="font-size:.9rem;color:#64748b;font-weight:700;text-align:center;">{current} de {total} produto(s) processado(s)</div>',
+            unsafe_allow_html=True,
+        )
+    return _callback
+
+
+def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         return
 
@@ -267,16 +280,19 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
 
     can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task)
     if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
-        with st.spinner(f'IA revisando {total_rows} produto(s) do preview final...'):
-            suggestions, status = generate_product_ai_suggestions(
-                df_final,
-                actions={'title': use_title, 'description': use_description, 'grammar': use_grammar, 'ncm': use_ncm},
-                max_rows=total_rows,
-                custom_task=custom_task,
-            )
+        progress_bar, status_box, counter_box = _make_preview_ai_progress()
+        suggestions, status = generate_product_ai_suggestions_batched(
+            df_final,
+            actions={'title': use_title, 'description': use_description, 'grammar': use_grammar, 'ncm': use_ncm},
+            max_rows=total_rows,
+            custom_task=custom_task,
+            batch_size=20,
+            progress_callback=_progress_callback(progress_bar, status_box, counter_box),
+        )
         st.session_state[suggestions_key] = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
         st.session_state[status_key] = status
         add_debug(f'IA de catálogo executada em todas as {total_rows} linha(s) do preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
+        st.success(f'IA concluiu a revisão de {total_rows} produto(s).')
         st.rerun()
 
     status = st.session_state.get(status_key)
