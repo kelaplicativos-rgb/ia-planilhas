@@ -10,6 +10,7 @@ from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_stat
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
+from bling_app_zero.ui.system_reboot import render_system_reboot_button
 
 
 def main() -> None:
@@ -24,6 +25,7 @@ def main() -> None:
 
     try:
         render_home()
+        render_system_reboot_button()
         add_audit_event('home_rendered', area='APP')
         render_sidebar_tools()
         audit_session_state_changes(stage='app_end')
