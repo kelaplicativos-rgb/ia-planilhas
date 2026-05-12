@@ -57,6 +57,8 @@ from bling_app_zero.ui.home_wizard_ui import (
 )
 from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_center_ready
 
+RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
+
 
 def _looks_like_loaded_df(value: object) -> bool:
     if value is None or not hasattr(value, 'columns'):
@@ -106,7 +108,7 @@ def _selected_operation() -> str:
             'operation_auto_selected',
             area='WIZARD',
             step=st.session_state.get(WIZARD_STEP_KEY),
-            details={'operation': operation, 'available': available},
+            details={'operation': operation, 'available': available, 'responsible_file': RESPONSIBLE_FILE},
         )
     return operation
 
@@ -130,7 +132,12 @@ def _current_step() -> str:
             'wizard_step_normalized',
             area='WIZARD',
             step=step,
-            details={'original_step': original_step, 'normalized_step': step, 'steps': steps},
+            details={
+                'original_step': original_step,
+                'normalized_step': step,
+                'steps': steps,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
     st.session_state[WIZARD_STEP_KEY] = step
     return step
@@ -147,7 +154,14 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         'wizard_step_changed',
         area='WIZARD',
         step=step,
-        details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation()},
+        details={
+            'from': previous,
+            'to': step,
+            'requested': requested,
+            'reason': reason,
+            'operation': _selected_operation(),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
     try:
         st.query_params['step'] = step
@@ -182,7 +196,7 @@ def _reset_outputs_for_operation_change() -> None:
         'wizard_outputs_reset',
         area='WIZARD',
         step=st.session_state.get(WIZARD_STEP_KEY),
-        details={'removed_keys': removed},
+        details={'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -191,12 +205,134 @@ def _reset_wizard() -> None:
     st.session_state.pop(FLOW_OPERATION_KEY, None)
     st.session_state.pop('operacao_final', None)
     st.session_state.pop('tipo_operacao_final', None)
-    add_audit_event('wizard_reset', area='WIZARD', step=_current_step())
+    add_audit_event('wizard_reset', area='WIZARD', step=_current_step(), details={'responsible_file': RESPONSIBLE_FILE})
     _go_to_step(STEP_MODELO, reason='reset_wizard')
 
 
 def _render_step_header() -> WizardNav:
     return render_step_header(steps=_active_steps(), current=_current_step())
+
+
+def _debug_state_keys(keys: list[str]) -> dict[str, object]:
+    debug: dict[str, object] = {}
+    for key in keys:
+        value = st.session_state.get(key)
+        if value is None:
+            debug[key] = {'present': False, 'loaded_dataframe': False}
+            continue
+        summary: dict[str, object] = {
+            'present': True,
+            'type': type(value).__name__,
+            'loaded_dataframe': _looks_like_loaded_df(value),
+        }
+        if hasattr(value, 'shape'):
+            try:
+                summary['shape'] = tuple(value.shape)
+            except Exception:
+                pass
+        if isinstance(value, (list, tuple, set, dict, str)):
+            try:
+                summary['length'] = len(value)
+            except Exception:
+                pass
+        debug[key] = summary
+    return debug
+
+
+def _blocked_audit_details(current: str, pending_message: str | None) -> dict[str, object]:
+    operation = _selected_operation()
+    details: dict[str, object] = {
+        'message': pending_message,
+        'operation': operation,
+        'step': current,
+        'wizard_step_key': WIZARD_STEP_KEY,
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+
+    if current == STEP_MODELO:
+        required_keys = [
+            HOME_CADASTRO_MODEL_KEY,
+            *GLOBAL_CADASTRO_MODEL_KEYS,
+            HOME_ESTOQUE_MODEL_KEY,
+            *GLOBAL_ESTOQUE_MODEL_KEYS,
+            'home_model_upload_bling',
+        ]
+        details.update(
+            {
+                'blocking_reason': 'missing_bling_model',
+                'blocking_key': 'home_model_upload_bling',
+                'required_any_of': [
+                    HOME_CADASTRO_MODEL_KEY,
+                    *GLOBAL_CADASTRO_MODEL_KEYS,
+                    HOME_ESTOQUE_MODEL_KEY,
+                    *GLOBAL_ESTOQUE_MODEL_KEYS,
+                ],
+                'state_keys': _debug_state_keys(required_keys),
+            }
+        )
+    elif current == STEP_OPERACAO:
+        details.update(
+            {
+                'blocking_reason': 'operation_not_selected_or_model_not_detected',
+                'blocking_key': FLOW_OPERATION_KEY,
+                'state_keys': _debug_state_keys([FLOW_OPERATION_KEY, 'operacao_final', 'tipo_operacao_final']),
+            }
+        )
+    elif current == STEP_ORIGEM:
+        details.update(
+            {
+                'blocking_reason': 'origin_not_selected',
+                'blocking_key': FLOW_ORIGIN_KEY,
+                'state_keys': _debug_state_keys([FLOW_ORIGIN_KEY, 'origem_final', 'origem_dados', 'origem_tipo']),
+            }
+        )
+    elif current == STEP_REGRAS:
+        details.update(
+            {
+                'blocking_reason': 'rules_center_not_confirmed',
+                'blocking_key': 'rules_center_reviewed',
+                'state_keys': _debug_state_keys(['rules_center_reviewed', 'bling_user_rules']),
+            }
+        )
+    elif current == STEP_ENTRADA:
+        details.update(
+            {
+                'blocking_reason': 'input_data_not_ready',
+                'state_keys': _debug_state_keys([
+                    'cadastro_wizard_df_origem',
+                    'cadastro_wizard_df_para_mapear',
+                    'estoque_wizard_upload',
+                    'estoque_wizard_df_origem_site',
+                ]),
+            }
+        )
+    elif current == STEP_MAPEAMENTO:
+        details.update(
+            {
+                'blocking_reason': 'mapping_not_confirmed',
+                'blocking_key': 'cadastro_mapping_confirmed',
+                'state_keys': _debug_state_keys(['cadastro_mapping_confirmed', 'mapping_cadastro', 'mapping_confidence_cadastro']),
+            }
+        )
+    elif current == STEP_GERAR_ESTOQUE:
+        details.update(
+            {
+                'blocking_reason': 'stock_output_not_generated',
+                'blocking_key': 'df_final_estoque',
+                'state_keys': _debug_state_keys(['estoque_multi_outputs', 'df_final_estoque', 'mapping_estoque']),
+            }
+        )
+    elif current == STEP_PREVIEW:
+        details.update(
+            {
+                'blocking_reason': 'preview_source_not_ready',
+                'state_keys': _debug_state_keys(['df_final_cadastro', 'df_final_estoque', 'cadastro_mapping_confirmed']),
+            }
+        )
+    else:
+        details.update({'blocking_reason': 'step_prerequisite_not_ready'})
+
+    return details
 
 
 def _audit_step_blocked(current: str, pending_message: str | None) -> None:
@@ -209,7 +345,7 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
         area='WIZARD',
         step=current,
         status='BLOQUEADO',
-        details={'message': pending_message, 'operation': _selected_operation()},
+        details=_blocked_audit_details(current, pending_message),
     )
 
 
@@ -232,7 +368,7 @@ def _render_nav_buttons(
     with col_back:
         disabled = current_index == 0
         if st.button('Voltar', use_container_width=True, disabled=disabled, key=f'wizard_back_{current}'):
-            add_audit_event('wizard_back_clicked', area='WIZARD', step=current, details={'index': current_index})
+            add_audit_event('wizard_back_clicked', area='WIZARD', step=current, details={'index': current_index, 'responsible_file': RESPONSIBLE_FILE})
             _previous_step()
     with col_next:
         if is_last:
@@ -243,11 +379,11 @@ def _render_nav_buttons(
                     'wizard_next_clicked',
                     area='WIZARD',
                     step=current,
-                    details={'label': next_label, 'index': current_index},
+                    details={'label': next_label, 'index': current_index, 'responsible_file': RESPONSIBLE_FILE},
                 )
                 _next_step()
         else:
-            st.markdown('<div class="bling-next-empty-slot" aria-hidden="true"></div>', unsafe_allow_html=True)
+            st.markdown('<div class="bling-next-blocked-slot" aria-hidden="true"></div>', unsafe_allow_html=True)
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
@@ -272,6 +408,7 @@ def _sync_flow_state(origin: str, operation: str) -> None:
                 'operation': operation,
                 'previous_origin': previous_origin,
                 'previous_operation': previous_operation,
+                'responsible_file': RESPONSIBLE_FILE,
             },
         )
     try:
@@ -315,7 +452,7 @@ def _clear_legacy_origin_widget_state(operation: str) -> None:
             removed.append(text)
             st.session_state.pop(key, None)
     if removed:
-        add_audit_event('legacy_origin_state_cleared', area='WIZARD', step=_current_step(), details={'removed_keys': removed})
+        add_audit_event('legacy_origin_state_cleared', area='WIZARD', step=_current_step(), details={'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _render_model_step() -> None:
@@ -331,6 +468,14 @@ def _render_model_step() -> None:
             'has_model': has_model,
             'has_cadastro_model': _has_cadastro_model(),
             'has_estoque_model': _has_estoque_model(),
+            'model_keys': _debug_state_keys([
+                HOME_CADASTRO_MODEL_KEY,
+                *GLOBAL_CADASTRO_MODEL_KEYS,
+                HOME_ESTOQUE_MODEL_KEY,
+                *GLOBAL_ESTOQUE_MODEL_KEYS,
+                'home_model_upload_bling',
+            ]),
+            'responsible_file': RESPONSIBLE_FILE,
         },
     )
     _render_nav_buttons(
@@ -364,7 +509,7 @@ def _render_operation_step() -> None:
             st.session_state[FLOW_OPERATION_KEY] = selected
             st.session_state['operacao_final'] = selected
             st.session_state['tipo_operacao_final'] = selected
-            add_audit_event('operation_auto_recognized', area='WIZARD', step=STEP_OPERACAO, details={'operation': selected})
+            add_audit_event('operation_auto_recognized', area='WIZARD', step=STEP_OPERACAO, details={'operation': selected, 'responsible_file': RESPONSIBLE_FILE})
         st.success(f'Fluxo reconhecido automaticamente: {labels_by_value[selected]}')
         if selected == 'estoque':
             st.caption('Modelo de saldo/estoque detectado: o próximo fluxo será de atualização de estoque.')
@@ -393,7 +538,7 @@ def _render_operation_step() -> None:
             'operation_changed',
             area='WIZARD',
             step=STEP_OPERACAO,
-            details={'previous': previous, 'selected': selected, 'available': available},
+            details={'previous': previous, 'selected': selected, 'available': available, 'responsible_file': RESPONSIBLE_FILE},
         )
         _reset_outputs_for_operation_change()
     st.session_state[FLOW_OPERATION_KEY] = selected
@@ -426,12 +571,12 @@ def _render_pricing_step() -> None:
             'pricing_toggle_changed',
             area='WIZARD',
             step=STEP_PRECIFICACAO,
-            details={'previous': previous, 'selected': use_pricing},
+            details={'previous': previous, 'selected': use_pricing, 'responsible_file': RESPONSIBLE_FILE},
         )
     if use_pricing:
         config = render_home_pricing_config_form()
         set_home_pricing_config(config)
-        add_audit_event('pricing_config_updated', area='PRECIFICACAO', step=STEP_PRECIFICACAO, details={'config': config})
+        add_audit_event('pricing_config_updated', area='PRECIFICACAO', step=STEP_PRECIFICACAO, details={'config': config, 'responsible_file': RESPONSIBLE_FILE})
     else:
         disable_home_pricing()
     _render_nav_buttons(allow_next=True, next_label='Continuar')
@@ -473,7 +618,7 @@ def _render_origin_step() -> None:
 
 
 def _render_rules_step() -> None:
-    add_audit_event('rules_center_rendered', area='REGRAS', step=STEP_REGRAS, details={'operation': _selected_operation()})
+    add_audit_event('rules_center_rendered', area='REGRAS', step=STEP_REGRAS, details={'operation': _selected_operation(), 'responsible_file': RESPONSIBLE_FILE})
     render_rules_center_step()
     _render_nav_buttons(
         allow_next=rules_center_ready(),
@@ -483,7 +628,7 @@ def _render_rules_step() -> None:
 
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
-    add_audit_event('cadastro_entry_rendered', area='CADASTRO', step=STEP_ENTRADA, details={'origin': origin})
+    add_audit_event('cadastro_entry_rendered', area='CADASTRO', step=STEP_ENTRADA, details={'origin': origin, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
 
@@ -497,7 +642,7 @@ def _render_cadastro_entrada() -> None:
 
 def _render_cadastro_mapeamento() -> None:
     ready = cadastro_mapping_ready()
-    add_audit_event('cadastro_mapping_rendered', area='CADASTRO', step=STEP_MAPEAMENTO, details={'ready': ready})
+    add_audit_event('cadastro_mapping_rendered', area='CADASTRO', step=STEP_MAPEAMENTO, details={'ready': ready, 'responsible_file': RESPONSIBLE_FILE})
     render_cadastro_mapeamento_step()
     _render_nav_buttons(
         allow_next=cadastro_mapping_ready(),
@@ -507,7 +652,7 @@ def _render_cadastro_mapeamento() -> None:
 
 def _render_cadastro_preview() -> None:
     ready = cadastro_mapping_ready()
-    add_audit_event('cadastro_preview_rendered', area='CADASTRO', step=STEP_PREVIEW, details={'ready': ready})
+    add_audit_event('cadastro_preview_rendered', area='CADASTRO', step=STEP_PREVIEW, details={'ready': ready, 'responsible_file': RESPONSIBLE_FILE})
     render_cadastro_preview_step()
     _render_nav_buttons(
         allow_next=cadastro_mapping_ready(),
@@ -516,22 +661,22 @@ def _render_cadastro_preview() -> None:
 
 
 def _render_cadastro_download() -> None:
-    add_audit_event('cadastro_download_step_rendered', area='CADASTRO', step=STEP_DOWNLOAD)
+    add_audit_event('cadastro_download_step_rendered', area='CADASTRO', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
     render_cadastro_download_step()
     col_back, col_reset = st.columns(2)
     with col_back:
         if st.button('Voltar para preview', use_container_width=True, key='wizard_download_back'):
-            add_audit_event('download_back_to_preview_clicked', area='CADASTRO', step=STEP_DOWNLOAD)
+            add_audit_event('download_back_to_preview_clicked', area='CADASTRO', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
             _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
     with col_reset:
         if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset'):
-            add_audit_event('download_reset_clicked', area='CADASTRO', step=STEP_DOWNLOAD)
+            add_audit_event('download_reset_clicked', area='CADASTRO', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
             _reset_wizard()
 
 
 def _render_estoque_entrada() -> None:
     origin = _current_origin_choice()
-    add_audit_event('estoque_entry_rendered', area='ESTOQUE', step=STEP_ENTRADA, details={'origin': origin})
+    add_audit_event('estoque_entry_rendered', area='ESTOQUE', step=STEP_ENTRADA, details={'origin': origin, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
 
@@ -545,7 +690,7 @@ def _render_estoque_entrada() -> None:
 
 def _render_estoque_gerar() -> None:
     ready = estoque_output_ready()
-    add_audit_event('estoque_generate_rendered', area='ESTOQUE', step=STEP_GERAR_ESTOQUE, details={'ready': ready})
+    add_audit_event('estoque_generate_rendered', area='ESTOQUE', step=STEP_GERAR_ESTOQUE, details={'ready': ready, 'responsible_file': RESPONSIBLE_FILE})
     render_estoque_gerar_step()
     _render_nav_buttons(
         allow_next=estoque_output_ready(),
@@ -555,7 +700,7 @@ def _render_estoque_gerar() -> None:
 
 def _render_estoque_preview() -> None:
     ready = estoque_output_ready()
-    add_audit_event('estoque_preview_rendered', area='ESTOQUE', step=STEP_PREVIEW, details={'ready': ready})
+    add_audit_event('estoque_preview_rendered', area='ESTOQUE', step=STEP_PREVIEW, details={'ready': ready, 'responsible_file': RESPONSIBLE_FILE})
     render_estoque_preview_step()
     _render_nav_buttons(
         allow_next=estoque_output_ready(),
@@ -564,16 +709,16 @@ def _render_estoque_preview() -> None:
 
 
 def _render_estoque_download() -> None:
-    add_audit_event('estoque_download_step_rendered', area='ESTOQUE', step=STEP_DOWNLOAD)
+    add_audit_event('estoque_download_step_rendered', area='ESTOQUE', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
     render_estoque_download_step()
     col_back, col_reset = st.columns(2)
     with col_back:
         if st.button('Voltar para preview', use_container_width=True, key='wizard_estoque_download_back'):
-            add_audit_event('download_back_to_preview_clicked', area='ESTOQUE', step=STEP_DOWNLOAD)
+            add_audit_event('download_back_to_preview_clicked', area='ESTOQUE', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
             _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
     with col_reset:
         if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_download_reset'):
-            add_audit_event('download_reset_clicked', area='ESTOQUE', step=STEP_DOWNLOAD)
+            add_audit_event('download_reset_clicked', area='ESTOQUE', step=STEP_DOWNLOAD, details={'responsible_file': RESPONSIBLE_FILE})
             _reset_wizard()
 
 
@@ -585,7 +730,7 @@ def render_home_wizard() -> None:
         'wizard_step_rendered',
         area='WIZARD',
         step=step,
-        details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps},
+        details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'responsible_file': RESPONSIBLE_FILE},
     )
     if step == STEP_MODELO:
         _render_model_step()
@@ -614,7 +759,7 @@ def render_home_wizard() -> None:
     elif operation == 'estoque' and step == STEP_DOWNLOAD:
         _render_estoque_download()
     else:
-        add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation})
+        add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         st.warning('Etapa inválida. Volte para o início do fluxo.')
         _render_nav_buttons(
             allow_next=False,
