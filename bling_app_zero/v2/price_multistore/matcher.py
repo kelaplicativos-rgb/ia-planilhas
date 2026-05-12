@@ -58,14 +58,18 @@ def merge_source_cost(
         base[output_cost_column] = ''
         return base
 
+    lookup_cost_column = f'{output_cost_column}_origem'
     lookup = source[[source_id, source_cost_column]].copy().fillna('')
     lookup[source_id] = lookup[source_id].astype(str).str.strip()
+    lookup = lookup.rename(columns={source_cost_column: lookup_cost_column})
     lookup = lookup.drop_duplicates(subset=[source_id], keep='first')
+
     out = base.copy().fillna('')
     out[model_id] = out[model_id].astype(str).str.strip()
-    out = out.merge(lookup, how='left', left_on=model_id, right_on=source_id, suffixes=('', '_origem'))
-    out[output_cost_column] = out[source_cost_column].fillna('')
-    drop_cols = [column for column in [source_id, source_cost_column] if column in out.columns and column not in base.columns]
+    out = out.merge(lookup, how='left', left_on=model_id, right_on=source_id, suffixes=('', '_match'))
+    out[output_cost_column] = out.get(lookup_cost_column, '').fillna('') if lookup_cost_column in out.columns else ''
+
+    drop_cols = [column for column in [source_id, lookup_cost_column] if column in out.columns and column not in base.columns]
     if drop_cols:
         out = out.drop(columns=drop_cols)
     return out.fillna('')
