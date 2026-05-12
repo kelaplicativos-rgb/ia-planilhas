@@ -4,9 +4,12 @@ from typing import Any
 
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
+from bling_app_zero.ui.home_wizard_constants import STEP_ENTRADA, STEP_REGRAS, WIZARD_STEP_KEY
 
 RULES_CENTER_READY_KEY = 'rules_center_reviewed'
+RULES_CENTER_ADVANCED_KEY = 'rules_center_advanced_to_next_step'
 
 PROTECTION_FIELDS = [
     ('clean_invalid_gtin', 'Limpar GTIN inválido', 'GTIN fora do padrão sai vazio no arquivo final.'),
@@ -136,6 +139,57 @@ def _render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
+def _save_rules_and_mark_ready(rules: dict[str, Any], *, source: str) -> None:
+    set_user_rules(rules)
+    st.session_state[RULES_CENTER_READY_KEY] = True
+    add_audit_event(
+        'rules_center_saved',
+        area='REGRAS',
+        step=str(st.session_state.get(WIZARD_STEP_KEY) or ''),
+        details={
+            'source': source,
+            'ready_key': RULES_CENTER_READY_KEY,
+            'ready': True,
+            'responsible_file': 'bling_app_zero/ui/rules_center_step.py',
+        },
+    )
+
+
+def _confirm_and_continue(rules: dict[str, Any]) -> None:
+    _save_rules_and_mark_ready(rules, source='confirm_and_continue')
+    current_step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+
+    if current_step == STEP_REGRAS:
+        st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
+        st.session_state[RULES_CENTER_ADVANCED_KEY] = True
+        add_audit_event(
+            'rules_center_confirmed_and_advanced',
+            area='REGRAS',
+            step=STEP_REGRAS,
+            details={
+                'from': STEP_REGRAS,
+                'to': STEP_ENTRADA,
+                'wizard_step_key': WIZARD_STEP_KEY,
+                'responsible_file': 'bling_app_zero/ui/rules_center_step.py',
+            },
+        )
+        st.success('Central de regras confirmada. Avançando para Entrada dos dados...')
+    else:
+        add_audit_event(
+            'rules_center_confirmed_without_navigation',
+            area='REGRAS',
+            step=current_step,
+            details={
+                'reason': 'rules_center_not_rendered_as_main_step',
+                'current_step': current_step,
+                'responsible_file': 'bling_app_zero/ui/rules_center_step.py',
+            },
+        )
+        st.success('Central de regras confirmada.')
+
+    st.rerun()
+
+
 def render_rules_center_step() -> None:
     st.markdown('### Regras e Padrões')
     st.caption('Central visível do fluxo. Regras importantes não ficam mais escondidas na sidebar.')
@@ -149,26 +203,37 @@ def render_rules_center_step() -> None:
     col_save, col_reset = st.columns(2)
     with col_save:
         if st.button('Salvar regras desta sessão', use_container_width=True, key='rules_center_save'):
-            set_user_rules(rules)
-            st.session_state[RULES_CENTER_READY_KEY] = True
+            _save_rules_and_mark_ready(rules, source='save_button')
             st.success('Regras e padrões salvos para esta sessão.')
             st.rerun()
     with col_reset:
         if st.button('Restaurar padrões', use_container_width=True, key='rules_center_reset'):
             reset_user_rules()
             st.session_state[RULES_CENTER_READY_KEY] = True
+            add_audit_event(
+                'rules_center_reset_to_defaults',
+                area='REGRAS',
+                step=str(st.session_state.get(WIZARD_STEP_KEY) or ''),
+                details={
+                    'ready_key': RULES_CENTER_READY_KEY,
+                    'ready': True,
+                    'responsible_file': 'bling_app_zero/ui/rules_center_step.py',
+                },
+            )
             st.success('Padrões restaurados.')
             st.rerun()
 
     if st.button('Confirmar e continuar', use_container_width=True, key='rules_center_confirm'):
-        set_user_rules(rules)
-        st.session_state[RULES_CENTER_READY_KEY] = True
-        st.success('Central de regras confirmada.')
-        st.rerun()
+        _confirm_and_continue(rules)
 
 
 def rules_center_ready() -> bool:
     return bool(st.session_state.get(RULES_CENTER_READY_KEY, False))
 
 
-__all__ = ['RULES_CENTER_READY_KEY', 'render_rules_center_step', 'rules_center_ready']
+__all__ = [
+    'RULES_CENTER_ADVANCED_KEY',
+    'RULES_CENTER_READY_KEY',
+    'render_rules_center_step',
+    'rules_center_ready',
+]
