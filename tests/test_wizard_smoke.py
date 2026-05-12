@@ -13,6 +13,7 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home',
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.rules_center_step',
+    'bling_app_zero.ui.rules_panel',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.cadastro_wizard_state',
     'bling_app_zero.ui.cadastro_entry_step',
@@ -117,6 +118,20 @@ def test_rules_center_is_plugged_into_wizard() -> None:
     assert 'render_rules_center_step()' in wizard
     assert 'allow_next=rules_center_ready()' in wizard
     assert 'Regra principal: mapeamento/manual ganha' in rules_step
+
+
+def test_sidebar_rules_panel_is_read_only_summary() -> None:
+    rules_panel = Path('bling_app_zero/ui/rules_panel.py').read_text(encoding='utf-8')
+
+    assert 'Resumo somente leitura' in rules_panel
+    assert 'Abrir Central de Regras' in rules_panel
+    assert 'render_resources_tab' not in rules_panel
+    assert 'add_custom_rule' not in rules_panel
+    assert 'update_custom_rule_by_id' not in rules_panel
+    assert 'remove_custom_rule_by_id' not in rules_panel
+    assert 'set_custom_rule_enabled' not in rules_panel
+    assert 'st.text_input(' not in rules_panel
+    assert 'st.toggle(' not in rules_panel
 
 
 def test_home_wizard_reset_clears_mapping_and_outputs() -> None:
