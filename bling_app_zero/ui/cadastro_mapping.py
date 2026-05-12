@@ -207,25 +207,46 @@ def _visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
         return targets
 
     total_pages = (len(targets) + MAPPING_PAGE_SIZE - 1) // MAPPING_PAGE_SIZE
-    page_options = [f'Bloco {idx + 1} de {total_pages}' for idx in range(total_pages)]
-    selected_page = st.selectbox(
-        'Bloco de campos',
-        page_options,
-        index=0,
-        key=f'{mapping_key}_page',
-        help='Mostra poucos campos por vez para deixar o mapeamento mais leve no celular.',
-    )
+    page_key = f'{mapping_key}_page_index'
     try:
-        page_index = page_options.index(str(selected_page))
-    except ValueError:
+        page_index = int(st.session_state.get(page_key, 0) or 0)
+    except Exception:
         page_index = 0
+    page_index = max(0, min(page_index, total_pages - 1))
+    st.session_state[page_key] = page_index
 
     start = page_index * MAPPING_PAGE_SIZE
     end = min(start + MAPPING_PAGE_SIZE, len(targets))
     st.caption(
-        f'Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
+        f'Bloco {page_index + 1} de {total_pages} · Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
         'Os demais continuam salvos e entram no CSV final.'
     )
+
+    col_prev, col_mid, col_next = st.columns([1, 1, 1])
+    with col_prev:
+        if st.button(
+            '⬅️ Campos anteriores',
+            use_container_width=True,
+            disabled=page_index <= 0,
+            key=f'{mapping_key}_page_prev',
+        ):
+            st.session_state[page_key] = max(0, page_index - 1)
+            st.rerun()
+    with col_mid:
+        st.markdown(
+            f'<div style="text-align:center; padding-top:.65rem; color:#64748b; font-weight:700;">{page_index + 1}/{total_pages}</div>',
+            unsafe_allow_html=True,
+        )
+    with col_next:
+        if st.button(
+            'Próximos campos ➡️',
+            use_container_width=True,
+            disabled=page_index >= total_pages - 1,
+            key=f'{mapping_key}_page_next',
+        ):
+            st.session_state[page_key] = min(total_pages - 1, page_index + 1)
+            st.rerun()
+
     return targets[start:end]
 
 
