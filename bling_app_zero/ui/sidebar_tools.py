@@ -22,7 +22,7 @@ SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Ferramentas de conferência', render_diagnostics_panel),
     ('Audit trail operacional', render_audit_panel),
     ('Manutenção do sistema', render_maintenance_panel),
-    ('Regras e recursos do CSV final', render_rules_panel),
+    ('Regras e padrões', render_rules_panel),
 )
 
 
@@ -62,13 +62,13 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
 
 def _ensure_sidebar_defaults() -> None:
     if SIDEBAR_TOOLS_OPEN_KEY not in st.session_state:
-        st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = True
+        st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = False
     if SIDEBAR_TOOL_KEY not in st.session_state:
-        st.session_state[SIDEBAR_TOOL_KEY] = 'Todas as ferramentas abertas'
+        st.session_state[SIDEBAR_TOOL_KEY] = 'Ferramentas carregadas e recolhidas'
 
 
 def render_sidebar_tools() -> None:
-    """Renderiza a sidebar técnica com todas as ferramentas abertas por padrão."""
+    """Renderiza a sidebar técnica com todas as ferramentas carregadas e recolhidas por padrão."""
     inject_sidebar_tools_theme()
     _ensure_sidebar_defaults()
     _render_sidebar_header()
@@ -77,7 +77,7 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'all_tools_open',
+            'mode': 'all_tools_loaded_collapsed',
             'tools': [name for name, _ in SIDEBAR_TOOLS],
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
