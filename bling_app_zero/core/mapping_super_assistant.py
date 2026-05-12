@@ -46,7 +46,14 @@ RISKY_TARGET_TERMS = [
     'altura', 'largura', 'profundidade', 'peso', 'comprimento', 'unidade', 'origem',
     'cest', 'ipi', 'classe enquadramento', 'cross docking', 'clonar dados', 'frete gratis',
     'frete grátis', 'garantia', 'condicao', 'condição', 'situacao', 'situação', 'tipo item',
-    'fornecedor', 'nome fornecedor', 'nome do fornecedor',
+    'fornecedor', 'nome fornecedor', 'nome do fornecedor', 'codigo fornecedor',
+    'código fornecedor', 'cod fornecedor', 'cód fornecedor', 'cod no fornecedor',
+    'cód no fornecedor', 'codigo no fornecedor', 'código no fornecedor',
+]
+
+NEVER_AUTO_MAP_TARGET_TERMS = [
+    'codigo fornecedor', 'código fornecedor', 'cod fornecedor', 'cód fornecedor',
+    'cod no fornecedor', 'cód no fornecedor', 'codigo no fornecedor', 'código no fornecedor',
 ]
 
 PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
@@ -118,9 +125,17 @@ def _target_kind(target: str) -> str:
     return 'custom'
 
 
+def _has_any_term(text: str, terms: list[str]) -> bool:
+    key = normalize_key(text)
+    return any(normalize_key(term) in key for term in terms)
+
+
+def _is_never_auto_map_target(target: str) -> bool:
+    return _has_any_term(target, NEVER_AUTO_MAP_TARGET_TERMS)
+
+
 def _is_risky_target(target: str) -> bool:
-    key = normalize_key(target)
-    return any(term in key for term in RISKY_TARGET_TERMS)
+    return _has_any_term(target, RISKY_TARGET_TERMS)
 
 
 def _is_price_like_source(source: str, profile: dict[str, float | str]) -> bool:
@@ -195,6 +210,9 @@ def _content_score(target_kind: str, source: str, profile: dict[str, float | str
 
 
 def _best_candidate(df: pd.DataFrame, target: str, source_columns: list[str], used: set[str]) -> Candidate:
+    if _is_never_auto_map_target(target):
+        return Candidate('', 0)
+
     target_kind = _target_kind(target)
 
     if target_kind == 'fornecedor':
@@ -225,7 +243,7 @@ def _force_exact_matches_first(mapping: dict[str, str], source_columns: list[str
     out = dict(mapping or {})
     used = {value for value in out.values() if value}
     for target in target_columns:
-        if _target_kind(target) == 'fornecedor':
+        if _target_kind(target) == 'fornecedor' or _is_never_auto_map_target(target):
             if out.get(target):
                 used.discard(out.get(target, ''))
             out[target] = ''
@@ -256,7 +274,9 @@ def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_
     used = {source for source in mapping.values() if source}
 
     for target in target_columns:
-        if _target_kind(target) == 'fornecedor':
+        if _target_kind(target) == 'fornecedor' or _is_never_auto_map_target(target):
+            if mapping.get(target):
+                used.discard(mapping.get(target, ''))
             mapping[target] = ''
             continue
         current = mapping.get(target, '')
