@@ -27,7 +27,7 @@ def _duplicated_source_columns(mapping: dict[str, str]) -> list[str]:
 def _render_deposito_field(target: str, mapping_key: str, target_index: int, deposito: str, sidebar_rule_targets: set[str]) -> None:
     widget_key = target_widget_key(mapping_key, target_index)
     with st.container(border=True):
-        render_mapping_title(with_sidebar_rule_badge('🟢 ' + target, sidebar_rule_targets))
+        render_mapping_title(with_sidebar_rule_badge('🟣 ' + target + ' · preenchido por regra/recurso', sidebar_rule_targets))
         st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_dep', label_visibility='collapsed')
 
 
@@ -60,7 +60,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state.pop(order_key, None)
 
     st.markdown('##### Conferir campos do estoque')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado · 🟣 regra/recurso do sidebar')
+    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 coluna/valor confirmado · 🟣 preenchido por regra/recurso')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
@@ -83,7 +83,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         if 'deposito' in target_key:
             _render_deposito_field(target, mapping_key, target_index, deposito, sidebar_rule_targets)
             edited_mapping[target] = ''
-            edited_confidence[target] = {'level': 'verde', 'emoji': '🟢', 'label': 'pronto', 'score': 100, 'order': 2}
+            edited_confidence[target] = {'level': 'lilas', 'emoji': '🟣', 'label': 'preenchido por regra/recurso', 'score': 100, 'order': 2}
             continue
 
         selected, info_after = render_mapping_select(
