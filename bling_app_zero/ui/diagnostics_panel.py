@@ -75,7 +75,7 @@ def render_diagnostics_content() -> None:
 
 def render_diagnostics_panel() -> None:
     with st.sidebar:
-        with st.expander('Ferramentas de conferência', expanded=True):
+        with st.expander('Ferramentas de conferência', expanded=False):
             render_diagnostics_content()
 
 
