@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.measurements import NORMALIZE_MEASURES_RESOURCE_KEY
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
+from bling_app_zero.ui.rules_post_mapping_defaults_tab import render_post_mapping_defaults_tab
 from bling_app_zero.ui.rules_resources_state import DEFAULT_VALUES, should_save, sync_system_default_rules, text_value
 
 
@@ -100,6 +101,7 @@ def render_resources_tab() -> None:
 
     _render_resource_flags(updated)
     _render_internal_defaults(updated)
+    render_post_mapping_defaults_tab()
 
     updated['invalid_gtin_mode'] = 'limpar'
     updated['image_separator'] = '|'
