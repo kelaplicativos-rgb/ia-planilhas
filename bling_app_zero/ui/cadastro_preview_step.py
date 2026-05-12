@@ -5,6 +5,7 @@ import streamlit as st
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
     render_row_count_blocker,
+    render_supplier_price_master_notice,
     valid_df,
 )
 from bling_app_zero.ui.home_shared import preview_df, show_mapping
@@ -21,6 +22,8 @@ def render_cadastro_preview_step() -> None:
     if not valid_df(df_final):
         st.warning('O preview ainda não foi gerado. Volte para o mapeamento e confirme os campos.')
         return
+
+    render_supplier_price_master_notice(df_final)
 
     if render_row_count_blocker(df_final):
         return
