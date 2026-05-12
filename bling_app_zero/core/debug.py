@@ -37,30 +37,11 @@ def _logs_to_text(logs: list[dict[str, Any]]) -> str:
     )
 
 
-def _clear_app_cache() -> None:
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-    try:
-        st.cache_resource.clear()
-    except Exception:
-        pass
-    add_debug('Cache do Streamlit limpo.', origin='DEBUG', level='INFO')
-
-
 def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
-            st.session_state[LOG_SESSION_KEY] = []
-            st.success('Logs limpos.')
-            st.rerun()
-    with col_b:
-        if st.button('Limpar cache', use_container_width=True, key=f'{prefix}_clear_cache'):
-            _clear_app_cache()
-            st.success('Cache limpo.')
-            st.rerun()
+    if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
+        st.session_state[LOG_SESSION_KEY] = []
+        st.success('Logs limpos.')
+        st.rerun()
 
     if logs:
         text = _logs_to_text(logs)
