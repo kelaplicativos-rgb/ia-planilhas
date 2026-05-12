@@ -436,17 +436,11 @@ def _render_operation_step() -> None:
 
 
 def _render_pricing_step() -> None:
-    operation = _selected_operation()
     _render_section_card(
         'Etapa 3',
         'Precificação opcional',
-        'Ative somente se quiser calcular preço de venda antes do mapeamento. Se não precisar, pule esta etapa.',
+        'Ative somente se quiser calcular preço de venda antes do mapeamento. Esta etapa vale para cadastro e estoque. Se não precisar, pule esta etapa.',
     )
-    if operation == 'estoque':
-        disable_home_pricing()
-        st.info('Precificação não é usada no fluxo de estoque. Continue para escolher a origem.')
-        _render_nav_buttons(allow_next=True, next_label='Continuar')
-        return
     use_pricing = st.toggle(
         'Usar calculadora de preço',
         value=bool(st.session_state.get('home_precificacao_inicial', False)),
