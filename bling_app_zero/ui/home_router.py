@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -41,26 +43,67 @@ def _current_flow() -> str:
     return ''
 
 
+def _open_cadastro_flow() -> None:
+    st.session_state['home_slim_flow_operation'] = 'cadastro'
+    _set_flow(FLOW_WIZARD)
+
+
+def _open_estoque_flow() -> None:
+    st.session_state['home_slim_flow_operation'] = 'estoque'
+    _set_flow(FLOW_WIZARD)
+
+
+def _open_multistore_price_flow() -> None:
+    _set_flow(FLOW_PRICE_MULTISTORE)
+
+
+def _render_home_operation_card(
+    *,
+    icon: str,
+    title: str,
+    description: str,
+    button_label: str,
+    button_key: str,
+    on_click: Callable[[], None],
+) -> None:
+    """Renderiza cada operação dentro do próprio card.
+
+    BLINGFIX: no mobile, título, texto e botão soltos deixam a Home confusa.
+    Cada opção precisa ficar visualmente fechada em um único bloco.
+    """
+    with st.container(border=True):
+        st.markdown(f'#### {icon} {title}')
+        st.caption(description)
+        if st.button(button_label, use_container_width=True, key=button_key):
+            on_click()
+
+
 def _render_operation_choice() -> None:
     st.markdown('### O que você quer fazer?')
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown('**🧾 Cadastrar produtos**')
-        st.caption('Gerar CSV de cadastro de produtos para importar no Bling.')
-        if st.button('Abrir cadastro', use_container_width=True, key='home_open_cadastro_flow'):
-            st.session_state['home_slim_flow_operation'] = 'cadastro'
-            _set_flow(FLOW_WIZARD)
-    with c2:
-        st.markdown('**📦 Atualizar estoque**')
-        st.caption('Gerar CSV de atualização de saldo e depósito para o Bling.')
-        if st.button('Abrir estoque', use_container_width=True, key='home_open_estoque_flow'):
-            st.session_state['home_slim_flow_operation'] = 'estoque'
-            _set_flow(FLOW_WIZARD)
-    with c3:
-        st.markdown('**🏬 Atualizar Preços Multiloja**')
-        st.caption('Atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.')
-        if st.button('Atualizar preços', use_container_width=True, key='home_open_multistore_price_flow'):
-            _set_flow(FLOW_PRICE_MULTISTORE)
+    _render_home_operation_card(
+        icon='🧾',
+        title='Cadastrar produtos',
+        description='Gerar CSV de cadastro de produtos para importar no Bling.',
+        button_label='Abrir cadastro',
+        button_key='home_open_cadastro_flow',
+        on_click=_open_cadastro_flow,
+    )
+    _render_home_operation_card(
+        icon='📦',
+        title='Atualizar estoque',
+        description='Gerar CSV de atualização de saldo e depósito para o Bling.',
+        button_label='Abrir estoque',
+        button_key='home_open_estoque_flow',
+        on_click=_open_estoque_flow,
+    )
+    _render_home_operation_card(
+        icon='🏬',
+        title='Atualizar Preços Multiloja',
+        description='Atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.',
+        button_label='Atualizar preços',
+        button_key='home_open_multistore_price_flow',
+        on_click=_open_multistore_price_flow,
+    )
 
 
 def _render_back_to_operations() -> None:
