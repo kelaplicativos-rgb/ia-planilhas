@@ -10,6 +10,7 @@ from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
 WATCHED_RESOURCES = [
     'clean_invalid_gtin',
     'normalize_image_separator',
+    'normalize_measures_to_meters',
     'auto_product_code',
     'unique_product_code',
 ]
@@ -136,17 +137,19 @@ def _save_if_changed(original: dict[str, Any], updated: dict[str, Any]) -> None:
         st.rerun()
 
 
-def _render_measure_normalizer_toggle() -> None:
+def _render_measure_normalizer_toggle(updated: dict[str, Any]) -> None:
+    current = bool(updated.get('normalize_measures_to_meters', True))
     if NORMALIZE_MEASURES_RESOURCE_KEY not in st.session_state:
-        st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = True
+        st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = current
 
-    current = bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, True))
-    st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = _resource_toggle(
+    selected = _resource_toggle(
         'Normalizar medidas para metro',
         current,
         'resource_normalize_measures_toggle',
         'Quando ligado, somente colunas de dimensão como Altura, Largura, Comprimento e Profundidade convertem 18 para 0,018 e 676 para 0,676 no CSV final.',
     )
+    updated['normalize_measures_to_meters'] = bool(selected)
+    st.session_state[NORMALIZE_MEASURES_RESOURCE_KEY] = bool(selected)
 
 
 def _render_internal_defaults(updated: dict[str, Any]) -> None:
@@ -205,7 +208,7 @@ def render_resources_tab() -> None:
         bool(updated.get('normalize_image_separator', True)),
         'resource_normalize_images',
     )
-    _render_measure_normalizer_toggle()
+    _render_measure_normalizer_toggle(updated)
     updated['auto_product_code'] = _resource_toggle(
         'Gerar código automático',
         bool(updated.get('auto_product_code', True)),
