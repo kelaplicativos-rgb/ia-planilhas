@@ -155,7 +155,7 @@ def build_manual_mapping_result(
         edited_mapping[target] = selected
 
     st.session_state[mapping_key] = edited_mapping
-    df_preview_manual = sanitize_for_bling(apply_mapping(df_source, model, edited_mapping))
+    df_preview_manual = sanitize_for_bling(apply_mapping(df_source, model, edited_mapping), operation='cadastro')
 
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
