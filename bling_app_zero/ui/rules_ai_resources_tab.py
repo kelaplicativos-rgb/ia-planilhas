@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.ai_resource_rules import (
@@ -16,6 +17,8 @@ from bling_app_zero.core.ai_resource_rules import (
     get_ai_resources,
     set_ai_resources,
 )
+from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.ncm.ncm_service import apply_ncm_suggestions
 
 WATCHED_AI_RESOURCES = [
     AI_RESOURCE_SUGGEST_NCM,
@@ -34,6 +37,8 @@ DESCRIPTION_LABELS = {
     'media': 'Média',
     'grande': 'Grande',
 }
+
+DF_FINAL_CADASTRO_KEY = 'df_final_cadastro'
 
 
 def _bool_label(value: bool) -> str:
@@ -81,13 +86,68 @@ def _text_area(label: str, value: str, key: str, help_text: str | None = None) -
     )
 
 
+def _render_ncm_action(enabled: bool) -> None:
+    if not enabled:
+        st.caption('Ligue o recurso de NCM para liberar o motor de sugestões no preview final.')
+        return
+
+    st.markdown('##### Motor NCM inteligente')
+    st.caption('Sugere NCM para produtos sem NCM. Alta confiança pode preencher a coluna NCM; demais sugestões ficam para revisão.')
+    df_final = st.session_state.get(DF_FINAL_CADASTRO_KEY)
+    if not isinstance(df_final, pd.DataFrame) or df_final.empty:
+        st.caption('Gere primeiro o preview final de cadastro para aplicar sugestões de NCM.')
+        return
+
+    col_apply, col_review = st.columns(2)
+    with col_apply:
+        apply_high = st.toggle(
+            'Aplicar alta confiança no NCM',
+            value=True,
+            key='ai_ncm_apply_high_confidence',
+            help='Quando ligado, apenas sugestões com alta confiança entram direto na coluna NCM. As outras ficam em colunas auxiliares.',
+        )
+    with col_review:
+        limit = st.number_input(
+            'Limite por rodada',
+            min_value=10,
+            max_value=1000,
+            value=300,
+            step=10,
+            key='ai_ncm_limit_per_run',
+        )
+
+    if st.button('Gerar sugestões de NCM para ausentes', use_container_width=True, key='ai_ncm_apply_to_final'):
+        with st.spinner('Analisando produtos sem NCM...'):
+            updated_df = apply_ncm_suggestions(
+                df_final,
+                use_ai=True,
+                apply_high_confidence=apply_high,
+                limit=int(limit),
+            )
+        st.session_state[DF_FINAL_CADASTRO_KEY] = updated_df
+        add_audit_event(
+            'ai_ncm_suggestions_applied',
+            area='NCM',
+            details={
+                'rows': len(updated_df),
+                'columns': list(updated_df.columns),
+                'apply_high_confidence': apply_high,
+                'limit': int(limit),
+            },
+        )
+        st.success('Sugestões de NCM geradas. Confira o preview final antes de baixar o CSV.')
+        st.rerun()
+
+
 def _render_catalog_ai_block(updated: dict) -> dict:
     updated[AI_RESOURCE_SUGGEST_NCM] = _ai_toggle(
         'Sugerir NCM com IA para revisão',
         bool(updated.get(AI_RESOURCE_SUGGEST_NCM, False)),
         'resource_ai_suggest_ncm',
-        'Quando ligado, libera apoio da IA para sugerir NCM por grupos de produtos. Não aplica automaticamente: revise antes de usar.',
+        'Quando ligado, libera apoio da IA para sugerir NCM por grupos de produtos. Alta confiança pode preencher, mas revise antes de importar.',
     )
+    _render_ncm_action(bool(updated.get(AI_RESOURCE_SUGGEST_NCM, False)))
+
     updated[AI_RESOURCE_IMPROVE_CATALOG_TEXT] = _ai_toggle(
         'Melhorar títulos e descrições com IA',
         bool(updated.get(AI_RESOURCE_IMPROVE_CATALOG_TEXT, False)),
