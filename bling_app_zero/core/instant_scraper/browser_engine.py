@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -49,6 +50,22 @@ def _safe_error(exc: BaseException | str) -> str:
     if any(term in text.lower() for term in blocked_terms):
         return "Erro protegido: a mensagem técnica continha dado sensível e foi ocultada."
     return text[:500] or "Erro desconhecido no navegador autenticado."
+
+
+def _chromium_executable() -> str | None:
+    for command in ("chromium-browser", "chromium", "google-chrome", "google-chrome-stable"):
+        path = shutil.which(command)
+        if path:
+            return path
+    return None
+
+
+def _launch_chromium(playwright):
+    executable_path = _chromium_executable()
+    launch_args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+    if executable_path:
+        return playwright.chromium.launch(headless=True, executable_path=executable_path, args=launch_args)
+    return playwright.chromium.launch(headless=True, args=launch_args)
 
 
 def _extract_rows_from_html(html: str, url: str) -> list[dict[str, Any]]:
@@ -147,9 +164,11 @@ def run_browser_scraper(config: BrowserScraperConfig) -> BrowserScraperResult:
     errors: list[str] = []
     warnings: list[str] = []
     visited: set[str] = set()
+    browser = None
+    context = None
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = _launch_chromium(p)
             context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36", locale="pt-BR", viewport={"width": 1366, "height": 900})
             page = context.new_page()
             if config.allow_entry_step:
@@ -171,9 +190,18 @@ def run_browser_scraper(config: BrowserScraperConfig) -> BrowserScraperResult:
                 if len(rows) < config.max_products and _click_next_if_possible(page):
                     rows.extend(_extract_rows_from_html(page.content(), page.url))
                 rows = rows[: config.max_products]
-            context.close()
-            browser.close()
     except Exception as exc:
         errors.append(_safe_error(exc))
+    finally:
+        try:
+            if context is not None:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if browser is not None:
+                browser.close()
+        except Exception:
+            pass
     df = align_rows_to_requested_columns(rows, config.model_columns, operation=config.operation)
     return BrowserScraperResult(ok=not df.empty and not errors, df=df, errors=errors, warnings=warnings, pages_visited=len(visited))
