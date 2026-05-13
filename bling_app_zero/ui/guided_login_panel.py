@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
@@ -112,6 +113,43 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
     )
 
 
+def _render_internal_browser(login_url: str) -> None:
+    if not _is_valid_http_url(login_url):
+        return
+
+    open_browser = st.checkbox(
+        'Abrir login dentro do sistema',
+        value=False,
+        key='guided_login_open_internal_browser',
+        help='Abre uma janela interna do fornecedor para login/CAPTCHA quando o site permitir.',
+    )
+    if not open_browser:
+        return
+
+    safe_url = login_url.strip()
+    encoded_url = quote(safe_url, safe=':/?&=%#.-_')
+    components.html(
+        f'''
+        <div style="border:1px solid #d8dee9;border-radius:14px;overflow:hidden;background:#fff;margin:8px 0 10px 0;">
+          <div style="padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e5e7eb;font-family:Arial,sans-serif;font-size:14px;color:#334155;">
+            Navegador interno do fornecedor
+          </div>
+          <iframe
+            src="{encoded_url}"
+            style="width:100%;height:560px;border:0;background:#fff;"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
+        </div>
+        <div style="font-family:Arial,sans-serif;font-size:13px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-left:5px solid #fb923c;border-radius:10px;padding:10px 12px;">
+          Se a janela ficar em branco ou o fornecedor bloquear o carregamento interno, é proteção do próprio site contra iframe. Nesse caso, a captura autenticada ainda pode rodar pelo motor do sistema, mas o CAPTCHA visual precisará de outro modo de checkpoint.
+        </div>
+        ''',
+        height=660,
+        scrolling=True,
+    )
+
+
 def _render_prepared_config() -> None:
     config = st.session_state.get(CONFIG_KEY)
     if not isinstance(config, dict):
@@ -149,7 +187,9 @@ def render_guided_login_panel() -> None:
         key='guided_login_password_ephemeral',
     )
 
-    st.caption('Se aparecer CAPTCHA ou código, resolva manualmente no site. O sistema não tenta burlar proteção.')
+    _render_internal_browser(login_url)
+
+    st.caption('Se aparecer CAPTCHA ou código, resolva manualmente dentro da janela interna quando o fornecedor permitir. O sistema não tenta burlar proteção.')
 
     if st.button('🔐 Preparar login', use_container_width=True, key='prepare_guided_login_capture'):
         _prepare_config(login_url=login_url, username=username, password=password, operation=operation)
