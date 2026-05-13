@@ -33,7 +33,7 @@ def _is_valid_http_url(value: str) -> bool:
     return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)
 
 
-def _safe_config(login_url: str, username: str, search_terms: str, product_or_category_urls: str, notes: str, capture_mode: str) -> dict[str, object]:
+def _safe_config(login_url: str, username: str, search_terms: str, notes: str, capture_mode: str) -> dict[str, object]:
     return {
         'login_url': login_url.strip(),
         'domain': urlparse(login_url.strip()).netloc if login_url.strip() else '',
@@ -41,17 +41,16 @@ def _safe_config(login_url: str, username: str, search_terms: str, product_or_ca
         'username_preview': username.strip()[:3] + '***' if username.strip() else '',
         'capture_mode': capture_mode,
         'search_terms': _normalize_multiline_values(search_terms),
-        'product_or_category_urls': _normalize_multiline_values(product_or_category_urls),
         'notes': notes.strip(),
         'prepared_at': datetime.now().isoformat(timespec='seconds'),
         'responsible_file': RESPONSIBLE_FILE,
         'password_saved': False,
+        'internal_urls_required': False,
     }
 
 
 def _build_guided_login_prompt(config: dict[str, object]) -> str:
     terms = config.get('search_terms') or []
-    urls = config.get('product_or_category_urls') or []
     return f'''BLINGCRAWLER LOGIN GUIADO
 
 Acesse o repositório e use como fonte principal:
@@ -78,8 +77,8 @@ NÃO FOI SALVA E NÃO DEVE SER EXIBIDA EM LOGS.
 Termos de busca informados:
 {terms}
 
-URLs de produto/categoria informadas:
-{urls}
+URLs internas de produto/categoria:
+Não solicitadas neste fluxo. O motor autenticado deve descobrir a área de produtos após o login guiado ou seguir as instruções textuais do usuário.
 
 Observações do usuário:
 {config.get('notes') or 'Sem observações adicionais.'}
@@ -90,7 +89,9 @@ Regras obrigatórias:
 - Não salvar senha no session_state persistente, logs, auditoria, arquivos ou prompt.
 - Usar campos type=password na UI.
 - Para sites com JavaScript/login, preferir Playwright quando disponível.
-- O login deve ser guiado: o usuário informa URL, credenciais e instruções; o sistema prepara a captura.
+- O login deve ser guiado: o usuário informa a URL de login, credenciais e instruções; o sistema prepara a captura.
+- Não exigir que o usuário cole URL interna de produto/categoria logo abaixo do login guiado.
+- Após autenticar, o motor deve descobrir a navegação de produtos/categorias quando possível.
 - Se a autenticação exigir captcha, 2FA ou bloqueio humano, parar e orientar o usuário, sem tentar burlar proteção.
 - Para cadastro de produtos, capturar dados completos do produto quando permitido.
 - Para atualização de estoque, buscar somente as colunas solicitadas pela planilha modelo.
@@ -103,7 +104,7 @@ Retorne diagnóstico e implementação no padrão arquivo/caminho + código comp
 '''
 
 
-def _prepare_config(login_url: str, username: str, password: str, search_terms: str, product_or_category_urls: str, notes: str, capture_mode: str) -> None:
+def _prepare_config(login_url: str, username: str, password: str, search_terms: str, notes: str, capture_mode: str) -> None:
     if not _is_valid_http_url(login_url):
         st.warning('Informe uma URL de login válida, começando com http:// ou https://.')
         return
@@ -115,7 +116,6 @@ def _prepare_config(login_url: str, username: str, password: str, search_terms: 
         login_url=login_url,
         username=username,
         search_terms=search_terms,
-        product_or_category_urls=product_or_category_urls,
         notes=notes,
         capture_mode=capture_mode,
     )
@@ -136,7 +136,7 @@ def _prepare_config(login_url: str, username: str, password: str, search_terms: 
             'domain': config.get('domain'),
             'capture_mode': capture_mode,
             'has_terms': bool(config.get('search_terms')),
-            'has_urls': bool(config.get('product_or_category_urls')),
+            'has_internal_urls': False,
             'password_saved': False,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -201,21 +201,15 @@ def render_guided_login_panel() -> None:
         ],
         key='guided_login_capture_mode',
     )
-    product_or_category_urls = st.text_area(
-        'URLs de produto/categoria após login, uma por linha',
-        placeholder='Cole aqui links internos do site, se tiver.',
-        height=90,
-        key='guided_login_product_or_category_urls',
-    )
     search_terms = st.text_area(
         'Termos para buscar produtos, um por linha',
-        placeholder='Ex.: controle gamer\ncabo usb\nfone bluetooth',
+        placeholder='Opcional. Ex.: controle gamer\ncabo usb\nfone bluetooth',
         height=90,
         key='guided_login_search_terms',
     )
     notes = st.text_area(
         'Instruções do login ou da busca',
-        placeholder='Ex.: depois de logar, clicar em Produtos > Catálogo; buscar por SKU; capturar preço e estoque.',
+        placeholder='Ex.: depois de logar, entrar em Produtos > Catálogo; buscar por SKU; capturar preço e estoque.',
         height=90,
         key='guided_login_notes',
     )
@@ -226,7 +220,6 @@ def render_guided_login_panel() -> None:
             username=username,
             password=password,
             search_terms=search_terms,
-            product_or_category_urls=product_or_category_urls,
             notes=notes,
             capture_mode=capture_mode,
         )
