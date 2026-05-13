@@ -46,16 +46,24 @@ def is_site_origin() -> bool:
     return str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '').strip().lower() == 'site'
 
 
+def _supplier_origin_label() -> str:
+    return 'captura/origem do fornecedor' if is_site_origin() else 'planilha/origem do fornecedor'
+
+
+def _supplier_origin_short_label() -> str:
+    return 'origem do fornecedor' if is_site_origin() else 'planilha do fornecedor'
+
+
 def supplier_price_master_filter_active() -> bool:
     return bool(st.session_state.get(CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY, False))
 
 
 def activate_supplier_price_master_filter(df_origem: pd.DataFrame | None) -> None:
-    """Ativa a planilha do fornecedor como filtro mestre do resultado final.
+    """Ativa a origem do fornecedor como filtro mestre do resultado final.
 
     Regra de negócio:
-    - Em atualização de preços por planilha, a planilha fornecedora é a base final.
-    - Produto que não está na planilha fornecedora não deve aparecer no CSV final.
+    - A origem do fornecedor é a base final de produtos.
+    - Produto que não está na origem do fornecedor não deve aparecer no CSV final.
     - O modelo do Bling serve como estrutura de colunas, nunca como fonte para criar linhas extras.
     """
     if not valid_df(df_origem):
@@ -77,12 +85,7 @@ def supplier_price_master_expected_rows() -> int:
 
 
 def enforce_supplier_price_master_filter(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
-    """Impede que a base/modelo do Bling gere linhas fora da planilha fornecedora.
-
-    Se algum módulo futuro tentar montar o CSV com mais linhas do que a origem fornecedora,
-    as linhas excedentes são descartadas. Quando houver menos linhas do que a origem, o bloqueio
-    continua sendo feito por render_row_count_blocker para evitar perda silenciosa.
-    """
+    """Impede que a base/modelo do Bling gere linhas fora da origem fornecedora."""
     if not supplier_price_master_filter_active() or not isinstance(df_final, pd.DataFrame):
         return df_final
 
@@ -107,14 +110,16 @@ def render_supplier_price_master_notice(df_final: pd.DataFrame | None = None) ->
     expected = supplier_price_master_expected_rows()
     current = len(df_final) if isinstance(df_final, pd.DataFrame) else expected
     removed = int(st.session_state.get('cadastro_supplier_price_master_excess_rows_removed') or 0)
+    source_label = _supplier_origin_label()
+    short_label = _supplier_origin_short_label()
 
     st.warning(
-        f'{CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME}: a planilha do fornecedor está sendo usada como filtro mestre. '
-        'O CSV final terá somente produtos presentes na planilha fornecedora de preços.'
+        f'{CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME}: a {source_label} está sendo usada como filtro mestre. '
+        f'O CSV final terá somente produtos presentes na {short_label}.'
     )
     st.caption(
-        f'Produtos na planilha fornecedora: {expected}. Produtos no resultado atual: {current}. '
-        'Produtos fora da planilha fornecedora são desconsiderados.'
+        f'Produtos na {short_label}: {expected}. Produtos no resultado atual: {current}. '
+        f'Produtos fora da {short_label} são desconsiderados.'
     )
     if removed > 0:
         st.caption(f'Blindagem aplicada: {removed} linha(s) excedente(s) foram removida(s) antes do preview/download.')
@@ -177,13 +182,14 @@ def render_row_count_blocker(df_final: pd.DataFrame | None) -> bool:
     current = len(df_final) if isinstance(df_final, pd.DataFrame) else 0
     if expected <= 0 or current == expected:
         return False
+    short_label = _supplier_origin_short_label()
     st.error(
-        f'Proteção ativada: a planilha/origem do fornecedor tem {expected} produto(s), mas o arquivo final tem {current}. '
+        f'Proteção ativada: a {short_label} tem {expected} produto(s), mas o arquivo final tem {current}. '
         'Volte para Entrada, confira a origem e refaça/confirme o mapeamento antes de baixar.'
     )
     st.caption(
         'O sistema bloqueou o avanço para evitar perda silenciosa de produtos no CSV final. '
-        'Na atualização de preços por planilha, somente produtos listados pelo fornecedor podem ser gerados.'
+        f'Somente produtos listados na {short_label} podem ser gerados.'
     )
     st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
     st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
