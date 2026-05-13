@@ -9,6 +9,15 @@ from bling_app_zero.core.mapping_super_assistant import safe_default_for_target
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.ui.mapping_widget_state import is_manual_value, manual_value_key, target_widget_key
 
+CALCULATED_PRICE_SOURCE_COLUMN = 'Preço de venda'
+PRICE_TARGET_ALIASES = (
+    'Preço de venda',
+    'Preço unitário (OBRIGATÓRIO)',
+    'Preço unitário',
+    'Preço',
+    'Valor',
+)
+
 
 def apply_safe_defaults(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
@@ -35,6 +44,34 @@ def apply_manual_fixed_values(
     return out
 
 
+def apply_calculated_price_lock(df_preview: pd.DataFrame, df_source: pd.DataFrame) -> pd.DataFrame:
+    """Força o preço da calculadora nos campos de preço do Bling.
+
+    Quando a precificação do cadastro está ativa, o usuário ainda consegue revisar
+    o mapeamento, mas o CSV final não deve voltar a usar o preço bruto do fornecedor
+    por engano. O valor calculado em `Preço de venda` passa a ser a fonte oficial
+    para todos os aliases de preço existentes no modelo.
+    """
+    out = df_preview.copy().fillna('') if isinstance(df_preview, pd.DataFrame) else pd.DataFrame()
+    if not bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
+        return out
+    if not isinstance(df_source, pd.DataFrame) or CALCULATED_PRICE_SOURCE_COLUMN not in df_source.columns:
+        return out
+    calculated_values = df_source[CALCULATED_PRICE_SOURCE_COLUMN].reset_index(drop=True)
+    if len(calculated_values) != len(out):
+        return out
+    applied_targets: list[str] = []
+    for column in PRICE_TARGET_ALIASES:
+        if column in out.columns:
+            out[column] = calculated_values
+            applied_targets.append(column)
+    if applied_targets:
+        st.session_state['cadastro_preco_calculado_targets_aplicados'] = applied_targets
+    else:
+        st.session_state.pop('cadastro_preco_calculado_targets_aplicados', None)
+    return out
+
+
 def fill_deposito_manual(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
     out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if not deposito:
@@ -56,6 +93,7 @@ def build_cadastro_preview(
     preview = apply_mapping(df_source, model, mapping_for_apply)
     preview = apply_manual_fixed_values(preview, mapping, target_columns, mapping_key)
     preview = apply_safe_defaults(preview)
+    preview = apply_calculated_price_lock(preview, df_source)
     return sanitize_for_bling(preview, operation='cadastro')
 
 
@@ -75,6 +113,7 @@ def build_estoque_preview(
 
 
 __all__ = [
+    'apply_calculated_price_lock',
     'apply_manual_fixed_values',
     'apply_safe_defaults',
     'build_cadastro_preview',
