@@ -7,6 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
+from bling_app_zero.ui.ai_maintenance_panel import render_ai_maintenance_panel
 from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 from bling_app_zero.ui.features_panel import render_features_panel
 from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
@@ -20,6 +21,7 @@ SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Módulos e recursos', render_features_panel),
     ('Ferramentas de conferência', render_diagnostics_panel),
+    ('Assistente IA de correção', render_ai_maintenance_panel),
     ('Manutenção do sistema', render_maintenance_panel),
 )
 
@@ -31,7 +33,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
                 <div class="bling-sidebar-kicker">Painel técnico</div>
                 <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Módulos, conferência, logs, audit trail e manutenção. Regras e padrões ficam somente no fluxo principal.</div>
+                <div class="bling-sidebar-text">Módulos, conferência, logs, audit trail, assistência IA segura e manutenção.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -39,7 +41,6 @@ def _render_sidebar_header() -> None:
 
 
 def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
-    """Executa uma ferramenta da sidebar sem deixar uma falha derrubar as demais."""
     try:
         renderer()
     except Exception as exc:
@@ -66,7 +67,6 @@ def _ensure_sidebar_defaults() -> None:
 
 
 def _clear_legacy_sidebar_rules_state() -> None:
-    """Remove sobras da antiga Central de Regras dentro da sidebar."""
     legacy_keys = [
         'sidebar_rules_center_requested',
         'sidebar_open_rules_center_inline',
@@ -85,7 +85,6 @@ def _clear_legacy_sidebar_rules_state() -> None:
 
 
 def render_sidebar_tools() -> None:
-    """Renderiza a sidebar técnica sem regras/editáveis duplicadas."""
     inject_sidebar_tools_theme()
     _ensure_sidebar_defaults()
     _clear_legacy_sidebar_rules_state()
@@ -95,7 +94,7 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'compact_tools_without_rules_or_separate_audit',
+            'mode': 'compact_tools_with_safe_ai_assistant',
             'tools': [name for name, _ in SIDEBAR_TOOLS],
             'rules_location': 'main_flow_only',
             'audit_location': 'maintenance_panel',
