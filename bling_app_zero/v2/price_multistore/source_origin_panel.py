@@ -14,6 +14,11 @@ from bling_app_zero.v2.session_store import get_state, pop_state, set_state, wid
 SOURCE_DF_KEY = 'multistore_source_origin_df'
 SOURCE_LABEL_KEY = 'multistore_source_origin_label'
 SOURCE_MODE_KEY = 'multistore_source_origin_mode'
+SOURCE_USAGE_KEY = 'multistore_source_usage_mode'
+
+USAGE_UPLOAD = 'Usar upload normal da Planilha 2'
+USAGE_SITE = 'Usar captura/busca por site como Planilha 2'
+USAGE_MANUAL = 'Usar tabela/exportação importada como Planilha 2'
 
 PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,3}(?:\.\d{3})*,\d{2}|(?:R\$\s*)?\d+\.\d{2}')
 SKU_RE = re.compile(r'\b(?:SKU|C[ÓO]D(?:IGO)?|REF(?:ER[ÊE]NCIA)?|ID)\s*[:#-]?\s*([A-Za-z0-9._/-]{2,})', re.IGNORECASE)
@@ -132,7 +137,7 @@ def _store_source(df: pd.DataFrame, label: str, mode: str) -> None:
     set_state(SOURCE_DF_KEY, clean)
     set_state(SOURCE_LABEL_KEY, label)
     set_state(SOURCE_MODE_KEY, mode)
-    st.success(f'Origem de custo criada: {len(clean)} linha(s) × {len(clean.columns)} coluna(s).')
+    st.success(f'Origem complementar criada: {len(clean)} linha(s) × {len(clean.columns)} coluna(s).')
 
 
 def get_multistore_source_origin_df() -> pd.DataFrame | None:
@@ -142,21 +147,34 @@ def get_multistore_source_origin_df() -> pd.DataFrame | None:
     return None
 
 
+def get_multistore_source_usage_mode() -> str:
+    mode = str(get_state(SOURCE_USAGE_KEY) or USAGE_UPLOAD)
+    if mode not in {USAGE_UPLOAD, USAGE_SITE, USAGE_MANUAL}:
+        return USAGE_UPLOAD
+    return mode
+
+
+def should_use_multistore_complementary_source() -> bool:
+    mode = get_multistore_source_usage_mode()
+    return mode in {USAGE_SITE, USAGE_MANUAL}
+
+
 def _render_saved_source() -> None:
     df = get_multistore_source_origin_df()
     if not isinstance(df, pd.DataFrame) or df.empty:
         return
-    label = str(get_state(SOURCE_LABEL_KEY) or 'origem alternativa')
+    label = str(get_state(SOURCE_LABEL_KEY) or 'origem complementar')
     mode = str(get_state(SOURCE_MODE_KEY) or '')
-    st.success(f'Origem de custo ativa: {label}')
+    st.success(f'Origem complementar disponível: {label}')
     if mode:
         st.caption(f'Modo: {mode}')
-    with st.expander(f'Preview da origem ativa · {len(df)} linha(s) × {len(df.columns)} coluna(s)', expanded=False):
+    with st.expander(f'Preview da origem complementar · {len(df)} linha(s) × {len(df.columns)} coluna(s)', expanded=False):
         st.dataframe(df.head(30).fillna(''), use_container_width=True, height=220)
-    if st.button('Limpar origem alternativa de custo', use_container_width=True, key=widget_key('clear_multistore_source_origin')):
+    if st.button('Limpar origem complementar', use_container_width=True, key=widget_key('clear_multistore_source_origin')):
         pop_state(SOURCE_DF_KEY, None)
         pop_state(SOURCE_LABEL_KEY, None)
         pop_state(SOURCE_MODE_KEY, None)
+        set_state(SOURCE_USAGE_KEY, USAGE_UPLOAD)
         st.rerun()
 
 
@@ -167,12 +185,12 @@ def _render_public_site_capture() -> None:
         height=110,
         key=widget_key('multistore_source_site_urls'),
     )
-    if st.button('🌐 Buscar origem de custo no site', use_container_width=True, key=widget_key('multistore_source_site_fetch')):
+    if st.button('🌐 Buscar origem complementar no site', use_container_width=True, key=widget_key('multistore_source_site_fetch')):
         raw_urls = str(urls or '').strip()
         if not raw_urls:
             st.warning('Informe pelo menos um link do fornecedor.')
             return
-        with st.spinner('Buscando origem de custo no site...'):
+        with st.spinner('Buscando origem complementar no site...'):
             df = run_site_engine(
                 operation='cadastro',
                 pipeline=load_site_pipeline(),
@@ -199,7 +217,7 @@ def _render_manual_import() -> None:
         height=110,
         key=widget_key('multistore_source_manual_paste'),
     )
-    if st.button('📥 Importar origem de custo', use_container_width=True, key=widget_key('multistore_source_manual_import')):
+    if st.button('📥 Importar origem complementar', use_container_width=True, key=widget_key('multistore_source_manual_import')):
         if uploaded is not None:
             name = getattr(uploaded, 'name', 'origem_fornecedor.html')
             df = _read_table_file(uploaded.getvalue(), name)
@@ -213,22 +231,31 @@ def _render_manual_import() -> None:
 
 def render_multistore_source_origin_panel() -> pd.DataFrame | None:
     with st.container(border=True):
-        st.markdown('##### Origem alternativa de custo')
-        st.caption('Use quando a origem de custo vier de site público, arquivo exportado ou tabela copiada do fornecedor. Essa origem substitui a Planilha 2 nesta sessão.')
+        st.markdown('##### Origem complementar de custo/preço')
+        st.caption('Use planilha, captura por site ou importação do fornecedor. Nenhuma origem substitui a outra automaticamente: você escolhe qual será usada como Planilha 2 no cálculo.')
         mode = st.radio(
-            'Como deseja trazer a origem de custo?',
-            ['Usar upload normal da Planilha 2', 'Buscar por site público', 'Importar tabela/exportação do fornecedor'],
+            'Qual origem deseja usar como Planilha 2 neste cálculo?',
+            [USAGE_UPLOAD, USAGE_SITE, USAGE_MANUAL],
             horizontal=False,
-            key=widget_key('multistore_source_origin_mode_choice'),
+            key=widget_key(SOURCE_USAGE_KEY),
         )
-        if mode == 'Buscar por site público':
+        set_state(SOURCE_USAGE_KEY, mode)
+        if mode == USAGE_SITE:
             _render_public_site_capture()
-        elif mode == 'Importar tabela/exportação do fornecedor':
+        elif mode == USAGE_MANUAL:
             _render_manual_import()
         else:
-            st.caption('Use o campo de upload normal da Planilha 2 logo abaixo.')
+            st.caption('A Planilha 2 virá do upload normal abaixo. Você ainda pode manter uma captura por site salva para usar depois.')
         _render_saved_source()
     return get_multistore_source_origin_df()
 
 
-__all__ = ['get_multistore_source_origin_df', 'render_multistore_source_origin_panel']
+__all__ = [
+    'USAGE_MANUAL',
+    'USAGE_SITE',
+    'USAGE_UPLOAD',
+    'get_multistore_source_origin_df',
+    'get_multistore_source_usage_mode',
+    'render_multistore_source_origin_panel',
+    'should_use_multistore_complementary_source',
+]
