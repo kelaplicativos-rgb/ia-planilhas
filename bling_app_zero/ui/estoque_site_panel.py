@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_operation_router import run_site_engine
+from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
 from bling_app_zero.ui.site_models import (
     choose_site_estoque_model_df,
@@ -66,6 +67,12 @@ def _store_stock_site_df(df_site: pd.DataFrame) -> None:
     st.session_state['origem_final'] = 'site'
     st.session_state['home_slim_flow_operation'] = OPERATION
     st.session_state['home_slim_flow_origin'] = 'site'
+
+
+def _render_guided_login_origin_module() -> None:
+    with st.expander('🔐 Login guiado para fornecedor protegido', expanded=False):
+        st.caption('Use esta opção quando o fornecedor exigir login antes da captura de estoque.')
+        render_guided_login_panel()
 
 
 def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | None]:
@@ -147,6 +154,7 @@ def render_estoque_site_panel() -> None:
     )
     st.info('Motor ativo: ESTOQUE POR SITE independente. Cadastro de produtos não entra neste fluxo.')
 
+    _render_guided_login_origin_module()
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
 
