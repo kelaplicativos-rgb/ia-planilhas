@@ -9,6 +9,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
 from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
+from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
     choose_site_estoque_model_df,
@@ -89,7 +90,13 @@ def _guided_login_enabled(operation: str) -> bool:
     return bool(st.session_state.get(_guided_login_toggle_key(operation), False))
 
 
-def _render_guided_login_origin_module(operation: str) -> None:
+def _render_guided_login_origin_module(
+    operation: str,
+    requested_columns: list[str] | None,
+    df_modelo_cadastro: pd.DataFrame | None,
+    df_modelo_estoque: pd.DataFrame | None,
+    df_modelo: pd.DataFrame | None,
+) -> None:
     label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
     enabled = st.checkbox(
         'Este fornecedor exige login?',
@@ -106,8 +113,15 @@ def _render_guided_login_origin_module(operation: str) -> None:
         render_guided_login_panel()
 
     st.warning(
-        'Atenção: resolver CAPTCHA/código em uma aba do navegador não transfere automaticamente a sessão logada para o servidor do Streamlit. '
-        'Por isso a busca pública por links fica bloqueada quando o fornecedor exige login. Para retornar produtos autenticados, o próximo BLINGFIX precisa conectar um motor Playwright com sessão controlada pelo sistema.'
+        'Atenção: a sessão aberta no navegador do usuário não é compartilhada automaticamente com o servidor do Streamlit. '
+        'Depois de entrar no fornecedor, exporte ou copie a tabela de produtos e importe abaixo para seguir o fluxo.'
+    )
+    render_manual_table_import_panel(
+        operation=operation,
+        requested_columns=requested_columns,
+        df_modelo_cadastro=df_modelo_cadastro,
+        df_modelo_estoque=df_modelo_estoque,
+        df_modelo=df_modelo,
     )
 
 
@@ -159,9 +173,9 @@ def _run_site_capture(
 ) -> None:
     raw_urls = str(raw_urls or '').strip()
     if _guided_login_enabled(operation):
-        st.warning('Busca bloqueada: este fornecedor exige login. A captura autenticada precisa de motor com sessão conectada, não da busca pública por links.')
+        st.warning('Busca bloqueada: este fornecedor exige login. Importe a tabela/exportação da página do fornecedor pelo painel de login guiado.')
         add_audit_event(
-            'site_capture_blocked_guided_login_requires_authenticated_engine',
+            'site_capture_blocked_guided_login_requires_manual_import',
             area='SITE',
             step='entrada',
             status='BLOQUEADO',
@@ -298,7 +312,7 @@ def render_site_panel() -> None:
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
-    _render_guided_login_origin_module(operation)
+    _render_guided_login_origin_module(operation, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
     running = bool(st.session_state.get('site_capture_running'))
     if running:
@@ -313,7 +327,7 @@ def render_site_panel() -> None:
     if operation == 'estoque' and not _has_columns(requested_columns):
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
     if _guided_login_enabled(operation):
-        st.caption('Busca pública bloqueada porque este fornecedor exige login. Use o painel de login guiado e conecte o motor autenticado no próximo BLINGFIX.')
+        st.caption('Busca pública bloqueada porque este fornecedor exige login. Importe a tabela/exportação da página do fornecedor no painel acima.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
