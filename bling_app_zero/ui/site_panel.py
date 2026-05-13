@@ -64,6 +64,28 @@ def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
     st.session_state.pop(_site_df_key(other), None)
 
 
+def _clear_site_df(operation: str, reason: str) -> None:
+    """Remove origem antiga da operação quando uma nova captura não é válida.
+
+    BLINGFIX #ALL: uma tentativa nova que falha não pode deixar uma captura antiga
+    aparecendo como se fosse o resultado atual. A limpeza é limitada à operação em
+    execução para não apagar a outra origem sem necessidade.
+    """
+    removed: list[str] = []
+    current_key = _site_df_key(operation)
+    for key in (current_key, 'df_site_bruto'):
+        if key in st.session_state:
+            removed.append(key)
+            st.session_state.pop(key, None)
+    add_audit_event(
+        'site_capture_stale_source_cleared',
+        area='SITE',
+        step='entrada',
+        status='AVISO',
+        details={'operation': operation, 'reason': reason, 'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _get_site_df(operation: str) -> pd.DataFrame | None:
     df_current = st.session_state.get(_site_df_key(operation))
     if isinstance(df_current, pd.DataFrame):
@@ -119,6 +141,7 @@ def _guided_entry_url() -> str:
 
 
 def _clear_stuck_capture(operation: str) -> None:
+    _clear_site_df(operation, 'captura_travada_limpa_manualmente')
     _set_capture_state(
         operation=operation,
         running=False,
@@ -286,6 +309,7 @@ def _run_authenticated_site_capture(
             _orange_warning(str(warning))
         if result.errors:
             error_message = '; '.join(result.errors)
+            _clear_site_df(operation, 'captura_autenticada_com_erros')
             _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
             add_audit_event(
                 'authenticated_site_capture_failed',
@@ -305,6 +329,7 @@ def _run_authenticated_site_capture(
             return
         if not isinstance(result.df, pd.DataFrame) or result.df.empty:
             error_message = 'A captura autenticada não encontrou dados na página preparada. Use a compatibilidade universal abaixo quando o fornecedor bloquear iframe, sessão, captcha ou robô.'
+            _clear_site_df(operation, 'captura_autenticada_vazia')
             _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
             add_audit_event(
                 'authenticated_site_capture_empty',
@@ -357,6 +382,7 @@ def _run_authenticated_site_capture(
         st.rerun()
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
+        _clear_site_df(operation, 'captura_autenticada_exception')
         _set_capture_state(operation=operation, running=False, finished=False, error=message)
         add_audit_event(
             'authenticated_site_capture_exception',
@@ -375,6 +401,7 @@ def _run_authenticated_site_capture(
         _orange_warning('A captura automática falhou e foi destravada. Use a compatibilidade universal abaixo se este fornecedor bloquear robôs ou iframe.')
     finally:
         if not completed and bool(st.session_state.get('site_capture_running')):
+            _clear_site_df(operation, 'captura_interrompida')
             _set_capture_state(
                 operation=operation,
                 running=False,
@@ -396,10 +423,12 @@ def _run_site_capture(
         _run_authenticated_site_capture(operation, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
         return
     if not raw_urls:
+        _clear_site_df(operation, 'busca_publica_sem_links')
         st.warning('Informe pelo menos um link antes de iniciar a busca por site.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
     if operation == 'estoque' and not _has_columns(requested_columns):
+        _clear_site_df(operation, 'busca_estoque_sem_modelo')
         st.error('Busca bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
         add_audit_event('site_capture_blocked_missing_stock_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
@@ -435,6 +464,7 @@ def _run_site_capture(
         )
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
+        _clear_site_df(operation, 'busca_publica_exception')
         _set_capture_state(operation=operation, running=False, finished=False, error=message)
         add_audit_event('site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
         st.error('A busca por site não conseguiu finalizar. Baixe o log debug para conferir o erro técnico.')
@@ -442,6 +472,12 @@ def _run_site_capture(
 
     rows = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
     columns = len(df_site.columns) if isinstance(df_site, pd.DataFrame) else 0
+    if not isinstance(df_site, pd.DataFrame) or df_site.empty:
+        _clear_site_df(operation, 'busca_publica_vazia')
+        _set_capture_state(operation=operation, running=False, finished=False, error='A busca por site não encontrou produtos válidos.', rows=0, columns=0)
+        add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+        st.warning('A busca por site não encontrou produtos válidos. Confira os links ou use a compatibilidade universal quando o fornecedor bloquear robôs.')
+        return
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     _store_site_df(operation, df_site)
     st.session_state['operation_site'] = operation
@@ -450,7 +486,7 @@ def _run_site_capture(
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = 'site'
     _set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
-    add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK' if rows else 'AVISO', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
