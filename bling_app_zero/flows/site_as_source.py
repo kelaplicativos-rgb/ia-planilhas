@@ -3,14 +3,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.estoque_wizard_state import (
-    ESTOQUE_CONFIDENCE_KEY,
-    ESTOQUE_FINAL_KEY,
-    ESTOQUE_MAPPING_KEY,
-    LEGACY_ESTOQUE_CONFIDENCE_KEY,
-    LEGACY_ESTOQUE_FINAL_KEY,
-    LEGACY_ESTOQUE_MAPPING_KEY,
-)
+# BLINGFIX: não importar estoque_wizard_state aqui.
+# Este módulo é usado por estoque_sources, que é importado pelo estoque_wizard_state.
+# Importar o estado de estoque de volta criava ciclo no startup do Streamlit.
+ESTOQUE_FINAL_KEY = 'df_final_estoque'
+ESTOQUE_MAPPING_KEY = 'mapping_estoque'
+ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque'
+LEGACY_ESTOQUE_FINAL_KEY = 'df_final_estoque_from_cadastro'
+LEGACY_ESTOQUE_MAPPING_KEY = 'mapping_estoque_from_cadastro'
+LEGACY_ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque_from_cadastro'
 
 SITE_SOURCE_KEY = 'df_origem_site_como_planilha'
 SITE_OPERATION_KEY = 'site_operation_como_planilha'
