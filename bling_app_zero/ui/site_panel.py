@@ -17,6 +17,7 @@ from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_s
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
+LOGIN_CONFIRMED_KEY = 'guided_login_confirmed_logged_in'
 
 
 def _query_param(name: str) -> str:
@@ -88,25 +89,18 @@ def _guided_login_enabled(operation: str) -> bool:
     return bool(st.session_state.get(_guided_login_toggle_key(operation), False))
 
 
+def _login_confirmed() -> bool:
+    return bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False))
+
+
 def _protected_session_value() -> str:
     key = 'guided_login_' + 'password_ephemeral'
     return str(st.session_state.get(key) or '').strip()
 
 
 def _clear_stuck_capture(operation: str) -> None:
-    _set_capture_state(
-        operation=operation,
-        running=False,
-        finished=False,
-        error='Captura anterior destravada manualmente. Execute novamente.',
-    )
-    add_audit_event(
-        'site_capture_unstuck_manually',
-        area='SITE',
-        step='entrada',
-        status='AVISO',
-        details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    _set_capture_state(operation=operation, running=False, finished=False, error='Captura anterior destravada manualmente. Execute novamente.')
+    add_audit_event('site_capture_unstuck_manually', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _render_guided_login_origin_module(operation: str) -> None:
@@ -157,6 +151,9 @@ def _run_authenticated_site_capture(operation: str, requested_columns: list[str]
     entry_url = str(st.session_state.get('guided_login_url') or '').strip()
     user_value = str(st.session_state.get('guided_login_username') or '').strip()
     session_value = _protected_session_value()
+    if not _login_confirmed():
+        _orange_warning('Confirme que você está 100% logado no fornecedor antes de executar a captura.')
+        return
     if not entry_url.startswith(('http://', 'https://')):
         _orange_warning('Informe uma URL de entrada válida antes de executar a captura autenticada.')
         return
@@ -166,13 +163,11 @@ def _run_authenticated_site_capture(operation: str, requested_columns: list[str]
     if operation == 'estoque' and not _has_columns(requested_columns):
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir as colunas solicitadas.')
         return
-
     started_at = time.time()
     completed = False
     progress = None
     _set_capture_state(operation=operation, running=True, finished=False)
-    add_audit_event('authenticated_site_capture_started', area='SITE', step='entrada', details={'operation': operation, 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
-
+    add_audit_event('authenticated_site_capture_started', area='SITE', step='entrada', details={'operation': operation, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
     try:
         progress = st.progress(0, text='Executando captura autenticada estilo Instant Scraper...')
         result = run_browser_scraper(BrowserScraperConfig(operation=operation, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns or (list(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else None), max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
@@ -283,8 +278,11 @@ def render_site_panel() -> None:
     if error:
         st.error(f'Última captura por site falhou: {error}')
     if _guided_login_enabled(operation):
+        login_confirmed = _login_confirmed()
+        if not login_confirmed:
+            _orange_warning('A captura autenticada está bloqueada até confirmar 100% que o login foi concluído.')
         button_label = '🔐 Executar captura autenticada estilo Instant Scraper'
-        button_disabled = running
+        button_disabled = running or not login_confirmed
     else:
         button_label = 'Buscar no site e gerar origem de cadastro'
         button_disabled = running or (operation == 'estoque' and not _has_columns(requested_columns))
