@@ -21,6 +21,14 @@ def _render_features_panel_lazy() -> None:
     render_features_panel()
 
 
+def _render_bling_command_center_lazy() -> None:
+    from bling_app_zero.ui.bling_command_center import render_bling_command_center
+
+    with st.sidebar:
+        with st.expander('Central de Comandos BLING', expanded=False):
+            render_bling_command_center()
+
+
 def _render_diagnostics_panel_lazy() -> None:
     from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
 
@@ -41,6 +49,7 @@ def _render_maintenance_panel_lazy() -> None:
 
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
     ('Módulos e recursos', _render_features_panel_lazy),
+    ('Central de Comandos BLING', _render_bling_command_center_lazy),
     ('Ferramentas de conferência', _render_diagnostics_panel_lazy),
     ('Assistente IA de correção', _render_ai_maintenance_panel_lazy),
     ('Manutenção do sistema', _render_maintenance_panel_lazy),
@@ -54,7 +63,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
                 <div class="bling-sidebar-kicker">Painel técnico</div>
                 <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Módulos, conferência, logs, audit trail, assistência IA segura e manutenção.</div>
+                <div class="bling-sidebar-text">Módulos, comandos BLING, conferência, logs, audit trail, assistência IA segura e manutenção.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -120,6 +129,7 @@ def render_sidebar_tools() -> None:
             'tools': [name for name, _ in SIDEBAR_TOOLS],
             'rules_location': 'main_flow_only',
             'audit_location': 'maintenance_panel',
+            'command_center_location': 'sidebar',
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
     )
