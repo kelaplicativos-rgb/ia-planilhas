@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import re
 import zipfile
 from io import BytesIO
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -21,11 +23,80 @@ RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
 PRICE_MULTISTORE_OPERATION_QP = 'price_multistore_v2'
 MAX_BLING_IMPORT_ROWS = 200
 
-MARKETPLACE_OPTIONS = ['mercado_livre', 'shopee', 'amazon', 'b2w', 'olist', 'madeira_madeira', 'magazine_luiza', 'via_varejo', 'carrefour', 'outro']
+CALCULATOR_MODES = ['Lucro nominal', 'Margem de contribuição', 'Preço fixo']
+CALCULATOR_MODE_MAP = {
+    'Lucro nominal': 'nominal_profit',
+    'Margem de contribuição': 'contribution_margin',
+    'Preço fixo': 'fixed_sale_price',
+}
+
+DEFAULT_PROFILE_BASE: dict[str, Any] = {
+    'store_id': '',
+    'calculator_mode_label': 'Lucro nominal',
+    'marketplace_fee': 14.0,
+    'tax': 8.0,
+    'freight': 0.0,
+    'other_fees': 0.0,
+    'desired_nominal_profit': 15.0,
+    'desired_margin': 15.0,
+    'desired_sale_price': 0.0,
+    'supplier_term': 15.0,
+    'stock_turnover': 30.0,
+    'promo': 0.0,
+    'custom': False,
+}
+
+DEFAULT_MARKETPLACE_LABELS = {
+    'mercado_livre': 'Mercado Livre',
+    'shopee': 'Shopee',
+    'amazon': 'Amazon',
+    'b2w': 'B2W / Americanas',
+    'olist': 'Olist',
+    'madeira_madeira': 'Madeira Madeira',
+    'magazine_luiza': 'Magazine Luiza',
+    'via_varejo': 'Via Varejo',
+    'carrefour': 'Carrefour',
+    'outro': 'Outro marketplace',
+}
+
+DEFAULT_MARKETPLACE_FEES = {
+    'mercado_livre': 16.0,
+    'shopee': 14.0,
+    'amazon': 14.0,
+    'b2w': 14.0,
+    'olist': 14.0,
+    'madeira_madeira': 14.0,
+    'magazine_luiza': 14.0,
+    'via_varejo': 14.0,
+    'carrefour': 14.0,
+    'outro': 14.0,
+}
+
+NUMERIC_PROFILE_FIELDS = [
+    'marketplace_fee',
+    'tax',
+    'freight',
+    'other_fees',
+    'desired_nominal_profit',
+    'desired_margin',
+    'desired_sale_price',
+    'supplier_term',
+    'stock_turnover',
+    'promo',
+]
+
+
+def _default_marketplace_profiles() -> dict[str, dict[str, Any]]:
+    profiles: dict[str, dict[str, Any]] = {}
+    for key, label in DEFAULT_MARKETPLACE_LABELS.items():
+        profile = dict(DEFAULT_PROFILE_BASE)
+        profile['label'] = label
+        profile['marketplace_fee'] = DEFAULT_MARKETPLACE_FEES.get(key, 14.0)
+        profiles[key] = profile
+    return profiles
 
 
 def _keep_multistore_route_alive() -> None:
-    """Mantém a tela multiloja como rota ativa mesmo após reruns do Streamlit."""
     try:
         st.query_params['operation_v2'] = PRICE_MULTISTORE_OPERATION_QP
     except Exception:
@@ -76,7 +147,6 @@ def _csv_zip_bytes(parts: list[pd.DataFrame], prefix: str = 'bling_precos_multil
 
 
 def _render_closed_preview(title: str, df: pd.DataFrame | None, *, rows: int = 80, height: int = 220) -> None:
-    """Renderiza qualquer preview fechado por padrão para não poluir o fluxo."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return
     label = f'{title} · {len(df)} linha(s) × {len(df.columns)} coluna(s)'
@@ -120,29 +190,140 @@ def _render_success_action(message: str) -> None:
 def _render_bling_import_actions() -> None:
     _render_success_action('Após baixar todos os arquivos necessários, abra o importador de preços multilojas no Bling.')
     try:
-        st.link_button(
-            'Abrir importador do Bling agora ↗',
-            BLING_MULTISTORE_PRICE_IMPORT_URL,
-            use_container_width=True,
-        )
+        st.link_button('Abrir importador do Bling agora ↗', BLING_MULTISTORE_PRICE_IMPORT_URL, use_container_width=True)
     except Exception:
         st.markdown(f'[Abrir importador do Bling agora ↗]({BLING_MULTISTORE_PRICE_IMPORT_URL})')
 
 
+def _slugify(value: str) -> str:
+    text = str(value or 'marketplace').strip().lower()
+    text = text.translate(str.maketrans('áàãâäéèêëíìîïóòõôöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'))
+    return re.sub(r'[^a-z0-9]+', '_', text).strip('_') or 'marketplace'
+
+
+def _profile_key_from_label(label: str, existing: dict[str, dict[str, Any]]) -> str:
+    slug = _slugify(label)
+    key = slug
+    index = 2
+    while key in existing:
+        key = f'{slug}_{index}'
+        index += 1
+    return key
+
+
+def _normalize_profile(raw: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = dict(DEFAULT_PROFILE_BASE)
+    if fallback:
+        base.update(fallback)
+    base.update(dict(raw or {}))
+    base['label'] = str(base.get('label') or 'Marketplace').strip()
+    base['store_id'] = str(base.get('store_id') or '').strip()
+    base['calculator_mode_label'] = str(base.get('calculator_mode_label') or 'Lucro nominal')
+    if base['calculator_mode_label'] not in CALCULATOR_MODES:
+        base['calculator_mode_label'] = 'Lucro nominal'
+    for field in NUMERIC_PROFILE_FIELDS:
+        try:
+            base[field] = float(base.get(field, 0.0) or 0.0)
+        except Exception:
+            base[field] = float(DEFAULT_PROFILE_BASE.get(field, 0.0) or 0.0)
+    base['custom'] = bool(base.get('custom', False))
+    return base
+
+
+def _marketplace_profiles() -> dict[str, dict[str, Any]]:
+    profiles = _default_marketplace_profiles()
+    saved = get_state('multistore_marketplace_profiles')
+    if isinstance(saved, dict):
+        for key, value in saved.items():
+            if isinstance(value, dict):
+                profiles[str(key)] = _normalize_profile(value, profiles.get(str(key)))
+    set_state('multistore_marketplace_profiles', profiles)
+    return profiles
+
+
+def _save_marketplace_profiles(profiles: dict[str, dict[str, Any]]) -> None:
+    cleaned = {str(key): _normalize_profile(value) for key, value in profiles.items()}
+    set_state('multistore_marketplace_profiles', cleaned)
+
+
 def _format_marketplace(value: str) -> str:
-    labels = {
-        'mercado_livre': 'Mercado Livre',
-        'shopee': 'Shopee',
-        'amazon': 'Amazon',
-        'b2w': 'B2W / Americanas',
-        'olist': 'Olist',
-        'madeira_madeira': 'Madeira Madeira',
-        'magazine_luiza': 'Magazine Luiza',
-        'via_varejo': 'Via Varejo',
-        'carrefour': 'Carrefour',
-        'outro': 'Outro marketplace',
-    }
-    return labels.get(value, value.replace('_', ' ').title())
+    profiles = _marketplace_profiles()
+    profile = profiles.get(value, {})
+    return str(profile.get('label') or value.replace('_', ' ').title())
+
+
+def _number_key(channel: str, field: str) -> str:
+    return widget_key(f'multistore_{field}_{channel}')
+
+
+def _field_widget_key(channel: str, field: str) -> str:
+    return widget_key(f'multistore_{field}_{channel}')
+
+
+def _sync_calculator_defaults(channel: str, profile: dict[str, Any]) -> None:
+    previous_channel = get_state('multistore_last_selected_channel')
+    if previous_channel == channel:
+        return
+    set_state('multistore_last_selected_channel', channel)
+    st.session_state[_field_widget_key(channel, 'store_name')] = str(profile.get('label') or _format_marketplace(channel))
+    st.session_state[_field_widget_key(channel, 'store_id')] = str(profile.get('store_id') or '')
+    st.session_state[_field_widget_key(channel, 'calculator_mode_label')] = str(profile.get('calculator_mode_label') or 'Lucro nominal')
+    for field in NUMERIC_PROFILE_FIELDS:
+        st.session_state[_number_key(channel, field)] = float(profile.get(field, 0.0) or 0.0)
+
+
+def _current_profile_from_widgets(channel: str, profile: dict[str, Any]) -> dict[str, Any]:
+    output = dict(profile)
+    output['label'] = str(st.session_state.get(_field_widget_key(channel, 'store_name'), profile.get('label') or _format_marketplace(channel))).strip()
+    output['store_id'] = str(st.session_state.get(_field_widget_key(channel, 'store_id'), profile.get('store_id') or '')).strip()
+    output['calculator_mode_label'] = str(st.session_state.get(_field_widget_key(channel, 'calculator_mode_label'), profile.get('calculator_mode_label') or 'Lucro nominal'))
+    for field in NUMERIC_PROFILE_FIELDS:
+        output[field] = float(st.session_state.get(_number_key(channel, field), profile.get(field, 0.0)) or 0.0)
+    output['custom'] = bool(profile.get('custom', False))
+    return _normalize_profile(output, profile)
+
+
+def _render_marketplace_manager(channel: str, profile: dict[str, Any]) -> None:
+    profiles = _marketplace_profiles()
+    with st.expander('Gerenciar marketplaces e taxas salvas', expanded=False):
+        st.caption('Cada marketplace abre a calculadora com as taxas salvas aqui. Você pode salvar, adicionar, editar ou excluir marketplaces.')
+        col_save, col_delete = st.columns(2)
+        with col_save:
+            if st.button('Salvar taxas deste marketplace', use_container_width=True, key=widget_key(f'save_profile_{channel}')):
+                profiles[channel] = _current_profile_from_widgets(channel, profile)
+                _save_marketplace_profiles(profiles)
+                st.success('Taxas salvas para este marketplace.')
+                st.rerun()
+        with col_delete:
+            can_delete = len(profiles) > 1
+            if st.button('Excluir marketplace selecionado', use_container_width=True, disabled=not can_delete, key=widget_key(f'delete_profile_{channel}')):
+                profiles.pop(channel, None)
+                _save_marketplace_profiles(profiles)
+                set_state('multistore_selected_channel', next(iter(profiles), 'outro'))
+                set_state('multistore_last_selected_channel', '')
+                st.success('Marketplace excluído.')
+                st.rerun()
+
+        st.markdown('##### Adicionar novo marketplace')
+        new_name = st.text_input('Nome do novo marketplace', key=widget_key('new_marketplace_name'))
+        c1, c2, c3 = st.columns(3)
+        new_fee = c1.number_input('Taxa marketplace %', min_value=0.0, value=14.0, step=0.5, key=widget_key('new_marketplace_fee'))
+        new_tax = c2.number_input('Imposto %', min_value=0.0, value=8.0, step=0.5, key=widget_key('new_marketplace_tax'))
+        new_profit = c3.number_input('Quero ganhar R$', min_value=0.0, value=15.0, step=0.5, key=widget_key('new_marketplace_profit'))
+        if st.button('Adicionar marketplace', use_container_width=True, key=widget_key('add_marketplace_profile')):
+            name = str(new_name or '').strip()
+            if not name:
+                _render_alert('Informe o nome do novo marketplace antes de adicionar.')
+            else:
+                key = _profile_key_from_label(name, profiles)
+                new_profile = dict(DEFAULT_PROFILE_BASE)
+                new_profile.update({'label': name, 'marketplace_fee': float(new_fee), 'tax': float(new_tax), 'desired_nominal_profit': float(new_profit), 'custom': True})
+                profiles[key] = _normalize_profile(new_profile)
+                _save_marketplace_profiles(profiles)
+                set_state('multistore_selected_channel', key)
+                set_state('multistore_last_selected_channel', '')
+                st.success(f'Marketplace "{name}" adicionado.')
+                st.rerun()
 
 
 def _render_flow_explanation() -> None:
@@ -257,12 +438,28 @@ def render_price_multistore_v2() -> None:
     st.markdown('## 🏬 Atualizar Preços Multiloja')
     _render_flow_explanation()
 
+    profiles = _marketplace_profiles()
+    options = list(profiles.keys())
+
     st.markdown('### Etapa 1 · Loja / marketplace')
-    channel = st.selectbox('Qual loja/marketplace você quer atualizar?', MARKETPLACE_OPTIONS, format_func=_format_marketplace, key=widget_key('multistore_channel'))
+    selected_channel = get_state('multistore_selected_channel')
+    index = options.index(selected_channel) if selected_channel in options else 0
+    channel = st.selectbox(
+        'Qual loja/marketplace você quer atualizar?',
+        options,
+        index=index,
+        format_func=_format_marketplace,
+        key=widget_key('multistore_channel'),
+    )
+    set_state('multistore_selected_channel', channel)
+    profile = profiles.get(channel, _default_marketplace_profiles()['outro'])
+    _sync_calculator_defaults(channel, profile)
+
     c_store_1, c_store_2 = st.columns(2)
-    store_name = c_store_1.text_input('Nome da loja no Bling', value=_format_marketplace(channel), key=widget_key('multistore_store_name'))
-    store_id = c_store_2.text_input('ID da loja no Bling, se houver', value='', key=widget_key('multistore_store_id'))
+    store_name = c_store_1.text_input('Nome da loja no Bling', key=_field_widget_key(channel, 'store_name'))
+    store_id = c_store_2.text_input('ID da loja no Bling, se houver', key=_field_widget_key(channel, 'store_id'))
     st.caption('Trabalhe com um marketplace por vez para evitar mistura de taxas, anúncios e IDs na Loja.')
+    _render_marketplace_manager(channel, profile)
 
     st.markdown('### Etapa 2 · Planilha do Bling')
     st.caption('Envie a planilha exportada do Bling para atualizar preços multiloja. Essa planilha será preenchida e enviada de volta ao Bling.')
@@ -305,32 +502,43 @@ def render_price_multistore_v2() -> None:
     can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
 
     st.markdown('### Etapa 5 · Calculadora')
-    calculator_mode = st.radio('Como deseja calcular?', ['Lucro nominal', 'Margem de contribuição', 'Preço fixo'], horizontal=True, key=widget_key('multistore_calculator_mode_label'))
-    mode_map = {'Lucro nominal': 'nominal_profit', 'Margem de contribuição': 'contribution_margin', 'Preço fixo': 'fixed_sale_price'}
-    calculator_mode_key = mode_map[calculator_mode]
+    calculator_mode = st.radio(
+        'Como deseja calcular?',
+        CALCULATOR_MODES,
+        horizontal=True,
+        key=_field_widget_key(channel, 'calculator_mode_label'),
+    )
+    calculator_mode_key = CALCULATOR_MODE_MAP[calculator_mode]
 
     c1, c2, c3, c4 = st.columns(4)
-    marketplace_fee = c1.number_input('Taxa marketplace %', min_value=0.0, value=16.0 if channel == 'mercado_livre' else 14.0, step=0.5, key=widget_key('multistore_marketplace_fee'))
-    tax = c2.number_input('Imposto %', min_value=0.0, value=8.0, step=0.5, key=widget_key('multistore_tax'))
-    freight = c3.number_input('Frete R$', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_freight'))
-    other_fees = c4.number_input('Outras taxas %', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_other_fees'))
+    marketplace_fee = c1.number_input('Taxa marketplace %', min_value=0.0, step=0.5, key=_number_key(channel, 'marketplace_fee'))
+    tax = c2.number_input('Imposto %', min_value=0.0, step=0.5, key=_number_key(channel, 'tax'))
+    freight = c3.number_input('Frete R$', min_value=0.0, step=0.5, key=_number_key(channel, 'freight'))
+    other_fees = c4.number_input('Outras taxas %', min_value=0.0, step=0.5, key=_number_key(channel, 'other_fees'))
 
     c5, c6, c7, c8 = st.columns(4)
     if calculator_mode_key == 'nominal_profit':
-        desired_nominal_profit = c5.number_input('Quero ganhar R$', min_value=0.0, value=15.0, step=0.5, key=widget_key('multistore_desired_nominal_profit'))
-        desired_margin = 0.0
-        desired_sale_price = 0.0
+        desired_nominal_profit = c5.number_input('Quero ganhar R$', min_value=0.0, step=0.5, key=_number_key(channel, 'desired_nominal_profit'))
+        desired_margin = float(st.session_state.get(_number_key(channel, 'desired_margin'), profile.get('desired_margin', 0.0)) or 0.0)
+        desired_sale_price = float(st.session_state.get(_number_key(channel, 'desired_sale_price'), profile.get('desired_sale_price', 0.0)) or 0.0)
     elif calculator_mode_key == 'contribution_margin':
-        desired_margin = c5.number_input('Quero margem de %', min_value=0.0, value=15.0, step=0.5, key=widget_key('multistore_desired_margin'))
-        desired_nominal_profit = 0.0
-        desired_sale_price = 0.0
+        desired_margin = c5.number_input('Quero margem de %', min_value=0.0, step=0.5, key=_number_key(channel, 'desired_margin'))
+        desired_nominal_profit = float(st.session_state.get(_number_key(channel, 'desired_nominal_profit'), profile.get('desired_nominal_profit', 0.0)) or 0.0)
+        desired_sale_price = float(st.session_state.get(_number_key(channel, 'desired_sale_price'), profile.get('desired_sale_price', 0.0)) or 0.0)
     else:
-        desired_sale_price = c5.number_input('Quero vender por R$', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_desired_sale_price'))
-        desired_nominal_profit = 0.0
-        desired_margin = 0.0
-    supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, value=15.0, step=1.0, key=widget_key('multistore_supplier_term'))
-    stock_turnover = c7.number_input('Giro estoque (dias)', min_value=0.0, value=30.0, step=1.0, key=widget_key('multistore_stock_turnover'))
-    promo = c8.number_input('Promo %', min_value=0.0, value=0.0, step=0.5, key=widget_key('multistore_promo'))
+        desired_sale_price = c5.number_input('Quero vender por R$', min_value=0.0, step=0.5, key=_number_key(channel, 'desired_sale_price'))
+        desired_nominal_profit = float(st.session_state.get(_number_key(channel, 'desired_nominal_profit'), profile.get('desired_nominal_profit', 0.0)) or 0.0)
+        desired_margin = float(st.session_state.get(_number_key(channel, 'desired_margin'), profile.get('desired_margin', 0.0)) or 0.0)
+    supplier_term = c6.number_input('Prazo fornecedor (dias)', min_value=0.0, step=1.0, key=_number_key(channel, 'supplier_term'))
+    stock_turnover = c7.number_input('Giro estoque (dias)', min_value=0.0, step=1.0, key=_number_key(channel, 'stock_turnover'))
+    promo = c8.number_input('Promo %', min_value=0.0, step=0.5, key=_number_key(channel, 'promo'))
+
+    if st.button('Salvar taxas atuais para este marketplace', use_container_width=True, key=widget_key(f'save_profile_below_calc_{channel}')):
+        profiles = _marketplace_profiles()
+        profiles[channel] = _current_profile_from_widgets(channel, profile)
+        _save_marketplace_profiles(profiles)
+        st.success('Taxas atuais salvas para este marketplace.')
+        st.rerun()
 
     pricing_rules = {
         'calculator_mode': calculator_mode_key,
@@ -346,13 +554,13 @@ def render_price_multistore_v2() -> None:
         'stock_turnover_days': stock_turnover,
         'promo_discount_percent': promo,
     }
-    profile = build_store_profile(channel, store_id=store_id, name=store_name, overrides={'pricing_rules': pricing_rules})
+    profile_for_run = build_store_profile(channel, store_id=store_id, name=store_name, overrides={'pricing_rules': pricing_rules})
 
     if not can_generate:
         _render_alert('A geração fica bloqueada até carregar a origem de custo e selecionar a coluna de Preço de custo.')
 
     if st.button('Gerar prévia de preços', use_container_width=True, key=widget_key('multistore_generate'), disabled=not can_generate):
-        result = run_multistore_price_flow(model_df, profile, source_df, source_cost_column, pricing_rules)
+        result = run_multistore_price_flow(model_df, profile_for_run, source_df, source_cost_column, pricing_rules)
         set_state('multistore_last_ok', result.ok)
         set_state('multistore_last_message', result.message)
         set_state('multistore_last_errors', list(result.errors))
