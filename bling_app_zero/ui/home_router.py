@@ -57,6 +57,11 @@ def _open_multistore_price_flow() -> None:
     _set_flow(FLOW_PRICE_MULTISTORE)
 
 
+def _render_group_title(title: str, caption: str) -> None:
+    st.markdown(f'### {title}')
+    st.caption(caption)
+
+
 def _render_home_operation_card(
     *,
     icon: str,
@@ -65,6 +70,7 @@ def _render_home_operation_card(
     button_label: str,
     button_key: str,
     on_click: Callable[[], None],
+    badge: str | None = None,
 ) -> None:
     """Renderiza cada operação dentro do próprio card.
 
@@ -72,6 +78,8 @@ def _render_home_operation_card(
     Cada opção precisa ficar visualmente fechada em um único bloco.
     """
     with st.container(border=True):
+        if badge:
+            st.caption(badge)
         st.markdown(f'#### {icon} {title}')
         st.caption(description)
         if st.button(button_label, use_container_width=True, key=button_key):
@@ -80,40 +88,60 @@ def _render_home_operation_card(
 
 def _render_operation_choice() -> None:
     st.markdown('### O que você quer fazer?')
+    st.caption('Escolha primeiro o tipo de trabalho. O fluxo principal começa pelo modelo do Bling para evitar erro de planilha no final.')
+
+    _render_group_title(
+        'Fluxo principal',
+        'Use estes caminhos para gerar CSV oficial de cadastro ou estoque do Bling.',
+    )
     _render_home_operation_card(
         icon='🧾',
         title='Cadastrar produtos',
-        description='Gerar CSV de cadastro de produtos para importar no Bling.',
+        description='Enviar modelo do Bling, carregar produtos por planilha/XML/PDF/site, mapear campos e gerar CSV de cadastro.',
         button_label='Abrir cadastro',
         button_key='home_open_cadastro_flow',
         on_click=_open_cadastro_flow,
+        badge='Fluxo principal',
     )
     _render_home_operation_card(
         icon='📦',
         title='Atualizar estoque',
-        description='Gerar CSV de atualização de saldo e depósito para o Bling.',
+        description='Enviar modelo de estoque, carregar origem dos dados, preencher saldo/depósito e gerar CSV de atualização.',
         button_label='Abrir estoque',
         button_key='home_open_estoque_flow',
         on_click=_open_estoque_flow,
+        badge='Fluxo principal',
+    )
+
+    st.divider()
+    _render_group_title(
+        'Módulos adicionais',
+        'Ferramentas separadas do fluxo principal. Use quando precisar de uma função específica.',
     )
     _render_home_operation_card(
         icon='🏬',
         title='Atualizar Preços Multiloja',
-        description='Atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.',
+        description='Módulo específico para atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.',
         button_label='Atualizar preços',
         button_key='home_open_multistore_price_flow',
         on_click=_open_multistore_price_flow,
+        badge='Módulo adicional',
     )
 
 
 def _render_back_to_operations() -> None:
+    st.caption('Voltar aqui mantém o progresso salvo nesta sessão. Use “Recomeçar fluxo” dentro do download quando quiser limpar tudo.')
     if st.button('← Voltar para escolha da operação', use_container_width=True, key='home_back_to_operation_choice'):
         st.session_state.pop(ACTIVE_FLOW_KEY, None)
         try:
             st.query_params.pop('operation_v2', None)
         except Exception:
             pass
-        add_audit_event('home_operation_cleared', area='HOME', details={'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event(
+            'home_operation_cleared',
+            area='HOME',
+            details={'kept_wizard_progress': True, 'responsible_file': RESPONSIBLE_FILE},
+        )
         st.rerun()
 
 
