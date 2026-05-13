@@ -8,6 +8,7 @@ from bling_app_zero.core.instant_scraper import BrowserScraperConfig, run_browse
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
+from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import choose_site_estoque_model_df, choose_site_model_df, render_optional_site_model_upload, requested_columns_for_site_capture
 from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
 from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_site_progress
@@ -40,7 +41,10 @@ def _has_columns(columns: list[str] | None) -> bool:
 
 
 def _orange_warning(message: str) -> None:
-    st.markdown(f"""<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>""", unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _guided_login_toggle_key() -> str:
@@ -61,10 +65,6 @@ def _guided_capture_config() -> dict[str, object]:
 
 
 def _guided_capture_mode() -> str:
-    config = _guided_capture_config()
-    mode = str(config.get('capture_mode') or st.session_state.get('guided_login_capture_mode') or 'browser_session').strip()
-    if mode in {'browser_session', 'products_page'}:
-        return 'browser_session'
     return 'browser_session'
 
 
@@ -141,6 +141,21 @@ def _render_urls_input() -> str:
     return st.text_area('Links para buscar estoque', value=_query_urls_default(), height=120, key='urls_site_estoque_independente', placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1', help='Cole links de categoria, busca ou produto.')
 
 
+def _render_universal_fallback(*, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
+    if not _guided_login_enabled():
+        return
+    expanded = bool(st.session_state.get('site_capture_error'))
+    with st.expander('🧩 Compatibilidade universal para fornecedores bloqueados', expanded=expanded):
+        _orange_warning('Use esta opção quando o fornecedor bloquear iframe, popup, sessão, captcha, Cloudflare ou robô. O fluxo de estoque continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
+        render_manual_table_import_panel(
+            operation=OPERATION,
+            requested_columns=requested_columns,
+            df_modelo_cadastro=None,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo_estoque,
+        )
+
+
 def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
     entry_url = _guided_entry_url()
     capture_mode = _guided_capture_mode()
@@ -159,7 +174,7 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
     add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'capture_mode': capture_mode, 'allow_entry_step': False, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
     try:
         progress = st.progress(0, text='Executando captura autenticada de estoque pelo navegador do fornecedor...')
-        result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value='', session_value='', start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=False, security_resolved=True))
+        result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=False, security_resolved=True, persist_state=True, state_namespace='estoque_supplier_browser'))
         progress.progress(80, text='Organizando dados capturados...')
         for warning in result.warnings:
             _orange_warning(str(warning))
@@ -167,12 +182,12 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
             error_message = '; '.join(result.errors)
             _set_stock_capture_state(running=False, error=error_message)
             add_audit_event('authenticated_stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': error_message, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
-            _orange_warning(error_message)
+            _orange_warning('A captura automática não conseguiu ler este fornecedor. Use a compatibilidade universal abaixo para importar HTML/CSV/XLSX ou tabela copiada.')
             return
         if not isinstance(result.df, pd.DataFrame) or result.df.empty:
-            error_message = 'A captura autenticada não encontrou dados de estoque na página preparada. Confira se a URL informada é a tela de produtos/estoque aberta depois do login.'
+            error_message = 'A captura autenticada não encontrou dados de estoque na página preparada. Use a compatibilidade universal abaixo quando o fornecedor bloquear iframe, sessão, captcha ou robô.'
             _set_stock_capture_state(running=False, error=error_message)
-            add_audit_event('authenticated_stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event('authenticated_stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'state_reused': getattr(result, 'state_reused', False), 'state_saved': getattr(result, 'state_saved', False), 'responsible_file': RESPONSIBLE_FILE})
             _orange_warning(error_message)
             return
         df_site = result.df.fillna('')
@@ -180,14 +195,14 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
         _store_stock_site_df(df_site)
         _set_stock_capture_state(running=False, error='')
         completed = True
-        add_audit_event('authenticated_stock_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': OPERATION, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+        add_audit_event('authenticated_stock_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': OPERATION, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'state_reused': getattr(result, 'state_reused', False), 'state_saved': getattr(result, 'state_saved', False), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
         progress.progress(100, text='Captura autenticada de estoque concluída.')
         st.rerun()
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
         _set_stock_capture_state(running=False, error=message)
         add_audit_event('authenticated_stock_site_capture_exception', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
-        _orange_warning('A captura autenticada de estoque falhou e foi destravada. Confira o log debug e tente novamente.')
+        _orange_warning('A captura automática falhou e foi destravada. Use a compatibilidade universal abaixo se este fornecedor bloquear robôs ou iframe.')
     finally:
         if not completed and bool(st.session_state.get('site_capture_running')):
             _set_stock_capture_state(running=False, error=st.session_state.get('site_capture_error') or 'Captura interrompida antes de finalizar.')
@@ -210,7 +225,7 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
 
 
 def render_estoque_site_panel() -> None:
-    st.markdown("""<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada de estoque por site</div><h2 class="bling-flow-card-title">Motor independente de estoque</h2><p class="bling-flow-card-text">Este painel não usa a busca de cadastro. Ele lê o modelo de estoque e procura somente os campos pedidos nele.</p></section>""", unsafe_allow_html=True)
+    st.markdown('<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada de estoque por site</div><h2 class="bling-flow-card-title">Motor independente de estoque</h2><p class="bling-flow-card-text">Este painel não usa a busca de cadastro. Ele lê o modelo de estoque e procura somente os campos pedidos nele.</p></section>', unsafe_allow_html=True)
     st.info('Motor ativo: ESTOQUE POR SITE independente. Cadastro de produtos não entra neste fluxo.')
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
@@ -235,6 +250,7 @@ def render_estoque_site_panel() -> None:
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key='buscar_site_estoque_independente'):
         add_audit_event('stock_site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': OPERATION, 'guided_login_enabled': _guided_login_enabled(), 'capture_mode': _guided_capture_mode() if _guided_login_enabled() else 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_stock_site_capture(raw_urls, requested_columns, df_modelo_estoque)
+    _render_universal_fallback(requested_columns=requested_columns, df_modelo_estoque=df_modelo_estoque)
     df_site_bruto = _get_stock_site_df()
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         render_site_source_summary(df_site_bruto, OPERATION, show_history=False)
