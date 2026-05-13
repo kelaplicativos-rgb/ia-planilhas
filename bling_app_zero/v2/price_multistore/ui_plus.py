@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-"""Wrapper oficial do fluxo Preços Multiloja.
-
-BLINGCLEAN #ALL SAFE:
-- `ui.py` continua sendo o motor base do Multiloja e não deve ser apagado.
-- `ui_plus.py` é a entrada oficial chamada pela Home.
-- Este wrapper adiciona origem complementar por site/importação sem reescrever o
-  motor original, reduzindo risco de quebrar cálculo, CSV, ZIP e auditoria.
-"""
+# Wrapper oficial do fluxo Preços Multiloja.
+#
+# BLINGCLEAN #ALL SAFE:
+# - `ui.py` continua sendo o motor base do Multiloja e não deve ser apagado.
+# - `ui_plus.py` é a entrada oficial chamada pela Home.
+# - Este wrapper adiciona origem complementar por site/importação sem reescrever o
+#   motor original, reduzindo risco de quebrar cálculo, CSV, ZIP e auditoria.
 
 from collections.abc import Callable
 
