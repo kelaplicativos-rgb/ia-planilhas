@@ -3,6 +3,14 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.estoque_wizard_state import (
+    ESTOQUE_CONFIDENCE_KEY,
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+)
 from bling_app_zero.ui.home_shared import df_signature
 
 CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
@@ -20,14 +28,21 @@ CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY = 'cadastro_supplier_price_master_s
 CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME = 'REGRA_FILTRO_MESTRE_FORNECEDOR_PRECOS'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/importador.produtos.php'
 
+CADASTRO_STOCK_OUTPUT_KEYS = [
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
+]
+
 CADASTRO_OUTPUT_KEYS = [
     'df_final_cadastro',
     'mapping_cadastro',
     'mapping_confidence_cadastro',
     'df_origem_cadastro_precificada',
-    'df_final_estoque_from_cadastro',
-    'mapping_estoque_from_cadastro',
-    'mapping_confidence_estoque_from_cadastro',
+    *CADASTRO_STOCK_OUTPUT_KEYS,
     CADASTRO_ORIGEM_PRICED_KEY,
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
@@ -246,6 +261,7 @@ __all__ = [
     'CADASTRO_ORIGEM_PRICED_KEY',
     'CADASTRO_OUTPUT_KEYS',
     'CADASTRO_SOURCE_SIGNATURE_KEY',
+    'CADASTRO_STOCK_OUTPUT_KEYS',
     'CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY',
     'CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY',
     'CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME',
