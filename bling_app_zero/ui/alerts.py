@@ -97,9 +97,6 @@ def inject_alert_theme() -> None:
             line-height: 1.38;
             font-weight: 650;
         }
-        .bling-next-blocked-slot {
-            display: none !important;
-        }
         @media (max-width: 640px) {
             .bling-alert-card {
                 border-radius: 16px;
