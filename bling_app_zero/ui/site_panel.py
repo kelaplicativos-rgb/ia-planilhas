@@ -7,6 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
+from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
@@ -78,6 +79,13 @@ def _operation_badge(operation: str) -> str:
     if operation == 'estoque':
         return 'Motor ativo: ESTOQUE POR SITE - somente colunas do modelo de estoque.'
     return 'Motor ativo: CADASTRO POR SITE - origem completa para cadastro de produtos.'
+
+
+def _render_guided_login_origin_module(operation: str) -> None:
+    label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
+    with st.expander('🔐 Login guiado para fornecedor protegido', expanded=False):
+        st.caption(f'Use esta opção quando o fornecedor exigir login antes da {label}.')
+        render_guided_login_panel()
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -255,6 +263,7 @@ def render_site_panel() -> None:
     st.info(_operation_badge(operation))
     st.caption(config.description)
 
+    _render_guided_login_origin_module(operation)
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
 
