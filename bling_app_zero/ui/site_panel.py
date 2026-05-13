@@ -93,6 +93,22 @@ def _protected_session_value() -> str:
     return str(st.session_state.get(key) or '').strip()
 
 
+def _clear_stuck_capture(operation: str) -> None:
+    _set_capture_state(
+        operation=operation,
+        running=False,
+        finished=False,
+        error='Captura anterior destravada manualmente. Execute novamente.',
+    )
+    add_audit_event(
+        'site_capture_unstuck_manually',
+        area='SITE',
+        step='entrada',
+        status='AVISO',
+        details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _render_guided_login_origin_module(operation: str) -> None:
     label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
     enabled = st.checkbox('Este fornecedor exige login?', value=_guided_login_enabled(operation), key=_guided_login_toggle_key(operation), help='Deixe desmarcado para busca normal por links.')
@@ -150,36 +166,53 @@ def _run_authenticated_site_capture(operation: str, requested_columns: list[str]
     if operation == 'estoque' and not _has_columns(requested_columns):
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir as colunas solicitadas.')
         return
+
     started_at = time.time()
+    completed = False
+    progress = None
     _set_capture_state(operation=operation, running=True, finished=False)
     add_audit_event('authenticated_site_capture_started', area='SITE', step='entrada', details={'operation': operation, 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
-    progress = st.progress(0, text='Executando captura autenticada estilo Instant Scraper...')
-    result = run_browser_scraper(BrowserScraperConfig(operation=operation, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns or (list(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else None), max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
-    progress.progress(80, text='Organizando dados capturados...')
-    for warning in result.warnings:
-        _orange_warning(str(warning))
-    if result.errors:
-        error_message = '; '.join(result.errors)
-        _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
-        _orange_warning(error_message)
-        return
-    if not isinstance(result.df, pd.DataFrame) or result.df.empty:
-        error_message = 'A captura autenticada não encontrou dados na página.'
-        _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
-        _orange_warning(error_message)
-        return
-    df_site = result.df.fillna('')
-    save_site_source(df_site, entry_url, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
-    _store_site_df(operation, df_site)
-    st.session_state['operation_site'] = operation
-    st.session_state['tipo_operacao_site'] = operation
-    st.session_state['operacao_final'] = operation
-    st.session_state['tipo_operacao_final'] = operation
-    st.session_state['origem_final'] = 'site'
-    _set_capture_state(operation=operation, running=False, finished=True, rows=len(df_site), columns=len(df_site.columns))
-    add_audit_event('authenticated_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
-    progress.progress(100, text='Captura autenticada concluída.')
-    st.rerun()
+
+    try:
+        progress = st.progress(0, text='Executando captura autenticada estilo Instant Scraper...')
+        result = run_browser_scraper(BrowserScraperConfig(operation=operation, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns or (list(df_modelo.columns) if isinstance(df_modelo, pd.DataFrame) else None), max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
+        progress.progress(80, text='Organizando dados capturados...')
+        for warning in result.warnings:
+            _orange_warning(str(warning))
+        if result.errors:
+            error_message = '; '.join(result.errors)
+            _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
+            add_audit_event('authenticated_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'error': error_message, 'pages_visited': result.pages_visited, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+            _orange_warning(error_message)
+            return
+        if not isinstance(result.df, pd.DataFrame) or result.df.empty:
+            error_message = 'A captura autenticada não encontrou dados na página.'
+            _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
+            add_audit_event('authenticated_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'pages_visited': result.pages_visited, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+            _orange_warning(error_message)
+            return
+        df_site = result.df.fillna('')
+        save_site_source(df_site, entry_url, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
+        _store_site_df(operation, df_site)
+        st.session_state['operation_site'] = operation
+        st.session_state['tipo_operacao_site'] = operation
+        st.session_state['operacao_final'] = operation
+        st.session_state['tipo_operacao_final'] = operation
+        st.session_state['origem_final'] = 'site'
+        _set_capture_state(operation=operation, running=False, finished=True, rows=len(df_site), columns=len(df_site.columns))
+        completed = True
+        add_audit_event('authenticated_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+        if progress is not None:
+            progress.progress(100, text='Captura autenticada concluída.')
+        st.rerun()
+    except Exception as exc:
+        message = str(exc) or exc.__class__.__name__
+        _set_capture_state(operation=operation, running=False, finished=False, error=message)
+        add_audit_event('authenticated_site_capture_exception', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+        _orange_warning('A captura autenticada falhou e foi destravada. Confira o log debug e tente novamente.')
+    finally:
+        if not completed and bool(st.session_state.get('site_capture_running')):
+            _set_capture_state(operation=operation, running=False, finished=False, error=st.session_state.get('site_capture_error') or 'Captura interrompida antes de finalizar.')
 
 
 def _run_site_capture(operation: str, raw_urls: str, requested_columns: list[str] | None, df_modelo_cadastro: pd.DataFrame | None, df_modelo_estoque: pd.DataFrame | None, df_modelo: pd.DataFrame | None) -> None:
@@ -243,6 +276,9 @@ def render_site_panel() -> None:
     running = bool(st.session_state.get('site_capture_running'))
     if running:
         _orange_warning('Captura por site em andamento. Aguarde o preview da origem aparecer antes de continuar.')
+        if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+            _clear_stuck_capture(operation)
+            st.rerun()
     error = str(st.session_state.get('site_capture_error') or '').strip()
     if error:
         st.error(f'Última captura por site falhou: {error}')
