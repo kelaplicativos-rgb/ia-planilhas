@@ -13,6 +13,7 @@ AUDIT_SESSION_ID_KEY = 'audit_session_id'
 AUDIT_STATE_SNAPSHOT_KEY = 'audit_state_snapshot'
 AUDIT_MAX_ITEMS = 10000
 AUDIT_EXPORT_FILENAME = 'bling_audit_trail.jsonl'
+REDACTED_VALUE = '[REDACTED]'
 
 SENSITIVE_KEYWORDS = (
     'password',
@@ -24,6 +25,13 @@ SENSITIVE_KEYWORDS = (
     'cookie',
     'api_key',
     'apikey',
+    'credential',
+    'credentials',
+    'auth',
+    'security_code',
+    'captcha',
+    '2fa',
+    'ephemeral',
 )
 
 IGNORED_STATE_KEYS = {
@@ -74,7 +82,7 @@ def _sanitize(value: Any, *, depth: int = 0) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             safe_key = _safe_text(key, 120)
-            result[safe_key] = '[REDACTED]' if _is_sensitive_key(key) else _sanitize(item, depth=depth + 1)
+            result[safe_key] = REDACTED_VALUE if _is_sensitive_key(key) else _sanitize(item, depth=depth + 1)
         return result
     if isinstance(value, (list, tuple, set)):
         return [_sanitize(item, depth=depth + 1) for item in list(value)[:80]]
@@ -98,7 +106,13 @@ def _fingerprint(value: Any) -> str:
     return hashlib.sha256(payload.encode('utf-8', errors='ignore')).hexdigest()
 
 
-def _state_value_summary(value: Any) -> dict[str, Any]:
+def _state_value_summary(value: Any, *, key: Any | None = None) -> dict[str, Any]:
+    if key is not None and _is_sensitive_key(key):
+        return {
+            'type': type(value).__name__,
+            'fingerprint': hashlib.sha256(REDACTED_VALUE.encode('utf-8')).hexdigest(),
+            'value': REDACTED_VALUE,
+        }
     sanitized = _sanitize(value)
     return {
         'type': type(value).__name__,
@@ -113,7 +127,7 @@ def _capture_state_snapshot() -> dict[str, dict[str, Any]]:
         if _should_ignore_state_key(key):
             continue
         safe_key = _safe_text(key, 160)
-        snapshot[safe_key] = _state_value_summary(value)
+        snapshot[safe_key] = _state_value_summary(value, key=key)
     return snapshot
 
 
@@ -149,15 +163,6 @@ def add_audit_event(
 
 
 def audit_session_state_changes(stage: str = 'runtime') -> None:
-    """Registra alterações gerais no session_state entre um rerun e outro.
-
-    Este rastreador captura o máximo possível dos movimentos do usuário em widgets
-    Streamlit: campos preenchidos, valores apagados, números alterados, seleção de
-    opções, checkboxes/toggles, uploads e chaves criadas/removidas pelo fluxo.
-
-    Limitação natural do Streamlit: ele registra a mudança quando o app reroda
-    após a interação, não cada tecla pressionada em tempo real antes do rerun.
-    """
     previous = st.session_state.get(AUDIT_STATE_SNAPSHOT_KEY)
     current = _capture_state_snapshot()
     if not isinstance(previous, dict):
@@ -172,32 +177,15 @@ def audit_session_state_changes(stage: str = 'runtime') -> None:
     common = sorted(previous_keys & current_keys)
 
     for key in added:
-        add_audit_event(
-            'field_added',
-            area='STATE',
-            details={'stage': stage, 'key': key, 'new': current.get(key)},
-        )
+        add_audit_event('field_added', area='STATE', details={'stage': stage, 'key': key, 'new': current.get(key)})
     for key in removed:
-        add_audit_event(
-            'field_removed',
-            area='STATE',
-            details={'stage': stage, 'key': key, 'old': previous.get(key)},
-        )
+        add_audit_event('field_removed', area='STATE', details={'stage': stage, 'key': key, 'old': previous.get(key)})
     for key in common:
         old = previous.get(key, {})
         new = current.get(key, {})
         if old.get('fingerprint') == new.get('fingerprint'):
             continue
-        add_audit_event(
-            'field_changed',
-            area='STATE',
-            details={
-                'stage': stage,
-                'key': key,
-                'old': old,
-                'new': new,
-            },
-        )
+        add_audit_event('field_changed', area='STATE', details={'stage': stage, 'key': key, 'old': old, 'new': new})
 
     st.session_state[AUDIT_STATE_SNAPSHOT_KEY] = current
 
@@ -205,12 +193,7 @@ def audit_session_state_changes(stage: str = 'runtime') -> None:
 def audit_button(label: str, *, key: str, area: str, step: str | None = None, **button_kwargs: Any) -> bool:
     clicked = st.button(label, key=key, **button_kwargs)
     if clicked:
-        add_audit_event(
-            'button_clicked',
-            area=area,
-            step=step,
-            details={'label': label, 'key': key},
-        )
+        add_audit_event('button_clicked', area=area, step=step, details={'label': label, 'key': key})
     return clicked
 
 
