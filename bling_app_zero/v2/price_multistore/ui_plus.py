@@ -11,9 +11,13 @@ from bling_app_zero.v2.price_multistore.source_origin_panel import (
     should_use_multistore_complementary_source,
 )
 from bling_app_zero.v2.price_multistore import ui as original_ui
+from bling_app_zero.v2.session_store import get_state, widget_key
 
 
 _ORIGINAL_READ: Callable[[object], pd.DataFrame | None] = original_ui._read
+SUGGESTED_PRICE_COLUMN_STATE = 'multistore_source_suggested_price_column'
+SOURCE_UPLOAD_WIDGET = 'multistore_source_upload'
+COST_COLUMN_WIDGET = 'multistore_cost_column'
 
 
 def _patched_read_factory():
@@ -32,11 +36,32 @@ def _patched_read_factory():
     return _patched_read
 
 
+def _prime_cost_column_from_complementary_source(source_df: pd.DataFrame | None) -> None:
+    """Preenche a coluna de custo sugerida antes do módulo legado renderizar o selectbox.
+
+    O módulo original espera upload da Planilha 2. Quando o wrapper injeta uma origem
+    complementar por site/importação, o usuário não deve precisar escolher de novo a
+    coluna que o painel complementar já detectou como preço/custo provável.
+    """
+    if not should_use_multistore_complementary_source():
+        return
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        return
+    suggested = str(get_state(SUGGESTED_PRICE_COLUMN_STATE) or '').strip()
+    if not suggested or suggested not in [str(column) for column in source_df.columns]:
+        return
+    cost_key = widget_key(COST_COLUMN_WIDGET)
+    source_upload_key = widget_key(SOURCE_UPLOAD_WIDGET)
+    if st.session_state.get(source_upload_key) is None:
+        st.session_state[cost_key] = suggested
+
+
 def render_price_multistore_v2() -> None:
     st.markdown('### Origem complementar')
     source_df = render_multistore_source_origin_panel()
     if should_use_multistore_complementary_source():
         if isinstance(source_df, pd.DataFrame) and not source_df.empty:
+            _prime_cost_column_from_complementary_source(source_df)
             st.caption('A origem complementar escolhida será usada como Planilha 2 neste cálculo.')
         else:
             st.caption('Você escolheu usar origem complementar, mas ainda precisa capturar/importar os dados do fornecedor.')
