@@ -343,6 +343,25 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
     )
 
 
+def _audit_model_waiting_for_upload() -> None:
+    marker_key = 'audit_model_waiting_for_upload_notice'
+    if st.session_state.get(marker_key):
+        return
+    st.session_state[marker_key] = True
+    add_audit_event(
+        'wizard_model_waiting_for_upload',
+        area='WIZARD',
+        step=STEP_MODELO,
+        status='INFO',
+        details={
+            'message': 'Aguardando envio do modelo do Bling.',
+            'has_model': False,
+            'visual_block_removed': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _render_nav_buttons(
     *,
     allow_next: bool = True,
@@ -469,7 +488,7 @@ def _render_model_step() -> None:
         )
 
         if not has_model:
-            _audit_step_blocked(STEP_MODELO, 'Aguardando modelo do Bling.')
+            _audit_model_waiting_for_upload()
             return
 
         st.markdown('<div class="bling-primary-cta-anchor"></div>', unsafe_allow_html=True)
