@@ -10,23 +10,34 @@ def inject_unified_light_layout(force: bool = False) -> None:
         """
         <style id="bling-unified-theme">
         :root {
-            --bling-bg: #f8fbff;
+            --bling-bg: #f7f8fc;
+            --bling-bg-soft: #eef2f8;
             --bling-surface: #ffffff;
-            --bling-surface-soft: #f1f7ff;
-            --bling-border: rgba(37, 99, 235, 0.14);
-            --bling-text: #0f172a;
+            --bling-surface-soft: #f3f6fb;
+            --bling-surface-green: #eaf7f0;
+            --bling-border: rgba(71, 85, 105, 0.16);
+            --bling-border-strong: rgba(71, 85, 105, 0.26);
+            --bling-text: #1f2937;
+            --bling-text-soft: #334155;
             --bling-muted: #64748b;
-            --bling-primary: #2563eb;
-            --bling-primary-dark: #1d4ed8;
-            --bling-accent: #38bdf8;
+            --bling-primary: #4f67a5;
+            --bling-primary-dark: #40588f;
+            --bling-primary-hover: #3b5184;
+            --bling-primary-soft: #edf2ff;
+            --bling-accent: #6f86bf;
+            --bling-success-bg: #eaf7f0;
+            --bling-success-border: rgba(34, 197, 94, 0.18);
+            --bling-success-text: #475569;
             --bling-warning-bg: #fff7ed;
             --bling-warning-border: rgba(251, 146, 60, 0.42);
             --bling-warning-text: #7c2d12;
-            --bling-radius-xl: 24px;
-            --bling-radius-lg: 18px;
-            --bling-shadow: 0 16px 42px rgba(15, 23, 42, 0.065);
-            --bling-shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.045);
+            --bling-radius-xl: 22px;
+            --bling-radius-lg: 16px;
+            --bling-radius-md: 12px;
+            --bling-shadow: 0 14px 34px rgba(15, 23, 42, 0.070);
+            --bling-shadow-soft: 0 7px 18px rgba(15, 23, 42, 0.050);
             --bling-content-width: 980px;
+            --bling-font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
         }
 
         html,
@@ -37,11 +48,18 @@ def inject_unified_light_layout(force: bool = False) -> None:
             overflow-x: hidden !important;
             color: var(--bling-text) !important;
             background:
-                radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.13), transparent 22rem),
-                radial-gradient(circle at 88% 2%, rgba(37, 99, 235, 0.10), transparent 28rem),
+                radial-gradient(circle at 16% 0%, rgba(79, 103, 165, 0.10), transparent 24rem),
+                radial-gradient(circle at 92% 4%, rgba(111, 134, 191, 0.09), transparent 26rem),
                 linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 100%) !important;
+            font-family: var(--bling-font-family) !important;
             -webkit-font-smoothing: antialiased !important;
             text-rendering: optimizeLegibility !important;
+        }
+
+        html *,
+        body *,
+        [data-testid="stApp"] * {
+            font-family: var(--bling-font-family) !important;
         }
 
         header[data-testid="stHeader"] {
@@ -50,8 +68,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
             opacity: 1 !important;
             pointer-events: auto !important;
             z-index: 999999 !important;
-            background: rgba(255, 255, 255, 0.82) !important;
-            border-bottom: 1px solid rgba(226, 232, 240, 0.78) !important;
+            background: rgba(255, 255, 255, 0.86) !important;
+            border-bottom: 1px solid rgba(226, 232, 240, 0.88) !important;
             backdrop-filter: blur(14px) !important;
         }
 
@@ -80,14 +98,21 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
         .bling-hero,
         .bling-flow-card,
+        .bling-inline-card,
+        div[data-testid="stForm"],
+        div[data-testid="stExpander"] {
+            border: 1px solid var(--bling-border) !important;
+            border-radius: var(--bling-radius-xl) !important;
+            background: rgba(255, 255, 255, 0.96) !important;
+            box-shadow: var(--bling-shadow-soft) !important;
+        }
+
+        .bling-hero,
+        .bling-flow-card,
         .bling-inline-card {
             width: min(100%, 760px) !important;
             margin: 0 auto 1rem auto !important;
             padding: 1.25rem 1.15rem !important;
-            border: 1px solid var(--bling-border) !important;
-            border-radius: var(--bling-radius-xl) !important;
-            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.94)) !important;
-            box-shadow: var(--bling-shadow) !important;
             text-align: left !important;
             position: relative !important;
             overflow: hidden !important;
@@ -110,30 +135,39 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         .bling-hero-kicker,
-        .bling-flow-card-kicker {
+        .bling-flow-card-kicker,
+        .bling-selected-flow-badge,
+        .bling-home-pill {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            margin: 0 0 0.62rem 0 !important;
-            padding: 0.30rem 0.66rem !important;
-            border-radius: 999px !important;
-            background: rgba(37, 99, 235, 0.10) !important;
-            border: 1px solid rgba(37, 99, 235, 0.12) !important;
+            gap: 0.42rem !important;
             color: var(--bling-primary-dark) !important;
-            font-size: 0.78rem !important;
+            background: var(--bling-primary-soft) !important;
+            border: 1px solid rgba(79, 103, 165, 0.16) !important;
+            border-radius: 999px !important;
+            padding: 0.34rem 0.68rem !important;
+            font-size: 0.82rem !important;
             font-weight: 820 !important;
             line-height: 1.1 !important;
+            margin: 0 0 0.78rem 0 !important;
+        }
+
+        .bling-hero-title,
+        .bling-flow-card-title,
+        .bling-step-title,
+        h1, h2, h3, h4, h5 {
+            display: block !important;
+            color: var(--bling-text) !important;
+            font-weight: 880 !important;
+            letter-spacing: -0.018em !important;
+            line-height: 1.16 !important;
         }
 
         .bling-hero-title,
         .bling-flow-card-title {
-            display: block !important;
             margin: 0 0 0.46rem 0 !important;
-            color: var(--bling-text) !important;
-            font-size: clamp(1.48rem, 3.6vw, 2.18rem) !important;
-            font-weight: 920 !important;
-            letter-spacing: -0.035em !important;
-            line-height: 1.08 !important;
+            font-size: clamp(1.42rem, 3.4vw, 2.06rem) !important;
         }
 
         .bling-hero-subtitle,
@@ -144,6 +178,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-testid="stMarkdownContainer"] p {
             color: var(--bling-muted) !important;
             line-height: 1.45 !important;
+            font-weight: 500 !important;
         }
 
         div[data-testid="stVerticalBlock"] { gap: 0.82rem !important; }
@@ -160,38 +195,14 @@ def inject_unified_light_layout(force: bool = False) -> None:
             margin: 0.8rem auto 0 auto !important;
         }
 
-        .bling-step-title,
-        h1, h2, h3, h4, h5 {
-            color: var(--bling-text) !important;
-            font-weight: 880 !important;
-            letter-spacing: -0.012em !important;
-            line-height: 1.22 !important;
-        }
-
-        .bling-selected-flow-badge,
-        .bling-home-pill {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 0.42rem !important;
-            color: var(--bling-primary-dark) !important;
-            background: rgba(37, 99, 235, 0.10) !important;
-            border: 1px solid rgba(37, 99, 235, 0.14) !important;
-            border-radius: 999px !important;
-            padding: 0.34rem 0.68rem !important;
-            font-size: 0.84rem !important;
-            font-weight: 820 !important;
-            margin: 0 0 0.8rem 0 !important;
-        }
-
         .bling-compact-note,
         .bling-inline-preview {
-            border-radius: 12px !important;
-            padding: 0.62rem 0.72rem !important;
-            background: rgba(239, 246, 255, 0.88) !important;
-            color: rgba(30, 64, 175, 0.85) !important;
-            border: 1px solid rgba(37, 99, 235, 0.12) !important;
-            font-size: 0.88rem !important;
+            border-radius: var(--bling-radius-md) !important;
+            padding: 0.68rem 0.78rem !important;
+            background: var(--bling-primary-soft) !important;
+            color: var(--bling-text-soft) !important;
+            border: 1px solid rgba(79, 103, 165, 0.14) !important;
+            font-size: 0.9rem !important;
             line-height: 1.42 !important;
             margin: 0.55rem 0 0.75rem 0 !important;
         }
@@ -200,6 +211,18 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-testid="stAlert"] {
             border-radius: 16px !important;
             box-shadow: none !important;
+        }
+
+        div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]),
+        .stAlert:has([data-testid="stAlertContentSuccess"]) {
+            background: var(--bling-success-bg) !important;
+            border: 1px solid var(--bling-success-border) !important;
+            color: var(--bling-success-text) !important;
+        }
+
+        div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) *,
+        .stAlert:has([data-testid="stAlertContentSuccess"]) * {
+            color: var(--bling-success-text) !important;
         }
 
         div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]),
@@ -216,37 +239,70 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
         .stButton > button,
         .stDownloadButton > button,
-        div[data-testid="stFileUploader"] button {
-            min-height: 44px !important;
-            border-radius: 14px !important;
-            border: 1px solid rgba(37, 99, 235, 0.18) !important;
+        div[data-testid="stFileUploader"] button,
+        button[kind="secondary"] {
+            min-height: 46px !important;
+            border-radius: 18px !important;
+            border: 1px solid var(--bling-border-strong) !important;
             background: #ffffff !important;
-            color: var(--bling-text) !important;
-            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.045) !important;
-            font-weight: 780 !important;
+            color: var(--bling-text-soft) !important;
+            box-shadow: 0 5px 14px rgba(15, 23, 42, 0.045) !important;
+            font-weight: 760 !important;
+            letter-spacing: 0.005em !important;
             white-space: normal !important;
+            transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease !important;
+        }
+
+        .stButton > button *,
+        .stDownloadButton > button *,
+        div[data-testid="stFileUploader"] button *,
+        button[kind="secondary"] * {
+            color: inherit !important;
+            font-weight: inherit !important;
         }
 
         .stButton > button:hover,
         .stDownloadButton > button:hover,
-        div[data-testid="stFileUploader"] button:hover {
-            border-color: rgba(37, 99, 235, 0.34) !important;
-            background: var(--bling-surface-soft) !important;
-            box-shadow: 0 10px 22px rgba(37, 99, 235, 0.10) !important;
+        div[data-testid="stFileUploader"] button:hover,
+        button[kind="secondary"]:hover {
+            border-color: rgba(79, 103, 165, 0.42) !important;
+            background: var(--bling-primary-soft) !important;
+            box-shadow: 0 8px 20px rgba(79, 103, 165, 0.12) !important;
             transform: translateY(-1px) !important;
+            color: var(--bling-primary-dark) !important;
+        }
+
+        .stButton > button:focus,
+        .stDownloadButton > button:focus,
+        div[data-testid="stFileUploader"] button:focus,
+        button[kind="secondary"]:focus {
+            outline: 3px solid rgba(79, 103, 165, 0.18) !important;
+            outline-offset: 2px !important;
+            box-shadow: 0 0 0 1px rgba(79, 103, 165, 0.18), 0 8px 20px rgba(79, 103, 165, 0.12) !important;
         }
 
         .stButton > button:disabled,
         .stButton > button[disabled],
         .stDownloadButton > button:disabled,
-        .stDownloadButton > button[disabled] {
-            cursor: default !important;
-            opacity: 0.72 !important;
-            color: #94a3b8 !important;
-            background: rgba(248, 250, 252, 0.82) !important;
-            border: 1px solid rgba(203, 213, 225, 0.72) !important;
+        .stDownloadButton > button[disabled],
+        button:disabled,
+        button[disabled] {
+            cursor: not-allowed !important;
+            opacity: 0.58 !important;
+            color: #64748b !important;
+            background: #eef2f7 !important;
+            border: 1px solid rgba(148, 163, 184, 0.38) !important;
             box-shadow: none !important;
             transform: none !important;
+        }
+
+        .stButton > button:disabled *,
+        .stButton > button[disabled] *,
+        .stDownloadButton > button:disabled *,
+        .stDownloadButton > button[disabled] *,
+        button:disabled *,
+        button[disabled] * {
+            color: inherit !important;
         }
 
         button[kind="primary"],
@@ -254,8 +310,31 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button {
             color: #ffffff !important;
             background: linear-gradient(135deg, var(--bling-primary), var(--bling-primary-dark)) !important;
-            border-color: rgba(37, 99, 235, 0.34) !important;
-            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22) !important;
+            border-color: rgba(64, 88, 143, 0.42) !important;
+            box-shadow: 0 12px 26px rgba(64, 88, 143, 0.25) !important;
+            font-weight: 820 !important;
+        }
+
+        button[kind="primary"] *,
+        .bling-primary-cta-anchor + div .stButton > button *,
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button * {
+            color: #ffffff !important;
+            font-weight: inherit !important;
+        }
+
+        button[kind="primary"]:hover,
+        .bling-primary-cta-anchor + div .stButton > button:hover,
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button:hover {
+            color: #ffffff !important;
+            background: linear-gradient(135deg, var(--bling-primary-dark), var(--bling-primary-hover)) !important;
+            border-color: rgba(59, 81, 132, 0.50) !important;
+            box-shadow: 0 14px 30px rgba(64, 88, 143, 0.30) !important;
+        }
+
+        button[kind="primary"]:hover *,
+        .bling-primary-cta-anchor + div .stButton > button:hover *,
+        div[data-testid="stVerticalBlock"]:has(.bling-primary-cta-anchor) .stButton > button:hover * {
+            color: #ffffff !important;
         }
 
         div[data-testid="stFileUploader"] {
@@ -264,9 +343,9 @@ def inject_unified_light_layout(force: bool = False) -> None:
         }
 
         div[data-testid="stFileUploader"] section {
-            border: 1px dashed rgba(37, 99, 235, 0.22) !important;
+            border: 1px dashed rgba(79, 103, 165, 0.26) !important;
             border-radius: var(--bling-radius-xl) !important;
-            background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,247,255,0.94)) !important;
+            background: rgba(255, 255, 255, 0.94) !important;
             box-shadow: var(--bling-shadow-soft) !important;
             padding: 1rem !important;
             min-height: 118px !important;
@@ -277,9 +356,15 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-baseweb="select"] > div,
         div[data-baseweb="input"] > div,
         div[data-baseweb="textarea"] > div {
-            border-radius: 14px !important;
+            border-radius: 16px !important;
             background: #ffffff !important;
-            border-color: rgba(37, 99, 235, 0.16) !important;
+            border-color: var(--bling-border-strong) !important;
+            color: var(--bling-text) !important;
+        }
+
+        input::placeholder,
+        textarea::placeholder {
+            color: #94a3b8 !important;
         }
 
         div[data-testid="stDataFrame"] {
@@ -292,7 +377,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
         section[data-testid="stSidebar"] {
             background: rgba(255, 255, 255, 0.96) !important;
-            border-right: 1px solid rgba(191, 219, 254, 0.72) !important;
+            border-right: 1px solid rgba(203, 213, 225, 0.82) !important;
         }
 
         footer { visibility: hidden !important; }
@@ -323,14 +408,16 @@ def inject_unified_light_layout(force: bool = False) -> None:
             }
 
             .bling-hero-kicker,
-            .bling-flow-card-kicker {
-                font-size: 0.68rem !important;
+            .bling-flow-card-kicker,
+            .bling-selected-flow-badge,
+            .bling-home-pill {
+                font-size: 0.70rem !important;
                 margin-bottom: 0.52rem !important;
             }
 
             .bling-hero-title,
             .bling-flow-card-title {
-                font-size: 1.42rem !important;
+                font-size: 1.38rem !important;
                 line-height: 1.12 !important;
                 letter-spacing: -0.026em !important;
                 margin-bottom: 0.46rem !important;
@@ -338,8 +425,8 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
             .bling-hero-subtitle,
             .bling-flow-card-text {
-                font-size: 0.86rem !important;
-                line-height: 1.38 !important;
+                font-size: 0.88rem !important;
+                line-height: 1.40 !important;
                 max-width: 100% !important;
             }
 
@@ -355,9 +442,13 @@ def inject_unified_light_layout(force: bool = False) -> None:
             }
 
             .stButton > button,
-            .stDownloadButton > button {
-                min-height: 42px !important;
-                font-size: 0.92rem !important;
+            .stDownloadButton > button,
+            div[data-testid="stFileUploader"] button,
+            button[kind="primary"],
+            button[kind="secondary"] {
+                min-height: 46px !important;
+                font-size: 0.94rem !important;
+                border-radius: 18px !important;
             }
         }
         </style>
