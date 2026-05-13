@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""Wrapper oficial do fluxo Preços Multiloja.
+
+BLINGCLEAN #ALL SAFE:
+- `ui.py` continua sendo o motor base do Multiloja e não deve ser apagado.
+- `ui_plus.py` é a entrada oficial chamada pela Home.
+- Este wrapper adiciona origem complementar por site/importação sem reescrever o
+  motor original, reduzindo risco de quebrar cálculo, CSV, ZIP e auditoria.
+"""
+
 from collections.abc import Callable
 
 import pandas as pd
@@ -21,6 +30,12 @@ COST_COLUMN_WIDGET = 'multistore_cost_column'
 
 
 def _patched_read_factory():
+    """Cria um leitor temporário para injetar a origem complementar como Planilha 2.
+
+    O motor base chama `_read()` duas vezes: Planilha 1 do Bling e Planilha 2 de
+    custo. Este patch só interfere quando não há upload da Planilha 2 e o usuário
+    escolheu usar captura por site/importação como origem complementar.
+    """
     call_index = {'value': 0}
 
     def _patched_read(uploaded_file) -> pd.DataFrame | None:
@@ -37,9 +52,9 @@ def _patched_read_factory():
 
 
 def _prime_cost_column_from_complementary_source(source_df: pd.DataFrame | None) -> None:
-    """Preenche a coluna de custo sugerida antes do módulo legado renderizar o selectbox.
+    """Preenche a coluna de custo sugerida antes do módulo base renderizar o selectbox.
 
-    O módulo original espera upload da Planilha 2. Quando o wrapper injeta uma origem
+    O motor base espera upload da Planilha 2. Quando o wrapper injeta uma origem
     complementar por site/importação, o usuário não deve precisar escolher de novo a
     coluna que o painel complementar já detectou como preço/custo provável.
     """
@@ -57,6 +72,11 @@ def _prime_cost_column_from_complementary_source(source_df: pd.DataFrame | None)
 
 
 def render_price_multistore_v2() -> None:
+    """Renderiza o Multiloja oficial com origem complementar segura.
+
+    A Home deve chamar esta função. O motor base (`original_ui`) continua cuidando
+    do cálculo, auditoria, CSV e ZIP; este wrapper apenas prepara a origem extra.
+    """
     st.markdown('### Origem complementar')
     source_df = render_multistore_source_origin_panel()
     if should_use_multistore_complementary_source():
