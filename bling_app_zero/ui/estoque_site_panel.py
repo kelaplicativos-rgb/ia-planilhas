@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.instant_scraper import BrowserScraperConfig, run_browser_scraper
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
@@ -15,6 +16,7 @@ ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
 OPERATION = 'estoque'
 STOCK_SITE_DF_KEY = 'df_site_bruto_estoque'
+RESPONSIBLE_FILE = 'bling_app_zero/ui/estoque_site_panel.py'
 
 
 def _query_param(name: str) -> str:
@@ -45,6 +47,17 @@ def _guided_login_toggle_key() -> str:
 
 def _guided_login_enabled() -> bool:
     return bool(st.session_state.get(_guided_login_toggle_key(), False))
+
+
+def _set_stock_capture_state(*, running: bool, error: str = '') -> None:
+    st.session_state['site_capture_running'] = running
+    st.session_state['site_capture_error'] = error
+    st.session_state['site_capture_operation'] = OPERATION
+
+
+def _clear_stuck_capture() -> None:
+    _set_stock_capture_state(running=False, error='Captura anterior destravada manualmente. Execute novamente.')
+    add_audit_event('stock_site_capture_unstuck_manually', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _get_stock_site_df() -> pd.DataFrame | None:
@@ -122,22 +135,44 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
     if not _has_columns(requested_columns):
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
         return
-    progress = st.progress(0, text='Executando captura autenticada de estoque estilo Instant Scraper...')
-    result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
-    progress.progress(80, text='Organizando dados capturados...')
-    for warning in result.warnings:
-        _orange_warning(str(warning))
-    if result.errors:
-        _orange_warning('; '.join(result.errors))
-        return
-    if not isinstance(result.df, pd.DataFrame) or result.df.empty:
-        _orange_warning('A captura autenticada não encontrou dados de estoque na página.')
-        return
-    df_site = result.df.fillna('')
-    save_site_source(df_site=df_site, raw_urls=entry_url, requested_columns=requested_columns, df_modelo_cadastro=None, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo_estoque, operation=OPERATION)
-    _store_stock_site_df(df_site)
-    progress.progress(100, text='Captura autenticada de estoque concluída.')
-    st.rerun()
+
+    completed = False
+    _set_stock_capture_state(running=True, error='')
+    add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+    try:
+        progress = st.progress(0, text='Executando captura autenticada de estoque estilo Instant Scraper...')
+        result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
+        progress.progress(80, text='Organizando dados capturados...')
+        for warning in result.warnings:
+            _orange_warning(str(warning))
+        if result.errors:
+            error_message = '; '.join(result.errors)
+            _set_stock_capture_state(running=False, error=error_message)
+            add_audit_event('authenticated_stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': error_message, 'pages_visited': result.pages_visited, 'responsible_file': RESPONSIBLE_FILE})
+            _orange_warning(error_message)
+            return
+        if not isinstance(result.df, pd.DataFrame) or result.df.empty:
+            error_message = 'A captura autenticada não encontrou dados de estoque na página.'
+            _set_stock_capture_state(running=False, error=error_message)
+            add_audit_event('authenticated_stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'pages_visited': result.pages_visited, 'responsible_file': RESPONSIBLE_FILE})
+            _orange_warning(error_message)
+            return
+        df_site = result.df.fillna('')
+        save_site_source(df_site=df_site, raw_urls=entry_url, requested_columns=requested_columns, df_modelo_cadastro=None, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo_estoque, operation=OPERATION)
+        _store_stock_site_df(df_site)
+        _set_stock_capture_state(running=False, error='')
+        completed = True
+        add_audit_event('authenticated_stock_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': OPERATION, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+        progress.progress(100, text='Captura autenticada de estoque concluída.')
+        st.rerun()
+    except Exception as exc:
+        message = str(exc) or exc.__class__.__name__
+        _set_stock_capture_state(running=False, error=message)
+        add_audit_event('authenticated_stock_site_capture_exception', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'responsible_file': RESPONSIBLE_FILE})
+        _orange_warning('A captura autenticada de estoque falhou e foi destravada. Confira o log debug e tente novamente.')
+    finally:
+        if not completed and bool(st.session_state.get('site_capture_running')):
+            _set_stock_capture_state(running=False, error=st.session_state.get('site_capture_error') or 'Captura interrompida antes de finalizar.')
 
 
 def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
@@ -162,12 +197,18 @@ def render_estoque_site_panel() -> None:
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
     _render_guided_login_origin_module()
+    running = bool(st.session_state.get('site_capture_running'))
+    if running:
+        _orange_warning('Captura por site em andamento. Aguarde o preview da origem aparecer antes de continuar.')
+        if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key='limpar_captura_travada_estoque'):
+            _clear_stuck_capture()
+            st.rerun()
     if _guided_login_enabled():
         button_label = '🔐 Executar captura autenticada de estoque estilo Instant Scraper'
-        button_disabled = not _has_columns(requested_columns)
+        button_disabled = running or not _has_columns(requested_columns)
     else:
         button_label = 'Buscar somente estoque no site'
-        button_disabled = not _has_columns(requested_columns)
+        button_disabled = running or not _has_columns(requested_columns)
     if not _has_columns(requested_columns):
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key='buscar_site_estoque_independente'):
