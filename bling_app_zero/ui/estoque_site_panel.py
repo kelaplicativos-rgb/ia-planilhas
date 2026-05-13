@@ -17,6 +17,7 @@ ALL_PRODUCTS_LIMIT = 1_000_000
 OPERATION = 'estoque'
 STOCK_SITE_DF_KEY = 'df_site_bruto_estoque'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/estoque_site_panel.py'
+LOGIN_CONFIRMED_KEY = 'guided_login_confirmed_logged_in'
 
 
 def _query_param(name: str) -> str:
@@ -47,6 +48,10 @@ def _guided_login_toggle_key() -> str:
 
 def _guided_login_enabled() -> bool:
     return bool(st.session_state.get(_guided_login_toggle_key(), False))
+
+
+def _login_confirmed() -> bool:
+    return bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False))
 
 
 def _set_stock_capture_state(*, running: bool, error: str = '') -> None:
@@ -126,6 +131,9 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
     entry_url = str(st.session_state.get('guided_login_url') or '').strip()
     user_value = str(st.session_state.get('guided_login_username') or '').strip()
     session_value = _protected_session_value()
+    if not _login_confirmed():
+        _orange_warning('Confirme que você está 100% logado no fornecedor antes de executar a captura.')
+        return
     if not entry_url.startswith(('http://', 'https://')):
         _orange_warning('Informe uma URL de entrada válida antes de executar a captura autenticada.')
         return
@@ -135,10 +143,9 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
     if not _has_columns(requested_columns):
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
         return
-
     completed = False
     _set_stock_capture_state(running=True, error='')
-    add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+    add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
     try:
         progress = st.progress(0, text='Executando captura autenticada de estoque estilo Instant Scraper...')
         result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value=user_value, session_value=session_value, start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=True, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
@@ -204,8 +211,11 @@ def render_estoque_site_panel() -> None:
             _clear_stuck_capture()
             st.rerun()
     if _guided_login_enabled():
+        login_confirmed = _login_confirmed()
+        if not login_confirmed:
+            _orange_warning('A captura autenticada está bloqueada até confirmar 100% que o login foi concluído.')
         button_label = '🔐 Executar captura autenticada de estoque estilo Instant Scraper'
-        button_disabled = running or not _has_columns(requested_columns)
+        button_disabled = running or not _has_columns(requested_columns) or not login_confirmed
     else:
         button_label = 'Buscar somente estoque no site'
         button_disabled = running or not _has_columns(requested_columns)
