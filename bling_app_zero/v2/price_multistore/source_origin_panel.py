@@ -9,12 +9,14 @@ from bs4 import BeautifulSoup
 
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
+from bling_app_zero.v2.price_multistore.site_source import get_site_capture_source_df, source_origin_label, suggest_price_column
 from bling_app_zero.v2.session_store import get_state, pop_state, set_state, widget_key
 
 SOURCE_DF_KEY = 'multistore_source_origin_df'
 SOURCE_LABEL_KEY = 'multistore_source_origin_label'
 SOURCE_MODE_KEY = 'multistore_source_origin_mode'
 SOURCE_USAGE_KEY = 'multistore_source_usage_mode'
+SOURCE_SUGGESTED_PRICE_COLUMN_KEY = 'multistore_source_suggested_price_column'
 
 USAGE_UPLOAD = 'Usar upload normal da Planilha 2'
 USAGE_SITE = 'Usar captura/busca por site como Planilha 2'
@@ -137,6 +139,9 @@ def _store_source(df: pd.DataFrame, label: str, mode: str) -> None:
     set_state(SOURCE_DF_KEY, clean)
     set_state(SOURCE_LABEL_KEY, label)
     set_state(SOURCE_MODE_KEY, mode)
+    suggested = suggest_price_column(clean)
+    if suggested:
+        set_state(SOURCE_SUGGESTED_PRICE_COLUMN_KEY, suggested)
     st.success(f'Origem complementar criada: {len(clean)} linha(s) × {len(clean.columns)} coluna(s).')
 
 
@@ -165,20 +170,40 @@ def _render_saved_source() -> None:
         return
     label = str(get_state(SOURCE_LABEL_KEY) or 'origem complementar')
     mode = str(get_state(SOURCE_MODE_KEY) or '')
+    suggested = str(get_state(SOURCE_SUGGESTED_PRICE_COLUMN_KEY) or '')
     st.success(f'Origem complementar disponível: {label}')
     if mode:
         st.caption(f'Modo: {mode}')
+    if suggested:
+        st.caption(f'Coluna provável de custo/preço: {suggested}')
     with st.expander(f'Preview da origem complementar · {len(df)} linha(s) × {len(df.columns)} coluna(s)', expanded=False):
         st.dataframe(df.head(30).fillna(''), use_container_width=True, height=220)
     if st.button('Limpar origem complementar', use_container_width=True, key=widget_key('clear_multistore_source_origin')):
         pop_state(SOURCE_DF_KEY, None)
         pop_state(SOURCE_LABEL_KEY, None)
         pop_state(SOURCE_MODE_KEY, None)
+        pop_state(SOURCE_SUGGESTED_PRICE_COLUMN_KEY, None)
         set_state(SOURCE_USAGE_KEY, USAGE_UPLOAD)
         st.rerun()
 
 
+def _render_existing_site_capture() -> None:
+    df_capture, source_key = get_site_capture_source_df()
+    if not isinstance(df_capture, pd.DataFrame) or df_capture.empty:
+        st.caption('Nenhuma captura por site anterior foi encontrada nesta sessão. Você pode buscar pelos links abaixo.')
+        return
+    label = source_origin_label(source_key)
+    st.info(f'Captura por site encontrada na sessão: {label} · {len(df_capture)} linha(s) × {len(df_capture.columns)} coluna(s).')
+    with st.expander('Conferir captura por site encontrada', expanded=False):
+        st.dataframe(df_capture.head(25).fillna(''), use_container_width=True, height=220)
+    if st.button('Usar esta captura por site como Planilha 2', use_container_width=True, key=widget_key('use_existing_site_capture_as_multistore_source')):
+        _store_source(df_capture, label, 'Captura por site existente')
+        st.rerun()
+
+
 def _render_public_site_capture() -> None:
+    _render_existing_site_capture()
+    st.divider()
     urls = st.text_area(
         'Links do fornecedor para buscar custo/preço',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
