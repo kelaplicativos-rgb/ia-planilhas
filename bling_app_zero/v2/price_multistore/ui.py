@@ -97,15 +97,11 @@ def _render_info(message: str) -> None:
     )
 
 
-def _render_bling_import_link() -> None:
+def _render_success_action(message: str) -> None:
     st.markdown(
         f"""
         <div style="margin-top:.75rem;background:#ecfdf5;border:1px solid #bbf7d0;color:#14532d;border-radius:16px;padding:.9rem 1rem;font-weight:700;">
-            ✅ CSV pronto. Depois de baixar, use o botão abaixo para abrir o importador direto no Bling.
-            <br>
-            <a href="{BLING_MULTISTORE_PRICE_IMPORT_URL}" target="_blank" rel="noopener noreferrer" style="color:#047857;font-weight:900;text-decoration:none;">
-                Abrir importador de preços multilojas no Bling ↗
-            </a>
+            ✅ {message}
         </div>
         """,
         unsafe_allow_html=True,
@@ -113,7 +109,7 @@ def _render_bling_import_link() -> None:
 
 
 def _render_bling_import_actions() -> None:
-    _render_bling_import_link()
+    _render_success_action('Após baixar todos os arquivos necessários, abra o importador de preços multilojas no Bling.')
     try:
         st.link_button(
             'Abrir importador do Bling agora ↗',
@@ -192,7 +188,7 @@ def _render_import_downloads(result_df: pd.DataFrame) -> None:
     set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
 
     if total_rows <= MAX_BLING_IMPORT_ROWS:
-        _render_info(f'Arquivo dentro do limite do Bling: {total_rows} linha(s).')
+        _render_success_action(f'Arquivo dentro do limite do Bling: {total_rows} linha(s).')
         st.download_button(
             'Baixar CSV limpo para o Bling',
             data=to_csv_bytes(result_df),
@@ -242,7 +238,6 @@ def _render_ready_result(result_df: pd.DataFrame) -> None:
 
     st.markdown('### Etapa 7 · Download e importação')
     _render_info('Baixe os arquivos limpos. Quando passar de 200 linhas, importe no Bling uma parte por vez.')
-    _render_bling_import_actions()
     _render_import_downloads(result_df)
     _render_bling_import_actions()
 
