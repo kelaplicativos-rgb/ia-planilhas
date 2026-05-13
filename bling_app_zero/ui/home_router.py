@@ -6,7 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard import render_home_wizard
-from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
+from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
@@ -121,7 +121,7 @@ def _render_operation_choice() -> None:
     _render_home_operation_card(
         icon='🏬',
         title='Atualizar Preços Multiloja',
-        description='Módulo específico para atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional.',
+        description='Módulo específico para atualizar preços por marketplace com ID na Loja, Preço e Preço Promocional. Aceita upload, captura por site ou tabela/exportação importada como origem de custo.',
         button_label='Atualizar preços',
         button_key='home_open_multistore_price_flow',
         on_click=_open_multistore_price_flow,
