@@ -162,22 +162,30 @@ def _render_safe_summary(config: dict[str, object]) -> None:
 
 
 def _render_technical_prompt(prompt: str) -> None:
-    with st.expander('Detalhes técnicos para BLINGFIX / motor autenticado', expanded=False):
-        st.caption('Área técnica. O usuário final não precisa usar este prompt durante o fluxo normal.')
-        st.text_area(
-            'Prompt técnico oculto',
-            value=prompt,
-            height=300,
-            key='guided_login_prompt_textarea',
-        )
-        st.download_button(
-            '⬇️ Baixar prompt técnico .txt',
-            data=prompt.encode('utf-8-sig'),
-            file_name='blingcrawler_login_guiado_prompt.txt',
-            mime='text/plain',
-            use_container_width=True,
-            key='download_guided_login_prompt',
-        )
+    show_technical = st.checkbox(
+        'Mostrar detalhes técnicos para BLINGFIX',
+        value=False,
+        key='guided_login_show_technical_prompt',
+        help='Opcional. Mostra o prompt técnico sem usar expander aninhado.',
+    )
+    if not show_technical:
+        return
+
+    st.caption('Área técnica. O usuário final não precisa usar este prompt durante o fluxo normal.')
+    st.text_area(
+        'Prompt técnico oculto',
+        value=prompt,
+        height=300,
+        key='guided_login_prompt_textarea',
+    )
+    st.download_button(
+        '⬇️ Baixar prompt técnico .txt',
+        data=prompt.encode('utf-8-sig'),
+        file_name='blingcrawler_login_guiado_prompt.txt',
+        mime='text/plain',
+        use_container_width=True,
+        key='download_guided_login_prompt',
+    )
 
 
 def _render_prepared_config() -> None:
