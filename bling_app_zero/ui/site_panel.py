@@ -56,7 +56,7 @@ def _site_df_key(operation: str) -> str:
 
 def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
     st.session_state[_site_df_key(operation)] = df_site
-    st.session_state['df_site_bruto'] = df_site  # compatibilidade com modulos antigos
+    st.session_state['df_site_bruto'] = df_site
     other = 'estoque' if operation == 'cadastro' else 'cadastro'
     st.session_state.pop(_site_df_key(other), None)
 
@@ -113,8 +113,8 @@ def _render_guided_login_origin_module(
         render_guided_login_panel()
 
     st.warning(
-        'Atenção: a sessão aberta no navegador do usuário não é compartilhada automaticamente com o servidor do Streamlit. '
-        'Depois de entrar no fornecedor, exporte ou copie a tabela de produtos e importe abaixo para seguir o fluxo.'
+        'Fornecedor com login detectado. A busca pública por links fica bloqueada. '
+        'Entre no fornecedor, exporte ou copie a tabela de produtos e importe abaixo.'
     )
     render_manual_table_import_panel(
         operation=operation,
@@ -143,6 +143,9 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
 
 
 def _render_urls_input(operation: str) -> str:
+    if _guided_login_enabled(operation):
+        st.info('Fornecedor com login: não é necessário colar links para busca pública. Use a importação da tabela/exportação abaixo.')
+        return ''
     return st.text_area(
         'Links do fornecedor',
         value=_query_urls_default(),
@@ -296,13 +299,20 @@ def render_site_panel() -> None:
         return
 
     config = config_for_site_operation(operation)
+    login_mode = _guided_login_enabled(operation)
+    title = 'Importe a tabela do fornecedor' if login_mode else 'Cole os links do fornecedor'
+    text = (
+        'Fornecedor com login: entre no fornecedor, exporte ou copie a lista de produtos e importe abaixo.'
+        if login_mode
+        else 'A captura acontece aqui. Depois continue para a próxima etapa do Wizard.'
+    )
 
     st.markdown(
-        """
+        f"""
         <section class="bling-flow-card bling-inline-card">
             <div class="bling-flow-card-kicker">Entrada por site</div>
-            <h2 class="bling-flow-card-title">Cole os links do fornecedor</h2>
-            <p class="bling-flow-card-text">A captura acontece aqui. Depois continue para a próxima etapa do Wizard.</p>
+            <h2 class="bling-flow-card-title">{title}</h2>
+            <p class="bling-flow-card-text">{text}</p>
         </section>
         """,
         unsafe_allow_html=True,
