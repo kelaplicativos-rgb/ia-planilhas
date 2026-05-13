@@ -5,6 +5,7 @@ import streamlit as st
 
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
+from bling_app_zero.ui.estoque_wizard_state import clear_estoque_outputs, set_stock_output
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
 
 
@@ -26,6 +27,20 @@ def _download_key(index: object, name: str, df_final: pd.DataFrame) -> str:
     return f'estoque_final_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
 
 
+def _store_stock_results(results: list[dict[str, object]]) -> None:
+    st.session_state['estoque_multi_outputs'] = results
+    if not results:
+        clear_estoque_outputs()
+        return
+    first = results[0]
+    df_final = first.get('df_final')
+    mapping = first.get('mapping')
+    set_stock_output(
+        df_final if isinstance(df_final, pd.DataFrame) else None,
+        mapping if isinstance(mapping, dict) else {},
+    )
+
+
 def build_stock_outputs_from_dataframe(
     df_origem: pd.DataFrame,
     df_modelo: pd.DataFrame | None,
@@ -42,9 +57,7 @@ def build_stock_outputs_from_dataframe(
         st.error(str(exc))
         return
     result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
-    st.session_state['estoque_multi_outputs'] = [result]
-    st.session_state['df_final_estoque'] = df_final
-    st.session_state['mapping_estoque'] = mapping
+    _store_stock_results([result])
 
 
 def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -> None:
@@ -67,13 +80,7 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
             st.error(str(exc))
             return
         results.append({'index': index, 'name': file_name(file), 'df_final': df_final, 'mapping': mapping})
-    st.session_state['estoque_multi_outputs'] = results
-    if results:
-        st.session_state['df_final_estoque'] = results[0]['df_final']
-        st.session_state['mapping_estoque'] = results[0]['mapping']
-    else:
-        st.session_state.pop('df_final_estoque', None)
-        st.session_state.pop('mapping_estoque', None)
+    _store_stock_results(results)
 
 
 def render_stock_preview() -> None:
