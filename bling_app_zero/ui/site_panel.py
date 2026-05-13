@@ -81,9 +81,23 @@ def _operation_badge(operation: str) -> str:
     return 'Motor ativo: CADASTRO POR SITE - origem completa para cadastro de produtos.'
 
 
+def _guided_login_toggle_key(operation: str) -> str:
+    return f'site_guided_login_enabled_{operation}'
+
+
 def _render_guided_login_origin_module(operation: str) -> None:
     label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
-    with st.expander('🔐 Login guiado para fornecedor protegido', expanded=False):
+    enabled = st.checkbox(
+        'Este fornecedor exige login?',
+        value=bool(st.session_state.get(_guided_login_toggle_key(operation), False)),
+        key=_guided_login_toggle_key(operation),
+        help='Deixe desmarcado para busca normal por links. Marque apenas se o site pedir usuário e senha.',
+    )
+    if not enabled:
+        st.caption('Busca pública ativa. O painel de login guiado fica escondido até você marcar esta opção.')
+        return
+
+    with st.expander('🔐 Configurar login guiado', expanded=True):
         st.caption(f'Use esta opção quando o fornecedor exigir login antes da {label}.')
         render_guided_login_panel()
 
@@ -263,9 +277,9 @@ def render_site_panel() -> None:
     st.info(_operation_badge(operation))
     st.caption(config.description)
 
-    _render_guided_login_origin_module(operation)
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
+    _render_guided_login_origin_module(operation)
 
     running = bool(st.session_state.get('site_capture_running'))
     if running:
