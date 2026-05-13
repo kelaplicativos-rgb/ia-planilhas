@@ -14,6 +14,7 @@ def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
 
 
 def _show_missing_model_warning() -> None:
+    clear_estoque_outputs()
     st.error('Envie o modelo de estoque do Bling antes de gerar o CSV. O sistema só preenche as colunas existentes nesse modelo.')
 
 
@@ -50,11 +51,21 @@ def build_stock_outputs_from_dataframe(
     if not _valid_model(df_modelo):
         _show_missing_model_warning()
         return
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        clear_estoque_outputs()
+        st.warning('Nenhuma origem válida de estoque foi encontrada para gerar o CSV.')
+        return
     run_estoque_pipeline = load_estoque_pipeline()
     try:
         df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
     except MissingEstoqueModelError as exc:
+        clear_estoque_outputs()
         st.error(str(exc))
+        return
+    except Exception as exc:
+        clear_estoque_outputs()
+        st.error('Não foi possível gerar o estoque. Confira a origem, o modelo e o depósito informado.')
+        st.caption(str(exc) or exc.__class__.__name__)
         return
     result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
     _store_stock_results([result])
@@ -66,6 +77,7 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
         return
     source_files = source_files_from_upload(upload)
     if not source_files:
+        clear_estoque_outputs()
         st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.')
         return
     run_estoque_pipeline = load_estoque_pipeline()
@@ -77,7 +89,13 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
         try:
             df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
         except MissingEstoqueModelError as exc:
+            clear_estoque_outputs()
             st.error(str(exc))
+            return
+        except Exception as exc:
+            clear_estoque_outputs()
+            st.error(f'Não foi possível gerar o estoque da origem {index}: {file_name(file)}.')
+            st.caption(str(exc) or exc.__class__.__name__)
             return
         results.append({'index': index, 'name': file_name(file), 'df_final': df_final, 'mapping': mapping})
     _store_stock_results(results)
