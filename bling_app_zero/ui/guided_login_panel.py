@@ -6,7 +6,12 @@ from urllib.parse import urlparse
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.browser_remote import RemoteBrowserConfig, open_remote_browser_snapshot
+from bling_app_zero.core.browser_remote import (
+    RemoteBrowserCommand,
+    RemoteBrowserConfig,
+    open_remote_browser_snapshot,
+    run_remote_browser_command,
+)
 from bling_app_zero.core.debug import add_debug
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/guided_login_panel.py'
@@ -47,6 +52,10 @@ def _current_operation() -> str:
     return 'cadastro'
 
 
+def _state_namespace() -> str:
+    return f'{_current_operation()}_supplier_remote_browser'
+
+
 def _safe_config(supplier_url: str, operation: str) -> dict[str, object]:
     clean_url = supplier_url.strip()
     return {
@@ -62,7 +71,7 @@ def _safe_config(supplier_url: str, operation: str) -> dict[str, object]:
         'responsible_file': RESPONSIBLE_FILE,
         'external_login_fields': False,
         'credentials_saved': False,
-        'remote_browser_snapshot': True,
+        'remote_browser_control': True,
     }
 
 
@@ -80,7 +89,7 @@ Operação:
 
 Modo:
 Navegador real do sistema via Playwright/Chromium. O sistema abre a URL no servidor,
-valida a página renderizada e usa o motor de captura por blocos/DOM.
+permite comandos guiados, valida a página renderizada e usa o motor de captura por blocos/DOM.
 
 Regras:
 - Não usar iframe como fonte de verdade.
@@ -88,7 +97,7 @@ Regras:
 - Não pedir campos externos de login.
 - Não salvar credenciais.
 - Só preparar captura quando o snapshot do navegador real abrir a página correta.
-- Se o fornecedor exigir login interativo não suportado, usar compatibilidade universal.
+- Se o fornecedor exigir captcha/2FA/bloqueio humano forte, usar compatibilidade universal.
 - Cadastro: capturar dados completos quando possível.
 - Estoque: preencher somente colunas da planilha modelo.
 - Se não encontrar informação, deixar vazio.
@@ -118,12 +127,52 @@ def _clear_legacy_external_login_state() -> None:
         )
 
 
+def _current_remote_url(fallback_url: str) -> str:
+    return str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or fallback_url or '').strip()
+
+
+def _display_snapshot(snapshot, supplier_url: str) -> None:
+    st.session_state[REMOTE_SNAPSHOT_OK_KEY] = bool(snapshot.ok)
+    st.session_state[REMOTE_SNAPSHOT_URL_KEY] = supplier_url
+    st.session_state[REMOTE_SNAPSHOT_FINAL_URL_KEY] = snapshot.final_url or supplier_url
+    st.session_state[REMOTE_SNAPSHOT_TITLE_KEY] = snapshot.title or ''
+    for warning in snapshot.warnings:
+        _orange_warning(str(warning))
+    if snapshot.errors:
+        st.error('Não consegui executar esta ação no navegador real do sistema.')
+        for error in snapshot.errors:
+            st.caption(str(error))
+        _orange_warning('Se o fornecedor exigir captcha, 2FA, popup ou bloquear robô, use a compatibilidade universal: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
+        return
+    if snapshot.screenshot_png:
+        st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_container_width=True)
+    st.success('Snapshot atualizado pelo navegador real do sistema.')
+
+
+def _run_browser_action(supplier_url: str, command: RemoteBrowserCommand, label: str) -> None:
+    current_url = _current_remote_url(supplier_url)
+    if not _is_valid_http_url(current_url):
+        _orange_warning('Abra primeiro uma URL válida no navegador real do sistema.')
+        return
+    with st.spinner(label):
+        snapshot = run_remote_browser_command(
+            RemoteBrowserConfig(
+                url=current_url,
+                state_namespace=_state_namespace(),
+                headless=True,
+            ),
+            command,
+        )
+    _display_snapshot(snapshot, current_url)
+
+
 def _prepare_config(supplier_url: str, operation: str) -> None:
-    if not _is_valid_http_url(supplier_url):
+    final_url = _current_remote_url(supplier_url)
+    if not _is_valid_http_url(final_url):
         _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
         return
     if not bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)):
-        _orange_warning('Abra primeiro o snapshot do navegador real do sistema. Se ele não mostrar a página correta, use a compatibilidade universal.')
+        _orange_warning('Abra primeiro o navegador real do sistema. Se ele não mostrar a página correta, use a compatibilidade universal.')
         return
     if not bool(st.session_state.get(PAGE_READY_KEY, False)):
         _orange_warning('Confirme que o snapshot mostra a página correta de produtos/catálogo antes de preparar a captura.')
@@ -133,7 +182,6 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
     st.session_state[SECURITY_RESOLVED_KEY] = True
     st.session_state[LOGIN_CONFIRMED_KEY] = True
 
-    final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url).strip()
     config = _safe_config(supplier_url=final_url, operation=operation)
     prompt = _build_guided_login_prompt(config)
 
@@ -142,11 +190,11 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
     st.session_state[LAST_PREPARED_KEY] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
     add_debug(
-        f'Navegador real do sistema preparado para domínio {config.get("domain")}. Sem campos externos de login.',
+        f'Navegador real controlado preparado para domínio {config.get("domain")}. Sem campos externos de login.',
         origin='LOGIN_GUIADO',
     )
     add_audit_event(
-        'remote_supplier_browser_prepared',
+        'remote_control_supplier_browser_prepared',
         area='LOGIN_GUIADO',
         details={
             'domain': config.get('domain'),
@@ -155,15 +203,15 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
             'products_page_ready': True,
             'external_login_fields': False,
             'credentials_saved': False,
-            'remote_browser_snapshot': True,
+            'remote_browser_control': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
 
 def _render_remote_browser_snapshot(supplier_url: str) -> None:
-    st.caption('Navegador real do sistema: o servidor abre a página em Chromium e mostra um snapshot. Não é iframe e não usa a aba externa do celular como sessão.')
-    if st.button('🌐 Abrir snapshot no navegador real do sistema', use_container_width=True, key='open_remote_supplier_browser_snapshot'):
+    st.caption('Navegador real do sistema: o servidor abre a página em Chromium e você controla por comandos seguros. Não é iframe e não usa a aba externa do celular como sessão.')
+    if st.button('🌐 Abrir navegador real do sistema', use_container_width=True, key='open_remote_supplier_browser_snapshot'):
         if not _is_valid_http_url(supplier_url):
             _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
             return
@@ -171,33 +219,44 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
             snapshot = open_remote_browser_snapshot(
                 RemoteBrowserConfig(
                     url=supplier_url,
-                    state_namespace=f'{_current_operation()}_supplier_remote_browser',
+                    state_namespace=_state_namespace(),
                     headless=True,
                 )
             )
-        st.session_state[REMOTE_SNAPSHOT_OK_KEY] = bool(snapshot.ok)
-        st.session_state[REMOTE_SNAPSHOT_URL_KEY] = supplier_url
-        st.session_state[REMOTE_SNAPSHOT_FINAL_URL_KEY] = snapshot.final_url or supplier_url
-        st.session_state[REMOTE_SNAPSHOT_TITLE_KEY] = snapshot.title or ''
-        for warning in snapshot.warnings:
-            _orange_warning(str(warning))
-        if snapshot.errors:
-            st.error('Não consegui abrir esta página no navegador real do sistema.')
-            for error in snapshot.errors:
-                st.caption(str(error))
-            _orange_warning('Se o fornecedor exigir login interativo, captcha ou bloquear robô, use a compatibilidade universal abaixo: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
-            return
-        if snapshot.screenshot_png:
-            st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_column_width=True)
-        st.success('Snapshot do navegador real carregado. Confira se esta é a página correta antes de preparar a captura.')
+        _display_snapshot(snapshot, supplier_url)
 
     if bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)):
         title = str(st.session_state.get(REMOTE_SNAPSHOT_TITLE_KEY) or 'Snapshot carregado')
         final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url)
-        st.success(f'Último snapshot carregado: {title}')
+        st.success(f'Navegador real carregado: {title}')
         st.caption(final_url)
 
-    _orange_warning('Abrir fora do sistema no celular não compartilha login com este navegador real. Se precisar operar manualmente o site logado, use exportação/cópia/importação pela compatibilidade universal.')
+        with st.expander('🎮 Controles do navegador real', expanded=True):
+            selector = st.text_input('Seletor CSS para clicar ou digitar', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
+            text_value = st.text_input('Texto para digitar no seletor acima', key='remote_browser_type_text')
+            click_text = st.text_input('Ou clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
+            key_value = st.text_input('Tecla para pressionar', value='Enter', key='remote_browser_key_value')
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button('🖱️ Clicar seletor', use_container_width=True, key='remote_click_selector'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_selector', value=selector), 'Clicando no seletor...')
+                if st.button('⌨️ Digitar no seletor', use_container_width=True, key='remote_type_selector'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_selector', value=selector, text=text_value), 'Digitando no campo...')
+                if st.button('⬇️ Rolar para baixo', use_container_width=True, key='remote_scroll_down'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_down'), 'Rolando página...')
+            with col2:
+                if st.button('🔎 Clicar texto', use_container_width=True, key='remote_click_text'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_text', value=click_text), 'Clicando no texto...')
+                if st.button('↩️ Pressionar tecla', use_container_width=True, key='remote_press_key'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value=key_value), 'Pressionando tecla...')
+                if st.button('⬆️ Rolar para cima', use_container_width=True, key='remote_scroll_up'):
+                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_up'), 'Rolando página...')
+
+            if st.button('🔄 Atualizar snapshot', use_container_width=True, key='remote_refresh_snapshot'):
+                _run_browser_action(supplier_url, RemoteBrowserCommand(action='snapshot'), 'Atualizando snapshot...')
+
+    _orange_warning('Este controle usa comandos seguros no Chromium do servidor. Se o site exigir captcha, confirmação por SMS/2FA ou bloqueio humano forte, use a compatibilidade universal.')
 
 
 def _render_page_confirmation() -> None:
@@ -219,7 +278,7 @@ def _render_prepared_config() -> None:
     domain = str(config.get('domain') or '').strip() or 'site informado'
     operation = str(config.get('operation') or 'cadastro').strip()
     label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.success(f'Navegador real preparado para {domain} em {last_prepared}.')
+    st.success(f'Navegador real controlado preparado para {domain} em {last_prepared}.')
     st.caption(f'Pronto para captura de {label}. O sistema usará Chromium/Playwright no servidor e não iframe.')
 
 
@@ -227,8 +286,8 @@ def render_guided_login_panel() -> None:
     _clear_legacy_external_login_state()
     operation = _current_operation()
     operation_label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.markdown('##### Navegador real do sistema')
-    st.caption(f'Use esta área para abrir a página do fornecedor no Chromium do servidor e preparar a captura de {operation_label}.')
+    st.markdown('##### Navegador real controlado')
+    st.caption(f'Use esta área para operar o Chromium do servidor por comandos e preparar a captura de {operation_label}.')
 
     supplier_url = st.text_input(
         'URL do fornecedor ou da página de produtos',
