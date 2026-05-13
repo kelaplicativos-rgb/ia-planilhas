@@ -15,8 +15,10 @@ PROMPT_KEY = 'guided_login_capture_prompt'
 LAST_PREPARED_KEY = 'guided_login_capture_last_prepared_at'
 SECURITY_RESOLVED_KEY = 'guided_login_security_resolved'
 LOGIN_CONFIRMED_KEY = 'guided_login_confirmed_logged_in'
+PAGE_READY_KEY = 'guided_login_products_page_ready'
+MODE_KEY = 'guided_login_capture_mode'
 
-DEFAULT_LOGIN_URL = 'https://app.obaobamix.com.br/login'
+DEFAULT_LOGIN_URL = 'https://app.stoqui.com.br/products'
 
 
 def _is_valid_http_url(value: str) -> bool:
@@ -27,16 +29,17 @@ def _is_valid_http_url(value: str) -> bool:
     return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)
 
 
-def _safe_config(login_url: str, username: str, operation: str) -> dict[str, object]:
+def _safe_config(login_url: str, username: str, operation: str, capture_mode: str) -> dict[str, object]:
     clean_url = login_url.strip()
     return {
         'login_url': clean_url,
         'domain': urlparse(clean_url).netloc if clean_url else '',
         'username_filled': bool(username.strip()),
         'operation': operation,
-        'capture_mode': 'estoque' if operation == 'estoque' else 'cadastro',
+        'capture_mode': capture_mode,
         'security_resolved': bool(st.session_state.get(SECURITY_RESOLVED_KEY, False)),
         'login_confirmed': bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)),
+        'products_page_ready': bool(st.session_state.get(PAGE_READY_KEY, False)),
         'prepared_at': datetime.now().isoformat(timespec='seconds'),
         'responsible_file': RESPONSIBLE_FILE,
         'password_saved': False,
@@ -45,9 +48,9 @@ def _safe_config(login_url: str, username: str, operation: str) -> dict[str, obj
 
 
 def _build_guided_login_prompt(config: dict[str, object]) -> str:
-    return f'''BLINGCRAWLER LOGIN GUIADO COMPACTO
+    return f'''BLINGCRAWLER CAPTURA AUTENTICADA COMPACTA
 
-Site de login:
+Página informada:
 {config.get('login_url')}
 
 Domínio:
@@ -56,21 +59,20 @@ Domínio:
 Operação:
 {config.get('operation')}
 
-Usuário preenchido:
-{config.get('username_filled')}
+Modo:
+{config.get('capture_mode')}
 
-Login confirmado pelo usuário:
-{config.get('login_confirmed')}
+Página de produtos confirmada:
+{config.get('products_page_ready')}
 
-Senha:
-NÃO FOI SALVA E NÃO DEVE SER EXIBIDA EM LOGS.
+Credenciais:
+NÃO FORAM SALVAS E NÃO DEVEM SER EXIBIDAS EM LOGS.
 
 Regras:
-- Só executar captura após confirmação manual de que o usuário está logado.
+- Só executar captura após confirmação manual de que a página de produtos/catálogo está aberta.
 - Usar motor autenticado independente.
 - Não misturar com busca pública.
-- Não salvar senha, token, cookie, código ou segredo.
-- Se houver CAPTCHA/2FA, parar e pedir ação manual.
+- Não salvar dados protegidos da sessão.
 - Cadastro: capturar dados completos quando possível.
 - Estoque: preencher somente colunas da planilha modelo.
 - Se não encontrar informação, deixar vazio.
@@ -85,19 +87,20 @@ def _current_operation() -> str:
     return 'cadastro'
 
 
-def _prepare_config(login_url: str, username: str, password: str, operation: str) -> None:
+def _prepare_config(login_url: str, username: str, password: str, operation: str, capture_mode: str) -> None:
     if not _is_valid_http_url(login_url):
-        st.warning('Informe uma URL de login válida, começando com http:// ou https://.')
+        st.warning('Informe uma URL válida, começando com http:// ou https://.')
         return
-    if not password.strip():
-        st.warning('Informe a senha apenas para esta sessão. Ela não será salva em logs nem no prompt.')
+    if not bool(st.session_state.get(PAGE_READY_KEY, False)):
+        st.warning('Confirme que a página de produtos/catálogo está aberta antes de preparar a captura.')
         return
-    if not bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)):
-        st.warning('Confirme que você está 100% logado no fornecedor antes de preparar a captura.')
+    if capture_mode == 'login' and not password.strip():
+        st.warning('Informe a senha apenas para esta sessão ou use o modo página de produtos já aberta.')
         return
 
     st.session_state[SECURITY_RESOLVED_KEY] = True
-    config = _safe_config(login_url=login_url, username=username, operation=operation)
+    st.session_state[LOGIN_CONFIRMED_KEY] = True
+    config = _safe_config(login_url=login_url, username=username, operation=operation, capture_mode=capture_mode)
     prompt = _build_guided_login_prompt(config)
 
     st.session_state[CONFIG_KEY] = config
@@ -105,7 +108,7 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
     st.session_state[LAST_PREPARED_KEY] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
     add_debug(
-        f'Login guiado compacto confirmado para domínio {config.get("domain")}. Senha não registrada.',
+        f'Captura compacta preparada para domínio {config.get("domain")}. Dados protegidos não registrados.',
         origin='LOGIN_GUIADO',
     )
     add_audit_event(
@@ -114,8 +117,9 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
         details={
             'domain': config.get('domain'),
             'operation': operation,
+            'capture_mode': capture_mode,
             'username_filled': bool(config.get('username_filled')),
-            'login_confirmed': True,
+            'products_page_ready': True,
             'password_saved': False,
             'security_code_saved': False,
             'responsible_file': RESPONSIBLE_FILE,
@@ -126,16 +130,14 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
 def _render_internal_browser(login_url: str) -> None:
     if not _is_valid_http_url(login_url):
         return
-
     open_browser = st.checkbox(
-        'Abrir login dentro do sistema',
-        value=False,
+        'Abrir página dentro do sistema',
+        value=True,
         key='guided_login_open_internal_browser',
-        help='Abre uma janela interna do fornecedor para login/CAPTCHA quando o site permitir.',
+        help='Abre a página do fornecedor dentro do sistema quando o site permitir.',
     )
     if not open_browser:
         return
-
     safe_url = login_url.strip()
     encoded_url = quote(safe_url, safe=':/?&=%#.-_')
     components.html(
@@ -151,25 +153,22 @@ def _render_internal_browser(login_url: str) -> None:
             referrerpolicy="no-referrer-when-downgrade"
           ></iframe>
         </div>
-        <div style="font-family:Arial,sans-serif;font-size:13px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-left:5px solid #fb923c;border-radius:10px;padding:10px 12px;">
-          Se a janela ficar em branco ou o fornecedor bloquear o carregamento interno, é proteção do próprio site contra iframe. Nesse caso, a captura só deve continuar depois de você confirmar que está logado por outro checkpoint.
-        </div>
         ''',
-        height=660,
+        height=620,
         scrolling=True,
     )
 
 
-def _render_login_confirmation() -> None:
+def _render_page_confirmation() -> None:
     st.checkbox(
-        'Estou 100% logado no fornecedor e pronto para capturar',
-        value=bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)),
-        key=LOGIN_CONFIRMED_KEY,
-        help='Marque somente depois de ver que o login foi concluído e que a área de produtos/catálogo está acessível.',
+        'Estou vendo a página de produtos/catálogo e posso capturar agora',
+        value=bool(st.session_state.get(PAGE_READY_KEY, False)),
+        key=PAGE_READY_KEY,
+        help='Marque somente depois que a lista de produtos aparecer no navegador interno.',
     )
-    if not bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)):
+    if not bool(st.session_state.get(PAGE_READY_KEY, False)):
         st.markdown(
-            '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:10px;padding:10px 12px;margin:8px 0;">⚠️ A captura autenticada só será liberada depois desta confirmação.</div>',
+            '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:10px;padding:10px 12px;margin:8px 0;">⚠️ A captura só será liberada depois de confirmar que a página de produtos está visível.</div>',
             unsafe_allow_html=True,
         )
 
@@ -182,43 +181,45 @@ def _render_prepared_config() -> None:
     domain = str(config.get('domain') or '').strip() or 'site informado'
     operation = str(config.get('operation') or 'cadastro').strip()
     label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.success(f'Login confirmado para {domain} em {last_prepared}.')
-    st.caption(f'Pronto para captura autenticada de {label}. Senha não foi salva.')
+    st.success(f'Página preparada para {domain} em {last_prepared}.')
+    st.caption(f'Pronto para captura autenticada de {label}. Dados protegidos não foram salvos.')
 
 
 def render_guided_login_panel() -> None:
     operation = _current_operation()
     operation_label = 'estoque' if operation == 'estoque' else 'cadastro'
+    st.markdown('##### Página do fornecedor')
+    st.caption(f'Abra a página onde os produtos aparecem para capturar {operation_label}.')
 
-    st.markdown('##### Login do fornecedor')
-    st.caption(f'Preencha só o necessário para capturar {operation_label}.')
-
+    capture_mode = st.radio(
+        'Modo',
+        options=['products_page', 'login'],
+        format_func=lambda value: 'Página de produtos já aberta' if value == 'products_page' else 'Preciso informar usuário e senha',
+        horizontal=True,
+        key=MODE_KEY,
+    )
     login_url = st.text_input(
-        'URL de login',
+        'URL da página',
         value=str(st.session_state.get('guided_login_url') or DEFAULT_LOGIN_URL),
-        placeholder='https://site.com.br/login',
+        placeholder='https://site.com.br/products',
         key='guided_login_url',
     )
-    username = st.text_input(
-        'Usuário ou e-mail',
-        placeholder='seu usuário ou e-mail',
-        key='guided_login_username',
-    )
-    password = st.text_input(
-        'Senha da sessão',
-        type='password',
-        placeholder='não será salva',
-        key='guided_login_password_ephemeral',
-    )
+
+    username = ''
+    password = ''
+    if capture_mode == 'login':
+        username = st.text_input('Usuário ou e-mail', placeholder='seu usuário ou e-mail', key='guided_login_username')
+        password = st.text_input('Senha da sessão', type='password', placeholder='não será salva', key='guided_login_password_ephemeral')
+    else:
+        st.session_state.setdefault('guided_login_username', '')
+        st.session_state.setdefault('guided_login_password_ephemeral', '')
 
     _render_internal_browser(login_url)
-    st.caption('Se aparecer CAPTCHA ou código, resolva manualmente. O sistema não tenta burlar proteção.')
-    _render_login_confirmation()
+    _render_page_confirmation()
 
-    can_prepare = bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False))
-    if st.button('🔐 Preparar login', use_container_width=True, key='prepare_guided_login_capture', disabled=not can_prepare):
-        _prepare_config(login_url=login_url, username=username, password=password, operation=operation)
-
+    can_prepare = bool(st.session_state.get(PAGE_READY_KEY, False))
+    if st.button('🔐 Preparar captura', use_container_width=True, key='prepare_guided_login_capture', disabled=not can_prepare):
+        _prepare_config(login_url=login_url, username=username, password=password, operation=operation, capture_mode=capture_mode)
     _render_prepared_config()
 
 
