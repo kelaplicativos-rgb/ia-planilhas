@@ -62,13 +62,15 @@ def _guided_capture_config() -> dict[str, object]:
 
 def _guided_capture_mode() -> str:
     config = _guided_capture_config()
-    mode = str(config.get('capture_mode') or st.session_state.get('guided_login_capture_mode') or 'products_page').strip()
-    return mode if mode in {'products_page', 'login'} else 'products_page'
+    mode = str(config.get('capture_mode') or st.session_state.get('guided_login_capture_mode') or 'browser_session').strip()
+    if mode in {'browser_session', 'products_page'}:
+        return 'browser_session'
+    return 'browser_session'
 
 
 def _guided_entry_url() -> str:
     config = _guided_capture_config()
-    return str(config.get('login_url') or st.session_state.get('guided_login_url') or '').strip()
+    return str(config.get('supplier_url') or config.get('login_url') or st.session_state.get('guided_login_url') or '').strip()
 
 
 def _set_stock_capture_state(*, running: bool, error: str = '') -> None:
@@ -110,14 +112,12 @@ def _store_stock_site_df(df_site: pd.DataFrame) -> None:
 def _render_guided_login_origin_module() -> None:
     enabled = st.checkbox('Este fornecedor exige login?', value=_guided_login_enabled(), key=_guided_login_toggle_key(), help='Deixe desmarcado para busca normal por links.')
     if not enabled:
-        st.caption('Busca pública ativa. O painel de login guiado fica escondido até você marcar esta opção.')
+        st.caption('Busca pública ativa. O navegador do fornecedor fica escondido até você marcar esta opção.')
         return
-    with st.expander('🔐 Configurar login guiado', expanded=True):
-        st.caption('Use esta opção quando o fornecedor exigir entrada autenticada antes da captura de estoque.')
+    with st.expander('🔐 Navegador do fornecedor', expanded=True):
+        st.caption('Faça login diretamente no site do fornecedor e abra a página de estoque/produtos antes da captura.')
         render_guided_login_panel()
-    _orange_warning('Fornecedor com entrada autenticada detectada. A busca pública por links foi substituída pela captura estilo Instant Scraper.')
-    if _login_confirmed() and _guided_capture_mode() == 'products_page':
-        _orange_warning('Modo página de produtos já aberta ativo. O botão agora executa a captura pela URL preparada. Se o site exigir a sessão real, use o modo com credenciais para o navegador automatizado entrar também.')
+    _orange_warning('Fornecedor com entrada autenticada detectada. A busca pública por links foi substituída pela captura pelo navegador do fornecedor.')
 
 
 def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | None]:
@@ -136,41 +136,30 @@ def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | Non
 
 def _render_urls_input() -> str:
     if _guided_login_enabled():
-        st.caption('Modo autenticado ativo. Use o botão de captura autenticada abaixo em vez da busca pública.')
+        st.caption('Modo autenticado ativo. Use o navegador do fornecedor e o botão de captura autenticada abaixo em vez da busca pública.')
         return ''
     return st.text_area('Links para buscar estoque', value=_query_urls_default(), height=120, key='urls_site_estoque_independente', placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1', help='Cole links de categoria, busca ou produto.')
 
 
-def _protected_session_value() -> str:
-    key = 'guided_login_' + 'pass' + 'word_ephemeral'
-    return str(st.session_state.get(key) or '').strip()
-
-
 def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
     entry_url = _guided_entry_url()
-    user_value = str(st.session_state.get('guided_login_username') or '').strip()
-    session_value = _protected_session_value()
     capture_mode = _guided_capture_mode()
-    allow_entry_step = capture_mode == 'login'
-    add_audit_event('authenticated_stock_site_capture_button_received', area='SITE', step='entrada', details={'operation': OPERATION, 'capture_mode': capture_mode, 'login_confirmed': _login_confirmed(), 'has_entry_url': bool(entry_url), 'has_user_value': bool(user_value), 'has_session_value': bool(session_value), 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('authenticated_stock_site_capture_button_received', area='SITE', step='entrada', details={'operation': OPERATION, 'capture_mode': capture_mode, 'login_confirmed': _login_confirmed(), 'has_entry_url': bool(entry_url), 'requested_columns_count': len(requested_columns or []), 'responsible_file': RESPONSIBLE_FILE})
     if not _login_confirmed():
-        _orange_warning('Confirme que você está 100% logado no fornecedor antes de executar a captura.')
+        _orange_warning('Confirme que você está logado no fornecedor e vendo a página de produtos/estoque antes de executar a captura.')
         return
     if not entry_url.startswith(('http://', 'https://')):
-        _orange_warning('Informe uma URL de entrada válida antes de executar a captura autenticada.')
-        return
-    if allow_entry_step and not session_value:
-        _orange_warning('No modo com credenciais, informe o valor protegido desta sessão antes de executar a captura autenticada.')
+        _orange_warning('Informe uma URL válida do fornecedor antes de executar a captura autenticada.')
         return
     if not _has_columns(requested_columns):
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
         return
     completed = False
     _set_stock_capture_state(running=True, error='')
-    add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'capture_mode': capture_mode, 'allow_entry_step': allow_entry_step, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
+    add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'capture_mode': capture_mode, 'allow_entry_step': False, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
     try:
-        progress = st.progress(0, text='Executando captura autenticada de estoque estilo Instant Scraper...')
-        result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value=user_value, session_value=session_value if allow_entry_step else '', start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=allow_entry_step, security_resolved=bool(st.session_state.get('guided_login_security_resolved', False))))
+        progress = st.progress(0, text='Executando captura autenticada de estoque pelo navegador do fornecedor...')
+        result = run_browser_scraper(BrowserScraperConfig(operation=OPERATION, entry_url=entry_url, user_value='', session_value='', start_urls=[entry_url], model_columns=requested_columns, max_pages=25, max_products=300, allow_entry_step=False, security_resolved=True))
         progress.progress(80, text='Organizando dados capturados...')
         for warning in result.warnings:
             _orange_warning(str(warning))
@@ -181,9 +170,7 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
             _orange_warning(error_message)
             return
         if not isinstance(result.df, pd.DataFrame) or result.df.empty:
-            error_message = 'A captura autenticada não encontrou dados de estoque na página.'
-            if capture_mode == 'products_page':
-                error_message += ' Se essa tela só aparece depois de login, use o modo com credenciais para o navegador automatizado autenticar também.'
+            error_message = 'A captura autenticada não encontrou dados de estoque na página preparada. Confira se a URL informada é a tela de produtos/estoque aberta depois do login.'
             _set_stock_capture_state(running=False, error=error_message)
             add_audit_event('authenticated_stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
             _orange_warning(error_message)
@@ -237,8 +224,8 @@ def render_estoque_site_panel() -> None:
     if _guided_login_enabled():
         login_confirmed = _login_confirmed()
         if not login_confirmed:
-            _orange_warning('A captura autenticada está bloqueada até confirmar 100% que o login foi concluído.')
-        button_label = '🔐 Executar captura autenticada de estoque estilo Instant Scraper'
+            _orange_warning('A captura autenticada está bloqueada até confirmar que você está logado e vendo a página de produtos/estoque.')
+        button_label = '🔐 Executar captura autenticada pelo navegador do fornecedor'
         button_disabled = running or not _has_columns(requested_columns) or not login_confirmed
     else:
         button_label = 'Buscar somente estoque no site'
