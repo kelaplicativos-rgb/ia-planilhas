@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
+from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
     choose_site_estoque_model_df,
     choose_site_model_df,
@@ -39,6 +40,14 @@ def _has_columns(columns: list[str] | None) -> bool:
     return bool([str(column).strip() for column in (columns or [])])
 
 
+def _guided_login_toggle_key() -> str:
+    return 'site_guided_login_enabled_estoque'
+
+
+def _guided_login_enabled() -> bool:
+    return bool(st.session_state.get(_guided_login_toggle_key(), False))
+
+
 def _get_stock_site_df() -> pd.DataFrame | None:
     df_current = st.session_state.get(STOCK_SITE_DF_KEY)
     if isinstance(df_current, pd.DataFrame):
@@ -69,14 +78,13 @@ def _store_stock_site_df(df_site: pd.DataFrame) -> None:
     st.session_state['home_slim_flow_origin'] = 'site'
 
 
-def _guided_login_toggle_key() -> str:
-    return 'site_guided_login_enabled_estoque'
-
-
-def _render_guided_login_origin_module() -> None:
+def _render_guided_login_origin_module(
+    requested_columns: list[str] | None,
+    df_modelo_estoque: pd.DataFrame | None,
+) -> None:
     enabled = st.checkbox(
         'Este fornecedor exige login?',
-        value=bool(st.session_state.get(_guided_login_toggle_key(), False)),
+        value=_guided_login_enabled(),
         key=_guided_login_toggle_key(),
         help='Deixe desmarcado para busca normal por links. Marque apenas se o site pedir usuário e senha.',
     )
@@ -87,6 +95,18 @@ def _render_guided_login_origin_module() -> None:
     with st.expander('🔐 Configurar login guiado', expanded=True):
         st.caption('Use esta opção quando o fornecedor exigir login antes da captura de estoque.')
         render_guided_login_panel()
+
+    st.warning(
+        'Fornecedor com login detectado. A busca pública por links fica bloqueada. '
+        'Entre no fornecedor, exporte ou copie a tabela de estoque/produtos e importe abaixo.'
+    )
+    render_manual_table_import_panel(
+        operation=OPERATION,
+        requested_columns=requested_columns,
+        df_modelo_cadastro=None,
+        df_modelo_estoque=df_modelo_estoque,
+        df_modelo=df_modelo_estoque,
+    )
 
 
 def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | None]:
@@ -110,6 +130,9 @@ def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | Non
 
 
 def _render_urls_input() -> str:
+    if _guided_login_enabled():
+        st.info('Fornecedor com login: não é necessário colar links para busca pública. Use a importação da tabela/exportação abaixo.')
+        return ''
     return st.text_area(
         'Links para buscar estoque',
         value=_query_urls_default(),
@@ -125,6 +148,9 @@ def _run_stock_site_capture(
     requested_columns: list[str] | None,
     df_modelo_estoque: pd.DataFrame | None,
 ) -> None:
+    if _guided_login_enabled():
+        st.warning('Busca bloqueada: este fornecedor exige login. Importe a tabela/exportação da página do fornecedor pelo painel de login guiado.')
+        return
     if not _has_columns(requested_columns):
         st.error('Busca bloqueada: o modelo de estoque precisa definir exatamente quais colunas serão preenchidas.')
         return
@@ -170,11 +196,13 @@ def render_estoque_site_panel() -> None:
 
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
-    _render_guided_login_origin_module()
+    _render_guided_login_origin_module(requested_columns, df_modelo_estoque)
 
-    button_disabled = not _has_columns(requested_columns)
-    if button_disabled:
+    button_disabled = not _has_columns(requested_columns) or _guided_login_enabled()
+    if not _has_columns(requested_columns):
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
+    if _guided_login_enabled():
+        st.caption('Busca pública bloqueada porque este fornecedor exige login. Importe a tabela/exportação da página do fornecedor no painel acima.')
 
     if st.button(
         'Buscar somente estoque no site',
