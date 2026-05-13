@@ -4,6 +4,16 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.text import normalize_key
+from bling_app_zero.ui.estoque_wizard_state import (
+    ESTOQUE_CONFIDENCE_KEY,
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+    set_stock_output,
+    stock_final_df,
+)
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_title
 from bling_app_zero.ui.mapping_ai_actions import render_ai_button
@@ -33,9 +43,15 @@ def _render_deposito_field(target: str, mapping_key: str, target_index: int, dep
 
 def _reset_stock_mapping(mapping_key: str, order_key: str) -> None:
     st.session_state.pop(mapping_key, None)
-    st.session_state.pop('df_final_estoque_from_cadastro', None)
-    st.session_state.pop('mapping_estoque_from_cadastro', None)
-    st.session_state.pop('mapping_confidence_estoque_from_cadastro', None)
+    for key in (
+        ESTOQUE_FINAL_KEY,
+        ESTOQUE_MAPPING_KEY,
+        ESTOQUE_CONFIDENCE_KEY,
+        LEGACY_ESTOQUE_FINAL_KEY,
+        LEGACY_ESTOQUE_MAPPING_KEY,
+        LEGACY_ESTOQUE_CONFIDENCE_KEY,
+    ):
+        st.session_state.pop(key, None)
     st.session_state.pop(order_key, None)
     clear_mapping_widgets(mapping_key)
     st.rerun()
@@ -100,11 +116,8 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     render_mapping_page_arrows(mapping_key)
 
     st.session_state[mapping_key] = edited_mapping
-    st.session_state['mapping_confidence_estoque_from_cadastro'] = edited_confidence
-
     df_preview_manual = build_estoque_preview(df_source, model, edited_mapping, target_columns, mapping_key, deposito)
-    st.session_state['df_final_estoque_from_cadastro'] = df_preview_manual
-    st.session_state['mapping_estoque_from_cadastro'] = edited_mapping
+    set_stock_output(df_preview_manual, edited_mapping, edited_confidence)
 
     duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
@@ -131,7 +144,7 @@ def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Data
         return
 
     render_manual_stock_mapping(df_source, df_modelo_estoque, deposito)
-    df_stock = st.session_state.get('df_final_estoque_from_cadastro')
+    df_stock = stock_final_df()
     if isinstance(df_stock, pd.DataFrame) and not df_stock.empty:
         preview_df('Prévia do estoque', df_stock)
         download_final(df_stock, 'estoque')
