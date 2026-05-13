@@ -14,6 +14,7 @@ CONFIG_KEY = 'guided_login_capture_config'
 PROMPT_KEY = 'guided_login_capture_prompt'
 LAST_PREPARED_KEY = 'guided_login_capture_last_prepared_at'
 SECURITY_RESOLVED_KEY = 'guided_login_security_resolved'
+LOGIN_CONFIRMED_KEY = 'guided_login_confirmed_logged_in'
 
 DEFAULT_LOGIN_URL = 'https://app.obaobamix.com.br/login'
 
@@ -34,7 +35,8 @@ def _safe_config(login_url: str, username: str, operation: str) -> dict[str, obj
         'username_filled': bool(username.strip()),
         'operation': operation,
         'capture_mode': 'estoque' if operation == 'estoque' else 'cadastro',
-        'security_resolved': True,
+        'security_resolved': bool(st.session_state.get(SECURITY_RESOLVED_KEY, False)),
+        'login_confirmed': bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)),
         'prepared_at': datetime.now().isoformat(timespec='seconds'),
         'responsible_file': RESPONSIBLE_FILE,
         'password_saved': False,
@@ -57,10 +59,14 @@ Operação:
 Usuário preenchido:
 {config.get('username_filled')}
 
+Login confirmado pelo usuário:
+{config.get('login_confirmed')}
+
 Senha:
 NÃO FOI SALVA E NÃO DEVE SER EXIBIDA EM LOGS.
 
 Regras:
+- Só executar captura após confirmação manual de que o usuário está logado.
 - Usar motor autenticado independente.
 - Não misturar com busca pública.
 - Não salvar senha, token, cookie, código ou segredo.
@@ -86,17 +92,20 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
     if not password.strip():
         st.warning('Informe a senha apenas para esta sessão. Ela não será salva em logs nem no prompt.')
         return
+    if not bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)):
+        st.warning('Confirme que você está 100% logado no fornecedor antes de preparar a captura.')
+        return
 
+    st.session_state[SECURITY_RESOLVED_KEY] = True
     config = _safe_config(login_url=login_url, username=username, operation=operation)
     prompt = _build_guided_login_prompt(config)
 
     st.session_state[CONFIG_KEY] = config
     st.session_state[PROMPT_KEY] = prompt
     st.session_state[LAST_PREPARED_KEY] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-    st.session_state[SECURITY_RESOLVED_KEY] = True
 
     add_debug(
-        f'Login guiado compacto preparado para domínio {config.get("domain")}. Senha não registrada.',
+        f'Login guiado compacto confirmado para domínio {config.get("domain")}. Senha não registrada.',
         origin='LOGIN_GUIADO',
     )
     add_audit_event(
@@ -106,6 +115,7 @@ def _prepare_config(login_url: str, username: str, password: str, operation: str
             'domain': config.get('domain'),
             'operation': operation,
             'username_filled': bool(config.get('username_filled')),
+            'login_confirmed': True,
             'password_saved': False,
             'security_code_saved': False,
             'responsible_file': RESPONSIBLE_FILE,
@@ -142,12 +152,26 @@ def _render_internal_browser(login_url: str) -> None:
           ></iframe>
         </div>
         <div style="font-family:Arial,sans-serif;font-size:13px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-left:5px solid #fb923c;border-radius:10px;padding:10px 12px;">
-          Se a janela ficar em branco ou o fornecedor bloquear o carregamento interno, é proteção do próprio site contra iframe. Nesse caso, a captura autenticada ainda pode rodar pelo motor do sistema, mas o CAPTCHA visual precisará de outro modo de checkpoint.
+          Se a janela ficar em branco ou o fornecedor bloquear o carregamento interno, é proteção do próprio site contra iframe. Nesse caso, a captura só deve continuar depois de você confirmar que está logado por outro checkpoint.
         </div>
         ''',
         height=660,
         scrolling=True,
     )
+
+
+def _render_login_confirmation() -> None:
+    st.checkbox(
+        'Estou 100% logado no fornecedor e pronto para capturar',
+        value=bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)),
+        key=LOGIN_CONFIRMED_KEY,
+        help='Marque somente depois de ver que o login foi concluído e que a área de produtos/catálogo está acessível.',
+    )
+    if not bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False)):
+        st.markdown(
+            '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:10px;padding:10px 12px;margin:8px 0;">⚠️ A captura autenticada só será liberada depois desta confirmação.</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_prepared_config() -> None:
@@ -158,7 +182,7 @@ def _render_prepared_config() -> None:
     domain = str(config.get('domain') or '').strip() or 'site informado'
     operation = str(config.get('operation') or 'cadastro').strip()
     label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.success(f'Login preparado para {domain} em {last_prepared}.')
+    st.success(f'Login confirmado para {domain} em {last_prepared}.')
     st.caption(f'Pronto para captura autenticada de {label}. Senha não foi salva.')
 
 
@@ -188,10 +212,11 @@ def render_guided_login_panel() -> None:
     )
 
     _render_internal_browser(login_url)
+    st.caption('Se aparecer CAPTCHA ou código, resolva manualmente. O sistema não tenta burlar proteção.')
+    _render_login_confirmation()
 
-    st.caption('Se aparecer CAPTCHA ou código, resolva manualmente dentro da janela interna quando o fornecedor permitir. O sistema não tenta burlar proteção.')
-
-    if st.button('🔐 Preparar login', use_container_width=True, key='prepare_guided_login_capture'):
+    can_prepare = bool(st.session_state.get(LOGIN_CONFIRMED_KEY, False))
+    if st.button('🔐 Preparar login', use_container_width=True, key='prepare_guided_login_capture', disabled=not can_prepare):
         _prepare_config(login_url=login_url, username=username, password=password, operation=operation)
 
     _render_prepared_config()
