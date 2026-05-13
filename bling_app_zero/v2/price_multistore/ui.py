@@ -75,6 +75,15 @@ def _csv_zip_bytes(parts: list[pd.DataFrame], prefix: str = 'bling_precos_multil
     return buffer.getvalue()
 
 
+def _render_closed_preview(title: str, df: pd.DataFrame | None, *, rows: int = 80, height: int = 220) -> None:
+    """Renderiza qualquer preview fechado por padrão para não poluir o fluxo."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return
+    label = f'{title} · {len(df)} linha(s) × {len(df.columns)} coluna(s)'
+    with st.expander(label, expanded=False):
+        st.dataframe(df.head(rows).fillna(''), use_container_width=True, height=height)
+
+
 def _render_alert(message: str) -> None:
     st.markdown(
         f"""
@@ -166,7 +175,7 @@ def _render_audit_download() -> None:
 
     st.markdown('### Auditoria · Produtos não incluídos')
     _render_alert(f'{len(audit_df)} produto(s) da origem não entraram na operação. Baixe esta planilha para conferência.')
-    st.dataframe(audit_df.head(80), use_container_width=True, height=260)
+    _render_closed_preview('Preview da auditoria dos produtos não incluídos', audit_df, rows=80, height=260)
     st.download_button(
         'Baixar auditoria dos produtos não incluídos',
         data=to_csv_bytes(audit_df),
@@ -230,7 +239,8 @@ def _render_ready_result(result_df: pd.DataFrame) -> None:
     _keep_multistore_route_alive()
     st.markdown('### Etapa 6 · Conferência')
     preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
-    st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
+    preview_df = result_df[preview_cols].copy() if preview_cols else result_df.copy()
+    _render_closed_preview('Preview final limpo para importação', preview_df, rows=80, height=340)
     total_parts = max(1, math.ceil(len(result_df) / MAX_BLING_IMPORT_ROWS)) if len(result_df) else 0
     st.caption(f'{len(result_df)} linha(s) prontas para importação · {total_parts} arquivo(s) respeitando o limite de {MAX_BLING_IMPORT_ROWS} linhas.')
 
@@ -262,7 +272,7 @@ def render_price_multistore_v2() -> None:
         detection = detect_multistore_model(model_df)
         if detection.is_multistore:
             st.success(f'Modelo multiloja reconhecido · {len(model_df)} linha(s) × {len(model_df.columns)} coluna(s).')
-            st.dataframe(model_df.head(12), use_container_width=True, height=180)
+            _render_closed_preview('Preview da Planilha 1 do Bling', model_df, rows=12, height=180)
         else:
             _render_alert(detection.message + ' Faltando: ' + ', '.join(detection.missing))
             return
@@ -280,7 +290,7 @@ def render_price_multistore_v2() -> None:
     source_df = _read(source_upload)
     if isinstance(source_df, pd.DataFrame) and not source_df.empty:
         st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
-        st.dataframe(source_df.head(12), use_container_width=True, height=180)
+        _render_closed_preview('Preview da Planilha 2 de origem/custo', source_df, rows=12, height=180)
     else:
         result_df = get_state('multistore_result_df')
         if isinstance(result_df, pd.DataFrame) and not result_df.empty:
