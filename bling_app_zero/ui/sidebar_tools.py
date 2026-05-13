@@ -7,22 +7,43 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
-from bling_app_zero.ui.ai_maintenance_panel import render_ai_maintenance_panel
-from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
-from bling_app_zero.ui.features_panel import render_features_panel
 from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
-from bling_app_zero.ui.maintenance_panel import render_maintenance_panel
 
 SidebarRenderer = Callable[[], None]
 
 SIDEBAR_TOOL_KEY = 'sidebar_active_technical_tool'
 SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 
+
+def _render_features_panel_lazy() -> None:
+    from bling_app_zero.ui.features_panel import render_features_panel
+
+    render_features_panel()
+
+
+def _render_diagnostics_panel_lazy() -> None:
+    from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
+
+    render_diagnostics_panel()
+
+
+def _render_ai_maintenance_panel_lazy() -> None:
+    from bling_app_zero.ui.ai_maintenance_panel import render_ai_maintenance_panel
+
+    render_ai_maintenance_panel()
+
+
+def _render_maintenance_panel_lazy() -> None:
+    from bling_app_zero.ui.maintenance_panel import render_maintenance_panel
+
+    render_maintenance_panel()
+
+
 SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
-    ('Módulos e recursos', render_features_panel),
-    ('Ferramentas de conferência', render_diagnostics_panel),
-    ('Assistente IA de correção', render_ai_maintenance_panel),
-    ('Manutenção do sistema', render_maintenance_panel),
+    ('Módulos e recursos', _render_features_panel_lazy),
+    ('Ferramentas de conferência', _render_diagnostics_panel_lazy),
+    ('Assistente IA de correção', _render_ai_maintenance_panel_lazy),
+    ('Manutenção do sistema', _render_maintenance_panel_lazy),
 )
 
 
@@ -41,6 +62,7 @@ def _render_sidebar_header() -> None:
 
 
 def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
+    """Executa uma ferramenta da sidebar sem deixar uma falha derrubar o app."""
     try:
         renderer()
     except Exception as exc:
@@ -94,7 +116,7 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'compact_tools_with_safe_ai_assistant',
+            'mode': 'compact_tools_with_lazy_safe_imports',
             'tools': [name for name, _ in SIDEBAR_TOOLS],
             'rules_location': 'main_flow_only',
             'audit_location': 'maintenance_panel',
