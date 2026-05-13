@@ -377,7 +377,7 @@ def _render_nav_buttons(
                 )
                 _next_step()
         else:
-            st.markdown('<div class="bling-next-blocked-slot" aria-hidden="true"></div>', unsafe_allow_html=True)
+            pass
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
