@@ -128,6 +128,23 @@ def _try_entry_step(page, config: BrowserScraperConfig) -> list[str]:
     return warnings
 
 
+def _queue_after_entry(page, config: BrowserScraperConfig, start_urls: list[str]) -> list[str]:
+    queue: list[str] = []
+    current_url = str(getattr(page, "url", "") or "").strip()
+    entry_url = str(config.entry_url or "").strip()
+    if _valid_url(current_url):
+        queue.append(current_url)
+    for url in start_urls:
+        clean = str(url or "").strip()
+        if not _valid_url(clean):
+            continue
+        if config.allow_entry_step and entry_url and clean.rstrip("/") == entry_url.rstrip("/") and current_url and current_url.rstrip("/") != entry_url.rstrip("/"):
+            continue
+        if clean not in queue:
+            queue.append(clean)
+    return queue
+
+
 def _scroll_page(page) -> None:
     for _ in range(8):
         try:
@@ -173,13 +190,14 @@ def run_browser_scraper(config: BrowserScraperConfig) -> BrowserScraperResult:
             page = context.new_page()
             if config.allow_entry_step:
                 warnings.extend(_try_entry_step(page, config))
-            queue = list(start_urls)
+            queue = _queue_after_entry(page, config, start_urls)
             while queue and len(visited) < max(1, config.max_pages) and len(rows) < max(1, config.max_products):
                 url = queue.pop(0)
                 if url in visited:
                     continue
                 visited.add(url)
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                if str(getattr(page, "url", "") or "").rstrip("/") != str(url or "").rstrip("/"):
+                    page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(1800)
                 _scroll_page(page)
                 html = page.content()
