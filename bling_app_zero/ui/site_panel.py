@@ -85,11 +85,15 @@ def _guided_login_toggle_key(operation: str) -> str:
     return f'site_guided_login_enabled_{operation}'
 
 
+def _guided_login_enabled(operation: str) -> bool:
+    return bool(st.session_state.get(_guided_login_toggle_key(operation), False))
+
+
 def _render_guided_login_origin_module(operation: str) -> None:
     label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
     enabled = st.checkbox(
         'Este fornecedor exige login?',
-        value=bool(st.session_state.get(_guided_login_toggle_key(operation), False)),
+        value=_guided_login_enabled(operation),
         key=_guided_login_toggle_key(operation),
         help='Deixe desmarcado para busca normal por links. Marque apenas se o site pedir usuário e senha.',
     )
@@ -100,6 +104,11 @@ def _render_guided_login_origin_module(operation: str) -> None:
     with st.expander('🔐 Configurar login guiado', expanded=True):
         st.caption(f'Use esta opção quando o fornecedor exigir login antes da {label}.')
         render_guided_login_panel()
+
+    st.warning(
+        'Atenção: resolver CAPTCHA/código em uma aba do navegador não transfere automaticamente a sessão logada para o servidor do Streamlit. '
+        'Por isso a busca pública por links fica bloqueada quando o fornecedor exige login. Para retornar produtos autenticados, o próximo BLINGFIX precisa conectar um motor Playwright com sessão controlada pelo sistema.'
+    )
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -149,6 +158,16 @@ def _run_site_capture(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     raw_urls = str(raw_urls or '').strip()
+    if _guided_login_enabled(operation):
+        st.warning('Busca bloqueada: este fornecedor exige login. A captura autenticada precisa de motor com sessão conectada, não da busca pública por links.')
+        add_audit_event(
+            'site_capture_blocked_guided_login_requires_authenticated_engine',
+            area='SITE',
+            step='entrada',
+            status='BLOQUEADO',
+            details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return
     if not raw_urls:
         st.warning('Informe pelo menos um link antes de iniciar a busca por site.')
         add_audit_event(
@@ -290,9 +309,11 @@ def render_site_panel() -> None:
         st.error(f'Última captura por site falhou: {error}')
 
     button_label = 'Buscar no site e gerar origem de estoque' if operation == 'estoque' else 'Buscar no site e gerar origem de cadastro'
-    button_disabled = running or (operation == 'estoque' and not _has_columns(requested_columns))
+    button_disabled = running or _guided_login_enabled(operation) or (operation == 'estoque' and not _has_columns(requested_columns))
     if operation == 'estoque' and not _has_columns(requested_columns):
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
+    if _guided_login_enabled(operation):
+        st.caption('Busca pública bloqueada porque este fornecedor exige login. Use o painel de login guiado e conecte o motor autenticado no próximo BLINGFIX.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
