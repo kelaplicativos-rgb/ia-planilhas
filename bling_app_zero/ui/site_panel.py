@@ -9,7 +9,6 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
 from bling_app_zero.ui.guided_login_panel import render_guided_login_panel
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
-from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
     choose_site_estoque_model_df,
@@ -90,13 +89,7 @@ def _guided_login_enabled(operation: str) -> bool:
     return bool(st.session_state.get(_guided_login_toggle_key(operation), False))
 
 
-def _render_guided_login_origin_module(
-    operation: str,
-    requested_columns: list[str] | None,
-    df_modelo_cadastro: pd.DataFrame | None,
-    df_modelo_estoque: pd.DataFrame | None,
-    df_modelo: pd.DataFrame | None,
-) -> None:
+def _render_guided_login_origin_module(operation: str) -> None:
     label = 'captura autenticada de estoque' if operation == 'estoque' else 'captura autenticada de cadastro'
     enabled = st.checkbox(
         'Este fornecedor exige login?',
@@ -114,14 +107,7 @@ def _render_guided_login_origin_module(
 
     st.warning(
         'Fornecedor com login detectado. A busca pública por links fica bloqueada. '
-        'Entre no fornecedor, exporte ou copie a tabela de produtos e importe abaixo.'
-    )
-    render_manual_table_import_panel(
-        operation=operation,
-        requested_columns=requested_columns,
-        df_modelo_cadastro=df_modelo_cadastro,
-        df_modelo_estoque=df_modelo_estoque,
-        df_modelo=df_modelo,
+        'Este fluxo precisa de scraper autenticado com navegador guiado para entrar no fornecedor e capturar os produtos dentro do site.'
     )
 
 
@@ -144,7 +130,7 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
 
 def _render_urls_input(operation: str) -> str:
     if _guided_login_enabled(operation):
-        st.info('Fornecedor com login: não é necessário colar links para busca pública. Use a importação da tabela/exportação abaixo.')
+        st.info('Fornecedor com login: a busca pública por links fica bloqueada. Use o painel de login guiado para preparar a captura autenticada.')
         return ''
     return st.text_area(
         'Links do fornecedor',
@@ -176,9 +162,9 @@ def _run_site_capture(
 ) -> None:
     raw_urls = str(raw_urls or '').strip()
     if _guided_login_enabled(operation):
-        st.warning('Busca bloqueada: este fornecedor exige login. Importe a tabela/exportação da página do fornecedor pelo painel de login guiado.')
+        st.warning('Busca bloqueada: este fornecedor exige login. É necessário usar o scraper autenticado/guiado, não a busca pública por links.')
         add_audit_event(
-            'site_capture_blocked_guided_login_requires_manual_import',
+            'site_capture_blocked_guided_login_requires_authenticated_scraper',
             area='SITE',
             step='entrada',
             status='BLOQUEADO',
@@ -300,9 +286,9 @@ def render_site_panel() -> None:
 
     config = config_for_site_operation(operation)
     login_mode = _guided_login_enabled(operation)
-    title = 'Importe a tabela do fornecedor' if login_mode else 'Cole os links do fornecedor'
+    title = 'Captura autenticada guiada' if login_mode else 'Cole os links do fornecedor'
     text = (
-        'Fornecedor com login: entre no fornecedor, exporte ou copie a lista de produtos e importe abaixo.'
+        'Fornecedor com login: prepare a captura autenticada. A busca pública por links fica bloqueada.'
         if login_mode
         else 'A captura acontece aqui. Depois continue para a próxima etapa do Wizard.'
     )
@@ -322,7 +308,7 @@ def render_site_panel() -> None:
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
-    _render_guided_login_origin_module(operation, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
+    _render_guided_login_origin_module(operation)
 
     running = bool(st.session_state.get('site_capture_running'))
     if running:
@@ -337,7 +323,7 @@ def render_site_panel() -> None:
     if operation == 'estoque' and not _has_columns(requested_columns):
         st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
     if _guided_login_enabled(operation):
-        st.caption('Busca pública bloqueada porque este fornecedor exige login. Importe a tabela/exportação da página do fornecedor no painel acima.')
+        st.caption('Busca pública bloqueada porque este fornecedor exige login. Use captura autenticada guiada.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
