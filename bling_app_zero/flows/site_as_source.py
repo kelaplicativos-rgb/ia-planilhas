@@ -3,6 +3,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.estoque_wizard_state import (
+    ESTOQUE_CONFIDENCE_KEY,
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+)
+
 SITE_SOURCE_KEY = 'df_origem_site_como_planilha'
 SITE_OPERATION_KEY = 'site_operation_como_planilha'
 SITE_SOURCE_URLS_KEY = 'site_source_urls_como_planilha'
@@ -42,6 +51,15 @@ PLANILHA_MODEL_CADASTRO_KEYS = [
 PLANILHA_MODEL_ESTOQUE_KEYS = [
     'df_modelo_estoque',
     'modelo_estoque_df',
+]
+STOCK_OUTPUT_KEYS = [
+    'estoque_multi_outputs',
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
 ]
 
 
@@ -90,6 +108,11 @@ def _df_signature(df: pd.DataFrame | None) -> str:
         return f'{len(df)}x{len(df.columns)}'
 
 
+def _clear_stock_output_cache() -> None:
+    for key in STOCK_OUTPUT_KEYS:
+        st.session_state.pop(key, None)
+
+
 def _clear_output_cache_for_operation(operation: str) -> None:
     normalized = _normalize_operation(operation)
     keys = []
@@ -100,21 +123,16 @@ def _clear_output_cache_for_operation(operation: str) -> None:
             'mapping_confidence_cadastro',
             'df_origem_cadastro_precificada',
             'cadastro_preco_calculado_ativo',
-            'df_final_estoque_from_cadastro',
-            'mapping_estoque_from_cadastro',
-            'mapping_confidence_estoque_from_cadastro',
             CADASTRO_WIZARD_PARA_MAPEAR_KEY,
             'cadastro_mapping_confirmed',
             'cadastro_mapping_confirmed_signature',
         ])
     else:
-        keys.extend([
-            'estoque_multi_outputs',
-            'df_final_estoque',
-            'mapping_estoque',
-        ])
+        keys.extend(STOCK_OUTPUT_KEYS)
     for key in keys:
         st.session_state.pop(key, None)
+    if normalized == 'cadastro':
+        _clear_stock_output_cache()
 
 
 def _mirror_as_uploaded_planilha(
@@ -176,8 +194,6 @@ def _mirror_to_wizard_keys(
         if cadastro_model is None:
             cadastro_model = operation_model
         st.session_state[CADASTRO_WIZARD_ORIGEM_KEY] = origem.copy().fillna('')
-        # Esta chave é recriada depois pela precificação/mapeamento quando houver preço calculado.
-        # Aqui ela também serve como origem pronta para diagnóstico e para não deixar o Wizard sem contexto.
         st.session_state[CADASTRO_WIZARD_PARA_MAPEAR_KEY] = origem.copy().fillna('')
         st.session_state[CADASTRO_EXPECTED_ROWS_KEY] = int(len(origem))
         st.session_state[CADASTRO_EXPECTED_SIGNATURE_KEY] = _df_signature(origem)
@@ -340,6 +356,7 @@ def clear_site_source(operation: str | None = None) -> None:
             'site_capture_error',
             'site_capture_rows',
             'site_capture_columns',
+            *STOCK_OUTPUT_KEYS,
         ]:
             st.session_state.pop(key, None)
 
