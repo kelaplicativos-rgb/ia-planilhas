@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import streamlit as st
 
@@ -15,6 +16,13 @@ SIDEBAR_TOOL_KEY = 'sidebar_active_technical_tool'
 SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 
 
+@dataclass(frozen=True)
+class SidebarTool:
+    name: str
+    group: str
+    renderer: SidebarRenderer
+
+
 def _render_features_panel_lazy() -> None:
     from bling_app_zero.ui.features_panel import render_features_panel
 
@@ -25,7 +33,7 @@ def _render_bling_command_center_lazy() -> None:
     from bling_app_zero.ui.bling_command_center import render_bling_command_center
 
     with st.sidebar:
-        with st.expander('Central de Comandos BLING', expanded=False):
+        with st.expander('Comandos BLING prontos', expanded=False):
             render_bling_command_center()
 
 
@@ -47,12 +55,18 @@ def _render_maintenance_panel_lazy() -> None:
     render_maintenance_panel()
 
 
-SIDEBAR_TOOLS: tuple[tuple[str, SidebarRenderer], ...] = (
-    ('Módulos e recursos', _render_features_panel_lazy),
-    ('Central de Comandos BLING', _render_bling_command_center_lazy),
-    ('Ferramentas de conferência', _render_diagnostics_panel_lazy),
-    ('Assistente IA de correção', _render_ai_maintenance_panel_lazy),
-    ('Manutenção do sistema', _render_maintenance_panel_lazy),
+SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
+    SidebarTool('Central de Comandos BLING', 'Diagnóstico e correção', _render_bling_command_center_lazy),
+    SidebarTool('Ferramentas de conferência', 'Diagnóstico e correção', _render_diagnostics_panel_lazy),
+    SidebarTool('Assistente IA de correção', 'Diagnóstico e correção', _render_ai_maintenance_panel_lazy),
+    SidebarTool('Manutenção do sistema', 'Sistema e manutenção', _render_maintenance_panel_lazy),
+    SidebarTool('Módulos e recursos', 'Recursos disponíveis', _render_features_panel_lazy),
+)
+
+SIDEBAR_GROUPS: tuple[tuple[str, str], ...] = (
+    ('Diagnóstico e correção', 'Comandos BLING, varreduras, simulações e assistência técnica.'),
+    ('Sistema e manutenção', 'Logs, auditoria, limpeza e suporte operacional.'),
+    ('Recursos disponíveis', 'Lista de módulos e capacidades carregadas no sistema.'),
 )
 
 
@@ -61,10 +75,23 @@ def _render_sidebar_header() -> None:
         st.markdown(
             """
             <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
-                <div class="bling-sidebar-kicker">Painel técnico</div>
-                <div class="bling-sidebar-title">Ferramentas do sistema</div>
-                <div class="bling-sidebar-text">Módulos, comandos BLING, conferência, logs, audit trail, assistência IA segura e manutenção.</div>
+                <div class="bling-sidebar-kicker">Painel de apoio</div>
+                <div class="bling-sidebar-title">Central técnica</div>
+                <div class="bling-sidebar-text">Diagnóstico, comandos BLING, logs e manutenção. As entradas reais continuam no fluxo principal.</div>
             </section>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_sidebar_group_header(title: str, caption: str) -> None:
+    with st.sidebar:
+        st.markdown(
+            f"""
+            <div class="bling-sidebar-group" aria-label="{title}">
+                <div class="bling-sidebar-group-title">{title}</div>
+                <div class="bling-sidebar-group-caption">{caption}</div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -115,6 +142,10 @@ def _clear_legacy_sidebar_rules_state() -> None:
         )
 
 
+def _tools_for_group(group: str) -> list[SidebarTool]:
+    return [tool for tool in SIDEBAR_TOOLS if tool.group == group]
+
+
 def render_sidebar_tools() -> None:
     inject_sidebar_tools_theme()
     _ensure_sidebar_defaults()
@@ -125,18 +156,24 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'compact_tools_with_lazy_safe_imports',
-            'tools': [name for name, _ in SIDEBAR_TOOLS],
+            'mode': 'grouped_sidebar_with_safe_lazy_imports',
+            'groups': [group for group, _ in SIDEBAR_GROUPS],
+            'tools': [tool.name for tool in SIDEBAR_TOOLS],
             'rules_location': 'main_flow_only',
             'audit_location': 'maintenance_panel',
-            'command_center_location': 'sidebar',
+            'command_center_location': 'sidebar_group_diagnostics',
             'guided_login_location': 'site_origin_module',
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
     )
 
-    for name, renderer in SIDEBAR_TOOLS:
-        _render_sidebar_tool(name, renderer)
+    for group, caption in SIDEBAR_GROUPS:
+        tools = _tools_for_group(group)
+        if not tools:
+            continue
+        _render_sidebar_group_header(group, caption)
+        for tool in tools:
+            _render_sidebar_tool(tool.name, tool.renderer)
 
 
 __all__ = ['render_sidebar_tools']
