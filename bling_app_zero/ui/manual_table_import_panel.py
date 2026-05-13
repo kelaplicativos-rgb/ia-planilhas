@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from io import BytesIO
 
 import pandas as pd
@@ -10,6 +11,10 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/manual_table_import_panel.py'
+PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,3}(?:\.\d{3})*,\d{2}|(?:R\$\s*)?\d+\.\d{2}')
+SKU_RE = re.compile(r'\b(?:SKU|C[ÓO]D(?:IGO)?|REF(?:ER[ÊE]NCIA)?|ID)\s*[:#-]?\s*([A-Za-z0-9._/-]{2,})', re.IGNORECASE)
+GTIN_RE = re.compile(r'\b(\d{8}|\d{12}|\d{13}|\d{14})\b')
+STOCK_RE = re.compile(r'\b(?:estoque|saldo|qtd|quantidade)\s*[:#-]?\s*(-?\d+(?:[,.]\d+)?)', re.IGNORECASE)
 
 
 def _clean(value: object) -> str:
@@ -28,11 +33,9 @@ def _read_spreadsheet(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     return pd.read_excel(buffer, dtype=str).fillna('')
 
 
-def _html_to_table(text: str) -> pd.DataFrame:
-    soup = BeautifulSoup(text or '', 'html.parser')
-    tables = soup.find_all('table')
+def _extract_tables(soup: BeautifulSoup) -> list[pd.DataFrame]:
     frames: list[pd.DataFrame] = []
-    for table in tables:
+    for table in soup.find_all('table'):
         rows: list[list[str]] = []
         for tr in table.find_all('tr'):
             cells = tr.find_all(['th', 'td'])
@@ -47,19 +50,110 @@ def _html_to_table(text: str) -> pd.DataFrame:
         frame = pd.DataFrame(rows[1:], columns=columns).fillna('')
         if not frame.empty:
             frames.append(frame)
-    if frames:
-        frames.sort(key=lambda df: len(df) * max(1, len(df.columns)), reverse=True)
-        return frames[0].fillna('').astype(str)
+    return frames
 
+
+def _extract_plain_tabular(text: str) -> pd.DataFrame:
     plain_rows = []
     for line in str(text or '').splitlines():
         if '\t' in line:
             plain_rows.append([_clean(part) for part in line.split('\t')])
-    if len(plain_rows) >= 2:
-        width = max(len(row) for row in plain_rows)
-        plain_rows = [row + [''] * (width - len(row)) for row in plain_rows]
-        columns = [_clean(value) or f'Coluna {idx + 1}' for idx, value in enumerate(plain_rows[0])]
-        return pd.DataFrame(plain_rows[1:], columns=columns).fillna('').astype(str)
+    if len(plain_rows) < 2:
+        return pd.DataFrame()
+    width = max(len(row) for row in plain_rows)
+    plain_rows = [row + [''] * (width - len(row)) for row in plain_rows]
+    columns = [_clean(value) or f'Coluna {idx + 1}' for idx, value in enumerate(plain_rows[0])]
+    return pd.DataFrame(plain_rows[1:], columns=columns).fillna('').astype(str)
+
+
+def _node_image(node) -> str:
+    image = node.find('img')
+    if not image:
+        return ''
+    return _clean(image.get('src') or image.get('data-src') or image.get('data-original') or '')
+
+
+def _node_link(node) -> str:
+    link = node.find('a')
+    if not link:
+        return ''
+    return _clean(link.get('href') or '')
+
+
+def _extract_cards(soup: BeautifulSoup) -> pd.DataFrame:
+    selectors = [
+        '[class*=produto]',
+        '[class*=product]',
+        '[class*=item]',
+        '[class*=card]',
+        '[data-product]',
+        '[data-produto]',
+        '[data-sku]',
+        '[data-id]',
+    ]
+    rows: list[dict[str, str]] = []
+    seen_nodes: set[int] = set()
+    seen_texts: set[str] = set()
+
+    for selector in selectors:
+        for node in soup.select(selector):
+            node_id = id(node)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+
+            text = _clean(node.get_text(' ', strip=True))
+            if len(text) < 8 or text in seen_texts:
+                continue
+            seen_texts.add(text)
+
+            price_match = PRICE_RE.search(text)
+            sku_match = SKU_RE.search(text)
+            gtin_match = GTIN_RE.search(text)
+            stock_match = STOCK_RE.search(text)
+            has_signal = bool(price_match or sku_match or stock_match or gtin_match)
+            has_word = any(token in text.lower() for token in ('produto', 'preço', 'preco', 'estoque', 'sku', 'cód', 'codigo', 'ref'))
+            if not has_signal and not has_word:
+                continue
+
+            name = text
+            if price_match:
+                name = _clean(text[:price_match.start()]) or text
+            if len(name) > 260:
+                name = name[:260]
+
+            rows.append(
+                {
+                    'Descrição': name,
+                    'Preço': price_match.group(0) if price_match else '',
+                    'Código/SKU': sku_match.group(1) if sku_match else _clean(node.get('data-sku') or node.get('data-id') or ''),
+                    'GTIN/EAN': gtin_match.group(1) if gtin_match else '',
+                    'Estoque': stock_match.group(1) if stock_match else '',
+                    'Imagem URL': _node_image(node),
+                    'URL': _node_link(node),
+                    'Texto capturado': text[:900],
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).fillna('').astype(str)
+
+
+def _html_to_table(text: str) -> pd.DataFrame:
+    soup = BeautifulSoup(text or '', 'html.parser')
+    frames = _extract_tables(soup)
+    if frames:
+        frames.sort(key=lambda df: len(df) * max(1, len(df.columns)), reverse=True)
+        return frames[0].fillna('').astype(str)
+
+    plain = _extract_plain_tabular(text)
+    if isinstance(plain, pd.DataFrame) and not plain.empty:
+        return plain
+
+    cards = _extract_cards(soup)
+    if isinstance(cards, pd.DataFrame) and not cards.empty:
+        return cards
 
     return pd.DataFrame()
 
@@ -77,7 +171,7 @@ def _store_manual_source(
     operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
     clean_df = df.copy().fillna('').astype(str) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if clean_df.empty:
-        st.warning('Não encontrei uma tabela com produtos no conteúdo enviado.')
+        st.warning('Não encontrei uma tabela ou blocos de produtos no conteúdo enviado.')
         return
 
     st.session_state[f'df_site_bruto_{operation}'] = clean_df
@@ -116,7 +210,7 @@ def render_manual_table_import_panel(
 ) -> None:
     operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
     st.markdown('###### Importar tabela do fornecedor')
-    st.caption('Use quando você já abriu o fornecedor e consegue exportar ou copiar a tabela de produtos.')
+    st.caption('Use quando você já abriu o fornecedor e consegue exportar, salvar ou copiar a lista de produtos.')
 
     uploaded = st.file_uploader(
         'Enviar HTML/CSV/XLSX exportado do fornecedor',
@@ -124,8 +218,8 @@ def render_manual_table_import_panel(
         key=f'manual_supplier_table_upload_{operation}',
     )
     pasted = st.text_area(
-        'Ou cole aqui a tabela copiada',
-        placeholder='Cole uma tabela copiada da página de produtos. Tabelas com tabulação também funcionam.',
+        'Ou cole aqui a tabela/HTML copiado',
+        placeholder='Cole uma tabela, HTML da página ou blocos de produto copiados da página do fornecedor.',
         height=120,
         key=f'manual_supplier_table_pasted_{operation}',
     )
