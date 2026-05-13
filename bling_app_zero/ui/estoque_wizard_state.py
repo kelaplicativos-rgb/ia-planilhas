@@ -12,6 +12,12 @@ ESTOQUE_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_MODELO_KEY = 'estoque_wizard_df_modelo'
 ESTOQUE_DEPOSITO_KEY = 'estoque_nome_deposito'
 ESTOQUE_DEPOSITO_SIGNATURE_KEY = 'estoque_deposito_signature_atual'
+ESTOQUE_FINAL_KEY = 'df_final_estoque'
+ESTOQUE_MAPPING_KEY = 'mapping_estoque'
+ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque'
+LEGACY_ESTOQUE_FINAL_KEY = 'df_final_estoque_from_cadastro'
+LEGACY_ESTOQUE_MAPPING_KEY = 'mapping_estoque_from_cadastro'
+LEGACY_ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque_from_cadastro'
 ESTOQUE_DEPOSITO_ALIAS_KEYS = [
     ESTOQUE_DEPOSITO_KEY,
     'deposito_estoque',
@@ -23,11 +29,12 @@ BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/importador.saldos.estoq
 
 ESTOQUE_OUTPUT_KEYS = [
     'estoque_multi_outputs',
-    'df_final_estoque',
-    'mapping_estoque',
-    'df_final_estoque_from_cadastro',
-    'mapping_estoque_from_cadastro',
-    'mapping_confidence_estoque_from_cadastro',
+    ESTOQUE_FINAL_KEY,
+    ESTOQUE_MAPPING_KEY,
+    ESTOQUE_CONFIDENCE_KEY,
+    LEGACY_ESTOQUE_FINAL_KEY,
+    LEGACY_ESTOQUE_MAPPING_KEY,
+    LEGACY_ESTOQUE_CONFIDENCE_KEY,
 ]
 
 
@@ -129,11 +136,61 @@ def estoque_context_ready() -> bool:
     return has_stock_source() and valid_model(df_modelo) and valid_deposito()
 
 
+def set_stock_output(df_final: pd.DataFrame | None, mapping: dict | None = None, confidence: dict | None = None) -> None:
+    """Salva saída de estoque nos nomes limpos e mantém aliases legados.
+
+    BLINGCLEAN: `*_from_cadastro` ficou confuso porque o motor de estoque hoje é independente.
+    As chaves novas viram a fonte oficial; as antigas continuam sincronizadas para não quebrar módulos existentes.
+    """
+    if isinstance(df_final, pd.DataFrame):
+        st.session_state[ESTOQUE_FINAL_KEY] = df_final
+        st.session_state[LEGACY_ESTOQUE_FINAL_KEY] = df_final
+    if isinstance(mapping, dict):
+        st.session_state[ESTOQUE_MAPPING_KEY] = mapping
+        st.session_state[LEGACY_ESTOQUE_MAPPING_KEY] = mapping
+    if isinstance(confidence, dict):
+        st.session_state[ESTOQUE_CONFIDENCE_KEY] = confidence
+        st.session_state[LEGACY_ESTOQUE_CONFIDENCE_KEY] = confidence
+
+
+def stock_final_df() -> pd.DataFrame | None:
+    df_final = st.session_state.get(ESTOQUE_FINAL_KEY)
+    if isinstance(df_final, pd.DataFrame) and not df_final.empty:
+        return df_final
+    legacy = st.session_state.get(LEGACY_ESTOQUE_FINAL_KEY)
+    if isinstance(legacy, pd.DataFrame) and not legacy.empty:
+        st.session_state[ESTOQUE_FINAL_KEY] = legacy
+        return legacy
+    return None
+
+
+def stock_mapping() -> dict:
+    mapping = st.session_state.get(ESTOQUE_MAPPING_KEY)
+    if isinstance(mapping, dict):
+        return mapping
+    legacy = st.session_state.get(LEGACY_ESTOQUE_MAPPING_KEY)
+    if isinstance(legacy, dict):
+        st.session_state[ESTOQUE_MAPPING_KEY] = legacy
+        return legacy
+    return {}
+
+
+def stock_confidence() -> dict:
+    confidence = st.session_state.get(ESTOQUE_CONFIDENCE_KEY)
+    if isinstance(confidence, dict):
+        return confidence
+    legacy = st.session_state.get(LEGACY_ESTOQUE_CONFIDENCE_KEY)
+    if isinstance(legacy, dict):
+        st.session_state[ESTOQUE_CONFIDENCE_KEY] = legacy
+        return legacy
+    return {}
+
+
 def generated_output_ready() -> bool:
     outputs = st.session_state.get('estoque_multi_outputs')
     if isinstance(outputs, list) and outputs:
         return True
-    df_final = st.session_state.get('df_final_estoque')
+    df_final = stock_final_df()
     return isinstance(df_final, pd.DataFrame) and not df_final.empty
 
 
@@ -160,14 +217,13 @@ def current_stock_source() -> tuple[pd.DataFrame | None, str]:
 
 
 def sync_manual_stock_output(name: str) -> bool:
-    df_final = st.session_state.get('df_final_estoque_from_cadastro')
-    mapping = st.session_state.get('mapping_estoque_from_cadastro', {})
+    df_final = stock_final_df()
+    mapping = stock_mapping()
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         return False
-    result = {'index': 1, 'name': name or 'Origem de estoque', 'df_final': df_final, 'mapping': mapping if isinstance(mapping, dict) else {}}
+    result = {'index': 1, 'name': name or 'Origem de estoque', 'df_final': df_final, 'mapping': mapping}
     st.session_state['estoque_multi_outputs'] = [result]
-    st.session_state['df_final_estoque'] = df_final
-    st.session_state['mapping_estoque'] = result['mapping']
+    set_stock_output(df_final, mapping)
     return True
 
 
@@ -179,7 +235,10 @@ def build_stock_outputs_if_possible() -> bool:
 
 __all__ = [
     'BLING_IMPORTADOR_ESTOQUE_URL',
+    'ESTOQUE_CONFIDENCE_KEY',
     'ESTOQUE_DEPOSITO_KEY',
+    'ESTOQUE_FINAL_KEY',
+    'ESTOQUE_MAPPING_KEY',
     'ESTOQUE_MODELO_KEY',
     'build_stock_outputs_if_possible',
     'clear_estoque_outputs_if_deposito_changed',
@@ -190,6 +249,10 @@ __all__ = [
     'estoque_output_ready',
     'is_site_origin',
     'normalize_deposito',
+    'set_stock_output',
+    'stock_confidence',
+    'stock_final_df',
+    'stock_mapping',
     'store_deposito_value',
     'store_estoque_context',
     'sync_manual_stock_output',
