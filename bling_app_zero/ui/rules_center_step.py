@@ -3,10 +3,8 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules
-from bling_app_zero.ui.home_wizard_constants import STEP_ENTRADA, STEP_REGRAS, WIZARD_STEP_KEY
 from bling_app_zero.ui.rules_center_sections import render_default_rules, render_protection_rules
 from bling_app_zero.ui.rules_center_state import (
-    RULES_CENTER_ADVANCED_KEY,
     RULES_CENTER_AUTOSAVE_SIGNATURE_KEY,
     RULES_CENTER_READY_KEY,
     auto_save_rules_if_changed,
@@ -16,25 +14,15 @@ from bling_app_zero.ui.rules_center_state import (
     rules_signature,
 )
 
-
-def _confirm_and_continue(rules: dict) -> None:
-    mark_rules_ready(rules, source='confirm_and_continue')
-    current_step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
-
-    if current_step == STEP_REGRAS:
-        st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
-        st.session_state[RULES_CENTER_ADVANCED_KEY] = True
-        st.success('Central de regras confirmada. Avançando para Entrada dos dados...')
-    else:
-        st.success('Central de regras confirmada.')
-
-    st.rerun()
+RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
 
 
 def render_rules_center_step() -> None:
     st.markdown('### Regras e Padrões')
     st.caption('Central visível do fluxo. Regras importantes não ficam escondidas em caixas recolhidas.')
-    st.info('Valores definidos aqui funcionam como padrão de segurança: só serão aplicados quando a coluna existir e não houver valor real vindo da planilha, do site, do XML/PDF ou do mapeamento manual. Se houver valor real, ele tem prioridade.')
+    st.info(
+        'Valores definidos aqui funcionam como padrão de segurança: só serão aplicados quando a coluna existir e não houver valor real vindo da planilha, do site, do XML/PDF ou do mapeamento manual. Se houver valor real, ele tem prioridade.'
+    )
 
     original_rules = get_user_rules()
     previous_signature = rules_signature(original_rules)
@@ -59,12 +47,10 @@ def render_rules_center_step() -> None:
             st.success('Padrões restaurados.')
             st.rerun()
 
-    if st.button('Confirmar e continuar', use_container_width=True, key='rules_center_confirm'):
-        _confirm_and_continue(rules)
+    st.caption('Após revisar ou salvar os padrões, use o botão Continuar abaixo para avançar no fluxo.')
 
 
 __all__ = [
-    'RULES_CENTER_ADVANCED_KEY',
     'RULES_CENTER_READY_KEY',
     'render_rules_center_step',
     'rules_center_ready',
