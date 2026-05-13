@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.browser_remote import RemoteBrowserConfig, open_remote_browser_snapshot
 from bling_app_zero.core.debug import add_debug
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/guided_login_panel.py'
@@ -17,6 +17,10 @@ SECURITY_RESOLVED_KEY = 'guided_login_security_resolved'
 LOGIN_CONFIRMED_KEY = 'guided_login_confirmed_logged_in'
 PAGE_READY_KEY = 'guided_login_products_page_ready'
 MODE_KEY = 'guided_login_capture_mode'
+REMOTE_SNAPSHOT_URL_KEY = 'guided_login_remote_snapshot_url'
+REMOTE_SNAPSHOT_FINAL_URL_KEY = 'guided_login_remote_snapshot_final_url'
+REMOTE_SNAPSHOT_TITLE_KEY = 'guided_login_remote_snapshot_title'
+REMOTE_SNAPSHOT_OK_KEY = 'guided_login_remote_snapshot_ok'
 
 DEFAULT_SUPPLIER_URL = 'https://app.obaobamix.com.br/admin'
 LEGACY_EXTERNAL_LOGIN_KEYS = (
@@ -58,11 +62,12 @@ def _safe_config(supplier_url: str, operation: str) -> dict[str, object]:
         'responsible_file': RESPONSIBLE_FILE,
         'external_login_fields': False,
         'credentials_saved': False,
+        'remote_browser_snapshot': True,
     }
 
 
 def _build_guided_login_prompt(config: dict[str, object]) -> str:
-    return f'''BLINGCRAWLER CAPTURA POR NAVEGADOR DO FORNECEDOR
+    return f'''BLINGCRAWLER CAPTURA POR NAVEGADOR REAL DO SISTEMA
 
 Página preparada:
 {config.get('supplier_url') or config.get('login_url')}
@@ -74,14 +79,16 @@ Operação:
 {config.get('operation')}
 
 Modo:
-Navegador interno/assistido. O usuário acessa o fornecedor, faz login no próprio site e confirma quando estiver na página de produtos.
+Navegador real do sistema via Playwright/Chromium. O sistema abre a URL no servidor,
+valida a página renderizada e usa o motor de captura por blocos/DOM.
 
 Regras:
+- Não usar iframe como fonte de verdade.
+- Não assumir que aba externa do celular compartilha sessão com o servidor.
 - Não pedir campos externos de login.
 - Não salvar credenciais.
-- Só executar captura após confirmação manual de que a página de produtos/catálogo está aberta.
-- Usar motor autenticado independente.
-- Não misturar com busca pública.
+- Só preparar captura quando o snapshot do navegador real abrir a página correta.
+- Se o fornecedor exigir login interativo não suportado, usar compatibilidade universal.
 - Cadastro: capturar dados completos quando possível.
 - Estoque: preencher somente colunas da planilha modelo.
 - Se não encontrar informação, deixar vazio.
@@ -115,15 +122,19 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
     if not _is_valid_http_url(supplier_url):
         _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
         return
+    if not bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)):
+        _orange_warning('Abra primeiro o snapshot do navegador real do sistema. Se ele não mostrar a página correta, use a compatibilidade universal.')
+        return
     if not bool(st.session_state.get(PAGE_READY_KEY, False)):
-        _orange_warning('Confirme que você está logado e vendo a página de produtos/catálogo antes de preparar a captura.')
+        _orange_warning('Confirme que o snapshot mostra a página correta de produtos/catálogo antes de preparar a captura.')
         return
 
     _clear_legacy_external_login_state()
     st.session_state[SECURITY_RESOLVED_KEY] = True
     st.session_state[LOGIN_CONFIRMED_KEY] = True
 
-    config = _safe_config(supplier_url=supplier_url, operation=operation)
+    final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url).strip()
+    config = _safe_config(supplier_url=final_url, operation=operation)
     prompt = _build_guided_login_prompt(config)
 
     st.session_state[CONFIG_KEY] = config
@@ -131,11 +142,11 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
     st.session_state[LAST_PREPARED_KEY] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
     add_debug(
-        f'Navegador do fornecedor preparado para domínio {config.get("domain")}. Sem campos externos de login.',
+        f'Navegador real do sistema preparado para domínio {config.get("domain")}. Sem campos externos de login.',
         origin='LOGIN_GUIADO',
     )
     add_audit_event(
-        'guided_supplier_browser_prepared',
+        'remote_supplier_browser_prepared',
         area='LOGIN_GUIADO',
         details={
             'domain': config.get('domain'),
@@ -144,47 +155,60 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
             'products_page_ready': True,
             'external_login_fields': False,
             'credentials_saved': False,
+            'remote_browser_snapshot': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
 
-def _render_internal_browser(supplier_url: str) -> None:
-    if not _is_valid_http_url(supplier_url):
-        return
-    safe_url = supplier_url.strip()
-    encoded_url = quote(safe_url, safe=':/?&=%#.-_')
-    st.caption('O login deve ser feito diretamente no navegador abaixo. O sistema não pede nem salva credenciais em campos externos.')
-    components.html(
-        f'''
-        <div style="border:1px solid #d8dee9;border-radius:14px;overflow:hidden;background:#fff;margin:8px 0 10px 0;">
-          <div style="padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e5e7eb;font-family:Arial,sans-serif;font-size:14px;color:#334155;display:flex;justify-content:space-between;gap:10px;align-items:center;">
-            <span>Navegador do fornecedor</span>
-            <a href="{encoded_url}" target="_blank" rel="noopener noreferrer" style="color:#0f172a;text-decoration:none;font-weight:700;">Abrir em nova aba</a>
-          </div>
-          <iframe
-            src="{encoded_url}"
-            style="width:100%;height:620px;border:0;background:#fff;"
-            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-            referrerpolicy="no-referrer-when-downgrade"
-          ></iframe>
-        </div>
-        ''',
-        height=690,
-        scrolling=True,
-    )
-    _orange_warning('Se o fornecedor bloquear abertura dentro do sistema, use “Abrir em nova aba”. Depois cole/volte a URL correta no campo acima e confirme a página de produtos.')
+def _render_remote_browser_snapshot(supplier_url: str) -> None:
+    st.caption('Navegador real do sistema: o servidor abre a página em Chromium e mostra um snapshot. Não é iframe e não usa a aba externa do celular como sessão.')
+    if st.button('🌐 Abrir snapshot no navegador real do sistema', use_container_width=True, key='open_remote_supplier_browser_snapshot'):
+        if not _is_valid_http_url(supplier_url):
+            _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
+            return
+        with st.spinner('Abrindo navegador real do sistema...'):
+            snapshot = open_remote_browser_snapshot(
+                RemoteBrowserConfig(
+                    url=supplier_url,
+                    state_namespace=f'{_current_operation()}_supplier_remote_browser',
+                    headless=True,
+                )
+            )
+        st.session_state[REMOTE_SNAPSHOT_OK_KEY] = bool(snapshot.ok)
+        st.session_state[REMOTE_SNAPSHOT_URL_KEY] = supplier_url
+        st.session_state[REMOTE_SNAPSHOT_FINAL_URL_KEY] = snapshot.final_url or supplier_url
+        st.session_state[REMOTE_SNAPSHOT_TITLE_KEY] = snapshot.title or ''
+        for warning in snapshot.warnings:
+            _orange_warning(str(warning))
+        if snapshot.errors:
+            st.error('Não consegui abrir esta página no navegador real do sistema.')
+            for error in snapshot.errors:
+                st.caption(str(error))
+            _orange_warning('Se o fornecedor exigir login interativo, captcha ou bloquear robô, use a compatibilidade universal abaixo: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
+            return
+        if snapshot.screenshot_png:
+            st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_column_width=True)
+        st.success('Snapshot do navegador real carregado. Confira se esta é a página correta antes de preparar a captura.')
+
+    if bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)):
+        title = str(st.session_state.get(REMOTE_SNAPSHOT_TITLE_KEY) or 'Snapshot carregado')
+        final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url)
+        st.success(f'Último snapshot carregado: {title}')
+        st.caption(final_url)
+
+    _orange_warning('Abrir fora do sistema no celular não compartilha login com este navegador real. Se precisar operar manualmente o site logado, use exportação/cópia/importação pela compatibilidade universal.')
 
 
 def _render_page_confirmation() -> None:
     st.checkbox(
-        'Estou logado no fornecedor e estou vendo a página de produtos/catálogo',
+        'O snapshot mostra a página correta de produtos/catálogo',
         value=bool(st.session_state.get(PAGE_READY_KEY, False)),
         key=PAGE_READY_KEY,
-        help='Marque somente depois que a lista de produtos aparecer no navegador do fornecedor.',
+        help='Marque somente depois que o snapshot do navegador real mostrar a página que deve ser capturada.',
     )
     if not bool(st.session_state.get(PAGE_READY_KEY, False)):
-        _orange_warning('A captura fica bloqueada até você confirmar que está logado e vendo a página de produtos.')
+        _orange_warning('A captura fica bloqueada até você confirmar que o snapshot mostra a página correta de produtos.')
 
 
 def _render_prepared_config() -> None:
@@ -195,30 +219,32 @@ def _render_prepared_config() -> None:
     domain = str(config.get('domain') or '').strip() or 'site informado'
     operation = str(config.get('operation') or 'cadastro').strip()
     label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.success(f'Navegador preparado para {domain} em {last_prepared}.')
-    st.caption(f'Pronto para captura de {label}. O login foi feito no próprio site do fornecedor; nenhum campo externo de login foi usado.')
+    st.success(f'Navegador real preparado para {domain} em {last_prepared}.')
+    st.caption(f'Pronto para captura de {label}. O sistema usará Chromium/Playwright no servidor e não iframe.')
 
 
 def render_guided_login_panel() -> None:
     _clear_legacy_external_login_state()
     operation = _current_operation()
     operation_label = 'estoque' if operation == 'estoque' else 'cadastro'
-    st.markdown('##### Navegador do fornecedor')
-    st.caption(f'Abra o site do fornecedor, faça login ali dentro e vá até a página de produtos para capturar {operation_label}.')
+    st.markdown('##### Navegador real do sistema')
+    st.caption(f'Use esta área para abrir a página do fornecedor no Chromium do servidor e preparar a captura de {operation_label}.')
 
     supplier_url = st.text_input(
-        'URL do fornecedor',
+        'URL do fornecedor ou da página de produtos',
         value=str(st.session_state.get('guided_login_url') or DEFAULT_SUPPLIER_URL),
         placeholder='https://site-do-fornecedor.com.br/admin',
         key='guided_login_url',
     )
 
-    _render_internal_browser(supplier_url)
+    _render_remote_browser_snapshot(supplier_url)
     _render_page_confirmation()
 
-    can_prepare = bool(st.session_state.get(PAGE_READY_KEY, False))
+    can_prepare = bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)) and bool(st.session_state.get(PAGE_READY_KEY, False))
     if st.button('✅ Preparar captura desta página', use_container_width=True, key='prepare_guided_login_capture', disabled=not can_prepare):
         _prepare_config(supplier_url=supplier_url, operation=operation)
+    if not can_prepare:
+        st.caption('Para habilitar este botão, abra um snapshot válido no navegador real do sistema e confirme que ele mostra a página de produtos.')
     _render_prepared_config()
 
 
