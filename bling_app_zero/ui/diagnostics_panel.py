@@ -10,6 +10,7 @@ except Exception:
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.flows.simulation import run_all_simulations, run_engine_inventory, run_single_simulation, simulation_options
+from bling_app_zero.ui.blingscan_prompt_panel import render_blingscan_prompt_panel
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/diagnostics_panel.py'
 
@@ -99,6 +100,8 @@ def _render_flow_simulation_buttons() -> None:
 
 def render_diagnostics_content() -> None:
     st.caption('Use esta área para testar rapidamente os fluxos principais sem importar arquivos reais.')
+    render_blingscan_prompt_panel()
+    st.divider()
     _render_openai_validation()
     _render_engine_inventory()
     _render_flow_simulation_buttons()
