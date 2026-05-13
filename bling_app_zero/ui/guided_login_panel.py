@@ -19,7 +19,12 @@ PAGE_READY_KEY = 'guided_login_products_page_ready'
 MODE_KEY = 'guided_login_capture_mode'
 
 DEFAULT_SUPPLIER_URL = 'https://app.obaobamix.com.br/admin'
-DEFAULT_LOGIN_URL = DEFAULT_SUPPLIER_URL
+LEGACY_EXTERNAL_LOGIN_KEYS = (
+    'guided_login_username',
+    'guided_login_password_ephemeral',
+    'guided_login_security_code',
+    'guided_login_security_code_ephemeral',
+)
 
 
 def _is_valid_http_url(value: str) -> bool:
@@ -90,6 +95,22 @@ def _orange_warning(message: str) -> None:
     )
 
 
+def _clear_legacy_external_login_state() -> None:
+    removed: list[str] = []
+    for key in LEGACY_EXTERNAL_LOGIN_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    st.session_state[MODE_KEY] = 'browser_session'
+    if removed:
+        add_audit_event(
+            'supplier_browser_legacy_login_state_cleared',
+            area='LOGIN_GUIADO',
+            status='OK',
+            details={'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE},
+        )
+
+
 def _prepare_config(supplier_url: str, operation: str) -> None:
     if not _is_valid_http_url(supplier_url):
         _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
@@ -98,11 +119,9 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
         _orange_warning('Confirme que você está logado e vendo a página de produtos/catálogo antes de preparar a captura.')
         return
 
+    _clear_legacy_external_login_state()
     st.session_state[SECURITY_RESOLVED_KEY] = True
     st.session_state[LOGIN_CONFIRMED_KEY] = True
-    st.session_state[MODE_KEY] = 'browser_session'
-    st.session_state['guided_login_username'] = ''
-    st.session_state['guided_login_' + 'pass' + 'word_ephemeral'] = ''
 
     config = _safe_config(supplier_url=supplier_url, operation=operation)
     prompt = _build_guided_login_prompt(config)
@@ -181,6 +200,7 @@ def _render_prepared_config() -> None:
 
 
 def render_guided_login_panel() -> None:
+    _clear_legacy_external_login_state()
     operation = _current_operation()
     operation_label = 'estoque' if operation == 'estoque' else 'cadastro'
     st.markdown('##### Navegador do fornecedor')
