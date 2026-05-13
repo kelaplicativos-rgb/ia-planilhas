@@ -76,13 +76,38 @@ def inject_sidebar_tools_theme() -> None:
             margin: 0 !important;
         }
 
+        .bling-sidebar-group {
+            margin: 0.95rem 0 0.48rem 0 !important;
+            padding: 0.62rem 0.7rem !important;
+            border-radius: 14px !important;
+            background: rgba(79, 103, 165, 0.08) !important;
+            border: 1px solid rgba(79, 103, 165, 0.14) !important;
+        }
+
+        .bling-sidebar-group-title {
+            color: var(--bling-primary-dark) !important;
+            font-size: 0.86rem !important;
+            font-weight: 900 !important;
+            line-height: 1.16 !important;
+            letter-spacing: -0.01em !important;
+            margin: 0 0 0.22rem 0 !important;
+        }
+
+        .bling-sidebar-group-caption {
+            color: var(--bling-muted) !important;
+            font-size: 0.74rem !important;
+            font-weight: 560 !important;
+            line-height: 1.28 !important;
+            margin: 0 !important;
+        }
+
         section[data-testid="stSidebar"] details {
             border: 1px solid var(--bling-border) !important;
             border-radius: var(--bling-radius-lg) !important;
             background: rgba(255, 255, 255, 0.94) !important;
             box-shadow: var(--bling-shadow-soft) !important;
             overflow: hidden !important;
-            margin-bottom: 0.78rem !important;
+            margin-bottom: 0.58rem !important;
         }
 
         section[data-testid="stSidebar"] summary {
