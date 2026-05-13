@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import math
+import zipfile
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
@@ -7,7 +11,7 @@ from bling_app_zero.v2.bling_links import BLING_MULTISTORE_PRICE_IMPORT_URL
 from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
-from bling_app_zero.v2.price_multistore.matcher import find_best_identifier
+from bling_app_zero.v2.price_multistore.matcher import build_not_included_audit, find_best_identifier
 from bling_app_zero.v2.session_store import get_state, pop_state, set_state, widget_key
 from bling_app_zero.v2.store_profiles import build_store_profile
 from bling_app_zero.v2.table_io import load_table
@@ -15,6 +19,7 @@ from bling_app_zero.v2.user_context import get_user_context
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/ui.py'
 PRICE_MULTISTORE_OPERATION_QP = 'price_multistore_v2'
+MAX_BLING_IMPORT_ROWS = 200
 
 MARKETPLACE_OPTIONS = ['mercado_livre', 'shopee', 'amazon', 'b2w', 'olist', 'madeira_madeira', 'magazine_luiza', 'via_varejo', 'carrefour', 'outro']
 
@@ -53,6 +58,21 @@ def _cost_column_options(df: pd.DataFrame | None) -> list[str]:
         else:
             others.append(column)
     return preferred + others
+
+
+def _split_dataframe(df: pd.DataFrame, limit: int = MAX_BLING_IMPORT_ROWS) -> list[pd.DataFrame]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    return [df.iloc[start:start + limit].copy().fillna('') for start in range(0, len(df), limit)]
+
+
+def _csv_zip_bytes(parts: list[pd.DataFrame], prefix: str = 'bling_precos_multilojas') -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+        total = len(parts)
+        for index, part_df in enumerate(parts, start=1):
+            zip_file.writestr(f'{prefix}_parte_{index:02d}_de_{total:02d}.csv', to_csv_bytes(part_df))
+    return buffer.getvalue()
 
 
 def _render_alert(message: str) -> None:
@@ -142,26 +162,88 @@ def _render_match_summary(model_df: pd.DataFrame | None, source_df: pd.DataFrame
         _render_alert('Não encontrei automaticamente um identificador igual entre as duas planilhas. Verifique se ambas têm IdProduto, ID na Loja, SKU/Código, GTIN ou Descrição.')
 
 
+def _render_audit_download() -> None:
+    audit_df = get_state('multistore_not_included_audit_df')
+    if not isinstance(audit_df, pd.DataFrame) or audit_df.empty:
+        st.success('Auditoria: nenhum produto ficou fora do cruzamento.')
+        return
+
+    st.markdown('### Auditoria · Produtos não incluídos')
+    _render_alert(f'{len(audit_df)} produto(s) da origem não entraram na operação. Baixe esta planilha para conferência.')
+    st.dataframe(audit_df.head(80), use_container_width=True, height=260)
+    st.download_button(
+        'Baixar auditoria dos produtos não incluídos',
+        data=to_csv_bytes(audit_df),
+        file_name='auditoria_produtos_nao_incluidos_multiloja.csv',
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=widget_key('multistore_audit_download'),
+    )
+
+
+def _render_import_downloads(result_df: pd.DataFrame) -> None:
+    parts = _split_dataframe(result_df, MAX_BLING_IMPORT_ROWS)
+    if not parts:
+        _render_alert('Nenhuma linha disponível para gerar CSV de importação.')
+        return
+
+    total_rows = len(result_df)
+    total_parts = len(parts)
+    set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
+
+    if total_rows <= MAX_BLING_IMPORT_ROWS:
+        _render_info(f'Arquivo dentro do limite do Bling: {total_rows} linha(s).')
+        st.download_button(
+            'Baixar CSV limpo para o Bling',
+            data=to_csv_bytes(result_df),
+            file_name='bling_precos_multilojas.csv',
+            mime='text/csv; charset=utf-8',
+            use_container_width=True,
+            key=widget_key('multistore_download'),
+        )
+        return
+
+    _render_alert(
+        f'O Bling não reconhece importação acima de {MAX_BLING_IMPORT_ROWS} linhas. '
+        f'Este resultado tem {total_rows} linhas e foi dividido em {total_parts} partes.'
+    )
+    st.download_button(
+        f'Baixar ZIP com {total_parts} CSVs de até {MAX_BLING_IMPORT_ROWS} linhas',
+        data=_csv_zip_bytes(parts),
+        file_name='bling_precos_multilojas_partes_200_linhas.zip',
+        mime='application/zip',
+        use_container_width=True,
+        key=widget_key('multistore_download_zip_parts'),
+    )
+
+    with st.expander('Baixar partes separadamente', expanded=False):
+        for index, part_df in enumerate(parts, start=1):
+            start_row = ((index - 1) * MAX_BLING_IMPORT_ROWS) + 1
+            end_row = start_row + len(part_df) - 1
+            st.download_button(
+                f'Parte {index}/{total_parts} · linhas {start_row} a {end_row}',
+                data=to_csv_bytes(part_df),
+                file_name=f'bling_precos_multilojas_parte_{index:02d}_de_{total_parts:02d}.csv',
+                mime='text/csv; charset=utf-8',
+                use_container_width=True,
+                key=widget_key(f'multistore_download_part_{index}'),
+            )
+
+
 def _render_ready_result(result_df: pd.DataFrame) -> None:
     _keep_multistore_route_alive()
     st.markdown('### Etapa 6 · Conferência')
     preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
     st.dataframe(result_df[preview_cols].head(80) if preview_cols else result_df.head(80), use_container_width=True, height=340)
+    total_parts = max(1, math.ceil(len(result_df) / MAX_BLING_IMPORT_ROWS)) if len(result_df) else 0
+    st.caption(f'{len(result_df)} linha(s) prontas para importação · {total_parts} arquivo(s) respeitando o limite de {MAX_BLING_IMPORT_ROWS} linhas.')
+
+    _render_audit_download()
 
     st.markdown('### Etapa 7 · Download e importação')
-    _render_info('Primeiro baixe o CSV. O link do Bling fica fixo nesta etapa e não deve mais sumir depois do download.')
+    _render_info('Baixe os arquivos limpos. Quando passar de 200 linhas, importe no Bling uma parte por vez.')
     _render_bling_import_actions()
-
-    csv_bytes = to_csv_bytes(result_df)
-    set_state('multistore_result_csv_bytes', csv_bytes)
-    st.download_button(
-        'Baixar CSV limpo para o Bling',
-        data=csv_bytes,
-        file_name='bling_precos_multilojas.csv',
-        mime='text/csv; charset=utf-8',
-        use_container_width=True,
-        key=widget_key('multistore_download'),
-    )
+    _render_import_downloads(result_df)
     _render_bling_import_actions()
 
 
@@ -179,7 +261,7 @@ def render_price_multistore_v2() -> None:
 
     st.markdown('### Etapa 2 · Planilha do Bling')
     st.caption('Envie a planilha exportada do Bling para atualizar preços multiloja. Essa planilha será preenchida e enviada de volta ao Bling.')
-    model_upload = st.file_uploader('Planilha 1 — Modelo Multiloja do Bling', type=['csv', 'xlsx', 'xls'], key=widget_key('multistore_model_upload'))
+    model_upload = st.file_uploader('Planilha 1 — Modelo Multiloja do Bling', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_model_upload'))
     model_df = _read(model_upload)
     if isinstance(model_df, pd.DataFrame):
         detection = detect_multistore_model(model_df)
@@ -199,7 +281,7 @@ def render_price_multistore_v2() -> None:
 
     st.markdown('### Etapa 3 · Custo dos produtos')
     st.caption('Envie a planilha de cadastro/produtos que contém o Preço de custo. Ela não será enviada ao Bling; serve apenas para calcular.')
-    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls'], key=widget_key('multistore_source_upload'))
+    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_source_upload'))
     source_df = _read(source_upload)
     if isinstance(source_df, pd.DataFrame) and not source_df.empty:
         st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
@@ -271,12 +353,15 @@ def render_price_multistore_v2() -> None:
         set_state('multistore_last_errors', list(result.errors))
         if result.ok:
             result_df = result.payload.df.copy().fillna('')
+            audit_df = build_not_included_audit(model_df, source_df, source_cost_column)
             set_state('multistore_result_df', result_df)
             set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
+            set_state('multistore_not_included_audit_df', audit_df)
             set_state('multistore_import_ready', True)
         else:
             pop_state('multistore_result_df', None)
             pop_state('multistore_result_csv_bytes', None)
+            pop_state('multistore_not_included_audit_df', None)
             set_state('multistore_import_ready', False)
         st.rerun()
 
