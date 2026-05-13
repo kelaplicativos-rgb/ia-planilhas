@@ -69,8 +69,22 @@ def _store_stock_site_df(df_site: pd.DataFrame) -> None:
     st.session_state['home_slim_flow_origin'] = 'site'
 
 
+def _guided_login_toggle_key() -> str:
+    return 'site_guided_login_enabled_estoque'
+
+
 def _render_guided_login_origin_module() -> None:
-    with st.expander('🔐 Login guiado para fornecedor protegido', expanded=False):
+    enabled = st.checkbox(
+        'Este fornecedor exige login?',
+        value=bool(st.session_state.get(_guided_login_toggle_key(), False)),
+        key=_guided_login_toggle_key(),
+        help='Deixe desmarcado para busca normal por links. Marque apenas se o site pedir usuário e senha.',
+    )
+    if not enabled:
+        st.caption('Busca pública ativa. O painel de login guiado fica escondido até você marcar esta opção.')
+        return
+
+    with st.expander('🔐 Configurar login guiado', expanded=True):
         st.caption('Use esta opção quando o fornecedor exigir login antes da captura de estoque.')
         render_guided_login_panel()
 
@@ -154,9 +168,9 @@ def render_estoque_site_panel() -> None:
     )
     st.info('Motor ativo: ESTOQUE POR SITE independente. Cadastro de produtos não entra neste fluxo.')
 
-    _render_guided_login_origin_module()
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
+    _render_guided_login_origin_module()
 
     button_disabled = not _has_columns(requested_columns)
     if button_disabled:
