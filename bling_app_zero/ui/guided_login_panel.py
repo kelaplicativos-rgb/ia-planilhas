@@ -143,37 +143,60 @@ def _prepare_config(login_url: str, username: str, password: str, search_terms: 
     )
 
 
+def _render_safe_summary(config: dict[str, object]) -> None:
+    st.markdown('###### Resumo da captura autenticada')
+    st.write(f'**Site:** {config.get("domain") or "não informado"}')
+    st.write(f'**Modo:** {config.get("capture_mode") or "não informado"}')
+    st.write('**Usuário:** preenchido' if config.get('username_filled') else '**Usuário:** não preenchido')
+    st.write('**Senha:** não salva')
+
+    terms = config.get('search_terms')
+    if isinstance(terms, list) and terms:
+        st.write(f'**Termos informados:** {len(terms)}')
+    else:
+        st.write('**Termos informados:** nenhum — o motor deverá descobrir os produtos após o login.')
+
+    notes = str(config.get('notes') or '').strip()
+    if notes:
+        st.write(f'**Instruções:** {notes}')
+
+
+def _render_technical_prompt(prompt: str) -> None:
+    with st.expander('Detalhes técnicos para BLINGFIX / motor autenticado', expanded=False):
+        st.caption('Área técnica. O usuário final não precisa usar este prompt durante o fluxo normal.')
+        st.text_area(
+            'Prompt técnico oculto',
+            value=prompt,
+            height=300,
+            key='guided_login_prompt_textarea',
+        )
+        st.download_button(
+            '⬇️ Baixar prompt técnico .txt',
+            data=prompt.encode('utf-8-sig'),
+            file_name='blingcrawler_login_guiado_prompt.txt',
+            mime='text/plain',
+            use_container_width=True,
+            key='download_guided_login_prompt',
+        )
+
+
 def _render_prepared_config() -> None:
     config = st.session_state.get(CONFIG_KEY)
     prompt = st.session_state.get(PROMPT_KEY)
     if not isinstance(config, dict) or not isinstance(prompt, str):
-        st.info('Preencha os dados e clique em preparar captura guiada.')
+        st.info('Preencha os dados e clique em preparar login guiado.')
         return
 
     last_prepared = st.session_state.get(LAST_PREPARED_KEY, 'agora')
     st.success(f'Login guiado preparado em {last_prepared}.')
-    st.json(config, expanded=False)
-    st.text_area(
-        'Prompt técnico para conectar o motor autenticado',
-        value=prompt,
-        height=340,
-        key='guided_login_prompt_textarea',
-    )
-    st.download_button(
-        '⬇️ Baixar prompt LOGIN GUIADO .txt',
-        data=prompt.encode('utf-8-sig'),
-        file_name='blingcrawler_login_guiado_prompt.txt',
-        mime='text/plain',
-        use_container_width=True,
-        key='download_guided_login_prompt',
-    )
-
-    st.warning('Senha não foi salva no prompt. Se o site tiver captcha ou 2FA, a captura deve parar e pedir ação manual.')
+    _render_safe_summary(config)
+    st.warning('Motor autenticado preparado para integração. Senha não foi salva. Se houver captcha ou 2FA, a captura deve parar e pedir ação manual.')
+    _render_technical_prompt(prompt)
 
 
 def render_guided_login_panel() -> None:
     st.markdown('##### Login guiado para captura autenticada')
-    st.caption('Use para sites que exigem login antes de buscar produtos. A senha fica apenas no campo seguro da sessão e não entra no prompt/log.')
+    st.caption('Use quando o fornecedor exigir login antes de buscar produtos. A senha fica apenas no campo seguro da sessão.')
 
     login_url = st.text_input(
         'URL da tela de login',
@@ -214,7 +237,7 @@ def render_guided_login_panel() -> None:
         key='guided_login_notes',
     )
 
-    if st.button('🔐 Preparar captura com login guiado', use_container_width=True, key='prepare_guided_login_capture'):
+    if st.button('🔐 Preparar login guiado', use_container_width=True, key='prepare_guided_login_capture'):
         _prepare_config(
             login_url=login_url,
             username=username,
