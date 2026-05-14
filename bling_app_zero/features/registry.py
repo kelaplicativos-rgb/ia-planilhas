@@ -5,9 +5,21 @@ from bling_app_zero.features.download_pipeline import DOWNLOAD_FEATURES
 
 RESPONSIBLE_FILE = 'bling_app_zero/features/registry.py'
 
-# Registry oficial de recursos plugáveis.
-# Regra: recurso novo deve entrar aqui com key, contrato, escopo, estágio e arquivo dono.
-# Evite ligar recurso novo diretamente no app.py, home_wizard.py ou exporter.py sem contrato.
+# BLINGREFORM:
+# O mapeamento passa a ser a única fonte de preenchimento de campos:
+# - escolher coluna
+# - escrever valor fixo
+# - deixar vazio
+# Portanto recursos de preenchimento por custom_rules ficam fora do runtime.
+FILL_RULE_FEATURE_KEYS = {
+    'custom_rules',
+    'empty_custom_rules',
+}
+
+ACTIVE_DOWNLOAD_FEATURES: tuple[FeatureDefinition, ...] = tuple(
+    feature for feature in DOWNLOAD_FEATURES if feature.key not in FILL_RULE_FEATURE_KEYS
+)
+
 SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
     FeatureDefinition(
         key='site_cadastro_engine',
@@ -47,7 +59,7 @@ SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
 )
 
 FEATURE_REGISTRY: tuple[FeatureDefinition, ...] = (
-    *DOWNLOAD_FEATURES,
+    *ACTIVE_DOWNLOAD_FEATURES,
     *SITE_AND_SYSTEM_FEATURES,
 )
 
@@ -75,7 +87,9 @@ def features_by_scope(scope: str) -> list[FeatureDefinition]:
 
 
 __all__ = [
+    'ACTIVE_DOWNLOAD_FEATURES',
     'FEATURE_REGISTRY',
+    'FILL_RULE_FEATURE_KEYS',
     'RESPONSIBLE_FILE',
     'features_by_scope',
     'features_by_stage',
