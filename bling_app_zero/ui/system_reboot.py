@@ -39,7 +39,6 @@ def _clear_session_state() -> list[str]:
 
 
 def reboot_system_to_home() -> None:
-    """Limpa cache, session_state e query params, voltando ao início do Wizard."""
     add_audit_event(
         'system_reboot_requested',
         area='SISTEMA',
@@ -72,38 +71,8 @@ def reboot_system_to_home() -> None:
 
 
 def render_system_reboot_button() -> None:
-    """Botão inferior global: reinicia o fluxo inteiro com confirmação visual."""
-    st.markdown(
-        """
-        <style>
-        .bling-reboot-box {
-            margin-top: 1.15rem;
-            padding: .95rem 1rem;
-            border-radius: 18px;
-            background: #fff7ed;
-            border: 1px solid #fed7aa;
-            box-shadow: 0 10px 24px rgba(146, 64, 14, .07);
-        }
-        .bling-reboot-title {
-            color: #9a3412;
-            font-weight: 900;
-            font-size: .94rem;
-            margin-bottom: .18rem;
-        }
-        .bling-reboot-text {
-            color: #7c2d12;
-            font-weight: 650;
-            font-size: .88rem;
-            line-height: 1.35;
-            margin: 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     if not st.session_state.get(REBOOT_CONFIRM_KEY):
-        if st.button('🔄 Reiniciar sistema e voltar para Home', use_container_width=True, key='system_reboot_open_confirm'):
+        if st.button('Reiniciar sistema', use_container_width=True, key='system_reboot_open_confirm'):
             st.session_state[REBOOT_CONFIRM_KEY] = True
             add_audit_event(
                 'system_reboot_confirm_opened',
@@ -114,21 +83,12 @@ def render_system_reboot_button() -> None:
             st.rerun()
         return
 
-    st.markdown(
-        """
-        <div class="bling-reboot-box" role="alert">
-            <div class="bling-reboot-title">⚠️ Reiniciar sistema inteiro?</div>
-            <p class="bling-reboot-text">
-                Isso vai limpar arquivos carregados, origem, captura por site, mapeamentos, precificação,
-                previews, resultados finais, caches e voltar para a Home como se o app tivesse acabado de abrir.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.warning(
+        'Reiniciar vai limpar arquivos, origem, captura, mapeamentos, precificação, previews, resultados e caches.'
     )
     col_cancel, col_confirm = st.columns(2)
     with col_cancel:
-        if st.button('Cancelar reinício', use_container_width=True, key='system_reboot_cancel'):
+        if st.button('Cancelar', use_container_width=True, key='system_reboot_cancel'):
             st.session_state[REBOOT_CONFIRM_KEY] = False
             add_audit_event(
                 'system_reboot_cancelled',
@@ -138,7 +98,7 @@ def render_system_reboot_button() -> None:
             )
             st.rerun()
     with col_confirm:
-        if st.button('✅ Sim, limpar tudo e voltar para Home', use_container_width=True, key='system_reboot_confirm'):
+        if st.button('Sim, limpar tudo', use_container_width=True, key='system_reboot_confirm'):
             reboot_system_to_home()
 
 
