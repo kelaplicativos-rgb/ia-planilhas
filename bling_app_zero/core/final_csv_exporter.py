@@ -6,11 +6,11 @@ from typing import Sequence
 
 import pandas as pd
 
+from bling_app_zero.core.final_download_resources import normalize_image_urls
+
 try:
-    from bling_app_zero.features.download_pipeline import normalize_image_urls
     from bling_app_zero.features.runtime import run_features_for_stage
 except Exception:  # pragma: no cover
-    normalize_image_urls = None
     run_features_for_stage = None
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_csv_exporter.py'
