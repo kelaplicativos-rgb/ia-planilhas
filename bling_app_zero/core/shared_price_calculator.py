@@ -50,8 +50,8 @@ def _float(value: Any, default: float = 0.0) -> float:
 def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Normaliza a configuração única de preço para cadastro, estoque e multiloja.
 
-    Também aceita as chaves antigas da calculadora de cadastro para não quebrar
-    sessões existentes.
+    Entrada compatível: aceita chaves antigas da calculadora de cadastro.
+    Saída limpa: devolve somente o contrato novo da calculadora compartilhada.
     """
     raw = dict(raw or {})
     mode = str(raw.get('calculator_mode') or 'nominal_profit').strip().lower()
@@ -98,11 +98,6 @@ def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         'marketplace_threshold': config.marketplace_threshold,
         'marketplace_fixed_fee': config.marketplace_fixed_fee,
         'marketplace_capital_days': config.marketplace_capital_days,
-        # Chaves antigas mantidas para compatibilidade visual/estado.
-        'profit_percent': config.desired_contribution_margin_percent,
-        'fee_percent': config.other_sale_fees_percent,
-        'discount_percent': config.marketplace_fee_percent,
-        'fixed_value': config.desired_nominal_profit,
     }
 
 
