@@ -32,6 +32,18 @@ def _contract_from_input_df(df: pd.DataFrame | None, contract_columns: Sequence[
     return []
 
 
+def _clean_explicit_empty_columns(columns: Sequence[object] | None) -> set[str]:
+    return {str(column or '').strip() for column in (columns or []) if str(column or '').strip()}
+
+
+def _force_empty_columns(df: pd.DataFrame, columns: Sequence[object] | None) -> pd.DataFrame:
+    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for column in _clean_explicit_empty_columns(columns):
+        if column in out.columns:
+            out[column] = ''
+    return out
+
+
 def enforce_export_contract(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> pd.DataFrame:
     """Aplica a trava final do contrato antes do CSV.
 
@@ -52,11 +64,13 @@ def sanitize_for_bling(
     df: pd.DataFrame,
     operation: str = 'global',
     contract_columns: Sequence[object] | None = None,
+    explicit_empty_columns: Sequence[object] | None = None,
 ) -> pd.DataFrame:
     """Sanitiza o DataFrame final usando o runtime oficial BLINGMODULE.
 
     Regra de exportação:
-    - o DataFrame que chega aqui já deve estar no modelo ativo do Bling;
+    - o mapeamento manual manda no CSV;
+    - campos marcados como "deixar vazio" ficam vazios mesmo após features;
     - features podem limpar valores;
     - features não podem alterar o contrato final do CSV;
     - se nenhum contrato explícito vier, o contrato é o cabeçalho recebido.
@@ -65,21 +79,31 @@ def sanitize_for_bling(
         return enforce_export_contract(None, contract_columns)
 
     contract = _contract_from_input_df(df, contract_columns)
+    protected_empty = _clean_explicit_empty_columns(explicit_empty_columns)
+    input_df = _force_empty_columns(df.copy().fillna(''), protected_empty)
     context = run_features_for_stage(
         operation=str(operation or 'global').strip().lower() or 'global',
         stage='download',
-        final_df=df.copy().fillna(''),
+        final_df=input_df,
+        config={'explicit_empty_columns': sorted(protected_empty)},
     )
-    safe = context.final_df if isinstance(context.final_df, pd.DataFrame) else df.copy().fillna('')
-    return enforce_export_contract(safe.fillna(''), contract)
+    safe = context.final_df if isinstance(context.final_df, pd.DataFrame) else input_df
+    safe = _force_empty_columns(safe.fillna(''), protected_empty)
+    return enforce_export_contract(safe, contract)
 
 
 def to_bling_csv_bytes(
     df: pd.DataFrame,
     operation: str = 'global',
     contract_columns: Sequence[object] | None = None,
+    explicit_empty_columns: Sequence[object] | None = None,
 ) -> bytes:
-    safe = sanitize_for_bling(df, operation=operation, contract_columns=contract_columns)
+    safe = sanitize_for_bling(
+        df,
+        operation=operation,
+        contract_columns=contract_columns,
+        explicit_empty_columns=explicit_empty_columns,
+    )
     buffer = BytesIO()
     safe.to_csv(buffer, sep=';', index=False, encoding='utf-8-sig')
     return buffer.getvalue()
