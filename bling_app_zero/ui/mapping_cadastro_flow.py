@@ -21,7 +21,6 @@ from bling_app_zero.ui.mapping_filters import filter_targets
 from bling_app_zero.ui.mapping_models import cadastro_model, source_columns_from_df, target_columns_from_model
 from bling_app_zero.ui.mapping_pagination import render_mapping_page_arrows, visible_targets
 from bling_app_zero.ui.mapping_preview_builder import build_cadastro_preview
-from bling_app_zero.ui.mapping_sidebar_rule_badge import sidebar_rule_targets_from_columns
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets, clear_stale_mapping_widgets, is_manual_value, mapping_base
 
 
@@ -55,7 +54,7 @@ def _render_cadastro_actions(
     model: pd.DataFrame,
     source_columns: list[str],
 ) -> None:
-    with st.expander('Ações avançadas', expanded=False):
+    with st.expander('Outras ações', expanded=False):
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button('Atualizar prévia', use_container_width=True, key=f'{mapping_key}_refresh'):
@@ -67,8 +66,9 @@ def _render_cadastro_actions(
 
 def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
     st.markdown('### Mapear campos')
-    st.caption(f'{len(df_source)} produto(s) · revise somente o que estiver pendente.')
-    with st.expander('Ver origem', expanded=False):
+    st.caption(f'{len(df_source)} produto(s) carregado(s). Confira as ligações abaixo.')
+    st.info('Escolha a coluna correta para cada campo do Bling. Depois confirme o mapeamento.')
+    with st.expander('Ver dados de origem', expanded=False):
         preview_df('Origem', df_source)
 
 
@@ -78,7 +78,6 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     model = cadastro_model(df_modelo)
     source_columns = source_columns_from_df(df_source)
     target_columns = target_columns_from_model(model)
-    sidebar_rule_targets = sidebar_rule_targets_from_columns(target_columns)
     options = [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
 
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
@@ -101,7 +100,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
-    filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required, sidebar_rule_targets)
+    filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required)
     visible = visible_targets(mapping_key, filtered_targets)
 
     render_mapping_page_arrows(mapping_key, position='top')
