@@ -7,6 +7,7 @@ import streamlit as st
 from bling_app_zero.ui.mapping_constants import (
     EMPTY_CHOOSE_OPTION,
     EMPTY_LEAVE_OPTION,
+    EMPTY_MAPPING_VALUE,
     MANUAL_MAPPING_VALUE,
     MANUAL_WRITE_OPTION,
     MAPPING_WIDGET_PREFIXES,
@@ -33,29 +34,28 @@ def is_manual_value(value: str | None) -> bool:
     return str(value or '').strip() == MANUAL_MAPPING_VALUE
 
 
+def is_empty_mapping_value(value: str | None) -> bool:
+    return str(value or '').strip() == EMPTY_MAPPING_VALUE
+
+
 def option_value(value: str | None) -> str:
     text = str(value or '').strip()
-    if text in {EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION, MANUAL_MAPPING_VALUE}:
+    if text in {EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION, MANUAL_MAPPING_VALUE, EMPTY_MAPPING_VALUE}:
         return ''
     return text
 
 
 def display_option(value: str | None) -> str:
-    """Converte o valor salvo para a opção visual do selectbox.
-
-    BLINGFIX FAROL: valor vazio não pode abrir como "deixar vazio".
-    Quando o campo ainda não foi decidido, ele deve abrir em "escolher coluna"
-    para manter o farol vermelho. A opção "deixar vazio" só fica verde quando
-    o usuário escolhe essa opção explicitamente e o marcador __empty_resolved é salvo.
-    """
     text = str(value or '').strip()
     if is_manual_value(text):
         return MANUAL_WRITE_OPTION
+    if is_empty_mapping_value(text):
+        return EMPTY_LEAVE_OPTION
     return text if text else EMPTY_CHOOSE_OPTION
 
 
 def is_explicit_empty(widget_key: str, value: str | None) -> bool:
-    return str(value or '').strip() == EMPTY_LEAVE_OPTION or bool(st.session_state.get(f'{widget_key}__empty_resolved'))
+    return is_empty_mapping_value(value) or str(value or '').strip() == EMPTY_LEAVE_OPTION or bool(st.session_state.get(f'{widget_key}__empty_resolved'))
 
 
 def is_explicit_manual(widget_key: str, value: str | None) -> bool:
@@ -63,6 +63,10 @@ def is_explicit_manual(widget_key: str, value: str | None) -> bool:
 
 
 def default_index(options: list[str], value: str, widget_key: str | None = None) -> int:
+    if is_manual_value(value):
+        return options.index(MANUAL_WRITE_OPTION) if MANUAL_WRITE_OPTION in options else 0
+    if is_empty_mapping_value(value):
+        return options.index(EMPTY_LEAVE_OPTION) if EMPTY_LEAVE_OPTION in options else 0
     if widget_key and st.session_state.get(f'{widget_key}__manual_resolved'):
         return options.index(MANUAL_WRITE_OPTION) if MANUAL_WRITE_OPTION in options else 0
     if widget_key and st.session_state.get(f'{widget_key}__empty_resolved'):
@@ -92,6 +96,7 @@ __all__ = [
     'clear_stale_mapping_widgets',
     'default_index',
     'display_option',
+    'is_empty_mapping_value',
     'is_explicit_empty',
     'is_explicit_manual',
     'is_manual_value',
