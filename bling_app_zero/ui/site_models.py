@@ -45,15 +45,25 @@ def _upload_attr(upload: Any, name: str) -> pd.DataFrame | None:
 
 
 def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
-    return _upload_attr(upload, 'cadastro_model_df') or _upload_attr(upload, 'model_df')
+    """Retorna somente modelo classificado como cadastro.
+
+    Não usa `model_df` como fallback para evitar que um modelo de estoque anexado
+    por engano vire contrato de cadastro.
+    """
+    return _upload_attr(upload, 'cadastro_model_df')
 
 
 def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
-    return _upload_attr(upload, 'estoque_model_df') or _upload_attr(upload, 'model_df')
+    """Retorna somente modelo classificado como estoque.
+
+    Não usa `model_df` como fallback para evitar que um modelo de cadastro anexado
+    por engano vire contrato de estoque.
+    """
+    return _upload_attr(upload, 'estoque_model_df')
 
 
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do cadastro: anexo recente > modelo salvo/Home > padrão interno."""
+    """Modelo do cadastro: anexo correto > modelo salvo/Home > padrão interno."""
     uploaded = _uploaded_cadastro_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -62,7 +72,7 @@ def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
 
 
 def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do estoque: anexo recente > modelo salvo/Home > padrão interno."""
+    """Modelo do estoque: anexo correto > modelo salvo/Home > padrão interno."""
     uploaded = _uploaded_estoque_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -86,8 +96,9 @@ def requested_columns_for_site_capture(
     Regra global:
     - cadastro por site usa apenas modelo de cadastro;
     - estoque por site usa apenas modelo de estoque;
-    - anexo do usuário tem prioridade sobre padrão interno;
-    - na ausência de anexo, o padrão interno oficial vira o contrato;
+    - anexo correto do usuário tem prioridade sobre padrão interno;
+    - arquivo anexado da operação errada é ignorado neste fluxo;
+    - na ausência de anexo correto, o padrão interno oficial vira o contrato;
     - a ordem das colunas do contrato é preservada no preview/download.
     """
     normalized = str(operation or '').strip().lower()
@@ -111,19 +122,18 @@ def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
 
     if has_home_site_model_for_operation(operation_key):
         st.success(f'Modelo de {operation_key} disponível para uso.')
-        st.caption('Se você anexar um modelo nesta tela, ele terá prioridade. Se não anexar, o sistema usa o modelo interno oficial para esta operação.')
+        st.caption('Se você anexar um modelo correto nesta tela, ele terá prioridade. Se não anexar, o sistema usa o modelo interno oficial para esta operação.')
 
-    required_model = False
     caption = (
-        'Opcional: anexe o modelo oficial do Bling para o CSV final sair exatamente com as colunas desse arquivo. Sem anexo, será usado o modelo interno oficial de estoque.'
+        'Opcional: anexe o modelo oficial de estoque do Bling. Se anexar modelo de cadastro por engano, ele será ignorado neste fluxo. Sem anexo correto, será usado o modelo interno oficial de estoque.'
         if operation_key == 'estoque'
-        else 'Opcional: anexe o modelo oficial do Bling para o CSV final sair exatamente com as colunas desse arquivo. Sem anexo, será usado o modelo interno oficial de cadastro.'
+        else 'Opcional: anexe o modelo oficial de cadastro do Bling. Se anexar modelo de estoque por engano, ele será ignorado neste fluxo. Sem anexo correto, será usado o modelo interno oficial de cadastro.'
     )
 
     return render_model_upload_box(
         title='Modelo do Bling para esta operação',
         operation=operation_key,
         key=f'model_upload_site_{operation_key}',
-        required_model=required_model,
+        required_model=False,
         caption=caption,
     )
