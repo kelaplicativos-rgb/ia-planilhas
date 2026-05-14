@@ -6,9 +6,9 @@ from typing import Iterable
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
+from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION
 from bling_app_zero.ui.mapping_field_widget import render_mapping_select
-from bling_app_zero.ui.mapping_widget_state import is_empty_mapping_value, is_manual_value, manual_value_key, option_value, target_widget_key
+from bling_app_zero.ui.mapping_widget_state import option_value
 from bling_app_zero.v2.session_store import widget_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/v2/price_multistore/shared_mapping.py'
@@ -28,6 +28,13 @@ class MultistoreMappingSelection:
 
 
 def _options(columns: Iterable[object]) -> list[str]:
+    """Opções do mapeamento compartilhado para cruzamento multiloja.
+
+    Aqui o componente visual é compartilhado com cadastro/estoque, mas estas três
+    chaves são obrigatoriamente colunas reais: identificador Bling,
+    identificador origem e preço de custo. Valor fixo/vazio continuam no
+    mapeamento global, mas não servem para cruzar produtos.
+    """
     cleaned: list[str] = []
     seen: set[str] = set()
     for column in columns:
@@ -36,36 +43,23 @@ def _options(columns: Iterable[object]) -> list[str]:
             continue
         cleaned.append(text)
         seen.add(text)
-    return [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION, *cleaned]
+    return [EMPTY_CHOOSE_OPTION, *cleaned]
 
 
-def _manual_value_for(target_index: int) -> str:
-    widget = target_widget_key(MAPPING_KEY, target_index)
-    return str(st.session_state.get(manual_value_key(widget), '') or '').strip()
-
-
-def _resolved_column(selected: str, target_index: int) -> str:
-    if is_manual_value(selected):
-        return _manual_value_for(target_index)
-    if is_empty_mapping_value(selected):
-        return ''
+def _resolved_column(selected: str) -> str:
     return option_value(selected)
 
 
 def _render_mapping_help() -> None:
     st.info(
-        'Este fluxo usa o mesmo mapeamento compartilhado do cadastro/estoque: '
-        'escolha uma coluna, escreva valor fixo quando fizer sentido, ou deixe vazio. '
-        'Para cruzamento de preços, os identificadores e o preço de custo precisam apontar para colunas válidas.'
+        'Este fluxo usa o mesmo componente de mapeamento do cadastro/estoque, '
+        'mas o cruzamento de preços exige colunas reais: uma coluna identificadora no Bling, '
+        'uma coluna identificadora na origem e uma coluna de custo.'
     )
 
 
 def render_multistore_shared_mapping(model_df: pd.DataFrame, source_df: pd.DataFrame) -> MultistoreMappingSelection:
-    """Renderiza o mapeamento compartilhado do fluxo de preços multiloja.
-
-    O objetivo é substituir seletores isolados por uma decisão única e persistente,
-    usando os mesmos componentes do cadastro/estoque.
-    """
+    """Renderiza o mapeamento compartilhado do fluxo de preços multiloja."""
     model = model_df.copy().fillna('') if isinstance(model_df, pd.DataFrame) else pd.DataFrame()
     source = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
 
@@ -85,7 +79,7 @@ def render_multistore_shared_mapping(model_df: pd.DataFrame, source_df: pd.DataF
             MAPPING_KEY,
             _options(model.columns),
         )
-        model_identifier = _resolved_column(selected_model, 0)
+        model_identifier = _resolved_column(selected_model)
         st.session_state[widget_key('multistore_model_identifier_column')] = model_identifier
 
     with st.container(border=True):
@@ -98,7 +92,7 @@ def render_multistore_shared_mapping(model_df: pd.DataFrame, source_df: pd.DataF
             MAPPING_KEY,
             _options(source.columns),
         )
-        source_identifier = _resolved_column(selected_source_id, 1)
+        source_identifier = _resolved_column(selected_source_id)
         st.session_state[widget_key('multistore_source_identifier_column')] = source_identifier
 
     with st.container(border=True):
@@ -111,7 +105,7 @@ def render_multistore_shared_mapping(model_df: pd.DataFrame, source_df: pd.DataF
             MAPPING_KEY,
             _options(source.columns),
         )
-        source_cost = _resolved_column(selected_cost, 2)
+        source_cost = _resolved_column(selected_cost)
         st.session_state[widget_key('multistore_source_cost_column')] = source_cost
 
     errors: list[str] = []
