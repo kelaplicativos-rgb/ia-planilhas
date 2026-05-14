@@ -5,8 +5,8 @@ from typing import Any
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.cadastro_wizard_state import cadastro_context_ready, cadastro_mapping_ready
-from bling_app_zero.ui.estoque_wizard_state import estoque_context_ready, estoque_output_ready
+from bling_app_zero.ui.cadastro_wizard_state import cadastro_context_ready
+from bling_app_zero.ui.estoque_wizard_state import estoque_context_ready
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     ESTOQUE_STEPS,
@@ -38,6 +38,7 @@ AUTOFLOW_ENABLED_KEY = 'bling_autofluxo_enabled'
 AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_PAUSE_STEP_KEY = 'bling_autofluxo_pause_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
+MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}
 
 
 def _looks_like_loaded_df(value: Any) -> bool:
@@ -145,10 +146,8 @@ def _step_ready_for_autonext(step: str, operation: str) -> bool:
         return _current_origin() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
         return estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
-    if step == STEP_MAPEAMENTO:
-        return cadastro_mapping_ready()
-    if step == STEP_GERAR_ESTOQUE:
-        return estoque_output_ready()
+    if step in MANUAL_REVIEW_STEPS:
+        return False
     if step == STEP_REGRAS:
         return rules_center_ready()
     return False
@@ -199,6 +198,24 @@ def clear_home_autofluxo_pause(step: str | None = None) -> None:
         st.session_state.pop(AUTOFLOW_PAUSE_STEP_KEY, None)
 
 
+def pause_home_autofluxo_for_manual_review(step: str, *, reason: str = 'manual_mapping_review') -> None:
+    """Pausa o auto-next em telas onde uma mudança do usuário deve ficar visível.
+
+    Mapeamento é decisão humana. Selecionar uma coluna recalcula a prévia, mas não
+    pode empurrar o usuário para a próxima tela. O avanço deve ser pelo botão do wizard.
+    """
+    normalized = str(step or '').strip().lower()
+    if not normalized:
+        return
+    st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = normalized
+    add_audit_event(
+        'autofluxo_paused_for_manual_review',
+        area='AUTOFLOW',
+        step=normalized,
+        details={'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _move_to_step(next_step: str, *, current: str, operation: str, reason: str) -> None:
     move_signature = f'{current}->{next_step}:{operation}:{reason}'
     previous_signature = str(st.session_state.get(AUTOFLOW_LAST_MOVE_KEY) or '')
@@ -234,8 +251,9 @@ def run_home_autofluxo() -> None:
     BLINGAUTOFLUXO:
     - não pula etapas bloqueadas;
     - não pula preview/download;
+    - não pula mapeamento/correção manual;
     - respeita Voltar: quando o usuário volta, a etapa atual fica pausada para revisão;
-    - remove cliques de Continuar quando o estado já prova que a próxima etapa é segura.
+    - remove cliques de Continuar apenas quando o estado já prova que a próxima etapa é segura e sem decisão humana.
     """
     enabled = st.session_state.get(AUTOFLOW_ENABLED_KEY, True)
     if not enabled:
@@ -249,6 +267,10 @@ def run_home_autofluxo() -> None:
     current = _current_step()
 
     if _remember_direction_and_respect_back_navigation(current):
+        return
+
+    if current in MANUAL_REVIEW_STEPS:
+        pause_home_autofluxo_for_manual_review(current, reason='current_step_requires_human_mapping_review')
         return
 
     paused_step = str(st.session_state.get(AUTOFLOW_PAUSE_STEP_KEY) or '').strip().lower()
@@ -279,4 +301,4 @@ def run_home_autofluxo() -> None:
     _move_to_step(next_step, current=current, operation=operation, reason=reason)
 
 
-__all__ = ['run_home_autofluxo', 'clear_home_autofluxo_pause']
+__all__ = ['run_home_autofluxo', 'clear_home_autofluxo_pause', 'pause_home_autofluxo_for_manual_review']
