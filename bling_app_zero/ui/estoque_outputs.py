@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
 from bling_app_zero.ui.estoque_wizard_state import clear_estoque_outputs, set_stock_output
@@ -26,6 +27,11 @@ def _stock_results() -> list[dict[str, object]]:
 def _download_key(index: object, name: str, df_final: pd.DataFrame) -> str:
     safe_name = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in str(name or 'estoque'))[:60]
     return f'estoque_final_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
+
+
+def _final_preview_df(df_final: pd.DataFrame) -> pd.DataFrame:
+    """Aplica no preview de estoque a mesma blindagem usada no CSV."""
+    return sanitize_for_bling(df_final.copy().fillna(''), operation='estoque')
 
 
 def _store_stock_results(results: list[dict[str, object]]) -> None:
@@ -107,7 +113,8 @@ def render_stock_preview() -> None:
         st.warning('Nenhum preview de estoque foi gerado ainda.')
         return
     st.markdown('#### Conferência final do estoque')
-    st.caption('Confira o arquivo final antes do download. Esta tela pertence somente ao fluxo novo de atualização de estoque.')
+    st.caption('Confira o arquivo final antes do download. Esta tela já reflete as configurações do arquivo final.')
+    preview_results: list[dict[str, object]] = []
     for result in results:
         index = result.get('index')
         df_final = result.get('df_final')
@@ -116,9 +123,13 @@ def render_stock_preview() -> None:
             if isinstance(mapping, dict):
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
-                preview_df('Arquivo final de estoque', df_final)
+                df_preview = _final_preview_df(df_final)
+                preview_results.append({**result, 'df_final': df_preview})
+                preview_df('Arquivo final de estoque', df_preview)
             else:
                 st.warning('Não foi possível montar o preview desta origem.')
+    if preview_results:
+        st.session_state['estoque_multi_outputs_preview_rules_applied'] = preview_results
 
 
 def render_stock_downloads() -> None:
@@ -135,4 +146,4 @@ def render_stock_downloads() -> None:
             st.warning(f'Não foi possível baixar a origem {index}: {name}.')
             continue
         st.markdown(f'**Origem {index}**')
-        download_final(df_final, 'estoque', _download_key(index, name, df_final))
+        download_final(_final_preview_df(df_final), 'estoque', _download_key(index, name, df_final))
