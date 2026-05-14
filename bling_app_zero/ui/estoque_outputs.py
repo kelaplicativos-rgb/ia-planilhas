@@ -3,10 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.bling_models import enforce_model_contract, estoque_default_model
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
-from bling_app_zero.ui.estoque_wizard_state import clear_estoque_outputs, set_stock_output
+from bling_app_zero.ui.estoque_wizard_state import ESTOQUE_MODELO_KEY, clear_estoque_outputs, set_stock_output
+from bling_app_zero.ui.home_models import get_home_estoque_model
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
 
 
@@ -14,9 +16,21 @@ def _valid_model(df_modelo: pd.DataFrame | None) -> bool:
     return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
 
 
-def _show_missing_model_warning() -> None:
-    clear_estoque_outputs()
-    st.error('Envie o modelo de estoque do Bling antes de gerar o CSV. O sistema só preenche as colunas existentes nesse modelo.')
+def _model_or_internal(df_modelo: pd.DataFrame | None = None) -> pd.DataFrame:
+    if _valid_model(df_modelo):
+        return df_modelo.copy().fillna('')
+    state_model = st.session_state.get(ESTOQUE_MODELO_KEY)
+    if _valid_model(state_model):
+        return state_model.copy().fillna('')
+    home_model = get_home_estoque_model()
+    if _valid_model(home_model):
+        return home_model.copy().fillna('')
+    return estoque_default_model()
+
+
+def _show_model_contract_notice(df_modelo: pd.DataFrame | None = None) -> None:
+    model = _model_or_internal(df_modelo)
+    st.caption(f'Contrato de estoque ativo: {len(model.columns)} coluna(s). O CSV final respeitará exatamente esse cabeçalho e essa ordem.')
 
 
 def _stock_results() -> list[dict[str, object]]:
@@ -29,9 +43,11 @@ def _download_key(index: object, name: str, df_final: pd.DataFrame) -> str:
     return f'estoque_final_{index}_{safe_name}_{len(df_final)}_{len(df_final.columns)}'
 
 
-def _final_preview_df(df_final: pd.DataFrame) -> pd.DataFrame:
-    """Aplica no preview de estoque a mesma blindagem usada no CSV."""
-    return sanitize_for_bling(df_final.copy().fillna(''), operation='estoque')
+def _final_preview_df(df_final: pd.DataFrame, df_modelo: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Aplica no preview/download a mesma blindagem de contrato usada no CSV."""
+    model = _model_or_internal(df_modelo)
+    contracted = enforce_model_contract(df_final.copy().fillna(''), 'estoque', model)
+    return sanitize_for_bling(contracted, operation='estoque')
 
 
 def _store_stock_results(results: list[dict[str, object]]) -> None:
@@ -54,16 +70,14 @@ def build_stock_outputs_from_dataframe(
     deposito: str,
     name: str = 'Origem por site',
 ) -> None:
-    if not _valid_model(df_modelo):
-        _show_missing_model_warning()
-        return
+    model = _model_or_internal(df_modelo)
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         clear_estoque_outputs()
         st.warning('Nenhuma origem válida de estoque foi encontrada para gerar o CSV.')
         return
     run_estoque_pipeline = load_estoque_pipeline()
     try:
-        df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+        df_final, mapping = run_estoque_pipeline(df_origem, model, deposito=deposito)
     except MissingEstoqueModelError as exc:
         clear_estoque_outputs()
         st.error(str(exc))
@@ -73,14 +87,13 @@ def build_stock_outputs_from_dataframe(
         st.error('Não foi possível gerar o estoque. Confira a origem, o modelo e o depósito informado.')
         st.caption(str(exc) or exc.__class__.__name__)
         return
-    result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping}
+    df_final = _final_preview_df(df_final, model)
+    result = {'index': 1, 'name': name, 'df_final': df_final, 'mapping': mapping, 'df_modelo': model}
     _store_stock_results([result])
 
 
 def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -> None:
-    if not _valid_model(df_modelo):
-        _show_missing_model_warning()
-        return
+    model = _model_or_internal(df_modelo)
     source_files = source_files_from_upload(upload)
     if not source_files:
         clear_estoque_outputs()
@@ -93,7 +106,7 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
         if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
             continue
         try:
-            df_final, mapping = run_estoque_pipeline(df_origem, df_modelo, deposito=deposito)
+            df_final, mapping = run_estoque_pipeline(df_origem, model, deposito=deposito)
         except MissingEstoqueModelError as exc:
             clear_estoque_outputs()
             st.error(str(exc))
@@ -103,7 +116,8 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
             st.error(f'Não foi possível gerar o estoque da origem {index}: {file_name(file)}.')
             st.caption(str(exc) or exc.__class__.__name__)
             return
-        results.append({'index': index, 'name': file_name(file), 'df_final': df_final, 'mapping': mapping})
+        df_final = _final_preview_df(df_final, model)
+        results.append({'index': index, 'name': file_name(file), 'df_final': df_final, 'mapping': mapping, 'df_modelo': model})
     _store_stock_results(results)
 
 
@@ -114,16 +128,18 @@ def render_stock_preview() -> None:
         return
     st.markdown('#### Conferência final do estoque')
     st.caption('Confira o arquivo final antes do download. Esta tela já reflete as configurações do arquivo final.')
+    _show_model_contract_notice()
     preview_results: list[dict[str, object]] = []
     for result in results:
         index = result.get('index')
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
+        df_modelo = result.get('df_modelo')
         with st.expander(f'Origem {index} · conferência do estoque', expanded=False):
             if isinstance(mapping, dict):
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
-                df_preview = _final_preview_df(df_final)
+                df_preview = _final_preview_df(df_final, df_modelo if isinstance(df_modelo, pd.DataFrame) else None)
                 preview_results.append({**result, 'df_final': df_preview})
                 preview_df('Arquivo final de estoque', df_preview)
             else:
@@ -138,12 +154,15 @@ def render_stock_downloads() -> None:
         st.warning('Nenhum CSV de estoque foi gerado ainda.')
         return
     st.caption('Baixe somente o CSV final de atualização de estoque. Cada origem válida gera um arquivo separado.')
+    _show_model_contract_notice()
     for result in results:
         index = result.get('index')
         name = str(result.get('name') or f'origem_{index}')
         df_final = result.get('df_final')
+        df_modelo = result.get('df_modelo')
         if not isinstance(df_final, pd.DataFrame):
             st.warning(f'Não foi possível baixar a origem {index}: {name}.')
             continue
+        df_safe = _final_preview_df(df_final, df_modelo if isinstance(df_modelo, pd.DataFrame) else None)
         st.markdown(f'**Origem {index}**')
-        download_final(_final_preview_df(df_final), 'estoque', _download_key(index, name, df_final))
+        download_final(df_safe, 'estoque', _download_key(index, name, df_safe))
