@@ -11,6 +11,12 @@ except Exception:  # pragma: no cover
 
 POST_MAPPING_DEFAULTS_SESSION_KEY = 'bling_post_mapping_defaults'
 
+# Compatibilidade com telas antigas de mapeamento/sidebar.
+# BLINGREFORM: os defaults pós-mapeamento foram desplugados do download final,
+# então este dicionário permanece vazio para não pintar campos nem preencher valores
+# de forma escondida.
+COLUMN_DEFAULT_KEY_BY_TARGET: dict[str, str] = {}
+
 # BLINGREFORM:
 # O preenchimento de campos deixa de ser feito por regras escondidas/defaults.
 # Agora a fonte oficial é o mapeamento:
@@ -37,9 +43,9 @@ def get_post_mapping_defaults_config() -> dict[str, Any]:
 def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None = None) -> pd.DataFrame:
     """Não aplica mais preenchimento automático pós-mapeamento.
 
-    Esta função permanece para compatibilidade do pipeline, mas não altera valores.
-    Isso elimina a contradição onde o usuário escolhia "deixar vazio" e um default
-    preenchia novamente no CSV final.
+    Esta função permanece para compatibilidade do pipeline e de imports antigos,
+    mas não altera valores. Isso elimina a contradição onde o usuário escolhia
+    "deixar vazio" e um default preenchia novamente no CSV final.
     """
     _ = rules
     if df is None:
@@ -48,6 +54,7 @@ def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None =
 
 
 __all__ = [
+    'COLUMN_DEFAULT_KEY_BY_TARGET',
     'DEFAULT_POST_MAPPING_CONFIG',
     'POST_MAPPING_DEFAULTS_SESSION_KEY',
     'apply_post_mapping_defaults',
