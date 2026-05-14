@@ -104,6 +104,8 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required, sidebar_rule_targets)
     visible = visible_targets(mapping_key, filtered_targets)
 
+    render_mapping_page_arrows(mapping_key, position='top')
+
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
@@ -121,7 +123,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         edited_mapping[target] = selected
         edited_confidence[target] = info_after
 
-    render_mapping_page_arrows(mapping_key)
+    render_mapping_page_arrows(mapping_key, position='bottom')
 
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
