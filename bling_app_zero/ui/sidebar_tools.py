@@ -12,7 +12,6 @@ from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
 
 SidebarRenderer = Callable[[], None]
 
-SIDEBAR_TOOL_KEY = 'sidebar_active_technical_tool'
 SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 
 
@@ -29,7 +28,7 @@ def _render_support_diagnostic_panel_lazy() -> None:
 
 
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
-    SidebarTool('Enviar diagnóstico para suporte', _render_support_diagnostic_panel_lazy),
+    SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy),
 )
 
 
@@ -39,8 +38,8 @@ def _render_sidebar_header() -> None:
             """
             <section class="bling-sidebar-hero" aria-label="Suporte técnico">
                 <div class="bling-sidebar-kicker">Suporte</div>
-                <div class="bling-sidebar-title">Enviar diagnóstico</div>
-                <div class="bling-sidebar-text">Gere um pacote único com logs, auditoria e estado seguro da sessão para enviar no BLINGFIX.</div>
+                <div class="bling-sidebar-title">Diagnóstico</div>
+                <div class="bling-sidebar-text">Gere um arquivo para enviar quando precisar de BLINGFIX.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -63,18 +62,16 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
         )
         with st.sidebar:
             with st.expander('Diagnóstico indisponível', expanded=True):
-                st.error('Não consegui montar o pacote técnico, mas o sistema principal continua aberto.')
+                st.error('Não consegui gerar o diagnóstico, mas o sistema principal continua aberto.')
                 st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
 
 
 def _ensure_sidebar_defaults() -> None:
     if SIDEBAR_TOOLS_OPEN_KEY not in st.session_state:
         st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = False
-    if SIDEBAR_TOOL_KEY not in st.session_state:
-        st.session_state[SIDEBAR_TOOL_KEY] = 'Diagnóstico técnico recolhido'
 
 
-def _clear_legacy_sidebar_rules_state() -> None:
+def _clear_legacy_sidebar_noise_state() -> None:
     legacy_keys = [
         'sidebar_rules_center_requested',
         'sidebar_open_rules_center_inline',
@@ -104,21 +101,14 @@ def _clear_legacy_sidebar_rules_state() -> None:
 def render_sidebar_tools() -> None:
     inject_sidebar_tools_theme()
     _ensure_sidebar_defaults()
-    _clear_legacy_sidebar_rules_state()
+    _clear_legacy_sidebar_noise_state()
     _render_sidebar_header()
 
     add_audit_event(
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'minimal_support_diagnostic_on_demand',
-            'removed_panels': [
-                'BLINGSCAN automático',
-                'Assistente IA de correção',
-                'Ferramentas de conferência',
-                'Recursos disponíveis',
-                'Lista de módulos e capacidades carregadas no sistema',
-            ],
+            'mode': 'clean_minimal_support_diagnostic',
             'tools': [tool.name for tool in SIDEBAR_TOOLS],
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
