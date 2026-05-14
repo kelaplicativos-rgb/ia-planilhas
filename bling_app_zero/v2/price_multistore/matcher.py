@@ -7,6 +7,31 @@ KIND_LABELS = {
 }
 
 
+def _norm(value: object) -> str:
+    text = str(value or '').strip().lower()
+    table = str.maketrans('áàãâäéèêëíìîïóòõôöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')
+    text = text.translate(table)
+    return ''.join(ch for ch in text if ch.isalnum())
+
+
+def find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
+    """Localiza coluna obrigatória do próprio modelo multiloja.
+
+    Compatibilidade para o validador V2. Isto NÃO reativa o fallback de
+    cruzamento automático entre planilha Bling e origem; serve apenas para
+    conferir se a planilha do Bling tem campos esperados como IdProduto,
+    ID na Loja e Preço.
+    """
+    if not isinstance(df, pd.DataFrame):
+        return ''
+    normalized = {_norm(column): str(column) for column in df.columns}
+    for candidate in candidates:
+        found = normalized.get(_norm(candidate))
+        if found:
+            return found
+    return ''
+
+
 def _clean_match_key(series: pd.Series) -> pd.Series:
     return series.fillna('').astype(str).str.strip()
 
@@ -113,4 +138,4 @@ def build_not_included_audit(
     return audit.fillna('')
 
 
-__all__ = ['build_not_included_audit', 'merge_source_cost']
+__all__ = ['build_not_included_audit', 'find_column', 'merge_source_cost']
