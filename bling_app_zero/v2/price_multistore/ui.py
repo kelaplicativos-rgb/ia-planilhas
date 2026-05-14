@@ -13,7 +13,8 @@ from bling_app_zero.v2.bling_links import BLING_MULTISTORE_PRICE_IMPORT_URL
 from bling_app_zero.v2.exporter import to_csv_bytes
 from bling_app_zero.v2.price_multistore.detector import detect_multistore_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
-from bling_app_zero.v2.price_multistore.matcher import build_not_included_audit, find_best_identifier
+from bling_app_zero.v2.price_multistore.matcher import build_not_included_audit
+from bling_app_zero.v2.price_multistore.shared_mapping import MultistoreMappingSelection, render_multistore_shared_mapping
 from bling_app_zero.v2.session_store import get_state, pop_state, set_state, widget_key
 from bling_app_zero.v2.store_profiles import build_store_profile
 from bling_app_zero.v2.table_io import load_table
@@ -85,6 +86,16 @@ NUMERIC_PROFILE_FIELDS = [
     'promo',
 ]
 
+SITE_SOURCE_KEYS = (
+    'df_site_bruto_precos',
+    'df_site_bruto_cadastro',
+    'df_site_bruto_estoque',
+    'df_origem_site_como_planilha_cadastro',
+    'df_origem_site_como_planilha_estoque',
+    'df_origem_site_como_planilha',
+    'df_site_bruto',
+)
+
 
 def _default_marketplace_profiles() -> dict[str, dict[str, Any]]:
     profiles: dict[str, dict[str, Any]] = {}
@@ -113,22 +124,12 @@ def _read(uploaded_file) -> pd.DataFrame | None:
         return None
 
 
-def _cost_column_options(df: pd.DataFrame | None) -> list[str]:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return []
-    preferred: list[str] = []
-    others: list[str] = []
-    hints = ('custo', 'preco de custo', 'preço de custo', 'valor custo', 'valor compra', 'preco compra', 'preço compra')
-    blocked = ('idproduto', 'id produto', 'id na loja', 'id loja', 'sku', 'codigo', 'código', 'descricao', 'descrição', 'nome')
-    for column in [str(column) for column in df.columns]:
-        lower = column.lower()
-        if any(term in lower for term in blocked):
-            others.append(column)
-        elif any(hint in lower for hint in hints):
-            preferred.append(column)
-        else:
-            others.append(column)
-    return preferred + others
+def _site_source_df() -> pd.DataFrame | None:
+    for key in SITE_SOURCE_KEYS:
+        value = st.session_state.get(key)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            return value.copy().fillna('')
+    return None
 
 
 def _split_dataframe(df: pd.DataFrame, limit: int = MAX_BLING_IMPORT_ROWS) -> list[pd.DataFrame]:
@@ -330,22 +331,10 @@ def _render_flow_explanation() -> None:
     context = get_user_context()
     _render_info(
         'Este fluxo atualiza preços de produtos já vinculados a uma loja/marketplace no Bling. '
-        'Você envia a planilha multiloja do Bling e uma planilha com Preço de custo. '
-        'O sistema cruza os produtos, calcula os novos preços e gera o CSV pronto para importar.'
+        'A origem do custo pode ser arquivo ou uma captura por site já carregada. '
+        'O cruzamento usa o mesmo mapeamento compartilhado do cadastro/estoque.'
     )
     st.caption(f'Sessão isolada V2: {context.namespace}')
-
-
-def _render_match_summary(model_df: pd.DataFrame | None, source_df: pd.DataFrame | None) -> None:
-    if not isinstance(model_df, pd.DataFrame) or model_df.empty or not isinstance(source_df, pd.DataFrame) or source_df.empty:
-        _render_alert('O cruzamento será liberado depois que as duas planilhas forem anexadas.')
-        return
-    kind, model_col, source_col = find_best_identifier(model_df, source_df)
-    if kind and model_col and source_col:
-        st.success(f'Cruzamento sugerido: {model_col} ↔ {source_col}')
-        st.caption('O sistema usará esse identificador para buscar o custo da origem e preencher o modelo multiloja do Bling.')
-    else:
-        _render_alert('Não encontrei automaticamente um identificador igual entre as duas planilhas. Verifique se ambas têm IdProduto, ID na Loja, SKU/Código, GTIN ou Descrição.')
 
 
 def _render_audit_download() -> None:
@@ -433,6 +422,12 @@ def _render_ready_result(result_df: pd.DataFrame) -> None:
     _render_bling_import_actions()
 
 
+def _source_df_from_choice(choice: str, uploaded_file) -> pd.DataFrame | None:
+    if choice == 'Site capturado':
+        return _site_source_df()
+    return _read(uploaded_file)
+
+
 def render_price_multistore_v2() -> None:
     _keep_multistore_route_alive()
     st.markdown('## 🏬 Atualizar Preços Multiloja')
@@ -481,25 +476,33 @@ def render_price_multistore_v2() -> None:
         _render_alert('Anexe a Planilha 1 do Bling para continuar.')
         return
 
-    st.markdown('### Etapa 3 · Custo dos produtos')
-    st.caption('Envie a planilha de cadastro/produtos que contém o Preço de custo. Ela não será enviada ao Bling; serve apenas para calcular.')
-    source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_source_upload'))
-    source_df = _read(source_upload)
+    st.markdown('### Etapa 3 · Origem do custo')
+    source_origin = st.radio(
+        'Origem dos dados de custo',
+        ['Arquivo', 'Site capturado'],
+        horizontal=True,
+        key=widget_key('multistore_source_origin'),
+    )
+    source_upload = None
+    if source_origin == 'Arquivo':
+        st.caption('Envie a planilha de cadastro/produtos que contém o Preço de custo. Ela não será enviada ao Bling; serve apenas para calcular.')
+        source_upload = st.file_uploader('Planilha 2 — Origem de Custo dos Produtos', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_source_upload'))
+    else:
+        st.caption('Usa a última captura por site salva na sessão. Primeiro faça a captura por site no fluxo de origem, depois volte para preços multiloja.')
+
+    source_df = _source_df_from_choice(source_origin, source_upload)
     if isinstance(source_df, pd.DataFrame) and not source_df.empty:
-        st.success(f'Origem de custo carregada · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
-        _render_closed_preview('Preview da Planilha 2 de origem/custo', source_df, rows=12, height=180)
+        st.success(f'Origem de custo carregada por {source_origin.lower()} · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
+        _render_closed_preview('Preview da origem/custo', source_df, rows=12, height=180)
     else:
         result_df = get_state('multistore_result_df')
         if isinstance(result_df, pd.DataFrame) and not result_df.empty:
             _render_ready_result(result_df.copy().fillna(''))
             return
-        _render_alert('Para calcular, anexe a planilha de cadastro/produtos com Preço de custo.')
+        _render_alert('Para calcular, carregue uma origem de custo por arquivo ou por site capturado.')
 
-    st.markdown('### Etapa 4 · Cruzamento')
-    _render_match_summary(model_df, source_df)
-    cost_options = _cost_column_options(source_df)
-    source_cost_column = st.selectbox('Qual coluna da origem tem o Preço de custo?', cost_options, key=widget_key('multistore_cost_column')) if cost_options else ''
-    can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and bool(source_cost_column)
+    mapping = render_multistore_shared_mapping(model_df, source_df if isinstance(source_df, pd.DataFrame) else pd.DataFrame())
+    can_generate = isinstance(source_df, pd.DataFrame) and not source_df.empty and isinstance(mapping, MultistoreMappingSelection) and mapping.ready
 
     st.markdown('### Etapa 5 · Calculadora')
     calculator_mode = st.radio(
@@ -557,16 +560,30 @@ def render_price_multistore_v2() -> None:
     profile_for_run = build_store_profile(channel, store_id=store_id, name=store_name, overrides={'pricing_rules': pricing_rules})
 
     if not can_generate:
-        _render_alert('A geração fica bloqueada até carregar a origem de custo e selecionar a coluna de Preço de custo.')
+        _render_alert('A geração fica bloqueada até carregar a origem e concluir o mapeamento compartilhado.')
 
     if st.button('Gerar prévia de preços', use_container_width=True, key=widget_key('multistore_generate'), disabled=not can_generate):
-        result = run_multistore_price_flow(model_df, profile_for_run, source_df, source_cost_column, pricing_rules)
+        result = run_multistore_price_flow(
+            model_df,
+            profile_for_run,
+            source_df,
+            mapping.source_cost_column,
+            pricing_rules,
+            model_identifier_column=mapping.model_identifier_column,
+            source_identifier_column=mapping.source_identifier_column,
+        )
         set_state('multistore_last_ok', result.ok)
         set_state('multistore_last_message', result.message)
         set_state('multistore_last_errors', list(result.errors))
         if result.ok:
             result_df = result.payload.df.copy().fillna('')
-            audit_df = build_not_included_audit(model_df, source_df, source_cost_column)
+            audit_df = build_not_included_audit(
+                model_df,
+                source_df,
+                mapping.source_cost_column,
+                model_identifier_column=mapping.model_identifier_column,
+                source_identifier_column=mapping.source_identifier_column,
+            )
             set_state('multistore_result_df', result_df)
             set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
             set_state('multistore_not_included_audit_df', audit_df)
