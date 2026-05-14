@@ -41,12 +41,6 @@ CUSTOM_RULE_NOTICE_KEY = 'rules_center_custom_rule_notice'
 NEW_RULE_VERSION_KEY = 'rules_center_new_rule_version'
 
 
-def _small_title(title: str, caption: str = '') -> None:
-    st.markdown(f'##### {title}')
-    if caption:
-        st.caption(caption)
-
-
 def rule_id(target_column: str) -> str:
     safe = ''.join(ch if ch.isalnum() else '_' for ch in str(target_column).strip().lower())
     safe = '_'.join(part for part in safe.split('_') if part)
@@ -164,26 +158,7 @@ def _disable_all_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
     return updated
 
 
-def disable_all_rules(rules: dict[str, Any]) -> dict[str, Any]:
-    updated = dict(rules)
-    updated['clean_invalid_gtin'] = False
-    updated['normalize_image_separator'] = False
-    updated['auto_product_code'] = False
-    updated['unique_product_code'] = False
-    updated['normalize_measures_to_meters'] = False
-    updated['invalid_gtin_mode'] = 'limpar'
-    updated['image_separator'] = '|'
-    updated['custom_rules'] = [
-        {**dict(rule), 'enabled': False}
-        for rule in list(updated.get('custom_rules', []) or [])
-        if isinstance(rule, dict)
-    ]
-    updated['custom_rules'] = _disable_all_default_rules(updated['custom_rules'])
-    return updated
-
-
 def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
-    _small_title('Proteções', 'Tratamentos aplicados antes do CSV final.')
     updated = dict(rules)
     cols = st.columns(4)
     for index, (key, label, help_text) in enumerate(PROTECTION_FIELDS):
@@ -196,16 +171,15 @@ def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    _small_title('Medidas', 'Valores usados apenas quando a coluna existir e estiver vazia.')
     updated = dict(rules)
     measure_enabled = st.toggle(
-        'Aplicar medidas padrão',
+        'Medidas padrão',
         value=bool(master_enabled),
         disabled=not master_enabled,
         key='rules_center_measure_defaults_enabled',
     )
     unit_measure_enabled = st.toggle(
-        'Aplicar unidade das medidas',
+        'Unidade das medidas',
         value=bool(master_enabled),
         disabled=not master_enabled,
         key='rules_center_measure_unit_enabled',
@@ -243,7 +217,6 @@ def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any
 
 
 def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    _small_title('Campos básicos')
     updated = dict(rules)
     custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
     cols = st.columns(2)
@@ -262,7 +235,6 @@ def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, An
 
 
 def render_extra_default_rules(custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> list[dict[str, Any]]:
-    _small_title('Campos adicionais')
     custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
     for row_start in range(0, len(EXTRA_DEFAULT_RULES), 2):
         cols = st.columns(2)
@@ -278,9 +250,7 @@ def render_extra_default_rules(custom_rules: list[dict[str, Any]], master_enable
 
 def _render_default_rules_body(updated: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not master_enabled:
-        st.caption('Padrões opcionais desligados. As proteções continuam independentes.')
         return updated, _disable_all_default_rules(custom_rules)
-
     updated, custom_rules = render_measure_rules(updated, custom_rules, master_enabled=True)
     updated, custom_rules = render_basic_defaults(updated, custom_rules, master_enabled=True)
     custom_rules = render_extra_default_rules(custom_rules, master_enabled=True)
@@ -326,52 +296,54 @@ def _render_custom_rule_card(rule: dict[str, Any], index: int, master_enabled: b
 
 
 def render_custom_rules(custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> list[dict[str, Any]]:
-    _small_title('Regras personalizadas', 'Crie, edite ou exclua regras específicas.')
-
-    notice = st.session_state.pop(CUSTOM_RULE_NOTICE_KEY, '')
-    if notice:
-        st.success(notice)
-
-    system_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and _is_system_rule(rule)]
-    user_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and not _is_system_rule(rule)]
-
-    updated_user_rules: list[dict[str, Any]] = []
-    if user_rules:
-        for index, rule in enumerate(user_rules):
-            rendered = _render_custom_rule_card(rule, index, master_enabled)
-            if rendered:
-                updated_user_rules.append(rendered)
-    else:
-        st.caption('Nenhuma regra personalizada criada.')
-
-    version = int(st.session_state.get(NEW_RULE_VERSION_KEY, 0) or 0)
-    target_key = f'rules_center_new_rule_target_{version}'
-    value_key = f'rules_center_new_rule_value_{version}'
-    empty_key = f'rules_center_new_rule_only_empty_{version}'
-
     with st.container(border=True):
-        st.markdown('**Nova regra**')
-        new_target = st.text_input('Coluna', key=target_key, placeholder='Ex: Tipo')
-        new_value = st.text_input('Valor', key=value_key, placeholder='Ex: Produto')
-        new_only_empty = st.toggle('Somente quando estiver vazio', value=True, key=empty_key)
-        if st.button('Adicionar regra', use_container_width=True, key='rules_center_add_custom_rule', disabled=not master_enabled):
-            target = str(new_target or '').strip()
-            if not target:
-                st.warning('Informe a coluna da nova regra.')
-            else:
-                new_rule = {
-                    'id': user_rule_id(len(updated_user_rules) + 1, target),
-                    'condition': target,
-                    'target_column': target,
-                    'fill_value': str(new_value or ''),
-                    'only_when_empty': bool(new_only_empty),
-                    'enabled': True,
-                    'source': 'user',
-                }
-                updated_user_rules.append(new_rule)
-                st.session_state[NEW_RULE_VERSION_KEY] = version + 1
-                st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Regra adicionada.'
-                st.rerun()
+        st.markdown('##### Regras personalizadas')
+        st.caption('Crie, edite ou exclua regras específicas.')
+
+        notice = st.session_state.pop(CUSTOM_RULE_NOTICE_KEY, '')
+        if notice:
+            st.success(notice)
+
+        system_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and _is_system_rule(rule)]
+        user_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and not _is_system_rule(rule)]
+
+        updated_user_rules: list[dict[str, Any]] = []
+        if user_rules:
+            for index, rule in enumerate(user_rules):
+                rendered = _render_custom_rule_card(rule, index, master_enabled)
+                if rendered:
+                    updated_user_rules.append(rendered)
+        else:
+            st.caption('Nenhuma regra personalizada criada.')
+
+        version = int(st.session_state.get(NEW_RULE_VERSION_KEY, 0) or 0)
+        target_key = f'rules_center_new_rule_target_{version}'
+        value_key = f'rules_center_new_rule_value_{version}'
+        empty_key = f'rules_center_new_rule_only_empty_{version}'
+
+        with st.container(border=True):
+            st.markdown('**Nova regra**')
+            new_target = st.text_input('Coluna', key=target_key, placeholder='Ex: Tipo')
+            new_value = st.text_input('Valor', key=value_key, placeholder='Ex: Produto')
+            new_only_empty = st.toggle('Somente quando estiver vazio', value=True, key=empty_key)
+            if st.button('Adicionar regra', use_container_width=True, key='rules_center_add_custom_rule', disabled=not master_enabled):
+                target = str(new_target or '').strip()
+                if not target:
+                    st.warning('Informe a coluna da nova regra.')
+                else:
+                    new_rule = {
+                        'id': user_rule_id(len(updated_user_rules) + 1, target),
+                        'condition': target,
+                        'target_column': target,
+                        'fill_value': str(new_value or ''),
+                        'only_when_empty': bool(new_only_empty),
+                        'enabled': True,
+                        'source': 'user',
+                    }
+                    updated_user_rules.append(new_rule)
+                    st.session_state[NEW_RULE_VERSION_KEY] = version + 1
+                    st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Regra adicionada.'
+                    st.rerun()
 
     return system_rules + updated_user_rules
 
@@ -384,23 +356,9 @@ def render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
         has_enabled_custom = any(bool(rule.get('enabled')) for rule in custom_rules if isinstance(rule, dict))
         st.session_state[DEFAULT_RULES_ENABLED_KEY] = bool(has_enabled_custom)
 
-    _small_title('Padrões opcionais', 'Medidas, campos padrão e regras extras ficam agrupados aqui.')
-    col_toggle, col_disable = st.columns([2, 1])
-    with col_toggle:
-        master_enabled = st.toggle(
-            'Usar padrões opcionais',
-            value=bool(st.session_state.get(DEFAULT_RULES_ENABLED_KEY, False)),
-            key=DEFAULT_RULES_ENABLED_KEY,
-            help='Liga ou desliga medidas, campos padrão, campos adicionais e regras personalizadas.',
-        )
-    with col_disable:
-        if st.button('Desligar opcionais', use_container_width=True, key='rules_center_disable_optional_rules'):
-            st.session_state[DEFAULT_RULES_ENABLED_KEY] = False
-            updated['custom_rules'] = _disable_all_default_rules(custom_rules)
-            st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Padrões opcionais desligados.'
-            st.rerun()
-
+    master_enabled = bool(st.session_state.get(DEFAULT_RULES_ENABLED_KEY, True))
     updated, custom_rules = _render_default_rules_body(updated, custom_rules, master_enabled)
+    st.divider()
     custom_rules = render_custom_rules(custom_rules, master_enabled=master_enabled)
 
     updated['custom_rules'] = custom_rules
@@ -409,7 +367,6 @@ def render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     'DEFAULT_RULES_ENABLED_KEY',
-    'disable_all_rules',
     'render_basic_defaults',
     'render_custom_rules',
     'render_default_rules',
