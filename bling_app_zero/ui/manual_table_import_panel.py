@@ -35,15 +35,23 @@ def _render_copy_steps_box() -> None:
 <div style="background:#fff8ed;border:1px solid #ffd59b;border-left:6px solid #fb8c00;border-radius:12px;padding:14px 16px;margin:10px 0;color:#4b2800;">
   <div style="font-weight:800;margin-bottom:6px;">🔐 Captura segura para site protegido, login, duas etapas, CAPTCHA, Cloudflare ou firewall</div>
   <div style="font-size:0.94rem;line-height:1.55;">
-    <b>Opção rápida no Chrome:</b><br>
-    1. Abra o fornecedor em outra aba pelo navegador normal.<br>
+    <b>Desktop ou notebook — caminho recomendado:</b><br>
+    1. Abra o fornecedor em outra aba pelo Chrome, Edge ou navegador normal.<br>
     2. Faça login e resolva a segurança, CAPTCHA ou verificação em duas etapas.<br>
     3. Entre na tela/listagem dos produtos.<br>
-    4. Use <b>Ctrl + U</b> para abrir o código-fonte da página.<br>
-    5. Use <b>Ctrl + A</b> para selecionar tudo.<br>
-    6. Use <b>Ctrl + C</b> para copiar.<br>
-    7. Volte aqui, cole no campo <b>Ou cole aqui a tabela/HTML copiado</b> e clique em <b>Importar tabela para o fluxo</b>.<br><br>
-    <b>Quando houver muitos produtos:</b> role/carregue a lista antes de copiar, aumente a quantidade por página quando existir, ou use o capturador abaixo em <b>Varrer páginas</b> para gerar um HTML único com várias páginas/blocos.
+    4. Se existir filtro de quantidade por página, selecione a <b>maior quantidade disponível</b> antes de copiar ou salvar.<br>
+    5. Use <b>Ctrl + U</b> para abrir o código-fonte da página.<br>
+    6. Use <b>Ctrl + A</b> para selecionar tudo.<br>
+    7. Use <b>Ctrl + C</b> para copiar.<br>
+    8. Volte aqui, cole no campo <b>Ou cole aqui a tabela/HTML copiado</b> e clique em <b>Importar tabela para o fluxo</b>.<br><br>
+    <b>Mobile/celular — caminho diferente:</b><br>
+    1. Abra o fornecedor no Chrome do celular e faça login normalmente.<br>
+    2. Vá até a página de produtos, categoria, listagem ou produto atual.<br>
+    3. Filtre para exibir a <b>maior quantidade de produtos visível na tela</b>, quando existir essa opção.<br>
+    4. Toque na <b>setinha apontada para baixo</b> do Chrome para fazer o download da página atual.<br>
+    5. Volte aqui e envie o arquivo baixado no campo <b>Enviar HTML/CSV/XLSX exportado ou salvo do fornecedor</b>.<br>
+    6. Se os produtos estiverem em várias páginas, baixe <b>cada página individualmente</b> e envie todos os arquivos juntos. O sistema junta tudo e remove duplicados.<br><br>
+    <b>Resumo:</b> desktop/notebook é melhor para copiar HTML ou usar o capturador. No mobile, o caminho mais confiável é baixar a página atual e anexar o arquivo salvo aqui.
   </div>
 </div>
         ''',
@@ -53,9 +61,9 @@ def _render_copy_steps_box() -> None:
 
 def _render_safety_notes(operation: str) -> None:
     if operation == 'estoque':
-        _orange_info('No fluxo de estoque, a importação continuará respeitando as colunas solicitadas pelo modelo de estoque. O que não for encontrado no HTML fica vazio.')
+        _orange_info('No fluxo de estoque, a importação continuará respeitando as colunas solicitadas pelo modelo de estoque. O que não for encontrado no HTML fica vazio. No mobile, baixe cada página pela setinha do Chrome e envie os arquivos aqui.')
     else:
-        _orange_info('Esta área é o caminho seguro para fornecedores protegidos: o sistema não tenta burlar CAPTCHA nem pedir senha; ele só interpreta o HTML/tabela que você já conseguiu acessar legitimamente no Chrome.')
+        _orange_info('Esta área é o caminho seguro para fornecedores protegidos. No desktop/notebook você pode copiar HTML; no mobile, baixe a página atual pela setinha do Chrome e envie o arquivo salvo. O sistema não pede senha nem cookies.')
 
 
 def _read_spreadsheet(file_bytes: bytes, file_name: str) -> pd.DataFrame:
@@ -303,7 +311,7 @@ def render_manual_table_import_panel(
         placeholder='Cole aqui o HTML copiado com Ctrl+U > Ctrl+A > Ctrl+C, uma tabela copiada da página, ou blocos de produto copiados do fornecedor.',
         height=180,
         key=f'manual_supplier_table_pasted_{operation}',
-        help='Para página protegida, faça login no Chrome primeiro. O sistema não precisa da sua senha nem dos seus cookies.',
+        help='Para página protegida, faça login no Chrome primeiro. No mobile, prefira baixar a página atual pela setinha do Chrome e enviar o arquivo salvo.',
     )
 
     if st.button('📥 Importar tabela para o fluxo', use_container_width=True, key=f'manual_supplier_table_import_{operation}'):
