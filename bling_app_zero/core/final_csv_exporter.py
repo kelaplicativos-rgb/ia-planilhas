@@ -108,15 +108,7 @@ def sanitize_final_dataframe(
     explicit_empty_columns: Sequence[object] | None = None,
     run_download_features: bool = True,
 ) -> pd.DataFrame:
-    """Blindagem única antes do CSV final dos fluxos Bling.
-
-    Usado por cadastro, estoque e preços multiloja:
-    - remove colunas internas;
-    - limpa texto/BOM/quebras de linha;
-    - protege campos marcados como "deixar vazio";
-    - executa features globais de download quando aplicável;
-    - reaplica contrato no último segundo.
-    """
+    """Blindagem única antes do CSV final dos fluxos Bling."""
     if df is None:
         return enforce_contract(None, contract_columns)
 
@@ -205,6 +197,8 @@ __all__ = [
     'DEFAULT_ENCODING',
     'DEFAULT_SEPARATOR',
     'FinalCsvExportResult',
+    'INTERNAL_COLUMN_PREFIXES',
+    'RESPONSIBLE_FILE',
     'build_final_csv_export',
     'clean_columns',
     'clean_explicit_empty_columns',
