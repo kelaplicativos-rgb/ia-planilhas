@@ -23,6 +23,15 @@ def _clean_contract_columns(contract_columns: Sequence[object] | None) -> list[s
     return cleaned
 
 
+def _contract_from_input_df(df: pd.DataFrame | None, contract_columns: Sequence[object] | None) -> list[str]:
+    explicit = _clean_contract_columns(contract_columns)
+    if explicit:
+        return explicit
+    if isinstance(df, pd.DataFrame):
+        return _clean_contract_columns(list(df.columns))
+    return []
+
+
 def enforce_export_contract(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> pd.DataFrame:
     """Aplica a trava final do contrato antes do CSV.
 
@@ -47,20 +56,22 @@ def sanitize_for_bling(
     """Sanitiza o DataFrame final usando o runtime oficial BLINGMODULE.
 
     Regra de exportação:
+    - o DataFrame que chega aqui já deve estar no modelo ativo do Bling;
     - features podem limpar valores;
     - features não podem alterar o contrato final do CSV;
-    - a última operação antes do CSV é sempre reindexar no cabeçalho do modelo.
+    - se nenhum contrato explícito vier, o contrato é o cabeçalho recebido.
     """
     if df is None:
         return enforce_export_contract(None, contract_columns)
 
+    contract = _contract_from_input_df(df, contract_columns)
     context = run_features_for_stage(
         operation=str(operation or 'global').strip().lower() or 'global',
         stage='download',
         final_df=df.copy().fillna(''),
     )
     safe = context.final_df if isinstance(context.final_df, pd.DataFrame) else df.copy().fillna('')
-    return enforce_export_contract(safe.fillna(''), contract_columns)
+    return enforce_export_contract(safe.fillna(''), contract)
 
 
 def to_bling_csv_bytes(
