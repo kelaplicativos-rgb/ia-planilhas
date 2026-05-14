@@ -22,14 +22,14 @@ class SidebarTool:
     renderer: SidebarRenderer
 
 
-def _render_maintenance_panel_lazy() -> None:
-    from bling_app_zero.ui.maintenance_panel import render_maintenance_panel
+def _render_support_diagnostic_panel_lazy() -> None:
+    from bling_app_zero.ui.support_diagnostic_panel import render_support_diagnostic_panel
 
-    render_maintenance_panel()
+    render_support_diagnostic_panel()
 
 
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
-    SidebarTool('Enviar diagnóstico para suporte', _render_maintenance_panel_lazy),
+    SidebarTool('Enviar diagnóstico para suporte', _render_support_diagnostic_panel_lazy),
 )
 
 
@@ -40,7 +40,7 @@ def _render_sidebar_header() -> None:
             <section class="bling-sidebar-hero" aria-label="Suporte técnico">
                 <div class="bling-sidebar-kicker">Suporte</div>
                 <div class="bling-sidebar-title">Enviar diagnóstico</div>
-                <div class="bling-sidebar-text">Baixe um pacote único com logs, auditoria e estado seguro da sessão para enviar no BLINGFIX.</div>
+                <div class="bling-sidebar-text">Gere um pacote único com logs, auditoria e estado seguro da sessão para enviar no BLINGFIX.</div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -111,7 +111,7 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'minimal_support_bundle_only',
+            'mode': 'minimal_support_diagnostic_on_demand',
             'removed_panels': [
                 'BLINGSCAN automático',
                 'Assistente IA de correção',
