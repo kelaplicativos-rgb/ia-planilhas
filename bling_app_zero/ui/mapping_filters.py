@@ -6,19 +6,13 @@ from bling_app_zero.core.text import normalize_key
 from bling_app_zero.ui.mapping_sidebar_rule_badge import SIDEBAR_RULE_FILTER_LABEL, filter_sidebar_rule_targets, sidebar_rule_count
 
 FILTER_ALL = 'Todos'
-FILTER_RED = '🔴 Vermelhos'
-FILTER_YELLOW = '🟡 Amarelos'
-FILTER_GREEN = '🟢 Verdes'
+FILTER_RED = 'Pendentes'
+FILTER_YELLOW = 'Conferir'
+FILTER_GREEN = 'Prontos'
 FILTER_REQUIRED = 'Obrigatórios'
 
 
 def _normalize_target_list(targets: list[str] | tuple[str, ...] | set[str]) -> list[str]:
-    """Remove duplicados preservando ordem.
-
-    BLINGFIX: o contador do topo do mapeamento precisa contar campos do Bling,
-    não ocorrências duplicadas vindas do estado/widget. Isso impede números
-    impossíveis como 56 verdes em uma tela com 9 campos.
-    """
     normalized: list[str] = []
     seen: set[str] = set()
     for target in targets:
@@ -32,6 +26,10 @@ def _normalize_target_list(targets: list[str] | tuple[str, ...] | set[str]) -> l
 
 def _level_for(confidence: dict[str, dict[str, object]], target: str) -> str:
     return str(confidence.get(target, {}).get('level') or '').strip().lower()
+
+
+def _short_summary(*, selected: int, total: int, red: int, yellow: int, green: int, purple: int, required: int) -> str:
+    return f'{selected}/{total} campos · 🔴 {red} · 🟡 {yellow} · 🟢 {green} · 🟣 {purple} · Obrig. {required}'
 
 
 def filter_targets(
@@ -51,22 +49,26 @@ def filter_targets(
     required = [target for target in ordered_targets if target in required_targets]
     sidebar_targets = filter_sidebar_rule_targets(ordered_targets, sidebar_rule_targets)
 
-    col_filter, col_search = st.columns([1, 1])
-    with col_filter:
-        options = [FILTER_ALL, FILTER_RED, FILTER_YELLOW, FILTER_GREEN, SIDEBAR_RULE_FILTER_LABEL, FILTER_REQUIRED]
-        mode = st.radio(
-            'Visualização do mapeamento',
-            options,
-            horizontal=True,
-            key=f'{mapping_key}_view_mode',
-        )
-    with col_search:
-        search = st.text_input(
-            'Buscar campo do Bling',
-            value='',
-            key=f'{mapping_key}_search',
-            placeholder='Ex: preço, fornecedor, GTIN, imagem...',
-        )
+    mode_options = [FILTER_ALL, FILTER_RED, FILTER_YELLOW, FILTER_GREEN, SIDEBAR_RULE_FILTER_LABEL, FILTER_REQUIRED]
+
+    with st.container(border=True):
+        col_mode, col_search = st.columns([0.44, 0.56])
+        with col_mode:
+            mode = st.selectbox(
+                'Ver',
+                mode_options,
+                index=0,
+                key=f'{mapping_key}_view_mode',
+                label_visibility='collapsed',
+            )
+        with col_search:
+            search = st.text_input(
+                'Buscar',
+                value='',
+                key=f'{mapping_key}_search',
+                placeholder='Buscar campo...',
+                label_visibility='collapsed',
+            )
 
     if mode == FILTER_RED:
         selected = red_targets
@@ -92,9 +94,15 @@ def filter_targets(
     required_count = len(required)
 
     st.caption(
-        f'Mostrando {len(selected)} de {len(ordered_targets)} campo(s). '
-        f'🔴 {red_count} · 🟡 {yellow_count} · 🟢 {green_count} · '
-        f'🟣 {purple_count} · Obrigatórios {required_count}.'
+        _short_summary(
+            selected=len(selected),
+            total=len(ordered_targets),
+            red=red_count,
+            yellow=yellow_count,
+            green=green_count,
+            purple=purple_count,
+            required=required_count,
+        )
     )
     return selected
 
