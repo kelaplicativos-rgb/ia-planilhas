@@ -18,9 +18,11 @@ class RemoteBrowserConfig:
 
 @dataclass
 class RemoteBrowserCommand:
-    action: Literal['open', 'click_selector', 'click_text', 'type_selector', 'press', 'scroll_down', 'scroll_up', 'snapshot']
+    action: Literal['open', 'click_selector', 'click_text', 'click_xy', 'type_selector', 'press', 'scroll_down', 'scroll_up', 'snapshot']
     value: str = ''
     text: str = ''
+    x: int | None = None
+    y: int | None = None
 
 
 @dataclass
@@ -112,12 +114,20 @@ def open_remote_browser_snapshot(config: RemoteBrowserConfig) -> RemoteBrowserSn
     return run_remote_browser_command(config, RemoteBrowserCommand(action='open', value=config.url))
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(str(value).replace(',', '.')))
+    except Exception:
+        return default
+
+
 def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrowserCommand) -> RemoteBrowserSnapshot:
     """Executa um comando no Chromium real do servidor e devolve novo snapshot.
 
     Não é noVNC: cada comando abre Chromium, reaplica storage_state, executa a ação,
     salva cookies/localStorage e fecha. Isso permite controle operacional seguro no
-    Streamlit: navegar, clicar, digitar, pressionar tecla e rolar a página.
+    Streamlit: navegar, clicar por seletor/texto/coordenada, digitar, pressionar tecla
+    e rolar a página.
     """
     url = _clean_url(config.url)
     if not url:
@@ -151,6 +161,10 @@ def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrows
                 page.locator(value).first.click(timeout=10_000)
             elif action == 'click_text' and value:
                 page.get_by_text(value, exact=False).first.click(timeout=10_000)
+            elif action == 'click_xy':
+                x = max(0, min(_safe_int(command.x), int(config.width) - 1))
+                y = max(0, min(_safe_int(command.y), int(config.height) - 1))
+                page.mouse.click(x, y)
             elif action == 'type_selector' and value:
                 page.locator(value).first.fill(text, timeout=10_000)
             elif action == 'press':
@@ -167,7 +181,13 @@ def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrows
             except Exception:
                 pass
             page.wait_for_timeout(500)
-            snapshot = _snapshot_from_page(page, config=config, url=url, warnings=warnings, meta={'action': action, 'value': value, 'width': config.width, 'height': config.height})
+            snapshot = _snapshot_from_page(
+                page,
+                config=config,
+                url=url,
+                warnings=warnings,
+                meta={'action': action, 'value': value, 'x': command.x, 'y': command.y, 'width': config.width, 'height': config.height},
+            )
             browser.close()
             return snapshot
     except Exception as exc:
