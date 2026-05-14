@@ -8,13 +8,14 @@ from typing import Any
 import streamlit as st
 
 LOG_SESSION_KEY = 'logs'
-MAX_LOG_ITEMS = 300
+MAX_LOG_ITEMS = 120
 DEBUG_HOME_OPEN_KEY = 'debug_home_area_open'
 
 
 def _log_key() -> str:
     try:
         from bling_app_zero.v2.session_store import state_key
+
         return state_key('logs')
     except Exception:
         return LOG_SESSION_KEY
@@ -23,6 +24,7 @@ def _log_key() -> str:
 def _debug_open_key() -> str:
     try:
         from bling_app_zero.v2.session_store import state_key
+
         return state_key('debug_home_area_open')
     except Exception:
         return DEBUG_HOME_OPEN_KEY
@@ -66,7 +68,7 @@ def _collect_state_context(keys: list[str] | tuple[str, ...] | set[str] | None) 
     if not keys:
         return {}
     context: dict[str, str] = {}
-    for key in list(keys)[:30]:
+    for key in list(keys)[:20]:
         text_key = str(key or '').strip()
         if not text_key or text_key not in st.session_state:
             continue
