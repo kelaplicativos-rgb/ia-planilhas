@@ -185,12 +185,17 @@ Apenas faça a varredura e entregue o relatório.
 '''
 
 
-def _render_prompt_actions(prompt: str) -> None:
+def _widget_key(key_prefix: str, suffix: str) -> str:
+    prefix = str(key_prefix or 'sidebar').strip() or 'sidebar'
+    return f'{prefix}_{suffix}'
+
+
+def _render_prompt_actions(prompt: str, *, key_prefix: str) -> None:
     st.text_area(
         'Prompt BLINGSCAN pronto para copiar',
         value=prompt,
         height=420,
-        key='blingscan_prompt_textarea',
+        key=_widget_key(key_prefix, 'blingscan_prompt_textarea'),
     )
     st.download_button(
         '⬇️ Baixar prompt BLINGSCAN .txt',
@@ -198,23 +203,34 @@ def _render_prompt_actions(prompt: str) -> None:
         file_name='blingscan_prompt.txt',
         mime='text/plain',
         use_container_width=True,
-        key='download_blingscan_prompt_txt',
+        key=_widget_key(key_prefix, 'download_blingscan_prompt_txt'),
     )
 
 
-def render_blingscan_prompt_panel() -> None:
-    st.markdown('##### BLINGSCAN automático')
-    st.caption('Gera um prompt completo com o estado atual da sessão para varrer fluxo, layout, botões, mapeamento, preview e exportação.')
+def render_blingscan_prompt_panel(*, key_prefix: str = 'sidebar', compact: bool = False) -> None:
+    """Renderiza o botão BLINGSCAN em qualquer área da UI sem conflito de chaves.
 
-    if st.button('🔎 Executar varredura BLINGSCAN', use_container_width=True, key='run_blingscan_prompt_builder'):
+    O mesmo painel pode nascer na Home inicial e continuar disponível na sidebar.
+    As chaves visuais mudam por ``key_prefix``, mas o prompt gerado fica salvo em
+    uma chave global para o usuário poder copiar/baixar de qualquer lugar.
+    """
+    if compact:
+        st.markdown('##### 🔎 BLINGSCAN')
+        st.caption('Gera o prompt de varredura com o estado atual da sessão, pronto para copiar ou baixar.')
+    else:
+        st.markdown('##### BLINGSCAN automático')
+        st.caption('Gera um prompt completo com o estado atual da sessão para varrer fluxo, layout, botões, mapeamento, preview e exportação.')
+
+    if st.button('🔎 Executar varredura BLINGSCAN', use_container_width=True, key=_widget_key(key_prefix, 'run_blingscan_prompt_builder')):
         prompt = build_blingscan_prompt()
         st.session_state[BLINGSCAN_PROMPT_KEY] = prompt
         st.session_state[BLINGSCAN_LAST_RUN_KEY] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-        add_debug('Prompt BLINGSCAN gerado pela sidebar.', origin='BLINGSCAN')
+        add_debug(f'Prompt BLINGSCAN gerado em {key_prefix}.', origin='BLINGSCAN')
         add_audit_event(
             'blingscan_prompt_generated',
             area='DIAGNOSTICO',
             details={
+                'location': key_prefix,
                 'responsible_file': RESPONSIBLE_FILE,
                 'state_keys_scanned': list(STATE_KEYS_TO_SCAN),
             },
@@ -227,7 +243,7 @@ def render_blingscan_prompt_panel() -> None:
 
     last_run = st.session_state.get(BLINGSCAN_LAST_RUN_KEY, 'agora')
     st.success(f'Prompt BLINGSCAN gerado em {last_run}.')
-    _render_prompt_actions(str(prompt))
+    _render_prompt_actions(str(prompt), key_prefix=key_prefix)
 
     st.warning('Depois de colar este prompt no ChatGPT, se aparecer erro grave, execute BLINGFIX para corrigir.')
 
