@@ -5,7 +5,7 @@ import pandas as pd
 
 def _norm(value: object) -> str:
     text = str(value or '').strip().lower()
-    table = str.maketrans('áàãâäéèêëíìîïóòõôöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')
+    table = str.maketrans('áàãâäéèêëíìîïóòõöúùûüç', 'aaaaaeeeeiiiioooouuuuc')
     text = text.translate(table)
     return ''.join(ch for ch in text if ch.isalnum())
 
@@ -20,6 +20,7 @@ IDENTIFIER_CANDIDATES = {
 
 
 KIND_LABELS = {
+    'manual': 'Mapeamento manual',
     'id_store': 'ID na Loja',
     'id_product': 'IdProduto',
     'sku': 'SKU/Código',
@@ -52,11 +53,26 @@ def _clean_match_key(series: pd.Series) -> pd.Series:
     return series.fillna('').astype(str).str.strip()
 
 
+def _resolve_identifier_columns(
+    base: pd.DataFrame,
+    source: pd.DataFrame,
+    model_identifier_column: str = '',
+    source_identifier_column: str = '',
+) -> tuple[str, str, str]:
+    model_col = str(model_identifier_column or '').strip()
+    source_col = str(source_identifier_column or '').strip()
+    if model_col in base.columns and source_col in source.columns:
+        return 'manual', model_col, source_col
+    return find_best_identifier(base, source)
+
+
 def merge_source_cost(
     model_df: pd.DataFrame,
     source_df: pd.DataFrame,
     source_cost_column: str,
     output_cost_column: str = '_v2_custo_base',
+    model_identifier_column: str = '',
+    source_identifier_column: str = '',
 ) -> pd.DataFrame:
     base = model_df.copy().fillna('') if isinstance(model_df, pd.DataFrame) else pd.DataFrame()
     source = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
@@ -66,7 +82,7 @@ def merge_source_cost(
         base[output_cost_column] = ''
         return base
 
-    _kind, model_id, source_id = find_best_identifier(base, source)
+    _kind, model_id, source_id = _resolve_identifier_columns(base, source, model_identifier_column, source_identifier_column)
     if not model_id or not source_id:
         base[output_cost_column] = ''
         return base
@@ -92,20 +108,16 @@ def build_not_included_audit(
     model_df: pd.DataFrame,
     source_df: pd.DataFrame | None,
     source_cost_column: str = '',
+    model_identifier_column: str = '',
+    source_identifier_column: str = '',
 ) -> pd.DataFrame:
-    """Lista produtos da origem que não entraram na operação multiloja.
-
-    A operação de preços multiloja só consegue alterar produtos que já existem
-    na planilha exportada do Bling. Esta auditoria mostra itens da planilha de
-    custo/origem que não tiveram correspondente no modelo do Bling, para que o
-    usuário saiba o que ficou fora do CSV de importação.
-    """
+    """Lista produtos da origem que não entraram na operação multiloja."""
     base = model_df.copy().fillna('') if isinstance(model_df, pd.DataFrame) else pd.DataFrame()
     source = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
     if base.empty or source.empty:
         return pd.DataFrame()
 
-    kind, model_id, source_id = find_best_identifier(base, source)
+    kind, model_id, source_id = _resolve_identifier_columns(base, source, model_identifier_column, source_identifier_column)
     if not model_id or not source_id:
         audit = source.copy().fillna('')
         audit.insert(0, 'Motivo auditoria', 'Sem identificador comum para cruzar com a planilha do Bling')
