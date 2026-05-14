@@ -149,7 +149,7 @@ def _render_suggestions_editor(suggestions_df: pd.DataFrame, editor_key: str) ->
         hide_index=True,
         disabled=disabled_columns,
         column_config={
-            'Aplicar': st.column_config.CheckboxColumn('Aplicar', help='Marque as sugestões que devem entrar no CSV final.'),
+            'Aplicar': st.column_config.CheckboxColumn('Aplicar', help='Marcado = entra no CSV final.'),
             'Sugestão IA': st.column_config.TextColumn('Sugestão IA', help='Você pode ajustar o texto antes de aplicar.'),
         },
         key=editor_key,
@@ -199,10 +199,7 @@ def _progress_callback(progress_bar: object, status_box: object, counter_box: ob
         progress = max(0.0, min(1.0, float(info.get('progress') or 0.0)))
         progress_bar.progress(progress, text=f'{stage}: {current}/{total} produto(s) · {percent}%')
         status_box.caption(message)
-        counter_box.markdown(
-            f'<div style="font-size:.9rem;color:#64748b;font-weight:700;text-align:center;">{current} de {total} produto(s) processado(s)</div>',
-            unsafe_allow_html=True,
-        )
+        counter_box.caption(f'{current} de {total} produto(s) processado(s)')
     return _callback
 
 
@@ -216,6 +213,24 @@ def _append_suggestions(existing: object, new_df: pd.DataFrame) -> pd.DataFrame:
     if subset:
         combined = combined.drop_duplicates(subset=subset, keep='last')
     return combined.reset_index(drop=True)
+
+
+def _marked_suggestions_count(df: pd.DataFrame) -> int:
+    if not isinstance(df, pd.DataFrame) or df.empty or 'Aplicar' not in df.columns:
+        return 0
+    return int(df['Aplicar'].fillna(False).astype(bool).sum())
+
+
+def _affected_products_count(df: pd.DataFrame) -> int:
+    if not isinstance(df, pd.DataFrame) or df.empty or 'Linha' not in df.columns:
+        return 0
+    if 'Aplicar' in df.columns:
+        selected = df[df['Aplicar'].fillna(False).astype(bool)]
+    else:
+        selected = df
+    if selected.empty:
+        return 0
+    return int(selected['Linha'].nunique())
 
 
 def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
@@ -237,7 +252,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         <div class="bling-inline-card">
             <div class="bling-flow-card-kicker">IA de catálogo</div>
             <div class="bling-flow-card-title">Revisar produtos com IA</div>
-            <p class="bling-flow-card-text">Configure e execute a IA diretamente aqui no preview final. As sugestões aparecem para revisão antes de aplicar no CSV.</p>
+            <p class="bling-flow-card-text">A IA analisa todos os produtos do preview final e gera sugestões apenas onde encontrar ajuste seguro.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -280,25 +295,25 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
             [5, 10, 20, 50],
             index=1,
             key=_state_key(op, signature, 'batch_size'),
-            help='Use 5 ou 10 quando a IA estiver dando timeout.',
+            help='Use 5 ou 10 quando a IA estiver dando timeout. Isso não muda o total, só divide o processamento.',
         )
     with col_limit:
         max_rows_run = st.number_input(
-            'Máximo nesta rodada',
+            'Analisar produtos nesta execução',
             min_value=5,
             max_value=max(5, total_rows),
-            value=min(50, max(5, remaining or total_rows)),
+            value=max(5, remaining or total_rows),
             step=5,
             key=_state_key(op, signature, 'max_rows_run'),
-            help='Permite rodar em partes e continuar depois sem travar.',
+            help='Padrão: todos os produtos restantes. Reduza apenas se houver timeout.',
         )
 
     if current_offset > 0 and current_offset < total_rows:
-        st.info(f'Continuação disponível: próxima execução começa em {current_offset + 1}/{total_rows}.')
+        st.info(f'Continuação disponível: próxima execução começa em {current_offset + 1}/{total_rows} e pode analisar todos os {remaining} produto(s) restantes.')
     elif current_offset >= total_rows:
-        st.success('Todas as linhas já passaram por esta execução da IA. Você pode reiniciar se quiser gerar novamente.')
+        st.success('Todos os produtos já foram analisados pela IA. Agora aplique as sugestões geradas.')
     else:
-        st.info(f'A próxima execução da IA começa na linha 1 e pode analisar até {int(max_rows_run)} de {total_rows} linha(s).')
+        st.info(f'A próxima execução pode analisar todos os {total_rows} produto(s) do preview final.')
 
     col_reset, _ = st.columns([1, 2])
     with col_reset:
@@ -309,7 +324,8 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
             st.rerun()
 
     can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task) and current_offset < total_rows
-    if st.button(f'🤖 Executar IA no preview final de {label}', use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
+    run_label = f'🤖 Analisar todos os produtos restantes com IA · {label}'
+    if st.button(run_label, use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
         progress_bar, status_box, counter_box = _make_preview_ai_progress()
         suggestions, status, next_offset = generate_product_ai_suggestions_batched(
             df_final,
@@ -325,7 +341,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         st.session_state[status_key] = status
         st.session_state[offset_key] = next_offset
         add_debug(f'IA de catálogo executada de {current_offset + 1} até {next_offset} de {total_rows} linha(s) no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
-        st.success(f'IA processou até {next_offset}/{total_rows} produto(s).')
+        st.success(f'IA analisou até {next_offset}/{total_rows} produto(s).')
         st.rerun()
 
     status = st.session_state.get(status_key)
@@ -340,8 +356,12 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     st.session_state[suggestions_key] = suggestions_df
 
     if suggestions_df.empty:
-        st.info('A IA não encontrou alterações seguras para aplicar nesta rodada.')
+        st.info('A IA analisou os produtos, mas não encontrou alterações seguras para aplicar.')
         return
+
+    total_suggestions = int(len(suggestions_df))
+    affected_before_editor = _affected_products_count(suggestions_df)
+    st.info(f'IA analisou {min(current_offset, total_rows)}/{total_rows} produto(s) e gerou {total_suggestions} sugestão(ões) para {affected_before_editor} produto(s). Produtos sem sugestão não serão alterados.')
 
     st.markdown('##### Antes/depois sugerido pela IA')
     edited = _render_suggestions_editor(suggestions_df, editor_key)
@@ -350,15 +370,17 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     with st.expander('Prévia do CSV final se aplicar as sugestões marcadas', expanded=False):
         preview_df(f'Prévia com IA · {label}', preview_applied)
 
-    apply_count = int(edited['Aplicar'].sum()) if 'Aplicar' in edited.columns else 0
-    if st.button(f'✅ Aplicar {apply_count} sugestão(ões) no CSV final', use_container_width=True, key=_state_key(op, signature, 'apply')):
+    apply_count = _marked_suggestions_count(edited)
+    affected_products = _affected_products_count(edited)
+    button_label = f'✅ Aplicar {apply_count} sugestão(ões) em {affected_products} produto(s) do CSV final'
+    if st.button(button_label, use_container_width=True, key=_state_key(op, signature, 'apply')):
         if apply_count <= 0:
             st.warning('Nenhuma sugestão marcada para aplicar.')
             return
         df_applied = apply_product_ai_suggestions(df_final, edited)
         _store_applied_df(op, df_applied)
-        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas no CSV final de {label}.', origin='PREVIEW_IA', level='INFO')
-        st.success('Sugestões aplicadas no CSV final. Confira novamente o preview antes de baixar.')
+        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas em {affected_products} produto(s) no CSV final de {label}.', origin='PREVIEW_IA', level='INFO')
+        st.success(f'Sugestões aplicadas em {affected_products} produto(s). Confira novamente o preview antes de baixar.')
         st.rerun()
 
 
