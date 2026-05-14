@@ -22,6 +22,42 @@ def _clean(value: object) -> str:
     return ' '.join(str(value or '').replace('\xa0', ' ').split()).strip()
 
 
+def _orange_info(message: str) -> None:
+    st.markdown(
+        f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_copy_steps_box() -> None:
+    st.markdown(
+        '''
+<div style="background:#fff8ed;border:1px solid #ffd59b;border-left:6px solid #fb8c00;border-radius:12px;padding:14px 16px;margin:10px 0;color:#4b2800;">
+  <div style="font-weight:800;margin-bottom:6px;">🔐 Captura segura para site protegido, login, duas etapas, CAPTCHA, Cloudflare ou firewall</div>
+  <div style="font-size:0.94rem;line-height:1.55;">
+    <b>Opção rápida no Chrome:</b><br>
+    1. Abra o fornecedor em outra aba pelo navegador normal.<br>
+    2. Faça login e resolva a segurança, CAPTCHA ou verificação em duas etapas.<br>
+    3. Entre na tela/listagem dos produtos.<br>
+    4. Use <b>Ctrl + U</b> para abrir o código-fonte da página.<br>
+    5. Use <b>Ctrl + A</b> para selecionar tudo.<br>
+    6. Use <b>Ctrl + C</b> para copiar.<br>
+    7. Volte aqui, cole no campo <b>Ou cole aqui a tabela/HTML copiado</b> e clique em <b>Importar tabela para o fluxo</b>.<br><br>
+    <b>Quando houver muitos produtos:</b> role/carregue a lista antes de copiar, aumente a quantidade por página quando existir, ou use o capturador abaixo em <b>Varrer páginas</b> para gerar um HTML único com várias páginas/blocos.
+  </div>
+</div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_safety_notes(operation: str) -> None:
+    if operation == 'estoque':
+        _orange_info('No fluxo de estoque, a importação continuará respeitando as colunas solicitadas pelo modelo de estoque. O que não for encontrado no HTML fica vazio.')
+    else:
+        _orange_info('Esta área é o caminho seguro para fornecedores protegidos: o sistema não tenta burlar CAPTCHA nem pedir senha; ele só interpreta o HTML/tabela que você já conseguiu acessar legitimamente no Chrome.')
+
+
 def _read_spreadsheet(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     buffer = BytesIO(file_bytes)
     name = str(file_name or '').lower()
@@ -159,6 +195,33 @@ def _html_to_table(text: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _combine_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    clean_frames = [frame.fillna('').astype(str) for frame in frames if isinstance(frame, pd.DataFrame) and not frame.empty]
+    if not clean_frames:
+        return pd.DataFrame()
+    combined = pd.concat(clean_frames, ignore_index=True, sort=False).fillna('').astype(str)
+    if combined.empty:
+        return combined
+    text_columns = [column for column in combined.columns if combined[column].astype(str).str.strip().any()]
+    if text_columns:
+        combined = combined.drop_duplicates(subset=text_columns, keep='first').reset_index(drop=True)
+    return combined
+
+
+def _read_uploaded_files(uploaded_files: list[object]) -> tuple[pd.DataFrame, str]:
+    frames: list[pd.DataFrame] = []
+    labels: list[str] = []
+    for uploaded in uploaded_files:
+        name = getattr(uploaded, 'name', 'fornecedor.html')
+        labels.append(str(name))
+        file_bytes = uploaded.getvalue()
+        if str(name).lower().endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb')):
+            frames.append(_read_spreadsheet(file_bytes, name))
+        else:
+            frames.append(_html_to_table(file_bytes.decode('utf-8', errors='ignore')))
+    return _combine_frames(frames), 'tabela_fornecedor:' + ','.join(labels)
+
+
 def _store_manual_source(
     df: pd.DataFrame,
     *,
@@ -203,7 +266,7 @@ def _store_manual_source(
 
 def _render_html_capture_toggle(operation: str) -> None:
     show_helper = st.checkbox(
-        '🧲 Mostrar capturador de HTML da página aberta',
+        '🧲 Mostrar capturador guiado de HTML / varrer páginas protegidas',
         value=False,
         key=f'show_html_capture_helper_{operation}',
         help='Use quando o fornecedor não tem botão de exportar. Não usa expander para evitar erro de expander aninhado.',
@@ -221,37 +284,36 @@ def render_manual_table_import_panel(
     df_modelo: pd.DataFrame | None = None,
 ) -> None:
     operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
-    st.markdown('###### Importar tabela do fornecedor')
-    st.caption('Use quando você já abriu o fornecedor e consegue exportar, salvar ou copiar a lista de produtos.')
+    st.markdown('###### Importar site protegido / tabela do fornecedor')
+    st.caption('Use quando você já abriu o fornecedor no Chrome e consegue exportar, salvar ou copiar a lista de produtos depois do login.')
 
+    _render_safety_notes(operation)
+    _render_copy_steps_box()
     _render_html_capture_toggle(operation)
 
-    uploaded = st.file_uploader(
-        'Enviar HTML/CSV/XLSX exportado do fornecedor',
+    uploaded_files = st.file_uploader(
+        'Enviar HTML/CSV/XLSX exportado ou salvo do fornecedor',
         type=['html', 'htm', 'csv', 'xlsx', 'xls', 'xlsm', 'xlsb'],
         key=f'manual_supplier_table_upload_{operation}',
+        accept_multiple_files=True,
+        help='Pode enviar um HTML único, vários HTMLs de páginas diferentes, ou o arquivo gerado pelo capturador em Varrer páginas.',
     )
     pasted = st.text_area(
         'Ou cole aqui a tabela/HTML copiado',
-        placeholder='Cole uma tabela, HTML da página ou blocos de produto copiados da página do fornecedor.',
-        height=120,
+        placeholder='Cole aqui o HTML copiado com Ctrl+U > Ctrl+A > Ctrl+C, uma tabela copiada da página, ou blocos de produto copiados do fornecedor.',
+        height=180,
         key=f'manual_supplier_table_pasted_{operation}',
+        help='Para página protegida, faça login no Chrome primeiro. O sistema não precisa da sua senha nem dos seus cookies.',
     )
 
     if st.button('📥 Importar tabela para o fluxo', use_container_width=True, key=f'manual_supplier_table_import_{operation}'):
-        if uploaded is not None:
-            name = getattr(uploaded, 'name', 'fornecedor.html')
-            file_bytes = uploaded.getvalue()
-            if str(name).lower().endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb')):
-                df = _read_spreadsheet(file_bytes, name)
-            else:
-                df = _html_to_table(file_bytes.decode('utf-8', errors='ignore'))
-            raw_label = f'tabela_fornecedor:{name}'
+        if uploaded_files:
+            df, raw_label = _read_uploaded_files(list(uploaded_files))
         elif pasted.strip():
             df = _html_to_table(pasted)
-            raw_label = 'tabela_fornecedor:conteudo_colado'
+            raw_label = 'tabela_fornecedor:conteudo_colado_html_ou_tabela'
         else:
-            st.warning('Envie um arquivo ou cole uma tabela antes de importar.')
+            st.warning('Envie um arquivo ou cole uma tabela/HTML antes de importar.')
             return
 
         _store_manual_source(
