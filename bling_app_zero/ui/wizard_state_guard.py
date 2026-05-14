@@ -6,7 +6,8 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
-STATE_GUARD_VERSION = '2026-05-12-wizard-regras-guard-1'
+STATE_GUARD_LAST_OPERATION_KEY = 'bling_wizard_state_guard_last_operation'
+STATE_GUARD_VERSION = '2026-05-14-wizard-guard-fast-1'
 
 VALID_STEPS = {
     'modelo',
@@ -148,17 +149,26 @@ def _clear_cross_operation_site_state() -> None:
         st.session_state.pop('tipo_operacao_site', None)
 
 
-def run_wizard_state_guard(force: bool = False) -> None:
-    """Limpa estados antigos que quebram widgets dinâmicos do Streamlit.
+def _needs_heavy_cleanup(force: bool, operation: str) -> bool:
+    if force:
+        return True
+    if st.session_state.get(STATE_GUARD_VERSION_KEY) != STATE_GUARD_VERSION:
+        return True
+    return bool(operation and st.session_state.get(STATE_GUARD_LAST_OPERATION_KEY) != operation)
 
-    Preserva dados importantes do fluxo atual e remove resultados cruzados entre
-    cadastro e estoque, principalmente origem por site salva com operação antiga.
-    A etapa ``regras`` é uma etapa oficial do wizard e nunca deve ser normalizada
-    para ``modelo`` pelo guard.
+
+def run_wizard_state_guard(force: bool = False) -> None:
+    """Guard rápido: limpeza pesada só quando necessário.
+
+    Evita varrer/remover estados em todo rerun. Isso melhora fluidez em celular
+    antigo e reduz custo nas telas do wizard.
     """
-    current_version = st.session_state.get(STATE_GUARD_VERSION_KEY)
-    if force or current_version != STATE_GUARD_VERSION:
-        _clear_legacy_widgets()
-        st.session_state[STATE_GUARD_VERSION_KEY] = STATE_GUARD_VERSION
     _normalize_scalar_state()
+    operation = _selected_operation()
+    if not _needs_heavy_cleanup(force, operation):
+        return
+
+    _clear_legacy_widgets()
     _clear_cross_operation_site_state()
+    st.session_state[STATE_GUARD_VERSION_KEY] = STATE_GUARD_VERSION
+    st.session_state[STATE_GUARD_LAST_OPERATION_KEY] = operation
