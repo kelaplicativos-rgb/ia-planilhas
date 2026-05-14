@@ -9,11 +9,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event, audit_download_payload, get_audit_events, get_audit_session_id
-from bling_app_zero.core.cache_control import clear_streamlit_cache
 from bling_app_zero.core.debug import LOG_SESSION_KEY
-from bling_app_zero.ui.audit_panel import render_audit_panel_body
 
-LOG_BUNDLE_FILENAME = 'bling_logs_completos.zip'
+LOG_BUNDLE_FILENAME = 'bling_diagnostico_completo.zip'
 SENSITIVE_KEYWORDS = (
     'password',
     'senha',
@@ -45,11 +43,12 @@ COMPACT_KEEP_ACTIONS = {
     'model_file_read_failed',
     'model_upload_without_supported_files',
     'model_upload_classified',
+    'home_stale_flow_cleared',
+    'home_operation_selected',
+    'home_operation_cleared',
     'app_critical_error',
     'sidebar_tool_failed',
     'manual_checkpoint',
-    'cache_cleared_manually',
-    'technical_logs_cleared_manually',
 }
 
 
@@ -84,7 +83,7 @@ def _state_value_summary(value: Any) -> dict[str, Any]:
     if hasattr(value, 'shape') and hasattr(value, 'columns'):
         try:
             summary['shape'] = tuple(value.shape)
-            summary['columns'] = [str(col) for col in list(value.columns)[:80]]
+            summary['columns'] = [str(col) for col in list(value.columns)[:100]]
         except Exception:
             pass
         return summary
@@ -98,7 +97,7 @@ def _state_value_summary(value: Any) -> dict[str, Any]:
     if isinstance(value, (bool, int, float)):
         summary['value'] = value
     elif isinstance(value, str):
-        summary['preview'] = value[:180]
+        summary['preview'] = value[:220]
 
     return summary
 
@@ -170,6 +169,7 @@ def _build_log_bundle_zip() -> bytes:
             'audit_events_compact': len(compact_events),
             'session_state_keys': len(st.session_state.keys()),
         },
+        'observacao': 'Pacote seguro para enviar no BLINGFIX. Chaves sensíveis são mascaradas no resumo do estado.',
         'responsible_file': 'bling_app_zero/ui/maintenance_panel.py',
     }
 
@@ -184,74 +184,35 @@ def _build_log_bundle_zip() -> bytes:
     return buffer.getvalue()
 
 
-def _render_cache_tools() -> None:
-    st.markdown('###### Cache')
-    st.caption('Limpa cache interno do Streamlit sem apagar o fluxo atual do usuário.')
-    if st.button('Limpar cache agora', use_container_width=True, key='maintenance_clear_cache_now'):
-        clear_streamlit_cache(reason='manual_sidebar_maintenance')
-        add_audit_event('cache_cleared_manually', area='CACHE', details={'source': 'maintenance_panel'})
-        st.success('Cache limpo. Recarregando...')
-        st.rerun()
-
-
-def _render_log_bundle_download(logs: list[dict]) -> None:
-    audit_events = get_audit_events()
-    has_any_log = bool(logs) or bool(audit_events)
-    st.markdown('###### Pacote completo')
-    st.caption('Baixa todos os logs da sessão em um único arquivo ZIP: debug, audit bruto, audit compacto e resumo seguro do estado.')
-    st.download_button(
-        '⬇️ Baixar todos os logs (.zip)',
-        data=_build_log_bundle_zip(),
-        file_name=LOG_BUNDLE_FILENAME,
-        mime='application/zip',
-        use_container_width=True,
-        key=f'maintenance_download_all_logs_zip_{len(logs)}_{len(audit_events)}',
-        disabled=not has_any_log,
-    )
-
-
-def _render_log_tools() -> None:
-    logs = list(st.session_state.get(LOG_SESSION_KEY, []))
-    st.markdown('###### Logs técnicos')
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('Limpar logs', use_container_width=True, key='maintenance_clear_logs'):
-            st.session_state[LOG_SESSION_KEY] = []
-            add_audit_event('technical_logs_cleared_manually', area='LOGS', details={'source': 'maintenance_panel'})
-            st.success('Logs limpos.')
-            st.rerun()
-    with col_b:
-        st.download_button(
-            'Baixar log debug',
-            data=_logs_to_text(logs).encode('utf-8'),
-            file_name='bling_debug.log',
-            mime='text/plain; charset=utf-8',
-            use_container_width=True,
-            key=f'maintenance_download_debug_log_{len(logs)}',
-            disabled=not bool(logs),
-        )
-
-    _render_log_bundle_download(logs)
-
-    st.caption(f'{len(logs)} evento(s) técnico(s) registrado(s).')
-    show_logs = st.toggle('Ver eventos técnicos', value=False, key='maintenance_show_recent_logs')
-    if show_logs and logs:
-        with st.container(border=True):
-            for item in logs[-25:]:
-                level = item.get('nivel', 'INFO')
-                origin = item.get('origem', 'SISTEMA')
-                message = item.get('mensagem', '')
-                st.caption(f'[{level}] {origin}: {message}')
-
-
 def render_maintenance_panel() -> None:
+    """Sidebar mínima: apenas o arquivo que o usuário precisa enviar no BLINGFIX."""
+    logs = list(st.session_state.get(LOG_SESSION_KEY, []))
+    audit_events = get_audit_events()
+    has_diagnostic_data = bool(logs) or bool(audit_events) or bool(st.session_state.keys())
+
     with st.sidebar:
-        with st.expander('Manutenção do sistema', expanded=False):
-            _render_cache_tools()
-            st.divider()
-            _render_log_tools()
-            st.divider()
-            render_audit_panel_body(source='maintenance_panel')
+        with st.expander('Enviar diagnóstico para suporte', expanded=False):
+            st.caption('Se algo der erro, baixe este arquivo e envie no BLINGFIX.')
+            st.download_button(
+                '⬇️ Baixar diagnóstico completo',
+                data=_build_log_bundle_zip(),
+                file_name=LOG_BUNDLE_FILENAME,
+                mime='application/zip',
+                use_container_width=True,
+                key=f'maintenance_download_support_diagnostic_zip_{len(logs)}_{len(audit_events)}_{len(st.session_state.keys())}',
+                disabled=not has_diagnostic_data,
+            )
+            add_audit_event(
+                'support_diagnostic_panel_rendered',
+                area='SIDEBAR',
+                details={
+                    'mode': 'minimal_download_only',
+                    'technical_logs': len(logs),
+                    'audit_events': len(audit_events),
+                    'session_state_keys': len(st.session_state.keys()),
+                    'responsible_file': 'bling_app_zero/ui/maintenance_panel.py',
+                },
+            )
 
 
 __all__ = ['render_maintenance_panel']
