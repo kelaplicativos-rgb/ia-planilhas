@@ -90,13 +90,6 @@ def read_upload_fast(uploaded_file: Any | None) -> pd.DataFrame | None:
 
 
 @st.cache_resource(show_spinner=False)
-def load_apply_pricing() -> Callable:
-    from bling_app_zero.core.pricing import apply_pricing
-
-    return apply_pricing
-
-
-@st.cache_resource(show_spinner=False)
 def load_cadastro_pipeline() -> Callable:
     from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline
 
@@ -245,12 +238,7 @@ def _preserve_flow_after_download(operation: str) -> None:
 
 
 def _after_final_download(operation: str, signature: str, rules_sig: str) -> None:
-    """Registra o download sem limpar a sessão nem derrubar a navegação.
-
-    Antes esta função chamava clear_streamlit_cache(), que fazia limpeza de session_state
-    no clique do download. Isso podia apagar a operação ativa e mandar o usuário para a Home
-    antes de concluir a etapa/importação.
-    """
+    """Registra o download sem limpar a sessão nem derrubar a navegação."""
     _preserve_flow_after_download(operation)
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
