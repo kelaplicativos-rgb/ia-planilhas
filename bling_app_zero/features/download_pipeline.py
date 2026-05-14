@@ -10,7 +10,7 @@ from bling_app_zero.core.measurements import normalize_measure_columns, normaliz
 from bling_app_zero.core.post_mapping_defaults import apply_post_mapping_defaults
 from bling_app_zero.core.rule_value_validator import is_empty_rule_command
 from bling_app_zero.core.text import clean_cell, normalize_key
-from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules
+from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rules, stock_defaults_from_rules
 from bling_app_zero.features.contracts import FeatureContext, FeatureDefinition, FeatureResult
 
 RESPONSIBLE_FILE = 'bling_app_zero/features/download_pipeline.py'
@@ -26,6 +26,7 @@ PRODUCT_CODE_COLUMN_TERMS = [
     'referencia', 'referência',
 ]
 PRODUCT_NAME_COLUMN_TERMS = ['descricao', 'descrição', 'nome', 'produto', 'titulo', 'título']
+STOCK_QUANTITY_COLUMN_TERMS = ['balanco', 'balanço', 'saldo', 'estoque', 'quantidade', 'qtd']
 DEFAULT_SUPPLIER = 'Não definido'
 DEFAULT_MEASURE_UNIT = 'UN'
 DEFAULT_MEASURES_CM = {'altura': '2', 'largura': '11', 'profundidade': '18', 'comprimento': '18'}
@@ -34,6 +35,9 @@ SUPPLIER_INVALID_KEYS = {
     'sem informacao', 'seminformacao', 'indefinido', 'undefined',
 }
 SUPPLIER_CODE_RE = re.compile(r'^[A-Za-z]{0,6}\d+[A-Za-z0-9._/-]*$')
+AVAILABLE_PATTERNS = ['disponivel', 'disponível', 'em estoque', 'produto disponivel', 'produto disponível', 'in stock', 'available']
+LOW_PATTERNS = ['baixo', 'baixo estoque', 'estoque baixo', 'poucas unidades', 'ultimas unidades', 'últimas unidades', 'low stock']
+OUT_PATTERNS = ['esgotado', 'sem estoque', 'indisponivel', 'indisponível', 'zerado', 'out of stock', 'unavailable']
 
 
 def _rules() -> dict[str, Any]:
@@ -48,6 +52,9 @@ def _rules() -> dict[str, Any]:
             'depth_default': DEFAULT_MEASURES_CM['profundidade'],
             'length_default': DEFAULT_MEASURES_CM['comprimento'],
             'box_items_default': '1',
+            'stock_available_default': '1000',
+            'stock_low_default': '0',
+            'stock_out_default': '0',
             'clean_invalid_gtin': True,
             'normalize_image_separator': True,
             'invalid_gtin_mode': 'limpar',
@@ -79,6 +86,11 @@ def _looks_like_image_column(column: object) -> bool:
     return any(normalize_key(term) in key for term in IMAGE_COLUMN_TERMS)
 
 
+def _looks_like_stock_quantity_column(column: object) -> bool:
+    key = normalize_key(column)
+    return any(normalize_key(term) in key for term in STOCK_QUANTITY_COLUMN_TERMS)
+
+
 def _looks_like_product_code_column(column: object) -> bool:
     key = normalize_key(column)
     if not key or looks_like_gtin_column(column):
@@ -100,6 +112,21 @@ def _is_empty_text(value: object) -> bool:
 
 def _is_empty_rule_marker(value: object) -> bool:
     return is_empty_rule_command(clean_cell(value))
+
+
+def _stock_status_to_quantity(value: object) -> str:
+    text = clean_cell(value)
+    if not text:
+        return ''
+    key = normalize_key(text)
+    defaults = stock_defaults_from_rules(_rules())
+    if any(normalize_key(pattern) in key for pattern in OUT_PATTERNS):
+        return str(defaults.get('esgotado', '0'))
+    if any(normalize_key(pattern) in key for pattern in LOW_PATTERNS):
+        return str(defaults.get('baixo', '0'))
+    if any(normalize_key(pattern) in key for pattern in AVAILABLE_PATTERNS):
+        return str(defaults.get('disponivel', '1000'))
+    return text
 
 
 def normalize_image_urls(value: object) -> str:
@@ -210,6 +237,19 @@ def run_normalize_image_separator(context: FeatureContext) -> FeatureResult:
     for column in columns:
         out[column] = out[column].apply(normalize_image_urls)
     return _with_final(context, out, f'Imagens normalizadas em {len(columns)} coluna(s).')
+
+
+def run_normalize_stock_status(context: FeatureContext) -> FeatureResult:
+    df = _df_from_context(context)
+    if df.empty:
+        return _with_final(context, df, 'Sem dados para status de estoque.')
+    out = df.copy().fillna('')
+    changed = 0
+    for column in [c for c in out.columns if _looks_like_stock_quantity_column(c)]:
+        before = out[column].astype(str).tolist()
+        out[column] = out[column].apply(_stock_status_to_quantity)
+        changed += sum(1 for old, new in zip(before, out[column].astype(str).tolist()) if old != new)
+    return _with_final(context, out, f'Status de estoque convertidos em {changed} célula(s).')
 
 
 def run_normalize_measures(context: FeatureContext) -> FeatureResult:
@@ -325,6 +365,18 @@ NORMALIZE_IMAGE_SEPARATOR_FEATURE = FeatureDefinition(
     owner_file=RESPONSIBLE_FILE,
     runner=run_normalize_image_separator,
 )
+NORMALIZE_STOCK_STATUS_FEATURE = FeatureDefinition(
+    key='normalize_stock_status',
+    title='Converter status de estoque',
+    description='Converte Disponível/Baixo/Esgotado em quantidade usando os padrões definidos pelo usuário.',
+    scope='estoque',
+    stage='download',
+    status='stable',
+    state_key='feature_normalize_stock_status_enabled',
+    provides=('status_estoque_convertido',),
+    owner_file=RESPONSIBLE_FILE,
+    runner=run_normalize_stock_status,
+)
 NORMALIZE_MEASURES_FEATURE = FeatureDefinition(
     key='normalize_measures_to_meters',
     title='Normalizar medidas para metro',
@@ -390,6 +442,7 @@ DOWNLOAD_FEATURES = (
     CLEAN_CELLS_FEATURE,
     CLEAN_INVALID_GTIN_FEATURE,
     NORMALIZE_IMAGE_SEPARATOR_FEATURE,
+    NORMALIZE_STOCK_STATUS_FEATURE,
     NORMALIZE_MEASURES_FEATURE,
     CUSTOM_RULES_FEATURE,
     POST_MAPPING_DEFAULTS_FEATURE,
@@ -405,6 +458,7 @@ __all__ = [
     'EMPTY_CUSTOM_RULES_FEATURE',
     'NORMALIZE_IMAGE_SEPARATOR_FEATURE',
     'NORMALIZE_MEASURES_FEATURE',
+    'NORMALIZE_STOCK_STATUS_FEATURE',
     'POST_MAPPING_DEFAULTS_FEATURE',
     'UNIQUE_PRODUCT_CODES_FEATURE',
     'normalize_image_urls',
@@ -414,6 +468,7 @@ __all__ = [
     'run_empty_custom_rules',
     'run_normalize_image_separator',
     'run_normalize_measures',
+    'run_normalize_stock_status',
     'run_post_mapping_defaults',
     'run_unique_product_codes',
 ]
