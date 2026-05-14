@@ -9,6 +9,7 @@ from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
+HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_MULTISTORE = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
@@ -17,6 +18,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 def _set_flow(flow: str) -> None:
     previous = st.session_state.get(ACTIVE_FLOW_KEY)
     st.session_state[ACTIVE_FLOW_KEY] = flow
+    st.session_state[HOME_ALLOW_FLOW_KEY] = True
     add_audit_event(
         'home_operation_selected',
         area='HOME',
@@ -29,31 +31,39 @@ def _set_flow(flow: str) -> None:
     st.rerun()
 
 
-def _query_flow() -> str:
-    try:
-        return str(st.query_params.get('operation_v2', '') or '').strip()
-    except Exception:
-        return ''
+def _clear_flow_query_param() -> None:
+    for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao'):
+        try:
+            st.query_params.pop(key, None)
+        except Exception:
+            pass
 
 
 def _current_flow() -> str:
-    """Controla a tela inicial sem deixar sessão antiga sequestrar a Home.
+    """Mantém a Home como tela inicial real.
 
-    BLINGFIX HOME: modelos padrão carregados automaticamente não podem fazer o
-    app nascer dentro do wizard. O fluxo só abre quando o usuário clica no card
-    da Home ou quando a URL contém operation_v2.
+    BLINGFIX HOME NASCIMENTO:
+    A URL antiga com ``operation_v2`` estava fazendo o app nascer direto dentro
+    do wizard, mesmo após recarregar no mobile. Agora o fluxo só abre quando o
+    clique aconteceu nesta sessão. URL velha é limpa e volta para a Home.
     """
-    qp_flow = _query_flow()
-    if qp_flow:
-        st.session_state[ACTIVE_FLOW_KEY] = qp_flow
-        return qp_flow
+    allowed = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY))
+    flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
+    if allowed and flow:
+        return flow
 
-    if ACTIVE_FLOW_KEY in st.session_state:
-        st.session_state.pop(ACTIVE_FLOW_KEY, None)
+    stale_flow = st.session_state.pop(ACTIVE_FLOW_KEY, None)
+    st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
+    _clear_flow_query_param()
+    if stale_flow:
         add_audit_event(
             'home_stale_flow_cleared',
             area='HOME',
-            details={'reason': 'missing_operation_v2_query_param', 'responsible_file': RESPONSIBLE_FILE},
+            details={
+                'reason': 'home_must_start_on_operation_choice',
+                'stale_flow': stale_flow,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
     return ''
 
@@ -97,26 +107,6 @@ def _render_home_operation_card(
             on_click()
 
 
-def _render_home_blingscan_card() -> None:
-    """Mostra o BLINGSCAN diretamente na Home inicial.
-
-    O painel também continua disponível na sidebar, mas a Home precisa nascer
-    com o atalho visível para o usuário executar a varredura sem procurar a
-    Central técnica.
-    """
-    from bling_app_zero.ui.blingscan_prompt_panel import render_blingscan_prompt_panel
-
-    st.divider()
-    with st.container(border=True):
-        st.caption('Diagnóstico rápido')
-        render_blingscan_prompt_panel(key_prefix='home', compact=True)
-    add_audit_event(
-        'home_blingscan_card_rendered',
-        area='HOME',
-        details={'responsible_file': RESPONSIBLE_FILE},
-    )
-
-
 def _render_operation_choice() -> None:
     st.markdown('### O que você quer fazer?')
     st.caption('Escolha primeiro o tipo de trabalho. O fluxo principal começa pelo modelo do Bling para evitar erro de planilha no final.')
@@ -158,17 +148,14 @@ def _render_operation_choice() -> None:
         on_click=_open_multistore_price_flow,
         badge='Módulo adicional',
     )
-    _render_home_blingscan_card()
 
 
 def _render_back_to_operations() -> None:
     st.caption('Voltar aqui mantém o progresso salvo nesta sessão. Use “Recomeçar fluxo” dentro do download quando quiser limpar tudo.')
     if st.button('← Voltar para escolha da operação', use_container_width=True, key='home_back_to_operation_choice'):
         st.session_state.pop(ACTIVE_FLOW_KEY, None)
-        try:
-            st.query_params.pop('operation_v2', None)
-        except Exception:
-            pass
+        st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
+        _clear_flow_query_param()
         add_audit_event(
             'home_operation_cleared',
             area='HOME',
