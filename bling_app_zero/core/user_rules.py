@@ -9,7 +9,7 @@ except Exception:  # pragma: no cover
     st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 8
+RULES_SCHEMA_VERSION = 9
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
 
@@ -50,6 +50,9 @@ DEFAULT_RULES: dict[str, Any] = {
     'depth_default': '18',
     'length_default': '18',
     'box_items_default': '1',
+    'stock_available_default': '1000',
+    'stock_low_default': '0',
+    'stock_out_default': '0',
     'normalize_measures_to_meters': False,
     'clean_invalid_gtin': True,
     'normalize_image_separator': True,
@@ -131,7 +134,6 @@ def _is_removed_supplier_default_rule(rule: dict[str, Any]) -> bool:
 
 
 def _enable_system_auto_fill_rules(custom_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Nova regra visual: padrões principais já nascem ativos e editáveis."""
     enabled: list[dict[str, Any]] = []
     system_columns = {str(rule.get('target_column', '')).strip().lower() for rule in DEFAULT_CUSTOM_RULES}
     for rule in custom_rules:
@@ -218,6 +220,9 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['depth_default'] = _safe_text(rules.get('depth_default'), DEFAULT_RULES['depth_default'])
     rules['length_default'] = _safe_text(rules.get('length_default'), DEFAULT_RULES['length_default'])
     rules['box_items_default'] = _safe_text(rules.get('box_items_default'), DEFAULT_RULES['box_items_default'])
+    rules['stock_available_default'] = _safe_text(rules.get('stock_available_default'), DEFAULT_RULES['stock_available_default'])
+    rules['stock_low_default'] = _safe_text(rules.get('stock_low_default'), DEFAULT_RULES['stock_low_default'])
+    rules['stock_out_default'] = _safe_text(rules.get('stock_out_default'), DEFAULT_RULES['stock_out_default'])
     rules['normalize_measures_to_meters'] = False
     rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
     rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
@@ -341,6 +346,15 @@ def measure_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str
         'profundidade': str(current['depth_default']),
         'comprimento': str(current['length_default']),
         'itens_por_caixa': str(current['box_items_default']),
+    }
+
+
+def stock_defaults_from_rules(rules: dict[str, Any] | None = None) -> dict[str, str]:
+    current = normalize_rules(rules)
+    return {
+        'disponivel': str(current['stock_available_default']),
+        'baixo': str(current['stock_low_default']),
+        'esgotado': str(current['stock_out_default']),
     }
 
 
