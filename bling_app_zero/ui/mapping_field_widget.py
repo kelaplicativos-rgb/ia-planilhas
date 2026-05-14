@@ -8,6 +8,7 @@ from bling_app_zero.ui.layout import render_mapping_preview, render_mapping_titl
 from bling_app_zero.ui.mapping_confidence_state import confidence_for_selection, manual_confidence
 from bling_app_zero.ui.mapping_constants import (
     EMPTY_LEAVE_OPTION,
+    EMPTY_MAPPING_VALUE,
     MANUAL_MAPPING_VALUE,
     MANUAL_WRITE_OPTION,
 )
@@ -35,12 +36,6 @@ def render_selected_column_preview(df_source: pd.DataFrame, selected_column: str
 
 
 def signal_label(target: str, info: dict[str, object]) -> str:
-    """Título visual limpo do campo no mapeamento.
-
-    BLINGCLEAN: remove textos poluídos como "100% bit a bit", "vazio confirmado",
-    "valor fixo confirmado" e percentuais. O cartão deve mostrar só o farol e o
-    nome da coluna do Bling.
-    """
     emoji = str(info.get('emoji') or '🔴').strip() or '🔴'
     return f'{emoji} {target}'
 
@@ -67,7 +62,12 @@ def render_mapping_select(
     widget_key = target_widget_key(mapping_key, target_index)
     if widget_key in st.session_state:
         widget_value = st.session_state.get(widget_key, suggested)
-        suggested = MANUAL_MAPPING_VALUE if widget_value == MANUAL_WRITE_OPTION else option_value(widget_value)
+        if widget_value == MANUAL_WRITE_OPTION:
+            suggested = MANUAL_MAPPING_VALUE
+        elif widget_value == EMPTY_LEAVE_OPTION:
+            suggested = EMPTY_MAPPING_VALUE
+        else:
+            suggested = option_value(widget_value)
 
     raw_before = st.session_state.get(widget_key, suggested)
     info_before = confidence_for_selection(df_source, target, raw_before, widget_key)
@@ -104,7 +104,7 @@ def render_mapping_select(
             elif selected_raw == EMPTY_LEAVE_OPTION:
                 st.session_state[f'{widget_key}__empty_resolved'] = True
                 st.session_state.pop(f'{widget_key}__manual_resolved', None)
-                selected = ''
+                selected = EMPTY_MAPPING_VALUE
             else:
                 st.session_state.pop(f'{widget_key}__empty_resolved', None)
                 st.session_state.pop(f'{widget_key}__manual_resolved', None)
@@ -113,6 +113,16 @@ def render_mapping_select(
             info_after = confidence_for_selection(df_source, target, selected_raw, widget_key)
             if selected == MANUAL_MAPPING_VALUE:
                 info_after = manual_confidence()
+            elif selected == EMPTY_MAPPING_VALUE:
+                info_after = {
+                    'level': 'verde',
+                    'emoji': '🟢',
+                    'label': 'vazio confirmado',
+                    'score': 100,
+                    'order': 2,
+                    'strict': True,
+                    'explicit_empty': True,
+                }
             else:
                 render_selected_column_preview(df_source, selected)
 
