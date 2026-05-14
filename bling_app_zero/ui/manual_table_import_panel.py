@@ -8,6 +8,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.html_capture_helper import render_html_capture_helper
 from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/manual_table_import_panel.py'
@@ -211,6 +212,9 @@ def render_manual_table_import_panel(
     operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
     st.markdown('###### Importar tabela do fornecedor')
     st.caption('Use quando você já abriu o fornecedor e consegue exportar, salvar ou copiar a lista de produtos.')
+
+    with st.expander('🧲 Capturador de HTML da página aberta', expanded=False):
+        render_html_capture_helper()
 
     uploaded = st.file_uploader(
         'Enviar HTML/CSV/XLSX exportado do fornecedor',
