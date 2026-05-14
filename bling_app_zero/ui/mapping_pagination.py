@@ -7,6 +7,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.mapping_constants import MAPPING_PAGE_SIZE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_pagination.py'
+MOBILE_MAPPING_PAGE_SIZE = 6
 
 
 def mapping_page_key(mapping_key: str) -> str:
@@ -27,6 +28,10 @@ def mapping_page_anchor_id(mapping_key: str) -> str:
     return f'bling-mapping-page-anchor-{safe or "default"}'
 
 
+def _page_size() -> int:
+    return MOBILE_MAPPING_PAGE_SIZE
+
+
 def _scroll_script(anchor_id: str) -> str:
     return f"""
     <script>
@@ -45,11 +50,8 @@ def _scroll_script(anchor_id: str) -> str:
         function scrollToAnchor() {{
             const el = findAnchor();
             if (!el) return;
-            try {{
-                el.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-            }} catch (err) {{
-                try {{ el.scrollIntoView(true); }} catch (err2) {{}}
-            }}
+            try {{ el.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }}
+            catch (err) {{ try {{ el.scrollIntoView(true); }} catch (err2) {{}} }}
         }}
         setTimeout(scrollToAnchor, 60);
         setTimeout(scrollToAnchor, 220);
@@ -65,25 +67,14 @@ def render_mapping_page_scroll_anchor(mapping_key: str) -> None:
     st.markdown(f'<div id="{anchor_id}" data-bling-scroll-anchor="mapping-page"></div>', unsafe_allow_html=True)
     if not should_scroll:
         return
-    add_audit_event(
-        'mapping_page_scroll_requested',
-        area='MAPEAMENTO',
-        details={'mapping_key': mapping_key, 'anchor_id': anchor_id, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('mapping_page_scroll_requested', area='MAPEAMENTO', details={'mapping_key': mapping_key, 'anchor_id': anchor_id, 'responsible_file': RESPONSIBLE_FILE})
     components.html(_scroll_script(anchor_id), height=0, width=0)
 
 
 def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
-    if len(targets) <= MAPPING_PAGE_SIZE:
-        st.session_state.pop(mapping_page_meta_key(mapping_key), None)
-        add_audit_event(
-            'mapping_page_not_needed',
-            area='MAPEAMENTO',
-            details={'mapping_key': mapping_key, 'total_targets': len(targets), 'responsible_file': RESPONSIBLE_FILE},
-        )
-        return targets
-
-    total_pages = (len(targets) + MAPPING_PAGE_SIZE - 1) // MAPPING_PAGE_SIZE
+    page_size = _page_size()
+    total_targets = len(targets)
+    total_pages = max(1, (total_targets + page_size - 1) // page_size)
     page_key = mapping_page_key(mapping_key)
     try:
         page_index = int(st.session_state.get(page_key, 0) or 0)
@@ -92,16 +83,21 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
     page_index = max(0, min(page_index, total_pages - 1))
     st.session_state[page_key] = page_index
 
-    start = page_index * MAPPING_PAGE_SIZE
-    end = min(start + MAPPING_PAGE_SIZE, len(targets))
-    st.caption(f'Campos {start + 1} a {end} de {len(targets)} · página {page_index + 1}/{total_pages}')
+    start = page_index * page_size
+    end = min(start + page_size, total_targets)
+    if total_targets:
+        label = f'Campos {start + 1} a {end} de {total_targets} · página {page_index + 1}/{total_pages}'
+    else:
+        label = 'Nenhum campo neste filtro.'
+    st.caption(label)
     render_mapping_page_scroll_anchor(mapping_key)
     st.session_state[mapping_page_meta_key(mapping_key)] = {
         'page_index': page_index,
         'total_pages': total_pages,
-        'visible_start': start + 1,
+        'visible_start': start + 1 if total_targets else 0,
         'visible_end': end,
-        'total_targets': len(targets),
+        'total_targets': total_targets,
+        'page_size': page_size,
     }
     add_audit_event(
         'mapping_page_visible',
@@ -110,9 +106,10 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
             'mapping_key': mapping_key,
             'page': page_index + 1,
             'total_pages': total_pages,
-            'visible_start': start + 1,
+            'visible_start': start + 1 if total_targets else 0,
             'visible_end': end,
-            'total_targets': len(targets),
+            'total_targets': total_targets,
+            'page_size': page_size,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -135,19 +132,7 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
         'reason': 'usuario_navegou_campos_mapeamento',
         'responsible_file': RESPONSIBLE_FILE,
     }
-    add_audit_event(
-        'mapping_page_changed',
-        area='MAPEAMENTO',
-        details={
-            'mapping_key': mapping_key,
-            'direction': direction,
-            'from_page': previous_index + 1,
-            'to_page': safe_next + 1,
-            'total_pages': total_pages,
-            'scroll_to_top': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('mapping_page_changed', area='MAPEAMENTO', details={'mapping_key': mapping_key, 'direction': direction, 'from_page': previous_index + 1, 'to_page': safe_next + 1, 'total_pages': total_pages, 'scroll_to_top': True, 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
@@ -157,6 +142,8 @@ def _page_label(meta: dict) -> str:
     start = int(meta.get('visible_start') or 0)
     end = int(meta.get('visible_end') or 0)
     total = int(meta.get('total_targets') or 0)
+    if total <= 0:
+        return 'Nenhum campo neste filtro.'
     return f'Página {page_index + 1}/{total_pages} · Campos {start} a {end} de {total}'
 
 
@@ -166,8 +153,7 @@ def render_mapping_page_arrows(mapping_key: str, *, position: str = 'bottom') ->
         return
     page_index = int(meta.get('page_index') or 0)
     total_pages = max(1, int(meta.get('total_pages') or 1))
-    if total_pages <= 1:
-        return
+    total_targets = int(meta.get('total_targets') or 0)
 
     st.caption(_page_label(meta))
     col_prev, col_next = st.columns(2)
@@ -177,6 +163,9 @@ def render_mapping_page_arrows(mapping_key: str, *, position: str = 'bottom') ->
     with col_next:
         if st.button('Próximos campos →', use_container_width=True, disabled=page_index >= total_pages - 1, key=f'{mapping_key}_page_next_{position}'):
             _change_mapping_page(mapping_key, page_index + 1, direction='next', total_pages=total_pages)
+
+    if total_targets > 0 and total_pages <= 1 and position == 'bottom':
+        st.caption('Todos os campos do filtro atual já estão nesta tela.')
 
 
 __all__ = [
