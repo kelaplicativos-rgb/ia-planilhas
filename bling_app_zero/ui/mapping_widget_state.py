@@ -41,10 +41,17 @@ def option_value(value: str | None) -> str:
 
 
 def display_option(value: str | None) -> str:
+    """Converte o valor salvo para a opção visual do selectbox.
+
+    BLINGFIX FAROL: valor vazio não pode abrir como "deixar vazio".
+    Quando o campo ainda não foi decidido, ele deve abrir em "escolher coluna"
+    para manter o farol vermelho. A opção "deixar vazio" só fica verde quando
+    o usuário escolhe essa opção explicitamente e o marcador __empty_resolved é salvo.
+    """
     text = str(value or '').strip()
     if is_manual_value(text):
         return MANUAL_WRITE_OPTION
-    return text if text else EMPTY_LEAVE_OPTION
+    return text if text else EMPTY_CHOOSE_OPTION
 
 
 def is_explicit_empty(widget_key: str, value: str | None) -> bool:
