@@ -55,5 +55,5 @@ def render_estoque_upload(home_model_loaded: bool):
         key='smart_upload_estoque',
         allow_model=not home_model_loaded,
         required_model=not home_model_loaded,
-        accepted_types=['xlsx', 'xls', 'csv'],
+        accepted_types=['xlsx', 'xls', 'csv', 'html', 'htm', 'mht', 'mhtml'],
     )
