@@ -12,13 +12,25 @@ class RemoteBrowserConfig:
     state_namespace: str = 'supplier_remote_browser'
     headless: bool = True
     timeout_ms: int = 45_000
-    width: int = 1366
-    height: int = 900
+    width: int = 1600
+    height: int = 1000
 
 
 @dataclass
 class RemoteBrowserCommand:
-    action: Literal['open', 'click_selector', 'click_text', 'click_xy', 'type_selector', 'press', 'scroll_down', 'scroll_up', 'snapshot']
+    action: Literal[
+        'open',
+        'click_selector',
+        'click_text',
+        'click_xy',
+        'type_selector',
+        'type_smart',
+        'click_smart',
+        'press',
+        'scroll_down',
+        'scroll_up',
+        'snapshot',
+    ]
     value: str = ''
     text: str = ''
     x: int | None = None
@@ -121,14 +133,86 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
 
 
-def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrowserCommand) -> RemoteBrowserSnapshot:
-    """Executa um comando no Chromium real do servidor e devolve novo snapshot.
+def _smart_selectors(kind: str) -> list[str]:
+    normalized = str(kind or '').strip().lower()
+    if normalized in {'user', 'usuario', 'email', 'login'}:
+        return [
+            'input[type="email"]',
+            'input[name*="email" i]',
+            'input[id*="email" i]',
+            'input[name*="login" i]',
+            'input[id*="login" i]',
+            'input[name*="user" i]',
+            'input[id*="user" i]',
+            'input[name*="usuario" i]',
+            'input[id*="usuario" i]',
+            'input[type="text"]',
+        ]
+    if normalized in {'password', 'senha'}:
+        return [
+            'input[type="password"]',
+            'input[name*="senha" i]',
+            'input[id*="senha" i]',
+            'input[name*="password" i]',
+            'input[id*="password" i]',
+        ]
+    if normalized in {'search', 'busca', 'produto', 'products'}:
+        return [
+            'input[type="search"]',
+            'input[name*="search" i]',
+            'input[id*="search" i]',
+            'input[placeholder*="buscar" i]',
+            'input[placeholder*="pesquisar" i]',
+            'input[placeholder*="produto" i]',
+            'input[name*="busca" i]',
+            'input[id*="busca" i]',
+            'input[type="text"]',
+        ]
+    return [
+        'input:visible',
+        'textarea:visible',
+        '[contenteditable="true"]',
+    ]
 
-    Não é noVNC: cada comando abre Chromium, reaplica storage_state, executa a ação,
-    salva cookies/localStorage e fecha. Isso permite controle operacional seguro no
-    Streamlit: navegar, clicar por seletor/texto/coordenada, digitar, pressionar tecla
-    e rolar a página.
-    """
+
+def _smart_click_texts(kind: str) -> list[str]:
+    normalized = str(kind or '').strip().lower()
+    if normalized in {'login', 'entrar', 'submit'}:
+        return ['Entrar', 'Login', 'Acessar', 'Continuar', 'Enviar']
+    if normalized in {'produtos', 'products', 'catalogo', 'catálogo'}:
+        return ['Produtos', 'Produto', 'Catálogo', 'Catalogo', 'Estoque', 'Itens']
+    if normalized in {'next', 'proximo', 'próximo'}:
+        return ['Próximo', 'Proximo', 'Avançar', 'Avancar', 'Next', '>']
+    if normalized in {'search', 'buscar', 'pesquisar'}:
+        return ['Buscar', 'Pesquisar', 'Filtrar', 'Procurar']
+    return [kind]
+
+
+def _fill_first_available(page, selectors: list[str], text: str) -> bool:
+    for selector in selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() <= 0:
+                continue
+            locator.fill(text, timeout=3_000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _click_first_text(page, texts: list[str]) -> bool:
+    for text in texts:
+        try:
+            page.get_by_text(text, exact=False).first.click(timeout=4_000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrowserCommand) -> RemoteBrowserSnapshot:
+    """Executa um comando no Chromium real do servidor e devolve novo snapshot."""
     url = _clean_url(config.url)
     if not url:
         return RemoteBrowserSnapshot(ok=False, url=str(config.url or ''), errors=['URL inválida. Informe uma URL começando com http:// ou https://.'])
@@ -167,12 +251,18 @@ def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrows
                 page.mouse.click(x, y)
             elif action == 'type_selector' and value:
                 page.locator(value).first.fill(text, timeout=10_000)
+            elif action == 'type_smart':
+                if not _fill_first_available(page, _smart_selectors(value), text):
+                    warnings.append(f'Não encontrei um campo compatível para preencher: {value}.')
+            elif action == 'click_smart':
+                if not _click_first_text(page, _smart_click_texts(value)):
+                    warnings.append(f'Não encontrei botão/link compatível para clicar: {value}.')
             elif action == 'press':
                 page.keyboard.press(value or 'Enter')
             elif action == 'scroll_down':
-                page.evaluate('window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))')
+                page.evaluate('window.scrollBy(0, Math.max(700, window.innerHeight * 0.85))')
             elif action == 'scroll_up':
-                page.evaluate('window.scrollBy(0, -Math.max(600, window.innerHeight * 0.8))')
+                page.evaluate('window.scrollBy(0, -Math.max(700, window.innerHeight * 0.85))')
             elif action in {'open', 'snapshot'}:
                 pass
 
@@ -180,7 +270,7 @@ def run_remote_browser_command(config: RemoteBrowserConfig, command: RemoteBrows
                 page.wait_for_load_state('networkidle', timeout=8_000)
             except Exception:
                 pass
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(600)
             snapshot = _snapshot_from_page(
                 page,
                 config=config,
