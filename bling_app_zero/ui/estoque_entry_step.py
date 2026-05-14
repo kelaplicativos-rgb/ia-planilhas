@@ -41,40 +41,39 @@ def render_deposito_input() -> str:
         st.session_state[ESTOQUE_DEPOSITO_KEY] = current
 
     deposito = st.text_input(
-        'Nome do depósito que será gravado no CSV',
+        'Depósito',
         value=current,
         key=ESTOQUE_DEPOSITO_KEY,
-        placeholder='Ex: Principal, Loja 1, Galpão Central',
-        help='Este valor será aplicado em toda coluna de depósito do modelo de estoque do Bling.',
+        placeholder='Ex: Principal',
+        help='Valor aplicado nas colunas de depósito do CSV.',
     )
     deposito = normalize_deposito(deposito)
     store_deposito_value(deposito, write_primary=False)
     clear_estoque_outputs_if_deposito_changed(deposito)
     if deposito:
-        st.success(f'Depósito definido para o CSV: {deposito}')
+        st.success(f'Depósito: {deposito}')
     else:
-        st.error('Informe o nome real do depósito antes de continuar. Não use “Não definido” nesta etapa.')
+        st.error('Informe o depósito.')
     return deposito
 
 
 def render_deposito_missing_recovery() -> str:
-    st.warning('O nome do depósito não chegou nesta etapa. Informe abaixo para gerar o estoque sem voltar no fluxo.')
+    st.warning('Informe o depósito para gerar o estoque.')
     deposito = render_deposito_input()
     if not deposito:
-        st.error('Geração bloqueada: o CSV de estoque precisa do depósito para preencher o modelo do Bling.')
+        st.error('Geração bloqueada: o CSV de estoque precisa do depósito.')
     return deposito
 
 
 def render_estoque_entrada_step() -> None:
-    st.markdown('### Entrada do estoque')
-    st.caption('Nesta tela entra somente a origem de estoque e o nome do depósito. O mapeamento, preview e download ficam nas próximas etapas.')
+    site_origin = is_site_origin()
+    if not site_origin:
+        st.markdown('### Envie a origem')
+        st.caption('Arquivo do fornecedor para atualizar estoque.')
 
     deposito = render_deposito_input()
 
     model_loaded = home_estoque_model_loaded()
-    if model_loaded:
-        st.success('Modelo de estoque carregado. Agora informe a origem escolhida.')
-
     site_origin = is_site_origin()
     df_origem_site = get_estoque_site_source() if site_origin else None
     upload = empty_estoque_upload_result() if site_origin else render_estoque_upload(model_loaded)
@@ -85,20 +84,20 @@ def render_estoque_entrada_step() -> None:
     store_estoque_context(upload, df_origem_site, df_modelo)
 
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty and site_origin:
-        st.success('Origem de estoque por site pronta. Continue para conferir o mapeamento.')
+        st.success('Origem por site pronta.')
     elif site_origin:
-        st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
+        st.info('Busque os produtos pelo site para liberar a geração.')
     else:
         source_files = source_files_from_upload(upload)
         if source_files:
-            st.success(f'{len(source_files)} arquivo(s) de origem de estoque detectado(s).')
+            st.success(f'{len(source_files)} arquivo(s) detectado(s).')
         else:
-            st.info('Envie a origem do fornecedor para gerar o CSV final de estoque.')
+            st.info('Envie o arquivo do fornecedor.')
 
     if not valid_model(df_modelo):
-        st.error('Envie o modelo de estoque do Bling antes de continuar.')
+        st.error('Modelo de estoque ausente.')
     elif not deposito:
-        st.error('Informe o nome do depósito antes de continuar.')
+        st.error('Informe o depósito antes de continuar.')
 
 
 __all__ = [
