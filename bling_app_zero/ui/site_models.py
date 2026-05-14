@@ -6,15 +6,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.home_models import (
-    HOME_CADASTRO_MODEL_SOURCE_KEY,
-    HOME_ESTOQUE_MODEL_SOURCE_KEY,
-    get_home_cadastro_model,
-    get_home_estoque_model,
-)
+from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
 from bling_app_zero.ui.model_upload import render_model_upload_box
-
-DEFAULT_SYSTEM_MODEL_SOURCE = 'padrao_sistema'
 
 
 @dataclass
@@ -51,16 +44,6 @@ def _upload_attr(upload: Any, name: str) -> pd.DataFrame | None:
     return _df_or_none(getattr(upload, name, None))
 
 
-def _home_model_source(operation: str) -> str:
-    normalized = str(operation or '').strip().lower()
-    key = HOME_ESTOQUE_MODEL_SOURCE_KEY if normalized == 'estoque' else HOME_CADASTRO_MODEL_SOURCE_KEY
-    return str(st.session_state.get(key) or '').strip()
-
-
-def _home_model_is_system_default(operation: str) -> bool:
-    return _home_model_source(operation) == DEFAULT_SYSTEM_MODEL_SOURCE
-
-
 def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
     return _upload_attr(upload, 'cadastro_model_df') or _upload_attr(upload, 'model_df')
 
@@ -70,36 +53,21 @@ def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
 
 
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
-    """Escolhe o modelo de cadastro respeitando upload recente acima do padrão interno."""
+    """Modelo do cadastro: anexo recente > modelo salvo/Home > padrão interno."""
     uploaded = _uploaded_cadastro_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
-
     home_model = get_home_cadastro_model()
-    if isinstance(home_model, pd.DataFrame) and not _home_model_is_system_default('cadastro'):
-        return home_model
-
     return home_model if isinstance(home_model, pd.DataFrame) else None
 
 
 def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
-    """Escolhe o modelo de estoque sem deixar o padrão de 4 colunas atropelar o anexo.
-
-    BLINGFIX:
-    - modelo anexado neste painel tem prioridade máxima;
-    - modelo anexado na Home é aceito;
-    - modelo padrão interno de estoque não é tratado como modelo real para captura por site;
-    - sem modelo real, o botão de busca continua bloqueado.
-    """
+    """Modelo do estoque: anexo recente > modelo salvo/Home > padrão interno."""
     uploaded = _uploaded_estoque_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
-
     home_model = get_home_estoque_model()
-    if isinstance(home_model, pd.DataFrame) and not _home_model_is_system_default('estoque'):
-        return home_model
-
-    return None
+    return home_model if isinstance(home_model, pd.DataFrame) else None
 
 
 def choose_site_model_df(upload, operation: str = 'cadastro') -> pd.DataFrame | None:
@@ -115,12 +83,12 @@ def requested_columns_for_site_capture(
 ) -> list[str] | None:
     """Retorna somente as colunas do modelo da operação atual.
 
-    Regra BLINGFIX:
+    Regra global:
     - cadastro por site usa apenas modelo de cadastro;
-    - estoque por site usa apenas modelo de estoque real;
-    - nunca mistura cadastro + estoque na mesma captura;
-    - estoque por site não usa fallback solto sem modelo;
-    - a ordem das colunas é a ordem exata do modelo anexado.
+    - estoque por site usa apenas modelo de estoque;
+    - anexo do usuário tem prioridade sobre padrão interno;
+    - na ausência de anexo, o padrão interno oficial vira o contrato;
+    - a ordem das colunas do contrato é preservada no preview/download.
     """
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
@@ -133,8 +101,8 @@ def requested_columns_for_site_capture(
 def has_home_site_model_for_operation(operation: str) -> bool:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
-        return isinstance(get_home_estoque_model(), pd.DataFrame) and not _home_model_is_system_default('estoque')
-    return isinstance(get_home_cadastro_model(), pd.DataFrame) and not _home_model_is_system_default('cadastro')
+        return isinstance(get_home_estoque_model(), pd.DataFrame)
+    return isinstance(get_home_cadastro_model(), pd.DataFrame)
 
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
@@ -142,20 +110,14 @@ def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
     operation_key = 'estoque' if normalized == 'estoque' else 'cadastro'
 
     if has_home_site_model_for_operation(operation_key):
-        st.success(f'Modelo de {operation_key} anexado na Home e pronto para uso.')
-        st.caption('Este fluxo vai usar exatamente as colunas desse modelo salvo.')
-        return EmptyModelUpload()
+        st.success(f'Modelo de {operation_key} disponível para uso.')
+        st.caption('Se você anexar um modelo nesta tela, ele terá prioridade. Se não anexar, o sistema usa o modelo interno oficial para esta operação.')
 
-    if operation_key == 'estoque' and _home_model_is_system_default('estoque'):
-        st.warning('Existe um modelo padrão interno de estoque com poucas colunas, mas ele não será usado como modelo final. Anexe o modelo oficial do Bling para manter a estrutura completa.')
-    elif get_home_cadastro_model() is not None or get_home_estoque_model() is not None:
-        st.warning('Existe modelo carregado na Home, mas não para esta operação.')
-
-    required_model = operation_key == 'estoque'
+    required_model = False
     caption = (
-        'Obrigatório para estoque por site: anexe o modelo oficial do Bling. O CSV final manterá exatamente as colunas e a ordem desse modelo.'
-        if required_model
-        else 'Anexe o modelo do Bling para o sistema buscar somente as colunas pedidas.'
+        'Opcional: anexe o modelo oficial do Bling para o CSV final sair exatamente com as colunas desse arquivo. Sem anexo, será usado o modelo interno oficial de estoque.'
+        if operation_key == 'estoque'
+        else 'Opcional: anexe o modelo oficial do Bling para o CSV final sair exatamente com as colunas desse arquivo. Sem anexo, será usado o modelo interno oficial de cadastro.'
     )
 
     return render_model_upload_box(
