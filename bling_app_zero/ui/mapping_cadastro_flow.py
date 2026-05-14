@@ -55,13 +55,21 @@ def _render_cadastro_actions(
     model: pd.DataFrame,
     source_columns: list[str],
 ) -> None:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button('Atualizar prévia do cadastro', use_container_width=True, key=f'{mapping_key}_refresh'):
-            st.rerun()
-    with col_b:
-        if st.button('Refazer sugestões automáticas', use_container_width=True, key=f'{mapping_key}_reset'):
-            _reset_cadastro_mapping(mapping_key, order_key, df_source, model, source_columns)
+    with st.expander('Ações avançadas', expanded=False):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button('Atualizar prévia', use_container_width=True, key=f'{mapping_key}_refresh'):
+                st.rerun()
+        with col_b:
+            if st.button('Refazer sugestões', use_container_width=True, key=f'{mapping_key}_reset'):
+                _reset_cadastro_mapping(mapping_key, order_key, df_source, model, source_columns)
+
+
+def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
+    st.markdown('### Mapear campos')
+    st.caption(f'{len(df_source)} produto(s) · revise somente o que estiver pendente.')
+    with st.expander('Ver origem', expanded=False):
+        preview_df('Origem', df_source)
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -84,13 +92,11 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
         st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
 
-    st.markdown('#### 2. Conferir campos do cadastro')
-    st.caption('🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 regra/recurso do fluxo')
-    with st.expander('Ver origem antes de preencher', expanded=False):
-        preview_df('Origem para conferir', df_source)
+    _render_compact_mapping_header(df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA nos campos em dúvida')
+    with st.expander('Ajuda da IA', expanded=False):
+        render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Analisar campos pendentes')
 
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
@@ -126,7 +132,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
 
     duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
-        st.warning('A mesma coluna da origem foi usada em mais de um campo: ' + ', '.join(duplicated))
+        st.warning('Coluna repetida: ' + ', '.join(duplicated))
 
     render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key, target_columns)
     _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
