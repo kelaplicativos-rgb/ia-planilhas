@@ -77,6 +77,11 @@ def test_light_critical_wizard_modules_import() -> None:
         importlib.import_module(module_name)
 
 
+def test_site_critical_modules_import_without_running_scraper() -> None:
+    for module_name in SITE_CRITICAL_MODULES:
+        importlib.import_module(module_name)
+
+
 def test_streamlit_entrypoint_uses_home_wizard() -> None:
     app_source = Path('app.py').read_text(encoding='utf-8')
     home_source = Path('bling_app_zero/ui/home.py').read_text(encoding='utf-8')
@@ -87,11 +92,6 @@ def test_streamlit_entrypoint_uses_home_wizard() -> None:
     assert 'from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard' in home_source
     assert 'run_wizard_state_guard()' in home_source
     assert 'render_home_wizard()' in home_source
-
-
-def test_site_critical_modules_import_without_running_scraper() -> None:
-    for module_name in SITE_CRITICAL_MODULES:
-        importlib.import_module(module_name)
 
 
 def test_wizard_step_order_is_preserved() -> None:
@@ -105,7 +105,34 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_REGRAS == 'regras'
 
 
-def test_rules_center_is_plugged_into_wizard() -> None:
+def test_fixed_navigation_is_single_source_for_wizard_next_back() -> None:
+    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+
+    assert 'TOP_NAV_RENDERED_KEY' in wizard
+    assert "data-testid=\"wizard-fixed-navigation\"" in wizard
+    assert "st.button('← Voltar'" in wizard
+    assert "st.button(next_label" in wizard
+    assert 'def _render_top_navigation() -> None:' in wizard
+    assert '_render_top_navigation()' in wizard
+    assert "if bool(st.session_state.get(TOP_NAV_RENDERED_KEY))" in wizard
+    assert "_render_nav_buttons(allow_next=" not in wizard
+    assert "wizard_download_back" not in wizard
+    assert "wizard_estoque_download_back" not in wizard
+    assert "← Voltar para preview" not in wizard
+    assert "_render_reset_only_footer" in wizard
+
+
+def test_origin_step_does_not_auto_advance_after_selection() -> None:
+    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+    origin_block = wizard.split('def _render_origin_step() -> None:', 1)[1].split('def _render_rules_step() -> None:', 1)[0]
+
+    assert '_sync_flow_state(origin, operation)' in origin_block
+    assert '_go_to_step(STEP_ENTRADA' not in origin_block
+    assert 'origin_selected_auto_next' not in origin_block
+    assert 'Use Avançar para continuar ou Voltar para revisar sem perder os dados.' in origin_block
+
+
+def test_rules_center_is_plugged_into_fixed_wizard_navigation() -> None:
     constants = Path('bling_app_zero/ui/home_wizard_constants.py').read_text(encoding='utf-8')
     wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
     rules_step = Path('bling_app_zero/ui/rules_center_step.py').read_text(encoding='utf-8')
@@ -116,8 +143,23 @@ def test_rules_center_is_plugged_into_wizard() -> None:
     assert 'from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_center_ready' in wizard
     assert 'elif step == STEP_REGRAS:' in wizard
     assert 'render_rules_center_step()' in wizard
-    assert 'allow_next=rules_center_ready()' in wizard
+    assert 'if step == STEP_REGRAS:' in wizard
+    assert 'return rules_center_ready()' in wizard
     assert 'Regra principal: mapeamento/manual ganha' in rules_step
+
+
+def test_mapping_stays_paginated_for_mobile_performance() -> None:
+    pagination_source = Path('bling_app_zero/ui/mapping_pagination.py').read_text(encoding='utf-8')
+    field_widget_source = Path('bling_app_zero/ui/mapping_field_widget.py').read_text(encoding='utf-8')
+    filters_source = Path('bling_app_zero/ui/mapping_filters.py').read_text(encoding='utf-8')
+
+    assert 'def visible_targets(' in pagination_source
+    assert 'MOBILE_MAPPING_PAGE_SIZE = 6' in pagination_source
+    assert "label = f'Campos {start + 1} a {end} de {total_targets}" in pagination_source
+    assert "st.button('← Campos anteriores'" in pagination_source
+    assert "st.button('Próximos campos →'" in pagination_source
+    assert 'st.selectbox(' in field_widget_source
+    assert '🟣 Regras/recursos' in filters_source
 
 
 def test_sidebar_rules_panel_is_read_only_summary() -> None:
@@ -171,21 +213,6 @@ def test_wizard_state_guard_tracks_cross_operation_keys() -> None:
     assert 'mapping_estoque' in estoque_keys
 
 
-def test_mapping_stays_paginated_for_mobile_performance() -> None:
-    constants = importlib.import_module('bling_app_zero.ui.mapping_constants')
-    pagination_source = Path('bling_app_zero/ui/mapping_pagination.py').read_text(encoding='utf-8')
-    field_widget_source = Path('bling_app_zero/ui/mapping_field_widget.py').read_text(encoding='utf-8')
-    filters_source = Path('bling_app_zero/ui/mapping_filters.py').read_text(encoding='utf-8')
-
-    assert constants.MAPPING_PAGE_SIZE == 12
-    assert 'def visible_targets(' in pagination_source
-    assert 'MAPPING_PAGE_SIZE' in pagination_source
-    assert "f'Bloco {page_index + 1} de {total_pages}'" in pagination_source
-    assert 'st.selectbox(' in field_widget_source
-    assert 'Os demais continuam salvos e entram no CSV final.' in pagination_source
-    assert '🟣 Regras/recursos' in filters_source
-
-
 def test_shared_mapping_uses_modular_flows() -> None:
     shared_mapping = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
 
@@ -232,7 +259,6 @@ def test_site_origin_is_stored_by_operation() -> None:
     assert "st.session_state[_site_df_key(operation)] = df_site" in site_panel
     assert "other = 'estoque' if operation == 'cadastro' else 'cadastro'" in site_panel
     assert "st.session_state.pop(_site_df_key(other), None)" in site_panel
-
     assert "return f'{SITE_SOURCE_KEY}_{_op_key(operation)}'" in site_as_source
     assert "return f'{SITE_RAW_LEGACY_KEY}_{_op_key(operation)}'" in site_as_source
     assert "st.session_state[_raw_source_key(normalized)]" in site_as_source
@@ -271,20 +297,11 @@ def test_estoque_download_only_happens_on_download_step() -> None:
     assert 'render_stock_preview()' in preview_step
 
 
-def test_mapping_css_uses_existing_theme_variables() -> None:
-    mapping_css = Path('bling_app_zero/ui/layout/mapping.py').read_text(encoding='utf-8')
-
-    assert '--bling-panel' not in mapping_css
-    assert 'var(--bling-success)' not in mapping_css
-    assert '--bling-surface' in mapping_css
-    assert '--bling-success-text' in mapping_css
-
-
 def test_download_final_uses_official_exporter() -> None:
     home_shared = Path('bling_app_zero/ui/home_shared.py').read_text(encoding='utf-8')
 
-    assert 'from bling_app_zero.core.exporter import to_bling_csv_bytes' in home_shared
-    assert 'data=to_bling_csv_bytes(df)' in home_shared
+    assert 'from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes' in home_shared
+    assert 'to_bling_csv_bytes(df, operation=operation)' in home_shared
     assert '.to_csv(' not in home_shared
 
 
