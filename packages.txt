@@ -1,0 +1,3 @@
+# BLINGFIX PACKAGES LEVE
+# Fluxo principal não precisa de pacotes apt pesados na abertura.
+# Não instalar Chromium/GTK/X11 aqui; captura por site pública usa requests/httpx/bs4 via requirements.txt.
