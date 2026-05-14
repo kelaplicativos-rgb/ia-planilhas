@@ -5,12 +5,8 @@ import streamlit as st
 
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.mapping_confidence import confidence_for_mapping, resolved_empty_confidence, sort_targets_by_confidence
-from bling_app_zero.ui.mapping_widget_state import is_explicit_empty, is_explicit_manual, option_value, target_widget_key
+from bling_app_zero.ui.mapping_widget_state import is_empty_mapping_value, is_explicit_empty, is_explicit_manual, option_value, target_widget_key
 
-# BLINGFIX: além de colunas marcadas com * / OBRIGATÓRIO no modelo,
-# tratamos os campos essenciais do cadastro como obrigatórios visuais.
-# Isso evita o erro mostrado no mapeamento: "Obrigatórios 0" mesmo existindo
-# Descrição e Preço no modelo do Bling.
 ESSENTIAL_REQUIRED_KINDS = {
     'descricao',
     'preco_unitario',
@@ -32,7 +28,7 @@ def manual_confidence() -> dict[str, object]:
 def confidence_for_selection(df_source: pd.DataFrame, target: str, selected: str, widget_key: str) -> dict[str, object]:
     if is_explicit_manual(widget_key, selected):
         return manual_confidence()
-    if is_explicit_empty(widget_key, selected):
+    if is_empty_mapping_value(selected) or is_explicit_empty(widget_key, selected):
         return resolved_empty_confidence()
     return confidence_for_mapping(df_source, target, option_value(selected))
 
