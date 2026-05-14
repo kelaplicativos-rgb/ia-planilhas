@@ -112,7 +112,7 @@ def render_stock_preview() -> None:
         index = result.get('index')
         df_final = result.get('df_final')
         mapping = result.get('mapping', {})
-        with st.expander(f'Origem {index} · conferência do estoque', expanded=index == 1):
+        with st.expander(f'Origem {index} · conferência do estoque', expanded=False):
             if isinstance(mapping, dict):
                 show_mapping(mapping, operation='estoque')
             if isinstance(df_final, pd.DataFrame):
