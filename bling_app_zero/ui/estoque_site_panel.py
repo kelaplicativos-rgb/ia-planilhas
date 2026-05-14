@@ -142,16 +142,14 @@ def _render_urls_input() -> str:
 
 
 def _render_universal_fallback(*, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
-    expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('🧩 Compatibilidade universal: importar tabela/HTML/CSV/XLSX do fornecedor', expanded=expanded):
-        _orange_warning('Use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, captcha ou Cloudflare. O fluxo de estoque continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
-        render_manual_table_import_panel(
-            operation=OPERATION,
-            requested_columns=requested_columns,
-            df_modelo_cadastro=None,
-            df_modelo_estoque=df_modelo_estoque,
-            df_modelo=df_modelo_estoque,
-        )
+    _orange_warning('Compatibilidade universal: use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, captcha ou Cloudflare. O fluxo de estoque continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
+    render_manual_table_import_panel(
+        operation=OPERATION,
+        requested_columns=requested_columns,
+        df_modelo_cadastro=None,
+        df_modelo_estoque=df_modelo_estoque,
+        df_modelo=df_modelo_estoque,
+    )
 
 
 def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
@@ -175,7 +173,7 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
         _set_stock_capture_state(running=False, error=message)
         _finish_progress(progress_bar, status_box, text='Busca de estoque encerrada com erro.')
         add_audit_event('stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'responsible_file': RESPONSIBLE_FILE})
-        st.error('A busca de estoque por site não conseguiu finalizar. Baixe o log debug para conferir o erro técnico.')
+        st.error('A busca de estoque por site não conseguiu finalizar. Baixe o diagnóstico para correção na sidebar.')
         return
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_stock_site_df('busca_publica_vazia')
