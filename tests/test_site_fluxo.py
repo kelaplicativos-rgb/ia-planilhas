@@ -39,6 +39,32 @@ class TestSiteFluxo(unittest.TestCase):
 
         self.assertIsNone(requested)
 
+    def test_site_estoque_preserva_ordem_exata_do_modelo_anexado(self) -> None:
+        modelo_estoque = pd.DataFrame(
+            columns=[
+                'ID Produto',
+                'Código',
+                'Descrição',
+                'Depósito (OBRIGATÓRIO)',
+                'Balanço (OBRIGATÓRIO)',
+                'Observações',
+            ]
+        )
+
+        requested = requested_columns_for_site_capture('estoque', None, modelo_estoque)
+
+        self.assertEqual(
+            requested,
+            [
+                'ID Produto',
+                'Código',
+                'Descrição',
+                'Depósito (OBRIGATÓRIO)',
+                'Balanço (OBRIGATÓRIO)',
+                'Observações',
+            ],
+        )
+
     def test_site_scraper_url_only_nao_faz_http_e_respeita_contrato(self) -> None:
         df = run_fast_site_scraper(
             raw_urls='https://fornecedor.com/p/1\nhttps://fornecedor.com/p/2',
