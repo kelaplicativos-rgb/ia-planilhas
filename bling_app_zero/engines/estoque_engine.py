@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bling_app_zero.core.bling_models import enforce_model_contract, estoque_default_model
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
@@ -10,16 +11,16 @@ from bling_app_zero.core.user_rules import get_user_rules, stock_defaults_from_r
 
 
 class MissingEstoqueModelError(ValueError):
-    """Erro controlado quando o fluxo de estoque tenta gerar CSV sem modelo real."""
+    """Erro controlado quando o fluxo de estoque não tem contrato válido."""
 
 
 STOCK_ALLOWED_COLUMN_HINTS = (
-    'codigo',
-    'cod',
-    'sku',
     'id produto',
     'idproduto',
     'produto id',
+    'codigo',
+    'cod',
+    'sku',
     'descricao produto',
     'descricao',
     'nome produto',
@@ -30,6 +31,8 @@ STOCK_ALLOWED_COLUMN_HINTS = (
     'estoque',
     'quantidade',
     'qtd',
+    'observacao',
+    'obs',
 )
 
 STOCK_FORBIDDEN_COLUMN_HINTS = (
@@ -37,8 +40,6 @@ STOCK_FORBIDDEN_COLUMN_HINTS = (
     'custo',
     'valor',
     'ncm',
-    'gtin',
-    'ean',
     'marca',
     'categoria',
     'imagem',
@@ -48,8 +49,6 @@ STOCK_FORBIDDEN_COLUMN_HINTS = (
     'largura',
     'comprimento',
     'profundidade',
-    'observacao',
-    'obs',
     'fornecedor',
 )
 
@@ -61,6 +60,12 @@ OUT_PATTERNS = ['esgotado', 'sem estoque', 'indisponivel', 'indisponível', 'zer
 
 def _valid_model(df_model: pd.DataFrame | None) -> bool:
     return isinstance(df_model, pd.DataFrame) and len(df_model.columns) > 0
+
+
+def _model_or_internal(df_model: pd.DataFrame | None) -> pd.DataFrame:
+    if _valid_model(df_model):
+        return df_model.copy().fillna('')
+    return estoque_default_model()
 
 
 def _is_forbidden_stock_column(column: str) -> bool:
@@ -111,7 +116,7 @@ def _normalize_stock_status_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _protect_stock_mapping(mapping: dict[str, str], model: pd.DataFrame) -> dict[str, str]:
-    """Preserva o modelo anexado e bloqueia preenchimento indevido."""
+    """Preserva o modelo anexado/interno e bloqueia preenchimento indevido."""
     protected: dict[str, str] = {}
     for target in model.columns:
         target_text = str(target)
@@ -131,12 +136,8 @@ def _fill_deposito(df: pd.DataFrame, deposito: str) -> pd.DataFrame:
 
 
 def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = None, deposito: str = '') -> tuple[pd.DataFrame, dict[str, str]]:
-    if not _valid_model(df_model):
-        raise MissingEstoqueModelError(
-            'Modelo de estoque do Bling não carregado. Envie o modelo para gerar somente as colunas solicitadas.'
-        )
+    model = _model_or_internal(df_model)
 
-    model = df_model.copy().fillna('')
     if not _has_stock_quantity_column(model):
         raise MissingEstoqueModelError(
             'Modelo de estoque inválido. Não encontrei coluna de saldo, balanço, estoque ou quantidade.'
@@ -147,7 +148,8 @@ def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = 
     raw_mapping = super_auto_map_columns(source, model)
     mapping = _protect_stock_mapping(raw_mapping, model)
     final = apply_mapping(source, model, mapping)
-    final = final.reindex(columns=list(model.columns), fill_value='')
+    final = enforce_model_contract(final, 'estoque', model)
     final = _fill_deposito(final, deposito)
     final = _normalize_stock_status_columns(final)
+    final = enforce_model_contract(final, 'estoque', model)
     return sanitize_for_bling(final, operation='estoque'), mapping
