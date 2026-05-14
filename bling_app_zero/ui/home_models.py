@@ -3,11 +3,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.engines.cadastro_engine import default_model as default_cadastro_model
+from bling_app_zero.flows.estoque_contract import default_model as default_estoque_model
 from bling_app_zero.ui.model_upload import render_model_upload_box
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
 HOME_HAS_MODELS_KEY = 'home_modelos_bling_ok'
+HOME_CADASTRO_MODEL_SOURCE_KEY = 'home_modelo_cadastro_source'
+HOME_ESTOQUE_MODEL_SOURCE_KEY = 'home_modelo_estoque_source'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 
 GLOBAL_CADASTRO_MODEL_KEYS = [
@@ -26,19 +30,27 @@ def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
-def _save_model(key: str, df: pd.DataFrame | None, aliases: list[str]) -> None:
+def _save_model(key: str, df: pd.DataFrame | None, aliases: list[str], *, source: str = 'upload') -> None:
     copied = _copy_df(df)
     if copied is None:
         return
     st.session_state[key] = copied.copy().fillna('')
     for alias in aliases:
         st.session_state[alias] = copied.copy().fillna('')
+    if key == HOME_CADASTRO_MODEL_KEY:
+        st.session_state[HOME_CADASTRO_MODEL_SOURCE_KEY] = source
+    elif key == HOME_ESTOQUE_MODEL_KEY:
+        st.session_state[HOME_ESTOQUE_MODEL_SOURCE_KEY] = source
 
 
 def _forget_model(key: str, aliases: list[str]) -> None:
     st.session_state.pop(key, None)
     for alias in aliases:
         st.session_state.pop(alias, None)
+    if key == HOME_CADASTRO_MODEL_KEY:
+        st.session_state.pop(HOME_CADASTRO_MODEL_SOURCE_KEY, None)
+    elif key == HOME_ESTOQUE_MODEL_KEY:
+        st.session_state.pop(HOME_ESTOQUE_MODEL_SOURCE_KEY, None)
 
 
 def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_model_df: pd.DataFrame | None) -> None:
@@ -63,24 +75,40 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
         pass
 
 
+def ensure_default_home_models() -> None:
+    """Garante modelos padrão internos quando o usuário não anexar modelo.
+
+    Isso evita exigir upload em todo uso. Se o usuário anexar um modelo oficial,
+    o upload substitui somente aquele tipo e o outro modelo já salvo é preservado.
+    """
+    if get_home_cadastro_model() is None:
+        _save_model(HOME_CADASTRO_MODEL_KEY, default_cadastro_model(), GLOBAL_CADASTRO_MODEL_KEYS, source='padrao_sistema')
+    if get_home_estoque_model() is None:
+        _save_model(HOME_ESTOQUE_MODEL_KEY, default_estoque_model(), GLOBAL_ESTOQUE_MODEL_KEYS, source='padrao_sistema')
+    st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
+
+
 def save_home_models(
     cadastro_model_df: pd.DataFrame | None = None,
     estoque_model_df: pd.DataFrame | None = None,
+    *,
+    replace_missing: bool = False,
 ) -> None:
     cadastro = _copy_df(cadastro_model_df)
     estoque = _copy_df(estoque_model_df)
 
     if cadastro is not None:
-        _save_model(HOME_CADASTRO_MODEL_KEY, cadastro, GLOBAL_CADASTRO_MODEL_KEYS)
-    else:
+        _save_model(HOME_CADASTRO_MODEL_KEY, cadastro, GLOBAL_CADASTRO_MODEL_KEYS, source='upload')
+    elif replace_missing:
         _forget_model(HOME_CADASTRO_MODEL_KEY, GLOBAL_CADASTRO_MODEL_KEYS)
 
     if estoque is not None:
-        _save_model(HOME_ESTOQUE_MODEL_KEY, estoque, GLOBAL_ESTOQUE_MODEL_KEYS)
-    else:
+        _save_model(HOME_ESTOQUE_MODEL_KEY, estoque, GLOBAL_ESTOQUE_MODEL_KEYS, source='upload')
+    elif replace_missing:
         _forget_model(HOME_ESTOQUE_MODEL_KEY, GLOBAL_ESTOQUE_MODEL_KEYS)
 
-    _sync_detected_operation(cadastro, estoque)
+    ensure_default_home_models()
+    _sync_detected_operation(get_home_cadastro_model(), get_home_estoque_model())
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
 
 
@@ -102,16 +130,35 @@ def has_home_models() -> bool:
     return get_home_cadastro_model() is not None or get_home_estoque_model() is not None
 
 
+def _model_source_label(source: object) -> str:
+    text = str(source or '').strip()
+    if text == 'upload':
+        return 'modelo anexado'
+    if text == 'padrao_sistema':
+        return 'padrão salvo do sistema'
+    return 'modelo disponível'
+
+
 def _render_loaded_summary() -> None:
     cadastro = get_home_cadastro_model()
     estoque = get_home_estoque_model()
     parts: list[str] = []
     if isinstance(cadastro, pd.DataFrame):
-        parts.append('cadastro')
+        parts.append(f'cadastro ({_model_source_label(st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY))})')
     if isinstance(estoque, pd.DataFrame):
-        parts.append('estoque')
+        parts.append(f'estoque ({_model_source_label(st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))})')
     if parts:
-        st.success('Modelos carregados: ' + ' + '.join(parts))
+        st.success('Modelos disponíveis: ' + ' + '.join(parts))
+
+    with st.expander('Conferir modelos disponíveis', expanded=False):
+        if isinstance(cadastro, pd.DataFrame):
+            st.caption('Cadastro')
+            st.dataframe(cadastro.head(1).astype(str), use_container_width=True, height=120)
+            st.caption(f'{len(cadastro.columns)} coluna(s): ' + ', '.join(map(str, cadastro.columns)))
+        if isinstance(estoque, pd.DataFrame):
+            st.caption('Estoque')
+            st.dataframe(estoque.head(1).astype(str), use_container_width=True, height=120)
+            st.caption(f'{len(estoque.columns)} coluna(s): ' + ', '.join(map(str, estoque.columns)))
 
 
 def render_home_bling_models() -> None:
@@ -120,9 +167,11 @@ def render_home_bling_models() -> None:
     O card visual externo fica no wizard para que explicação, upload, alerta
     e navegação fiquem no mesmo bloco, sem partes soltas na tela mobile.
     """
+    ensure_default_home_models()
+
     st.markdown('#### Modelo do Bling')
     st.caption(
-        'Envie o modelo de cadastro, estoque ou ambos. O sistema usa esse arquivo como contrato das colunas que podem ser preenchidas.'
+        'Você pode anexar um modelo oficial novo ou continuar com os modelos padrão já salvos no sistema para Cadastro e Estoque.'
     )
 
     upload = render_model_upload_box(
