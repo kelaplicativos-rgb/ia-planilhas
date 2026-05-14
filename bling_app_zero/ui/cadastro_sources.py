@@ -3,39 +3,73 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.bling_models import cadastro_default_model, estoque_default_model
 from bling_app_zero.flows.site_as_source import get_site_estoque_model, get_site_model_for_operation
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model, save_home_models
 from bling_app_zero.ui.smart_upload import SmartUploadResult, render_smart_upload_box
 
 
-def select_cadastro_model(upload) -> pd.DataFrame | None:
+def _valid_model(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
+def select_cadastro_model(upload) -> pd.DataFrame:
+    """Seleciona o contrato de cadastro do Bling.
+
+    Prioridade:
+    1. modelo do site/fluxo atual;
+    2. modelo salvo na Home;
+    3. modelo anexado/classificado como cadastro;
+    4. modelo genérico anexado;
+    5. modelo interno oficial de cadastro.
+
+    BLINGSCANFIX: cadastro nunca pode ficar sem contrato. Na ausência de planilha
+    modelo, o CSV final deve seguir o modelo interno oficial reconhecido pelo Bling.
+    """
     site_model = get_site_model_for_operation('cadastro')
-    if isinstance(site_model, pd.DataFrame):
-        return site_model
+    if _valid_model(site_model):
+        return site_model.copy().fillna('')
+
     home_model = get_home_cadastro_model()
-    if isinstance(home_model, pd.DataFrame):
-        return home_model
-    if isinstance(upload.cadastro_model_df, pd.DataFrame):
-        save_home_models(upload.cadastro_model_df, upload.estoque_model_df)
-        return upload.cadastro_model_df
-    if isinstance(upload.model_df, pd.DataFrame):
-        save_home_models(upload.model_df, upload.estoque_model_df)
-        return upload.model_df
-    return None
+    if _valid_model(home_model):
+        return home_model.copy().fillna('')
+
+    cadastro_model = getattr(upload, 'cadastro_model_df', None)
+    if _valid_model(cadastro_model):
+        save_home_models(cadastro_model, getattr(upload, 'estoque_model_df', None))
+        return cadastro_model.copy().fillna('')
+
+    generic_model = getattr(upload, 'model_df', None)
+    if _valid_model(generic_model):
+        save_home_models(generic_model, getattr(upload, 'estoque_model_df', None))
+        return generic_model.copy().fillna('')
+
+    return cadastro_default_model()
 
 
-def select_estoque_model_for_cadastro(upload) -> pd.DataFrame | None:
+def select_estoque_model_for_cadastro(upload) -> pd.DataFrame:
+    """Seleciona o contrato de estoque auxiliar do cadastro.
+
+    Quando não houver modelo anexado/salvo, usa o contrato interno oficial de
+    estoque para manter o fluxo coerente com a regra global do Bling.
+    """
     site_model = get_site_estoque_model()
-    if isinstance(site_model, pd.DataFrame):
-        return site_model
+    if _valid_model(site_model):
+        return site_model.copy().fillna('')
+
     home_model = get_home_estoque_model()
-    if isinstance(home_model, pd.DataFrame):
-        return home_model
-    if isinstance(upload.estoque_model_df, pd.DataFrame):
-        cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else upload.model_df
-        save_home_models(cadastro_model, upload.estoque_model_df)
-        return upload.estoque_model_df
-    return None
+    if _valid_model(home_model):
+        return home_model.copy().fillna('')
+
+    estoque_model = getattr(upload, 'estoque_model_df', None)
+    if _valid_model(estoque_model):
+        cadastro_model = getattr(upload, 'cadastro_model_df', None)
+        if not _valid_model(cadastro_model):
+            cadastro_model = getattr(upload, 'model_df', None)
+        save_home_models(cadastro_model if _valid_model(cadastro_model) else None, estoque_model)
+        return estoque_model.copy().fillna('')
+
+    return estoque_default_model()
 
 
 def _site_origin_upload_result(df_origem_site: pd.DataFrame) -> SmartUploadResult:
