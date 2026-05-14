@@ -21,18 +21,29 @@ NOISE_TERMS = [
 ]
 
 PRODUCT_SIGNAL_TERMS = [
-    'descricao', 'descrição', 'detalhes', 'informacoes adicionais', 'informações adicionais',
+    'descricao', 'descrição', 'descricao completa', 'descrição completa', 'descricao do produto', 'descrição do produto',
+    'detalhes', 'detalhes do produto', 'informacoes adicionais', 'informações adicionais',
     'caracteristicas', 'características', 'especificacoes', 'especificações', 'ficha tecnica', 'ficha técnica',
     'codigo', 'código', 'sku', 'referencia', 'referência', 'modelo', 'marca', 'ean', 'gtin', 'ncm',
     'garantia', 'conteudo da embalagem', 'conteúdo da embalagem', 'produto', 'hifi', 'fone',
 ]
 
 BLOCK_SELECTORS = [
-    '[itemprop=description]', '.description', '.descricao', '.descricao-produto', '.product-description',
+    '[itemprop=description]', '[data-product-description]', '[data-testid*=description]', '[data-testid*=descricao]',
+    '[class*=description]', '[class*=descricao]', '[class*=descri]', '[class*=detalhe]', '[class*=detail]',
+    '[id*=description]', '[id*=descricao]', '[id*=descri]', '[id*=detalhe]', '[id*=detail]',
+    '.description', '.descricao', '.descricao-produto', '.product-description', '.productDescription',
     '.product-details', '.product-tabs', '.tabs', '.tab-content', '.product-info', '.produto-info',
     '.informacoes', '.informacoes-adicionais', '.info-adicional', '.additional-information',
     '.specifications', '.specification', '.especificacoes', '.ficha-tecnica', '.caracteristicas',
-    '#descricao', '#description', '#detalhes', '#especificacoes', '#ficha-tecnica', 'main', 'article',
+    '#descricao', '#description', '#detalhes', '#especificacoes', '#ficha-tecnica',
+    'section[class*=product]', 'div[class*=product]', 'main', 'article',
+]
+
+META_DESCRIPTION_SELECTORS = [
+    'meta[name="description"]',
+    'meta[property="og:description"]',
+    'meta[name="twitter:description"]',
 ]
 
 REMOVE_SELECTORS = [
@@ -85,7 +96,7 @@ def _is_noise_text(text: str) -> bool:
     words = key.split()
     if len(words) <= 2 and not any(signal in key for signal in [normalize_key(t) for t in PRODUCT_SIGNAL_TERMS]):
         return True
-    if len(text) > 4500:
+    if len(text) > 9000:
         return True
     return False
 
@@ -100,8 +111,10 @@ def _score_text(text: str) -> int:
         score += 8
     if re.search(r'\b[A-Z0-9][A-Z0-9._/-]{2,}\b', text):
         score += 4
-    if 80 <= len(text) <= 2200:
-        score += 10
+    if 80 <= len(text) <= 4200:
+        score += 14
+    if len(text) > 4200:
+        score += 4
     if any(normalize_key(term) in key for term in [normalize_key(t) for t in NOISE_TERMS]):
         score -= 25
     return score
@@ -128,10 +141,22 @@ def _node_text(node: Tag) -> str:
     return ' • '.join(_dedupe_keep_order(chunks))
 
 
+def _meta_descriptions(soup: BeautifulSoup) -> list[str]:
+    values: list[str] = []
+    for selector in META_DESCRIPTION_SELECTORS:
+        node = soup.select_one(selector)
+        if node:
+            text = clean_cell(node.get('content') or '')
+            if text and not _is_noise_text(text):
+                values.append(text)
+    return values
+
+
 def _candidate_blocks(page: FastProductPage) -> list[str]:
     soup = soup_from_page(page)
     _remove_noise_nodes(soup)
     blocks: list[str] = []
+    blocks.extend(_meta_descriptions(soup))
 
     for selector in BLOCK_SELECTORS:
         for node in soup.select(selector):
@@ -140,13 +165,18 @@ def _candidate_blocks(page: FastProductPage) -> list[str]:
                 if text and not _is_noise_text(text):
                     blocks.append(text)
 
-    for heading in soup.find_all(['h2', 'h3', 'h4', 'strong', 'b']):
+    for heading in soup.find_all(['h2', 'h3', 'h4', 'strong', 'b', 'button', 'summary']):
         title = clean_cell(heading.get_text(' ', strip=True))
         title_key = normalize_key(title)
         if not any(normalize_key(term) in title_key for term in PRODUCT_SIGNAL_TERMS):
             continue
         parts = [title]
-        for sibling in heading.find_all_next(limit=6):
+        parent = heading.parent if isinstance(heading.parent, Tag) else None
+        if parent:
+            parent_text = _node_text(parent)
+            if parent_text and not _is_noise_text(parent_text):
+                parts.append(parent_text)
+        for sibling in heading.find_all_next(limit=10):
             if not isinstance(sibling, Tag):
                 continue
             if sibling.name in {'h1', 'h2', 'h3'} and sibling is not heading:
@@ -158,14 +188,14 @@ def _candidate_blocks(page: FastProductPage) -> list[str]:
 
     product = page.jsonld_products[0] if page.jsonld_products else {}
     if isinstance(product, dict):
-        for key in ['description', 'additionalProperty', 'features', 'material', 'model']:
+        for key in ['description', 'additionalProperty', 'features', 'material', 'model', 'audience']:
             value = product.get(key)
             if isinstance(value, list):
                 chunks = []
                 for item in value:
                     if isinstance(item, dict):
                         name = clean_cell(item.get('name') or item.get('propertyID') or '')
-                        val = clean_cell(item.get('value') or '')
+                        val = clean_cell(item.get('value') or item.get('description') or '')
                         chunks.append(f'{name}: {val}' if name and val else name or val)
                     else:
                         chunks.append(clean_cell(item))
@@ -178,7 +208,7 @@ def _candidate_blocks(page: FastProductPage) -> list[str]:
                 blocks.append(text)
 
     ranked = sorted(_dedupe_keep_order(blocks), key=_score_text, reverse=True)
-    return [text for text in ranked if _score_text(text) > 0][:12]
+    return [text for text in ranked if _score_text(text) > 0][:18]
 
 
 def _split_technical(blocks: list[str]) -> tuple[str, str, str]:
@@ -194,18 +224,18 @@ def _split_technical(blocks: list[str]) -> tuple[str, str, str]:
         else:
             desc.append(block)
     return (
-        ' • '.join(_dedupe_keep_order(desc))[:3500],
-        ' • '.join(_dedupe_keep_order(tech))[:3000],
-        ' • '.join(_dedupe_keep_order(attrs))[:3000],
+        ' • '.join(_dedupe_keep_order(desc))[:7000],
+        ' • '.join(_dedupe_keep_order(tech))[:5000],
+        ' • '.join(_dedupe_keep_order(attrs))[:5000],
     )
 
 
 def scrape_product_blocks(page: FastProductPage) -> BlockScrapeResult:
     blocks = _candidate_blocks(page)
     desc, tech, attrs = _split_technical(blocks)
-    all_blocks = ' • '.join(_dedupe_keep_order(blocks))[:5000]
+    all_blocks = ' • '.join(_dedupe_keep_order(blocks))[:9000]
     if not desc:
-        desc = all_blocks[:3500]
+        desc = all_blocks[:7000]
     return BlockScrapeResult(
         complementary_description=desc,
         technical_sheet=tech,
