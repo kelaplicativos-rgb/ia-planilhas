@@ -5,8 +5,8 @@ from typing import Any
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.cadastro_wizard_steps import cadastro_context_ready, cadastro_mapping_ready
-from bling_app_zero.ui.estoque_wizard_steps import estoque_context_ready, estoque_output_ready
+from bling_app_zero.ui.cadastro_wizard_state import cadastro_context_ready, cadastro_mapping_ready
+from bling_app_zero.ui.estoque_wizard_state import estoque_context_ready, estoque_output_ready
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     ESTOQUE_STEPS,
