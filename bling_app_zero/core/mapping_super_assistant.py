@@ -12,7 +12,7 @@ from bling_app_zero.core.text import normalize_key
 
 PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,7}(?:[\.,]\d{2})')
 GTIN_RE = re.compile(r'^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$')
-NUMBER_RE = re.compile(r'^\d+(?:[\.,]\d+)?$')
+NUMBER_RE = re.compile(r'^-?\d+(?:[\.,]\d+)?$')
 URL_RE = re.compile(r'https?://', re.I)
 IMAGE_RE = re.compile(r'\.(?:jpg|jpeg|png|webp|gif)(?:\?|$)', re.I)
 
@@ -57,9 +57,6 @@ NEVER_AUTO_MAP_TARGET_TERMS = [
 ]
 
 PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
-
-# BLINGFIX: padrões fixos removidos do motor de mapeamento.
-# A sidebar/regras do usuário deve ser a única origem de preenchimento automático.
 SAFE_CONSTANTS: dict[str, str] = {}
 
 
@@ -109,7 +106,7 @@ def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
         'url': sum(1 for v in values if URL_RE.search(v)) / total,
         'image': sum(1 for v in values if URL_RE.search(v) and (IMAGE_RE.search(v) or '|' in v)) / total,
         'avg_len': sum(len(v) for v in values) / total,
-        'unique': len(set(v.lower() for v in values)) / total,
+        'unique': len(set(v.lower() for v in values)) / total if values else 0,
         'has_values': bool(values),
     }
 
@@ -179,31 +176,31 @@ def _content_score(target_kind: str, source: str, profile: dict[str, float | str
     has_values = bool(profile.get('has_values'))
 
     if target_kind == source_kind and target_kind != 'custom':
-        return 60
+        return 70
     if target_kind == 'fornecedor':
         return 70 if text >= 0.60 and numeric < 0.10 and url == 0 and avg_len <= 45 and unique <= 0.50 else -200
     if target_kind == 'custom':
         return 25 if has_values else 5
     if target_kind in {'codigo', 'id_produto'}:
-        return 45 if gtin >= 0.40 or numeric >= 0.60 or source_kind in {'codigo', 'gtin'} else -80
+        return 45 if gtin >= 0.30 or numeric >= 0.55 or source_kind in {'codigo', 'gtin'} else -80
     if target_kind == 'gtin':
-        return int(gtin * 100) if gtin >= 0.50 else -100
+        return int(gtin * 110) if gtin >= 0.50 else -120
     if target_kind in {'descricao', 'nome_apoio'}:
-        return int(text * 50 + min(avg_len, 80) / 3) if text >= 0.45 and url < 0.25 else -80
+        return int(text * 55 + min(avg_len, 80) / 3) if text >= 0.40 and url < 0.25 else -80
     if target_kind in {'preco_unitario', 'preco_custo'}:
-        return int(max(price, numeric) * 80) if price >= 0.25 or numeric >= 0.70 else -80
+        return int(max(price, numeric) * 90) if price >= 0.25 or numeric >= 0.70 else -90
     if target_kind == 'estoque':
         if _is_price_like_source(source, profile):
             return -120
-        return int(numeric * 80) if numeric >= 0.65 and price < 0.35 else -80
+        return int(numeric * 90) if numeric >= 0.60 and price < 0.35 else -80
     if target_kind == 'url':
-        return int(url * 90) if url >= 0.45 else -80
+        return int(url * 95) if url >= 0.45 else -90
     if target_kind == 'imagem':
-        return int(image * 100) if image >= 0.30 else -100
+        return int(image * 110) if image >= 0.30 else -120
     if target_kind == 'marca':
-        return int(text * 50 + (30 if avg_len <= 35 else -20)) if text >= 0.35 and url == 0 else -70
+        return int(text * 55 + (30 if avg_len <= 45 else -20)) if text >= 0.30 and url == 0 else -70
     if target_kind == 'categoria':
-        return int(text * 50 + (25 if avg_len <= 90 else 0)) if text >= 0.35 else -60
+        return int(text * 50 + (25 if avg_len <= 140 else 0)) if text >= 0.25 else -60
     if target_kind == 'deposito':
         return 40 if text >= 0.30 and unique <= 0.30 else -50
     return -30
@@ -263,7 +260,12 @@ def _force_exact_matches_first(mapping: dict[str, str], source_columns: list[str
     return out
 
 
-def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_score: int = 80) -> dict[str, str]:
+def _confidence_is_usable(df_source: pd.DataFrame, target: str, source: str) -> bool:
+    info = confidence_for_mapping(df_source, target, source)
+    return str(info.get('level') or '') in {'verde', 'amarelo'}
+
+
+def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_score: int = 95) -> dict[str, str]:
     base_mapping = auto_map_columns(df_source, df_model)
     if not isinstance(df_source, pd.DataFrame) or not isinstance(df_model, pd.DataFrame):
         return base_mapping
@@ -279,17 +281,15 @@ def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_
                 used.discard(mapping.get(target, ''))
             mapping[target] = ''
             continue
+
         current = mapping.get(target, '')
         if current:
-            if _is_exact_or_equivalent(target, current):
-                continue
-            info = confidence_for_mapping(df_source, target, current)
-            if str(info.get('level')) in {'verde', 'amarelo'}:
+            if _is_exact_or_equivalent(target, current) or _confidence_is_usable(df_source, target, current):
                 continue
             used.discard(current)
 
         candidate = _best_candidate(df_source, target, source_columns, used)
-        if candidate.source and candidate.score >= min_score:
+        if candidate.source and candidate.score >= min_score and _confidence_is_usable(df_source, target, candidate.source):
             mapping[target] = candidate.source
             used.add(candidate.source)
         elif not current:
@@ -299,9 +299,4 @@ def super_auto_map_columns(df_source: pd.DataFrame, df_model: pd.DataFrame, min_
 
 
 def safe_default_for_target(target: str) -> str:
-    """Padrões automáticos fixos desativados.
-
-    Campos como Fornecedor, Cross-Docking, Clonar dados do pai e Cód no fornecedor
-    não devem aparecer como protegidos/preenchidos automaticamente no mapeamento.
-    """
     return ''
