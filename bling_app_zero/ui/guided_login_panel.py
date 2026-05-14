@@ -26,6 +26,8 @@ REMOTE_SNAPSHOT_URL_KEY = 'guided_login_remote_snapshot_url'
 REMOTE_SNAPSHOT_FINAL_URL_KEY = 'guided_login_remote_snapshot_final_url'
 REMOTE_SNAPSHOT_TITLE_KEY = 'guided_login_remote_snapshot_title'
 REMOTE_SNAPSHOT_OK_KEY = 'guided_login_remote_snapshot_ok'
+REMOTE_VIEWPORT_WIDTH = 1366
+REMOTE_VIEWPORT_HEIGHT = 900
 
 DEFAULT_SUPPLIER_URL = 'https://app.obaobamix.com.br/admin'
 LEGACY_EXTERNAL_LOGIN_KEYS = (
@@ -160,6 +162,8 @@ def _run_browser_action(supplier_url: str, command: RemoteBrowserCommand, label:
                 url=current_url,
                 state_namespace=_state_namespace(),
                 headless=True,
+                width=REMOTE_VIEWPORT_WIDTH,
+                height=REMOTE_VIEWPORT_HEIGHT,
             ),
             command,
         )
@@ -211,7 +215,21 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
 
 def _render_remote_controls(supplier_url: str) -> None:
     st.markdown('###### 🎮 Controles do navegador real')
-    st.caption('Use estes comandos para operar o Chromium do servidor. Este bloco não usa expander para evitar erro de expander aninhado no Streamlit.')
+    st.caption('Use os comandos abaixo para operar o Chromium do servidor. Para clicar no snapshot, use coordenadas X/Y aproximadas da imagem original 1366x900.')
+
+    coord_col1, coord_col2 = st.columns(2)
+    with coord_col1:
+        click_x = st.number_input('Clique X', min_value=0, max_value=REMOTE_VIEWPORT_WIDTH - 1, value=100, step=10, key='remote_browser_click_x')
+    with coord_col2:
+        click_y = st.number_input('Clique Y', min_value=0, max_value=REMOTE_VIEWPORT_HEIGHT - 1, value=100, step=10, key='remote_browser_click_y')
+    if st.button('🎯 Clicar na coordenada X/Y', use_container_width=True, key='remote_click_xy'):
+        _run_browser_action(
+            supplier_url,
+            RemoteBrowserCommand(action='click_xy', x=int(click_x), y=int(click_y)),
+            f'Clicando na coordenada X={int(click_x)} Y={int(click_y)}...',
+        )
+
+    st.divider()
     selector = st.text_input('Seletor CSS para clicar ou digitar', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
     text_value = st.text_input('Texto para digitar no seletor acima', key='remote_browser_type_text')
     click_text = st.text_input('Ou clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
@@ -249,6 +267,8 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
                     url=supplier_url,
                     state_namespace=_state_namespace(),
                     headless=True,
+                    width=REMOTE_VIEWPORT_WIDTH,
+                    height=REMOTE_VIEWPORT_HEIGHT,
                 )
             )
         _display_snapshot(snapshot, supplier_url)
