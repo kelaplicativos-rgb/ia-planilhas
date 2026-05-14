@@ -16,8 +16,8 @@ STEP_MODELO = 'modelo'
 STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
-STEP_REGRAS = 'regras'
 STEP_ENTRADA = 'entrada'
+STEP_REGRAS = 'regras'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_GERAR_ESTOQUE = 'gerar_estoque'
 STEP_PREVIEW = 'preview'
@@ -29,8 +29,8 @@ CADASTRO_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
-    STEP_REGRAS,
     STEP_ENTRADA,
+    STEP_REGRAS,
     STEP_MAPEAMENTO,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -41,8 +41,8 @@ ESTOQUE_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
-    STEP_REGRAS,
     STEP_ENTRADA,
+    STEP_REGRAS,
     STEP_GERAR_ESTOQUE,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -55,8 +55,8 @@ STEP_LABELS = {
     STEP_OPERACAO: 'Operação',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
-    STEP_REGRAS: 'Regras',
     STEP_ENTRADA: 'Entrada',
+    STEP_REGRAS: 'Regras',
     STEP_MAPEAMENTO: 'Mapeamento',
     STEP_GERAR_ESTOQUE: 'Gerar',
     STEP_PREVIEW: 'Preview',
