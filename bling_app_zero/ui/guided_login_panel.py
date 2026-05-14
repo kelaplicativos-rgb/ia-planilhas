@@ -209,6 +209,34 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
     )
 
 
+def _render_remote_controls(supplier_url: str) -> None:
+    st.markdown('###### 🎮 Controles do navegador real')
+    st.caption('Use estes comandos para operar o Chromium do servidor. Este bloco não usa expander para evitar erro de expander aninhado no Streamlit.')
+    selector = st.text_input('Seletor CSS para clicar ou digitar', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
+    text_value = st.text_input('Texto para digitar no seletor acima', key='remote_browser_type_text')
+    click_text = st.text_input('Ou clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
+    key_value = st.text_input('Tecla para pressionar', value='Enter', key='remote_browser_key_value')
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button('🖱️ Clicar seletor', use_container_width=True, key='remote_click_selector'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_selector', value=selector), 'Clicando no seletor...')
+        if st.button('⌨️ Digitar no seletor', use_container_width=True, key='remote_type_selector'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_selector', value=selector, text=text_value), 'Digitando no campo...')
+        if st.button('⬇️ Rolar para baixo', use_container_width=True, key='remote_scroll_down'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_down'), 'Rolando página...')
+    with col2:
+        if st.button('🔎 Clicar texto', use_container_width=True, key='remote_click_text'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_text', value=click_text), 'Clicando no texto...')
+        if st.button('↩️ Pressionar tecla', use_container_width=True, key='remote_press_key'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value=key_value), 'Pressionando tecla...')
+        if st.button('⬆️ Rolar para cima', use_container_width=True, key='remote_scroll_up'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_up'), 'Rolando página...')
+
+    if st.button('🔄 Atualizar snapshot', use_container_width=True, key='remote_refresh_snapshot'):
+        _run_browser_action(supplier_url, RemoteBrowserCommand(action='snapshot'), 'Atualizando snapshot...')
+
+
 def _render_remote_browser_snapshot(supplier_url: str) -> None:
     st.caption('Navegador real do sistema: o servidor abre a página em Chromium e você controla por comandos seguros. Não é iframe e não usa a aba externa do celular como sessão.')
     if st.button('🌐 Abrir navegador real do sistema', use_container_width=True, key='open_remote_supplier_browser_snapshot'):
@@ -230,31 +258,7 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
         final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url)
         st.success(f'Navegador real carregado: {title}')
         st.caption(final_url)
-
-        with st.expander('🎮 Controles do navegador real', expanded=True):
-            selector = st.text_input('Seletor CSS para clicar ou digitar', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
-            text_value = st.text_input('Texto para digitar no seletor acima', key='remote_browser_type_text')
-            click_text = st.text_input('Ou clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
-            key_value = st.text_input('Tecla para pressionar', value='Enter', key='remote_browser_key_value')
-
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button('🖱️ Clicar seletor', use_container_width=True, key='remote_click_selector'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_selector', value=selector), 'Clicando no seletor...')
-                if st.button('⌨️ Digitar no seletor', use_container_width=True, key='remote_type_selector'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_selector', value=selector, text=text_value), 'Digitando no campo...')
-                if st.button('⬇️ Rolar para baixo', use_container_width=True, key='remote_scroll_down'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_down'), 'Rolando página...')
-            with col2:
-                if st.button('🔎 Clicar texto', use_container_width=True, key='remote_click_text'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_text', value=click_text), 'Clicando no texto...')
-                if st.button('↩️ Pressionar tecla', use_container_width=True, key='remote_press_key'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value=key_value), 'Pressionando tecla...')
-                if st.button('⬆️ Rolar para cima', use_container_width=True, key='remote_scroll_up'):
-                    _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_up'), 'Rolando página...')
-
-            if st.button('🔄 Atualizar snapshot', use_container_width=True, key='remote_refresh_snapshot'):
-                _run_browser_action(supplier_url, RemoteBrowserCommand(action='snapshot'), 'Atualizando snapshot...')
+        _render_remote_controls(supplier_url)
 
     _orange_warning('Este controle usa comandos seguros no Chromium do servidor. Se o site exigir captcha, confirmação por SMS/2FA ou bloqueio humano forte, use a compatibilidade universal.')
 
