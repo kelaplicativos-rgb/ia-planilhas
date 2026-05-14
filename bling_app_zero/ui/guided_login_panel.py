@@ -145,7 +145,7 @@ def _display_snapshot(snapshot, supplier_url: str) -> None:
         _orange_warning('Se o fornecedor exigir captcha, 2FA, popup ou bloquear robô, use a compatibilidade universal: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
         return
     if snapshot.screenshot_png:
-        st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_container_width=True)
+        st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_column_width=True)
     st.success('Snapshot atualizado pelo navegador real do sistema.')
 
 
