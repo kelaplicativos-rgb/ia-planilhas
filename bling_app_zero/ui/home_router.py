@@ -40,7 +40,6 @@ def _clear_flow_query_param() -> None:
 
 
 def _current_flow() -> str:
-    """Mantém a Home como tela inicial real."""
     allowed = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY))
     flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
     if allowed and flow:
@@ -121,17 +120,21 @@ def _render_operation_choice() -> None:
     )
 
 
+def _back_to_operations() -> None:
+    st.session_state.pop(ACTIVE_FLOW_KEY, None)
+    st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
+    _clear_flow_query_param()
+    add_audit_event(
+        'home_operation_cleared',
+        area='HOME',
+        details={'kept_wizard_progress': True, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    st.rerun()
+
+
 def _render_back_to_operations() -> None:
     if st.button('← Voltar', use_container_width=True, key='home_back_to_operation_choice'):
-        st.session_state.pop(ACTIVE_FLOW_KEY, None)
-        st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
-        _clear_flow_query_param()
-        add_audit_event(
-            'home_operation_cleared',
-            area='HOME',
-            details={'kept_wizard_progress': True, 'responsible_file': RESPONSIBLE_FILE},
-        )
-        st.rerun()
+        _back_to_operations()
 
 
 def render_home_router() -> None:
@@ -140,11 +143,13 @@ def render_home_router() -> None:
         _render_operation_choice()
         return
 
-    _render_back_to_operations()
     if flow == FLOW_PRICE_MULTISTORE:
+        _render_back_to_operations()
         render_price_multistore_v2()
         return
 
+    # No fluxo principal, o Voltar fica dentro do wizard.
+    # Isso evita múltiplos botões “Voltar” empilhados na mesma tela mobile.
     render_home_wizard()
 
 
