@@ -183,7 +183,7 @@ def _render_urls_input(operation: str) -> str:
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole um ou mais links: categoria, busca ou produtos individuais.',
+        help='Cole um ou mais links públicos: categoria, busca ou produtos individuais. Se o fornecedor exigir login, CAPTCHA, duas etapas, Cloudflare ou firewall, use a área de site protegido logo abaixo.',
     )
 
 
@@ -214,6 +214,17 @@ def _clear_stuck_capture(operation: str) -> None:
     )
 
 
+def _render_protected_site_hint() -> None:
+    st.markdown(
+        '<div style="background:#fff8ed;border:1px solid #ffd59b;border-left:6px solid #fb8c00;border-radius:12px;padding:12px 14px;margin:10px 0;color:#4b2800;font-size:0.95rem;">'
+        '<b>Site com login, CAPTCHA, duas etapas, Cloudflare ou firewall?</b><br>'
+        'Não use o botão de busca pública acima para esse caso. Abra o fornecedor no Chrome, resolva a segurança e use a opção abaixo <b>Importar site protegido / colar HTML</b>. '
+        'Ela aceita Ctrl+U → Ctrl+A → Ctrl+C, HTML salvo, tabela copiada ou vários arquivos HTML de páginas diferentes.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_universal_fallback(
     *,
     operation: str,
@@ -223,10 +234,10 @@ def _render_universal_fallback(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('🧩 Compatibilidade universal: importar tabela/HTML/CSV/XLSX do fornecedor', expanded=expanded):
+    with st.expander('🔐 Importar site protegido / colar HTML, tabela, CSV ou XLSX', expanded=expanded):
         _orange_warning(
-            'Use esta opção quando o fornecedor bloquear robô, iframe, sessão, login ou CAPTCHA. '
-            'Abra o fornecedor no navegador normal, exporte/salve/copie a tabela e importe aqui para continuar o fluxo.'
+            'Use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, verificação em duas etapas, CAPTCHA, Cloudflare ou firewall. '
+            'O sistema não precisa da sua senha nem tenta burlar proteção: você acessa no Chrome e cola/envia aqui o HTML ou tabela já carregada.'
         )
         render_manual_table_import_panel(
             operation=operation,
@@ -327,7 +338,7 @@ def render_site_panel() -> None:
 
     config = config_for_site_operation(operation)
     st.markdown(
-        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2><p class="bling-flow-card-text">A captura pública acontece aqui. Fornecedores com login/CAPTCHA devem usar a compatibilidade universal por importação.</p></section>',
+        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2><p class="bling-flow-card-text">A captura pública acontece aqui. Fornecedores com login, CAPTCHA, duas etapas ou firewall devem usar a área de site protegido logo abaixo.</p></section>',
         unsafe_allow_html=True,
     )
     st.info(_operation_badge(operation))
@@ -354,6 +365,7 @@ def render_site_panel() -> None:
         add_audit_event('site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': operation, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
+    _render_protected_site_hint()
     _render_universal_fallback(
         operation=operation,
         requested_columns=requested_columns,
