@@ -19,26 +19,7 @@ SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
 @dataclass(frozen=True)
 class SidebarTool:
     name: str
-    group: str
     renderer: SidebarRenderer
-
-
-def _render_features_panel_lazy() -> None:
-    from bling_app_zero.ui.features_panel import render_features_panel
-
-    render_features_panel()
-
-
-def _render_diagnostics_panel_lazy() -> None:
-    from bling_app_zero.ui.diagnostics_panel import render_diagnostics_panel
-
-    render_diagnostics_panel()
-
-
-def _render_ai_maintenance_panel_lazy() -> None:
-    from bling_app_zero.ui.ai_maintenance_panel import render_ai_maintenance_panel
-
-    render_ai_maintenance_panel()
 
 
 def _render_maintenance_panel_lazy() -> None:
@@ -48,16 +29,7 @@ def _render_maintenance_panel_lazy() -> None:
 
 
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
-    SidebarTool('Ferramentas de conferência', 'Diagnóstico e correção', _render_diagnostics_panel_lazy),
-    SidebarTool('Assistente IA de correção', 'Diagnóstico e correção', _render_ai_maintenance_panel_lazy),
-    SidebarTool('Manutenção do sistema', 'Sistema e manutenção', _render_maintenance_panel_lazy),
-    SidebarTool('Módulos e recursos', 'Recursos disponíveis', _render_features_panel_lazy),
-)
-
-SIDEBAR_GROUPS: tuple[tuple[str, str], ...] = (
-    ('Diagnóstico e correção', 'Varreduras, simulações e assistência técnica.'),
-    ('Sistema e manutenção', 'Logs, auditoria, limpeza e suporte operacional.'),
-    ('Recursos disponíveis', 'Lista de módulos e capacidades carregadas no sistema.'),
+    SidebarTool('Enviar diagnóstico para suporte', _render_maintenance_panel_lazy),
 )
 
 
@@ -65,31 +37,18 @@ def _render_sidebar_header() -> None:
     with st.sidebar:
         st.markdown(
             """
-            <section class="bling-sidebar-hero" aria-label="Ferramentas do sistema">
-                <div class="bling-sidebar-kicker">Painel de apoio</div>
-                <div class="bling-sidebar-title">Central técnica</div>
-                <div class="bling-sidebar-text">Diagnóstico, logs e manutenção. As entradas reais continuam no fluxo principal.</div>
+            <section class="bling-sidebar-hero" aria-label="Suporte técnico">
+                <div class="bling-sidebar-kicker">Suporte</div>
+                <div class="bling-sidebar-title">Enviar diagnóstico</div>
+                <div class="bling-sidebar-text">Baixe um pacote único com logs, auditoria e estado seguro da sessão para enviar no BLINGFIX.</div>
             </section>
             """,
             unsafe_allow_html=True,
         )
 
 
-def _render_sidebar_group_header(title: str, caption: str) -> None:
-    with st.sidebar:
-        st.markdown(
-            f"""
-            <div class="bling-sidebar-group" aria-label="{title}">
-                <div class="bling-sidebar-group-title">{title}</div>
-                <div class="bling-sidebar-group-caption">{caption}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
 def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
-    """Executa uma ferramenta da sidebar sem deixar uma falha derrubar o app."""
+    """Executa a ferramenta essencial da sidebar sem derrubar o app."""
     try:
         renderer()
     except Exception as exc:
@@ -103,16 +62,16 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
             details={'tool': name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
         with st.sidebar:
-            with st.expander(f'{name} indisponível', expanded=True):
-                st.error(f'O módulo {name} falhou, mas os outros recursos continuam disponíveis.')
-                st.caption('Baixe o log técnico e envie para o próximo BLINGFIX.')
+            with st.expander('Diagnóstico indisponível', expanded=True):
+                st.error('Não consegui montar o pacote técnico, mas o sistema principal continua aberto.')
+                st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
 
 
 def _ensure_sidebar_defaults() -> None:
     if SIDEBAR_TOOLS_OPEN_KEY not in st.session_state:
         st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = False
     if SIDEBAR_TOOL_KEY not in st.session_state:
-        st.session_state[SIDEBAR_TOOL_KEY] = 'Ferramentas carregadas e recolhidas'
+        st.session_state[SIDEBAR_TOOL_KEY] = 'Diagnóstico técnico recolhido'
 
 
 def _clear_legacy_sidebar_rules_state() -> None:
@@ -122,6 +81,12 @@ def _clear_legacy_sidebar_rules_state() -> None:
         'bling_command_center_prompt',
         'bling_command_center_command_name',
         'bling_command_center_last_run',
+        'sidebar_active_technical_tool',
+        'show_engine_inventory',
+        'openai_validation_result',
+        'blingflow_simulation_result',
+        'blingscan_prompt_ready',
+        'blingscan_prompt_last_run',
     ]
     removed: list[str] = []
     for key in legacy_keys:
@@ -130,14 +95,10 @@ def _clear_legacy_sidebar_rules_state() -> None:
             st.session_state.pop(key, None)
     if removed:
         add_audit_event(
-            'legacy_sidebar_rules_state_cleared',
+            'legacy_sidebar_noise_state_cleared',
             area='SIDEBAR',
             details={'removed_keys': removed, 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
-
-
-def _tools_for_group(group: str) -> list[SidebarTool]:
-    return [tool for tool in SIDEBAR_TOOLS if tool.group == group]
 
 
 def render_sidebar_tools() -> None:
@@ -150,24 +111,21 @@ def render_sidebar_tools() -> None:
         'sidebar_tools_rendered',
         area='SIDEBAR',
         details={
-            'mode': 'grouped_sidebar_without_command_center',
-            'groups': [group for group, _ in SIDEBAR_GROUPS],
+            'mode': 'minimal_support_bundle_only',
+            'removed_panels': [
+                'BLINGSCAN automático',
+                'Assistente IA de correção',
+                'Ferramentas de conferência',
+                'Recursos disponíveis',
+                'Lista de módulos e capacidades carregadas no sistema',
+            ],
             'tools': [tool.name for tool in SIDEBAR_TOOLS],
-            'rules_location': 'main_flow_only',
-            'audit_location': 'maintenance_panel',
-            'command_center_location': 'removed_from_sidebar',
-            'guided_login_location': 'site_origin_module',
             'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
         },
     )
 
-    for group, caption in SIDEBAR_GROUPS:
-        tools = _tools_for_group(group)
-        if not tools:
-            continue
-        _render_sidebar_group_header(group, caption)
-        for tool in tools:
-            _render_sidebar_tool(tool.name, tool.renderer)
+    for tool in SIDEBAR_TOOLS:
+        _render_sidebar_tool(tool.name, tool.renderer)
 
 
 __all__ = ['render_sidebar_tools']
