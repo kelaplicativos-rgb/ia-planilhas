@@ -8,14 +8,13 @@ from typing import Any
 import streamlit as st
 
 LOG_SESSION_KEY = 'logs'
-MAX_LOG_ITEMS = 120
+MAX_LOG_ITEMS = 300
 DEBUG_HOME_OPEN_KEY = 'debug_home_area_open'
 
 
 def _log_key() -> str:
     try:
         from bling_app_zero.v2.session_store import state_key
-
         return state_key('logs')
     except Exception:
         return LOG_SESSION_KEY
@@ -24,7 +23,6 @@ def _log_key() -> str:
 def _debug_open_key() -> str:
     try:
         from bling_app_zero.v2.session_store import state_key
-
         return state_key('debug_home_area_open')
     except Exception:
         return DEBUG_HOME_OPEN_KEY
@@ -68,7 +66,7 @@ def _collect_state_context(keys: list[str] | tuple[str, ...] | set[str] | None) 
     if not keys:
         return {}
     context: dict[str, str] = {}
-    for key in list(keys)[:20]:
+    for key in list(keys)[:30]:
         text_key = str(key or '').strip()
         if not text_key or text_key not in st.session_state:
             continue
@@ -136,12 +134,31 @@ def _logs_to_text(logs: list[dict[str, Any]]) -> str:
     return '\n'.join(lines)
 
 
+def _render_internal_diagnostic_download(prefix: str) -> None:
+    try:
+        from bling_app_zero.core.log_access import build_internal_log_json_bytes
+        data = build_internal_log_json_bytes()
+    except Exception as exc:
+        st.caption(f'Pacote diagnóstico indisponível: {exc}')
+        return
+    st.download_button(
+        'Baixar pacote diagnóstico interno',
+        data=data,
+        file_name='bling_internal_diagnostic.json',
+        mime='application/json; charset=utf-8',
+        use_container_width=True,
+        key=f'{prefix}_download_internal_diagnostic',
+    )
+
+
 def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
     key = _log_key()
     if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
         st.session_state[key] = []
         st.success('Logs limpos.')
         st.rerun()
+
+    _render_internal_diagnostic_download(prefix)
 
     if logs:
         st.download_button(
