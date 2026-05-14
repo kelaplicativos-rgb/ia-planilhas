@@ -6,7 +6,9 @@ from typing import Callable, Iterable
 
 import pandas as pd
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.column_contract import RequestedField, build_contract
+from bling_app_zero.core.debug import add_debug
 from bling_app_zero.engines.devtools_scraper.enhancer import enhance_with_rendered_page, needs_rendered_fallback
 from bling_app_zero.engines.fast_site_scraper.extractors import (
     extract_brand,
@@ -27,8 +29,6 @@ from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.page_parser import parse_product_page
 from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls
 
-# BLINGFIX: 48 workers era agressivo demais para sites reais e podia travar a captura
-# antes de salvar a origem no Wizard. Mantemos paralelismo, mas com limite seguro.
 MAX_WORKERS = 8
 SLOW_LINK_SECONDS = 6.0
 SMART_COMPLETE_TARGET = 180
@@ -37,6 +37,9 @@ SMART_STOP_COMPLETE_RATIO = 0.72
 SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
 DEVTOOLS_FALLBACK_MAX_PER_RUN = 3
+RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
+DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
+RESPONSIBLE_FILE = 'bling_app_zero/engines/fast_site_scraper/engine.py'
 
 
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
@@ -52,28 +55,18 @@ def _default_columns(operation: str) -> list[str]:
     if operation == 'estoque':
         return ['Código', 'Descrição', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)']
     return [
-        'URL',
-        'Código',
-        'SKU',
-        'GTIN',
-        'Descrição',
-        'Descrição complementar',
-        'Características',
-        'Ficha técnica',
-        'Nome',
-        'Preço',
-        'Preço unitário (OBRIGATÓRIO)',
-        'URL Imagens',
-        'Imagens',
-        'Marca',
-        'Categoria',
+        'URL', 'Código', 'SKU', 'GTIN', 'Descrição', 'Descrição complementar',
+        'Características', 'Ficha técnica', 'Nome', 'Preço', 'Preço unitário (OBRIGATÓRIO)',
+        'URL Imagens', 'Imagens', 'Marca', 'Categoria',
     ]
 
 
-def _needed_kinds(contract: list[RequestedField]) -> set[str]:
+def _needed_kinds(contract: list[RequestedField], operation: str = 'cadastro') -> set[str]:
     kinds = {field.kind for field in contract}
     if 'codigo' in kinds or 'id_produto' in kinds:
         kinds.add('gtin')
+    if operation == 'cadastro' and kinds.intersection(DESCRIPTION_TRIGGER_KINDS):
+        kinds.add('descricao_complementar')
     return kinds
 
 
@@ -115,17 +108,9 @@ def _value_for_kind(product: FastProductData, kind: str) -> str:
 
 def _has_useful_data(product: FastProductData, needed: set[str]) -> bool:
     if any([
-        product.codigo,
-        product.gtin,
-        product.descricao,
-        product.descricao_complementar,
-        product.ficha_tecnica,
-        product.caracteristicas,
-        product.preco,
-        product.estoque,
-        product.imagem,
-        product.marca,
-        product.categoria,
+        product.codigo, product.gtin, product.descricao, product.descricao_complementar,
+        product.ficha_tecnica, product.caracteristicas, product.preco, product.estoque,
+        product.imagem, product.marca, product.categoria,
     ]):
         return True
     return 'url' in needed and bool(product.url)
@@ -143,6 +128,31 @@ def _url_only_row(url: str) -> FastProductData:
     return FastProductData(url=url)
 
 
+def _log_rich_description_result(url: str, product: FastProductData, needed: set[str]) -> None:
+    if 'descricao_complementar' not in needed:
+        return
+    length = len(str(product.descricao_complementar or '').strip())
+    status = 'vazia' if length == 0 else 'curta' if length < 80 else 'ok'
+    details = {
+        'url': url,
+        'descricao_len': len(str(product.descricao or '').strip()),
+        'descricao_complementar_len': length,
+        'ficha_tecnica_len': len(str(product.ficha_tecnica or '').strip()),
+        'caracteristicas_len': len(str(product.caracteristicas or '').strip()),
+        'status': status,
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+    add_audit_event('site_rich_description_extracted', area='SITE', status='OK' if status == 'ok' else 'INFO', details=details)
+    if status != 'ok':
+        add_debug(
+            f'Descrição complementar {status} na captura por site.',
+            origin='SITE_DESCRICAO_RICA',
+            level='WARN' if status == 'vazia' else 'INFO',
+            file_name=RESPONSIBLE_FILE,
+            details=details,
+        )
+
+
 def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float, bool]:
     started = time.perf_counter()
     if needed <= {'url'}:
@@ -150,11 +160,9 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float
 
     html = fetch_live(url, timeout=8)
     if not html:
-        product = FastProductData(url=url)
-        return url, product, time.perf_counter() - started, True
+        return url, FastProductData(url=url), time.perf_counter() - started, True
 
     page = parse_product_page(url, html)
-
     data = {
         'url': url,
         'codigo': '',
@@ -176,7 +184,7 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float
         data['codigo'] = extract_code(page)
     if 'gtin' in needed:
         data['gtin'] = extract_gtin(page)
-    if 'descricao' in needed or 'descricao_curta' in needed or 'nome_apoio' in needed:
+    if needed.intersection(DESCRIPTION_TRIGGER_KINDS):
         data['descricao'] = extract_description(page)
     if 'descricao_complementar' in needed:
         data['descricao_complementar'] = extract_description_complementar(page)
@@ -198,16 +206,13 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float
     if not data['codigo'] and data['gtin']:
         data['codigo'] = data['gtin']
 
-    return url, FastProductData(**data), time.perf_counter() - started, False
+    product = FastProductData(**data)
+    _log_rich_description_result(url, product, needed)
+    return url, product, time.perf_counter() - started, False
 
 
-def _enhance_products_sequentially(
-    products_by_url: list[tuple[str, FastProductData]],
-    needed: set[str],
-    progress_callback: Callable[[dict], None] | None,
-) -> tuple[list[FastProductData], int]:
-    """Aplica DevTools em fila, com limite baixo, nunca dentro das threads HTTP."""
-    if not needed.intersection({'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}):
+def _enhance_products_sequentially(products_by_url: list[tuple[str, FastProductData]], needed: set[str], progress_callback: Callable[[dict], None] | None) -> tuple[list[FastProductData], int]:
+    if not needed.intersection(RICH_DESCRIPTION_KINDS):
         return [product for _, product in products_by_url], 0
 
     enhanced_products: list[FastProductData] = []
@@ -223,13 +228,10 @@ def _enhance_products_sequentially(
                 'devtools': used,
             })
             enhanced = enhance_with_rendered_page(url, product, needed)
-            if enhanced != product:
-                product = enhanced
-                used += 1
-            else:
-                used += 1
+            product = enhanced
+            used += 1
+            _log_rich_description_result(url, product, needed)
         enhanced_products.append(product)
-
     return enhanced_products, used
 
 
@@ -248,25 +250,16 @@ def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return out.loc[:, columns].fillna('')
 
 
-def _should_stop_early(
-    *,
-    processed: int,
-    products: list[FastProductData],
-    complete_count: int,
-    last_gain_at: int,
-) -> tuple[bool, str]:
+def _should_stop_early(*, processed: int, products: list[FastProductData], complete_count: int, last_gain_at: int) -> tuple[bool, str]:
     found = len(products)
     if complete_count >= SMART_COMPLETE_TARGET:
         return True, f'{complete_count} produto(s) completos encontrados.'
-
     if processed >= SMART_STOP_MIN_PROCESSED and found >= SMART_STOP_MIN_FOUND:
         ratio = complete_count / max(found, 1)
         if ratio >= SMART_STOP_COMPLETE_RATIO:
             return True, f'{complete_count}/{found} produto(s) com os principais campos preenchidos.'
-
     if processed - last_gain_at >= SMART_STOP_NO_GAIN_WINDOW and found >= SMART_STOP_MIN_FOUND:
         return True, 'A busca parou porque os últimos links não trouxeram novos produtos úteis.'
-
     return False, ''
 
 
@@ -280,48 +273,37 @@ def run_fast_site_scraper(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     total_started = time.perf_counter()
-    columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()] or _default_columns(operation)
+    normalized_operation = 'estoque' if str(operation).strip().lower() == 'estoque' else 'cadastro'
+    columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()] or _default_columns(normalized_operation)
     contract = build_contract(columns)
-    needed = _needed_kinds(contract)
+    needed = _needed_kinds(contract, normalized_operation)
     important = _important_kinds(contract)
 
-    _emit(progress_callback, {
-        'stage': 'Procurando links',
-        'message': 'Procurando produtos nos links informados...',
-        'progress': 0.08,
-        'columns': len(columns),
-    })
+    add_audit_event(
+        'site_scraper_contract_built',
+        area='SITE',
+        details={
+            'operation': normalized_operation,
+            'columns': columns[:80],
+            'needed_kinds': sorted(needed),
+            'rich_description_enabled': 'descricao_complementar' in needed,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+    _emit(progress_callback, {'stage': 'Procurando links', 'message': 'Procurando produtos nos links informados...', 'progress': 0.08, 'columns': len(columns)})
     discovery_started = time.perf_counter()
     urls = discover_product_urls(raw_urls, max_pages=max_pages, max_products=max_products)
     discovery_seconds = time.perf_counter() - discovery_started
 
-    _emit(progress_callback, {
-        'stage': 'Links encontrados',
-        'message': f'{len(urls)} link(s) de produto separados para leitura.',
-        'progress': 0.22,
-        'urls_found': len(urls),
-        'discovery_seconds': round(discovery_seconds, 2),
-    })
-
+    _emit(progress_callback, {'stage': 'Links encontrados', 'message': f'{len(urls)} link(s) de produto separados para leitura.', 'progress': 0.22, 'urls_found': len(urls), 'discovery_seconds': round(discovery_seconds, 2)})
     if not urls:
-        _emit(progress_callback, {
-            'stage': 'Nada encontrado',
-            'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.',
-            'progress': 1.0,
-            'urls_found': 0,
-        })
+        _emit(progress_callback, {'stage': 'Nada encontrado', 'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.', 'progress': 1.0, 'urls_found': 0})
         return pd.DataFrame(columns=columns)
 
     if needed <= {'url'}:
         rows = [_to_contract_row(_url_only_row(url), contract) for url in urls[:max_products]]
-        _emit(progress_callback, {
-            'stage': 'Pronto',
-            'message': f'{len(rows)} link(s) preparados para a origem.',
-            'progress': 0.92,
-            'processed': len(rows),
-            'urls_found': len(urls),
-            'total_seconds': round(time.perf_counter() - total_started, 2),
-        })
+        _emit(progress_callback, {'stage': 'Pronto', 'message': f'{len(rows)} link(s) preparados para a origem.', 'progress': 0.92, 'processed': len(rows), 'urls_found': len(urls), 'total_seconds': round(time.perf_counter() - total_started, 2)})
         return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
     products_by_url: list[tuple[str, FastProductData]] = []
@@ -337,12 +319,13 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo todos os {total} produto(s) encontrados.' if not stop_early else f'Lendo até {total} produto(s). O DevTools entra depois, em fila, só se faltar descrição rica.',
+        'message': f'Lendo até {total} produto(s). O motor de descrição rica está ativo.' if 'descricao_complementar' in needed else f'Lendo até {total} produto(s).',
         'progress': 0.28,
         'processed': 0,
         'total': total,
         'workers': workers,
         'stop_early': bool(stop_early),
+        'rich_description_enabled': 'descricao_complementar' in needed,
     })
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -364,50 +347,47 @@ def run_fast_site_scraper(
                 errors += 1
 
             if stop_early:
-                should_stop, reason = _should_stop_early(
-                    processed=processed,
-                    products=[product for _, product in products_by_url],
-                    complete_count=complete_count,
-                    last_gain_at=last_gain_at,
-                )
+                should_stop, reason = _should_stop_early(processed=processed, products=[product for _, product in products_by_url], complete_count=complete_count, last_gain_at=last_gain_at)
                 if should_stop:
                     stop_reason = reason
                     for pending in futures:
                         if not pending.done():
                             pending.cancel()
-                    _emit(progress_callback, {
-                        'stage': 'Busca suficiente',
-                        'message': stop_reason,
-                        'progress': 0.86,
-                        'processed': processed,
-                        'total': total,
-                        'found': len(products_by_url),
-                        'complete': complete_count,
-                        'errors': errors,
-                        'devtools': 0,
-                        'slow_links': slow_links[-5:],
-                    })
+                    _emit(progress_callback, {'stage': 'Busca suficiente', 'message': stop_reason, 'progress': 0.86, 'processed': processed, 'total': total, 'found': len(products_by_url), 'complete': complete_count, 'errors': errors, 'devtools': 0, 'slow_links': slow_links[-5:]})
                     break
 
             now = time.perf_counter()
             if now - last_emit >= 0.5 or processed == total:
                 ratio = processed / max(total, 1)
-                _emit(progress_callback, {
-                    'stage': 'Lendo produtos',
-                    'message': f'{processed}/{total} produto(s) lido(s).',
-                    'progress': 0.28 + (0.58 * ratio),
-                    'processed': processed,
-                    'total': total,
-                    'found': len(products_by_url),
-                    'complete': complete_count,
-                    'errors': errors,
-                    'devtools': 0,
-                    'slow_links': slow_links[-5:],
-                    'stop_early': bool(stop_early),
-                })
+                _emit(progress_callback, {'stage': 'Lendo produtos', 'message': f'{processed}/{total} produto(s) lido(s).', 'progress': 0.28 + (0.58 * ratio), 'processed': processed, 'total': total, 'found': len(products_by_url), 'complete': complete_count, 'errors': errors, 'devtools': 0, 'slow_links': slow_links[-5:], 'stop_early': bool(stop_early), 'rich_description_enabled': 'descricao_complementar' in needed})
                 last_emit = now
 
     products, rendered_fallbacks = _enhance_products_sequentially(products_by_url, needed, progress_callback)
+    rich_ok = sum(1 for product in products if len(str(product.descricao_complementar or '').strip()) >= 80)
+    rich_empty = sum(1 for product in products if not str(product.descricao_complementar or '').strip())
+
+    add_audit_event(
+        'site_scraper_finished',
+        area='SITE',
+        status='OK',
+        details={
+            'operation': normalized_operation,
+            'products': len(products),
+            'rich_description_enabled': 'descricao_complementar' in needed,
+            'rich_description_ok': rich_ok,
+            'rich_description_empty': rich_empty,
+            'devtools': rendered_fallbacks,
+            'errors': errors,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    add_debug(
+        f'Busca por site finalizada: {len(products)} produto(s), descrição rica OK em {rich_ok}, vazia em {rich_empty}.',
+        origin='SITE_DESCRICAO_RICA',
+        level='INFO',
+        file_name=RESPONSIBLE_FILE,
+        details={'rich_description_enabled': 'descricao_complementar' in needed, 'devtools': rendered_fallbacks, 'errors': errors},
+    )
 
     rows = [_to_contract_row(product, contract) for product in products]
     final_message = f'Montando origem com {len(rows)} produto(s).'
@@ -415,17 +395,5 @@ def run_fast_site_scraper(
         final_message = f'{final_message} DevTools reforçou {rendered_fallbacks} página(s), em fila.'
     if stop_reason:
         final_message = f'{final_message} {stop_reason}'
-    _emit(progress_callback, {
-        'stage': 'Montando origem',
-        'message': final_message,
-        'progress': 0.91,
-        'processed': processed,
-        'found': len(products),
-        'complete': complete_count,
-        'errors': errors,
-        'devtools': rendered_fallbacks,
-        'slow_links': slow_links[-10:],
-        'total_seconds': round(time.perf_counter() - total_started, 2),
-        'stop_early': bool(stop_early),
-    })
+    _emit(progress_callback, {'stage': 'Montando origem', 'message': final_message, 'progress': 0.91, 'processed': processed, 'found': len(products), 'complete': complete_count, 'errors': errors, 'devtools': rendered_fallbacks, 'slow_links': slow_links[-10:], 'total_seconds': round(time.perf_counter() - total_started, 2), 'stop_early': bool(stop_early), 'rich_description_ok': rich_ok, 'rich_description_empty': rich_empty})
     return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
