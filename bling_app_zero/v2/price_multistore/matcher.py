@@ -2,51 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-
-def _norm(value: object) -> str:
-    text = str(value or '').strip().lower()
-    table = str.maketrans('áàãâäéèêëíìîïóòõöúùûüç', 'aaaaaeeeeiiiioooouuuuc')
-    text = text.translate(table)
-    return ''.join(ch for ch in text if ch.isalnum())
-
-
-IDENTIFIER_CANDIDATES = {
-    'id_store': ('ID na Loja', 'Id na loja', 'ID Loja', 'ID Anuncio', 'ID Anúncio', 'Sku Marketplace'),
-    'id_product': ('IdProduto', 'ID Produto', 'Codigo Produto', 'Código Produto'),
-    'sku': ('SKU', 'Codigo', 'Código', 'Referencia', 'Referência'),
-    'gtin': ('GTIN', 'EAN', 'GTIN/EAN'),
-    'description': ('Descricao', 'Descrição', 'Produto', 'Nome'),
-}
-
-
 KIND_LABELS = {
-    'manual': 'Mapeamento manual',
-    'id_store': 'ID na Loja',
-    'id_product': 'IdProduto',
-    'sku': 'SKU/Código',
-    'gtin': 'GTIN/EAN',
-    'description': 'Descrição/Nome',
+    'manual': 'Mapeamento compartilhado',
 }
-
-
-def find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
-    if not isinstance(df, pd.DataFrame):
-        return ''
-    normalized = {_norm(column): str(column) for column in df.columns}
-    for candidate in candidates:
-        found = normalized.get(_norm(candidate))
-        if found:
-            return found
-    return ''
-
-
-def find_best_identifier(model_df: pd.DataFrame, source_df: pd.DataFrame) -> tuple[str, str, str]:
-    for kind, candidates in IDENTIFIER_CANDIDATES.items():
-        model_col = find_column(model_df, candidates)
-        source_col = find_column(source_df, candidates)
-        if model_col and source_col:
-            return kind, model_col, source_col
-    return '', '', ''
 
 
 def _clean_match_key(series: pd.Series) -> pd.Series:
@@ -59,11 +17,17 @@ def _resolve_identifier_columns(
     model_identifier_column: str = '',
     source_identifier_column: str = '',
 ) -> tuple[str, str, str]:
+    """Resolve somente as colunas escolhidas no mapeamento compartilhado.
+
+    BLINGCLEAN: o V2 não usa mais fallback por nome de coluna. O usuário escolhe
+    as colunas reais no mapeamento compartilhado; se a escolha não existir, o
+    cruzamento fica bloqueado/sem custo em vez de adivinhar silenciosamente.
+    """
     model_col = str(model_identifier_column or '').strip()
     source_col = str(source_identifier_column or '').strip()
     if model_col in base.columns and source_col in source.columns:
         return 'manual', model_col, source_col
-    return find_best_identifier(base, source)
+    return '', '', ''
 
 
 def merge_source_cost(
@@ -120,7 +84,7 @@ def build_not_included_audit(
     kind, model_id, source_id = _resolve_identifier_columns(base, source, model_identifier_column, source_identifier_column)
     if not model_id or not source_id:
         audit = source.copy().fillna('')
-        audit.insert(0, 'Motivo auditoria', 'Sem identificador comum para cruzar com a planilha do Bling')
+        audit.insert(0, 'Motivo auditoria', 'Mapeamento compartilhado incompleto para cruzar com a planilha do Bling')
         audit.insert(1, 'Identificador usado', '')
         audit.insert(2, 'Coluna origem', '')
         audit.insert(3, 'Coluna Bling', '')
@@ -149,4 +113,4 @@ def build_not_included_audit(
     return audit.fillna('')
 
 
-__all__ = ['build_not_included_audit', 'find_best_identifier', 'find_column', 'merge_source_cost']
+__all__ = ['build_not_included_audit', 'merge_source_cost']
