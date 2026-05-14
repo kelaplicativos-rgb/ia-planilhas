@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
@@ -193,7 +194,41 @@ def _render_remote_desktop_setup_hint() -> None:
         '[remote_desktop]\nurl = "https://SEU-NOVNC/vnc.html?autoconnect=true&resize=scale"',
         language='toml',
     )
-    _orange_warning('Sem essa URL noVNC, o Streamlit não consegue hospedar um desktop gráfico completo sozinho. O painel abaixo mostra o que falta configurar sem criar falsa sensação de navegador vivo.')
+    _orange_warning('Sem essa URL noVNC, o Streamlit não consegue hospedar um desktop gráfico completo sozinho. O painel mostra o que falta configurar sem criar falsa sensação de navegador vivo.')
+
+
+def _render_supplier_browser_above(supplier_url: str) -> None:
+    st.markdown('##### Navegador do fornecedor')
+    st.caption('Este é o navegador visual do fornecedor que fica acima do BLINGREMOTE DESKTOP. Ele serve como apoio rápido; alguns fornecedores podem bloquear iframe/login/CAPTCHA por segurança.')
+
+    if not _is_valid_http_url(supplier_url):
+        _orange_warning('Informe uma URL válida para abrir o navegador do fornecedor.')
+        return
+
+    safe_url = quote(supplier_url, safe=':/?&=%#.-_')
+    st.markdown(f'[Abrir fornecedor em nova aba]({supplier_url})')
+    components.html(
+        f'''
+        <div style="border:1px solid #d8dee9;border-radius:16px;overflow:hidden;background:#f8fafc;margin:8px 0 16px 0;">
+          <div style="display:flex;gap:8px;align-items:center;background:#111827;color:#e5e7eb;padding:10px 12px;font-family:Arial,sans-serif;font-size:13px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;"></span>
+            <span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;display:inline-block;"></span>
+            <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+            <strong style="margin-left:8px;">Fornecedor / iframe visual</strong>
+            <span style="opacity:.72;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{safe_url}</span>
+          </div>
+          <iframe
+            src="{safe_url}"
+            style="width:100%;height:560px;border:0;background:#ffffff;"
+            allow="clipboard-read; clipboard-write; fullscreen"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
+        </div>
+        ''',
+        height=640,
+        scrolling=True,
+    )
+    _orange_warning('Se esse navegador aparecer em branco, cortado ou não permitir login/CAPTCHA, use o BLINGREMOTE DESKTOP abaixo ou abra em nova aba. Muitos sites bloqueiam iframe por segurança.')
 
 
 def render_guided_login_panel() -> None:
@@ -210,6 +245,8 @@ def render_guided_login_panel() -> None:
         placeholder='https://site-do-fornecedor.com.br/admin',
         key='guided_login_url',
     )
+
+    _render_supplier_browser_above(supplier_url)
 
     has_remote_desktop = render_remote_desktop_panel(supplier_url=supplier_url, operation=operation)
     st.session_state[REMOTE_DESKTOP_URL_READY_KEY] = bool(has_remote_desktop)
