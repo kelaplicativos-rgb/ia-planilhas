@@ -24,14 +24,17 @@ STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
+# Ordem oficial do wizard.
+# BLINGFIX: os botões Voltar/Avançar usam índice -1/+1 em cima destas listas.
+# Portanto a ordem aqui precisa ser a ordem visual real do fluxo, sem exceções.
 CADASTRO_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
+    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_MAPEAMENTO,
-    STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
@@ -41,9 +44,9 @@ ESTOQUE_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
+    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
-    STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
@@ -55,10 +58,10 @@ STEP_LABELS = {
     STEP_OPERACAO: 'Operação',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
+    STEP_REGRAS: 'Regras',
     STEP_ENTRADA: 'Entrada',
     STEP_MAPEAMENTO: 'Mapeamento',
     STEP_GERAR_ESTOQUE: 'Gerar',
-    STEP_REGRAS: 'Regras',
     STEP_PREVIEW: 'Preview',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
@@ -158,3 +161,9 @@ class WizardNav:
     index: int
     total: int
     steps: list[str]
+
+
+def nav_for_step(steps: list[str], current: str) -> WizardNav:
+    if current not in steps:
+        current = steps[0]
+    return WizardNav(current=current, index=steps.index(current), total=len(steps), steps=steps)
