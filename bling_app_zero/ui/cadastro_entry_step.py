@@ -44,10 +44,11 @@ def source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFram
 
 
 def render_cadastro_entrada_step() -> None:
-    st.markdown('### Entrada do cadastro')
-    st.caption('Carregue somente a origem do fornecedor nesta etapa. O mapeamento, preview e download ficam nas próximas telas.')
-
     site_origin = is_site_origin()
+    if not site_origin:
+        st.markdown('### Envie a origem')
+        st.caption('Planilha, XML, PDF, HTML ou CSV do fornecedor.')
+
     df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None
     upload = empty_cadastro_upload_result() if site_origin else render_cadastro_source_upload(None)
     df_origem = source_dataframe(df_origem_site, upload)
@@ -58,25 +59,20 @@ def render_cadastro_entrada_step() -> None:
     store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
     if valid_df(df_origem) and site_origin:
-        st.success(f'Origem de cadastro por site pronta com {len(df_origem)} produto(s). Continue para o mapeamento.')
+        st.success(f'Origem pronta: {len(df_origem)} produto(s).')
     elif valid_df(df_origem):
-        st.success(f'Origem de cadastro carregada com {len(df_origem)} produto(s) e {len(df_origem.columns)} coluna(s).')
-        with st.expander('Conferir origem carregada', expanded=False):
+        st.success(f'Origem carregada: {len(df_origem)} produto(s).')
+        with st.expander('Ver origem', expanded=False):
             preview_df('Origem do cadastro', df_origem)
     elif site_origin:
-        st.info('Faça a busca por site acima. Quando a origem for criada, o botão Continuar será liberado.')
+        st.info('Busque os produtos pelo site para liberar o mapeamento.')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
     else:
-        st.info('Envie a origem do fornecedor antes de continuar.')
+        st.info('Envie o arquivo do fornecedor.')
 
-    if valid_model(df_modelo):
-        st.caption(f'Modelo de cadastro detectado com {len(df_modelo.columns)} coluna(s).')
-    else:
-        st.error('Modelo de cadastro do Bling ausente. Volte na etapa Modelo e envie o modelo correto antes de continuar.')
-
-    if valid_model(df_modelo_estoque):
-        st.caption(f'Modelo de estoque também detectado com {len(df_modelo_estoque.columns)} coluna(s).')
+    if not valid_model(df_modelo):
+        st.error('Modelo de cadastro ausente. Volte em Modelo e envie o arquivo correto.')
 
 
 __all__ = [
