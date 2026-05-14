@@ -57,6 +57,7 @@ ORIGIN_AUTO_FORWARDED_KEY = 'wizard_origin_auto_forwarded_signature'
 BOTTOM_NAV_RENDERED_KEY = 'wizard_bottom_nav_rendered_current_cycle'
 HOME_ACTIVE_OPERATION_KEY = 'home_active_operation_v2'
 HOME_ALLOW_OPERATION_KEY = 'home_allow_operation_v2_session'
+HOME_CHOICE_TARGET = '__home_choice__'
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -113,8 +114,41 @@ def _selected_operation() -> str:
     return operation
 
 
+def wizard_steps_for_operation(operation: str) -> list[str]:
+    """Fluxograma oficial da operação para os botões Voltar/Avançar."""
+    return list(ESTOQUE_STEPS if str(operation or '').strip().lower() == 'estoque' else CADASTRO_STEPS)
+
+
+def wizard_previous_target(current_step: str, operation: str) -> str:
+    """Destino puro do botão Voltar.
+
+    Na primeira etapa, Voltar precisa continuar clicável e retornar para a escolha
+    inicial da Home sem apagar os dados já informados.
+    """
+    steps = wizard_steps_for_operation(operation)
+    current = str(current_step or '').strip().lower()
+    if current not in steps:
+        return STEP_MODELO
+    index = steps.index(current)
+    if index <= 0:
+        return HOME_CHOICE_TARGET
+    return steps[index - 1]
+
+
+def wizard_next_target(current_step: str, operation: str) -> str:
+    """Destino puro do botão Avançar."""
+    steps = wizard_steps_for_operation(operation)
+    current = str(current_step or '').strip().lower()
+    if current not in steps:
+        return STEP_MODELO
+    index = steps.index(current)
+    if index >= len(steps) - 1:
+        return current
+    return steps[index + 1]
+
+
 def _active_steps() -> list[str]:
-    return ESTOQUE_STEPS if _selected_operation() == 'estoque' else CADASTRO_STEPS
+    return wizard_steps_for_operation(_selected_operation())
 
 
 def _current_step() -> str:
@@ -175,21 +209,17 @@ def _back_to_home_choice() -> None:
 
 
 def _next_step() -> None:
-    steps = _active_steps()
-    current = _current_step()
-    index = steps.index(current)
-    if index < len(steps) - 1:
-        _go_to_step(steps[index + 1], reason='next_button')
+    target = wizard_next_target(_current_step(), _selected_operation())
+    if target != _current_step():
+        _go_to_step(target, reason='next_button')
 
 
 def _previous_step() -> None:
-    steps = _active_steps()
-    current = _current_step()
-    index = steps.index(current)
-    if index > 0:
-        _go_to_step(steps[index - 1], reason='back_button_preserve_state')
+    target = wizard_previous_target(_current_step(), _selected_operation())
+    if target == HOME_CHOICE_TARGET:
+        _back_to_home_choice()
         return
-    _back_to_home_choice()
+    _go_to_step(target, reason='back_button_preserve_state')
 
 
 def _reset_outputs_for_operation_change() -> None:
