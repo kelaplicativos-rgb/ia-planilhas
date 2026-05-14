@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -8,7 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.audit import add_audit_event, audit_download_payload, get_audit_events, get_audit_session_id
+from bling_app_zero.core.audit import get_audit_events, get_audit_session_id
 from bling_app_zero.core.debug import LOG_SESSION_KEY
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_logs_panel.py'
@@ -95,11 +94,10 @@ def diagnose_site_descriptions() -> dict[str, Any]:
     for column in columns:
         series = df[column].fillna('').astype(str)
         lengths = series.map(lambda text: len(text.strip()))
-        filled = int((lengths > 0).sum())
         result['metricas'].append({
             'coluna': column,
-            'preenchidos': filled,
-            'vazios': int(len(df) - filled),
+            'preenchidos': int((lengths > 0).sum()),
+            'vazios': int((lengths <= 0).sum()),
             'curtos_menor_80': int(((lengths > 0) & (lengths < 80)).sum()),
             'longos_240_mais': int((lengths >= 240).sum()),
             'media_caracteres': round(float(lengths.mean()) if len(lengths) else 0.0, 1),
@@ -127,30 +125,4 @@ def build_blinglogs_payload() -> dict[str, Any]:
     }
 
 
-def render_bling_logs_panel() -> None:
-    add_audit_event('blinglogs_panel_opened', area='BLINGLOGS', details={'responsible_file': RESPONSIBLE_FILE})
-    st.markdown('### BLINGLOGS')
-    st.caption('Audit JSON, logs técnicos, chaves de estado e diagnóstico de descrição por site.')
-
-    payload = build_blinglogs_payload()
-    st.info(f"Audit {payload['counts']['audit']} · Debug {payload['counts']['debug']} · Estado {payload['counts']['state_keys']}")
-
-    with st.container(border=True):
-        st.markdown('#### Diagnóstico das descrições')
-        st.json(payload['site_description_diagnosis'], expanded=False)
-
-    tab_audit, tab_debug, tab_state, tab_download = st.tabs(['Audit JSON', 'Debug', 'Estado', 'Download'])
-    with tab_audit:
-        rows = _audit_rows()
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=360) if rows else st.info('Sem audit nesta sessão.')
-    with tab_debug:
-        rows = _debug_rows()
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=360) if rows else st.info('Sem debug nesta sessão.')
-    with tab_state:
-        st.dataframe(pd.DataFrame(_state_rows()), use_container_width=True, hide_index=True, height=420)
-    with tab_download:
-        st.download_button('Baixar resumo BLINGLOGS', data=json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode('utf-8-sig'), file_name='blinglogs_resumo.json', mime='application/json', use_container_width=True)
-        st.download_button('Baixar Audit JSONL', data=audit_download_payload(), file_name='bling_audit_trail.jsonl', mime='application/jsonl', use_container_width=True)
-
-
-__all__ = ['build_blinglogs_payload', 'diagnose_site_descriptions', 'render_bling_logs_panel']
+__all__ = ['build_blinglogs_payload', 'diagnose_site_descriptions']
