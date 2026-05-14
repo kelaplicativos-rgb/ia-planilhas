@@ -25,7 +25,7 @@ from bling_app_zero.ui.mapping_filters import filter_targets
 from bling_app_zero.ui.mapping_models import estoque_model, source_columns_from_df, target_columns_from_model
 from bling_app_zero.ui.mapping_pagination import render_mapping_page_arrows, visible_targets
 from bling_app_zero.ui.mapping_preview_builder import build_estoque_preview
-from bling_app_zero.ui.mapping_sidebar_rule_badge import sidebar_rule_targets_from_columns, with_sidebar_rule_badge
+from bling_app_zero.ui.mapping_sidebar_rule_badge import sidebar_rule_targets_from_columns
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets, clear_stale_mapping_widgets, is_manual_value, mapping_base, target_widget_key
 
 
@@ -34,10 +34,16 @@ def _duplicated_source_columns(mapping: dict[str, str]) -> list[str]:
     return sorted({value for value in used_values if value and used_values.count(value) > 1})
 
 
-def _render_deposito_field(target: str, mapping_key: str, target_index: int, deposito: str, sidebar_rule_targets: set[str]) -> None:
+def _render_deposito_field(target: str, mapping_key: str, target_index: int, deposito: str) -> None:
+    """Renderiza depósito informado no fluxo sem usar roxo.
+
+    BLINGFIX FAROL: roxo é reservado exclusivamente para reflexo da Central de
+    Regras e Padrões. Depósito digitado no fluxo é valor confirmado do usuário,
+    portanto usa verde.
+    """
     widget_key = target_widget_key(mapping_key, target_index)
     with st.container(border=True):
-        render_mapping_title(with_sidebar_rule_badge('🟣 ' + target + ' · preenchido por regra/recurso', sidebar_rule_targets))
+        render_mapping_title(f'🟢 {target} · preenchido pelo depósito informado')
         st.text_input(target, value=deposito, disabled=True, key=f'{widget_key}_dep', label_visibility='collapsed')
 
 
@@ -76,7 +82,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state.pop(order_key, None)
 
     st.markdown('##### Conferir campos do estoque')
-    st.caption('🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 preenchido por regra/recurso')
+    st.caption('🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 reflexo da Central de Regras e Padrões')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
@@ -97,9 +103,17 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         target_index = target_index_by_name.get(target, len(edited_mapping))
         target_key = normalize_key(target)
         if 'deposito' in target_key:
-            _render_deposito_field(target, mapping_key, target_index, deposito, sidebar_rule_targets)
+            _render_deposito_field(target, mapping_key, target_index, deposito)
             edited_mapping[target] = ''
-            edited_confidence[target] = {'level': 'lilas', 'emoji': '🟣', 'label': 'preenchido por regra/recurso', 'score': 100, 'order': 2}
+            edited_confidence[target] = {
+                'level': 'verde',
+                'emoji': '🟢',
+                'label': 'preenchido pelo depósito informado',
+                'score': 100,
+                'order': 2,
+                'strict': True,
+                'system_flow_value': True,
+            }
             continue
 
         selected, info_after = render_mapping_select(
