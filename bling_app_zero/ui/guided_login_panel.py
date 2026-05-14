@@ -214,23 +214,31 @@ def _render_clickable_snapshot(supplier_url: str) -> None:
     components.html(html, height=920, scrolling=True)
 
 
-def _display_snapshot(snapshot, supplier_url: str) -> None:
+def _store_snapshot(snapshot, supplier_url: str) -> None:
+    """Salva o snapshot no estado, sem renderizar aqui.
+
+    A renderização visual fica centralizada em _render_remote_browser_snapshot().
+    Isso evita aparecerem dois navegadores na tela após abrir, clicar ou atualizar.
+    """
     st.session_state[REMOTE_SNAPSHOT_OK_KEY] = bool(snapshot.ok)
     st.session_state[REMOTE_SNAPSHOT_URL_KEY] = supplier_url
     st.session_state[REMOTE_SNAPSHOT_FINAL_URL_KEY] = snapshot.final_url or supplier_url
     st.session_state[REMOTE_SNAPSHOT_TITLE_KEY] = snapshot.title or ''
-    for warning in snapshot.warnings:
+    st.session_state['remote_browser_last_warnings'] = [str(w) for w in getattr(snapshot, 'warnings', [])]
+    st.session_state['remote_browser_last_errors'] = [str(e) for e in getattr(snapshot, 'errors', [])]
+    if getattr(snapshot, 'screenshot_png', None):
+        st.session_state[REMOTE_SNAPSHOT_PNG_KEY] = bytes(snapshot.screenshot_png)
+
+
+def _render_snapshot_messages() -> None:
+    for warning in st.session_state.get('remote_browser_last_warnings', []) or []:
         _orange_warning(str(warning))
-    if snapshot.errors:
+    errors = st.session_state.get('remote_browser_last_errors', []) or []
+    if errors:
         st.error('Não consegui executar esta ação no navegador real do sistema.')
-        for error in snapshot.errors:
+        for error in errors:
             st.caption(str(error))
         _orange_warning('Se o fornecedor exigir captcha, 2FA, popup ou bloquear robô, use a compatibilidade universal: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
-        return
-    if snapshot.screenshot_png:
-        st.session_state[REMOTE_SNAPSHOT_PNG_KEY] = bytes(snapshot.screenshot_png)
-        _render_clickable_snapshot(supplier_url)
-    st.success('Tela do navegador atualizada.')
 
 
 def _run_browser_action(supplier_url: str, command: RemoteBrowserCommand, label: str) -> None:
@@ -240,7 +248,7 @@ def _run_browser_action(supplier_url: str, command: RemoteBrowserCommand, label:
         return
     with st.spinner(label):
         snapshot = run_remote_browser_command(_remote_config(current_url), command)
-    _display_snapshot(snapshot, current_url)
+    _store_snapshot(snapshot, current_url)
 
 
 def _consume_click_from_snapshot_if_needed(supplier_url: str) -> None:
@@ -301,12 +309,15 @@ def _render_mirror_panel(supplier_url: str) -> None:
         with action_col1:
             if st.button('Preencher usuário', use_container_width=True, key='remote_mirror_fill_user'):
                 _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_smart', value='user', text=mirror_user), 'Preenchendo usuário no navegador...')
+                st.rerun()
         with action_col2:
             if st.button('Preencher senha', use_container_width=True, key='remote_mirror_fill_password'):
                 _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_smart', value='password', text=mirror_password), 'Preenchendo senha no navegador...')
+                st.rerun()
         with action_col3:
             if st.button('Entrar', use_container_width=True, key='remote_mirror_login'):
                 _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_smart', value='login'), 'Tentando entrar...')
+                st.rerun()
 
     st.divider()
     search_col, nav_col = st.columns([2, 1])
@@ -318,49 +329,63 @@ def _render_mirror_panel(supplier_url: str) -> None:
         if st.button('Buscar', use_container_width=True, key='remote_mirror_search_button'):
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_smart', value='search', text=mirror_search), 'Preenchendo busca...')
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value='Enter'), 'Executando busca...')
+            st.rerun()
 
     quick1, quick2, quick3, quick4 = st.columns(4)
     with quick1:
         if st.button('Ir para Produtos', use_container_width=True, key='remote_mirror_products'):
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_smart', value='produtos'), 'Abrindo produtos...')
+            st.rerun()
     with quick2:
         if st.button('Enter', use_container_width=True, key='remote_mirror_enter'):
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value='Enter'), 'Pressionando Enter...')
+            st.rerun()
     with quick3:
         if st.button('Rolar ↓', use_container_width=True, key='remote_mirror_scroll_down'):
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='scroll_down'), 'Rolando página...')
+            st.rerun()
     with quick4:
         if st.button('Atualizar tela', use_container_width=True, key='remote_mirror_refresh'):
             _run_browser_action(supplier_url, RemoteBrowserCommand(action='snapshot'), 'Atualizando tela...')
+            st.rerun()
 
 
 def _render_advanced_controls(supplier_url: str) -> None:
-    with st.expander('Comandos avançados', expanded=False):
-        st.caption('Use apenas quando o painel espelhado não encontrar o campo certo.')
-        coord_col1, coord_col2 = st.columns(2)
-        with coord_col1:
-            click_x = st.number_input('Clique X', min_value=0, max_value=REMOTE_VIEWPORT_WIDTH - 1, value=100, step=10, key='remote_browser_click_x')
-        with coord_col2:
-            click_y = st.number_input('Clique Y', min_value=0, max_value=REMOTE_VIEWPORT_HEIGHT - 1, value=100, step=10, key='remote_browser_click_y')
-        if st.button('Clicar na coordenada X/Y', use_container_width=True, key='remote_click_xy'):
-            _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_xy', x=int(click_x), y=int(click_y)), f'Clicando em X={int(click_x)} Y={int(click_y)}...')
+    show_advanced = st.checkbox('Mostrar comandos avançados', value=False, key='remote_show_advanced_controls')
+    if not show_advanced:
+        return
 
-        selector = st.text_input('Seletor CSS', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
-        text_value = st.text_input('Texto para digitar no seletor', key='remote_browser_type_text')
-        click_text = st.text_input('Clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
-        key_value = st.text_input('Tecla', value='Enter', key='remote_browser_key_value')
+    st.markdown('##### Comandos avançados')
+    st.caption('Use apenas quando o painel espelhado não encontrar o campo certo. Este bloco não usa expander para evitar erro de expander aninhado no Streamlit.')
+    coord_col1, coord_col2 = st.columns(2)
+    with coord_col1:
+        click_x = st.number_input('Clique X', min_value=0, max_value=REMOTE_VIEWPORT_WIDTH - 1, value=100, step=10, key='remote_browser_click_x')
+    with coord_col2:
+        click_y = st.number_input('Clique Y', min_value=0, max_value=REMOTE_VIEWPORT_HEIGHT - 1, value=100, step=10, key='remote_browser_click_y')
+    if st.button('Clicar na coordenada X/Y', use_container_width=True, key='remote_click_xy'):
+        _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_xy', x=int(click_x), y=int(click_y)), f'Clicando em X={int(click_x)} Y={int(click_y)}...')
+        st.rerun()
 
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button('Clicar seletor', use_container_width=True, key='remote_click_selector'):
-                _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_selector', value=selector), 'Clicando seletor...')
-            if st.button('Digitar seletor', use_container_width=True, key='remote_type_selector'):
-                _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_selector', value=selector, text=text_value), 'Digitando seletor...')
-        with c2:
-            if st.button('Clicar texto', use_container_width=True, key='remote_click_text'):
-                _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_text', value=click_text), 'Clicando texto...')
-            if st.button('Pressionar tecla', use_container_width=True, key='remote_press_key'):
-                _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value=key_value), 'Pressionando tecla...')
+    selector = st.text_input('Seletor CSS', placeholder='input[name="email"] ou button[type="submit"]', key='remote_browser_selector')
+    text_value = st.text_input('Texto para digitar no seletor', key='remote_browser_type_text')
+    click_text = st.text_input('Clicar em texto visível', placeholder='Entrar, Produtos, Próxima página...', key='remote_browser_click_text')
+    key_value = st.text_input('Tecla', value='Enter', key='remote_browser_key_value')
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button('Clicar seletor', use_container_width=True, key='remote_click_selector'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_selector', value=selector), 'Clicando seletor...')
+            st.rerun()
+        if st.button('Digitar seletor', use_container_width=True, key='remote_type_selector'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='type_selector', value=selector, text=text_value), 'Digitando seletor...')
+            st.rerun()
+    with c2:
+        if st.button('Clicar texto', use_container_width=True, key='remote_click_text'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='click_text', value=click_text), 'Clicando texto...')
+            st.rerun()
+        if st.button('Pressionar tecla', use_container_width=True, key='remote_press_key'):
+            _run_browser_action(supplier_url, RemoteBrowserCommand(action='press', value=key_value), 'Pressionando tecla...')
+            st.rerun()
 
 
 def _render_remote_browser_snapshot(supplier_url: str) -> None:
@@ -371,7 +396,8 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
             return
         with st.spinner('Abrindo navegador real do sistema...'):
             snapshot = open_remote_browser_snapshot(_remote_config(supplier_url))
-        _display_snapshot(snapshot, supplier_url)
+        _store_snapshot(snapshot, supplier_url)
+        st.rerun()
 
     if bool(st.session_state.get(REMOTE_SNAPSHOT_OK_KEY, False)):
         title = str(st.session_state.get(REMOTE_SNAPSHOT_TITLE_KEY) or 'Tela carregada')
@@ -379,6 +405,7 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
         st.success(f'Tela ativa: {title}')
         st.caption(final_url)
         _consume_click_from_snapshot_if_needed(supplier_url)
+        _render_snapshot_messages()
         _render_clickable_snapshot(supplier_url)
         _render_mirror_panel(supplier_url)
         _render_advanced_controls(supplier_url)
