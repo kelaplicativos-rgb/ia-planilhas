@@ -5,6 +5,7 @@ from collections.abc import Callable
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.bling_logs_panel import render_bling_logs_panel
 from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
 
@@ -12,6 +13,7 @@ ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_MULTISTORE = 'price_multistore_v2'
+FLOW_BLINGLOGS = 'blinglogs_panel'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 
 
@@ -75,6 +77,10 @@ def _open_multistore_price_flow() -> None:
     _set_flow(FLOW_PRICE_MULTISTORE)
 
 
+def _open_blinglogs_flow() -> None:
+    _set_flow(FLOW_BLINGLOGS)
+
+
 def _render_action_card(
     *,
     icon: str,
@@ -118,6 +124,14 @@ def _render_operation_choice() -> None:
         button_key='home_open_multistore_price_flow',
         on_click=_open_multistore_price_flow,
     )
+    _render_action_card(
+        icon='📋',
+        title='BLINGLOGS',
+        hint='Auditoria, debug e diagnóstico de descrição por site.',
+        button_label='Abrir logs',
+        button_key='home_open_blinglogs_flow',
+        on_click=_open_blinglogs_flow,
+    )
 
 
 def _back_to_operations() -> None:
@@ -148,8 +162,11 @@ def render_home_router() -> None:
         render_price_multistore_v2()
         return
 
-    # No fluxo principal, o Voltar fica dentro do wizard.
-    # Isso evita múltiplos botões “Voltar” empilhados na mesma tela mobile.
+    if flow == FLOW_BLINGLOGS:
+        _render_back_to_operations()
+        render_bling_logs_panel()
+        return
+
     render_home_wizard()
 
 
