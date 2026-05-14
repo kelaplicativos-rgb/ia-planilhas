@@ -54,6 +54,7 @@ from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 ORIGIN_AUTO_FORWARDED_KEY = 'wizard_origin_auto_forwarded_signature'
+TOP_NAV_RENDERED_KEY = 'wizard_top_nav_rendered_current_cycle'
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -143,6 +144,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
             'requested': requested,
             'reason': reason,
             'operation': _selected_operation(),
+            'state_preserved': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -166,7 +168,7 @@ def _previous_step() -> None:
     current = _current_step()
     index = steps.index(current)
     if index > 0:
-        _go_to_step(steps[index - 1], reason='back_button')
+        _go_to_step(steps[index - 1], reason='back_button_preserve_state')
 
 
 def _reset_outputs_for_operation_change() -> None:
@@ -199,28 +201,6 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
     add_audit_event('wizard_next_blocked', area='WIZARD', step=current, status='BLOQUEADO', details={'message': pending_message, 'operation': _selected_operation(), 'responsible_file': RESPONSIBLE_FILE})
 
 
-def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar', pending_message: str | None = None) -> None:
-    steps = _active_steps()
-    current = _current_step()
-    current_index = steps.index(current)
-    is_last = current_index == len(steps) - 1
-
-    if not allow_next and not is_last:
-        _audit_step_blocked(current, pending_message)
-        render_pending_notice(pending_message)
-
-    col_back, col_next = st.columns(2)
-    with col_back:
-        if st.button('Voltar', use_container_width=True, disabled=current_index == 0, key=f'wizard_back_{current}'):
-            _previous_step()
-    with col_next:
-        if is_last:
-            return
-        if allow_next and st.button(next_label, use_container_width=True, key=f'wizard_next_{current}'):
-            add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'responsible_file': RESPONSIBLE_FILE})
-            _next_step()
-
-
 def _sync_flow_state(origin: str, operation: str) -> None:
     origin = 'arquivo' if origin == 'arquivo' else 'site'
     operation = 'estoque' if operation == 'estoque' else 'cadastro'
@@ -241,7 +221,7 @@ def _sync_flow_state(origin: str, operation: str) -> None:
             'flow_state_synced',
             area='WIZARD',
             step=_current_step(),
-            details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'previous_operation': previous_operation, 'responsible_file': RESPONSIBLE_FILE},
+            details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'previous_operation': previous_operation, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
         )
     try:
         st.query_params['origem'] = origin
@@ -251,10 +231,22 @@ def _sync_flow_state(origin: str, operation: str) -> None:
         pass
 
 
+def _origin_from_radio_state(operation: str) -> str:
+    value = str(st.session_state.get(f'frontpage_origin_radio_{operation}') or '').strip().lower()
+    if 'arquivo' in value:
+        return 'arquivo'
+    if 'site' in value:
+        return 'site'
+    return ''
+
+
 def _current_origin_choice() -> str:
     current = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
     if current in {'arquivo', 'site'}:
         return current
+    radio_origin = _origin_from_radio_state(_selected_operation())
+    if radio_origin:
+        return radio_origin
     try:
         origem = str(st.query_params.get('origem', '') or '').strip().lower()
         flow = str(st.query_params.get('flow', '') or '').strip().lower()
@@ -266,6 +258,70 @@ def _current_origin_choice() -> str:
     if origem == 'site' or flow == 'site':
         return 'site'
     return ''
+
+
+def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
+    step = _current_step()
+    operation = _selected_operation()
+
+    if step == STEP_MODELO:
+        return _has_home_models(), 'Avançar →', 'Envie ou mantenha um modelo do Bling para continuar.'
+    if step == STEP_OPERACAO:
+        return operation in {'cadastro', 'estoque'}, 'Avançar →', 'Escolha Cadastro ou Estoque.'
+    if step == STEP_PRECIFICACAO:
+        return True, 'Avançar →', None
+    if step == STEP_ORIGEM:
+        return _current_origin_choice() in {'arquivo', 'site'}, 'Avançar →', 'Escolha Arquivo ou Site.'
+    if step == STEP_REGRAS:
+        return rules_center_ready(), 'Avançar →', 'Confirme as regras antes de continuar.'
+    if step == STEP_ENTRADA:
+        ready = estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
+        return ready, 'Avançar →', 'Carregue ou capture os dados desta etapa.'
+    if step == STEP_MAPEAMENTO:
+        return cadastro_mapping_ready(), 'Avançar →', 'Confirme o mapeamento obrigatório.'
+    if step == STEP_GERAR_ESTOQUE:
+        return estoque_output_ready(), 'Avançar →', 'Gere/conferira o estoque antes do preview.'
+    if step == STEP_PREVIEW:
+        ready = estoque_output_ready() if operation == 'estoque' else cadastro_mapping_ready()
+        return ready, 'Avançar →', 'O preview ainda depende da etapa anterior.'
+    return False, 'Avançar →', None
+
+
+def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar', pending_message: str | None = None) -> None:
+    if bool(st.session_state.get(TOP_NAV_RENDERED_KEY)):
+        return
+    _render_fixed_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
+
+
+def _render_fixed_navigation(*, allow_next: bool, next_label: str, pending_message: str | None) -> None:
+    steps = _active_steps()
+    current = _current_step()
+    current_index = steps.index(current)
+    is_last = current_index == len(steps) - 1
+
+    st.markdown('<div data-testid="wizard-fixed-navigation"></div>', unsafe_allow_html=True)
+    col_back, col_next = st.columns(2)
+    with col_back:
+        if st.button('← Voltar', use_container_width=True, disabled=current_index == 0, key=f'wizard_fixed_back_{current}'):
+            _previous_step()
+    with col_next:
+        if is_last:
+            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_fixed_next_last_{current}')
+        elif allow_next:
+            if st.button(next_label, use_container_width=True, key=f'wizard_fixed_next_{current}'):
+                add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'responsible_file': RESPONSIBLE_FILE})
+                _next_step()
+        else:
+            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_fixed_next_disabled_{current}')
+            _audit_step_blocked(current, pending_message)
+            render_pending_notice(pending_message)
+
+    st.session_state[TOP_NAV_RENDERED_KEY] = True
+
+
+def _render_top_navigation() -> None:
+    allow_next, next_label, pending_message = _nav_state_for_current_step()
+    _render_fixed_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
 
 
 def _clear_legacy_origin_widget_state(operation: str) -> None:
@@ -284,16 +340,11 @@ def _render_model_step() -> None:
         render_home_bling_models()
         if not _has_home_models():
             add_audit_event('wizard_model_waiting_for_upload', area='WIZARD', step=STEP_MODELO, status='INFO', details={'responsible_file': RESPONSIBLE_FILE})
-            return
-
-        if st.button('Continuar', use_container_width=True, key='wizard_model_continue'):
-            _next_step()
 
 
 def _render_operation_step() -> None:
     available = _available_operations()
     if not available:
-        _render_nav_buttons(allow_next=False, pending_message='Envie o modelo do Bling.')
         return
 
     labels_by_value = {'cadastro': '🧾 Cadastro', 'estoque': '📦 Estoque'}
@@ -303,7 +354,6 @@ def _render_operation_step() -> None:
         st.session_state['operacao_final'] = selected
         st.session_state['tipo_operacao_final'] = selected
         st.success(f'Operação: {labels_by_value[selected]}')
-        _render_nav_buttons(allow_next=True, next_label='Continuar')
         return
 
     current = _selected_operation()
@@ -317,7 +367,6 @@ def _render_operation_step() -> None:
     st.session_state[FLOW_OPERATION_KEY] = selected
     st.session_state['operacao_final'] = selected
     st.session_state['tipo_operacao_final'] = selected
-    _render_nav_buttons(allow_next=True, next_label='Continuar')
 
 
 def _render_pricing_step() -> None:
@@ -329,7 +378,6 @@ def _render_pricing_step() -> None:
         set_home_pricing_config(config)
     else:
         disable_home_pricing()
-    _render_nav_buttons(allow_next=True, next_label='Continuar')
 
 
 def _render_origin_step() -> None:
@@ -345,25 +393,15 @@ def _render_origin_step() -> None:
 
     choice_label = st.radio('Origem dos dados', labels, index=index, key=f'frontpage_origin_radio_{operation}', label_visibility='collapsed')
     if choice_label is None:
-        _render_nav_buttons(allow_next=False, pending_message='Escolha Arquivo ou Site.')
         return
 
     origin = values[labels.index(choice_label)]
     _sync_flow_state(origin, operation)
-    signature = f'{operation}:{origin}'
-    if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
-        st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
-        add_audit_event('origin_selected_auto_next', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
-        _go_to_step(STEP_ENTRADA, reason='origin_selected_auto_next')
-        return
-
-    st.success('Origem definida.')
-    _render_nav_buttons(allow_next=True, next_label='Ir para entrada')
+    st.success('Origem definida. Use Avançar para continuar ou Voltar para revisar sem perder os dados.')
 
 
 def _render_rules_step() -> None:
     render_rules_center_step()
-    _render_nav_buttons(allow_next=rules_center_ready(), pending_message='Confirme as regras antes de continuar.')
 
 
 def _render_cadastro_entrada() -> None:
@@ -374,24 +412,21 @@ def _render_cadastro_entrada() -> None:
 
         render_site_panel()
     render_cadastro_entrada_step()
-    _render_nav_buttons(allow_next=cadastro_context_ready(), pending_message='Carregue ou capture os produtos.')
 
 
 def _render_cadastro_mapeamento() -> None:
     render_cadastro_mapeamento_step()
-    _render_nav_buttons(allow_next=cadastro_mapping_ready(), pending_message='Confirme o mapeamento obrigatório.')
 
 
 def _render_cadastro_preview() -> None:
     render_cadastro_preview_step()
-    _render_nav_buttons(allow_next=cadastro_mapping_ready(), pending_message='O preview depende do mapeamento confirmado.')
 
 
 def _render_cadastro_download() -> None:
     render_cadastro_download_step()
     col_back, col_reset = st.columns(2)
     with col_back:
-        if st.button('Voltar para preview', use_container_width=True, key='wizard_download_back'):
+        if st.button('← Voltar para preview', use_container_width=True, key='wizard_download_back'):
             _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
     with col_reset:
         if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset'):
@@ -406,24 +441,21 @@ def _render_estoque_entrada() -> None:
 
         render_site_panel()
     render_estoque_entrada_step()
-    _render_nav_buttons(allow_next=estoque_context_ready(), pending_message='Informe a entrada do estoque.')
 
 
 def _render_estoque_gerar() -> None:
     render_estoque_gerar_step()
-    _render_nav_buttons(allow_next=estoque_output_ready(), pending_message='Gere o estoque antes do preview.')
 
 
 def _render_estoque_preview() -> None:
     render_estoque_preview_step()
-    _render_nav_buttons(allow_next=estoque_output_ready(), pending_message='O preview depende do estoque gerado.')
 
 
 def _render_estoque_download() -> None:
     render_estoque_download_step()
     col_back, col_reset = st.columns(2)
     with col_back:
-        if st.button('Voltar para preview', use_container_width=True, key='wizard_estoque_download_back'):
+        if st.button('← Voltar para preview', use_container_width=True, key='wizard_estoque_download_back'):
             _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
     with col_reset:
         if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_download_reset'):
@@ -431,10 +463,12 @@ def _render_estoque_download() -> None:
 
 
 def render_home_wizard() -> None:
+    st.session_state[TOP_NAV_RENDERED_KEY] = False
     nav = _render_step_header()
+    _render_top_navigation()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'fixed_navigation': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
@@ -465,4 +499,4 @@ def render_home_wizard() -> None:
     else:
         add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         st.warning('Etapa inválida. Recomece o fluxo.')
-        _render_nav_buttons(allow_next=False, pending_message='Fluxo inválido.')
+        render_pending_notice('Fluxo inválido.')
