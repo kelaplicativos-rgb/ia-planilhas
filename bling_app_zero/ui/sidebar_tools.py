@@ -8,11 +8,9 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
-from bling_app_zero.ui.layout.sidebar_theme import inject_sidebar_tools_theme
 
 SidebarRenderer = Callable[[], None]
-
-SIDEBAR_TOOLS_OPEN_KEY = 'sidebar_tools_open_by_default'
+SIDEBAR_CLEAN_DONE_KEY = 'sidebar_legacy_noise_clean_done'
 
 
 @dataclass(frozen=True)
@@ -32,22 +30,7 @@ SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
 )
 
 
-def _render_sidebar_header() -> None:
-    with st.sidebar:
-        st.markdown(
-            """
-            <section class="bling-sidebar-hero" aria-label="Suporte técnico">
-                <div class="bling-sidebar-kicker">Suporte</div>
-                <div class="bling-sidebar-title">Diagnóstico</div>
-                <div class="bling-sidebar-text">Gere um arquivo para enviar quando precisar de BLINGFIX.</div>
-            </section>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
 def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
-    """Executa a ferramenta essencial da sidebar sem derrubar o app."""
     try:
         renderer()
     except Exception as exc:
@@ -61,17 +44,13 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
             details={'tool': name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
         with st.sidebar:
-            with st.expander('Diagnóstico indisponível', expanded=True):
-                st.error('Não consegui gerar o diagnóstico, mas o sistema principal continua aberto.')
-                st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
+            st.error('Diagnóstico indisponível.')
+            st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
 
 
-def _ensure_sidebar_defaults() -> None:
-    if SIDEBAR_TOOLS_OPEN_KEY not in st.session_state:
-        st.session_state[SIDEBAR_TOOLS_OPEN_KEY] = False
-
-
-def _clear_legacy_sidebar_noise_state() -> None:
+def _clear_legacy_sidebar_noise_state_once() -> None:
+    if st.session_state.get(SIDEBAR_CLEAN_DONE_KEY):
+        return
     legacy_keys = [
         'sidebar_rules_center_requested',
         'sidebar_open_rules_center_inline',
@@ -90,6 +69,7 @@ def _clear_legacy_sidebar_noise_state() -> None:
         if key in st.session_state:
             removed.append(key)
             st.session_state.pop(key, None)
+    st.session_state[SIDEBAR_CLEAN_DONE_KEY] = True
     if removed:
         add_audit_event(
             'legacy_sidebar_noise_state_cleared',
@@ -99,21 +79,7 @@ def _clear_legacy_sidebar_noise_state() -> None:
 
 
 def render_sidebar_tools() -> None:
-    inject_sidebar_tools_theme()
-    _ensure_sidebar_defaults()
-    _clear_legacy_sidebar_noise_state()
-    _render_sidebar_header()
-
-    add_audit_event(
-        'sidebar_tools_rendered',
-        area='SIDEBAR',
-        details={
-            'mode': 'clean_minimal_support_diagnostic',
-            'tools': [tool.name for tool in SIDEBAR_TOOLS],
-            'responsible_file': 'bling_app_zero/ui/sidebar_tools.py',
-        },
-    )
-
+    _clear_legacy_sidebar_noise_state_once()
     for tool in SIDEBAR_TOOLS:
         _render_sidebar_tool(tool.name, tool.renderer)
 
