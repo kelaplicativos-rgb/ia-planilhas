@@ -21,6 +21,7 @@ from bling_app_zero.ui.estoque_wizard_steps import (
 )
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
+    get_home_pricing_config,
     render_home_pricing_config_form,
     set_home_pricing_config,
 )
@@ -120,12 +121,7 @@ def wizard_steps_for_operation(operation: str) -> list[str]:
 
 
 def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
-    """Regra única: índice atual + delta, sem pular etapas.
-
-    Exemplo: tela 5 + avançar = tela 6; tela 5 + voltar = tela 4.
-    No limite inicial, Voltar retorna para a Home do fluxo porque não existe
-    etapa -1 dentro do wizard. No limite final, Avançar permanece na última.
-    """
+    """Regra única: índice atual + delta, sem pular etapas."""
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
     if current not in steps:
@@ -138,12 +134,10 @@ def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
 
 
 def wizard_previous_target(current_step: str, operation: str) -> str:
-    """Destino puro do botão Voltar: etapa atual - 1 ou Home no limite inicial."""
     return _target_by_delta(current_step, operation, -1)
 
 
 def wizard_next_target(current_step: str, operation: str) -> str:
-    """Destino puro do botão Avançar: sempre etapa atual + 1."""
     return _target_by_delta(current_step, operation, 1)
 
 
@@ -174,15 +168,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
             'wizard_step_kept',
             area='WIZARD',
             step=step,
-            details={
-                'from': previous,
-                'to': step,
-                'requested': requested,
-                'reason': reason,
-                'operation': _selected_operation(),
-                'state_preserved': True,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -191,15 +177,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         'wizard_step_changed',
         area='WIZARD',
         step=step,
-        details={
-            'from': previous,
-            'to': step,
-            'requested': requested,
-            'reason': reason,
-            'operation': _selected_operation(),
-            'state_preserved': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['step'] = step
@@ -216,12 +194,7 @@ def _back_to_home_choice() -> None:
             st.query_params.pop(key, None)
         except Exception:
             pass
-    add_audit_event(
-        'wizard_back_to_home_choice',
-        area='WIZARD',
-        step=_current_step(),
-        details={'reason': 'back_button_first_step', 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('wizard_back_to_home_choice', area='WIZARD', step=_current_step(), details={'reason': 'back_button_first_step', 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
@@ -284,12 +257,7 @@ def _sync_flow_state(origin: str, operation: str) -> None:
 
     if previous_origin != origin or previous_operation != operation:
         st.session_state.pop(ORIGIN_AUTO_FORWARDED_KEY, None)
-        add_audit_event(
-            'flow_state_synced',
-            area='WIZARD',
-            step=_current_step(),
-            details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'previous_operation': previous_operation, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('flow_state_synced', area='WIZARD', step=_current_step(), details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'previous_operation': previous_operation, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
         st.query_params['operacao'] = operation
@@ -437,14 +405,26 @@ def _render_operation_step() -> None:
 
 
 def _render_pricing_step() -> None:
-    render_section_card('Preço', 'Precificação opcional', 'Use somente se quiser calcular preço antes do mapeamento.')
-    previous = bool(st.session_state.get('home_precificacao_inicial', False))
-    use_pricing = st.toggle('Usar calculadora', value=previous, key='home_pricing_enabled_toggle')
+    current_config = get_home_pricing_config()
+    render_section_card(
+        'Preço',
+        'Calculadora compartilhada de preços',
+        'Use a mesma calculadora do Atualizar Preços Multiloja para calcular preço antes do mapeamento.',
+    )
+    use_pricing = st.toggle(
+        'Usar calculadora compartilhada',
+        value=bool(current_config.get('enabled', False)),
+        key='home_pricing_enabled_toggle',
+        help='Quando ativada, o cadastro por site ou anexo usa o motor compartilhado de preço antes do mapeamento.',
+    )
     if use_pricing:
-        config = render_home_pricing_config_form()
-        set_home_pricing_config(config)
+        with st.container(border=True):
+            st.success('Calculadora compartilhada ativa para este fluxo.')
+            config = render_home_pricing_config_form()
+            set_home_pricing_config(config)
     else:
         disable_home_pricing()
+        st.info('Calculadora desativada. O sistema manterá o preço da origem ou o valor definido no mapeamento.')
 
 
 def _render_origin_step() -> None:
