@@ -119,32 +119,29 @@ def wizard_steps_for_operation(operation: str) -> list[str]:
     return list(ESTOQUE_STEPS if str(operation or '').strip().lower() == 'estoque' else CADASTRO_STEPS)
 
 
-def wizard_previous_target(current_step: str, operation: str) -> str:
-    """Destino puro do botão Voltar.
+def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
+    """Regra única: índice atual + delta, sem pular etapas.
 
-    Na primeira etapa, Voltar precisa continuar clicável e retornar para a escolha
-    inicial da Home sem apagar os dados já informados.
+    Exemplo: tela 5 + avançar = tela 6; tela 5 + voltar = tela 4.
+    No limite inicial/final, permanece na própria etapa.
     """
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
     if current not in steps:
         return STEP_MODELO
     index = steps.index(current)
-    if index <= 0:
-        return HOME_CHOICE_TARGET
-    return steps[index - 1]
+    target_index = max(0, min(len(steps) - 1, index + delta))
+    return steps[target_index]
+
+
+def wizard_previous_target(current_step: str, operation: str) -> str:
+    """Destino puro do botão Voltar: sempre etapa atual - 1."""
+    return _target_by_delta(current_step, operation, -1)
 
 
 def wizard_next_target(current_step: str, operation: str) -> str:
-    """Destino puro do botão Avançar."""
-    steps = wizard_steps_for_operation(operation)
-    current = str(current_step or '').strip().lower()
-    if current not in steps:
-        return STEP_MODELO
-    index = steps.index(current)
-    if index >= len(steps) - 1:
-        return current
-    return steps[index + 1]
+    """Destino puro do botão Avançar: sempre etapa atual + 1."""
+    return _target_by_delta(current_step, operation, 1)
 
 
 def _active_steps() -> list[str]:
@@ -168,6 +165,23 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     requested = step
     if step not in steps:
         step = STEP_MODELO
+
+    if step == previous:
+        add_audit_event(
+            'wizard_step_kept',
+            area='WIZARD',
+            step=step,
+            details={
+                'from': previous,
+                'to': step,
+                'requested': requested,
+                'reason': reason,
+                'operation': _selected_operation(),
+                'state_preserved': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return
 
     st.session_state[WIZARD_STEP_KEY] = step
     add_audit_event(
@@ -210,16 +224,12 @@ def _back_to_home_choice() -> None:
 
 def _next_step() -> None:
     target = wizard_next_target(_current_step(), _selected_operation())
-    if target != _current_step():
-        _go_to_step(target, reason='next_button')
+    _go_to_step(target, reason='next_button')
 
 
 def _previous_step() -> None:
     target = wizard_previous_target(_current_step(), _selected_operation())
-    if target == HOME_CHOICE_TARGET:
-        _back_to_home_choice()
-        return
-    _go_to_step(target, reason='back_button_preserve_state')
+    _go_to_step(target, reason='back_button_previous_index')
 
 
 def _reset_outputs_for_operation_change() -> None:
@@ -512,7 +522,7 @@ def render_home_wizard() -> None:
     nav = _render_step_header()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
