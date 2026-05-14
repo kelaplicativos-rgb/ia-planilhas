@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules, set_user_rules
-from bling_app_zero.ui.rules_center_sections import disable_all_rules, render_default_rules, render_protection_rules
+from bling_app_zero.core.user_rules import get_user_rules, reset_user_rules
+from bling_app_zero.ui.rules_center_sections import render_default_rules, render_protection_rules
 from bling_app_zero.ui.rules_center_state import (
     RULES_CENTER_AUTOSAVE_SIGNATURE_KEY,
     RULES_CENTER_READY_KEY,
@@ -19,10 +19,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
 
 def _render_rules_header() -> None:
     st.markdown('### Configurações do arquivo final')
-    st.caption(
-        'Central única para proteções, padrões opcionais e regras personalizadas. '
-        'Valores reais da origem e escolhas manuais continuam tendo prioridade.'
-    )
+    st.caption('Configure proteções, preenchimentos opcionais e regras. Valores reais e mapeamentos manuais continuam tendo prioridade.')
 
 
 def render_rules_center_step() -> None:
@@ -31,22 +28,7 @@ def render_rules_center_step() -> None:
     st.session_state.setdefault(RULES_CENTER_AUTOSAVE_SIGNATURE_KEY, previous_signature)
 
     with st.container(border=True):
-        col_title, col_off = st.columns([3, 1])
-        with col_title:
-            _render_rules_header()
-        with col_off:
-            st.write('')
-            if st.button('Desligar tudo', use_container_width=True, key='rules_center_disable_all_rules'):
-                disabled = disable_all_rules(original_rules)
-                normalized = set_user_rules(disabled)
-                st.session_state[RULES_CENTER_AUTOSAVE_SIGNATURE_KEY] = rules_signature(normalized)
-                st.session_state[RULES_CENTER_READY_KEY] = True
-                st.session_state['rules_center_default_rules_enabled'] = False
-                clear_mapping_rule_cache()
-                st.success('Todas as configurações foram desligadas.')
-                st.rerun()
-
-        st.divider()
+        _render_rules_header()
         rules = render_protection_rules(original_rules)
         rules = render_default_rules(rules)
         auto_save_rules_if_changed(rules, previous_signature)
