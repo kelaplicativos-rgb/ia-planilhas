@@ -24,6 +24,12 @@ BASIC_DEFAULT_FIELDS = [
     ('Itens por caixa', 'box_items_default', '1'),
 ]
 
+STOCK_DEFAULT_FIELDS = [
+    ('Disponível', 'stock_available_default', '1000'),
+    ('Baixo', 'stock_low_default', '0'),
+    ('Esgotado', 'stock_out_default', '0'),
+]
+
 EXTRA_DEFAULT_RULES = [
     ('Categoria', 'Vazio'),
     ('Clonar dados do pai', 'Não'),
@@ -144,6 +150,7 @@ def _all_default_targets() -> list[tuple[str, str]]:
         ('Unidade das medidas', 'Centímetro'),
     ]
     targets.extend((label, fallback) for label, _key, fallback in BASIC_DEFAULT_FIELDS)
+    targets.extend((label, fallback) for label, _key, fallback in STOCK_DEFAULT_FIELDS)
     targets.extend(EXTRA_DEFAULT_RULES)
     return targets
 
@@ -172,18 +179,8 @@ def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
 
 def render_measure_rules(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     updated = dict(rules)
-    measure_enabled = st.toggle(
-        'Medidas padrão',
-        value=bool(master_enabled),
-        disabled=not master_enabled,
-        key='rules_center_measure_defaults_enabled',
-    )
-    unit_measure_enabled = st.toggle(
-        'Unidade das medidas',
-        value=bool(master_enabled),
-        disabled=not master_enabled,
-        key='rules_center_measure_unit_enabled',
-    )
+    measure_enabled = st.toggle('Medidas padrão', value=bool(master_enabled), disabled=not master_enabled, key='rules_center_measure_defaults_enabled')
+    unit_measure_enabled = st.toggle('Unidade das medidas', value=bool(master_enabled), disabled=not master_enabled, key='rules_center_measure_unit_enabled')
     cols = st.columns(4)
 
     for index, (short_label, target_label, key, fallback) in enumerate(MEASURE_DEFAULT_FIELDS):
@@ -234,6 +231,20 @@ def render_basic_defaults(rules: dict[str, Any], custom_rules: list[dict[str, An
     return updated, custom_rules
 
 
+def render_stock_defaults(rules: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    updated = dict(rules)
+    cols = st.columns(3)
+    for index, (label, key, fallback) in enumerate(STOCK_DEFAULT_FIELDS):
+        current_value = clean_number_text(updated.get(key), fallback)
+        with cols[index % 3]:
+            value = st.text_input(label, value=current_value, key=f'rules_center_stock_value_{key}', disabled=not master_enabled)
+            render_rule_value_warning(label, value)
+        value = clean_number_text(value, fallback)
+        updated[key] = value
+        custom_rules = upsert_system_rule(custom_rules, label, value, bool(master_enabled))
+    return updated, custom_rules
+
+
 def render_extra_default_rules(custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> list[dict[str, Any]]:
     custom_by_column = custom_rules_by_column({'custom_rules': custom_rules})
     for row_start in range(0, len(EXTRA_DEFAULT_RULES), 2):
@@ -253,6 +264,7 @@ def _render_default_rules_body(updated: dict[str, Any], custom_rules: list[dict[
         return updated, _disable_all_default_rules(custom_rules)
     updated, custom_rules = render_measure_rules(updated, custom_rules, master_enabled=True)
     updated, custom_rules = render_basic_defaults(updated, custom_rules, master_enabled=True)
+    updated, custom_rules = render_stock_defaults(updated, custom_rules, master_enabled=True)
     custom_rules = render_extra_default_rules(custom_rules, master_enabled=True)
     return updated, custom_rules
 
@@ -373,4 +385,5 @@ __all__ = [
     'render_extra_default_rules',
     'render_measure_rules',
     'render_protection_rules',
+    'render_stock_defaults',
 ]
