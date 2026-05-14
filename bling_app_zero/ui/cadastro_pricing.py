@@ -3,10 +3,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.shared_price_calculator import apply_shared_pricing
 from bling_app_zero.ui.home_pricing_config import get_home_pricing_config
-from bling_app_zero.ui.home_shared import df_signature, load_apply_pricing
-
-DEFAULT_PROFIT_PERCENT = 50.0
+from bling_app_zero.ui.home_shared import df_signature
 
 PRICE_TARGET_ALIASES = [
     'Preço de venda',
@@ -62,29 +61,18 @@ def _pricing_enabled() -> bool:
     return bool(_pricing_config().get('enabled', False))
 
 
-def _pricing_values() -> dict[str, float]:
-    config = _pricing_config()
-    return {
-        'profit_percent': float(config.get('profit_percent', DEFAULT_PROFIT_PERCENT) or 0.0),
-        'tax_percent': float(config.get('tax_percent', 0.0) or 0.0),
-        'fee_percent': float(config.get('fee_percent', 0.0) or 0.0),
-        'discount_percent': float(config.get('discount_percent', 0.0) or 0.0),
-        'fixed_value': float(config.get('fixed_value', 0.0) or 0.0),
-    }
-
-
-def _store_pricing_state(signature: str, selected_cost_column: str, values: dict[str, float]) -> None:
+def _store_pricing_state(signature: str, selected_cost_column: str) -> None:
     st.session_state['cadastro_preco_calculado_ativo'] = True
     st.session_state[f'cadastro_coluna_custo_{signature}'] = selected_cost_column
-    st.session_state[f'cadastro_margem_{signature}'] = values['profit_percent']
-    st.session_state[f'cadastro_imposto_{signature}'] = values['tax_percent']
-    st.session_state[f'cadastro_taxa_{signature}'] = values['fee_percent']
-    st.session_state['cadastro_desconto_comissao'] = values['discount_percent']
-    st.session_state[f'cadastro_fixo_{signature}'] = values['fixed_value']
+    st.session_state['shared_price_calculator_source'] = 'cadastro_estoque'
 
 
 def render_cadastro_pricing(df_origem: pd.DataFrame) -> pd.DataFrame:
-    """Aplica a precificação configurada na Home sem duplicar campos na tela de cadastro."""
+    """Aplica a calculadora compartilhada do multiloja no cadastro.
+
+    Serve para origem por site ou anexo. A tela de configuração fica na etapa
+    Preço da Home; aqui apenas aplicamos o motor único sobre a coluna de custo.
+    """
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         return df_origem
 
@@ -93,28 +81,32 @@ def render_cadastro_pricing(df_origem: pd.DataFrame) -> pd.DataFrame:
         st.session_state.pop('df_origem_cadastro_precificada', None)
         return df_origem
 
-    colunas = [str(c) for c in df_origem.columns]
-    if not colunas:
+    columns = [str(c) for c in df_origem.columns]
+    if not columns:
         st.session_state['cadastro_preco_calculado_ativo'] = False
         st.session_state.pop('df_origem_cadastro_precificada', None)
         return df_origem
 
     origem_signature = df_signature(df_origem)
-    values = _pricing_values()
-    coluna_custo = colunas[best_cost_column(colunas)]
-    _store_pricing_state(origem_signature, coluna_custo, values)
+    config = _pricing_config()
+    cost_column = columns[best_cost_column(columns)]
+    _store_pricing_state(origem_signature, cost_column)
 
-    apply_pricing = load_apply_pricing()
-    df_precificado = apply_pricing(
+    df_precificado = apply_shared_pricing(
         df_origem,
-        coluna_custo,
-        'Preço de venda',
-        values['profit_percent'],
-        values['tax_percent'],
-        values['fee_percent'],
-        values['fixed_value'],
-        values['discount_percent'],
+        cost_column=cost_column,
+        output_column='Preço de venda',
+        config=config,
+        channel='cadastro_estoque',
     )
     df_precificado = apply_calculated_price_aliases(df_precificado, 'Preço de venda')
     st.session_state['df_origem_cadastro_precificada'] = df_precificado
     return df_precificado
+
+
+__all__ = [
+    'PRICE_TARGET_ALIASES',
+    'apply_calculated_price_aliases',
+    'best_cost_column',
+    'render_cadastro_pricing',
+]
