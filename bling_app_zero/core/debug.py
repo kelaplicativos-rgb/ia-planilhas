@@ -134,31 +134,12 @@ def _logs_to_text(logs: list[dict[str, Any]]) -> str:
     return '\n'.join(lines)
 
 
-def _render_internal_diagnostic_download(prefix: str) -> None:
-    try:
-        from bling_app_zero.core.log_access import build_internal_log_json_bytes
-        data = build_internal_log_json_bytes()
-    except Exception as exc:
-        st.caption(f'Pacote diagnóstico indisponível: {exc}')
-        return
-    st.download_button(
-        'Baixar pacote diagnóstico interno',
-        data=data,
-        file_name='bling_internal_diagnostic.json',
-        mime='application/json; charset=utf-8',
-        use_container_width=True,
-        key=f'{prefix}_download_internal_diagnostic',
-    )
-
-
 def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
     key = _log_key()
     if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
         st.session_state[key] = []
         st.success('Logs limpos.')
         st.rerun()
-
-    _render_internal_diagnostic_download(prefix)
 
     if logs:
         st.download_button(
