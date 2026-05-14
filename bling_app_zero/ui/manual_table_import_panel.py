@@ -201,6 +201,17 @@ def _store_manual_source(
     st.success(f'Origem criada com {len(clean_df)} linha(s) e {len(clean_df.columns)} coluna(s).')
 
 
+def _render_html_capture_toggle(operation: str) -> None:
+    show_helper = st.checkbox(
+        '🧲 Mostrar capturador de HTML da página aberta',
+        value=False,
+        key=f'show_html_capture_helper_{operation}',
+        help='Use quando o fornecedor não tem botão de exportar. Não usa expander para evitar erro de expander aninhado.',
+    )
+    if show_helper:
+        render_html_capture_helper()
+
+
 def render_manual_table_import_panel(
     *,
     operation: str,
@@ -213,8 +224,7 @@ def render_manual_table_import_panel(
     st.markdown('###### Importar tabela do fornecedor')
     st.caption('Use quando você já abriu o fornecedor e consegue exportar, salvar ou copiar a lista de produtos.')
 
-    with st.expander('🧲 Capturador de HTML da página aberta', expanded=False):
-        render_html_capture_helper()
+    _render_html_capture_toggle(operation)
 
     uploaded = st.file_uploader(
         'Enviar HTML/CSV/XLSX exportado do fornecedor',
