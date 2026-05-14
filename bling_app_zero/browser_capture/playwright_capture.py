@@ -3,15 +3,18 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urldefrag, urljoin, urlparse
 
 ProgressCallback = Callable[[dict], None]
 
 DEFAULT_TIMEOUT_MS = 45_000
 DEFAULT_WAIT_AFTER_ACTION_MS = 1_800
 DEFAULT_MAX_PAGES = 80
+DEFAULT_MAX_SITE_PAGES = 1_500
 DEFAULT_STATE_DIR = Path('.bling_browser_state')
 
 NEXT_RE = re.compile(
@@ -19,6 +22,9 @@ NEXT_RE = re.compile(
     re.IGNORECASE,
 )
 BAD_RE = re.compile(r'(voltar|anterior|previous|prev|cancelar|excluir|remover|delete|logout|sair)', re.IGNORECASE)
+PRODUCT_HINT_RE = re.compile(r'(produto|produtos|product|products|catalog|catalogo|cat[aá]logo|estoque|inventory|sku|admin/products)', re.IGNORECASE)
+BLOCKED_URL_RE = re.compile(r'(logout|sair|delete|destroy|remove|remover|excluir|cancel|cancelar|password|senha|token|revoke)', re.IGNORECASE)
+STATIC_ASSET_RE = re.compile(r'\.(?:jpg|jpeg|png|webp|gif|svg|ico|css|js|map|woff|woff2|ttf|eot|pdf|zip|rar|7z|mp4|mp3)(?:\?|$)', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -28,8 +34,11 @@ class BrowserCaptureConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     headless: bool = True
     max_pages: int = DEFAULT_MAX_PAGES
+    max_site_pages: int = DEFAULT_MAX_SITE_PAGES
     wait_after_action_ms: int = DEFAULT_WAIT_AFTER_ACTION_MS
     timeout_ms: int = DEFAULT_TIMEOUT_MS
+    same_domain_only: bool = True
+    prefer_product_links: bool = True
 
 
 @dataclass
@@ -52,9 +61,10 @@ def _state_path(config: BrowserCaptureConfig) -> Path:
     return Path(config.state_dir) / f'{_safe_key(config.supplier_key)}.json'
 
 
-def _html_path(config: BrowserCaptureConfig) -> Path:
+def _html_path(config: BrowserCaptureConfig, suffix: str = '') -> Path:
     ts = time.strftime('%Y%m%d_%H%M%S')
-    return Path(config.state_dir) / f'{_safe_key(config.supplier_key)}_{ts}.html'
+    extra = f'_{_safe_key(suffix)}' if suffix else ''
+    return Path(config.state_dir) / f'{_safe_key(config.supplier_key)}{extra}_{ts}.html'
 
 
 def _emit(callback: ProgressCallback | None, **payload: object) -> None:
@@ -79,13 +89,50 @@ def has_saved_session(config: BrowserCaptureConfig) -> bool:
     return path.exists() and path.stat().st_size > 20
 
 
-def manual_login_and_save_session(config: BrowserCaptureConfig, progress_callback: ProgressCallback | None = None) -> BrowserCaptureResult:
-    """Abre navegador visível para login manual e salva storage_state.
+def _normalize_url(base_url: str, href: str) -> str:
+    href = str(href or '').strip()
+    if not href or href.startswith(('javascript:', 'mailto:', 'tel:', 'data:', '#')):
+        return ''
+    absolute = urljoin(base_url, href)
+    absolute, _ = urldefrag(absolute)
+    parsed = urlparse(absolute)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        return ''
+    return absolute
 
-    Uso recomendado em máquina local/VPS com interface gráfica. Em Streamlit Cloud,
-    navegador headed pode não estar disponível. Esta função não burla CAPTCHA: o usuário
-    precisa resolver manualmente no navegador aberto.
-    """
+
+def _url_allowed(url: str, root_netloc: str, *, same_domain_only: bool = True) -> bool:
+    if not url:
+        return False
+    if STATIC_ASSET_RE.search(url) or BLOCKED_URL_RE.search(url):
+        return False
+    parsed = urlparse(url)
+    if parsed.scheme not in {'http', 'https'}:
+        return False
+    if same_domain_only and parsed.netloc.lower() != root_netloc.lower():
+        return False
+    return True
+
+
+def _url_priority(url: str) -> int:
+    score = 0
+    lower = url.lower()
+    if PRODUCT_HINT_RE.search(lower):
+        score += 100
+    if '/admin/products' in lower:
+        score += 200
+    if any(token in lower for token in ('page=', 'draw=', 'start=', 'offset=', 'pagina=')):
+        score += 35
+    if any(token in lower for token in ('edit', 'create', 'new')):
+        score -= 50
+    return score
+
+
+def _escape_attr(value: str) -> str:
+    return str(value or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def manual_login_and_save_session(config: BrowserCaptureConfig, progress_callback: ProgressCallback | None = None) -> BrowserCaptureResult:
     available, error = is_playwright_available()
     if not available:
         return BrowserCaptureResult(ok=False, errors=[f'Playwright indisponível: {error}'])
@@ -124,14 +171,12 @@ def _find_next_locator(page):
             if not locator.is_visible() or not locator.is_enabled():
                 continue
             label = ' '.join([
-                locator.inner_text(timeout=500) if locator.evaluate("el => !!el.innerText") else '',
+                locator.inner_text(timeout=500) if locator.evaluate('el => !!el.innerText') else '',
                 locator.get_attribute('value') or '',
                 locator.get_attribute('aria-label') or '',
                 locator.get_attribute('title') or '',
             ]).strip()
-            if not label:
-                continue
-            if NEXT_RE.search(label) and not BAD_RE.search(label):
+            if label and NEXT_RE.search(label) and not BAD_RE.search(label):
                 return locator
         except Exception:
             continue
@@ -144,12 +189,61 @@ def _find_next_locator(page):
     return None
 
 
-def capture_html_with_saved_session(config: BrowserCaptureConfig, progress_callback: ProgressCallback | None = None) -> BrowserCaptureResult:
-    """Captura HTML usando storage_state salvo anteriormente.
+def _capture_current_page(page, captured: list[dict[str, str]], seen: set[str], warnings: list[str], config: BrowserCaptureConfig, reason: str) -> bool:
+    try:
+        page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+        page.wait_for_timeout(config.wait_after_action_ms)
+        text = page.locator('body').inner_text(timeout=5_000)[:1_200]
+        key = f'{page.url}|{text}'
+        if key in seen:
+            return False
+        seen.add(key)
+        captured.append({'url': page.url, 'title': page.title(), 'reason': reason, 'html': page.content()})
+        return True
+    except Exception as exc:
+        warnings.append(f'Falha ao capturar página {page.url}: {exc}')
+        return False
 
-    Tenta visitar a URL, rolar, capturar HTML, clicar em próxima/carregar mais
-    e consolidar as páginas em um único HTML.
-    """
+
+def _discover_links(page, root_netloc: str, config: BrowserCaptureConfig) -> list[str]:
+    try:
+        raw_links = page.eval_on_selector_all('a[href]', 'els => els.map(a => a.getAttribute("href") || "").filter(Boolean)')
+    except Exception:
+        raw_links = []
+
+    links: list[str] = []
+    seen: set[str] = set()
+    for href in raw_links or []:
+        url = _normalize_url(page.url, href)
+        if not _url_allowed(url, root_netloc, same_domain_only=config.same_domain_only):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        links.append(url)
+    links.sort(key=_url_priority, reverse=True)
+    return links
+
+
+def _build_combined_html(captured: list[dict[str, str]], title: str) -> str:
+    body = [f'<!doctype html><html><head><meta charset="utf-8"><title>{_escape_attr(title)}</title></head><body>']
+    body.append(f'<h1>{_escape_attr(title)}</h1><p>Total de páginas/blocos: {len(captured)}</p>')
+    for idx, item in enumerate(captured, start=1):
+        url = _escape_attr(item.get('url', ''))
+        item_title = _escape_attr(item.get('title', ''))
+        reason = _escape_attr(item.get('reason', ''))
+        html_text = item.get('html', '')
+        body.append(f'<section class="bling-captured-page" data-url="{url}" data-reason="{reason}"><h2>Página {idx} - {item_title}</h2><p>URL: {url}</p>{html_text}</section>')
+    body.append('</body></html>')
+    return '\n'.join(body)
+
+
+def _open_context(config: BrowserCaptureConfig):
+    # Mantido separado apenas para clareza; o contexto ainda é criado dentro do sync_playwright.
+    return config
+
+
+def capture_html_with_saved_session(config: BrowserCaptureConfig, progress_callback: ProgressCallback | None = None) -> BrowserCaptureResult:
     available, error = is_playwright_available()
     if not available:
         return BrowserCaptureResult(ok=False, errors=[f'Playwright indisponível: {error}'])
@@ -163,26 +257,11 @@ def capture_html_with_saved_session(config: BrowserCaptureConfig, progress_callb
     if not state_path.exists():
         return BrowserCaptureResult(ok=False, errors=['Sessão salva não encontrada. Faça o login manual primeiro.'])
 
-    html_file = _html_path(config)
+    html_file = _html_path(config, 'pagina_atual')
     html_file.parent.mkdir(parents=True, exist_ok=True)
     captured: list[dict[str, str]] = []
     seen: set[str] = set()
     warnings: list[str] = []
-
-    def capture_page(page, reason: str) -> bool:
-        try:
-            page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-            page.wait_for_timeout(config.wait_after_action_ms)
-            text = page.locator('body').inner_text(timeout=5_000)[:900]
-            key = f'{page.url}|{text}'
-            if key in seen:
-                return False
-            seen.add(key)
-            captured.append({'url': page.url, 'title': page.title(), 'reason': reason, 'html': page.content()})
-            return True
-        except Exception as exc:
-            warnings.append(f'Falha ao capturar página: {exc}')
-            return False
 
     try:
         _emit(progress_callback, stage='starting_browser', message='Abrindo navegador Playwright em modo servidor...')
@@ -192,7 +271,7 @@ def capture_html_with_saved_session(config: BrowserCaptureConfig, progress_callb
             page = context.new_page()
             page.goto(config.supplier_url, wait_until='domcontentloaded', timeout=config.timeout_ms)
             page.wait_for_timeout(config.wait_after_action_ms)
-            capture_page(page, 'inicial')
+            _capture_current_page(page, captured, seen, warnings, config, 'inicial')
             for idx in range(1, max(1, config.max_pages)):
                 _emit(progress_callback, stage='capturing', page=idx, total=config.max_pages, message=f'Capturando página {idx} de até {config.max_pages}...')
                 next_locator = _find_next_locator(page)
@@ -207,19 +286,117 @@ def capture_html_with_saved_session(config: BrowserCaptureConfig, progress_callb
                 except Exception:
                     page.wait_for_timeout(config.wait_after_action_ms)
                 page.wait_for_timeout(config.wait_after_action_ms)
-                capture_page(page, 'apos_clique')
+                _capture_current_page(page, captured, seen, warnings, config, 'apos_clique')
                 if len(captured) == before_count and page.url == before_url:
                     warnings.append('Clique em próxima/carregar mais não mudou a página. Encerrando captura.')
                     break
             final_url = page.url
             browser.close()
 
-        body = ['<!doctype html><html><head><meta charset="utf-8"><title>BLING captura Playwright</title></head><body>']
-        body.append(f'<h1>BLING captura Playwright</h1><p>Total de páginas/blocos: {len(captured)}</p>')
-        for idx, item in enumerate(captured, start=1):
-            body.append(f'<section class="bling-captured-page" data-url="{item["url"]}"><h2>Página {idx} - {item["title"]}</h2><p>URL: {item["url"]}</p>{item["html"]}</section>')
-        body.append('</body></html>')
-        html_text = '\n'.join(body)
+        html_text = _build_combined_html(captured, 'BLING captura Playwright - página atual/paginação')
+        html_file.write_text(html_text, encoding='utf-8')
+        return BrowserCaptureResult(ok=bool(captured), html=html_text, file_path=str(html_file), pages_captured=len(captured), final_url=final_url, warnings=warnings)
+    except Exception as exc:
+        return BrowserCaptureResult(ok=False, errors=[str(exc) or exc.__class__.__name__], warnings=warnings)
+
+
+def capture_entire_site_html_with_saved_session(config: BrowserCaptureConfig, progress_callback: ProgressCallback | None = None) -> BrowserCaptureResult:
+    available, error = is_playwright_available()
+    if not available:
+        return BrowserCaptureResult(ok=False, errors=[f'Playwright indisponível: {error}'])
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        return BrowserCaptureResult(ok=False, errors=[str(exc) or exc.__class__.__name__])
+
+    state_path = _state_path(config)
+    if not state_path.exists():
+        return BrowserCaptureResult(ok=False, errors=['Sessão salva não encontrada. Faça o login manual primeiro.'])
+
+    start_url = config.supplier_url.strip()
+    root_netloc = urlparse(start_url).netloc
+    if not root_netloc:
+        return BrowserCaptureResult(ok=False, errors=['URL inicial inválida para varredura do site inteiro.'])
+
+    html_file = _html_path(config, 'site_inteiro')
+    html_file.parent.mkdir(parents=True, exist_ok=True)
+
+    captured: list[dict[str, str]] = []
+    seen_content: set[str] = set()
+    visited_urls: set[str] = set()
+    queued_urls: set[str] = set()
+    warnings: list[str] = []
+    queue: deque[str] = deque([start_url])
+    queued_urls.add(start_url)
+    final_url = start_url
+
+    try:
+        _emit(progress_callback, stage='starting_browser', message='Abrindo Playwright para varrer site inteiro...')
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=config.headless, args=['--disable-blink-features=AutomationControlled'])
+            context = browser.new_context(storage_state=str(state_path), viewport={'width': 1366, 'height': 900})
+            page = context.new_page()
+
+            while queue and len(visited_urls) < max(1, config.max_site_pages):
+                url = queue.popleft()
+                if url in visited_urls:
+                    continue
+                if not _url_allowed(url, root_netloc, same_domain_only=config.same_domain_only):
+                    continue
+
+                visited_urls.add(url)
+                _emit(
+                    progress_callback,
+                    stage='site_scan',
+                    visited=len(visited_urls),
+                    queued=len(queue),
+                    captured=len(captured),
+                    total=config.max_site_pages,
+                    url=url,
+                    message=f'Varrendo site inteiro: {len(visited_urls)}/{config.max_site_pages} páginas visitadas...',
+                )
+                try:
+                    page.goto(url, wait_until='domcontentloaded', timeout=config.timeout_ms)
+                    page.wait_for_timeout(config.wait_after_action_ms)
+                    final_url = page.url
+                    _capture_current_page(page, captured, seen_content, warnings, config, 'site_scan')
+
+                    discovered = _discover_links(page, root_netloc, config)
+                    for link in discovered:
+                        if link in visited_urls or link in queued_urls:
+                            continue
+                        queued_urls.add(link)
+                        if config.prefer_product_links and _url_priority(link) > 0:
+                            queue.appendleft(link)
+                        else:
+                            queue.append(link)
+
+                    next_locator = _find_next_locator(page)
+                    if next_locator is not None and len(visited_urls) < max(1, config.max_site_pages):
+                        before_url = page.url
+                        before_count = len(captured)
+                        try:
+                            next_locator.click(timeout=5_000)
+                            page.wait_for_load_state('domcontentloaded', timeout=10_000)
+                        except Exception:
+                            page.wait_for_timeout(config.wait_after_action_ms)
+                        page.wait_for_timeout(config.wait_after_action_ms)
+                        final_url = page.url
+                        changed = _capture_current_page(page, captured, seen_content, warnings, config, 'site_scan_next_click')
+                        if changed and page.url not in visited_urls and _url_allowed(page.url, root_netloc, same_domain_only=config.same_domain_only):
+                            visited_urls.add(page.url)
+                        if len(captured) == before_count and page.url == before_url:
+                            warnings.append(f'Botão próxima/carregar mais não alterou conteúdo em {url}.')
+                except Exception as exc:
+                    warnings.append(f'Falha ao visitar {url}: {exc}')
+                    continue
+
+            if queue:
+                warnings.append(f'Varredura encerrada pelo limite max_site_pages={config.max_site_pages}. Ainda havia {len(queue)} link(s) na fila.')
+            browser.close()
+
+        html_text = _build_combined_html(captured, 'BLING captura Playwright - SITE INTEIRO')
         html_file.write_text(html_text, encoding='utf-8')
         return BrowserCaptureResult(ok=bool(captured), html=html_text, file_path=str(html_file), pages_captured=len(captured), final_url=final_url, warnings=warnings)
     except Exception as exc:
@@ -233,6 +410,10 @@ def session_debug(config: BrowserCaptureConfig) -> dict[str, object]:
         'supplier_key': config.supplier_key,
         'state_path': str(state_path),
         'has_saved_session': state_path.exists(),
+        'max_pages': config.max_pages,
+        'max_site_pages': config.max_site_pages,
+        'same_domain_only': config.same_domain_only,
+        'prefer_product_links': config.prefer_product_links,
     }
     if state_path.exists():
         try:
@@ -247,6 +428,7 @@ def session_debug(config: BrowserCaptureConfig) -> dict[str, object]:
 __all__ = [
     'BrowserCaptureConfig',
     'BrowserCaptureResult',
+    'capture_entire_site_html_with_saved_session',
     'capture_html_with_saved_session',
     'has_saved_session',
     'is_playwright_available',
