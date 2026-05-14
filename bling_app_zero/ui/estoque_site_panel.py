@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -47,6 +49,22 @@ def _orange_warning(message: str) -> None:
     )
 
 
+def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.') -> None:
+    """Finaliza e remove barras/caixas para não parecer processamento infinito."""
+    if progress is not None:
+        try:
+            progress.progress(100, text=text)
+            time.sleep(0.15)
+            progress.empty()
+        except Exception:
+            pass
+    if status_box is not None:
+        try:
+            status_box.empty()
+        except Exception:
+            pass
+
+
 def _guided_login_toggle_key() -> str:
     return 'site_guided_login_enabled_estoque'
 
@@ -81,11 +99,6 @@ def _set_stock_capture_state(*, running: bool, error: str = '') -> None:
 
 
 def _clear_stock_site_df(reason: str) -> None:
-    """Remove origem antiga de estoque quando uma nova captura não é válida.
-
-    BLINGCLEAN #ALL SAFE: este painel é vivo, mas precisa seguir a mesma blindagem
-    do painel principal de site para não exibir captura antiga após falha.
-    """
     removed: list[str] = []
     for key in (STOCK_SITE_DF_KEY, 'df_site_bruto'):
         if key in st.session_state:
@@ -195,6 +208,7 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
         _orange_warning('Busca autenticada bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
         return
     completed = False
+    progress = None
     _set_stock_capture_state(running=True, error='')
     add_audit_event('authenticated_stock_site_capture_started', area='SITE', step='entrada', details={'operation': OPERATION, 'requested_columns_count': len(requested_columns or []), 'login_confirmed': True, 'capture_mode': capture_mode, 'allow_entry_step': False, 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
     try:
@@ -207,6 +221,7 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
             error_message = '; '.join(result.errors)
             _clear_stock_site_df('captura_autenticada_com_erros')
             _set_stock_capture_state(running=False, error=error_message)
+            _finish_progress(progress, text='Captura encerrada com erro.')
             add_audit_event('authenticated_stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': error_message, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
             _orange_warning('A captura automática não conseguiu ler este fornecedor. Use a compatibilidade universal abaixo para importar HTML/CSV/XLSX ou tabela copiada.')
             return
@@ -214,6 +229,7 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
             error_message = 'A captura autenticada não encontrou dados de estoque na página preparada. Use a compatibilidade universal abaixo quando o fornecedor bloquear iframe, sessão, captcha ou robô.'
             _clear_stock_site_df('captura_autenticada_vazia')
             _set_stock_capture_state(running=False, error=error_message)
+            _finish_progress(progress, text='Captura encerrada sem dados de estoque.')
             add_audit_event('authenticated_stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'state_reused': getattr(result, 'state_reused', False), 'state_saved': getattr(result, 'state_saved', False), 'responsible_file': RESPONSIBLE_FILE})
             _orange_warning(error_message)
             return
@@ -223,18 +239,20 @@ def _run_authenticated_stock_capture(requested_columns: list[str] | None, df_mod
         _set_stock_capture_state(running=False, error='')
         completed = True
         add_audit_event('authenticated_stock_site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': OPERATION, 'rows': len(df_site), 'columns': len(df_site.columns), 'pages_visited': result.pages_visited, 'capture_mode': capture_mode, 'state_reused': getattr(result, 'state_reused', False), 'state_saved': getattr(result, 'state_saved', False), 'responsible_file': RESPONSIBLE_FILE, 'engine': 'BLING_INSTANT_SCRAPER'})
-        progress.progress(100, text='Captura autenticada de estoque concluída.')
+        _finish_progress(progress, text='Captura autenticada de estoque concluída.')
         st.rerun()
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
         _clear_stock_site_df('captura_autenticada_exception')
         _set_stock_capture_state(running=False, error=message)
+        _finish_progress(progress, text='Captura encerrada com falha.')
         add_audit_event('authenticated_stock_site_capture_exception', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'capture_mode': capture_mode, 'responsible_file': RESPONSIBLE_FILE})
         _orange_warning('A captura automática falhou e foi destravada. Use a compatibilidade universal abaixo se este fornecedor bloquear robôs ou iframe.')
     finally:
         if not completed and bool(st.session_state.get('site_capture_running')):
             _clear_stock_site_df('captura_interrompida')
             _set_stock_capture_state(running=False, error=st.session_state.get('site_capture_error') or 'Captura interrompida antes de finalizar.')
+            _finish_progress(progress, text='Captura interrompida.')
 
 
 def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
@@ -259,18 +277,21 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
         message = str(exc) or exc.__class__.__name__
         _clear_stock_site_df('busca_publica_exception')
         _set_stock_capture_state(running=False, error=message)
+        _finish_progress(progress_bar, status_box, text='Busca de estoque encerrada com erro.')
         add_audit_event('stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'responsible_file': RESPONSIBLE_FILE})
         st.error('A busca de estoque por site não conseguiu finalizar. Baixe o log debug para conferir o erro técnico.')
         return
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_stock_site_df('busca_publica_vazia')
         _set_stock_capture_state(running=False, error='A busca de estoque por site não encontrou dados válidos.')
+        _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados de estoque.')
         add_audit_event('stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'responsible_file': RESPONSIBLE_FILE})
         st.warning('A busca de estoque por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
         return
     save_site_source(df_site=df_site, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=None, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo_estoque, operation=OPERATION)
     _store_stock_site_df(df_site)
     _set_stock_capture_state(running=False, error='')
+    _finish_progress(progress_bar, status_box, text='Busca de estoque concluída.')
     st.rerun()
 
 
