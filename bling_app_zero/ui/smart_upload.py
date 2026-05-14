@@ -8,9 +8,10 @@ import streamlit as st
 
 from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
 
-SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'txt']
+SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'txt', 'html', 'htm', 'mht', 'mhtml']
 MODEL_HINTS = ['modelo', 'bling', 'cadastro', 'estoque', 'layout', 'importacao', 'importação']
-SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export']
+SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export', 'html', 'mht', 'mhtml']
+SOURCE_MULTI_EXTS = {'mht', 'mhtml', 'html', 'htm', 'csv'}
 
 
 @dataclass
@@ -88,7 +89,7 @@ def _score_cadastro_model(file: Any, df: pd.DataFrame | None) -> int:
         score += 45
     if any(term in columns for term in ['depósito', 'deposito', 'balanço', 'balanco']):
         score -= 40
-    if _file_ext(file) in ['xml', 'pdf']:
+    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
         score -= 80
     return score
 
@@ -109,7 +110,7 @@ def _score_estoque_model(file: Any, df: pd.DataFrame | None) -> int:
         score += 60
     if any(term in columns for term in ['gtin', 'ean', 'ncm', 'marca', 'categoria']):
         score -= 25
-    if _file_ext(file) in ['xml', 'pdf']:
+    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
         score -= 80
     return score
 
@@ -117,11 +118,12 @@ def _score_estoque_model(file: Any, df: pd.DataFrame | None) -> int:
 def _score_source(file: Any, df: pd.DataFrame | None, operation: str) -> int:
     name = _file_name(file).lower()
     columns = _column_text(df)
+    ext = _file_ext(file)
     score = 0
 
     if any(hint in name for hint in SOURCE_HINTS):
         score += 35
-    if _file_ext(file) in ['xml', 'pdf']:
+    if ext in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
         score += 80
     if operation == 'estoque' and any(term in columns for term in ['quantidade', 'saldo', 'estoque', 'sku', 'codigo', 'código']):
         score += 25
@@ -149,6 +151,37 @@ def _is_any_same_file(file: Any, candidates: list[Any]) -> bool:
     return any(_is_same_file(file, candidate) for candidate in candidates if candidate is not None)
 
 
+def _concat_source_frames(source_candidates: list[tuple[Any, pd.DataFrame | None]], operation: str) -> tuple[Any | None, pd.DataFrame | None]:
+    usable: list[tuple[Any, pd.DataFrame]] = []
+    for file, df in source_candidates:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
+        score = _score_source(file, df, operation)
+        ext = _file_ext(file)
+        if score <= 0 and ext not in SOURCE_MULTI_EXTS:
+            continue
+        usable.append((file, df.fillna('').astype(str)))
+
+    if not usable:
+        return None, None
+
+    if len(usable) == 1:
+        return usable[0][0], usable[0][1]
+
+    frames: list[pd.DataFrame] = []
+    for file, df in usable:
+        frame = df.copy().fillna('').astype(str)
+        frame.insert(0, 'Arquivo origem', _file_name(file))
+        frames.append(frame)
+
+    combined = pd.concat(frames, ignore_index=True, sort=False).fillna('').astype(str)
+    if not combined.empty:
+        subset = [column for column in combined.columns if column != 'Arquivo origem'] or None
+        combined = combined.drop_duplicates(subset=subset, keep='first').reset_index(drop=True)
+
+    return usable[0][0], combined
+
+
 def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files: list[Any] | None = None) -> SmartUploadResult:
     loaded: list[tuple[Any, pd.DataFrame | None]] = [(file, _safe_read(file)) for file in files]
     if not loaded:
@@ -172,7 +205,9 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
     if not source_candidates:
         source_candidates = loaded
 
-    source_file, source_df = max(source_candidates, key=lambda item: _score_source(item[0], item[1], operation))
+    source_file, source_df = _concat_source_frames(source_candidates, operation)
+    if source_file is None:
+        source_file, source_df = max(source_candidates, key=lambda item: _score_source(item[0], item[1], operation))
 
     if operation == 'estoque':
         model_file, model_df = estoque_file, estoque_df
