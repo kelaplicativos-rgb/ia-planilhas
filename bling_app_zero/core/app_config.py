@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = '3.5.29-BLINGFLOW-COERENTE'
+APP_VERSION = '3.5.30-BLINGFLOW-AUTONEXT'
 
 PAGE_CONFIG = {
     'page_title': 'IA Planilhas → Bling',
