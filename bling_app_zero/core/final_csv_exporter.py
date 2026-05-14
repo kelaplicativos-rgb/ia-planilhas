@@ -29,6 +29,16 @@ class FinalCsvExportResult:
     rows: int
 
 
+def _as_list(values: Sequence[object] | None) -> list[object]:
+    """Converte sequências em lista sem avaliar truth value de pandas.Index."""
+    if values is None:
+        return []
+    try:
+        return list(values)
+    except TypeError:
+        return [values]
+
+
 def clean_text(value: object) -> str:
     text = '' if value is None else str(value)
     text = text.replace('\ufeff', '')
@@ -40,7 +50,7 @@ def clean_text(value: object) -> str:
 def clean_columns(columns: Sequence[object] | None) -> list[str]:
     cleaned: list[str] = []
     seen: set[str] = set()
-    for column in list(columns or []):
+    for column in _as_list(columns):
         text = clean_text(column)
         if not text or text in seen:
             continue
@@ -50,7 +60,7 @@ def clean_columns(columns: Sequence[object] | None) -> list[str]:
 
 
 def clean_explicit_empty_columns(columns: Sequence[object] | None) -> set[str]:
-    return {clean_text(column) for column in list(columns or []) if clean_text(column)}
+    return {clean_text(column) for column in _as_list(columns) if clean_text(column)}
 
 
 def drop_internal_columns(df: pd.DataFrame, prefixes: Sequence[str] = INTERNAL_COLUMN_PREFIXES) -> pd.DataFrame:
