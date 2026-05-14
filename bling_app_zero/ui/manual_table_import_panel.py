@@ -266,7 +266,7 @@ def render_manual_table_import_panel(
 
     df_current = st.session_state.get(f'df_site_bruto_{operation}')
     if isinstance(df_current, pd.DataFrame) and not df_current.empty:
-        render_site_source_summary(df_current, operation, show_history=False)
+        render_site_source_summary(df_current, operation, show_history=False, sample_in_expander=False)
 
 
 __all__ = ['render_manual_table_import_panel']
