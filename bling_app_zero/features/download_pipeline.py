@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import pandas as pd
 
-from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
+from bling_app_zero.core.final_download_resources import (
+    clean_cells_resource,
+    clean_invalid_gtin_resource,
+    normalize_image_separator_resource,
+    normalize_image_urls,
+    normalize_stock_status_resource,
+    unique_product_codes_resource,
+)
 from bling_app_zero.core.measurements import normalize_measure_columns, normalize_measures_resource_enabled
 from bling_app_zero.core.post_mapping_defaults import apply_post_mapping_defaults
 from bling_app_zero.core.rule_value_validator import is_empty_rule_command
@@ -14,30 +20,9 @@ from bling_app_zero.core.user_rules import custom_rules_from_rules, get_user_rul
 from bling_app_zero.features.contracts import FeatureContext, FeatureDefinition, FeatureResult
 
 RESPONSIBLE_FILE = 'bling_app_zero/features/download_pipeline.py'
-
-IMAGE_COLUMN_TERMS = [
-    'imagem', 'imagens', 'image', 'images', 'foto', 'fotos',
-    'url imagem', 'url imagens', 'url imagens externas',
-]
-PRODUCT_CODE_COLUMN_TERMS = [
-    'codigo', 'código', 'codigo produto', 'código produto', 'codigo do produto',
-    'código do produto', 'cod fornecedor', 'cód fornecedor', 'cod no fornecedor',
-    'cód no fornecedor', 'codigo no fornecedor', 'código no fornecedor', 'sku',
-    'referencia', 'referência',
-]
-PRODUCT_NAME_COLUMN_TERMS = ['descricao', 'descrição', 'nome', 'produto', 'titulo', 'título']
-STOCK_QUANTITY_COLUMN_TERMS = ['balanco', 'balanço', 'saldo', 'estoque', 'quantidade', 'qtd']
 DEFAULT_SUPPLIER = 'Não definido'
 DEFAULT_MEASURE_UNIT = 'UN'
 DEFAULT_MEASURES_CM = {'altura': '2', 'largura': '11', 'profundidade': '18', 'comprimento': '18'}
-SUPPLIER_INVALID_KEYS = {
-    '', 'nan', 'none', 'null', 'na', 'n/a', 'nao informado', 'naoinformado',
-    'sem informacao', 'seminformacao', 'indefinido', 'undefined',
-}
-SUPPLIER_CODE_RE = re.compile(r'^[A-Za-z]{0,6}\d+[A-Za-z0-9._/-]*$')
-AVAILABLE_PATTERNS = ['disponivel', 'disponível', 'em estoque', 'produto disponivel', 'produto disponível', 'in stock', 'available']
-LOW_PATTERNS = ['baixo', 'baixo estoque', 'estoque baixo', 'poucas unidades', 'ultimas unidades', 'últimas unidades', 'low stock']
-OUT_PATTERNS = ['esgotado', 'sem estoque', 'indisponivel', 'indisponível', 'zerado', 'out of stock', 'unavailable']
 
 
 def _rules() -> dict[str, Any]:
@@ -81,26 +66,16 @@ def _with_final(context: FeatureContext, df: pd.DataFrame, message: str) -> Feat
     return FeatureResult(ok=True, message=message, final_df=df.copy().fillna(''))
 
 
-def _looks_like_image_column(column: object) -> bool:
-    key = normalize_key(column)
-    return any(normalize_key(term) in key for term in IMAGE_COLUMN_TERMS)
+def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
+    target_key = normalize_key(target_column)
+    for column in out.columns:
+        if normalize_key(column) == target_key:
+            return str(column)
+    return ''
 
 
-def _looks_like_stock_quantity_column(column: object) -> bool:
-    key = normalize_key(column)
-    return any(normalize_key(term) in key for term in STOCK_QUANTITY_COLUMN_TERMS)
-
-
-def _looks_like_product_code_column(column: object) -> bool:
-    key = normalize_key(column)
-    if not key or looks_like_gtin_column(column):
-        return False
-    return key in {normalize_key(term) for term in PRODUCT_CODE_COLUMN_TERMS}
-
-
-def _looks_like_product_name_column(column: object) -> bool:
-    key = normalize_key(column)
-    return key in {normalize_key(term) for term in PRODUCT_NAME_COLUMN_TERMS}
+def _is_empty_rule_marker(value: object) -> bool:
+    return is_empty_rule_command(clean_cell(value))
 
 
 def _is_empty_text(value: object) -> bool:
@@ -110,146 +85,24 @@ def _is_empty_text(value: object) -> bool:
     return normalize_key(text) in {'nan', 'none', 'null', 'na', 'n/a', 'nao informado', 'naoinformado', 'sem informacao', 'seminformacao'}
 
 
-def _is_empty_rule_marker(value: object) -> bool:
-    return is_empty_rule_command(clean_cell(value))
-
-
-def _stock_status_to_quantity(value: object) -> str:
-    text = clean_cell(value)
-    if not text:
-        return ''
-    key = normalize_key(text)
-    defaults = stock_defaults_from_rules(_rules())
-    if any(normalize_key(pattern) in key for pattern in OUT_PATTERNS):
-        return str(defaults.get('esgotado', '0'))
-    if any(normalize_key(pattern) in key for pattern in LOW_PATTERNS):
-        return str(defaults.get('baixo', '0'))
-    if any(normalize_key(pattern) in key for pattern in AVAILABLE_PATTERNS):
-        return str(defaults.get('disponivel', '1000'))
-    return text
-
-
-def normalize_image_urls(value: object) -> str:
-    text = clean_cell(value)
-    if not text:
-        return ''
-    raw_parts = re.split(r'\s*\|\s*|\s*[\n\r,;]+\s*', text)
-    parts: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_parts:
-        item = clean_cell(raw).strip().strip('"\'[]()')
-        if not item or not item.lower().startswith(('http://', 'https://')) or item in seen:
-            continue
-        seen.add(item)
-        parts.append(item)
-    return '|'.join(parts)
-
-
-def _safe_code_text(value: object) -> str:
-    text = clean_cell(value)
-    text = re.sub(r'\s+', '-', text)
-    text = re.sub(r'[^A-Za-z0-9._-]+', '', text)
-    text = re.sub(r'-+', '-', text).strip('-._')
-    return text[:60]
-
-
-def _gtin_code_from_row(out: pd.DataFrame, row_index: int) -> str:
-    for column in out.columns:
-        if looks_like_gtin_column(column):
-            value = clean_gtin(out.at[row_index, column]) if row_index in out.index else ''
-            if value:
-                return value[:60]
-    return ''
-
-
-def _fallback_code_from_row(out: pd.DataFrame, row_index: int) -> str:
-    if not _resource_enabled('auto_product_code', True):
-        return ''
-    gtin_code = _gtin_code_from_row(out, row_index)
-    if gtin_code:
-        return gtin_code
-    for column in [c for c in out.columns if _looks_like_product_name_column(c)]:
-        value = clean_cell(out.at[row_index, column]) if row_index in out.index else ''
-        key = normalize_key(value)
-        if key:
-            base = re.sub(r'[^a-z0-9]+', '', key)[:24]
-            if base:
-                return f'auto-{base}-{row_index + 1}'[:60]
-    return f'auto-{row_index + 1}'
-
-
-def _make_unique_code(base_code: str, row_index: int, seen: set[str]) -> str:
-    base = _safe_code_text(base_code)
-    if not base and _resource_enabled('auto_product_code', True):
-        base = f'auto-{row_index + 1}'
-    if not base:
-        return ''
-    candidate = base[:60]
-    if not _resource_enabled('unique_product_code', True):
-        return candidate
-    counter = 2
-    while normalize_key(candidate) in seen:
-        suffix = f'-{counter}'
-        candidate = f'{base[:60 - len(suffix)]}{suffix}'
-        counter += 1
-    return candidate
-
-
-def _target_column_by_rule(out: pd.DataFrame, target_column: str) -> str:
-    target_key = normalize_key(target_column)
-    for column in out.columns:
-        if normalize_key(column) == target_key:
-            return str(column)
-    return ''
-
-
 def run_clean_cells(context: FeatureContext) -> FeatureResult:
-    df = _df_from_context(context)
-    if df.empty:
-        return _with_final(context, df, 'Sem dados para limpeza textual.')
-    out = df.copy().fillna('')
-    out.columns = [clean_cell(column) for column in out.columns]
-    for column in out.columns:
-        out[column] = out[column].apply(clean_cell)
-    return _with_final(context, out, 'Células e nomes de colunas limpos.')
+    result = clean_cells_resource(_df_from_context(context))
+    return _with_final(context, result.df, result.message)
 
 
 def run_clean_invalid_gtin(context: FeatureContext) -> FeatureResult:
-    df = _df_from_context(context)
-    if df.empty or not _resource_enabled('clean_invalid_gtin', True):
-        return _with_final(context, df, 'Limpeza de GTIN desativada ou sem dados.')
-    out = df.copy().fillna('')
-    changed = 0
-    for column in out.columns:
-        if looks_like_gtin_column(column):
-            before = out[column].astype(str).tolist()
-            out[column] = out[column].apply(clean_gtin)
-            changed += sum(1 for old, new in zip(before, out[column].astype(str).tolist()) if old != new)
-    return _with_final(context, out, f'GTIN limpo em {changed} célula(s).')
+    result = clean_invalid_gtin_resource(_df_from_context(context), enabled=_resource_enabled('clean_invalid_gtin', True))
+    return _with_final(context, result.df, result.message)
 
 
 def run_normalize_image_separator(context: FeatureContext) -> FeatureResult:
-    df = _df_from_context(context)
-    if df.empty or not _resource_enabled('normalize_image_separator', True):
-        return _with_final(context, df, 'Normalização de imagens desativada ou sem dados.')
-    out = df.copy().fillna('')
-    columns = [column for column in out.columns if _looks_like_image_column(column)]
-    for column in columns:
-        out[column] = out[column].apply(normalize_image_urls)
-    return _with_final(context, out, f'Imagens normalizadas em {len(columns)} coluna(s).')
+    result = normalize_image_separator_resource(_df_from_context(context), enabled=_resource_enabled('normalize_image_separator', True))
+    return _with_final(context, result.df, result.message)
 
 
 def run_normalize_stock_status(context: FeatureContext) -> FeatureResult:
-    df = _df_from_context(context)
-    if df.empty:
-        return _with_final(context, df, 'Sem dados para status de estoque.')
-    out = df.copy().fillna('')
-    changed = 0
-    for column in [c for c in out.columns if _looks_like_stock_quantity_column(c)]:
-        before = out[column].astype(str).tolist()
-        out[column] = out[column].apply(_stock_status_to_quantity)
-        changed += sum(1 for old, new in zip(before, out[column].astype(str).tolist()) if old != new)
-    return _with_final(context, out, f'Status de estoque convertidos em {changed} célula(s).')
+    result = normalize_stock_status_resource(_df_from_context(context), defaults=stock_defaults_from_rules(_rules()))
+    return _with_final(context, result.df, result.message)
 
 
 def run_normalize_measures(context: FeatureContext) -> FeatureResult:
@@ -310,23 +163,13 @@ def run_empty_custom_rules(context: FeatureContext) -> FeatureResult:
 
 
 def run_unique_product_codes(context: FeatureContext) -> FeatureResult:
-    df = _df_from_context(context)
-    if df.empty:
-        return _with_final(context, df, 'Sem dados para código automático.')
-    out = df.copy().fillna('')
-    for column in [c for c in out.columns if _looks_like_product_code_column(c)]:
-        seen: set[str] = set()
-        values: list[str] = []
-        for position, row_index in enumerate(out.index):
-            base_code = _safe_code_text(out.at[row_index, column])
-            if not base_code:
-                base_code = _fallback_code_from_row(out, row_index)
-            unique_code = _make_unique_code(base_code, position, seen)
-            if unique_code:
-                seen.add(normalize_key(unique_code))
-            values.append(unique_code)
-        out[column] = values
-    return _with_final(context, out, 'Códigos de produto normalizados e deduplicados.')
+    rules = _rules()
+    result = unique_product_codes_resource(
+        _df_from_context(context),
+        auto_product_code=bool(rules.get('auto_product_code', True)),
+        unique_product_code=bool(rules.get('unique_product_code', True)),
+    )
+    return _with_final(context, result.df, result.message)
 
 
 CLEAN_CELLS_FEATURE = FeatureDefinition(
