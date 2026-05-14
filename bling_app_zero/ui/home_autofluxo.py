@@ -38,6 +38,7 @@ AUTOFLOW_ENABLED_KEY = 'bling_autofluxo_enabled'
 AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_PAUSE_STEP_KEY = 'bling_autofluxo_pause_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
+AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}
 
 
@@ -199,15 +200,16 @@ def clear_home_autofluxo_pause(step: str | None = None) -> None:
 
 
 def pause_home_autofluxo_for_manual_review(step: str, *, reason: str = 'manual_mapping_review') -> None:
-    """Pausa o auto-next em telas onde uma mudança do usuário deve ficar visível.
-
-    Mapeamento é decisão humana. Selecionar uma coluna recalcula a prévia, mas não
-    pode empurrar o usuário para a próxima tela. O avanço deve ser pelo botão do wizard.
-    """
+    """Pausa o auto-next em telas onde uma mudança do usuário deve ficar visível."""
     normalized = str(step or '').strip().lower()
     if not normalized:
         return
     st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = normalized
+    st.session_state[AUTOFLOW_MANUAL_LOCK_KEY] = {
+        'target_step': normalized,
+        'reason': reason,
+        'responsible_file': RESPONSIBLE_FILE,
+    }
     add_audit_event(
         'autofluxo_paused_for_manual_review',
         area='AUTOFLOW',
@@ -245,17 +247,32 @@ def _move_to_step(next_step: str, *, current: str, operation: str, reason: str) 
     st.rerun()
 
 
-def run_home_autofluxo() -> None:
-    """Avança o wizard automaticamente quando não existe decisão humana real.
+def _manual_navigation_is_locked() -> bool:
+    lock = st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY)
+    if not isinstance(lock, dict):
+        return False
+    target_step = str(lock.get('target_step') or '').strip().lower()
+    current = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    return bool(target_step and (target_step == current or target_step == '__home_choice__'))
 
-    BLINGAUTOFLUXO:
-    - não pula etapas bloqueadas;
-    - não pula preview/download;
-    - não pula mapeamento/correção manual;
-    - respeita Voltar: quando o usuário volta, a etapa atual fica pausada para revisão;
-    - remove cliques de Continuar apenas quando o estado já prova que a próxima etapa é segura e sem decisão humana.
+
+def run_home_autofluxo() -> None:
+    """Autoavanço opcional.
+
+    BLINGFIX: o padrão agora é desligado para não sobrescrever os botões manuais
+    Voltar/Avançar. Quando habilitado explicitamente, ainda respeita travas de
+    navegação manual, mapeamento e revisão.
     """
-    enabled = st.session_state.get(AUTOFLOW_ENABLED_KEY, True)
+    if _manual_navigation_is_locked():
+        add_audit_event(
+            'autofluxo_blocked_by_manual_navigation',
+            area='AUTOFLOW',
+            step=st.session_state.get(WIZARD_STEP_KEY),
+            details={'lock': st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return
+
+    enabled = bool(st.session_state.get(AUTOFLOW_ENABLED_KEY, False))
     if not enabled:
         return
     if st.session_state.get(HOME_ACTIVE_OPERATION_KEY) != FLOW_WIZARD_VALUE:
