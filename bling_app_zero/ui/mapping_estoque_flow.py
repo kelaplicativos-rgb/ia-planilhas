@@ -19,7 +19,7 @@ from bling_app_zero.ui.layout import inject_mapping_css, render_mapping_title
 from bling_app_zero.ui.mapping_ai_actions import render_ai_button
 from bling_app_zero.ui.mapping_auto_suggestions import build_stock_auto_mapping
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
-from bling_app_zero.ui.mapping_constants import EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
+from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
 from bling_app_zero.ui.mapping_field_widget import render_mapping_select
 from bling_app_zero.ui.mapping_filters import filter_targets
 from bling_app_zero.ui.mapping_models import estoque_model, source_columns_from_df, target_columns_from_model
@@ -64,7 +64,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     source_columns = source_columns_from_df(df_source)
     target_columns = target_columns_from_model(model)
     sidebar_rule_targets = sidebar_rule_targets_from_columns(target_columns)
-    options = [MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
+    options = [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
 
     signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
     mapping_key = mapping_base('stk_map_', signature)
@@ -76,7 +76,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state.pop(order_key, None)
 
     st.markdown('##### Conferir campos do estoque')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 coluna/valor confirmado · 🟣 preenchido por regra/recurso')
+    st.caption('🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 preenchido por regra/recurso')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
