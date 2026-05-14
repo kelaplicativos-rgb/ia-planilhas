@@ -29,17 +29,32 @@ def _set_flow(flow: str) -> None:
     st.rerun()
 
 
-def _current_flow() -> str:
-    flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
-    if flow:
-        return flow
+def _query_flow() -> str:
     try:
-        qp_flow = str(st.query_params.get('operation_v2', '') or '').strip()
-        if qp_flow:
-            st.session_state[ACTIVE_FLOW_KEY] = qp_flow
-            return qp_flow
+        return str(st.query_params.get('operation_v2', '') or '').strip()
     except Exception:
-        pass
+        return ''
+
+
+def _current_flow() -> str:
+    """Controla a tela inicial sem deixar sessão antiga sequestrar a Home.
+
+    BLINGFIX HOME: modelos padrão carregados automaticamente não podem fazer o
+    app nascer dentro do wizard. O fluxo só abre quando o usuário clica no card
+    da Home ou quando a URL contém operation_v2.
+    """
+    qp_flow = _query_flow()
+    if qp_flow:
+        st.session_state[ACTIVE_FLOW_KEY] = qp_flow
+        return qp_flow
+
+    if ACTIVE_FLOW_KEY in st.session_state:
+        st.session_state.pop(ACTIVE_FLOW_KEY, None)
+        add_audit_event(
+            'home_stale_flow_cleared',
+            area='HOME',
+            details={'reason': 'missing_operation_v2_query_param', 'responsible_file': RESPONSIBLE_FILE},
+        )
     return ''
 
 
@@ -72,11 +87,7 @@ def _render_home_operation_card(
     on_click: Callable[[], None],
     badge: str | None = None,
 ) -> None:
-    """Renderiza cada operação dentro do próprio card.
-
-    BLINGFIX: no mobile, título, texto e botão soltos deixam a Home confusa.
-    Cada opção precisa ficar visualmente fechada em um único bloco.
-    """
+    """Renderiza cada operação dentro do próprio card."""
     with st.container(border=True):
         if badge:
             st.caption(badge)
@@ -97,7 +108,7 @@ def _render_operation_choice() -> None:
     _render_home_operation_card(
         icon='🧾',
         title='Cadastrar produtos',
-        description='Enviar modelo do Bling, carregar produtos por planilha/XML/PDF/site, mapear campos e gerar CSV de cadastro.',
+        description='Usar modelo salvo ou anexar modelo do Bling, carregar produtos por planilha/XML/PDF/site, mapear campos e gerar CSV de cadastro.',
         button_label='Abrir cadastro',
         button_key='home_open_cadastro_flow',
         on_click=_open_cadastro_flow,
@@ -106,7 +117,7 @@ def _render_operation_choice() -> None:
     _render_home_operation_card(
         icon='📦',
         title='Atualizar estoque',
-        description='Enviar modelo de estoque, carregar origem dos dados, preencher saldo/depósito e gerar CSV de atualização.',
+        description='Usar modelo salvo ou anexar modelo de estoque, carregar origem dos dados, preencher saldo/depósito e gerar CSV de atualização.',
         button_label='Abrir estoque',
         button_key='home_open_estoque_flow',
         on_click=_open_estoque_flow,
