@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.mapping_super_assistant import safe_default_for_target
 from bling_app_zero.ui.layout import render_mapping_preview, render_mapping_title
 from bling_app_zero.ui.mapping_confidence_state import confidence_for_selection, manual_confidence
 from bling_app_zero.ui.mapping_constants import (
@@ -72,59 +71,45 @@ def render_mapping_select(
     raw_before = st.session_state.get(widget_key, suggested)
     info_before = confidence_for_selection(df_source, target, raw_before, widget_key)
     label = signal_label(target, info_before)
-    default_value = safe_default_for_target(target)
 
     with st.container(border=True):
         render_mapping_title(label)
-        if default_value:
-            st.text_input(target, value=default_value, disabled=True, key=f'{widget_key}_default', label_visibility='collapsed')
-            selected = ''
+        selected_raw = st.selectbox(
+            target,
+            options,
+            index=default_index(options, suggested, widget_key),
+            key=widget_key,
+            label_visibility='collapsed',
+        )
+        if selected_raw == MANUAL_WRITE_OPTION:
+            st.session_state[f'{widget_key}__manual_resolved'] = True
+            st.session_state.pop(f'{widget_key}__empty_resolved', None)
+            render_manual_value_input(target, widget_key)
+            selected = MANUAL_MAPPING_VALUE
+        elif selected_raw == EMPTY_LEAVE_OPTION:
+            st.session_state[f'{widget_key}__empty_resolved'] = True
+            st.session_state.pop(f'{widget_key}__manual_resolved', None)
+            selected = EMPTY_MAPPING_VALUE
+        else:
+            st.session_state.pop(f'{widget_key}__empty_resolved', None)
+            st.session_state.pop(f'{widget_key}__manual_resolved', None)
+            selected = option_value(selected_raw)
+
+        info_after = confidence_for_selection(df_source, target, selected_raw, widget_key)
+        if selected == MANUAL_MAPPING_VALUE:
+            info_after = manual_confidence()
+        elif selected == EMPTY_MAPPING_VALUE:
             info_after = {
                 'level': 'verde',
                 'emoji': '🟢',
-                'label': '',
+                'label': 'vazio confirmado',
                 'score': 100,
                 'order': 2,
                 'strict': True,
-                'system_default': True,
+                'explicit_empty': True,
             }
         else:
-            selected_raw = st.selectbox(
-                target,
-                options,
-                index=default_index(options, suggested, widget_key),
-                key=widget_key,
-                label_visibility='collapsed',
-            )
-            if selected_raw == MANUAL_WRITE_OPTION:
-                st.session_state[f'{widget_key}__manual_resolved'] = True
-                st.session_state.pop(f'{widget_key}__empty_resolved', None)
-                render_manual_value_input(target, widget_key)
-                selected = MANUAL_MAPPING_VALUE
-            elif selected_raw == EMPTY_LEAVE_OPTION:
-                st.session_state[f'{widget_key}__empty_resolved'] = True
-                st.session_state.pop(f'{widget_key}__manual_resolved', None)
-                selected = EMPTY_MAPPING_VALUE
-            else:
-                st.session_state.pop(f'{widget_key}__empty_resolved', None)
-                st.session_state.pop(f'{widget_key}__manual_resolved', None)
-                selected = option_value(selected_raw)
-
-            info_after = confidence_for_selection(df_source, target, selected_raw, widget_key)
-            if selected == MANUAL_MAPPING_VALUE:
-                info_after = manual_confidence()
-            elif selected == EMPTY_MAPPING_VALUE:
-                info_after = {
-                    'level': 'verde',
-                    'emoji': '🟢',
-                    'label': 'vazio confirmado',
-                    'score': 100,
-                    'order': 2,
-                    'strict': True,
-                    'explicit_empty': True,
-                }
-            else:
-                render_selected_column_preview(df_source, selected)
+            render_selected_column_preview(df_source, selected)
 
     return selected, info_after
 
