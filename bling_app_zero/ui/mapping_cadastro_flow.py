@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
 from bling_app_zero.ui.mapping_ai_actions import render_ai_button
@@ -44,6 +45,7 @@ def _reset_cadastro_mapping(
     st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     st.session_state.pop(order_key, None)
     clear_mapping_widgets(mapping_key)
+    pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_reset_by_user')
     st.rerun()
 
 
@@ -58,6 +60,7 @@ def _render_cadastro_actions(
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button('Atualizar prévia', use_container_width=True, key=f'{mapping_key}_refresh'):
+                pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_refresh_by_user')
                 st.rerun()
         with col_b:
             if st.button('Refazer sugestões', use_container_width=True, key=f'{mapping_key}_reset'):
@@ -73,6 +76,7 @@ def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
+    pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_screen_visible')
     inject_mapping_css()
 
     model = cadastro_model(df_modelo)
@@ -123,6 +127,11 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         edited_confidence[target] = info_after
 
     render_mapping_page_arrows(mapping_key, position='bottom')
+
+    if edited_mapping != current_mapping:
+        pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_changed_by_user')
+        st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
+        st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
 
     st.session_state[mapping_key] = edited_mapping
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
