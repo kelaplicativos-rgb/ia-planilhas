@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -8,7 +9,7 @@ import pandas as pd
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
-from bling_app_zero.ui.site_models import requested_columns_for_site_capture
+from bling_app_zero.ui.site_models import choose_site_cadastro_model_df, choose_site_estoque_model_df, requested_columns_for_site_capture
 
 
 class TestSiteFluxo(unittest.TestCase):
@@ -38,6 +39,37 @@ class TestSiteFluxo(unittest.TestCase):
         requested = requested_columns_for_site_capture('estoque', modelo_cadastro, None)
 
         self.assertIsNone(requested)
+
+    def test_site_ignora_model_df_generico_para_nao_misturar_operacoes(self) -> None:
+        modelo_generico_cadastro = pd.DataFrame(columns=['Descrição', 'Preço de venda', 'URL Imagens'])
+        modelo_generico_estoque = pd.DataFrame(columns=['Código', 'Balanço (OBRIGATÓRIO)'])
+        upload_cadastro_errado = SimpleNamespace(
+            cadastro_model_df=None,
+            estoque_model_df=None,
+            model_df=modelo_generico_cadastro,
+        )
+        upload_estoque_errado = SimpleNamespace(
+            cadastro_model_df=None,
+            estoque_model_df=None,
+            model_df=modelo_generico_estoque,
+        )
+
+        with patch('bling_app_zero.ui.site_models.get_home_estoque_model', return_value=None):
+            self.assertIsNone(choose_site_estoque_model_df(upload_cadastro_errado))
+        with patch('bling_app_zero.ui.site_models.get_home_cadastro_model', return_value=None):
+            self.assertIsNone(choose_site_cadastro_model_df(upload_estoque_errado))
+
+    def test_site_usa_modelo_correto_classificado_no_upload(self) -> None:
+        modelo_cadastro = pd.DataFrame(columns=['Descrição', 'Preço de venda'])
+        modelo_estoque = pd.DataFrame(columns=['Código', 'Balanço (OBRIGATÓRIO)'])
+        upload = SimpleNamespace(
+            cadastro_model_df=modelo_cadastro,
+            estoque_model_df=modelo_estoque,
+            model_df=None,
+        )
+
+        self.assertEqual(list(choose_site_cadastro_model_df(upload).columns), ['Descrição', 'Preço de venda'])
+        self.assertEqual(list(choose_site_estoque_model_df(upload).columns), ['Código', 'Balanço (OBRIGATÓRIO)'])
 
     def test_site_estoque_preserva_ordem_exata_do_modelo_anexado(self) -> None:
         modelo_estoque = pd.DataFrame(
