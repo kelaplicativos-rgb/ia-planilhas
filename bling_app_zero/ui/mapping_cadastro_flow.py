@@ -12,6 +12,7 @@ from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_w
 from bling_app_zero.ui.mapping_constants import (
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
+    EMPTY_CHOOSE_OPTION,
     EMPTY_LEAVE_OPTION,
     MANUAL_WRITE_OPTION,
 )
@@ -70,7 +71,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     source_columns = source_columns_from_df(df_source)
     target_columns = target_columns_from_model(model)
     sidebar_rule_targets = sidebar_rule_targets_from_columns(target_columns)
-    options = [MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
+    options = [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
 
     signature = df_signature(df_source) + ':' + '|'.join(target_columns)
     mapping_key = mapping_base('cad_map_', signature)
@@ -84,7 +85,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
 
     st.markdown('#### 2. Conferir campos do cadastro')
-    st.caption('🔴 precisa escolher · 🟡 conferir · 🟢 pronto, valor fixo ou vazio confirmado · 🟣 regra/recurso do fluxo')
+    st.caption('🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 regra/recurso do fluxo')
     with st.expander('Ver origem antes de preencher', expanded=False):
         preview_df('Origem para conferir', df_source)
 
