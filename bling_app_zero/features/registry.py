@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from bling_app_zero.features.contracts import FeatureDefinition
 from bling_app_zero.features.download_pipeline import DOWNLOAD_FEATURES
 
@@ -16,8 +18,22 @@ FILL_RULE_FEATURE_KEYS = {
     'empty_custom_rules',
 }
 
+# Proteções que devem valer para todo CSV final do Bling, não só cadastro.
+GLOBAL_DOWNLOAD_PROTECTION_KEYS = {
+    'normalize_image_separator',
+}
+
+
+def _normalize_download_feature_scope(feature: FeatureDefinition) -> FeatureDefinition:
+    if feature.key in GLOBAL_DOWNLOAD_PROTECTION_KEYS and feature.scope != 'global':
+        return replace(feature, scope='global')
+    return feature
+
+
 ACTIVE_DOWNLOAD_FEATURES: tuple[FeatureDefinition, ...] = tuple(
-    feature for feature in DOWNLOAD_FEATURES if feature.key not in FILL_RULE_FEATURE_KEYS
+    _normalize_download_feature_scope(feature)
+    for feature in DOWNLOAD_FEATURES
+    if feature.key not in FILL_RULE_FEATURE_KEYS
 )
 
 SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
@@ -40,7 +56,7 @@ SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
         scope='estoque',
         stage='entrada',
         status='beta',
-        state_key='feature_site_estoque_engine_enabled',
+        state_key='feature_site_estoque_enabled',
         requires=('modelo_estoque', 'links_fornecedor'),
         provides=('estoque_wizard_df_origem_site',),
         owner_file='bling_app_zero/engines/site_operations/estoque_engine.py',
@@ -90,6 +106,7 @@ __all__ = [
     'ACTIVE_DOWNLOAD_FEATURES',
     'FEATURE_REGISTRY',
     'FILL_RULE_FEATURE_KEYS',
+    'GLOBAL_DOWNLOAD_PROTECTION_KEYS',
     'RESPONSIBLE_FILE',
     'features_by_scope',
     'features_by_stage',
