@@ -105,52 +105,35 @@ def test_wizard_step_order_is_preserved() -> None:
     assert wizard.STEP_REGRAS == 'regras'
 
 
+def _assert_linear_navigation(wizard, operation: str, steps: list[str]) -> None:
+    assert wizard.wizard_steps_for_operation(operation) == steps
+    for index, step in enumerate(steps):
+        expected_previous = steps[max(0, index - 1)]
+        expected_next = steps[min(len(steps) - 1, index + 1)]
+        assert wizard.wizard_previous_target(step, operation) == expected_previous
+        assert wizard.wizard_next_target(step, operation) == expected_next
+
+
 def test_wizard_button_flowchart_cadastro() -> None:
     wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
-
-    assert wizard.wizard_steps_for_operation('cadastro') == EXPECTED_CADASTRO_STEPS
-    assert wizard.wizard_previous_target('modelo', 'cadastro') == wizard.HOME_CHOICE_TARGET
-    assert wizard.wizard_next_target('modelo', 'cadastro') == 'operacao'
-    assert wizard.wizard_previous_target('operacao', 'cadastro') == 'modelo'
-    assert wizard.wizard_next_target('operacao', 'cadastro') == 'precificacao'
-    assert wizard.wizard_previous_target('precificacao', 'cadastro') == 'operacao'
-    assert wizard.wizard_next_target('precificacao', 'cadastro') == 'origem'
-    assert wizard.wizard_previous_target('origem', 'cadastro') == 'precificacao'
-    assert wizard.wizard_next_target('origem', 'cadastro') == 'regras'
-    assert wizard.wizard_previous_target('regras', 'cadastro') == 'origem'
-    assert wizard.wizard_next_target('regras', 'cadastro') == 'entrada'
-    assert wizard.wizard_previous_target('entrada', 'cadastro') == 'regras'
-    assert wizard.wizard_next_target('entrada', 'cadastro') == 'mapeamento'
-    assert wizard.wizard_previous_target('mapeamento', 'cadastro') == 'entrada'
-    assert wizard.wizard_next_target('mapeamento', 'cadastro') == 'preview'
-    assert wizard.wizard_previous_target('preview', 'cadastro') == 'mapeamento'
-    assert wizard.wizard_next_target('preview', 'cadastro') == 'download'
-    assert wizard.wizard_previous_target('download', 'cadastro') == 'preview'
-    assert wizard.wizard_next_target('download', 'cadastro') == 'download'
+    _assert_linear_navigation(wizard, 'cadastro', EXPECTED_CADASTRO_STEPS)
 
 
 def test_wizard_button_flowchart_estoque() -> None:
     wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
+    _assert_linear_navigation(wizard, 'estoque', EXPECTED_ESTOQUE_STEPS)
 
-    assert wizard.wizard_steps_for_operation('estoque') == EXPECTED_ESTOQUE_STEPS
-    assert wizard.wizard_previous_target('modelo', 'estoque') == wizard.HOME_CHOICE_TARGET
-    assert wizard.wizard_next_target('modelo', 'estoque') == 'operacao'
-    assert wizard.wizard_previous_target('operacao', 'estoque') == 'modelo'
-    assert wizard.wizard_next_target('operacao', 'estoque') == 'precificacao'
-    assert wizard.wizard_previous_target('precificacao', 'estoque') == 'operacao'
-    assert wizard.wizard_next_target('precificacao', 'estoque') == 'origem'
-    assert wizard.wizard_previous_target('origem', 'estoque') == 'precificacao'
-    assert wizard.wizard_next_target('origem', 'estoque') == 'regras'
-    assert wizard.wizard_previous_target('regras', 'estoque') == 'origem'
-    assert wizard.wizard_next_target('regras', 'estoque') == 'entrada'
-    assert wizard.wizard_previous_target('entrada', 'estoque') == 'regras'
-    assert wizard.wizard_next_target('entrada', 'estoque') == 'gerar_estoque'
-    assert wizard.wizard_previous_target('gerar_estoque', 'estoque') == 'entrada'
-    assert wizard.wizard_next_target('gerar_estoque', 'estoque') == 'preview'
-    assert wizard.wizard_previous_target('preview', 'estoque') == 'gerar_estoque'
-    assert wizard.wizard_next_target('preview', 'estoque') == 'download'
-    assert wizard.wizard_previous_target('download', 'estoque') == 'preview'
-    assert wizard.wizard_next_target('download', 'estoque') == 'download'
+
+def test_wizard_button_flowchart_examples_requested_by_user() -> None:
+    wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
+    steps = EXPECTED_CADASTRO_STEPS
+
+    assert wizard.wizard_previous_target(steps[0], 'cadastro') == steps[0]
+    assert wizard.wizard_next_target(steps[0], 'cadastro') == steps[1]
+    assert wizard.wizard_previous_target(steps[3], 'cadastro') == steps[2]
+    assert wizard.wizard_next_target(steps[3], 'cadastro') == steps[4]
+    assert wizard.wizard_previous_target(steps[5], 'cadastro') == steps[4]
+    assert wizard.wizard_next_target(steps[5], 'cadastro') == steps[6]
 
 
 def test_wizard_button_flowchart_invalid_step_fallback() -> None:
@@ -178,6 +161,7 @@ def test_bottom_navigation_is_single_source_for_wizard_next_back() -> None:
     assert "wizard_download_back" not in wizard
     assert "wizard_estoque_download_back" not in wizard
     assert "← Voltar para preview" not in wizard
+    assert "HOME_CHOICE_TARGET" not in wizard.split('def wizard_previous_target', 1)[1].split('def _active_steps', 1)[0]
     assert "_render_reset_only_footer" in wizard
 
 
