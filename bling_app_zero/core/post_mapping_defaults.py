@@ -4,8 +4,6 @@ from typing import Any
 
 import pandas as pd
 
-from bling_app_zero.core.text import clean_cell, normalize_key
-
 try:
     import streamlit as st
 except Exception:  # pragma: no cover
@@ -13,157 +11,40 @@ except Exception:  # pragma: no cover
 
 POST_MAPPING_DEFAULTS_SESSION_KEY = 'bling_post_mapping_defaults'
 
+# BLINGREFORM:
+# O preenchimento de campos deixa de ser feito por regras escondidas/defaults.
+# Agora a fonte oficial é o mapeamento:
+# - escolher coluna
+# - escrever valor fixo
+# - deixar vazio
 DEFAULT_POST_MAPPING_CONFIG: dict[str, Any] = {
-    'enabled': True,
-    'category_default': '',
-    'clone_parent_default': 'Não',
-    'product_condition_default': 'Novo',
-    'short_description_from_complement': True,
-    'description_complement_default': '',
-    'free_shipping_default': 'Não',
-    'additional_info_default': '',
-    'box_items_default': '1',
-    'situation_default': 'Ativo',
-    'unit_default': 'UN',
-    'measure_unit_name_default': 'Centímetro',
-    'video_default': '',
-    'volumes_default': '1',
+    'enabled': False,
 }
-
-COLUMN_DEFAULT_KEY_BY_TARGET: dict[str, str] = {
-    'categoria': 'category_default',
-    'clonar dados do pai': 'clone_parent_default',
-    'condição do produto': 'product_condition_default',
-    'condicao do produto': 'product_condition_default',
-    'descrição complementar': 'description_complement_default',
-    'descricao complementar': 'description_complement_default',
-    'frete grátis': 'free_shipping_default',
-    'frete gratis': 'free_shipping_default',
-    'informações adicionais': 'additional_info_default',
-    'informacoes adicionais': 'additional_info_default',
-    'itens p/ caixa': 'box_items_default',
-    'itens por caixa': 'box_items_default',
-    'situação': 'situation_default',
-    'situacao': 'situation_default',
-    'unidade': 'unit_default',
-    'unidade de medida': 'measure_unit_name_default',
-    'video': 'video_default',
-    'vídeo': 'video_default',
-    'volumes': 'volumes_default',
-}
-
-SHORT_DESCRIPTION_TARGETS = {
-    'descrição curta',
-    'descricao curta',
-    'descrição curta do produto',
-    'descricao curta do produto',
-}
-
-DESCRIPTION_COMPLEMENT_TARGETS = {
-    'descrição complementar',
-    'descricao complementar',
-}
-
-
-def _text(value: Any, fallback: str = '') -> str:
-    text = clean_cell(value).strip()
-    return text if text else fallback
-
-
-def _is_empty(value: Any) -> bool:
-    text = _text(value)
-    if not text:
-        return True
-    return normalize_key(text) in {
-        'nan',
-        'none',
-        'null',
-        'na',
-        'n/a',
-        'nao informado',
-        'naoinformado',
-        'sem informacao',
-        'seminformacao',
-    }
 
 
 def get_post_mapping_defaults_config() -> dict[str, Any]:
-    """Retorna a configuração visível dos padrões finais.
-
-    A configuração inicia com o sistema porque estes padrões são prioridade para
-    um CSV saudável. Ela continua editável e desligável no sidebar.
-    """
     config = dict(DEFAULT_POST_MAPPING_CONFIG)
     if st is None:
         return config
-
     raw = st.session_state.get(POST_MAPPING_DEFAULTS_SESSION_KEY)
     if isinstance(raw, dict):
-        for key in config:
-            if key in raw:
-                config[key] = raw[key]
-
-    config['enabled'] = bool(config.get('enabled', True))
-    config['short_description_from_complement'] = bool(config.get('short_description_from_complement', True))
+        config.update(raw)
+    config['enabled'] = False
     st.session_state[POST_MAPPING_DEFAULTS_SESSION_KEY] = config
     return config
 
 
-def _default_for_column(column: str, config: dict[str, Any]) -> str | None:
-    key = normalize_key(column)
-    config_key = COLUMN_DEFAULT_KEY_BY_TARGET.get(key)
-    if not config_key:
-        return None
-    return _text(config.get(config_key), str(DEFAULT_POST_MAPPING_CONFIG.get(config_key, '')))
-
-
-def _find_column(df: pd.DataFrame, normalized_names: set[str]) -> str:
-    for column in df.columns:
-        if normalize_key(column) in normalized_names:
-            return str(column)
-    return ''
-
-
-def _apply_short_description_link(out: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
-    if not bool(config.get('short_description_from_complement', True)):
-        return out
-    short_column = _find_column(out, SHORT_DESCRIPTION_TARGETS)
-    complement_column = _find_column(out, DESCRIPTION_COMPLEMENT_TARGETS)
-    if not short_column or not complement_column:
-        return out
-    out[short_column] = [
-        clean_cell(complement) if _is_empty(short) and not _is_empty(complement) else clean_cell(short)
-        for short, complement in zip(out[short_column], out[complement_column])
-    ]
-    return out
-
-
 def apply_post_mapping_defaults(df: pd.DataFrame, rules: dict[str, Any] | None = None) -> pd.DataFrame:
-    """Aplica padrões visíveis no sidebar após o mapeamento manual.
+    """Não aplica mais preenchimento automático pós-mapeamento.
 
-    Regra principal:
-    - inicia ligado com o sistema por ser prioridade de qualidade do CSV;
-    - o usuário pode desligar no sidebar;
-    - se a coluna não existir, nada é criado;
-    - se o usuário mapeou/preencheu valor, nada é sobrescrito;
-    - se a coluna existir e estiver vazia, recebe o padrão configurado no sidebar.
+    Esta função permanece para compatibilidade do pipeline, mas não altera valores.
+    Isso elimina a contradição onde o usuário escolhia "deixar vazio" e um default
+    preenchia novamente no CSV final.
     """
-    if df is None or df.empty:
+    _ = rules
+    if df is None:
         return df
-
-    config = get_post_mapping_defaults_config()
-    if not bool(config.get('enabled', True)):
-        return df
-
-    out = df.copy()
-    for column in out.columns:
-        default_value = _default_for_column(str(column), config)
-        if default_value is None:
-            continue
-        out[column] = out[column].apply(lambda value: default_value if _is_empty(value) else clean_cell(value))
-
-    out = _apply_short_description_link(out, config)
-    return out
+    return df.copy().fillna('') if isinstance(df, pd.DataFrame) else df
 
 
 __all__ = [
