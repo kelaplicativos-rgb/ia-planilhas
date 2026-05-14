@@ -7,7 +7,10 @@ from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard
 
 
 def render_home() -> None:
+    from bling_app_zero.ui.home_autofluxo import run_home_autofluxo
+
     run_wizard_state_guard()
+    run_home_autofluxo()
     inject_app_layout()
     inject_scroll_position_keeper()
     render_compact_hero()
