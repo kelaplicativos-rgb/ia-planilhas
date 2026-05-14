@@ -10,7 +10,28 @@ from bling_app_zero.core.text import normalize_key
 TEXT_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}')
 PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,6}(?:[\.,]\d{2})')
 GTIN_RE = re.compile(r'^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$')
-URL_RE = re.compile(r'^https?://', re.I)
+NUMBER_RE = re.compile(r'^-?\d+(?:[\.,]\d+)?$')
+URL_RE = re.compile(r'https?://', re.I)
+IMAGE_RE = re.compile(r'\.(?:jpg|jpeg|png|webp|gif)(?:\?|$)', re.I)
+
+FIELD_ALIASES = {
+    'codigo': ['codigo', 'código', 'cod', 'sku', 'referencia', 'referência', 'ref', 'id produto', 'id'],
+    'id_produto': ['id produto', 'codigo produto', 'código produto', 'id', 'sku', 'referencia', 'referência'],
+    'descricao': ['descricao', 'descrição', 'nome', 'produto', 'titulo', 'título', 'title', 'nome produto'],
+    'nome_apoio': ['nome', 'produto', 'titulo', 'título', 'descricao', 'descrição'],
+    'preco_unitario': ['preco', 'preço', 'valor', 'venda', 'preco venda', 'preço venda', 'preco unitario', 'preço unitário', 'price'],
+    'preco_custo': ['custo', 'preco custo', 'preço custo', 'valor custo', 'cost'],
+    'estoque': ['estoque', 'saldo', 'quantidade', 'qtd', 'balanco', 'balanço', 'stock', 'inventory'],
+    'gtin': ['gtin', 'ean', 'codigo barras', 'código barras', 'codigo de barras', 'código de barras', 'barcode'],
+    'marca': ['marca', 'brand', 'fabricante', 'manufacturer'],
+    'categoria': ['categoria', 'category', 'departamento', 'breadcrumb', 'grupo', 'familia', 'família'],
+    'imagem': ['imagem', 'imagens', 'foto', 'fotos', 'image', 'images', 'url imagem', 'url foto'],
+    'url': ['url', 'link', 'pagina', 'página', 'site', 'produto url'],
+    'ncm': ['ncm'],
+    'deposito': ['deposito', 'depósito', 'local estoque', 'almoxarifado'],
+    'fornecedor': ['fornecedor', 'supplier', 'nome fornecedor', 'nome do fornecedor'],
+    'observacao': ['observacao', 'observação', 'obs', 'detalhes', 'informacoes', 'informações'],
+}
 
 CUSTOM_EQUIVALENT_TERMS = {
     'cest': ['cest'],
@@ -24,6 +45,8 @@ CUSTOM_EQUIVALENT_TERMS = {
     'garantia': ['garantia'],
     'unidade': ['unidade', 'un'],
 }
+
+PRICE_SOURCE_TERMS = ['preco', 'preço', 'valor', 'price', 'custo', 'venda', 'unitario', 'unitário']
 
 
 def resolved_empty_confidence() -> dict[str, object]:
@@ -47,16 +70,17 @@ def _values(df: pd.DataFrame, column: str, limit: int = 80) -> list[str]:
     return values
 
 
-def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
+def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool]:
     values = _values(df, column)
     total = max(len(values), 1)
     text = sum(1 for value in values if TEXT_RE.search(value)) / total
-    numeric = sum(1 for value in values if re.fullmatch(r'\d+(?:[\.,]\d+)?', value.replace(' ', ''))) / total
+    numeric = sum(1 for value in values if NUMBER_RE.match(value.replace(' ', ''))) / total
     price = sum(1 for value in values if PRICE_RE.search(value)) / total
     gtin = sum(1 for value in values if GTIN_RE.match(re.sub(r'\D+', '', value))) / total
     url = sum(1 for value in values if URL_RE.search(value)) / total
-    image = sum(1 for value in values if 'http' in value.lower() and any(ext in value.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '|'])) / total
+    image = sum(1 for value in values if URL_RE.search(value) and (IMAGE_RE.search(value) or '|' in value)) / total
     avg_len = sum(len(value) for value in values) / total
+    unique = len(set(value.lower() for value in values)) / total if values else 0
     return {
         'kind': infer_kind(column),
         'text': text,
@@ -66,12 +90,24 @@ def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
         'url': url,
         'image': image,
         'avg_len': avg_len,
+        'unique': unique,
         'has_values': bool(values),
     }
 
 
 def _compact_key(value: str) -> str:
-    return normalize_key(value).replace(' ', '').replace('-', '')
+    return normalize_key(value).replace(' ', '').replace('-', '').replace('_', '').replace('.', '').replace('/', '')
+
+
+def _target_kind(target: str) -> str:
+    kind = infer_kind(target)
+    if kind != 'custom':
+        return kind
+    target_key = normalize_key(target)
+    for kind_name, aliases in FIELD_ALIASES.items():
+        if any(normalize_key(alias) in target_key or target_key in normalize_key(alias) for alias in aliases):
+            return kind_name
+    return 'custom'
 
 
 def _custom_equivalent(target: str, source: str) -> bool:
@@ -93,20 +129,50 @@ def _custom_equivalent(target: str, source: str) -> bool:
 
 
 def _bit_to_bit_match(target: str, source: str) -> bool:
-    """Retorna True somente para igualdade literal do nome da coluna.
-
-    Esta é a regra visual da bolinha verde em mapeamento automático:
-    verde = 100% bit a bit. Não normaliza acento, maiúscula/minúscula,
-    hífen, espaço, parênteses ou qualquer caractere escondido.
-    """
     return str(target) == str(source)
 
 
-def _manual_like_valid(target: str, source: str, profile: dict[str, float | str]) -> bool:
-    if _custom_equivalent(target, source):
-        return True
+def _alias_score(target_kind: str, source: str) -> int:
+    source_key = normalize_key(source)
+    score = 0
+    for alias in FIELD_ALIASES.get(target_kind, []):
+        alias_key = normalize_key(alias)
+        if alias_key and (alias_key in source_key or source_key in alias_key):
+            score += 40
+    return min(score, 80)
 
-    target_kind = infer_kind(target)
+
+def _name_score(target: str, source: str) -> int:
+    target_kind = _target_kind(target)
+    target_key = normalize_key(target)
+    source_key = normalize_key(source)
+    if not target_key or not source_key:
+        return 0
+
+    if _custom_equivalent(target, source):
+        return 150
+
+    score = 0
+    if target_key == source_key or _compact_key(target) == _compact_key(source):
+        score += 120
+    elif target_key in source_key or source_key in target_key:
+        score += 45
+    score += len(set(target_key.split()) & set(source_key.split())) * 14
+    score += _alias_score(target_kind, source)
+    if infer_kind(source) == target_kind and target_kind != 'custom':
+        score += 45
+    return score
+
+
+def _is_price_like_source(source: str, profile: dict[str, float | str | bool]) -> bool:
+    source_key = normalize_key(source)
+    if str(profile.get('kind') or '') in {'preco_unitario', 'preco_custo'}:
+        return True
+    return any(normalize_key(term) in source_key for term in PRICE_SOURCE_TERMS)
+
+
+def _content_score(target: str, source: str, profile: dict[str, float | str | bool]) -> int:
+    target_kind = _target_kind(target)
     source_kind = str(profile.get('kind') or infer_kind(source))
     has_values = bool(profile.get('has_values'))
     text = float(profile.get('text') or 0)
@@ -116,69 +182,41 @@ def _manual_like_valid(target: str, source: str, profile: dict[str, float | str]
     url = float(profile.get('url') or 0)
     image = float(profile.get('image') or 0)
     avg_len = float(profile.get('avg_len') or 0)
+    unique = float(profile.get('unique') or 0)
 
-    if target_kind != 'custom' and target_kind == source_kind:
-        return True
-    if target_kind in {'codigo', 'id_produto'}:
-        return has_values and (source_kind in {'codigo', 'id_produto', 'gtin'} or gtin >= 0.30 or numeric >= 0.45 or text >= 0.35)
-    if target_kind == 'gtin':
-        return gtin >= 0.45 or source_kind == 'gtin'
-    if target_kind in {'descricao', 'nome_apoio'}:
-        return has_values and text >= 0.35 and avg_len >= 4 and url < 0.35
-    if target_kind in {'preco_unitario', 'preco_custo'}:
-        return price >= 0.25 or numeric >= 0.55
-    if target_kind == 'estoque':
-        return numeric >= 0.55 or source_kind == 'estoque'
-    if target_kind == 'url':
-        return url >= 0.40 or source_kind == 'url'
-    if target_kind == 'imagem':
-        return image >= 0.25 or source_kind == 'imagem'
-    if target_kind == 'marca':
-        return has_values and text >= 0.30 and avg_len <= 45 and url == 0
-    if target_kind == 'categoria':
-        return has_values and text >= 0.25 and avg_len <= 120
-
-    return has_values
-
-
-def _name_score(target: str, source: str) -> int:
-    target_key = normalize_key(target)
-    source_key = normalize_key(source)
-    if not target_key or not source_key:
-        return 0
-    if _custom_equivalent(target, source):
-        return 120
-    score = 0
-    if target_key in source_key or source_key in target_key:
-        score += 55
-    score += len(set(target_key.split()) & set(source_key.split())) * 18
-    if infer_kind(target) == infer_kind(source) and infer_kind(target) != 'custom':
-        score += 50
-    return score
-
-
-def _compatible(target: str, source: str, profile: dict[str, float | str]) -> bool:
-    return _manual_like_valid(target, source, profile)
-
-
-def _content_score(target: str, source: str, profile: dict[str, float | str]) -> int:
-    if not _compatible(target, source, profile):
-        return 0
-    target_kind = infer_kind(target)
-    source_kind = str(profile.get('kind') or infer_kind(source))
-    if _custom_equivalent(target, source):
-        return 35
+    if not has_values:
+        return -80
     if target_kind == source_kind and target_kind != 'custom':
-        return 45
+        return 70
+    if target_kind in {'codigo', 'id_produto'}:
+        return 45 if gtin >= 0.30 or numeric >= 0.55 or source_kind in {'codigo', 'id_produto', 'gtin'} else -80
     if target_kind == 'gtin':
-        return int(float(profile.get('gtin') or 0) * 45)
-    if target_kind in {'preco_unitario', 'preco_custo'}:
-        return int(max(float(profile.get('price') or 0), float(profile.get('numeric') or 0)) * 35)
+        return int(gtin * 110) if gtin >= 0.50 or source_kind == 'gtin' else -120
     if target_kind in {'descricao', 'nome_apoio'}:
-        return int(float(profile.get('text') or 0) * 30 + min(float(profile.get('avg_len') or 0), 80) / 4)
+        return int(text * 55 + min(avg_len, 80) / 3) if text >= 0.40 and url < 0.25 else -80
+    if target_kind in {'preco_unitario', 'preco_custo'}:
+        return int(max(price, numeric) * 90) if price >= 0.25 or numeric >= 0.70 else -90
+    if target_kind == 'estoque':
+        if _is_price_like_source(source, profile):
+            return -120
+        return int(numeric * 90) if numeric >= 0.60 and price < 0.35 else -80
+    if target_kind == 'url':
+        return int(url * 95) if url >= 0.45 or source_kind == 'url' else -90
+    if target_kind == 'imagem':
+        return int(image * 110) if image >= 0.30 or source_kind == 'imagem' else -120
+    if target_kind == 'marca':
+        return int(text * 55 + (30 if avg_len <= 45 else -20)) if text >= 0.30 and url == 0 else -70
+    if target_kind == 'categoria':
+        return int(text * 50 + (25 if avg_len <= 140 else 0)) if text >= 0.25 else -60
+    if target_kind == 'fornecedor':
+        return 60 if text >= 0.60 and numeric < 0.10 and url == 0 and avg_len <= 45 and unique <= 0.70 else -90
     if target_kind == 'custom':
-        return 25
-    return 18
+        return 30 if has_values else -30
+    return -30
+
+
+def _compatible(target: str, source: str, profile: dict[str, float | str | bool]) -> bool:
+    return _content_score(target, source, profile) > -70 or _name_score(target, source) >= 100
 
 
 def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
@@ -186,8 +224,10 @@ def _confidence(score: int, level_hint: str = '') -> dict[str, object]:
         return {'score': 100, 'level': 'verde', 'emoji': '🟢', 'label': '100% bit a bit', 'order': 2, 'strict': True}
 
     safe_score = min(max(int(score), 0), 99)
+    if safe_score >= 130:
+        return {'score': safe_score, 'level': 'verde', 'emoji': '🟢', 'label': 'sugestão forte por cabeçalho e conteúdo', 'order': 2, 'strict': False}
     if safe_score >= 82:
-        return {'score': safe_score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'conferir', 'order': 1, 'strict': False}
+        return {'score': safe_score, 'level': 'amarelo', 'emoji': '🟡', 'label': 'conferir sugestão', 'order': 1, 'strict': False}
     return pending_confidence()
 
 
@@ -202,11 +242,10 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
     if not _compatible(target, source, profile):
         return pending_confidence()
 
-    score = _name_score(target, source) + _content_score(target, source, profile)
-
     if _bit_to_bit_match(target, source):
-        return _confidence(score, 'verde')
+        return _confidence(100, 'verde')
 
+    score = _name_score(target, source) + _content_score(target, source, profile)
     return _confidence(score)
 
 
