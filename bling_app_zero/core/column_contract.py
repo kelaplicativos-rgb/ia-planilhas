@@ -16,8 +16,6 @@ class RequestedField:
     required: bool = False
 
 
-# Colunas do modelo do Bling que NÃO devem ser preenchidas por chute de site.
-# Se o site não trouxer um dado explicitamente confiável para elas, ficam vazias.
 STRICT_EMPTY_TERMS = [
     'unidade', 'ncm', 'origem', 'ipi', 'valor ipi', 'situacao', 'situação',
     'fornecedor', 'localizacao', 'localização', 'estoque maximo', 'estoque máximo',
@@ -38,18 +36,9 @@ KIND_SYNONYMS = {
     'id_produto': ['id produto', 'identificador do produto'],
     'codigo': ['codigo produto', 'código produto', 'codigo', 'código', 'cod produto', 'sku', 'referencia', 'referência'],
     'gtin': ['gtin', 'ean', 'codigo de barras', 'código de barras', 'barcode'],
-    'descricao_complementar': [
-        'descricao complementar', 'descrição complementar',
-        'descricao completa', 'descrição completa',
-        'descricao longa', 'descrição longa',
-        'descricao detalhada', 'descrição detalhada',
-        'descricao do produto no fornecedor', 'descrição do produto no fornecedor',
-        'informacoes adicionais', 'informações adicionais',
-        'caracteristicas', 'características',
-        'especificacoes', 'especificações',
-        'ficha tecnica', 'ficha técnica',
-        'detalhes do produto', 'sobre o produto', 'conteudo do produto', 'conteúdo do produto',
-    ],
+    'ficha_tecnica': ['ficha tecnica', 'ficha técnica', 'dados tecnicos', 'dados técnicos', 'informacoes tecnicas', 'informações técnicas', 'especificacoes tecnicas', 'especificações técnicas'],
+    'caracteristicas': ['caracteristicas', 'características', 'detalhes do produto', 'detalhes', 'conteudo do produto', 'conteúdo do produto', 'conteudo da embalagem', 'conteúdo da embalagem', 'atributos', 'recursos', 'beneficios', 'benefícios'],
+    'descricao_complementar': ['descricao complementar', 'descrição complementar', 'descricao completa', 'descrição completa', 'descricao longa', 'descrição longa', 'descricao detalhada', 'descrição detalhada', 'descricao do produto no fornecedor', 'descrição do produto no fornecedor', 'descricao do fornecedor', 'descrição do fornecedor', 'descricao rica', 'descrição rica', 'informacoes adicionais', 'informações adicionais', 'sobre o produto', 'descricao extra', 'descrição extra'],
     'descricao_curta': ['descricao curta', 'descrição curta', 'resumo do produto', 'titulo curto', 'título curto', 'nome curto'],
     'descricao': ['descricao produto', 'descrição produto', 'descricao', 'descrição', 'nome produto', 'nome do produto', 'titulo', 'título'],
     'deposito': ['deposito', 'depósito', 'almoxarifado', 'local estoque'],
@@ -79,35 +68,27 @@ def _is_strict_empty_column(key: str) -> bool:
 
 
 def infer_kind(column_name: str) -> str:
-    """Detecta o tipo da coluna sem chutar em colunas sensíveis do Bling."""
     key = _clean_column_key(column_name)
     if not key:
         return 'custom'
-
     if _is_strict_empty_column(key):
         return 'custom'
 
     best_kind = 'custom'
     best_score = 0
-
     for kind, synonyms in KIND_SYNONYMS.items():
         for synonym in synonyms:
             syn = normalize_key(synonym)
             if not syn:
                 continue
-
             score = 0
             if key == syn:
                 score = 1000 + len(syn)
             elif syn in key:
                 score = 500 + len(syn)
-            # Não usamos mais "key in syn" para evitar que palavras genéricas
-            # como fornecedor/produto/valor virem descrição/preço por engano.
-
             if score > best_score:
                 best_score = score
                 best_kind = kind
-
     return best_kind
 
 
