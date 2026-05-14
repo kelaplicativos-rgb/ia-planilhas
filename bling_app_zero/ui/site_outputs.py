@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.final_csv_exporter import final_csv_bytes
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, normalize_site_operation
 from bling_app_zero.ui.home_models import save_home_models
@@ -10,7 +11,11 @@ from bling_app_zero.ui.site_progress import render_site_progress_history
 
 
 def source_csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    return final_csv_bytes(
+        df,
+        operation='origem_site',
+        run_download_features=False,
+    )
 
 
 def _label(operation: str) -> str:
