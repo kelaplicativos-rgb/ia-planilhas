@@ -67,12 +67,12 @@ def render_cadastro_source_upload(df_origem_site: pd.DataFrame | None):
         return _site_origin_upload_result(df_origem_site)
 
     if home_has_models:
-        st.info('Modelo do Bling já carregado. Envie abaixo a planilha, XML ou PDF do fornecedor.')
+        st.info('Modelo do Bling já carregado. Envie abaixo a planilha, XML, PDF, HTML, MHT ou MHTML do fornecedor.')
     return render_smart_upload_box(
         title='Arquivo do fornecedor',
         operation='cadastro',
         key='smart_upload_cadastro',
         allow_model=allow_model_upload,
         required_model=False,
-        accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf'],
+        accepted_types=['xlsx', 'xls', 'csv', 'xml', 'pdf', 'html', 'htm', 'mht', 'mhtml'],
     )
