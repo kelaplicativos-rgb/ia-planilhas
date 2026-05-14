@@ -422,15 +422,15 @@ def _render_cadastro_preview() -> None:
     render_cadastro_preview_step()
 
 
+def _render_reset_only_footer(key: str) -> None:
+    st.caption('Use os botões fixos acima para voltar ou avançar sem perder o que já foi informado.')
+    if st.button('Recomeçar fluxo', use_container_width=True, key=key):
+        _reset_wizard()
+
+
 def _render_cadastro_download() -> None:
     render_cadastro_download_step()
-    col_back, col_reset = st.columns(2)
-    with col_back:
-        if st.button('← Voltar para preview', use_container_width=True, key='wizard_download_back'):
-            _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
-    with col_reset:
-        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset'):
-            _reset_wizard()
+    _render_reset_only_footer('wizard_download_reset')
 
 
 def _render_estoque_entrada() -> None:
@@ -453,13 +453,7 @@ def _render_estoque_preview() -> None:
 
 def _render_estoque_download() -> None:
     render_estoque_download_step()
-    col_back, col_reset = st.columns(2)
-    with col_back:
-        if st.button('← Voltar para preview', use_container_width=True, key='wizard_estoque_download_back'):
-            _go_to_step(STEP_PREVIEW, reason='download_back_to_preview')
-    with col_reset:
-        if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_estoque_download_reset'):
-            _reset_wizard()
+    _render_reset_only_footer('wizard_estoque_download_reset')
 
 
 def render_home_wizard() -> None:
