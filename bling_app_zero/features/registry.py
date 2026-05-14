@@ -7,17 +7,6 @@ from bling_app_zero.features.download_pipeline import DOWNLOAD_FEATURES
 
 RESPONSIBLE_FILE = 'bling_app_zero/features/registry.py'
 
-# BLINGREFORM:
-# O mapeamento passa a ser a única fonte de preenchimento de campos:
-# - escolher coluna
-# - escrever valor fixo
-# - deixar vazio
-# Portanto recursos de preenchimento por custom_rules ficam fora do runtime.
-FILL_RULE_FEATURE_KEYS = {
-    'custom_rules',
-    'empty_custom_rules',
-}
-
 # Proteções que devem valer para todo CSV final do Bling, não só cadastro.
 GLOBAL_DOWNLOAD_PROTECTION_KEYS = {
     'normalize_image_separator',
@@ -33,7 +22,6 @@ def _normalize_download_feature_scope(feature: FeatureDefinition) -> FeatureDefi
 ACTIVE_DOWNLOAD_FEATURES: tuple[FeatureDefinition, ...] = tuple(
     _normalize_download_feature_scope(feature)
     for feature in DOWNLOAD_FEATURES
-    if feature.key not in FILL_RULE_FEATURE_KEYS
 )
 
 SITE_AND_SYSTEM_FEATURES: tuple[FeatureDefinition, ...] = (
@@ -105,7 +93,6 @@ def features_by_scope(scope: str) -> list[FeatureDefinition]:
 __all__ = [
     'ACTIVE_DOWNLOAD_FEATURES',
     'FEATURE_REGISTRY',
-    'FILL_RULE_FEATURE_KEYS',
     'GLOBAL_DOWNLOAD_PROTECTION_KEYS',
     'RESPONSIBLE_FILE',
     'features_by_scope',
