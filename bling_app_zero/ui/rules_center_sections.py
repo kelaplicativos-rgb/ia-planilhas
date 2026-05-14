@@ -38,6 +38,7 @@ EXTRA_DEFAULT_RULES = [
 
 DEFAULT_RULES_ENABLED_KEY = 'rules_center_default_rules_enabled'
 CUSTOM_RULE_NOTICE_KEY = 'rules_center_custom_rule_notice'
+NEW_RULE_VERSION_KEY = 'rules_center_new_rule_version'
 
 
 def rule_id(target_column: str) -> str:
@@ -344,11 +345,16 @@ def render_custom_rules(custom_rules: list[dict[str, Any]], master_enabled: bool
     else:
         st.caption('Nenhuma regra personalizada criada ainda.')
 
+    version = int(st.session_state.get(NEW_RULE_VERSION_KEY, 0) or 0)
+    target_key = f'rules_center_new_rule_target_{version}'
+    value_key = f'rules_center_new_rule_value_{version}'
+    empty_key = f'rules_center_new_rule_only_empty_{version}'
+
     with st.container(border=True):
         st.markdown('**Nova regra**')
-        new_target = st.text_input('Coluna da nova regra', key='rules_center_new_rule_target', placeholder='Ex: Tipo')
-        new_value = st.text_input('Valor da nova regra', key='rules_center_new_rule_value', placeholder='Ex: Produto')
-        new_only_empty = st.toggle('Aplicar somente quando estiver vazio', value=True, key='rules_center_new_rule_only_empty')
+        new_target = st.text_input('Coluna da nova regra', key=target_key, placeholder='Ex: Tipo')
+        new_value = st.text_input('Valor da nova regra', key=value_key, placeholder='Ex: Produto')
+        new_only_empty = st.toggle('Aplicar somente quando estiver vazio', value=True, key=empty_key)
         if st.button('Adicionar nova regra', use_container_width=True, key='rules_center_add_custom_rule', disabled=not master_enabled):
             target = str(new_target or '').strip()
             if not target:
@@ -364,8 +370,7 @@ def render_custom_rules(custom_rules: list[dict[str, Any]], master_enabled: bool
                     'source': 'user',
                 }
                 updated_user_rules.append(new_rule)
-                st.session_state['rules_center_new_rule_target'] = ''
-                st.session_state['rules_center_new_rule_value'] = ''
+                st.session_state[NEW_RULE_VERSION_KEY] = version + 1
                 st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Regra adicionada.'
                 st.rerun()
 
