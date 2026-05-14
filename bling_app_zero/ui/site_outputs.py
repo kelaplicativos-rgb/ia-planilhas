@@ -73,15 +73,29 @@ def render_site_source_summary(
     operation: str = 'cadastro',
     *,
     show_history: bool = False,
+    show_sample: bool = True,
+    sample_in_expander: bool = True,
 ) -> None:
-    """Resumo leve para o Wizard: sem mapeamento, preview final ou download final."""
+    """Resumo leve para o Wizard: sem mapeamento, preview final ou download final.
+
+    sample_in_expander=False evita erro do Streamlit quando este resumo é chamado
+    dentro de outro expander.
+    """
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
     label = _label(operation)
     st.success(f'Origem de {label} criada com {len(df_site)} produto(s) e {len(df_site.columns)} coluna(s).')
     st.caption('Continue para a próxima etapa. O mapeamento, preview e download final ficam separados no Wizard.')
-    with st.expander('Conferir uma amostra da origem por site', expanded=False):
-        st.dataframe(df_site.head(20).fillna('').astype(str), use_container_width=True)
+
+    if show_sample:
+        sample = df_site.head(20).fillna('').astype(str)
+        if sample_in_expander:
+            with st.expander('Conferir uma amostra da origem por site', expanded=False):
+                st.dataframe(sample, use_container_width=True)
+        else:
+            st.caption('Amostra da origem por site')
+            st.dataframe(sample, use_container_width=True)
+
     if show_history:
         render_site_progress_history()
 
