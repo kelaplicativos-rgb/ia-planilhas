@@ -33,6 +33,22 @@ def test_multistore_merge_uses_manual_identifier_columns() -> None:
     assert 'SKU fornecedor' not in out.columns
 
 
+def test_multistore_does_not_fallback_to_automatic_identifier_mapping() -> None:
+    model_df = pd.DataFrame([{'ID na Loja': 'ML-001', 'IdProduto': '10', 'Preço': ''}])
+    source_df = pd.DataFrame([{'ID na Loja': 'ML-001', 'Custo fornecedor': '12,50'}])
+
+    out = merge_source_cost(
+        model_df,
+        source_df,
+        source_cost_column='Custo fornecedor',
+        model_identifier_column='',
+        source_identifier_column='',
+    )
+
+    assert COST_COLUMN_INTERNAL in out.columns
+    assert out[COST_COLUMN_INTERNAL].tolist() == ['']
+
+
 def test_multistore_prepare_table_keeps_model_when_source_missing() -> None:
     model_df = pd.DataFrame([{'ID na Loja': 'ML-001', 'IdProduto': '10', 'Preço': ''}])
 
