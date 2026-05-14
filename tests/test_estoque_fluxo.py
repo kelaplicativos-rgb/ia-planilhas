@@ -5,18 +5,31 @@ from pathlib import Path
 
 import pandas as pd
 
+from bling_app_zero.core.bling_models import ESTOQUE_BLING_COLUMNS
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError, run_estoque_engine
 
 
 class TestEstoqueFluxo(unittest.TestCase):
-    def test_estoque_exige_modelo_real(self) -> None:
-        origem = pd.DataFrame({'Código': ['P001'], 'Quantidade': ['10']})
+    def test_estoque_sem_modelo_usa_contrato_interno_oficial(self) -> None:
+        origem = pd.DataFrame({'Código': ['P001'], 'Quantidade': ['10'], 'Nome': ['Produto teste']})
 
-        with self.assertRaises(MissingEstoqueModelError):
-            run_estoque_engine(origem, None, deposito='Principal')
+        final, mapping = run_estoque_engine(origem, None, deposito='Principal')
 
-        with self.assertRaises(MissingEstoqueModelError):
-            run_estoque_engine(origem, pd.DataFrame(), deposito='Principal')
+        self.assertEqual(list(final.columns), ESTOQUE_BLING_COLUMNS)
+        self.assertEqual(final.loc[0, 'Código'], 'P001')
+        self.assertEqual(final.loc[0, 'Depósito (OBRIGATÓRIO)'], 'Principal')
+        self.assertEqual(final.loc[0, 'Balanço (OBRIGATÓRIO)'], '10')
+        self.assertIn('Balanço (OBRIGATÓRIO)', mapping)
+
+    def test_estoque_modelo_vazio_usa_contrato_interno_oficial(self) -> None:
+        origem = pd.DataFrame({'SKU': ['P002'], 'Estoque': ['7']})
+
+        final, _mapping = run_estoque_engine(origem, pd.DataFrame(), deposito='Central')
+
+        self.assertEqual(list(final.columns), ESTOQUE_BLING_COLUMNS)
+        self.assertEqual(final.loc[0, 'Código'], 'P002')
+        self.assertEqual(final.loc[0, 'Depósito (OBRIGATÓRIO)'], 'Central')
+        self.assertEqual(final.loc[0, 'Balanço (OBRIGATÓRIO)'], '7')
 
     def test_estoque_gera_somente_colunas_do_modelo(self) -> None:
         origem = pd.DataFrame(
@@ -48,6 +61,13 @@ class TestEstoqueFluxo(unittest.TestCase):
         self.assertEqual(final.loc[0, 'Código'], 'P001')
         self.assertEqual(final.loc[0, 'Balanço (OBRIGATÓRIO)'], '')
         self.assertEqual(mapping['Balanço (OBRIGATÓRIO)'], '')
+
+    def test_estoque_modelo_invalido_sem_coluna_de_saldo_bloqueia(self) -> None:
+        origem = pd.DataFrame({'Código': ['P001'], 'Quantidade': ['10']})
+        modelo_invalido = pd.DataFrame(columns=['Código', 'Descrição'])
+
+        with self.assertRaises(MissingEstoqueModelError):
+            run_estoque_engine(origem, modelo_invalido, deposito='Principal')
 
     def test_simulacao_estoque_arquivo_e_site_usam_mesmo_contrato_do_bling(self) -> None:
         modelo = pd.DataFrame(columns=['Código', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
