@@ -97,6 +97,26 @@ def _render_home_operation_card(
             on_click()
 
 
+def _render_home_blingscan_card() -> None:
+    """Mostra o BLINGSCAN diretamente na Home inicial.
+
+    O painel também continua disponível na sidebar, mas a Home precisa nascer
+    com o atalho visível para o usuário executar a varredura sem procurar a
+    Central técnica.
+    """
+    from bling_app_zero.ui.blingscan_prompt_panel import render_blingscan_prompt_panel
+
+    st.divider()
+    with st.container(border=True):
+        st.caption('Diagnóstico rápido')
+        render_blingscan_prompt_panel(key_prefix='home', compact=True)
+    add_audit_event(
+        'home_blingscan_card_rendered',
+        area='HOME',
+        details={'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _render_operation_choice() -> None:
     st.markdown('### O que você quer fazer?')
     st.caption('Escolha primeiro o tipo de trabalho. O fluxo principal começa pelo modelo do Bling para evitar erro de planilha no final.')
@@ -138,6 +158,7 @@ def _render_operation_choice() -> None:
         on_click=_open_multistore_price_flow,
         badge='Módulo adicional',
     )
+    _render_home_blingscan_card()
 
 
 def _render_back_to_operations() -> None:
