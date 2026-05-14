@@ -123,19 +123,22 @@ def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
     """Regra única: índice atual + delta, sem pular etapas.
 
     Exemplo: tela 5 + avançar = tela 6; tela 5 + voltar = tela 4.
-    No limite inicial/final, permanece na própria etapa.
+    No limite inicial, Voltar retorna para a Home do fluxo porque não existe
+    etapa -1 dentro do wizard. No limite final, Avançar permanece na última.
     """
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
     if current not in steps:
         return STEP_MODELO
     index = steps.index(current)
+    if delta < 0 and index == 0:
+        return HOME_CHOICE_TARGET
     target_index = max(0, min(len(steps) - 1, index + delta))
     return steps[target_index]
 
 
 def wizard_previous_target(current_step: str, operation: str) -> str:
-    """Destino puro do botão Voltar: sempre etapa atual - 1."""
+    """Destino puro do botão Voltar: etapa atual - 1 ou Home no limite inicial."""
     return _target_by_delta(current_step, operation, -1)
 
 
@@ -229,6 +232,9 @@ def _next_step() -> None:
 
 def _previous_step() -> None:
     target = wizard_previous_target(_current_step(), _selected_operation())
+    if target == HOME_CHOICE_TARGET:
+        _back_to_home_choice()
+        return
     _go_to_step(target, reason='back_button_previous_index')
 
 
