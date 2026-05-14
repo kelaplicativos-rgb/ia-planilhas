@@ -24,10 +24,19 @@ def prepare_multistore_table(
     model_df: pd.DataFrame,
     source_df: pd.DataFrame | None,
     source_cost_column: str = '',
+    model_identifier_column: str = '',
+    source_identifier_column: str = '',
 ) -> pd.DataFrame:
     model = model_df.copy().fillna('') if isinstance(model_df, pd.DataFrame) else pd.DataFrame()
     if isinstance(source_df, pd.DataFrame) and not source_df.empty and source_cost_column:
-        return merge_source_cost(model, source_df, source_cost_column, COST_COLUMN_INTERNAL)
+        return merge_source_cost(
+            model,
+            source_df,
+            source_cost_column,
+            COST_COLUMN_INTERNAL,
+            model_identifier_column=model_identifier_column,
+            source_identifier_column=source_identifier_column,
+        )
     if COST_COLUMN_INTERNAL not in model.columns:
         model[COST_COLUMN_INTERNAL] = ''
     return model.fillna('')
@@ -39,13 +48,21 @@ def run_multistore_price_flow(
     source_df: pd.DataFrame | None = None,
     source_cost_column: str = '',
     pricing_rules: dict | None = None,
+    model_identifier_column: str = '',
+    source_identifier_column: str = '',
 ) -> ModuleResult:
     detection = detect_multistore_model(model_df)
     if not detection.is_multistore:
         payload = TablePayload(operation='preco', stage='input', df=model_df.copy().fillna('') if isinstance(model_df, pd.DataFrame) else pd.DataFrame(), store_profile=profile)
         return ModuleResult(False, payload, detection.message, errors=detection.missing)
 
-    working_df = prepare_multistore_table(model_df, source_df, source_cost_column)
+    working_df = prepare_multistore_table(
+        model_df,
+        source_df,
+        source_cost_column,
+        model_identifier_column=model_identifier_column,
+        source_identifier_column=source_identifier_column,
+    )
     issues = validate_before_calculation(working_df)
     if has_blocking_errors(issues):
         payload = TablePayload(operation='preco', stage='validate', df=working_df, store_profile=profile)
