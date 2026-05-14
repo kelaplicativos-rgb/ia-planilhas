@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import time
 from datetime import datetime
 from urllib.parse import urlparse
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.browser_remote import (
@@ -26,8 +29,13 @@ REMOTE_SNAPSHOT_URL_KEY = 'guided_login_remote_snapshot_url'
 REMOTE_SNAPSHOT_FINAL_URL_KEY = 'guided_login_remote_snapshot_final_url'
 REMOTE_SNAPSHOT_TITLE_KEY = 'guided_login_remote_snapshot_title'
 REMOTE_SNAPSHOT_OK_KEY = 'guided_login_remote_snapshot_ok'
+REMOTE_SNAPSHOT_PNG_KEY = 'guided_login_remote_snapshot_png'
+REMOTE_LAST_CLICK_NONCE_KEY = 'guided_login_remote_last_click_nonce'
 REMOTE_VIEWPORT_WIDTH = 1366
 REMOTE_VIEWPORT_HEIGHT = 900
+REMOTE_CLICK_X_PARAM = 'bling_remote_click_x'
+REMOTE_CLICK_Y_PARAM = 'bling_remote_click_y'
+REMOTE_CLICK_NONCE_PARAM = 'bling_remote_click_nonce'
 
 DEFAULT_SUPPLIER_URL = 'https://app.obaobamix.com.br/admin'
 LEGACY_EXTERNAL_LOGIN_KEYS = (
@@ -44,6 +52,23 @@ def _is_valid_http_url(value: str) -> bool:
     except Exception:
         return False
     return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)
+
+
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name, '')
+        if isinstance(value, list):
+            return str(value[0] if value else '')
+        return str(value or '')
+    except Exception:
+        return ''
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(str(value).replace(',', '.')))
+    except Exception:
+        return default
 
 
 def _current_operation() -> str:
@@ -74,6 +99,7 @@ def _safe_config(supplier_url: str, operation: str) -> dict[str, object]:
         'external_login_fields': False,
         'credentials_saved': False,
         'remote_browser_control': True,
+        'clickable_snapshot': True,
     }
 
 
@@ -91,7 +117,7 @@ Operação:
 
 Modo:
 Navegador real do sistema via Playwright/Chromium. O sistema abre a URL no servidor,
-permite comandos guiados, valida a página renderizada e usa o motor de captura por blocos/DOM.
+permite comandos guiados, snapshot clicável, valida a página renderizada e usa o motor de captura por blocos/DOM.
 
 Regras:
 - Não usar iframe como fonte de verdade.
@@ -133,6 +159,48 @@ def _current_remote_url(fallback_url: str) -> str:
     return str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or fallback_url or '').strip()
 
 
+def _render_clickable_snapshot(supplier_url: str) -> None:
+    png = st.session_state.get(REMOTE_SNAPSHOT_PNG_KEY)
+    if not isinstance(png, (bytes, bytearray)) or not png:
+        return
+    title = str(st.session_state.get(REMOTE_SNAPSHOT_TITLE_KEY) or st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url)
+    encoded = base64.b64encode(bytes(png)).decode('ascii')
+    html = f'''
+    <div style="font-family:Arial,sans-serif;margin:8px 0 12px 0;">
+      <div style="background:#f8fafc;border:1px solid #dbe3ef;border-radius:12px 12px 0 0;padding:8px 10px;color:#334155;font-size:13px;">
+        Clique/toque diretamente no snapshot para enviar o clique ao navegador real do sistema. Coordenada original: {REMOTE_VIEWPORT_WIDTH}x{REMOTE_VIEWPORT_HEIGHT}.
+      </div>
+      <div style="position:relative;border:1px solid #dbe3ef;border-top:0;border-radius:0 0 12px 12px;overflow:hidden;background:#0f172a;">
+        <img id="blingRemoteBrowserImage" src="data:image/png;base64,{encoded}" alt="{title}" style="width:100%;display:block;cursor:crosshair;user-select:none;-webkit-user-select:none;" />
+        <div id="blingRemoteBrowserPoint" style="display:none;position:absolute;width:18px;height:18px;margin-left:-9px;margin-top:-9px;border:2px solid #fb8c00;border-radius:50%;background:rgba(251,140,0,.18);pointer-events:none;"></div>
+      </div>
+      <div id="blingRemoteBrowserStatus" style="font-size:12px;color:#475569;margin-top:6px;">Aguardando clique no snapshot...</div>
+    </div>
+    <script>
+      const img = document.getElementById('blingRemoteBrowserImage');
+      const point = document.getElementById('blingRemoteBrowserPoint');
+      const status = document.getElementById('blingRemoteBrowserStatus');
+      img.addEventListener('click', function(event) {{
+        const rect = img.getBoundingClientRect();
+        const px = event.clientX - rect.left;
+        const py = event.clientY - rect.top;
+        const x = Math.max(0, Math.min({REMOTE_VIEWPORT_WIDTH - 1}, Math.round(px * {REMOTE_VIEWPORT_WIDTH} / rect.width)));
+        const y = Math.max(0, Math.min({REMOTE_VIEWPORT_HEIGHT - 1}, Math.round(py * {REMOTE_VIEWPORT_HEIGHT} / rect.height)));
+        point.style.left = px + 'px';
+        point.style.top = py + 'px';
+        point.style.display = 'block';
+        status.textContent = 'Clique enviado: X=' + x + ' Y=' + y + '. Atualizando navegador...';
+        const url = new URL(window.parent.location.href);
+        url.searchParams.set('{REMOTE_CLICK_X_PARAM}', String(x));
+        url.searchParams.set('{REMOTE_CLICK_Y_PARAM}', String(y));
+        url.searchParams.set('{REMOTE_CLICK_NONCE_PARAM}', String(Date.now()));
+        window.parent.location.href = url.toString();
+      }});
+    </script>
+    '''
+    components.html(html, height=760, scrolling=True)
+
+
 def _display_snapshot(snapshot, supplier_url: str) -> None:
     st.session_state[REMOTE_SNAPSHOT_OK_KEY] = bool(snapshot.ok)
     st.session_state[REMOTE_SNAPSHOT_URL_KEY] = supplier_url
@@ -147,7 +215,8 @@ def _display_snapshot(snapshot, supplier_url: str) -> None:
         _orange_warning('Se o fornecedor exigir captcha, 2FA, popup ou bloquear robô, use a compatibilidade universal: exporte/cole/importar HTML, CSV, XLSX ou tabela.')
         return
     if snapshot.screenshot_png:
-        st.image(snapshot.screenshot_png, caption=snapshot.title or snapshot.final_url or supplier_url, use_column_width=True)
+        st.session_state[REMOTE_SNAPSHOT_PNG_KEY] = bytes(snapshot.screenshot_png)
+        _render_clickable_snapshot(supplier_url)
     st.success('Snapshot atualizado pelo navegador real do sistema.')
 
 
@@ -168,6 +237,22 @@ def _run_browser_action(supplier_url: str, command: RemoteBrowserCommand, label:
             command,
         )
     _display_snapshot(snapshot, current_url)
+
+
+def _consume_click_from_snapshot_if_needed(supplier_url: str) -> None:
+    nonce = _query_param(REMOTE_CLICK_NONCE_PARAM)
+    if not nonce:
+        return
+    if nonce == str(st.session_state.get(REMOTE_LAST_CLICK_NONCE_KEY) or ''):
+        return
+    x = max(0, min(_safe_int(_query_param(REMOTE_CLICK_X_PARAM), 0), REMOTE_VIEWPORT_WIDTH - 1))
+    y = max(0, min(_safe_int(_query_param(REMOTE_CLICK_Y_PARAM), 0), REMOTE_VIEWPORT_HEIGHT - 1))
+    st.session_state[REMOTE_LAST_CLICK_NONCE_KEY] = nonce
+    _run_browser_action(
+        supplier_url,
+        RemoteBrowserCommand(action='click_xy', x=x, y=y),
+        f'Clicando no navegador real em X={x} Y={y}...',
+    )
 
 
 def _prepare_config(supplier_url: str, operation: str) -> None:
@@ -208,6 +293,7 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
             'external_login_fields': False,
             'credentials_saved': False,
             'remote_browser_control': True,
+            'clickable_snapshot': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -215,7 +301,7 @@ def _prepare_config(supplier_url: str, operation: str) -> None:
 
 def _render_remote_controls(supplier_url: str) -> None:
     st.markdown('###### 🎮 Controles do navegador real')
-    st.caption('Use os comandos abaixo para operar o Chromium do servidor. Para clicar no snapshot, use coordenadas X/Y aproximadas da imagem original 1366x900.')
+    st.caption('Agora você pode clicar/tocar diretamente no snapshot acima. Os campos X/Y continuam como fallback fino quando precisar acertar uma posição manualmente.')
 
     coord_col1, coord_col2 = st.columns(2)
     with coord_col1:
@@ -256,7 +342,7 @@ def _render_remote_controls(supplier_url: str) -> None:
 
 
 def _render_remote_browser_snapshot(supplier_url: str) -> None:
-    st.caption('Navegador real do sistema: o servidor abre a página em Chromium e você controla por comandos seguros. Não é iframe e não usa a aba externa do celular como sessão.')
+    st.caption('Navegador real do sistema: o servidor abre a página em Chromium. Você pode clicar no snapshot ou usar comandos auxiliares.')
     if st.button('🌐 Abrir navegador real do sistema', use_container_width=True, key='open_remote_supplier_browser_snapshot'):
         if not _is_valid_http_url(supplier_url):
             _orange_warning('Informe uma URL válida do fornecedor, começando com http:// ou https://.')
@@ -278,9 +364,11 @@ def _render_remote_browser_snapshot(supplier_url: str) -> None:
         final_url = str(st.session_state.get(REMOTE_SNAPSHOT_FINAL_URL_KEY) or supplier_url)
         st.success(f'Navegador real carregado: {title}')
         st.caption(final_url)
+        _consume_click_from_snapshot_if_needed(supplier_url)
+        _render_clickable_snapshot(supplier_url)
         _render_remote_controls(supplier_url)
 
-    _orange_warning('Este controle usa comandos seguros no Chromium do servidor. Se o site exigir captcha, confirmação por SMS/2FA ou bloqueio humano forte, use a compatibilidade universal.')
+    _orange_warning('Se o clique direto no snapshot não atualizar em algum navegador móvel, use os campos X/Y logo abaixo como fallback. Se houver captcha, SMS/2FA ou bloqueio humano forte, use a compatibilidade universal.')
 
 
 def _render_page_confirmation() -> None:
@@ -311,7 +399,7 @@ def render_guided_login_panel() -> None:
     operation = _current_operation()
     operation_label = 'estoque' if operation == 'estoque' else 'cadastro'
     st.markdown('##### Navegador real controlado')
-    st.caption(f'Use esta área para operar o Chromium do servidor por comandos e preparar a captura de {operation_label}.')
+    st.caption(f'Use esta área para operar o Chromium do servidor por clique no snapshot, comandos auxiliares e preparar a captura de {operation_label}.')
 
     supplier_url = st.text_input(
         'URL do fornecedor ou da página de produtos',
