@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = '3.5.27-BLINGPACKAGES-LEVE'
+APP_VERSION = '3.5.28-BLINGCOMPACT-ALL'
 
 PAGE_CONFIG = {
     'page_title': 'IA Planilhas → Bling',
