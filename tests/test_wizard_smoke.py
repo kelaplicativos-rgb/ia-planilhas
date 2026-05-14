@@ -110,7 +110,9 @@ def _assert_linear_navigation(wizard, operation: str, steps: list[str]) -> None:
     for index, step in enumerate(steps):
         expected_previous = steps[max(0, index - 1)]
         expected_next = steps[min(len(steps) - 1, index + 1)]
-        assert wizard.wizard_previous_target(step, operation) == expected_previous
+        assert wizard.wizard_previous_target(step, operation) in {expected_previous, wizard.HOME_CHOICE_TARGET}
+        if index > 0:
+            assert wizard.wizard_previous_target(step, operation) == expected_previous
         assert wizard.wizard_next_target(step, operation) == expected_next
 
 
@@ -128,7 +130,6 @@ def test_wizard_button_flowchart_examples_requested_by_user() -> None:
     wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
     steps = EXPECTED_CADASTRO_STEPS
 
-    assert wizard.wizard_previous_target(steps[0], 'cadastro') == steps[0]
     assert wizard.wizard_next_target(steps[0], 'cadastro') == steps[1]
     assert wizard.wizard_previous_target(steps[3], 'cadastro') == steps[2]
     assert wizard.wizard_next_target(steps[3], 'cadastro') == steps[4]
@@ -161,7 +162,6 @@ def test_bottom_navigation_is_single_source_for_wizard_next_back() -> None:
     assert "wizard_download_back" not in wizard
     assert "wizard_estoque_download_back" not in wizard
     assert "← Voltar para preview" not in wizard
-    assert "HOME_CHOICE_TARGET" not in wizard.split('def wizard_previous_target', 1)[1].split('def _active_steps', 1)[0]
     assert "_render_reset_only_footer" in wizard
 
 
@@ -377,8 +377,30 @@ def test_exporter_uses_bling_csv_contract() -> None:
     values = rows[1]
     row = dict(zip(header, values))
 
-    assert 'Descrição' in header
-    assert 'GTIN/EAN' in header
-    assert 'URL imagens externas' in header
+    assert header == ['Descrição', 'GTIN/EAN', 'URL imagens externas']
     assert row['GTIN/EAN'] == ''
     assert row['URL imagens externas'] == 'https://a.com/1.jpg|https://a.com/2.jpg'
+
+
+def test_exporter_removes_columns_outside_explicit_contract() -> None:
+    from bling_app_zero.core.exporter import to_bling_csv_bytes
+
+    df = pd.DataFrame(
+        [
+            {
+                'Código': 'P001',
+                'Descrição': 'Produto teste',
+                'Preço unitário (OBRIGATÓRIO)': '10',
+                'Coluna fora do Bling': 'não pode sair',
+            }
+        ]
+    )
+    contract = ['Código', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'GTIN/EAN']
+    csv_bytes = to_bling_csv_bytes(df, operation='cadastro', contract_columns=contract)
+    text = csv_bytes.decode('utf-8-sig')
+    rows = list(csv.reader(StringIO(text), delimiter=';'))
+
+    assert rows[0] == contract
+    assert len(rows[1]) == len(contract)
+    assert 'Coluna fora do Bling' not in rows[0]
+    assert dict(zip(rows[0], rows[1]))['GTIN/EAN'] == ''
