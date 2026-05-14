@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterable
@@ -42,8 +43,20 @@ DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH
 RESPONSIBLE_FILE = 'bling_app_zero/engines/fast_site_scraper/engine.py'
 
 
+def _inside_executor_thread() -> bool:
+    """Evita chamadas indiretas ao Streamlit dentro do ThreadPoolExecutor.
+
+    `add_audit_event` e `add_debug` usam estado/log visual do Streamlit. Quando
+    chamados em workers paralelos, o Streamlit emite `missing ScriptRunContext`.
+    O motor pode raspar em paralelo, mas logs/UI ficam restritos à thread principal.
+    """
+    return threading.current_thread().name.startswith('ThreadPoolExecutor')
+
+
 def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> None:
     if not progress_callback:
+        return
+    if _inside_executor_thread():
         return
     try:
         progress_callback(payload)
@@ -129,6 +142,8 @@ def _url_only_row(url: str) -> FastProductData:
 
 
 def _log_rich_description_result(url: str, product: FastProductData, needed: set[str]) -> None:
+    if _inside_executor_thread():
+        return
     if 'descricao_complementar' not in needed:
         return
     length = len(str(product.descricao_complementar or '').strip())
