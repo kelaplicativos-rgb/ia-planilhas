@@ -54,7 +54,9 @@ from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 ORIGIN_AUTO_FORWARDED_KEY = 'wizard_origin_auto_forwarded_signature'
-TOP_NAV_RENDERED_KEY = 'wizard_top_nav_rendered_current_cycle'
+BOTTOM_NAV_RENDERED_KEY = 'wizard_bottom_nav_rendered_current_cycle'
+HOME_ACTIVE_OPERATION_KEY = 'home_active_operation_v2'
+HOME_ALLOW_OPERATION_KEY = 'home_allow_operation_v2_session'
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -155,6 +157,23 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     st.rerun()
 
 
+def _back_to_home_choice() -> None:
+    st.session_state.pop(HOME_ACTIVE_OPERATION_KEY, None)
+    st.session_state.pop(HOME_ALLOW_OPERATION_KEY, None)
+    for key in ('operation_v2', 'step'):
+        try:
+            st.query_params.pop(key, None)
+        except Exception:
+            pass
+    add_audit_event(
+        'wizard_back_to_home_choice',
+        area='WIZARD',
+        step=_current_step(),
+        details={'reason': 'back_button_first_step', 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    st.rerun()
+
+
 def _next_step() -> None:
     steps = _active_steps()
     current = _current_step()
@@ -169,6 +188,8 @@ def _previous_step() -> None:
     index = steps.index(current)
     if index > 0:
         _go_to_step(steps[index - 1], reason='back_button_preserve_state')
+        return
+    _back_to_home_choice()
 
 
 def _reset_outputs_for_operation_change() -> None:
@@ -288,40 +309,40 @@ def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
 
 
 def _render_nav_buttons(*, allow_next: bool = True, next_label: str = 'Continuar', pending_message: str | None = None) -> None:
-    if bool(st.session_state.get(TOP_NAV_RENDERED_KEY)):
+    if bool(st.session_state.get(BOTTOM_NAV_RENDERED_KEY)):
         return
-    _render_fixed_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
+    _render_bottom_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
 
 
-def _render_fixed_navigation(*, allow_next: bool, next_label: str, pending_message: str | None) -> None:
+def _render_bottom_navigation(*, allow_next: bool, next_label: str, pending_message: str | None) -> None:
     steps = _active_steps()
     current = _current_step()
     current_index = steps.index(current)
     is_last = current_index == len(steps) - 1
 
-    st.markdown('<div data-testid="wizard-fixed-navigation"></div>', unsafe_allow_html=True)
+    st.markdown('<div data-testid="wizard-bottom-navigation"></div>', unsafe_allow_html=True)
     col_back, col_next = st.columns(2)
     with col_back:
-        if st.button('← Voltar', use_container_width=True, disabled=current_index == 0, key=f'wizard_fixed_back_{current}'):
+        if st.button('← Voltar', use_container_width=True, key=f'wizard_bottom_back_{current}'):
             _previous_step()
     with col_next:
         if is_last:
-            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_fixed_next_last_{current}')
+            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_bottom_next_last_{current}')
         elif allow_next:
-            if st.button(next_label, use_container_width=True, key=f'wizard_fixed_next_{current}'):
+            if st.button(next_label, use_container_width=True, key=f'wizard_bottom_next_{current}'):
                 add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'responsible_file': RESPONSIBLE_FILE})
                 _next_step()
         else:
-            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_fixed_next_disabled_{current}')
+            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_bottom_next_disabled_{current}')
             _audit_step_blocked(current, pending_message)
             render_pending_notice(pending_message)
 
-    st.session_state[TOP_NAV_RENDERED_KEY] = True
+    st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
 
 
-def _render_top_navigation() -> None:
+def _render_bottom_navigation_for_current_step() -> None:
     allow_next, next_label, pending_message = _nav_state_for_current_step()
-    _render_fixed_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
+    _render_bottom_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
 
 
 def _clear_legacy_origin_widget_state(operation: str) -> None:
@@ -423,7 +444,7 @@ def _render_cadastro_preview() -> None:
 
 
 def _render_reset_only_footer(key: str) -> None:
-    st.caption('Use os botões fixos acima para voltar ou avançar sem perder o que já foi informado.')
+    st.caption('Use os botões de navegação acima para voltar ou avançar sem perder o que já foi informado.')
     if st.button('Recomeçar fluxo', use_container_width=True, key=key):
         _reset_wizard()
 
@@ -457,12 +478,11 @@ def _render_estoque_download() -> None:
 
 
 def render_home_wizard() -> None:
-    st.session_state[TOP_NAV_RENDERED_KEY] = False
+    st.session_state[BOTTOM_NAV_RENDERED_KEY] = False
     nav = _render_step_header()
-    _render_top_navigation()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'fixed_navigation': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
@@ -494,3 +514,5 @@ def render_home_wizard() -> None:
         add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         st.warning('Etapa inválida. Recomece o fluxo.')
         render_pending_notice('Fluxo inválido.')
+
+    _render_bottom_navigation_for_current_step()
