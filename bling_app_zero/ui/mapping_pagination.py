@@ -32,7 +32,6 @@ def _scroll_script(anchor_id: str) -> str:
     <script>
     (function() {{
         const anchorId = {anchor_id!r};
-
         function findAnchor() {{
             try {{
                 const parentDoc = window.parent && window.parent.document ? window.parent.document : null;
@@ -41,34 +40,19 @@ def _scroll_script(anchor_id: str) -> str:
                     if (fromParent) return fromParent;
                 }}
             }} catch (err) {{}}
-
-            try {{
-                return document.getElementById(anchorId);
-            }} catch (err) {{
-                return null;
-            }}
+            try {{ return document.getElementById(anchorId); }} catch (err) {{ return null; }}
         }}
-
         function scrollToAnchor() {{
             const el = findAnchor();
             if (!el) return;
-
-            try {{
-                const parentWindow = window.parent || window;
-                const rect = el.getBoundingClientRect();
-                const currentY = parentWindow.scrollY || parentWindow.pageYOffset || 0;
-                const targetY = Math.max(0, rect.top + currentY - 18);
-                parentWindow.scrollTo({{ top: targetY, behavior: 'smooth' }});
-                return;
-            }} catch (err) {{}}
-
             try {{
                 el.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-            }} catch (err) {{}}
+            }} catch (err) {{
+                try {{ el.scrollIntoView(true); }} catch (err2) {{}}
+            }}
         }}
-
-        setTimeout(scrollToAnchor, 80);
-        setTimeout(scrollToAnchor, 240);
+        setTimeout(scrollToAnchor, 60);
+        setTimeout(scrollToAnchor, 220);
         setTimeout(scrollToAnchor, 520);
     }})();
     </script>
@@ -78,21 +62,13 @@ def _scroll_script(anchor_id: str) -> str:
 def render_mapping_page_scroll_anchor(mapping_key: str) -> None:
     anchor_id = mapping_page_anchor_id(mapping_key)
     should_scroll = bool(st.session_state.pop(mapping_page_scroll_key(mapping_key), False))
-    st.markdown(
-        f'<div id="{anchor_id}" data-bling-scroll-anchor="mapping-page" style="height:1px; scroll-margin-top:18px;"></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div id="{anchor_id}" data-bling-scroll-anchor="mapping-page"></div>', unsafe_allow_html=True)
     if not should_scroll:
         return
-
     add_audit_event(
         'mapping_page_scroll_requested',
         area='MAPEAMENTO',
-        details={
-            'mapping_key': mapping_key,
-            'anchor_id': anchor_id,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'mapping_key': mapping_key, 'anchor_id': anchor_id, 'responsible_file': RESPONSIBLE_FILE},
     )
     components.html(_scroll_script(anchor_id), height=0, width=0)
 
@@ -100,6 +76,11 @@ def render_mapping_page_scroll_anchor(mapping_key: str) -> None:
 def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
     if len(targets) <= MAPPING_PAGE_SIZE:
         st.session_state.pop(mapping_page_meta_key(mapping_key), None)
+        add_audit_event(
+            'mapping_page_not_needed',
+            area='MAPEAMENTO',
+            details={'mapping_key': mapping_key, 'total_targets': len(targets), 'responsible_file': RESPONSIBLE_FILE},
+        )
         return targets
 
     total_pages = (len(targets) + MAPPING_PAGE_SIZE - 1) // MAPPING_PAGE_SIZE
@@ -113,10 +94,7 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
 
     start = page_index * MAPPING_PAGE_SIZE
     end = min(start + MAPPING_PAGE_SIZE, len(targets))
-    st.caption(
-        f'Bloco {page_index + 1} de {total_pages} · Exibindo {start + 1} a {end} de {len(targets)} campo(s). '
-        'Os demais continuam salvos e entram no CSV final.'
-    )
+    st.caption(f'Campos {start + 1} a {end} de {len(targets)} · página {page_index + 1}/{total_pages}')
     render_mapping_page_scroll_anchor(mapping_key)
     st.session_state[mapping_page_meta_key(mapping_key)] = {
         'page_index': page_index,
@@ -125,6 +103,19 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
         'visible_end': end,
         'total_targets': len(targets),
     }
+    add_audit_event(
+        'mapping_page_visible',
+        area='MAPEAMENTO',
+        details={
+            'mapping_key': mapping_key,
+            'page': page_index + 1,
+            'total_pages': total_pages,
+            'visible_start': start + 1,
+            'visible_end': end,
+            'total_targets': len(targets),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
     return targets[start:end]
 
 
@@ -135,6 +126,15 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
     safe_next = max(0, min(total_pages - 1, int(next_index)))
     st.session_state[page_key] = safe_next
     st.session_state[scroll_key] = True
+    st.session_state['mapping_last_interruption_point'] = {
+        'mapping_key': mapping_key,
+        'from_page': previous_index + 1,
+        'to_page': safe_next + 1,
+        'total_pages': total_pages,
+        'direction': direction,
+        'reason': 'usuario_navegou_campos_mapeamento',
+        'responsible_file': RESPONSIBLE_FILE,
+    }
     add_audit_event(
         'mapping_page_changed',
         area='MAPEAMENTO',
@@ -151,25 +151,31 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
     st.rerun()
 
 
-def render_mapping_page_arrows(mapping_key: str) -> None:
+def _page_label(meta: dict) -> str:
+    page_index = int(meta.get('page_index') or 0)
+    total_pages = max(1, int(meta.get('total_pages') or 1))
+    start = int(meta.get('visible_start') or 0)
+    end = int(meta.get('visible_end') or 0)
+    total = int(meta.get('total_targets') or 0)
+    return f'Página {page_index + 1}/{total_pages} · Campos {start} a {end} de {total}'
+
+
+def render_mapping_page_arrows(mapping_key: str, *, position: str = 'bottom') -> None:
     meta = st.session_state.get(mapping_page_meta_key(mapping_key))
     if not isinstance(meta, dict):
         return
     page_index = int(meta.get('page_index') or 0)
     total_pages = max(1, int(meta.get('total_pages') or 1))
+    if total_pages <= 1:
+        return
 
-    st.markdown('<div style="height:.15rem"></div>', unsafe_allow_html=True)
-    col_prev, col_mid, col_next = st.columns([1, 2, 1])
+    st.caption(_page_label(meta))
+    col_prev, col_next = st.columns(2)
     with col_prev:
-        if st.button('←', use_container_width=True, disabled=page_index <= 0, key=f'{mapping_key}_page_prev'):
+        if st.button('← Campos anteriores', use_container_width=True, disabled=page_index <= 0, key=f'{mapping_key}_page_prev_{position}'):
             _change_mapping_page(mapping_key, page_index - 1, direction='previous', total_pages=total_pages)
-    with col_mid:
-        st.markdown(
-            f'<div style="text-align:center; padding-top:.55rem; color:#64748b; font-size:.86rem; font-weight:700;">{page_index + 1}/{total_pages}</div>',
-            unsafe_allow_html=True,
-        )
     with col_next:
-        if st.button('→', use_container_width=True, disabled=page_index >= total_pages - 1, key=f'{mapping_key}_page_next'):
+        if st.button('Próximos campos →', use_container_width=True, disabled=page_index >= total_pages - 1, key=f'{mapping_key}_page_next_{position}'):
             _change_mapping_page(mapping_key, page_index + 1, direction='next', total_pages=total_pages)
 
 
