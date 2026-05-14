@@ -65,12 +65,7 @@ def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
 
 
 def _clear_site_df(operation: str, reason: str) -> None:
-    """Remove origem antiga da operação quando uma nova captura não é válida.
-
-    BLINGFIX #ALL: uma tentativa nova que falha não pode deixar uma captura antiga
-    aparecendo como se fosse o resultado atual. A limpeza é limitada à operação em
-    execução para não apagar a outra origem sem necessidade.
-    """
+    """Remove origem antiga da operação quando uma nova captura não é válida."""
     removed: list[str] = []
     current_key = _site_df_key(operation)
     for key in (current_key, 'df_site_bruto'):
@@ -106,6 +101,22 @@ def _orange_warning(message: str) -> None:
         f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
         unsafe_allow_html=True,
     )
+
+
+def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.') -> None:
+    """Finaliza e remove barras/caixas para não parecer processamento infinito."""
+    if progress is not None:
+        try:
+            progress.progress(100, text=text)
+            time.sleep(0.15)
+            progress.empty()
+        except Exception:
+            pass
+    if status_box is not None:
+        try:
+            status_box.empty()
+        except Exception:
+            pass
 
 
 def _operation_badge(operation: str) -> str:
@@ -311,6 +322,7 @@ def _run_authenticated_site_capture(
             error_message = '; '.join(result.errors)
             _clear_site_df(operation, 'captura_autenticada_com_erros')
             _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
+            _finish_progress(progress, text='Captura encerrada com erro.')
             add_audit_event(
                 'authenticated_site_capture_failed',
                 area='SITE',
@@ -331,6 +343,7 @@ def _run_authenticated_site_capture(
             error_message = 'A captura autenticada não encontrou dados na página preparada. Use a compatibilidade universal abaixo quando o fornecedor bloquear iframe, sessão, captcha ou robô.'
             _clear_site_df(operation, 'captura_autenticada_vazia')
             _set_capture_state(operation=operation, running=False, finished=False, error=error_message)
+            _finish_progress(progress, text='Captura encerrada sem produtos encontrados.')
             add_audit_event(
                 'authenticated_site_capture_empty',
                 area='SITE',
@@ -377,13 +390,13 @@ def _run_authenticated_site_capture(
                 'engine': 'BLING_INSTANT_SCRAPER',
             },
         )
-        if progress is not None:
-            progress.progress(100, text='Captura autenticada concluída.')
+        _finish_progress(progress, text='Captura autenticada concluída.')
         st.rerun()
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
         _clear_site_df(operation, 'captura_autenticada_exception')
         _set_capture_state(operation=operation, running=False, finished=False, error=message)
+        _finish_progress(progress, text='Captura encerrada com falha.')
         add_audit_event(
             'authenticated_site_capture_exception',
             area='SITE',
@@ -408,6 +421,7 @@ def _run_authenticated_site_capture(
                 finished=False,
                 error=st.session_state.get('site_capture_error') or 'Captura interrompida antes de finalizar.',
             )
+            _finish_progress(progress, text='Captura interrompida.')
 
 
 def _run_site_capture(
@@ -466,6 +480,7 @@ def _run_site_capture(
         message = str(exc) or exc.__class__.__name__
         _clear_site_df(operation, 'busca_publica_exception')
         _set_capture_state(operation=operation, running=False, finished=False, error=message)
+        _finish_progress(progress_bar, status_box, text='Busca encerrada com erro.')
         add_audit_event('site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
         st.error('A busca por site não conseguiu finalizar. Baixe o log debug para conferir o erro técnico.')
         return
@@ -475,6 +490,7 @@ def _run_site_capture(
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_site_df(operation, 'busca_publica_vazia')
         _set_capture_state(operation=operation, running=False, finished=False, error='A busca por site não encontrou produtos válidos.', rows=0, columns=0)
+        _finish_progress(progress_bar, status_box, text='Busca encerrada sem produtos encontrados.')
         add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
         st.warning('A busca por site não encontrou produtos válidos. Confira os links ou use a compatibilidade universal quando o fornecedor bloquear robôs.')
         return
@@ -487,6 +503,7 @@ def _run_site_capture(
     st.session_state['origem_final'] = 'site'
     _set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
     add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+    _finish_progress(progress_bar, status_box, text='Busca por site concluída.')
     st.rerun()
 
 
