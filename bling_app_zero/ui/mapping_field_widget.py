@@ -13,6 +13,7 @@ from bling_app_zero.ui.mapping_constants import (
 )
 from bling_app_zero.ui.mapping_widget_state import (
     default_index,
+    manual_fixed_value_key,
     manual_value_key,
     option_value,
     target_widget_key,
@@ -39,15 +40,25 @@ def signal_label(target: str, info: dict[str, object]) -> str:
     return f'{emoji} {target}'
 
 
-def render_manual_value_input(target: str, widget_key: str) -> str:
+def render_manual_value_input(target: str, widget_key: str, mapping_key: str) -> str:
     value_key = manual_value_key(widget_key)
+    stable_value_key = manual_fixed_value_key(mapping_key, target)
+    initial_value = str(st.session_state.get(stable_value_key, st.session_state.get(value_key, '')) or '')
+
+    if value_key not in st.session_state:
+        st.session_state[value_key] = initial_value
+    if stable_value_key not in st.session_state:
+        st.session_state[stable_value_key] = initial_value
+
     manual_value = st.text_input(
         f'Valor fixo para {target}',
-        value=str(st.session_state.get(value_key, '') or ''),
+        value=initial_value,
         key=value_key,
         placeholder='Digite o valor que será repetido no arquivo final',
     )
-    return str(manual_value or '')
+    manual_value = str(manual_value or '')
+    st.session_state[stable_value_key] = manual_value
+    return manual_value
 
 
 def render_mapping_select(
@@ -84,7 +95,7 @@ def render_mapping_select(
         if selected_raw == MANUAL_WRITE_OPTION:
             st.session_state[f'{widget_key}__manual_resolved'] = True
             st.session_state.pop(f'{widget_key}__empty_resolved', None)
-            render_manual_value_input(target, widget_key)
+            render_manual_value_input(target, widget_key, mapping_key)
             selected = MANUAL_MAPPING_VALUE
         elif selected_raw == EMPTY_LEAVE_OPTION:
             st.session_state[f'{widget_key}__empty_resolved'] = True
