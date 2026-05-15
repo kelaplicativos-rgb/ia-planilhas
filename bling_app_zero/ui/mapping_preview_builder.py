@@ -7,7 +7,13 @@ from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_super_assistant import safe_default_for_target
 from bling_app_zero.core.text import normalize_key
-from bling_app_zero.ui.mapping_widget_state import is_empty_mapping_value, is_manual_value, manual_value_key, target_widget_key
+from bling_app_zero.ui.mapping_widget_state import (
+    is_empty_mapping_value,
+    is_manual_value,
+    manual_fixed_value_key,
+    manual_value_key,
+    target_widget_key,
+)
 
 CALCULATED_PRICE_SOURCE_COLUMN = 'Preço de venda'
 PRICE_TARGET_ALIASES = (
@@ -44,6 +50,15 @@ def apply_safe_defaults(df: pd.DataFrame, protected_empty_targets: set[str] | No
     return out
 
 
+def _manual_fixed_value(mapping_key: str, target: str, widget_key: str) -> str:
+    stable_key = manual_fixed_value_key(mapping_key, target)
+    legacy_key = manual_value_key(widget_key)
+    value = str(st.session_state.get(stable_key, '') or '')
+    if value:
+        return value
+    return str(st.session_state.get(legacy_key, '') or '')
+
+
 def apply_manual_fixed_values(
     df: pd.DataFrame,
     mapping: dict[str, str],
@@ -55,7 +70,7 @@ def apply_manual_fixed_values(
         if not is_manual_value(mapping.get(target, '')) or target not in out.columns:
             continue
         widget_key = target_widget_key(mapping_key, index)
-        manual_value = str(st.session_state.get(manual_value_key(widget_key), '') or '')
+        manual_value = _manual_fixed_value(mapping_key, target, widget_key)
         out[target] = manual_value
     return out
 
