@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 EMPTY_CHOOSE_OPTION = '— escolher coluna —'
-MANUAL_WRITE_OPTION = '— escrever valor fixo —'
+MANUAL_WRITE_OPTION = '— escrever —'
 EMPTY_LEAVE_OPTION = '— deixar vazio —'
 MANUAL_MAPPING_VALUE = '__BLING_MANUAL_FIXED_VALUE__'
 EMPTY_MAPPING_VALUE = '__BLING_EXPLICIT_EMPTY_VALUE__'
