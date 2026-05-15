@@ -30,6 +30,17 @@ def manual_value_key(widget_key: str) -> str:
     return f'{widget_key}__manual_value'
 
 
+def manual_fixed_value_key(mapping_key: str, target: str) -> str:
+    """Chave estável do valor fixo digitado para uma coluna do modelo.
+
+    A chave antiga era baseada somente no widget/índice visível. Quando o usuário
+    paginava, filtrava, confirmava ou seguia para o preview/download, o valor
+    podia ficar preso no estado visual do componente e não ser reencontrado na
+    montagem do CSV final. Esta chave usa o campo real do Bling como referência.
+    """
+    return f'{mapping_key}_manual_fixed_{short_hash(target, size=16)}'
+
+
 def is_manual_value(value: str | None) -> bool:
     return str(value or '').strip() == MANUAL_MAPPING_VALUE
 
@@ -100,6 +111,7 @@ __all__ = [
     'is_explicit_empty',
     'is_explicit_manual',
     'is_manual_value',
+    'manual_fixed_value_key',
     'manual_value_key',
     'mapping_base',
     'option_value',
