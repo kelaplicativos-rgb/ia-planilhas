@@ -7,7 +7,7 @@ FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
 STATE_GUARD_LAST_OPERATION_KEY = 'bling_wizard_state_guard_last_operation'
-STATE_GUARD_VERSION = '2026-05-14-wizard-guard-fast-1'
+STATE_GUARD_VERSION = '2026-05-16-wizard-guard-stock-no-price-1'
 
 VALID_STEPS = {
     'modelo',
@@ -24,6 +24,7 @@ VALID_STEPS = {
 }
 VALID_OPERATIONS = {'cadastro', 'estoque'}
 VALID_ORIGINS = {'arquivo', 'site'}
+STOCK_FORBIDDEN_STEPS = {'precificacao', 'mapeamento'}
 
 LEGACY_WIDGET_PREFIXES = (
     'frontpage_origin_radio_',
@@ -96,7 +97,8 @@ def _selected_operation() -> str:
 def _normalize_scalar_state() -> None:
     step = str(st.session_state.get(WIZARD_STEP_KEY) or 'modelo').strip().lower()
     if step not in VALID_STEPS:
-        st.session_state[WIZARD_STEP_KEY] = 'modelo'
+        step = 'modelo'
+        st.session_state[WIZARD_STEP_KEY] = step
 
     operation = _selected_operation()
     if operation:
@@ -109,6 +111,10 @@ def _normalize_scalar_state() -> None:
             st.session_state.pop(FLOW_OPERATION_KEY, None)
             st.session_state.pop('operacao_final', None)
             st.session_state.pop('tipo_operacao_final', None)
+
+    operation = _selected_operation()
+    if operation == 'estoque' and step in STOCK_FORBIDDEN_STEPS:
+        st.session_state[WIZARD_STEP_KEY] = 'origem'
 
     origin = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
     if origin and origin not in VALID_ORIGINS:
