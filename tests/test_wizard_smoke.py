@@ -34,6 +34,7 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.wizard_state_guard',
     'bling_app_zero.ui.ai_sidebar',
     'bling_app_zero.ui.ai_analysis_panel',
+    'bling_app_zero.ui.ai_mapping_apply_panel',
     'bling_app_zero.ai.ai_config',
     'bling_app_zero.ai.ai_client',
     'bling_app_zero.ai.ai_schema',
@@ -252,6 +253,22 @@ def test_ai_analysis_panel_is_informational_only() -> None:
     assert 'st.session_state["mapping_cadastro"]' not in panel
     assert 'st.session_state[\'mapping_estoque\']' not in panel
     assert 'st.session_state["mapping_estoque"]' not in panel
+
+
+def test_ai_mapping_apply_panel_is_safe_and_manual() -> None:
+    panel = Path('bling_app_zero/ui/ai_mapping_apply_panel.py').read_text(encoding='utf-8')
+    cadastro_flow = Path('bling_app_zero/ui/mapping_cadastro_flow.py').read_text(encoding='utf-8')
+    estoque_flow = Path('bling_app_zero/ui/mapping_estoque_flow.py').read_text(encoding='utf-8')
+
+    assert 'MIN_CONFIDENCE_TO_APPLY = 0.85' in panel
+    assert 'só preenche campos vazios/sem escolha' in panel
+    assert 'nunca sobrescreve mapeamento já escolhido pelo usuário' in panel
+    assert 'Nada será confirmado automaticamente.' in panel
+    assert "st.session_state.pop('cadastro_mapping_confirmed', None)" in panel
+    assert 'render_ai_mapping_apply_panel' in cadastro_flow
+    assert 'render_ai_mapping_apply_panel' in estoque_flow
+    assert "operation='cadastro'" in cadastro_flow
+    assert "operation='estoque'" in estoque_flow
 
 
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
