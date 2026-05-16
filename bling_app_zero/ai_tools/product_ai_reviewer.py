@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import pandas as pd
-import streamlit as st
 
+from bling_app_zero.ai.ai_config import get_ai_model, get_user_openai_key
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
-DEFAULT_MODEL = 'gpt-4o-mini'
 MAX_ROWS_PER_RUN = 60
 PROTECTED_COLUMN_TERMS = [
     'preco', 'preço', 'valor', 'gtin', 'ean', 'estoque', 'quantidade', 'saldo',
@@ -31,56 +29,17 @@ class ProductAISuggestion:
     reason: str
 
 
-def _unique_names(*names: str) -> list[str]:
-    result: list[str] = []
-    for name in names:
-        for candidate in [name, str(name).upper(), str(name).lower()]:
-            if candidate and candidate not in result:
-                result.append(candidate)
-    return result
-
-
-def _secret_value(*names: str) -> str:
-    expanded_names = _unique_names(*names)
-    for name in expanded_names:
-        value = os.getenv(name)
-        if value:
-            return str(value).strip()
-    try:
-        for name in expanded_names:
-            if name in st.secrets:
-                value = st.secrets.get(name)
-                if value:
-                    return str(value).strip()
-    except Exception:
-        pass
-    try:
-        openai_section = st.secrets.get('openai', {})
-        if isinstance(openai_section, dict):
-            for name in expanded_names:
-                if name in openai_section and openai_section.get(name):
-                    return str(openai_section.get(name) or '').strip()
-            wants_key = any('key' in normalize_key(name) or 'token' in normalize_key(name) for name in expanded_names)
-            wants_model = any('model' in normalize_key(name) for name in expanded_names)
-            if wants_key:
-                for alias in ['api_key', 'key', 'token', 'OPENAI_API_KEY', 'openai_api_key']:
-                    if alias in openai_section and openai_section.get(alias):
-                        return str(openai_section.get(alias) or '').strip()
-            if wants_model:
-                for alias in ['model', 'OPENAI_MODEL', 'openai_model']:
-                    if alias in openai_section and openai_section.get(alias):
-                        return str(openai_section.get(alias) or '').strip()
-    except Exception:
-        pass
-    return ''
-
-
 def ai_ready() -> bool:
-    return bool(_secret_value('OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key'))
+    """Usa somente a chave OpenAI digitada no sidebar do Mapeia.AI.
+
+    Regra BYOK: não procurar OPENAI_API_KEY em ambiente, st.secrets ou fallback
+    administrativo. Cada usuário informa a própria chave na sessão atual.
+    """
+    return bool(get_user_openai_key())
 
 
 def _model_name() -> str:
-    return _secret_value('OPENAI_MODEL', 'openai_model', 'model') or DEFAULT_MODEL
+    return get_ai_model()
 
 
 def _safe_json_loads(text: str) -> dict[str, Any]:
@@ -148,7 +107,13 @@ def _safe_row_data(row: pd.Series, max_columns: int = 36) -> dict[str, str]:
     return data
 
 
-def _rows_payload(df: pd.DataFrame, columns: dict[str, str], max_rows: int, include_custom_task_rows: bool = False, include_grammar_rows: bool = False) -> list[dict[str, Any]]:
+def _rows_payload(
+    df: pd.DataFrame,
+    columns: dict[str, str],
+    max_rows: int,
+    include_custom_task_rows: bool = False,
+    include_grammar_rows: bool = False,
+) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for index, row in df.head(max_rows).iterrows():
         title = _value(row, columns.get('title', ''))
@@ -219,12 +184,28 @@ def _normalize_suggestions(raw: list[dict[str, Any]], df: pd.DataFrame, columns:
         original = _value(df.loc[row_index], column)
         if original.strip() == suggested.strip():
             continue
-        suggestions.append(ProductAISuggestion(row_index, _product_ref(df.loc[row_index], columns), field, column, original, suggested, clean_cell(item.get('reason', 'Sugestão gerada pela IA.'))))
+        suggestions.append(
+            ProductAISuggestion(
+                row_index,
+                _product_ref(df.loc[row_index], columns),
+                field,
+                column,
+                original,
+                suggested,
+                clean_cell(item.get('reason', 'Sugestão gerada pela IA.')),
+            )
+        )
     return suggestions
 
 
-def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], actions: dict[str, bool], max_rows: int, custom_task: str = '') -> list[ProductAISuggestion]:
-    api_key = _secret_value('OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key')
+def _call_openai_for_suggestions(
+    df: pd.DataFrame,
+    columns: dict[str, str],
+    actions: dict[str, bool],
+    max_rows: int,
+    custom_task: str = '',
+) -> list[ProductAISuggestion]:
+    api_key = get_user_openai_key()
     if not api_key:
         return []
     clean_task = clean_cell(custom_task)
@@ -237,7 +218,7 @@ def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], acti
         enabled_actions.append('multitarefa')
     editable_columns = [str(column) for column in df.columns if not _is_protected_column(str(column))]
     system = (
-        'Você é uma IA de revisão de catálogo para importação no Bling. '
+        'Você é uma IA de revisão de catálogo para o Mapeia.AI. '
         'Melhore dados de produtos sem inventar especificações técnicas. Use somente dados da linha fornecida. '
         'Para NCM, gere apenas sugestão de 8 dígitos quando houver contexto suficiente. '
         'Nunca altere preço, GTIN/EAN, estoque, depósito, código/SKU, ID, imagens ou URLs. '
@@ -258,10 +239,33 @@ def _call_openai_for_suggestions(df: pd.DataFrame, columns: dict[str, str], acti
             'Retorne apenas JSON.',
         ],
         'rows': rows,
-        'output_schema': {'suggestions': [{'row_index': 0, 'field': 'title | description | grammar_title | grammar_description | ncm | multitarefa', 'column': 'obrigatório para multitarefa; opcional para title/description/ncm', 'suggested': 'texto sugerido ou NCM de 8 dígitos', 'reason': 'motivo curto'}]},
+        'output_schema': {
+            'suggestions': [
+                {
+                    'row_index': 0,
+                    'field': 'title | description | grammar_title | grammar_description | ncm | multitarefa',
+                    'column': 'obrigatório para multitarefa; opcional para title/description/ncm',
+                    'suggested': 'texto sugerido ou NCM de 8 dígitos',
+                    'reason': 'motivo curto',
+                }
+            ]
+        },
     }
-    payload = {'model': _model_name(), 'temperature': 0.2, 'response_format': {'type': 'json_object'}, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(user, ensure_ascii=False)}]}
-    response = httpx.post(OPENAI_CHAT_URL, headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}, json=payload, timeout=60)
+    payload = {
+        'model': _model_name(),
+        'temperature': 0.2,
+        'response_format': {'type': 'json_object'},
+        'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': json.dumps(user, ensure_ascii=False)},
+        ],
+    }
+    response = httpx.post(
+        OPENAI_CHAT_URL,
+        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+        json=payload,
+        timeout=60,
+    )
     response.raise_for_status()
     data = response.json()
     parsed = _safe_json_loads(data['choices'][0]['message']['content'])
@@ -292,14 +296,20 @@ def _fallback_suggestions(df: pd.DataFrame, columns: dict[str, str], actions: di
     return suggestions
 
 
-def generate_product_ai_suggestions(df: pd.DataFrame, *, actions: dict[str, bool] | None = None, max_rows: int = MAX_ROWS_PER_RUN, custom_task: str = '') -> tuple[list[ProductAISuggestion], str]:
+def generate_product_ai_suggestions(
+    df: pd.DataFrame,
+    *,
+    actions: dict[str, bool] | None = None,
+    max_rows: int = MAX_ROWS_PER_RUN,
+    custom_task: str = '',
+) -> tuple[list[ProductAISuggestion], str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return [], 'Sem dados finais para revisar.'
     selected_actions = actions or {'title': True, 'description': True, 'ncm': True, 'grammar': False}
     clean_task = clean_cell(custom_task)
     columns = detect_product_columns(df)
     if not any(columns.get(key) for key in ['title', 'description', 'ncm']) and not clean_task:
-        return [], 'Não encontrei colunas de título, descrição complementar ou NCM no CSV final.'
+        return [], 'Não encontrei colunas de título, descrição complementar ou NCM na planilha final.'
     try:
         suggestions = _call_openai_for_suggestions(df, columns, selected_actions, max_rows=max_rows, custom_task=clean_task)
         if suggestions:
@@ -313,14 +323,26 @@ def generate_product_ai_suggestions(df: pd.DataFrame, *, actions: dict[str, bool
         return [], f'IA online falhou: {exc}'
     local = _fallback_suggestions(df, columns, selected_actions, max_rows=max_rows)
     if local:
-        return local, 'OPENAI_API_KEY não configurada. Mostrei sugestões locais seguras.'
+        return local, 'Chave OpenAI não informada no sidebar. Mostrei sugestões locais seguras.'
     if clean_task or bool(selected_actions.get('grammar')):
-        return [], 'OPENAI_API_KEY não configurada. Ortografia/gramática e multitarefa livre precisam da IA conectada.'
-    return [], 'OPENAI_API_KEY não configurada e não encontrei sugestões locais seguras.'
+        return [], 'Chave OpenAI não informada no sidebar. Ortografia/gramática e multitarefa livre precisam da IA conectada.'
+    return [], 'Chave OpenAI não informada no sidebar e não encontrei sugestões locais seguras.'
 
 
 def suggestions_to_dataframe(suggestions: list[ProductAISuggestion]) -> pd.DataFrame:
-    return pd.DataFrame([{'Aplicar': True, 'Linha': item.row_index, 'Produto': item.product_ref, 'Campo': item.field, 'Coluna': item.column, 'Original': item.original, 'Sugestão IA': item.suggested, 'Motivo': item.reason} for item in suggestions])
+    return pd.DataFrame([
+        {
+            'Aplicar': True,
+            'Linha': item.row_index,
+            'Produto': item.product_ref,
+            'Campo': item.field,
+            'Coluna': item.column,
+            'Original': item.original,
+            'Sugestão IA': item.suggested,
+            'Motivo': item.reason,
+        }
+        for item in suggestions
+    ])
 
 
 def apply_product_ai_suggestions(df: pd.DataFrame, edited_suggestions: pd.DataFrame) -> pd.DataFrame:
@@ -344,4 +366,11 @@ def apply_product_ai_suggestions(df: pd.DataFrame, edited_suggestions: pd.DataFr
     return out
 
 
-__all__ = ['ProductAISuggestion', 'ai_ready', 'apply_product_ai_suggestions', 'detect_product_columns', 'generate_product_ai_suggestions', 'suggestions_to_dataframe']
+__all__ = [
+    'ProductAISuggestion',
+    'ai_ready',
+    'apply_product_ai_suggestions',
+    'detect_product_columns',
+    'generate_product_ai_suggestions',
+    'suggestions_to_dataframe',
+]
