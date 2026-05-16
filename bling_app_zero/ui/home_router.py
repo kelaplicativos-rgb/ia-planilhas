@@ -5,13 +5,13 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_shared import read_upload_fast
-from bling_app_zero.ui.universal_flow import render_universal_flow
+from bling_app_zero.ui.home_wizard import render_home_wizard
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_INTAKE_MODEL_KEY = 'mapeiaai_home_intake_model_df'
 HOME_INTAKE_MODEL_FILE_KEY = 'mapeiaai_home_intake_model_file'
-FLOW_UNIVERSAL = 'universal_model_flow'
+FLOW_WIZARD = 'wizard_cadastro_estoque'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 
 
@@ -75,36 +75,51 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     clean_df = df.copy().fillna('')
     st.session_state[HOME_INTAKE_MODEL_KEY] = clean_df
     st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
-    st.session_state['mapeiaai_universal_model_df'] = clean_df
     st.session_state['mapeiaai_final_contract_df'] = clean_df
+
+    # O restante do sistema antigo continua funcionando com os nomes de modelo
+    # que ele já conhece. O mesmo contrato fica disponível para cadastro e estoque,
+    # sem tentar detectar automaticamente o tipo do anexo.
+    st.session_state['home_modelo_cadastro_df'] = clean_df.copy()
+    st.session_state['df_modelo_cadastro'] = clean_df.copy()
+    st.session_state['modelo_cadastro_df'] = clean_df.copy()
+    st.session_state['home_modelo_estoque_df'] = clean_df.copy()
+    st.session_state['df_modelo_estoque'] = clean_df.copy()
+    st.session_state['modelo_estoque_df'] = clean_df.copy()
+
+    # Entrada padrão no wizard antigo. A partir da segunda etapa, o usuário volta
+    # a usar origem por site/anexo, calculadora, mapeamento, preview e download.
+    st.session_state.setdefault('home_slim_flow_operation', 'cadastro')
+    st.session_state.setdefault('operacao_final', 'cadastro')
+    st.session_state.setdefault('tipo_operacao_final', 'cadastro')
 
 
 def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
-    st.success('Planilha recebida como contrato final de saída.')
-    st.caption('O sistema não precisa adivinhar se é Kyte, Olist, Magalu, cadastro, estoque ou ERP próprio. O arquivo anexado define as colunas finais.')
+    st.success('Planilha recebida como modelo/contrato do arquivo final.')
+    st.caption('A primeira tela só guarda o modelo anexado. A partir da próxima etapa o sistema volta ao fluxo antigo funcional, com busca por site protegida, origem por anexo, calculadora, mapeamento, preview e download.')
     st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
     with st.expander('Conferir contrato da planilha final', expanded=False):
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button('Continuar para origem dos dados', use_container_width=True, key='home_continue_after_contract_upload'):
+    if st.button('Continuar para o fluxo do sistema', use_container_width=True, key='home_continue_after_contract_upload'):
         add_audit_event(
             'home_contract_continue_clicked',
             area='HOME',
             details={
                 'file_name': file_name,
                 'columns_count': int(len(df.columns)),
-                'flow': FLOW_UNIVERSAL,
+                'flow': FLOW_WIZARD,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-        _set_flow(FLOW_UNIVERSAL)
+        _set_flow(FLOW_WIZARD)
 
 
 def _render_operation_choice() -> None:
     st.markdown('## Anexe a planilha que vai ser mapeada')
     st.caption(
-        'Envie a planilha/modelo de destino. Ela vira o contrato fiel do download final, independente do sistema, fornecedor ou marketplace.'
+        'Envie a planilha/modelo de destino. Ela será usada como contrato fiel do download final. Depois o sistema volta ao fluxo antigo completo.'
     )
 
     uploaded = st.file_uploader(
@@ -117,7 +132,7 @@ def _render_operation_choice() -> None:
     df = _read_intake_file(uploaded)
     if not isinstance(df, pd.DataFrame):
         st.info('Anexe a planilha para liberar o próximo passo.')
-        st.caption('Depois você escolhe a origem dos dados, faz o mapeamento com IA real, aplica opcionais de cálculo e baixa o arquivo no mesmo contrato anexado.')
+        st.caption('Na próxima etapa voltam os recursos do sistema: buscar produtos por site, anexar origem, calculadora, mapeamento, preview e download final.')
         return
 
     file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
@@ -128,7 +143,7 @@ def _render_operation_choice() -> None:
         details={
             'file_name': file_name,
             'columns_count': int(len(df.columns)),
-            'flow': FLOW_UNIVERSAL,
+            'flow': FLOW_WIZARD,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -154,8 +169,11 @@ def render_home_router() -> None:
         _render_operation_choice()
         return
 
+    if flow != FLOW_WIZARD:
+        st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
+
     _render_back_to_operations()
-    render_universal_flow()
+    render_home_wizard()
 
 
 __all__ = ['render_home_router']
