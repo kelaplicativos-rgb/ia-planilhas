@@ -142,7 +142,7 @@ def _step_ready_for_autonext(step: str, operation: str) -> bool:
     if step == STEP_OPERACAO:
         return operation in {'cadastro', 'estoque'}
     if step == STEP_PRECIFICACAO:
-        return not _pricing_is_active()
+        return operation == 'cadastro' and not _pricing_is_active()
     if step == STEP_ORIGEM:
         return _current_origin() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
@@ -256,12 +256,18 @@ def _manual_navigation_is_locked() -> bool:
     return bool(target_step and (target_step == current or target_step == '__home_choice__'))
 
 
-def run_home_autofluxo() -> None:
-    """Autoavanço opcional.
+def _autoflow_enabled() -> bool:
+    if AUTOFLOW_ENABLED_KEY not in st.session_state:
+        st.session_state[AUTOFLOW_ENABLED_KEY] = True
+    return bool(st.session_state.get(AUTOFLOW_ENABLED_KEY, True))
 
-    BLINGFIX: o padrão agora é desligado para não sobrescrever os botões manuais
-    Voltar/Avançar. Quando habilitado explicitamente, ainda respeita travas de
-    navegação manual, mapeamento e revisão.
+
+def run_home_autofluxo() -> None:
+    """Autoavanço seguro do wizard.
+
+    BLINGFIX FLUIDEZ: o padrão agora é ligado para retirar cliques sem lógica.
+    O auto-next continua bloqueado em mapeamento, geração de estoque, preview,
+    download e qualquer etapa com pendência real.
     """
     if _manual_navigation_is_locked():
         add_audit_event(
@@ -272,8 +278,7 @@ def run_home_autofluxo() -> None:
         )
         return
 
-    enabled = bool(st.session_state.get(AUTOFLOW_ENABLED_KEY, False))
-    if not enabled:
+    if not _autoflow_enabled():
         return
     if st.session_state.get(HOME_ACTIVE_OPERATION_KEY) != FLOW_WIZARD_VALUE:
         return
@@ -287,7 +292,7 @@ def run_home_autofluxo() -> None:
         return
 
     if current in MANUAL_REVIEW_STEPS:
-        pause_home_autofluxo_for_manual_review(current, reason='current_step_requires_human_mapping_review')
+        pause_home_autofluxo_for_manual_review(current, reason='current_step_requires_human_review')
         return
 
     paused_step = str(st.session_state.get(AUTOFLOW_PAUSE_STEP_KEY) or '').strip().lower()
@@ -314,6 +319,10 @@ def run_home_autofluxo() -> None:
         reason = 'bling_model_already_loaded'
     elif current == STEP_ORIGEM:
         reason = 'origin_already_selected'
+    elif current == STEP_REGRAS:
+        reason = 'rules_already_confirmed'
+    elif current == STEP_ENTRADA:
+        reason = 'input_context_ready'
 
     _move_to_step(next_step, current=current, operation=operation, reason=reason)
 
