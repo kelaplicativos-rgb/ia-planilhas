@@ -160,7 +160,7 @@ def _official_cadastro_model(file: Any, df: pd.DataFrame | None) -> bool:
     if not columns:
         return False
 
-    name_says_product = any(term in name for term in ['produto', 'produtos', 'cadastro', 'modelo', 'bling'])
+    name_says_product = any(term in name for term in ['produto', 'produtos', 'cadastro', 'modelo', 'bling', 'magalu', 'marketplace', 'marketplaces'])
     has_required_base = _has_all_column_groups(df, CADASTRO_REQUIRED_TERMS)
     has_product_taxonomy = _has_any_column(df, ['ncm', 'marca', 'categoria'])
     has_product_extra = _has_any_column(df, ['descricao complementar', 'descricao curta', 'url imagens externas', 'gtin ean'])
@@ -177,9 +177,9 @@ def _score_cadastro_model(file: Any, df: pd.DataFrame | None) -> int:
     score = 0
     if _official_cadastro_model(file, df):
         score += 180
-    if any(term in name for term in ['modelo', 'bling', 'cadastro', 'produto', 'produtos', 'layout', 'importacao']):
+    if any(term in name for term in ['modelo', 'bling', 'cadastro', 'produto', 'produtos', 'layout', 'importacao', 'magalu', 'marketplace', 'marketplaces']):
         score += 35
-    if any(term in columns for term in ['gtin', 'ean', 'preco', 'descricao', 'ncm', 'marca', 'categoria']):
+    if any(term in columns for term in ['gtin', 'ean', 'preco', 'descricao', 'ncm', 'marca', 'categoria', 'sku', 'titulo']):
         score += 70
     if any(term in columns for term in CADASTRO_STRONG_TERMS):
         score += 35
@@ -216,6 +216,24 @@ def _pick_cadastro(loaded: list[tuple[Any, pd.DataFrame | None]]) -> tuple[Any |
     return file, df
 
 
+def _pick_generic_cadastro_contract(loaded: list[tuple[Any, pd.DataFrame | None]]) -> tuple[Any | None, pd.DataFrame | None]:
+    """Fallback para modelos de marketplace que não parecem Bling.
+
+    Quando o usuário está no fluxo de cadastro e anexou uma planilha modelo de
+    marketplace, como Magalu, Mercado Livre ou outro canal, ela deve virar
+    contrato do arquivo final mesmo sem colunas oficiais do Bling.
+    """
+    candidates: list[tuple[Any, pd.DataFrame]] = []
+    for file, df in loaded:
+        if _official_stock_model(file, df):
+            continue
+        if isinstance(df, pd.DataFrame) and len(df.columns):
+            candidates.append((file, df.copy().fillna('')))
+    if not candidates:
+        return None, None
+    return candidates[0]
+
+
 def _pick_estoque(loaded: list[tuple[Any, pd.DataFrame | None]], used_file: Any | None) -> tuple[Any | None, pd.DataFrame | None]:
     candidates = [item for item in loaded if item[0] is not used_file]
     if not candidates:
@@ -230,10 +248,10 @@ def _detected_message(cadastro_df: pd.DataFrame | None, estoque_df: pd.DataFrame
     if isinstance(estoque_df, pd.DataFrame) and not isinstance(cadastro_df, pd.DataFrame):
         return 'Modelo de estoque reconhecido automaticamente. Próximo fluxo: atualizar estoque.'
     if isinstance(cadastro_df, pd.DataFrame) and not isinstance(estoque_df, pd.DataFrame):
-        return 'Modelo de cadastro reconhecido automaticamente. Próximo fluxo: cadastrar produtos.'
+        return 'Modelo de cadastro/marketplace reconhecido automaticamente. Próximo fluxo: cadastrar produtos.'
     if isinstance(cadastro_df, pd.DataFrame) and isinstance(estoque_df, pd.DataFrame):
         return 'Modelos de cadastro e estoque reconhecidos.'
-    return 'Arquivo recebido. Confira se é um modelo oficial do Bling.'
+    return 'Arquivo recebido. Confira se é um modelo de importação válido.'
 
 
 def _render_detected_summary(
@@ -249,8 +267,8 @@ def _render_detected_summary(
     if isinstance(cadastro_df, pd.DataFrame) or isinstance(estoque_df, pd.DataFrame):
         with st.expander('Conferir modelos detectados', expanded=False):
             if isinstance(cadastro_df, pd.DataFrame):
-                st.caption(f'Cadastro: {_file_name(cadastro_file)}' if cadastro_file else 'Cadastro detectado')
-                preview_df('Cadastro', cadastro_df)
+                st.caption(f'Cadastro/marketplace: {_file_name(cadastro_file)}' if cadastro_file else 'Cadastro/marketplace detectado')
+                preview_df('Cadastro/marketplace', cadastro_df)
             if isinstance(estoque_df, pd.DataFrame):
                 st.caption(f'Estoque: {_file_name(estoque_file)}' if estoque_file else 'Estoque detectado')
                 preview_df('Estoque', estoque_df)
@@ -264,11 +282,11 @@ def render_model_upload_box(
     caption: str | None = None,
 ) -> ModelUploadResult:
     files = st.file_uploader(
-        'Enviar modelos do Bling',
+        'Enviar modelos de importação',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie o modelo de cadastro, estoque ou ambos.',
+        help='Envie o modelo de cadastro, marketplace, estoque ou ambos.',
         label_visibility='collapsed',
     )
 
@@ -307,6 +325,8 @@ def render_model_upload_box(
 
     loaded = [(file, _safe_read(file)) for file in supported_files]
     cadastro_file, cadastro_df = _pick_cadastro(loaded)
+    if str(operation or '').strip().lower() == 'cadastro' and not isinstance(cadastro_df, pd.DataFrame):
+        cadastro_file, cadastro_df = _pick_generic_cadastro_contract(loaded)
     estoque_file, estoque_df = _pick_estoque(loaded, cadastro_file)
 
     if isinstance(estoque_df, pd.DataFrame) and not isinstance(cadastro_df, pd.DataFrame):
