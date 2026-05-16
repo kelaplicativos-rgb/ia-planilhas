@@ -30,7 +30,7 @@ def _model_or_internal(df_modelo: pd.DataFrame | None = None) -> pd.DataFrame:
 
 def _show_model_contract_notice(df_modelo: pd.DataFrame | None = None) -> None:
     model = _model_or_internal(df_modelo)
-    st.caption(f'Contrato de estoque ativo: {len(model.columns)} coluna(s). O CSV final respeitará exatamente esse cabeçalho e essa ordem.')
+    st.caption(f'Contrato de estoque ativo: {len(model.columns)} coluna(s). A planilha final respeitará exatamente esse cabeçalho e essa ordem.')
 
 
 def _stock_results() -> list[dict[str, object]]:
@@ -44,7 +44,7 @@ def _download_key(index: object, name: str, df_final: pd.DataFrame) -> str:
 
 
 def _final_preview_df(df_final: pd.DataFrame, df_modelo: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Aplica no preview/download a mesma blindagem de contrato usada no CSV."""
+    """Aplica no preview/download a mesma blindagem de contrato usada na planilha final."""
     model = _model_or_internal(df_modelo)
     contracted = enforce_model_contract(df_final.copy().fillna(''), 'estoque', model)
     return sanitize_for_bling(contracted, operation='estoque')
@@ -73,7 +73,7 @@ def build_stock_outputs_from_dataframe(
     model = _model_or_internal(df_modelo)
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         clear_estoque_outputs()
-        st.warning('Nenhuma origem válida de estoque foi encontrada para gerar o CSV.')
+        st.warning('Nenhuma origem válida de estoque foi encontrada para gerar a planilha.')
         return
     run_estoque_pipeline = load_estoque_pipeline()
     try:
@@ -151,9 +151,9 @@ def render_stock_preview() -> None:
 def render_stock_downloads() -> None:
     results = _stock_results()
     if not results:
-        st.warning('Nenhum CSV de estoque foi gerado ainda.')
+        st.warning('Nenhuma planilha de estoque foi gerada ainda.')
         return
-    st.caption('Baixe somente o CSV final de atualização de estoque. Cada origem válida gera um arquivo separado.')
+    st.caption('Baixe somente a planilha final de atualização de estoque. Cada origem válida gera um arquivo separado.')
     _show_model_contract_notice()
     for result in results:
         index = result.get('index')
