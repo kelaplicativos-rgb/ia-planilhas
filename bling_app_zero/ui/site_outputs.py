@@ -133,5 +133,5 @@ def render_generated_site_actions(
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
-        help='Opcional: baixa apenas a origem bruta capturada no site, não é o CSV final do Bling.',
+        help='Opcional: baixa apenas a origem bruta capturada no site; não é a planilha final.',
     )
