@@ -87,7 +87,7 @@ def _render_operation_choice() -> None:
         button_key='home_open_universal_flow',
         on_click=_open_universal_flow,
     )
-    st.caption('Fluxo antigo extinto: cadastro, estoque e preços agora são tipos detectados dentro do modelo universal.')
+    st.caption('Cadastro, estoque, preços e multilojas são detectados automaticamente a partir das colunas do modelo anexado.')
 
 
 def _back_to_operations() -> None:
