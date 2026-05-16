@@ -121,7 +121,6 @@ def wizard_steps_for_operation(operation: str) -> list[str]:
 
 
 def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
-    """Regra única: índice atual + delta, sem pular etapas."""
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
     if current not in steps:
@@ -315,7 +314,7 @@ def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
     if step == STEP_MAPEAMENTO:
         return cadastro_mapping_ready(), 'Avançar →', 'Confirme o mapeamento obrigatório.'
     if step == STEP_GERAR_ESTOQUE:
-        return estoque_output_ready(), 'Avançar →', 'Gere/conferira o estoque antes do preview.'
+        return estoque_output_ready(), 'Avançar →', 'Gere/confira o estoque antes do preview.'
     if step == STEP_PREVIEW:
         ready = estoque_output_ready() if operation == 'estoque' else cadastro_mapping_ready()
         return ready, 'Avançar →', 'O preview ainda depende da etapa anterior.'
@@ -341,13 +340,12 @@ def _render_bottom_navigation(*, allow_next: bool, next_label: str, pending_mess
             _previous_step()
     with col_next:
         if is_last:
-            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_bottom_next_last_{current}')
+            st.caption('Última etapa do fluxo.')
         elif allow_next:
             if st.button(next_label, use_container_width=True, key=f'wizard_bottom_next_{current}'):
                 add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'responsible_file': RESPONSIBLE_FILE})
                 _next_step()
         else:
-            st.button('Avançar →', use_container_width=True, disabled=True, key=f'wizard_bottom_next_disabled_{current}')
             _audit_step_blocked(current, pending_message)
             render_pending_notice(pending_message)
 
@@ -444,7 +442,12 @@ def _render_origin_step() -> None:
 
     origin = values[labels.index(choice_label)]
     _sync_flow_state(origin, operation)
-    st.success('Origem definida. Use Avançar para continuar ou Voltar para revisar sem perder os dados.')
+    st.success('Origem definida. Avançando para a próxima etapa.')
+
+    signature = f'{operation}:{origin}'
+    if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
+        st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
+        _go_to_step(wizard_next_target(STEP_ORIGEM, operation), reason='origin_selected_auto_next')
 
 
 def _render_rules_step() -> None:
