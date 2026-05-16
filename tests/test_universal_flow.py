@@ -52,6 +52,17 @@ def test_universal_flow_preserves_final_model_contract() -> None:
     assert 'Baixar planilha final universal' in flow
 
 
+def test_universal_uploads_do_not_use_mobile_blocking_type_filters() -> None:
+    flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
+
+    assert 'SUPPORTED_UPLOAD_LABEL' in flow
+    assert 'No celular, o seletor fica livre' in flow
+    assert 'type=None' in flow
+    assert "type=['xlsx'" not in flow
+    assert "type=['xlsx', 'xls', 'csv'" not in flow
+    assert 'Android bloqueie CSV/planilhas válidas' in flow
+
+
 def test_universal_flow_state_is_signature_guarded() -> None:
     flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
 
