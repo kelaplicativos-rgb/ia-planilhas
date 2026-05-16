@@ -25,9 +25,9 @@ def render_compact_hero() -> None:
     """
     st.markdown(
         """
-        <section class="bling-hero" aria-label="Mapeia.AI">
+        <section class="bling-hero" aria-label="MapeiaAI">
             <div class="bling-hero-kicker">Mapeamento inteligente de planilhas</div>
-            <h1 class="bling-hero-title">Mapeia.AI</h1>
+            <h1 class="bling-hero-title">MapeiaAI</h1>
             <p class="bling-hero-subtitle">Transforme qualquer origem em uma planilha pronta no modelo certo.</p>
         </section>
         """,
