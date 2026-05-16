@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.ai_mapping_apply_panel import render_ai_mapping_apply_panel
+from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
@@ -70,7 +72,7 @@ def _render_cadastro_actions(
 def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
     st.markdown('### Mapear campos')
     st.caption(f'{len(df_source)} produto(s) carregado(s). Confira as ligações abaixo.')
-    st.info('Escolha a coluna correta para cada campo do Bling. Depois confirme o mapeamento.')
+    st.info('Escolha a coluna correta para cada campo do modelo. Depois confirme o mapeamento.')
     with st.expander('Ver dados de origem', expanded=False):
         preview_df('Origem', df_source)
 
@@ -101,6 +103,15 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     with st.expander('Ajuda da IA', expanded=False):
         render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Analisar campos pendentes')
 
+    render_ai_mapping_apply_panel(
+        df_source,
+        target_columns,
+        current_mapping,
+        mapping_key,
+        operation='cadastro',
+    )
+
+    current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
