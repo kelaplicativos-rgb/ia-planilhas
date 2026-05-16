@@ -4,16 +4,9 @@ from decimal import Decimal
 
 import pandas as pd
 
+from bling_app_zero.core.price_calculator_plugin import PRICE_OUTPUT_COLUMN, apply_price_calculator_plugin
 from bling_app_zero.v2.contracts import ModuleResult, ModuleSpec, TablePayload
-from bling_app_zero.v2.marketplace_calculator import (
-    CalculatorInputs,
-    D,
-    MarketplaceFeeRule,
-    money,
-    price_by_contribution_margin,
-    price_by_nominal_profit,
-    simulate_by_fixed_sale_price,
-)
+from bling_app_zero.v2.marketplace_calculator import D, money
 
 INTERNAL_COST_COLUMN = '_v2_custo_base'
 PRICE_COLUMN_CANDIDATES = (INTERNAL_COST_COLUMN, 'Custo', 'Preco de custo', 'Preço de custo', 'Preco Custo', 'Preço Custo')
@@ -21,17 +14,24 @@ REQUIRED_ID_COLUMNS = ('IdProduto', 'ID na Loja')
 PRICE_OUTPUT_COLUMNS = ('Preco', 'Preço')
 PROMO_OUTPUT_COLUMNS = ('Preco Promocional', 'Preço Promocional')
 
-SPECIAL_RULE_BY_CHANNEL = {
-    'mercado_livre': {'rule_type': 'meli_79', 'threshold': '79', 'fixed_fee': '5', 'capital_days': '10'},
-    'olist': {'rule_type': 'meli_100', 'threshold': '100', 'fixed_fee': '5', 'capital_days': '35'},
-    'madeira_madeira': {'rule_type': 'commission_on_freight', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
-    'b2w': {'rule_type': 'b2w_40', 'threshold': '40', 'fixed_fee': '5', 'capital_days': '15'},
-    'via_varejo': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '27'},
-    'carrefour': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '27'},
+# Regras genéricas por canal lógico. Mantém compatibilidade com chaves antigas,
+# mas não força nomes comerciais na experiência white-label.
+GENERIC_RULE_BY_CHANNEL = {
+    'canal_1': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'canal_2': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'canal_3': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'outro': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    # Compatibilidade silenciosa com perfis antigos salvos em sessão.
+    'mercado_livre': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'olist': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'madeira_madeira': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'b2w': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'via_varejo': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
+    'carrefour': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'amazon': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'shopee': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
-    'outro': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
 }
+SPECIAL_RULE_BY_CHANNEL = GENERIC_RULE_BY_CHANNEL
 
 
 def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
@@ -68,34 +68,15 @@ def _sample_invalid_cost_rows(df: pd.DataFrame, cost_col: str, limit: int = 10) 
     return tuple(messages)
 
 
-def _inputs_for_cost(cost_value: object, rules: dict) -> CalculatorInputs:
-    return CalculatorInputs(
-        tax_percent=_decimal_rule(rules, 'tax_percent'),
-        product_cost=D(cost_value),
-        freight_cost=_decimal_rule(rules, 'freight_cost'),
-        desired_sale_price=_decimal_rule(rules, 'desired_sale_price'),
-        desired_nominal_profit=_decimal_rule(rules, 'desired_nominal_profit', rules.get('profit_value', '0')),
-        desired_contribution_margin_percent=_decimal_rule(rules, 'desired_contribution_margin_percent', rules.get('profit_percent', '0')),
-        supplier_term_days=_decimal_rule(rules, 'supplier_term_days'),
-        stock_turnover_days=_decimal_rule(rules, 'stock_turnover_days'),
-        other_sale_fees_percent=_decimal_rule(rules, 'other_sale_fees_percent'),
-    )
-
-
-def _fee_rule(profile_channel: str, rules: dict) -> MarketplaceFeeRule:
+def _channel_rule_defaults(profile_channel: str, rules: dict) -> dict:
     channel = str(profile_channel or 'outro').strip().lower() or 'outro'
-    special = SPECIAL_RULE_BY_CHANNEL.get(channel, SPECIAL_RULE_BY_CHANNEL['outro'])
-    fee_percent = _decimal_rule(rules, 'marketplace_fee_percent', rules.get('commission_percent', '0'))
-    variation = str(rules.get('marketplace_variation') or rules.get('variation') or channel.replace('_', ' ').title())
-    return MarketplaceFeeRule(
-        marketplace=channel,
-        variation=variation,
-        fee_percent=fee_percent,
-        rule_type=str(rules.get('marketplace_rule_type') or special['rule_type']),
-        capital_days=_decimal_rule(rules, 'marketplace_capital_days', special['capital_days']),
-        threshold=_decimal_rule(rules, 'marketplace_threshold', special['threshold']),
-        fixed_fee=_decimal_rule(rules, 'marketplace_fixed_fee', special['fixed_fee']),
-    )
+    special = GENERIC_RULE_BY_CHANNEL.get(channel, GENERIC_RULE_BY_CHANNEL['outro'])
+    return {
+        'marketplace_rule_type': str(rules.get('marketplace_rule_type') or special['rule_type']),
+        'marketplace_capital_days': str(rules.get('marketplace_capital_days') or special['capital_days']),
+        'marketplace_threshold': str(rules.get('marketplace_threshold') or special['threshold']),
+        'marketplace_fixed_fee': str(rules.get('marketplace_fixed_fee') or special['fixed_fee']),
+    }
 
 
 def _promo_price(sale_price: Decimal, rules: dict) -> Decimal:
@@ -105,47 +86,38 @@ def _promo_price(sale_price: Decimal, rules: dict) -> Decimal:
     return sale_price * (Decimal('1') - discount)
 
 
-def _calculate_price_for_cost(cost_value: object, profile_channel: str, rules: dict) -> tuple[str, str]:
-    inputs = _inputs_for_cost(cost_value, rules)
-    rule = _fee_rule(profile_channel, rules)
-    mode = str(rules.get('calculator_mode') or 'nominal_profit').strip().lower()
-
-    if mode == 'contribution_margin':
-        result = price_by_contribution_margin(inputs, rule)
-    elif mode == 'fixed_sale_price':
-        result = simulate_by_fixed_sale_price(inputs, rule)
-    else:
-        result = price_by_nominal_profit(inputs, rule)
-
-    promo_value = _promo_price(result.sale_price, rules)
-    return money(result.sale_price), money(promo_value) if promo_value else ''
-
-
 def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str, ...]]:
     df = payload.df
     if not isinstance(df, pd.DataFrame) or df.empty:
-        return False, ('Planilha multiloja vazia.',)
+        return False, ('Planilha de preços vazia.',)
     errors: list[str] = []
     for required in REQUIRED_ID_COLUMNS:
         if not _find_column(df, (required,)):
-            errors.append(f'Coluna obrigatoria ausente: {required}')
+            errors.append(f'Coluna obrigatória ausente: {required}')
     cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
     if not cost_col:
-        errors.append('Coluna de custo/preco base ausente.')
+        errors.append('Coluna de custo/preço base ausente.')
     else:
         valid_costs = int(_valid_cost_mask(df, cost_col).sum())
         if valid_costs <= 0:
-            errors.append('Nenhum custo/preco base valido foi encontrado para calcular.')
+            errors.append('Nenhum custo/preço base válido foi encontrado para calcular.')
             errors.extend(_sample_invalid_cost_rows(df, cost_col, limit=5))
     if not (_find_column(df, PRICE_OUTPUT_COLUMNS) or _find_column(df, PROMO_OUTPUT_COLUMNS)):
-        errors.append('Modelo precisa ter coluna Preco ou Preco Promocional.')
+        errors.append('Modelo precisa ter coluna de preço ou preço promocional.')
     return not errors, tuple(errors)
+
+
+def _pricing_rules_for_plugin(profile_channel: str, rules: dict) -> dict:
+    output = dict(rules or {})
+    output.update(_channel_rule_defaults(profile_channel, output))
+    output['enabled'] = True
+    return output
 
 
 def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     ok, errors = validate_multistore_payload(payload)
     if not ok:
-        return ModuleResult(False, payload, 'Planilha multiloja invalida.', errors=errors)
+        return ModuleResult(False, payload, 'Planilha de preços inválida.', errors=errors)
 
     df = payload.df.copy().fillna('')
     profile = payload.store_profile
@@ -158,27 +130,35 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     skipped_rows = int((~valid_mask).sum())
     df = df.loc[valid_mask].copy().fillna('')
 
-    calculated_prices: list[str] = []
-    promo_prices: list[str] = []
-    for value in df[cost_col].tolist():
-        price, promo = _calculate_price_for_cost(value, profile.channel, rules)
-        calculated_prices.append(price)
-        promo_prices.append(promo)
+    plugin_result = apply_price_calculator_plugin(
+        df,
+        enabled=True,
+        config=_pricing_rules_for_plugin(profile.channel, rules),
+        cost_column=cost_col,
+        output_column=PRICE_OUTPUT_COLUMN,
+        channel=str(profile.channel or 'canal'),
+        aliases=(PRICE_OUTPUT_COLUMN,),
+    )
+    if not plugin_result.applied:
+        return ModuleResult(False, payload.with_df(df, stage='calculate'), plugin_result.message or 'Não foi possível aplicar a calculadora.', errors=(plugin_result.message,))
 
+    df = plugin_result.df.copy().fillna('')
     if price_col:
-        df[price_col] = calculated_prices
+        df[price_col] = df[PRICE_OUTPUT_COLUMN]
     if promo_col:
-        df[promo_col] = promo_prices
+        df[promo_col] = [money(_promo_price(D(value), rules)) if _promo_price(D(value), rules) else '' for value in df[PRICE_OUTPUT_COLUMN].tolist()]
+    if PRICE_OUTPUT_COLUMN in df.columns and PRICE_OUTPUT_COLUMN not in set(PRICE_OUTPUT_COLUMNS):
+        df = df.drop(columns=[PRICE_OUTPUT_COLUMN])
 
     for column, value in profile.field_defaults.items():
         if column in df.columns:
             df[column] = str(value)
 
-    fee_rule = _fee_rule(profile.channel, rules)
-    message = 'Precos multiloja calculados com calculadora profissional.'
+    message = 'Preços calculados com a calculadora plugável.'
     if skipped_rows:
-        message += f' {skipped_rows} linha(s) sem custo valido foram ignoradas para evitar preco zerado.'
+        message += f' {skipped_rows} linha(s) sem custo válido foram ignoradas para evitar preço zerado.'
 
+    normalized_rules = _pricing_rules_for_plugin(profile.channel, rules)
     return ModuleResult(
         True,
         payload.with_df(df, stage='calculate'),
@@ -186,27 +166,28 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
         metrics={
             'rows': len(df),
             'skipped_rows_without_valid_cost': skipped_rows,
-            'marketplace': profile.channel,
+            'channel': profile.channel,
             'store_id': profile.store_id,
             'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
-            'marketplace_fee_percent': str(fee_rule.fee_percent),
-            'marketplace_rule_type': fee_rule.rule_type,
-            'marketplace_threshold': str(fee_rule.threshold),
-            'marketplace_fixed_fee': str(fee_rule.fixed_fee),
+            'marketplace_fee_percent': str(rules.get('marketplace_fee_percent') or rules.get('commission_percent') or '0'),
+            'marketplace_rule_type': str(normalized_rules.get('marketplace_rule_type') or 'standard'),
+            'marketplace_threshold': str(normalized_rules.get('marketplace_threshold') or '0'),
+            'marketplace_fixed_fee': str(normalized_rules.get('marketplace_fixed_fee') or '0'),
+            'plugin': 'price_calculator_plugin',
         },
     )
 
 
 MULTISTORE_PRICE_SPEC = ModuleSpec(
     key='v2_multistore_price_calculator',
-    title='Calculadora V2 de Precos Multiloja',
-    description='Calcula Preco e Preco Promocional para vinculo produtos multilojas com lucro nominal, margem ou preco fixo.',
+    title='Calculadora plugável de preços',
+    description='Calcula preço e preço promocional para atualização por loja/canal com lucro nominal, margem ou preço fixo.',
     operation='preco',
     stage='calculate',
-    version='2.1.3',
-    depends_on=('store_profile', 'modelo_multiloja', 'custo_base'),
-    provides=('preco_multiloja_calculado',),
+    version='2.2.0',
+    depends_on=('store_profile', 'modelo_precos', 'custo_base'),
+    provides=('preco_calculado',),
     runner=run_multistore_price_calculator,
 )
 
-__all__ = ['INTERNAL_COST_COLUMN', 'MULTISTORE_PRICE_SPEC', 'SPECIAL_RULE_BY_CHANNEL', 'run_multistore_price_calculator', 'validate_multistore_payload']
+__all__ = ['INTERNAL_COST_COLUMN', 'MULTISTORE_PRICE_SPEC', 'SPECIAL_RULE_BY_CHANNEL', 'GENERIC_RULE_BY_CHANNEL', 'run_multistore_price_calculator', 'validate_multistore_payload']
