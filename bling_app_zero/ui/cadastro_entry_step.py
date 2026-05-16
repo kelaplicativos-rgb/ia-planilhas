@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_source_for_operation
+from bling_app_zero.ui.ai_analysis_panel import render_ai_origin_analysis_panel
 from bling_app_zero.ui.cadastro_sources import (
     render_cadastro_source_upload,
     select_cadastro_model,
@@ -60,8 +61,10 @@ def render_cadastro_entrada_step() -> None:
 
     if valid_df(df_origem) and site_origin:
         st.success(f'Origem pronta: {len(df_origem)} produto(s).')
+        render_ai_origin_analysis_panel(df_origem, df_modelo, operation='cadastro')
     elif valid_df(df_origem):
         st.success(f'Origem carregada: {len(df_origem)} produto(s).')
+        render_ai_origin_analysis_panel(df_origem, df_modelo, operation='cadastro')
         with st.expander('Ver origem', expanded=False):
             preview_df('Origem do cadastro', df_origem)
     elif site_origin:
