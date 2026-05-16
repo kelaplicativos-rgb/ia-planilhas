@@ -144,7 +144,22 @@ def test_bottom_navigation_blocks_without_disabled_continue_button() -> None:
     assert "st.button('Avançar →', use_container_width=True, disabled=True" not in wizard
 
 
-def test_origin_step_auto_advances_after_selection() -> None:
+def test_manual_buttons_pause_autofluxo_on_target_step() -> None:
+    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+
+    assert "MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}" in wizard
+    assert 'def _pause_autofluxo_for_manual_navigation(' in wizard
+    assert "st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = target" in wizard
+    assert "st.session_state[AUTOFLOW_LAST_STEP_KEY] = target" in wizard
+    assert "'target_step': target" in wizard
+    assert 'if reason in MANUAL_NAVIGATION_REASONS:' in wizard
+    assert '_pause_autofluxo_for_manual_navigation(step, reason=reason)' in wizard
+    assert "_go_to_step(target, reason='next_button')" in wizard
+    assert "_go_to_step(target, reason='back_button_previous_index')" in wizard
+    assert "'manual_navigation_pauses_autoflow': True" in wizard
+
+
+def test_origin_step_auto_advances_only_when_not_manually_paused() -> None:
     wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
     origin_block = wizard.split('def _render_origin_step() -> None:', 1)[1].split('def _render_rules_step() -> None:', 1)[0]
 
@@ -152,6 +167,8 @@ def test_origin_step_auto_advances_after_selection() -> None:
     assert 'origin_selected_auto_next' in origin_block
     assert 'wizard_next_target(STEP_ORIGEM, operation)' in origin_block
     assert 'Avançando para a próxima etapa.' in origin_block
+    assert '_manual_pause_matches(STEP_ORIGEM)' in origin_block
+    assert 'Use Avançar para seguir ou Voltar para revisar outra etapa.' in origin_block
 
 
 def test_autofluxo_is_safe_enabled_by_default() -> None:
