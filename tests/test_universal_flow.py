@@ -48,15 +48,22 @@ def test_home_contract_upload_goes_to_universal_flow_only() -> None:
     assert 'home_contract_model_uploaded' in router
 
 
-def test_universal_flow_preserves_final_contract_language() -> None:
+def test_universal_flow_restores_full_system_steps() -> None:
     flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
 
     assert 'Contrato final' in flow
     assert 'Origem dos dados' in flow
-    assert 'Mapeamento por contrato' in flow
-    assert 'Preview e download fiel' in flow
-    assert 'Planilha final fiel ao contrato anexado' in flow
+    assert 'Buscar produtos por site' in flow
+    assert 'Anexar arquivo de origem' in flow
+    assert 'run_site_pipeline' in flow
+    assert 'Calculadora marketplace opcional' in flow
+    assert 'Recursos IA Real' in flow
+    assert 'Mapeamento manual com faróis' in flow
+    assert 'Resumo dos faróis do mapeamento' in flow
+    assert 'Preview final' in flow
+    assert 'Planilha final' in flow
     assert 'Baixar planilha final mapeada' in flow
+    assert 'Planilha final fiel ao contrato anexado' in flow
     assert 'Tipo detectado' not in flow
     assert 'detect_model_type' not in flow
     assert 'Modelo universal' not in flow
