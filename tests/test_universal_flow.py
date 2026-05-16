@@ -22,7 +22,8 @@ def test_home_router_exposes_only_universal_flow() -> None:
     assert 'render_universal_flow' in router
     assert 'Preencher qualquer modelo' in router
     assert 'Começar pelo modelo de destino' in router
-    assert 'Fluxo antigo extinto' in router
+    assert 'Cadastro, estoque, preços e multilojas são detectados automaticamente' in router
+    assert 'Fluxo antigo extinto' not in router
     assert 'render_home_wizard' not in router
     assert 'render_price_multistore_v2' not in router
     assert 'Atalhos compatíveis' not in router
