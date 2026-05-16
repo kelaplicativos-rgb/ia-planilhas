@@ -37,7 +37,7 @@ SMART_STOP_MIN_PROCESSED = 120
 SMART_STOP_COMPLETE_RATIO = 0.72
 SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 3
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
 RESPONSIBLE_FILE = 'bling_app_zero/engines/fast_site_scraper/engine.py'
@@ -227,9 +227,6 @@ def _scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float
 
 
 def _enhance_products_sequentially(products_by_url: list[tuple[str, FastProductData]], needed: set[str], progress_callback: Callable[[dict], None] | None) -> tuple[list[FastProductData], int]:
-    if not needed.intersection(RICH_DESCRIPTION_KINDS):
-        return [product for _, product in products_by_url], 0
-
     enhanced_products: list[FastProductData] = []
     used = 0
     total_candidates = sum(1 for _, product in products_by_url if needs_rendered_fallback(product, needed))
@@ -238,7 +235,7 @@ def _enhance_products_sequentially(products_by_url: list[tuple[str, FastProductD
         if used < DEVTOOLS_FALLBACK_MAX_PER_RUN and needs_rendered_fallback(product, needed):
             _emit(progress_callback, {
                 'stage': 'Reforço DevTools',
-                'message': f'Reforçando descrição rica {used + 1}/{min(total_candidates, DEVTOOLS_FALLBACK_MAX_PER_RUN)} sem paralelo.',
+                'message': f'Reforçando página dinâmica {used + 1}/{min(total_candidates, DEVTOOLS_FALLBACK_MAX_PER_RUN)} sem paralelo.',
                 'progress': 0.89,
                 'devtools': used,
             })
@@ -301,6 +298,7 @@ def run_fast_site_scraper(
             'operation': normalized_operation,
             'columns': columns[:80],
             'needed_kinds': sorted(needed),
+            'dynamic_render_fallback_enabled': True,
             'rich_description_enabled': 'descricao_complementar' in needed,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -334,13 +332,14 @@ def run_fast_site_scraper(
 
     _emit(progress_callback, {
         'stage': 'Lendo produtos',
-        'message': f'Lendo até {total} produto(s). O motor de descrição rica está ativo.' if 'descricao_complementar' in needed else f'Lendo até {total} produto(s).',
+        'message': f'Lendo até {total} produto(s). Fallback dinâmico ativo para páginas carregadas por JavaScript.',
         'progress': 0.28,
         'processed': 0,
         'total': total,
         'workers': workers,
         'stop_early': bool(stop_early),
         'rich_description_enabled': 'descricao_complementar' in needed,
+        'dynamic_render_fallback_enabled': True,
     })
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -374,7 +373,7 @@ def run_fast_site_scraper(
             now = time.perf_counter()
             if now - last_emit >= 0.5 or processed == total:
                 ratio = processed / max(total, 1)
-                _emit(progress_callback, {'stage': 'Lendo produtos', 'message': f'{processed}/{total} produto(s) lido(s).', 'progress': 0.28 + (0.58 * ratio), 'processed': processed, 'total': total, 'found': len(products_by_url), 'complete': complete_count, 'errors': errors, 'devtools': 0, 'slow_links': slow_links[-5:], 'stop_early': bool(stop_early), 'rich_description_enabled': 'descricao_complementar' in needed})
+                _emit(progress_callback, {'stage': 'Lendo produtos', 'message': f'{processed}/{total} produto(s) lido(s).', 'progress': 0.28 + (0.58 * ratio), 'processed': processed, 'total': total, 'found': len(products_by_url), 'complete': complete_count, 'errors': errors, 'devtools': 0, 'slow_links': slow_links[-5:], 'stop_early': bool(stop_early), 'rich_description_enabled': 'descricao_complementar' in needed, 'dynamic_render_fallback_enabled': True})
                 last_emit = now
 
     products, rendered_fallbacks = _enhance_products_sequentially(products_by_url, needed, progress_callback)
@@ -388,6 +387,7 @@ def run_fast_site_scraper(
         details={
             'operation': normalized_operation,
             'products': len(products),
+            'dynamic_render_fallback_enabled': True,
             'rich_description_enabled': 'descricao_complementar' in needed,
             'rich_description_ok': rich_ok,
             'rich_description_empty': rich_empty,
@@ -397,11 +397,11 @@ def run_fast_site_scraper(
         },
     )
     add_debug(
-        f'Busca por site finalizada: {len(products)} produto(s), descrição rica OK em {rich_ok}, vazia em {rich_empty}.',
-        origin='SITE_DESCRICAO_RICA',
+        f'Busca por site finalizada: {len(products)} produto(s), DevTools reforçou {rendered_fallbacks}, descrição rica OK em {rich_ok}, vazia em {rich_empty}.',
+        origin='SITE_CAPTURA_DINAMICA',
         level='INFO',
         file_name=RESPONSIBLE_FILE,
-        details={'rich_description_enabled': 'descricao_complementar' in needed, 'devtools': rendered_fallbacks, 'errors': errors},
+        details={'rich_description_enabled': 'descricao_complementar' in needed, 'dynamic_render_fallback_enabled': True, 'devtools': rendered_fallbacks, 'errors': errors},
     )
 
     rows = [_to_contract_row(product, contract) for product in products]
@@ -410,5 +410,5 @@ def run_fast_site_scraper(
         final_message = f'{final_message} DevTools reforçou {rendered_fallbacks} página(s), em fila.'
     if stop_reason:
         final_message = f'{final_message} {stop_reason}'
-    _emit(progress_callback, {'stage': 'Montando origem', 'message': final_message, 'progress': 0.91, 'processed': processed, 'found': len(products), 'complete': complete_count, 'errors': errors, 'devtools': rendered_fallbacks, 'slow_links': slow_links[-10:], 'total_seconds': round(time.perf_counter() - total_started, 2), 'stop_early': bool(stop_early), 'rich_description_ok': rich_ok, 'rich_description_empty': rich_empty})
+    _emit(progress_callback, {'stage': 'Montando origem', 'message': final_message, 'progress': 0.91, 'processed': processed, 'found': len(products), 'complete': complete_count, 'errors': errors, 'devtools': rendered_fallbacks, 'slow_links': slow_links[-10:], 'total_seconds': round(time.perf_counter() - total_started, 2), 'stop_early': bool(stop_early), 'rich_description_ok': rich_ok, 'rich_description_empty': rich_empty, 'dynamic_render_fallback_enabled': True})
     return _ensure_columns(pd.DataFrame(rows).fillna(''), columns)
