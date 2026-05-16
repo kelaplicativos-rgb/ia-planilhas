@@ -153,10 +153,10 @@ def _operation_badge(operation: str) -> str:
 def _download_label(operation: str) -> str:
     op = str(operation or '').strip().lower()
     if op == 'estoque':
-        return '⬇️ Baixar CSV de ESTOQUE para o Bling'
+        return '⬇️ Baixar CSV final de ESTOQUE'
     if op == 'cadastro':
-        return '⬇️ Baixar CSV de CADASTRO para o Bling'
-    return '⬇️ Baixar CSV para o Bling'
+        return '⬇️ Baixar CSV final de CADASTRO'
+    return '⬇️ Baixar CSV final'
 
 
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -202,7 +202,7 @@ def show_contract(columns: list[str]) -> None:
 def _render_mapping_body(mapping: dict[str, str]) -> None:
     st.dataframe(
         pd.DataFrame([
-            {'Campo no Bling': key, 'Origem usada': value or '(vazio)'}
+            {'Campo do modelo': key, 'Origem usada': value or '(vazio)'}
             for key, value in mapping.items()
         ]).astype(str),
         use_container_width=True,
@@ -260,7 +260,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
 
     if st.session_state.pop('final_download_done', False):
-        st.caption('✅ Download final concluído. A etapa atual foi preservada para você continuar a importação sem voltar para a Home.')
+        st.caption('✅ Download final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
 
     errors = validate_final_df(df, operation)
     if errors:
