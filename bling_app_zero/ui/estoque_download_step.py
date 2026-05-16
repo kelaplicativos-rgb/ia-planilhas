@@ -9,10 +9,10 @@ from bling_app_zero.ui.estoque_wizard_state import build_stock_outputs_if_possib
 
 def render_estoque_download_step() -> None:
     st.markdown('### Download do estoque')
-    st.caption('Última etapa: baixe somente o CSV final de atualização de estoque.')
+    st.caption('Última etapa: baixe somente a planilha final de atualização de estoque.')
 
     if not build_stock_outputs_if_possible():
-        st.warning('Ainda não há CSV de estoque. Volte para o mapeamento do estoque.')
+        st.warning('Ainda não há planilha de estoque. Volte para o mapeamento do estoque.')
         return
     render_stock_downloads()
     render_bling_links_panel()
