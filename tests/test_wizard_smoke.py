@@ -32,6 +32,12 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.mapping_confirmation',
     'bling_app_zero.flows.site_as_source',
     'bling_app_zero.ui.wizard_state_guard',
+    'bling_app_zero.ui.ai_sidebar',
+    'bling_app_zero.ai.ai_config',
+    'bling_app_zero.ai.ai_client',
+    'bling_app_zero.ai.ai_schema',
+    'bling_app_zero.ai.ai_cache',
+    'bling_app_zero.ai.ai_job_queue',
     'bling_app_zero.core.exporter',
     'bling_app_zero.core.gtin',
 ]
@@ -180,6 +186,22 @@ def test_autofluxo_is_safe_enabled_by_default() -> None:
     assert 'MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}' in autofluxo
     assert 'current in {STEP_PREVIEW, STEP_DOWNLOAD}' in autofluxo
     assert "operation == 'cadastro' and not _pricing_is_active()" in autofluxo
+
+
+def test_ai_sidebar_byok_without_secrets_fallback() -> None:
+    ai_config = Path('bling_app_zero/ai/ai_config.py').read_text(encoding='utf-8')
+    ai_client = Path('bling_app_zero/ai/ai_client.py').read_text(encoding='utf-8')
+    ai_sidebar = Path('bling_app_zero/ui/ai_sidebar.py').read_text(encoding='utf-8')
+    sidebar_tools = Path('bling_app_zero/ui/sidebar_tools.py').read_text(encoding='utf-8')
+
+    assert 'AI_USER_API_KEY' in ai_config
+    assert 'st.secrets' not in ai_config
+    assert 'st.secrets' not in ai_client
+    assert 'OPENAI_RESPONSES_URL' in ai_client
+    assert "type='password'" in ai_sidebar
+    assert 'O sistema não usa chave em Secrets como fallback.' in ai_sidebar
+    assert 'IA do Mapeia.AI' in sidebar_tools
+    assert '_render_ai_sidebar_lazy' in sidebar_tools
 
 
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
