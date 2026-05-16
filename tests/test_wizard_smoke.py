@@ -33,6 +33,7 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.flows.site_as_source',
     'bling_app_zero.ui.wizard_state_guard',
     'bling_app_zero.ui.ai_sidebar',
+    'bling_app_zero.ui.ai_analysis_panel',
     'bling_app_zero.ai.ai_config',
     'bling_app_zero.ai.ai_client',
     'bling_app_zero.ai.ai_schema',
@@ -235,6 +236,22 @@ def test_ai_local_modules_suggest_mapping_and_quality() -> None:
     suggestions = mapping_result.data['mapping']['suggestions']
     assert any(item['target_column'] == 'Preco unitario' and item['source_column'] == 'Valor Venda' for item in suggestions)
     assert any(item['target_column'] == 'Estoque' and item['source_column'] == 'Saldo' for item in suggestions)
+
+
+def test_ai_analysis_panel_is_informational_only() -> None:
+    panel = Path('bling_app_zero/ui/ai_analysis_panel.py').read_text(encoding='utf-8')
+    cadastro_entry = Path('bling_app_zero/ui/cadastro_entry_step.py').read_text(encoding='utf-8')
+    estoque_entry = Path('bling_app_zero/ui/estoque_entry_step.py').read_text(encoding='utf-8')
+
+    assert 'render_ai_origin_analysis_panel' in cadastro_entry
+    assert 'render_ai_origin_analysis_panel' in estoque_entry
+    assert 'Nenhuma alteração automática será aplicada.' in panel
+    assert 'não altera a planilha' in panel
+    assert 'não aplica mapeamento' in panel
+    assert 'st.session_state[\'mapping_cadastro\']' not in panel
+    assert 'st.session_state["mapping_cadastro"]' not in panel
+    assert 'st.session_state[\'mapping_estoque\']' not in panel
+    assert 'st.session_state["mapping_estoque"]' not in panel
 
 
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
