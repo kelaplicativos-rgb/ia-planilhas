@@ -55,3 +55,21 @@ def test_credit_sidebar_and_mapping_confirmation_are_plugged() -> None:
     assert 'check_mapping_credit' in confirmation
     assert 'MapeiaAI' in config
     assert 'Mapeia.AI' not in config
+
+
+def test_business_config_centralizes_domain_and_packages() -> None:
+    business = importlib.import_module('bling_app_zero.core.business_config')
+    sidebar = Path('bling_app_zero/ui/credits_sidebar.py').read_text(encoding='utf-8')
+    hero = Path('bling_app_zero/ui/layout/components.py').read_text(encoding='utf-8')
+    ai_sidebar = Path('bling_app_zero/ui/ai_sidebar.py').read_text(encoding='utf-8')
+
+    assert business.BRAND_NAME == 'MapeiaAI'
+    assert business.APP_PUBLIC_DOMAIN == 'app.mapeiaAI.com'
+    assert business.CREDIT_PRICE_BRL == 1.0
+    assert business.CREDIT_PACKAGES
+    assert 'APP_PUBLIC_DOMAIN' in sidebar
+    assert 'CREDIT_PACKAGES' in sidebar
+    assert 'MapeiaAI' in hero
+    assert 'Mapeia.AI' not in hero
+    assert 'IA do MapeiaAI' in ai_sidebar
+    assert 'IA do Mapeia.AI' not in ai_sidebar
