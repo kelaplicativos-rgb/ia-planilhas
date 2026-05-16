@@ -3,49 +3,32 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ai_tools.product_ai_batch_runner import DEFAULT_AI_BATCH_SIZE, generate_product_ai_suggestions_batched
-from bling_app_zero.ai_tools.product_ai_reviewer import (
-    ai_ready,
-    apply_product_ai_suggestions,
-    detect_product_columns,
-    suggestions_to_dataframe,
+from bling_app_zero.ai_tools.product_ai_batch_runner import DEFAULT_AI_BATCH_SIZE
+from bling_app_zero.core.ai_resource_plugin import (
+    AI_RESOURCE_EXAMPLE_TASKS,
+    AIResourceRequest,
+    ai_resource_columns,
+    ai_resource_ready,
+    analyze_ai_resource_guard,
+    apply_ai_resource_policy_to_dataframe,
+    apply_ai_resource_suggestions,
+    normalize_ai_policy,
+    run_ai_resource_plugin,
 )
 from bling_app_zero.core.debug import add_debug
-from bling_app_zero.core.marketplace_text_guard import alerts_to_dataframe, analyze_marketplace_text
-from bling_app_zero.core.text import clean_cell
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 
 
 OPERATION_LABELS = {
     'cadastro': 'CADASTRO',
     'estoque': 'ESTOQUE',
+    'preco': 'PREÇOS',
 }
 
 TARGET_DF_KEYS = {
     'cadastro': 'df_final_cadastro',
     'estoque': 'df_final_estoque',
-}
-
-EXAMPLE_TASKS = [
-    'Crie títulos para produtos que estão sem nome.',
-    'Padronize os títulos com marca + modelo quando essas informações existirem.',
-    'Melhore as descrições complementares vazias ou muito curtas.',
-    'Sugira NCM para produtos que estão com NCM vazio.',
-]
-
-DESCRIPTION_LIMITS = {
-    'pequena': 220,
-    'media': 520,
-    'grande': 1000,
-}
-
-DEFAULT_PREVIEW_AI_POLICY = {
-    'limit_title_60': True,
-    'description_size': 'media',
-    'marketplace_text_guard': False,
-    'out_of_context_filter': False,
-    'blocked_terms': '',
-    'context_filter_terms': '',
+    'preco': 'multistore_result_df',
 }
 
 
@@ -56,50 +39,15 @@ def _operation_label(operation: str) -> str:
 def _state_key(operation: str, signature: str, suffix: str) -> str:
     op = str(operation or 'arquivo').strip().lower() or 'arquivo'
     safe_signature = str(signature).replace(' ', '_').replace(':', '_').replace('|', '_')[:120]
-    return f'preview_ai_{op}_{safe_signature}_{suffix}'
+    return f'ai_resource_{op}_{safe_signature}_{suffix}'
 
 
 def _set_custom_task(task_key: str, example: str) -> None:
     st.session_state[task_key] = example
 
 
-def _truncate_text(value: object, limit: int) -> str:
-    text = clean_cell(value)
-    if limit <= 0 or len(text) <= limit:
-        return text
-    cut = text[:limit].rstrip()
-    if ' ' in cut:
-        cut = cut.rsplit(' ', 1)[0].rstrip()
-    return cut
-
-
-def _apply_ai_resource_policy_to_dataframe(suggestions_df: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(suggestions_df, pd.DataFrame) or suggestions_df.empty:
-        return suggestions_df
-
-    limit_title = bool(DEFAULT_PREVIEW_AI_POLICY['limit_title_60'])
-    description_size = str(DEFAULT_PREVIEW_AI_POLICY['description_size'])
-    description_limit = DESCRIPTION_LIMITS.get(description_size, DESCRIPTION_LIMITS['media'])
-
-    out = suggestions_df.copy()
-    if out.empty or 'Sugestão IA' not in out.columns or 'Campo' not in out.columns:
-        return out
-
-    def _adjust(row: pd.Series) -> str:
-        field = str(row.get('Campo') or '').strip().lower()
-        suggestion = clean_cell(row.get('Sugestão IA', ''))
-        if field == 'title' and limit_title:
-            return _truncate_text(suggestion, 60)
-        if field == 'description':
-            return _truncate_text(suggestion, description_limit)
-        return suggestion
-
-    out['Sugestão IA'] = out.apply(_adjust, axis=1)
-    return out.reset_index(drop=True)
-
-
 def _render_detected_columns(df: pd.DataFrame) -> None:
-    columns = detect_product_columns(df)
+    columns = ai_resource_columns(df)
     detected = {
         'Título/Nome': columns.get('title') or '(não encontrada)',
         'Descrição complementar': columns.get('description') or '(não encontrada)',
@@ -108,25 +56,23 @@ def _render_detected_columns(df: pd.DataFrame) -> None:
         'Marca apoio': columns.get('brand') or '(não encontrada)',
         'Categoria apoio': columns.get('category') or '(não encontrada)',
     }
-    with st.expander('Colunas que a IA vai usar', expanded=False):
+    with st.expander('Colunas que o recurso IA vai usar', expanded=False):
         st.dataframe(pd.DataFrame([detected]).astype(str), use_container_width=True, height=90)
 
 
-def _render_marketplace_guard_alerts(df_final: pd.DataFrame, resources: dict) -> None:
-    alerts = analyze_marketplace_text(df_final, resources)
-    guard_enabled = bool(resources.get('marketplace_text_guard', False))
-    context_enabled = bool(resources.get('out_of_context_filter', False))
+def _render_guard_alerts(df_final: pd.DataFrame, policy: dict) -> None:
+    guard_enabled = bool(policy.get('marketplace_text_guard', False))
+    context_enabled = bool(policy.get('out_of_context_filter', False))
     if not guard_enabled and not context_enabled:
         return
-    if not alerts:
-        st.success('Blindagem marketplace: nenhum termo proibido/sensível ou descrição fora de contexto foi detectado no preview final.')
+    alerts_df = analyze_ai_resource_guard(df_final, policy)
+    if not isinstance(alerts_df, pd.DataFrame) or alerts_df.empty:
+        st.success('Blindagem de texto: nenhum termo sensível ou descrição fora de contexto foi detectado no preview final.')
         return
-
-    alerts_df = alerts_to_dataframe(alerts)
-    st.warning(f'Blindagem marketplace encontrou {len(alerts_df)} alerta(s). Revise antes de baixar a planilha final.')
+    st.warning(f'Blindagem de texto encontrou {len(alerts_df)} alerta(s). Revise antes de baixar a planilha final.')
     with st.expander('⚠️ Alertas de palavras proibidas e descrição fora de contexto', expanded=True):
         st.dataframe(alerts_df.astype(str), use_container_width=True, height=260)
-        st.caption('Por segurança, o sistema apenas alerta. Use a IA de catálogo ou edite o mapeamento para corrigir antes do download.')
+        st.caption('Por segurança, o sistema apenas alerta. Use o recurso IA ou edite o mapeamento para corrigir antes do download.')
 
 
 def _store_applied_df(operation: str, df_applied: pd.DataFrame) -> None:
@@ -161,16 +107,16 @@ def _render_multitask_box(op: str, signature: str) -> str:
     if task_key not in st.session_state:
         st.session_state[task_key] = ''
 
-    with st.expander('🧠 Multitarefa da IA', expanded=False):
-        st.caption('Peça uma ação livre para a IA executar na planilha final. Ela vai gerar sugestões por linha e você confirma antes de aplicar.')
+    with st.expander('🧠 Multitarefa do recurso IA', expanded=False):
+        st.caption('Peça uma ação livre para executar na planilha final. O sistema gera sugestões por linha e você confirma antes de aplicar.')
         custom_task = st.text_area(
-            'O que você quer que a IA faça na planilha?',
+            'O que você quer que o recurso IA faça na planilha?',
             key=task_key,
             height=96,
             placeholder='Ex: reformule todos os títulos dos produtos com no máximo 60 caracteres.',
         )
         st.caption('Exemplos rápidos')
-        for index, example in enumerate(EXAMPLE_TASKS, start=1):
+        for index, example in enumerate(AI_RESOURCE_EXAMPLE_TASKS, start=1):
             st.button(
                 example,
                 use_container_width=True,
@@ -178,12 +124,12 @@ def _render_multitask_box(op: str, signature: str) -> str:
                 on_click=_set_custom_task,
                 args=(task_key, example),
             )
-        st.caption('Proteção ativa: a IA não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs.')
+        st.caption('Proteção ativa: não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs sem coluna própria e segura.')
     return str(custom_task or '').strip()
 
 
-def _make_preview_ai_progress() -> tuple[object, object, object]:
-    progress_bar = st.progress(0, text='IA aguardando início...')
+def _make_ai_progress() -> tuple[object, object, object]:
+    progress_bar = st.progress(0, text='Recurso IA aguardando início...')
     status_box = st.empty()
     counter_box = st.empty()
     return progress_bar, status_box, counter_box
@@ -224,13 +170,21 @@ def _marked_suggestions_count(df: pd.DataFrame) -> int:
 def _affected_products_count(df: pd.DataFrame) -> int:
     if not isinstance(df, pd.DataFrame) or df.empty or 'Linha' not in df.columns:
         return 0
-    if 'Aplicar' in df.columns:
-        selected = df[df['Aplicar'].fillna(False).astype(bool)]
-    else:
-        selected = df
+    selected = df[df['Aplicar'].fillna(False).astype(bool)] if 'Aplicar' in df.columns else df
     if selected.empty:
         return 0
     return int(selected['Linha'].nunique())
+
+
+def _build_custom_task(custom_task: str, *, use_clean: bool, use_code: bool) -> str:
+    tasks: list[str] = []
+    if custom_task:
+        tasks.append(custom_task)
+    if use_clean:
+        tasks.append('Limpe textos quebrados, espaços duplicados e caracteres estranhos em colunas editáveis, sem alterar preço, estoque, GTIN/EAN, SKU, imagens ou URLs.')
+    if use_code:
+        tasks.append('Crie códigos internos somente se existir uma coluna própria de código interno vazia; não altere SKU, GTIN/EAN, ID, URL, imagem, preço ou estoque.')
+    return '\n'.join(tasks).strip()
 
 
 def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> None:
@@ -244,44 +198,43 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     status_key = _state_key(op, signature, 'status')
     editor_key = _state_key(op, signature, 'editor')
     offset_key = _state_key(op, signature, 'offset')
-    resources = dict(DEFAULT_PREVIEW_AI_POLICY)
+    policy = normalize_ai_policy({})
     total_rows = int(len(df_final))
 
     st.markdown(
         """
         <div class="bling-inline-card">
-            <div class="bling-flow-card-kicker">IA de catálogo</div>
-            <div class="bling-flow-card-title">Revisar produtos com IA</div>
-            <p class="bling-flow-card-text">A IA analisa todos os produtos do preview final e gera sugestões apenas onde encontrar ajuste seguro.</p>
+            <div class="bling-flow-card-kicker">Plugin IA</div>
+            <div class="bling-flow-card-title">Recursos inteligentes da planilha</div>
+            <p class="bling-flow-card-text">Use o mesmo módulo inteligente para revisar, limpar, sugerir texto ou criar códigos com confirmação antes de aplicar.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    _render_marketplace_guard_alerts(df_final, resources)
+    _render_guard_alerts(df_final, policy)
 
-    if op != 'cadastro':
-        st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
-
-    if ai_ready():
+    if ai_resource_ready():
         st.success('IA conectada. As sugestões serão geradas com a chave OpenAI informada no sidebar.')
     else:
-        st.warning('Chave OpenAI não informada no sidebar. O sistema ainda pode mostrar sugestões locais simples, mas ortografia/gramática, NCM e multitarefa livre precisam da IA conectada.')
+        st.warning('Chave OpenAI não informada no sidebar. Sugestões locais simples ainda podem aparecer, mas ortografia/gramática, NCM e multitarefa livre precisam da IA conectada.')
 
     _render_detected_columns(df_final)
 
-    st.markdown('##### O que a IA deve fazer agora?')
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown('##### O que o plugin IA deve fazer agora?')
+    col1, col2, col3 = st.columns(3)
     with col1:
         use_title = st.checkbox('Títulos', value=True, key=_state_key(op, signature, 'use_title'))
+        use_clean = st.checkbox('Limpar textos', value=False, key=_state_key(op, signature, 'use_clean'))
     with col2:
         use_description = st.checkbox('Descrições', value=True, key=_state_key(op, signature, 'use_description'))
+        use_code = st.checkbox('Criar código', value=False, key=_state_key(op, signature, 'use_code'))
     with col3:
         use_grammar = st.checkbox('Ortografia', value=False, key=_state_key(op, signature, 'use_grammar'))
-    with col4:
         use_ncm = st.checkbox('NCM vazio', value=True, key=_state_key(op, signature, 'use_ncm'))
 
     custom_task = _render_multitask_box(op, signature)
+    final_custom_task = _build_custom_task(custom_task, use_clean=bool(use_clean), use_code=bool(use_code))
 
     current_offset = int(st.session_state.get(offset_key, 0) or 0)
     current_offset = max(0, min(current_offset, total_rows))
@@ -295,7 +248,7 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
             [5, 10, 20, 50],
             index=1,
             key=_state_key(op, signature, 'batch_size'),
-            help='Use 5 ou 10 quando a IA estiver dando timeout. Isso não muda o total, só divide o processamento.',
+            help='Use 5 ou 10 quando houver timeout. Isso só divide o processamento.',
         )
     with col_limit:
         max_rows_run = st.number_input(
@@ -309,9 +262,9 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         )
 
     if current_offset > 0 and current_offset < total_rows:
-        st.info(f'Continuação disponível: próxima execução começa em {current_offset + 1}/{total_rows} e pode analisar todos os {remaining} produto(s) restantes.')
+        st.info(f'Continuação disponível: próxima execução começa em {current_offset + 1}/{total_rows} e pode analisar os {remaining} produto(s) restantes.')
     elif current_offset >= total_rows:
-        st.success('Todos os produtos já foram analisados pela IA. Agora aplique as sugestões geradas.')
+        st.success('Todos os produtos já foram analisados. Agora aplique as sugestões geradas.')
     else:
         st.info(f'A próxima execução pode analisar todos os {total_rows} produto(s) do preview final.')
 
@@ -323,25 +276,35 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
             st.session_state.pop(status_key, None)
             st.rerun()
 
-    can_run = bool(use_title or use_description or use_grammar or use_ncm or custom_task) and current_offset < total_rows
-    run_label = f'🤖 Analisar todos os produtos restantes com IA · {label}'
+    can_run = bool(use_title or use_description or use_grammar or use_ncm or final_custom_task) and current_offset < total_rows
+    run_label = f'🤖 Analisar todos os produtos restantes · {label}'
     if st.button(run_label, use_container_width=True, disabled=not can_run, key=_state_key(op, signature, 'run')):
-        progress_bar, status_box, counter_box = _make_preview_ai_progress()
-        suggestions, status, next_offset = generate_product_ai_suggestions_batched(
+        progress_bar, status_box, counter_box = _make_ai_progress()
+        result = run_ai_resource_plugin(
             df_final,
-            actions={'title': bool(use_title), 'description': bool(use_description), 'grammar': bool(use_grammar), 'ncm': bool(use_ncm)},
-            max_rows=int(max_rows_run),
-            custom_task=custom_task,
-            batch_size=int(batch_size or DEFAULT_AI_BATCH_SIZE),
-            start_offset=current_offset,
+            AIResourceRequest(
+                operation=op,
+                actions={
+                    'title': bool(use_title),
+                    'description': bool(use_description),
+                    'grammar': bool(use_grammar),
+                    'ncm': bool(use_ncm),
+                    'clean': bool(use_clean),
+                    'code': bool(use_code),
+                },
+                custom_task=final_custom_task,
+                batch_size=int(batch_size or DEFAULT_AI_BATCH_SIZE),
+                max_rows=int(max_rows_run),
+                start_offset=current_offset,
+                policy=policy,
+            ),
             progress_callback=_progress_callback(progress_bar, status_box, counter_box),
         )
-        new_suggestions_df = _apply_ai_resource_policy_to_dataframe(suggestions_to_dataframe(suggestions))
-        st.session_state[suggestions_key] = _append_suggestions(st.session_state.get(suggestions_key), new_suggestions_df)
-        st.session_state[status_key] = status
-        st.session_state[offset_key] = next_offset
-        add_debug(f'IA de catálogo executada de {current_offset + 1} até {next_offset} de {total_rows} linha(s) no preview final de {label}: {status}', origin='PREVIEW_IA', level='INFO')
-        st.success(f'IA analisou até {next_offset}/{total_rows} produto(s).')
+        st.session_state[suggestions_key] = _append_suggestions(st.session_state.get(suggestions_key), result.suggestions_df)
+        st.session_state[status_key] = result.status
+        st.session_state[offset_key] = result.next_offset
+        add_debug(f'Plugin IA executado de {current_offset + 1} até {result.next_offset} de {total_rows} linha(s) no preview final de {label}: {result.status}', origin='AI_RESOURCE_PLUGIN', level='INFO')
+        st.success(f'Plugin IA analisou até {result.next_offset}/{total_rows} produto(s).')
         st.rerun()
 
     status = st.session_state.get(status_key)
@@ -352,23 +315,24 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     if not isinstance(suggestions_df, pd.DataFrame):
         return
 
-    suggestions_df = _apply_ai_resource_policy_to_dataframe(suggestions_df)
+    suggestions_df = apply_ai_resource_policy_to_dataframe(suggestions_df, policy)
     st.session_state[suggestions_key] = suggestions_df
 
     if suggestions_df.empty:
-        st.info('A IA analisou os produtos, mas não encontrou alterações seguras para aplicar.')
+        st.info('O plugin analisou os produtos, mas não encontrou alterações seguras para aplicar.')
         return
 
     total_suggestions = int(len(suggestions_df))
     affected_before_editor = _affected_products_count(suggestions_df)
-    st.info(f'IA analisou {min(current_offset, total_rows)}/{total_rows} produto(s) e gerou {total_suggestions} sugestão(ões) para {affected_before_editor} produto(s). Produtos sem sugestão não serão alterados.')
+    st.info(f'O plugin analisou {min(current_offset, total_rows)}/{total_rows} produto(s) e gerou {total_suggestions} sugestão(ões) para {affected_before_editor} produto(s). Produtos sem sugestão não serão alterados.')
 
-    st.markdown('##### Antes/depois sugerido pela IA')
+    st.markdown('##### Antes/depois sugerido')
     edited = _render_suggestions_editor(suggestions_df, editor_key)
 
-    preview_applied = apply_product_ai_suggestions(df_final, edited)
+    preview_result = apply_ai_resource_suggestions(df_final, edited)
+    preview_applied = preview_result.df_applied if isinstance(preview_result.df_applied, pd.DataFrame) else df_final
     with st.expander('Prévia da planilha final se aplicar as sugestões marcadas', expanded=False):
-        preview_df(f'Prévia com IA · {label}', preview_applied)
+        preview_df(f'Prévia com plugin IA · {label}', preview_applied)
 
     apply_count = _marked_suggestions_count(edited)
     affected_products = _affected_products_count(edited)
@@ -377,9 +341,12 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         if apply_count <= 0:
             st.warning('Nenhuma sugestão marcada para aplicar.')
             return
-        df_applied = apply_product_ai_suggestions(df_final, edited)
-        _store_applied_df(op, df_applied)
-        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas em {affected_products} produto(s) na planilha final de {label}.', origin='PREVIEW_IA', level='INFO')
+        result = apply_ai_resource_suggestions(df_final, edited)
+        if not isinstance(result.df_applied, pd.DataFrame):
+            st.warning('Não foi possível aplicar as sugestões.')
+            return
+        _store_applied_df(op, result.df_applied)
+        add_debug(f'{apply_count} sugestão(ões) do plugin IA aplicadas em {affected_products} produto(s) na planilha final de {label}.', origin='AI_RESOURCE_PLUGIN', level='INFO')
         st.success(f'Sugestões aplicadas em {affected_products} produto(s). Confira novamente o preview antes de baixar.')
         st.rerun()
 
