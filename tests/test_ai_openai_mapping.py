@@ -59,3 +59,21 @@ def test_mapping_suggester_falls_back_when_ai_disabled(monkeypatch) -> None:
     assert result.task == 'mapping_suggester'
     assert 'suggestions' in result.data
     assert any(item['target_column'] == 'Preco unitario' for item in result.data['suggestions'])
+
+
+def test_catalog_ai_uses_sidebar_key_only() -> None:
+    reviewer = Path('bling_app_zero/ai_tools/product_ai_reviewer.py').read_text(encoding='utf-8')
+    preview = Path('bling_app_zero/ui/preview_ai_actions.py').read_text(encoding='utf-8')
+
+    assert 'get_user_openai_key' in reviewer
+    assert 'get_ai_model' in reviewer
+    assert 'os.getenv' not in reviewer
+    assert 'st.secrets' not in reviewer
+    assert '_secret_value' not in reviewer
+    assert 'import os' not in reviewer
+    assert 'OPENAI_API_KEY' not in reviewer
+    assert 'import streamlit as st' not in reviewer
+    assert 'Chave OpenAI não informada no sidebar' in preview
+    assert 'OPENAI_API_KEY não encontrada' not in preview
+    assert 'CSV final' not in preview
+    assert 'planilha final' in preview
