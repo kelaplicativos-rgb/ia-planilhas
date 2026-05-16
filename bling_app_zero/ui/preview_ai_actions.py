@@ -123,7 +123,7 @@ def _render_marketplace_guard_alerts(df_final: pd.DataFrame, resources: dict) ->
         return
 
     alerts_df = alerts_to_dataframe(alerts)
-    st.warning(f'Blindagem marketplace encontrou {len(alerts_df)} alerta(s). Revise antes de baixar o CSV final.')
+    st.warning(f'Blindagem marketplace encontrou {len(alerts_df)} alerta(s). Revise antes de baixar a planilha final.')
     with st.expander('⚠️ Alertas de palavras proibidas e descrição fora de contexto', expanded=True):
         st.dataframe(alerts_df.astype(str), use_container_width=True, height=260)
         st.caption('Por segurança, o sistema apenas alerta. Use a IA de catálogo ou edite o mapeamento para corrigir antes do download.')
@@ -149,7 +149,7 @@ def _render_suggestions_editor(suggestions_df: pd.DataFrame, editor_key: str) ->
         hide_index=True,
         disabled=disabled_columns,
         column_config={
-            'Aplicar': st.column_config.CheckboxColumn('Aplicar', help='Marcado = entra no CSV final.'),
+            'Aplicar': st.column_config.CheckboxColumn('Aplicar', help='Marcado = entra na planilha final.'),
             'Sugestão IA': st.column_config.TextColumn('Sugestão IA', help='Você pode ajustar o texto antes de aplicar.'),
         },
         key=editor_key,
@@ -264,9 +264,9 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
         st.caption('A IA de catálogo foi feita para produto/cadastro. No estoque ela fica disponível só como apoio quando houver colunas compatíveis.')
 
     if ai_ready():
-        st.success('IA conectada. As sugestões serão geradas com OpenAI.')
+        st.success('IA conectada. As sugestões serão geradas com a chave OpenAI informada no sidebar.')
     else:
-        st.warning('OPENAI_API_KEY não encontrada. O sistema ainda pode mostrar sugestões locais simples, mas ortografia/gramática, NCM e multitarefa livre precisam da chave configurada.')
+        st.warning('Chave OpenAI não informada no sidebar. O sistema ainda pode mostrar sugestões locais simples, mas ortografia/gramática, NCM e multitarefa livre precisam da IA conectada.')
 
     _render_detected_columns(df_final)
 
@@ -367,19 +367,19 @@ def render_preview_ai_actions(df_final: pd.DataFrame | None, operation: str) -> 
     edited = _render_suggestions_editor(suggestions_df, editor_key)
 
     preview_applied = apply_product_ai_suggestions(df_final, edited)
-    with st.expander('Prévia do CSV final se aplicar as sugestões marcadas', expanded=False):
+    with st.expander('Prévia da planilha final se aplicar as sugestões marcadas', expanded=False):
         preview_df(f'Prévia com IA · {label}', preview_applied)
 
     apply_count = _marked_suggestions_count(edited)
     affected_products = _affected_products_count(edited)
-    button_label = f'✅ Aplicar {apply_count} sugestão(ões) em {affected_products} produto(s) do CSV final'
+    button_label = f'✅ Aplicar {apply_count} sugestão(ões) em {affected_products} produto(s) da planilha final'
     if st.button(button_label, use_container_width=True, key=_state_key(op, signature, 'apply')):
         if apply_count <= 0:
             st.warning('Nenhuma sugestão marcada para aplicar.')
             return
         df_applied = apply_product_ai_suggestions(df_final, edited)
         _store_applied_df(op, df_applied)
-        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas em {affected_products} produto(s) no CSV final de {label}.', origin='PREVIEW_IA', level='INFO')
+        add_debug(f'{apply_count} sugestão(ões) da IA aplicadas em {affected_products} produto(s) na planilha final de {label}.', origin='PREVIEW_IA', level='INFO')
         st.success(f'Sugestões aplicadas em {affected_products} produto(s). Confira novamente o preview antes de baixar.')
         st.rerun()
 
