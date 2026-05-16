@@ -14,6 +14,7 @@ from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_by
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.validators import validate_final_df
+from bling_app_zero.universal.contract_adapter import adapt_dataframe_to_model_contract, model_for_operation
 
 PREVIEW_ROWS = 50
 _PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
@@ -250,6 +251,14 @@ def _after_final_download(operation: str, signature: str, rules_sig: str) -> Non
     )
 
 
+def _download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[pd.DataFrame, bool, list[str]]:
+    model = model_for_operation(operation)
+    adapted = adapt_dataframe_to_model_contract(df, model)
+    applied = isinstance(model, pd.DataFrame) and len(model.columns) > 0
+    model_columns = [str(column) for column in model.columns] if applied else []
+    return adapted, applied, model_columns
+
+
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
         st.warning('Ainda não há dados finais para baixar.')
@@ -262,7 +271,13 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if st.session_state.pop('final_download_done', False):
         st.caption('✅ Download da planilha final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
 
-    errors = validate_final_df(df, operation)
+    download_df, contract_applied, model_columns = _download_dataframe_for_contract(df, operation)
+    if contract_applied:
+        st.success('Download fiel ao modelo anexado: colunas e ordem seguem o arquivo de destino.')
+        with st.expander('Contrato aplicado no download', expanded=False):
+            st.caption('Colunas do arquivo final: ' + ', '.join(model_columns))
+
+    errors = validate_final_df(download_df, operation)
     if errors:
         try:
             with st.expander(f'{_operation_badge(operation)} · Conferência antes do download', expanded=True):
@@ -275,9 +290,9 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
             for error in errors:
                 st.warning(error)
 
-    signature = df_signature(df)
+    signature = df_signature(download_df)
     rules_sig = rules_signature()
-    csv_bytes = _csv_bytes_cached(df.copy(), operation, signature, rules_sig)
+    csv_bytes = _csv_bytes_cached(download_df.copy(), operation, signature, rules_sig)
 
     st.download_button(
         _download_label(operation),
