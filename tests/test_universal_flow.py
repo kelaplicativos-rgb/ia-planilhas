@@ -10,71 +10,58 @@ def test_universal_flow_modules_import() -> None:
     for module_name in [
         'bling_app_zero.ui.universal_flow',
         'bling_app_zero.ui.home_router',
+        'bling_app_zero.ai.ai_text_rules',
     ]:
         importlib.import_module(module_name)
 
 
-def test_home_router_uses_single_intake_screen_before_operational_flows() -> None:
+def test_home_router_uses_single_contract_screen_without_model_detection() -> None:
     router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
     assert "FLOW_UNIVERSAL = 'universal_model_flow'" in router
-    assert "FLOW_WIZARD = 'wizard_cadastro_estoque'" in router
-    assert "FLOW_PRICE_MULTISTORE = 'price_multistore_v2'" in router
+    assert "FLOW_WIZARD" not in router
+    assert "FLOW_PRICE_MULTISTORE" not in router
     assert 'render_universal_flow' in router
-    assert 'render_home_wizard' in router
-    assert 'render_price_multistore_v2' in router
+    assert 'render_home_wizard' not in router
+    assert 'render_price_multistore_v2' not in router
     assert 'Anexe a planilha que vai ser mapeada' in router
     assert 'Planilha que vai ser mapeada' in router
-    assert 'Continuar para {decision.label}' in router
-    assert 'Depois disso, o sistema mantém o fluxo normal' in router
+    assert 'contrato fiel do download final' in router
+    assert 'Continuar para origem dos dados' in router
+    assert 'detect_model_type' not in router
+    assert '_decision_for_model_type' not in router
+    assert 'Tipo detectado' not in router
     assert 'Preencher qualquer modelo' not in router
-    assert 'Começar pelo modelo de destino' not in router
-    assert 'Fluxos operacionais mantidos' not in router
     assert 'Começar cadastro' not in router
     assert 'Começar estoque' not in router
     assert 'Atualizar preços' not in router
-    assert 'Fluxo antigo extinto' not in router
     assert 'LEGACY_FLOWS' not in router
-    assert 'legacy_flow_redirected_to_universal' not in router
 
 
-def test_home_intake_routes_detected_models_to_normal_flows() -> None:
-    router_module = importlib.import_module('bling_app_zero.ui.home_router')
-
-    cadastro = router_module._decision_for_model_type('cadastro')
-    estoque = router_module._decision_for_model_type('estoque')
-    precos = router_module._decision_for_model_type('precos')
-    multilojas = router_module._decision_for_model_type('multilojas')
-    personalizado = router_module._decision_for_model_type('personalizado')
-
-    assert cadastro.flow == 'wizard_cadastro_estoque'
-    assert cadastro.operation == 'cadastro'
-    assert estoque.flow == 'wizard_cadastro_estoque'
-    assert estoque.operation == 'estoque'
-    assert precos.flow == 'price_multistore_v2'
-    assert multilojas.flow == 'price_multistore_v2'
-    assert personalizado.flow == 'universal_model_flow'
-
-
-def test_operational_flows_are_not_redirected_to_universal() -> None:
+def test_home_contract_upload_goes_to_universal_flow_only() -> None:
     router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
-    assert 'safe_flow = FLOW_UNIVERSAL if flow in LEGACY_FLOWS else flow' not in router
-    assert "st.session_state['home_slim_flow_operation'] = decision.operation" in router
-    assert 'render_home_wizard()' in router
-    assert 'render_price_multistore_v2()' in router
+    assert "st.session_state['mapeiaai_universal_model_df'] = clean_df" in router
+    assert "st.session_state['mapeiaai_final_contract_df'] = clean_df" in router
+    assert "_set_flow(FLOW_UNIVERSAL)" in router
+    assert 'home_model_contract_received' in router
+    assert 'home_contract_model_uploaded' in router
 
 
-def test_universal_flow_preserves_final_model_contract() -> None:
+def test_universal_flow_preserves_final_contract_language() -> None:
     flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
 
-    assert 'Modelo de destino' in flow
+    assert 'Contrato final' in flow
     assert 'Origem dos dados' in flow
-    assert 'Mapeamento universal' in flow
-    assert 'Planilha final idêntica ao modelo de destino em colunas e ordem.' in flow
+    assert 'Mapeamento por contrato' in flow
+    assert 'Preview e download fiel' in flow
+    assert 'Planilha final fiel ao contrato anexado' in flow
+    assert 'Baixar planilha final mapeada' in flow
+    assert 'Tipo detectado' not in flow
+    assert 'detect_model_type' not in flow
+    assert 'Modelo universal' not in flow
     assert 'build_universal_output' in flow
     assert 'validate_universal_output' in flow
-    assert 'Baixar planilha final universal' in flow
 
 
 def test_universal_uploads_do_not_use_mobile_blocking_type_filters() -> None:
@@ -141,3 +128,16 @@ def test_universal_output_still_keeps_exact_order_after_blindagem() -> None:
         'Nome destino': 'Mouse',
         'Sem origem': '',
     }
+
+
+def test_ai_text_rules_title_limit_and_prompt() -> None:
+    from bling_app_zero.ai.ai_text_rules import MAX_TITLE_LENGTH, ai_text_rules_prompt, clean_title_to_limit
+
+    title = clean_title_to_limit('Produto Gamer Ultra Resistente Com Cabo USB Reforçado Alta Performance Para Computador')
+
+    assert MAX_TITLE_LENGTH == 59
+    assert len(title) <= 59
+    prompt = ai_text_rules_prompt()
+    assert 'no máximo 59 caracteres' in prompt
+    assert 'descrições complementares devem ser persuasivas' in prompt
+    assert 'nunca altere preço, estoque, GTIN/EAN, SKU, ID, URL, imagem' in prompt
