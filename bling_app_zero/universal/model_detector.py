@@ -59,42 +59,47 @@ def _score_columns(columns: list[str]) -> dict[str, int]:
     return scores
 
 
+def _best_type_from_scores(scores: dict[str, int]) -> str:
+    precos_score = scores.get(MODEL_TYPE_PRECOS, 0)
+    multilojas_score = scores.get(MODEL_TYPE_MULTILOJAS, 0)
+    if multilojas_score >= 2 and precos_score >= 2:
+        return MODEL_TYPE_MULTILOJAS
+    return max(scores, key=lambda key: scores.get(key, 0)) if scores else MODEL_TYPE_PERSONALIZADO
+
+
+def _reason_for_type(model_type: str) -> str:
+    if model_type == MODEL_TYPE_MULTILOJAS:
+        return 'Modelo parece trabalhar preço por loja/canal/marketplace.'
+    if model_type == MODEL_TYPE_ESTOQUE:
+        return 'Modelo contém campos fortes de estoque, saldo, quantidade ou depósito.'
+    if model_type == MODEL_TYPE_PRECOS:
+        return 'Modelo contém campos fortes de preço, valor, margem ou desconto.'
+    if model_type == MODEL_TYPE_CADASTRO:
+        return 'Modelo contém campos de cadastro de produto, descrição, GTIN, NCM, categoria ou imagem.'
+    return 'Modelo personalizado detectado.'
+
+
 def detect_model_type(df_model: pd.DataFrame | None) -> ModelDetection:
     columns = _columns(df_model)
     if not columns:
         return ModelDetection(MODEL_TYPE_PERSONALIZADO, 0.0, 'Modelo sem colunas detectáveis.', {}, [])
 
     scores = _score_columns(columns)
-    estoque_score = scores.get(MODEL_TYPE_ESTOQUE, 0)
-    cadastro_score = scores.get(MODEL_TYPE_CADASTRO, 0)
-    precos_score = scores.get(MODEL_TYPE_PRECOS, 0)
-    multilojas_score = scores.get(MODEL_TYPE_MULTILOJAS, 0)
-
-    if multilojas_score >= 2 and precos_score >= 2:
-        detected = MODEL_TYPE_MULTILOJAS
-    else:
-        detected = max(scores, key=lambda key: scores.get(key, 0)) if scores else MODEL_TYPE_PERSONALIZADO
-
+    detected = _best_type_from_scores(scores)
     best = scores.get(detected, 0)
     total = max(1, sum(max(0, value) for value in scores.values()))
     confidence = min(0.98, round(best / total, 3)) if best else 0.25
 
     if best <= 1:
-        detected = MODEL_TYPE_PERSONALIZADO
-        confidence = 0.35
-        reason = 'Modelo personalizado: poucas colunas conhecidas foram encontradas.'
-    elif detected == MODEL_TYPE_MULTILOJAS:
-        reason = 'Modelo parece trabalhar preço por loja/canal/marketplace.'
-    elif detected == MODEL_TYPE_ESTOQUE:
-        reason = 'Modelo contém campos fortes de estoque, saldo, quantidade ou depósito.'
-    elif detected == MODEL_TYPE_PRECOS:
-        reason = 'Modelo contém campos fortes de preço, valor, margem ou desconto.'
-    elif detected == MODEL_TYPE_CADASTRO:
-        reason = 'Modelo contém campos de cadastro de produto, descrição, GTIN, NCM, categoria ou imagem.'
-    else:
-        reason = 'Modelo personalizado detectado.'
+        return ModelDetection(
+            MODEL_TYPE_PERSONALIZADO,
+            0.35,
+            'Modelo personalizado: poucas colunas conhecidas foram encontradas.',
+            scores,
+            columns,
+        )
 
-    return ModelDetection(detected, confidence, reason, scores, columns)
+    return ModelDetection(detected, confidence, _reason_for_type(detected), scores, columns)
 
 
 __all__ = [
