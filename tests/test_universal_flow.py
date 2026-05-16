@@ -14,7 +14,7 @@ def test_universal_flow_modules_import() -> None:
         importlib.import_module(module_name)
 
 
-def test_home_router_keeps_universal_and_operational_flows() -> None:
+def test_home_router_uses_single_intake_screen_before_operational_flows() -> None:
     router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
     assert "FLOW_UNIVERSAL = 'universal_model_flow'" in router
@@ -23,24 +23,44 @@ def test_home_router_keeps_universal_and_operational_flows() -> None:
     assert 'render_universal_flow' in router
     assert 'render_home_wizard' in router
     assert 'render_price_multistore_v2' in router
-    assert 'Preencher qualquer modelo' in router
-    assert 'Começar pelo modelo de destino' in router
-    assert 'Fluxos operacionais mantidos' in router
-    assert 'Começar cadastro' in router
-    assert 'Começar estoque' in router
-    assert 'Atualizar preços' in router
-    assert 'busca por site, calculadora, mapeamento, preview e download final' in router
+    assert 'Anexe a planilha que vai ser mapeada' in router
+    assert 'Planilha que vai ser mapeada' in router
+    assert 'Continuar para {decision.label}' in router
+    assert 'Depois disso, o sistema mantém o fluxo normal' in router
+    assert 'Preencher qualquer modelo' not in router
+    assert 'Começar pelo modelo de destino' not in router
+    assert 'Fluxos operacionais mantidos' not in router
+    assert 'Começar cadastro' not in router
+    assert 'Começar estoque' not in router
+    assert 'Atualizar preços' not in router
     assert 'Fluxo antigo extinto' not in router
     assert 'LEGACY_FLOWS' not in router
     assert 'legacy_flow_redirected_to_universal' not in router
+
+
+def test_home_intake_routes_detected_models_to_normal_flows() -> None:
+    router_module = importlib.import_module('bling_app_zero.ui.home_router')
+
+    cadastro = router_module._decision_for_model_type('cadastro')
+    estoque = router_module._decision_for_model_type('estoque')
+    precos = router_module._decision_for_model_type('precos')
+    multilojas = router_module._decision_for_model_type('multilojas')
+    personalizado = router_module._decision_for_model_type('personalizado')
+
+    assert cadastro.flow == 'wizard_cadastro_estoque'
+    assert cadastro.operation == 'cadastro'
+    assert estoque.flow == 'wizard_cadastro_estoque'
+    assert estoque.operation == 'estoque'
+    assert precos.flow == 'price_multistore_v2'
+    assert multilojas.flow == 'price_multistore_v2'
+    assert personalizado.flow == 'universal_model_flow'
 
 
 def test_operational_flows_are_not_redirected_to_universal() -> None:
     router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
     assert 'safe_flow = FLOW_UNIVERSAL if flow in LEGACY_FLOWS else flow' not in router
-    assert "st.session_state['home_slim_flow_operation'] = 'cadastro'" in router
-    assert "st.session_state['home_slim_flow_operation'] = 'estoque'" in router
+    assert "st.session_state['home_slim_flow_operation'] = decision.operation" in router
     assert 'render_home_wizard()' in router
     assert 'render_price_multistore_v2()' in router
 
