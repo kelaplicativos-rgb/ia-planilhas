@@ -14,16 +14,29 @@ def test_universal_flow_modules_import() -> None:
         importlib.import_module(module_name)
 
 
-def test_home_router_exposes_universal_flow_as_primary_option() -> None:
+def test_home_router_exposes_only_universal_flow() -> None:
     router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
     assert "FLOW_UNIVERSAL = 'universal_model_flow'" in router
+    assert 'LEGACY_FLOWS' in router
     assert 'render_universal_flow' in router
     assert 'Preencher qualquer modelo' in router
-    assert 'Começar pelo modelo universal' in router
-    assert 'Atalhos compatíveis' in router
-    assert 'render_home_wizard()' in router
-    assert 'render_price_multistore_v2()' in router
+    assert 'Começar pelo modelo de destino' in router
+    assert 'Fluxo antigo extinto' in router
+    assert 'render_home_wizard' not in router
+    assert 'render_price_multistore_v2' not in router
+    assert 'Atalhos compatíveis' not in router
+    assert 'Começar cadastro' not in router
+    assert 'Começar estoque' not in router
+    assert 'Atualizar preços' not in router
+
+
+def test_legacy_flows_redirect_to_universal() -> None:
+    router = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
+
+    assert "LEGACY_FLOWS = {'wizard_cadastro_estoque', 'price_multistore_v2'}" in router
+    assert 'legacy_flow_redirected_to_universal' in router
+    assert 'FLOW_UNIVERSAL if flow in LEGACY_FLOWS else flow' in router
 
 
 def test_universal_flow_preserves_final_model_contract() -> None:
