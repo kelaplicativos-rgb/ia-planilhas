@@ -39,12 +39,13 @@ CADASTRO_STEPS = [
     STEP_DOWNLOAD,
 ]
 
-# BLINGFIX FLUIDEZ: estoque não passa pela calculadora de preço.
-# Atualização de estoque precisa de modelo, origem, regras, entrada, geração,
-# preview e download. A etapa de preço só pertence ao cadastro.
+# Calculadora compartilhada em todos os fluxos principais.
+# No estoque ela fica disponível com toggle on/off para manter padrão global,
+# mesmo quando o usuário optar por não alterar preço nesta operação.
 ESTOQUE_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
+    STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_REGRAS,
     STEP_ENTRADA,
