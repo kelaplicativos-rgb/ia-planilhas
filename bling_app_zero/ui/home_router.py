@@ -1,42 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.home_models import save_home_models
 from bling_app_zero.ui.home_shared import read_upload_fast
-from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.ui.universal_flow import render_universal_flow
-from bling_app_zero.universal.model_detector import (
-    MODEL_TYPE_CADASTRO,
-    MODEL_TYPE_ESTOQUE,
-    MODEL_TYPE_MULTILOJAS,
-    MODEL_TYPE_PERSONALIZADO,
-    MODEL_TYPE_PRECOS,
-    detect_model_type,
-)
-from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_INTAKE_MODEL_KEY = 'mapeiaai_home_intake_model_df'
-HOME_INTAKE_MODEL_TYPE_KEY = 'mapeiaai_home_intake_model_type'
 HOME_INTAKE_MODEL_FILE_KEY = 'mapeiaai_home_intake_model_file'
 FLOW_UNIVERSAL = 'universal_model_flow'
-FLOW_WIZARD = 'wizard_cadastro_estoque'
-FLOW_PRICE_MULTISTORE = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
-
-
-@dataclass(frozen=True)
-class IntakeDecision:
-    flow: str
-    operation: str
-    label: str
-    reason: str
 
 
 def _set_flow(flow: str) -> None:
@@ -44,7 +20,7 @@ def _set_flow(flow: str) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     add_audit_event(
-        'home_operation_selected',
+        'home_model_contract_received',
         area='HOME',
         details={'previous': previous, 'selected': flow, 'responsible_file': RESPONSIBLE_FILE},
     )
@@ -76,44 +52,9 @@ def _current_flow() -> str:
         add_audit_event(
             'home_stale_flow_cleared',
             area='HOME',
-            details={'reason': 'home_must_start_on_sheet_intake', 'stale_flow': stale_flow, 'responsible_file': RESPONSIBLE_FILE},
+            details={'reason': 'home_must_start_on_sheet_contract_upload', 'stale_flow': stale_flow, 'responsible_file': RESPONSIBLE_FILE},
         )
     return ''
-
-
-def _decision_for_model_type(model_type: str) -> IntakeDecision:
-    if model_type == MODEL_TYPE_ESTOQUE:
-        return IntakeDecision(FLOW_WIZARD, 'estoque', 'Atualizar estoque', 'O modelo contém campos de estoque, saldo, quantidade ou depósito.')
-    if model_type == MODEL_TYPE_CADASTRO:
-        return IntakeDecision(FLOW_WIZARD, 'cadastro', 'Cadastrar produtos', 'O modelo contém campos de cadastro de produto.')
-    if model_type in {MODEL_TYPE_PRECOS, MODEL_TYPE_MULTILOJAS}:
-        return IntakeDecision(FLOW_PRICE_MULTISTORE, 'precos', 'Preços multiloja', 'O modelo contém campos de preço, loja, canal ou marketplace.')
-    return IntakeDecision(FLOW_UNIVERSAL, 'personalizado', 'Modelo universal', 'O modelo será tratado como layout personalizado e a planilha final seguirá exatamente o anexo.')
-
-
-def _store_intake_model(df: pd.DataFrame, file_name: str, model_type: str) -> None:
-    st.session_state[HOME_INTAKE_MODEL_KEY] = df.copy().fillna('')
-    st.session_state[HOME_INTAKE_MODEL_TYPE_KEY] = model_type
-    st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
-    st.session_state['mapeiaai_universal_model_df'] = df.copy().fillna('')
-    st.session_state['mapeiaai_price_model_df'] = df.copy().fillna('')
-
-    if model_type == MODEL_TYPE_ESTOQUE:
-        save_home_models(None, df, replace_missing=False)
-    elif model_type == MODEL_TYPE_CADASTRO:
-        save_home_models(df, None, replace_missing=False)
-
-
-def _apply_decision(decision: IntakeDecision) -> None:
-    if decision.operation in {'cadastro', 'estoque'}:
-        st.session_state['home_slim_flow_operation'] = decision.operation
-        st.session_state['operacao_final'] = decision.operation
-        st.session_state['tipo_operacao_final'] = decision.operation
-    elif decision.operation == 'precos':
-        st.session_state['home_slim_flow_operation'] = 'precos'
-        st.session_state['operacao_final'] = 'precos'
-        st.session_state['tipo_operacao_final'] = 'precos'
-    _set_flow(decision.flow)
 
 
 def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
@@ -130,31 +71,41 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
     return df.fillna('')
 
 
-def _render_intake_preview(df: pd.DataFrame, model_type: str, decision: IntakeDecision) -> None:
-    st.success(f'Tipo detectado: {decision.label}')
-    st.caption(decision.reason)
-    st.caption(f'Colunas encontradas: {len(df.columns)}')
-    with st.expander('Conferir planilha anexada', expanded=False):
+def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
+    clean_df = df.copy().fillna('')
+    st.session_state[HOME_INTAKE_MODEL_KEY] = clean_df
+    st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
+    st.session_state['mapeiaai_universal_model_df'] = clean_df
+    st.session_state['mapeiaai_final_contract_df'] = clean_df
+
+
+def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
+    st.success('Planilha recebida como contrato final de saída.')
+    st.caption('O sistema não precisa adivinhar se é Kyte, Olist, Magalu, cadastro, estoque ou ERP próprio. O arquivo anexado define as colunas finais.')
+    st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
+    with st.expander('Conferir contrato da planilha final', expanded=False):
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button(f'Continuar para {decision.label}', use_container_width=True, key='home_continue_after_intake_upload'):
+    if st.button('Continuar para origem dos dados', use_container_width=True, key='home_continue_after_contract_upload'):
         add_audit_event(
-            'home_intake_continue_clicked',
+            'home_contract_continue_clicked',
             area='HOME',
             details={
-                'model_type': model_type,
-                'flow': decision.flow,
-                'operation': decision.operation,
+                'file_name': file_name,
+                'columns_count': int(len(df.columns)),
+                'flow': FLOW_UNIVERSAL,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-        _apply_decision(decision)
+        _set_flow(FLOW_UNIVERSAL)
 
 
 def _render_operation_choice() -> None:
     st.markdown('## Anexe a planilha que vai ser mapeada')
-    st.caption('Envie o modelo/planilha de destino. O MapeiaAI detecta se é cadastro, estoque, preços multiloja ou modelo personalizado e segue para o fluxo normal.')
+    st.caption(
+        'Envie a planilha/modelo de destino. Ela vira o contrato fiel do download final, independente do sistema, fornecedor ou marketplace.'
+    )
 
     uploaded = st.file_uploader(
         'Planilha que vai ser mapeada',
@@ -166,36 +117,29 @@ def _render_operation_choice() -> None:
     df = _read_intake_file(uploaded)
     if not isinstance(df, pd.DataFrame):
         st.info('Anexe a planilha para liberar o próximo passo.')
-        st.caption('Depois disso, o sistema mantém o fluxo normal: origem dos dados, busca por site quando aplicável, calculadora, mapeamento, preview e download final.')
+        st.caption('Depois você escolhe a origem dos dados, faz o mapeamento com IA real, aplica opcionais de cálculo e baixa o arquivo no mesmo contrato anexado.')
         return
 
-    detection = detect_model_type(df)
-    model_type = detection.model_type
-    decision = _decision_for_model_type(model_type)
     file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
-    _store_intake_model(df, file_name, model_type)
-
+    _store_contract_model(df, file_name)
     add_audit_event(
-        'home_intake_model_detected',
+        'home_contract_model_uploaded',
         area='HOME',
         details={
             'file_name': file_name,
-            'model_type': model_type,
-            'confidence': detection.confidence,
             'columns_count': int(len(df.columns)),
-            'flow': decision.flow,
-            'operation': decision.operation,
+            'flow': FLOW_UNIVERSAL,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    _render_intake_preview(df, model_type, decision)
+    _render_contract_preview(df, file_name)
 
 
 def _back_to_operations() -> None:
     st.session_state.pop(ACTIVE_FLOW_KEY, None)
     st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
     _clear_flow_query_param()
-    add_audit_event('home_operation_cleared', area='HOME', details={'kept_wizard_progress': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('home_contract_flow_cleared', area='HOME', details={'kept_contract': True, 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
@@ -210,17 +154,8 @@ def render_home_router() -> None:
         _render_operation_choice()
         return
 
-    if flow == FLOW_UNIVERSAL:
-        _render_back_to_operations()
-        render_universal_flow()
-        return
-
-    if flow == FLOW_PRICE_MULTISTORE:
-        _render_back_to_operations()
-        render_price_multistore_v2()
-        return
-
-    render_home_wizard()
+    _render_back_to_operations()
+    render_universal_flow()
 
 
 __all__ = ['render_home_router']
