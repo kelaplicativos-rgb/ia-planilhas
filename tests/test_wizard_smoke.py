@@ -117,6 +117,21 @@ def test_wizard_button_flowchart_estoque_sem_preco() -> None:
     assert wizard.wizard_previous_target('origem', 'estoque') == 'operacao'
 
 
+def test_wizard_state_guard_corrige_etapa_invalida_do_estoque(monkeypatch) -> None:
+    guard = importlib.import_module('bling_app_zero.ui.wizard_state_guard')
+    st = importlib.import_module('streamlit')
+    monkeypatch.setattr(st, 'session_state', {}, raising=False)
+
+    st.session_state['home_slim_flow_operation'] = 'estoque'
+    st.session_state['bling_wizard_step'] = 'precificacao'
+    guard.run_wizard_state_guard(force=True)
+    assert st.session_state['bling_wizard_step'] == 'origem'
+
+    st.session_state['bling_wizard_step'] = 'mapeamento'
+    guard.run_wizard_state_guard(force=True)
+    assert st.session_state['bling_wizard_step'] == 'origem'
+
+
 def test_bottom_navigation_blocks_without_disabled_continue_button() -> None:
     wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
 
