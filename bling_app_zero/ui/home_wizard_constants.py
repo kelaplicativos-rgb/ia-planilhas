@@ -25,8 +25,8 @@ STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
 # Ordem oficial do wizard.
-# BLINGFIX: os botões Voltar/Avançar usam índice -1/+1 em cima destas listas.
-# Portanto a ordem aqui precisa ser a ordem visual real do fluxo, sem exceções.
+# Os botões Voltar/Avançar usam índice -1/+1 em cima destas listas.
+# Portanto a ordem aqui precisa ser a ordem visual real do fluxo.
 CADASTRO_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
@@ -39,10 +39,12 @@ CADASTRO_STEPS = [
     STEP_DOWNLOAD,
 ]
 
+# BLINGFIX FLUIDEZ: estoque não passa pela calculadora de preço.
+# Atualização de estoque precisa de modelo, origem, regras, entrada, geração,
+# preview e download. A etapa de preço só pertence ao cadastro.
 ESTOQUE_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
-    STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_REGRAS,
     STEP_ENTRADA,
@@ -51,7 +53,7 @@ ESTOQUE_STEPS = [
     STEP_DOWNLOAD,
 ]
 
-ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
+ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR, STEP_PRECIFICACAO]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
