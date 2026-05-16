@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.engines.cadastro_engine import default_model as default_cadastro_model
 from bling_app_zero.flows.estoque_contract import default_model as default_estoque_model
 from bling_app_zero.ui.model_upload import render_model_upload_box
+from bling_app_zero.universal.model_detector import detect_model_type
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
@@ -139,6 +140,18 @@ def _model_source_label(source: object) -> str:
     return 'modelo disponível'
 
 
+def _render_detection_badge(label: str, df: pd.DataFrame, source: object) -> None:
+    detection = detect_model_type(df)
+    st.caption(
+        f'{label}: {len(df.columns)} coluna(s) · tipo detectado: {detection.model_type} '
+        f'({round(detection.confidence * 100)}%) · {_model_source_label(source)}'
+    )
+    if detection.model_type == 'personalizado':
+        st.info('Modelo personalizado: a planilha final ainda respeitará exatamente as colunas e a ordem do arquivo anexado.')
+    else:
+        st.success(f'Modelo interpretado como {detection.model_type}. {detection.reason}')
+
+
 def _render_loaded_summary() -> None:
     cadastro = get_home_cadastro_model()
     estoque = get_home_estoque_model()
@@ -153,10 +166,12 @@ def _render_loaded_summary() -> None:
     with st.expander('Conferir modelos disponíveis', expanded=False):
         if isinstance(cadastro, pd.DataFrame):
             st.caption('Cadastro')
+            _render_detection_badge('Modelo', cadastro, st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY))
             st.dataframe(cadastro.head(1).astype(str), use_container_width=True, height=120)
             st.caption(f'{len(cadastro.columns)} coluna(s): ' + ', '.join(map(str, cadastro.columns)))
         if isinstance(estoque, pd.DataFrame):
             st.caption('Estoque')
+            _render_detection_badge('Modelo', estoque, st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))
             st.dataframe(estoque.head(1).astype(str), use_container_width=True, height=120)
             st.caption(f'{len(estoque.columns)} coluna(s): ' + ', '.join(map(str, estoque.columns)))
 
@@ -171,7 +186,7 @@ def render_home_bling_models() -> None:
 
     st.markdown('#### Modelo de destino')
     st.caption(
-        'Você pode anexar um modelo novo ou continuar com os modelos padrão já salvos no sistema para Cadastro e Estoque.'
+        'Anexe o modelo que você quer preencher. O MapeiaAI detecta se parece cadastro, estoque, preços, multilojas ou personalizado.'
     )
 
     upload = render_model_upload_box(
