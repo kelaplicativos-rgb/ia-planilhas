@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-APP_VERSION = '3.6.1-MAPEIA-AI'
+APP_VERSION = '3.7.0-MAPEIAAI-CREDITOS'
 
 PAGE_CONFIG = {
-    'page_title': 'Mapeia.AI',
+    'page_title': 'MapeiaAI',
     'page_icon': '🧭',
     'layout': 'wide',
     'initial_sidebar_state': 'collapsed',
