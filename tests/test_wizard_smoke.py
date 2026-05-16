@@ -38,6 +38,13 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ai.ai_schema',
     'bling_app_zero.ai.ai_cache',
     'bling_app_zero.ai.ai_job_queue',
+    'bling_app_zero.ai.ai_dataframe_tools',
+    'bling_app_zero.ai.ai_column_reader',
+    'bling_app_zero.ai.ai_header_matcher',
+    'bling_app_zero.ai.ai_content_checker',
+    'bling_app_zero.ai.ai_mapping_suggester',
+    'bling_app_zero.ai.ai_quality_score',
+    'bling_app_zero.ai.ai_orchestrator',
     'bling_app_zero.core.exporter',
     'bling_app_zero.core.gtin',
 ]
@@ -202,6 +209,32 @@ def test_ai_sidebar_byok_without_secrets_fallback() -> None:
     assert 'O sistema não usa chave em Secrets como fallback.' in ai_sidebar
     assert 'IA do Mapeia.AI' in sidebar_tools
     assert '_render_ai_sidebar_lazy' in sidebar_tools
+
+
+def test_ai_local_modules_suggest_mapping_and_quality() -> None:
+    from bling_app_zero.ai.ai_orchestrator import analyze_mapping, analyze_origin
+
+    source = pd.DataFrame(
+        [
+            {
+                'Produto': 'Cabo USB Tipo C',
+                'Valor Venda': '19,90',
+                'Saldo': '8',
+                'Codigo de barras': '7891234567895',
+            }
+        ]
+    )
+    target = pd.DataFrame(columns=['Descricao', 'Preco unitario', 'Estoque', 'GTIN/EAN'])
+
+    origin_result = analyze_origin(source)
+    mapping_result = analyze_mapping(source, target)
+
+    assert origin_result.ok is True
+    assert mapping_result.ok is True
+    assert origin_result.data['quality']['score'] >= 70
+    suggestions = mapping_result.data['mapping']['suggestions']
+    assert any(item['target_column'] == 'Preco unitario' and item['source_column'] == 'Valor Venda' for item in suggestions)
+    assert any(item['target_column'] == 'Estoque' and item['source_column'] == 'Saldo' for item in suggestions)
 
 
 def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> None:
