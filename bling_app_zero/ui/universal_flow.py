@@ -9,7 +9,6 @@ from bling_app_zero.ai.ai_openai_mapping_suggester import suggest_mapping_with_o
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_csv_exporter import final_csv_bytes
-from bling_app_zero.universal.model_detector import detect_model_type
 from bling_app_zero.universal.output_builder import build_universal_output, empty_universal_output
 from bling_app_zero.universal.universal_contract import build_universal_contract, validate_universal_output
 
@@ -89,11 +88,19 @@ def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame)
 
 
 def _render_model_step() -> pd.DataFrame | None:
-    st.markdown('### 1. Modelo de destino')
+    st.markdown('### 1. Contrato final')
+    model = _current_df(UNIVERSAL_MODEL_KEY)
+    if isinstance(model, pd.DataFrame):
+        st.success('Contrato final carregado pela primeira tela.')
+        st.caption('A planilha final seguirá exatamente essas colunas e essa ordem. Não há detecção de sistema/fornecedor nesta etapa.')
+        st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
+        st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
+        return model
+
     st.caption('Anexe a planilha exatamente no formato que você quer receber no final.')
     st.caption(SUPPORTED_UPLOAD_LABEL)
     uploaded = st.file_uploader(
-        'Modelo de destino',
+        'Contrato final da planilha',
         type=None,
         key='mapeiaai_universal_model_upload',
         help='O filtro de tipo fica aberto para evitar que o Android bloqueie CSV/planilhas válidas no seletor de arquivos.',
@@ -104,12 +111,11 @@ def _render_model_step() -> pd.DataFrame | None:
 
     model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
-        st.info('Envie o modelo de destino para começar.')
+        st.info('Envie a planilha/contrato final para começar.')
         return None
 
-    detection = detect_model_type(model)
-    st.success(f'Tipo detectado: {detection.model_type} · confiança {round(detection.confidence * 100)}%')
-    st.caption(detection.reason)
+    st.success('Contrato final recebido.')
+    st.caption('A planilha final seguirá exatamente essas colunas e essa ordem.')
     st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
     st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
     return model
@@ -117,7 +123,7 @@ def _render_model_step() -> pd.DataFrame | None:
 
 def _render_source_step() -> pd.DataFrame | None:
     st.markdown('### 2. Origem dos dados')
-    st.caption('Anexe a planilha, CSV ou arquivo do fornecedor que contém os dados brutos.')
+    st.caption('Anexe a origem dos dados: fornecedor, CSV, planilha, XML, HTML, MHTML ou PDF.')
     st.caption(SUPPORTED_UPLOAD_LABEL)
     uploaded = st.file_uploader(
         'Origem dos dados',
@@ -154,8 +160,8 @@ def _mapping_widget_key(signature: str, index: int, target_name: str) -> str:
 
 
 def _render_mapping_step(source: pd.DataFrame, model: pd.DataFrame, signature: str) -> dict[str, str]:
-    st.markdown('### 3. Mapeamento universal')
-    st.caption('Cada campo do modelo deve apontar para uma coluna da origem. Campo sem dado fica vazio na planilha final.')
+    st.markdown('### 3. Mapeamento por contrato')
+    st.caption('Cada coluna do contrato final aponta para uma coluna da origem. O que não existir fica vazio.')
 
     if UNIVERSAL_MAPPING_KEY not in st.session_state:
         suggested, engine = _suggest_mapping(source, model)
@@ -186,7 +192,7 @@ def _render_mapping_step(source: pd.DataFrame, model: pd.DataFrame, signature: s
 
 
 def _render_preview_and_download(source: pd.DataFrame, model: pd.DataFrame, mapping: dict[str, str]) -> None:
-    st.markdown('### 4. Preview e planilha final')
+    st.markdown('### 4. Preview e download fiel')
     contract = build_universal_contract(model)
     if source.empty:
         output = empty_universal_output(model, rows=0)
@@ -200,12 +206,12 @@ def _render_preview_and_download(source: pd.DataFrame, model: pd.DataFrame, mapp
             st.error(error)
         return
 
-    st.success('Planilha final idêntica ao modelo de destino em colunas e ordem.')
+    st.success('Planilha final fiel ao contrato anexado: mesmas colunas, mesma ordem, sem extras.')
     st.dataframe(output.head(50).astype(str), use_container_width=True, height=320)
     st.download_button(
-        '⬇️ Baixar planilha final universal',
+        '⬇️ Baixar planilha final mapeada',
         data=final_csv_bytes(output, operation='universal', run_download_features=True),
-        file_name='mapeiaai_planilha_final_universal.csv',
+        file_name='mapeiaai_planilha_final_mapeada.csv',
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key='mapeiaai_universal_download',
@@ -218,8 +224,8 @@ def _render_preview_and_download(source: pd.DataFrame, model: pd.DataFrame, mapp
 
 
 def render_universal_flow() -> None:
-    st.markdown('## Modelo universal')
-    st.caption('Qualquer modelo anexado vira o formato final. Cadastro, estoque, preços e multilojas são apenas tipos detectados.')
+    st.markdown('## Mapear planilha por contrato')
+    st.caption('O anexo define a saída. A origem fornece os dados. A IA real ajuda a correlacionar cabeçalhos e conteúdo.')
 
     model = _render_model_step()
     if not isinstance(model, pd.DataFrame):
