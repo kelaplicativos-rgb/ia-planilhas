@@ -45,25 +45,34 @@ def _upload_attr(upload: Any, name: str) -> pd.DataFrame | None:
 
 
 def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
-    """Retorna somente modelo classificado como cadastro.
+    """Retorna modelo classificado como cadastro/marketplace.
 
-    Não usa `model_df` como fallback para evitar que um modelo de estoque anexado
-    por engano vire contrato de cadastro.
+    O `model_upload` já aceita planilhas genéricas de marketplace no fluxo de
+    cadastro. Aqui mantemos o fallback para `model_df` somente quando ele não
+    foi classificado como estoque, evitando que um modelo de estoque vire
+    contrato de cadastro por engano.
     """
-    return _upload_attr(upload, 'cadastro_model_df')
+    cadastro = _upload_attr(upload, 'cadastro_model_df')
+    if isinstance(cadastro, pd.DataFrame):
+        return cadastro
+    estoque = _upload_attr(upload, 'estoque_model_df')
+    generic = _upload_attr(upload, 'model_df')
+    if isinstance(generic, pd.DataFrame) and not isinstance(estoque, pd.DataFrame):
+        return generic
+    return None
 
 
 def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
     """Retorna somente modelo classificado como estoque.
 
-    Não usa `model_df` como fallback para evitar que um modelo de cadastro anexado
-    por engano vire contrato de estoque.
+    Não usa `model_df` como fallback para evitar que um modelo de cadastro ou
+    marketplace anexado por engano vire contrato de estoque.
     """
     return _upload_attr(upload, 'estoque_model_df')
 
 
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do cadastro: anexo correto > modelo salvo/Home > padrão interno."""
+    """Modelo do cadastro/marketplace: anexo correto > modelo salvo/Home."""
     uploaded = _uploaded_cadastro_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -72,7 +81,7 @@ def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
 
 
 def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do estoque: anexo correto > modelo salvo/Home > padrão interno."""
+    """Modelo do estoque: anexo correto > modelo salvo/Home."""
     uploaded = _uploaded_estoque_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -94,11 +103,10 @@ def requested_columns_for_site_capture(
     """Retorna somente as colunas do modelo da operação atual.
 
     Regra global:
-    - cadastro por site usa apenas modelo de cadastro;
+    - cadastro por site usa apenas modelo de cadastro/marketplace;
     - estoque por site usa apenas modelo de estoque;
-    - anexo correto do usuário tem prioridade sobre padrão interno;
+    - anexo correto do usuário tem prioridade;
     - arquivo anexado da operação errada é ignorado neste fluxo;
-    - na ausência de anexo correto, o padrão interno oficial vira o contrato;
     - a ordem das colunas do contrato é preservada no preview/download.
     """
     normalized = str(operation or '').strip().lower()
@@ -122,16 +130,16 @@ def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
 
     if has_home_site_model_for_operation(operation_key):
         st.success(f'Modelo de {operation_key} disponível para uso.')
-        st.caption('Se você anexar um modelo correto nesta tela, ele terá prioridade. Se não anexar, o sistema usa o modelo interno oficial para esta operação.')
+        st.caption('Se você anexar outro modelo correto nesta tela, ele terá prioridade. Se não anexar, o sistema usa o modelo já salvo na primeira etapa.')
 
     caption = (
-        'Opcional: anexe o modelo oficial de estoque do Bling. Se anexar modelo de cadastro por engano, ele será ignorado neste fluxo. Sem anexo correto, será usado o modelo interno oficial de estoque.'
+        'Opcional: anexe o modelo de estoque. Se anexar modelo de cadastro/marketplace por engano, ele será ignorado neste fluxo.'
         if operation_key == 'estoque'
-        else 'Opcional: anexe o modelo oficial de cadastro do Bling. Se anexar modelo de estoque por engano, ele será ignorado neste fluxo. Sem anexo correto, será usado o modelo interno oficial de cadastro.'
+        else 'Opcional: anexe o modelo de cadastro ou marketplace, como Magalu, Mercado Livre ou outro canal. O arquivo final seguirá exatamente as colunas desse modelo.'
     )
 
     return render_model_upload_box(
-        title='Modelo do Bling para esta operação',
+        title='Modelo de importação para esta operação',
         operation=operation_key,
         key=f'model_upload_site_{operation_key}',
         required_model=False,
