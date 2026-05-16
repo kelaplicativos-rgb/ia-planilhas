@@ -59,6 +59,11 @@ BOTTOM_NAV_RENDERED_KEY = 'wizard_bottom_nav_rendered_current_cycle'
 HOME_ACTIVE_OPERATION_KEY = 'home_active_operation_v2'
 HOME_ALLOW_OPERATION_KEY = 'home_allow_operation_v2_session'
 HOME_CHOICE_TARGET = '__home_choice__'
+AUTOFLOW_PAUSE_STEP_KEY = 'bling_autofluxo_pause_step'
+AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
+AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
+AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
+MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -116,7 +121,6 @@ def _selected_operation() -> str:
 
 
 def wizard_steps_for_operation(operation: str) -> list[str]:
-    """Fluxograma oficial da operação para os botões Voltar/Avançar."""
     return list(ESTOQUE_STEPS if str(operation or '').strip().lower() == 'estoque' else CADASTRO_STEPS)
 
 
@@ -155,12 +159,54 @@ def _current_step() -> str:
     return step
 
 
+def _pause_autofluxo_for_manual_navigation(target_step: str, *, reason: str) -> None:
+    target = str(target_step or '').strip().lower()
+    if not target or target == HOME_CHOICE_TARGET:
+        return
+    st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = target
+    st.session_state[AUTOFLOW_LAST_STEP_KEY] = target
+    st.session_state.pop(AUTOFLOW_LAST_MOVE_KEY, None)
+    st.session_state[AUTOFLOW_MANUAL_LOCK_KEY] = {
+        'target_step': target,
+        'reason': reason,
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+    add_audit_event(
+        'wizard_manual_navigation_paused_autofluxo',
+        area='WIZARD',
+        step=target,
+        details={'reason': reason, 'target_step': target, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
+def _manual_pause_matches(step: str) -> bool:
+    target = str(step or '').strip().lower()
+    paused = str(st.session_state.get(AUTOFLOW_PAUSE_STEP_KEY) or '').strip().lower()
+    lock = st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY)
+    locked_step = str(lock.get('target_step') or '').strip().lower() if isinstance(lock, dict) else ''
+    return bool(target and (paused == target or locked_step == target))
+
+
+def _clear_manual_pause(step: str | None = None) -> None:
+    target = str(step or '').strip().lower()
+    paused = str(st.session_state.get(AUTOFLOW_PAUSE_STEP_KEY) or '').strip().lower()
+    lock = st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY)
+    locked_step = str(lock.get('target_step') or '').strip().lower() if isinstance(lock, dict) else ''
+    if step is None or paused == target:
+        st.session_state.pop(AUTOFLOW_PAUSE_STEP_KEY, None)
+    if step is None or locked_step == target:
+        st.session_state.pop(AUTOFLOW_MANUAL_LOCK_KEY, None)
+
+
 def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     steps = _active_steps()
     previous = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
     requested = step
     if step not in steps:
         step = STEP_MODELO
+
+    if reason in MANUAL_NAVIGATION_REASONS:
+        _pause_autofluxo_for_manual_navigation(step, reason=reason)
 
     if step == previous:
         add_audit_event(
@@ -188,6 +234,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
 def _back_to_home_choice() -> None:
     st.session_state.pop(HOME_ACTIVE_OPERATION_KEY, None)
     st.session_state.pop(HOME_ALLOW_OPERATION_KEY, None)
+    _clear_manual_pause()
     for key in ('operation_v2', 'step'):
         try:
             st.query_params.pop(key, None)
@@ -217,6 +264,7 @@ def _reset_outputs_for_operation_change() -> None:
             removed.append(key)
         st.session_state.pop(key, None)
     st.session_state.pop(ORIGIN_AUTO_FORWARDED_KEY, None)
+    _clear_manual_pause()
     add_audit_event('wizard_outputs_reset', area='WIZARD', step=st.session_state.get(WIZARD_STEP_KEY), details={'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE})
 
 
@@ -441,9 +489,18 @@ def _render_origin_step() -> None:
         return
 
     origin = values[labels.index(choice_label)]
+    previous_origin = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
+    origin_changed = previous_origin != origin
     _sync_flow_state(origin, operation)
-    st.success('Origem definida. Avançando para a próxima etapa.')
 
+    if _manual_pause_matches(STEP_ORIGEM) and not origin_changed:
+        st.info('Origem definida. Use Avançar para seguir ou Voltar para revisar outra etapa.')
+        return
+
+    if origin_changed:
+        _clear_manual_pause(STEP_ORIGEM)
+
+    st.success('Origem definida. Avançando para a próxima etapa.')
     signature = f'{operation}:{origin}'
     if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
         st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
@@ -511,7 +568,7 @@ def render_home_wizard() -> None:
     nav = _render_step_header()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
