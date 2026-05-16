@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.text import normalize_key
+from bling_app_zero.ui.ai_mapping_apply_panel import render_ai_mapping_apply_panel
 from bling_app_zero.ui.estoque_wizard_state import (
     ESTOQUE_CONFIDENCE_KEY,
     ESTOQUE_FINAL_KEY,
@@ -92,6 +93,15 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA no estoque')
 
+    render_ai_mapping_apply_panel(
+        df_source,
+        target_columns,
+        current_mapping,
+        mapping_key,
+        operation='estoque',
+    )
+
+    current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
@@ -156,7 +166,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Estoque')
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Envie o modelo de estoque no passo inicial para gerar também o CSV de estoque.')
+        st.info('Envie o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
         return
 
     deposito = str(st.session_state.get('deposito_manual') or '').strip()
