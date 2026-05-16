@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.ai_analysis_panel import render_ai_origin_analysis_panel
 from bling_app_zero.ui.estoque_models import home_estoque_model_loaded, render_estoque_model_contract, select_estoque_model
 from bling_app_zero.ui.estoque_sources import get_estoque_site_source, render_estoque_upload, source_files_from_upload
 from bling_app_zero.ui.estoque_wizard_state import (
@@ -45,7 +46,7 @@ def render_deposito_input() -> str:
         value=current,
         key=ESTOQUE_DEPOSITO_KEY,
         placeholder='Ex: Principal',
-        help='Valor aplicado nas colunas de depósito do CSV.',
+        help='Valor aplicado nas colunas de depósito da planilha final.',
     )
     deposito = normalize_deposito(deposito)
     store_deposito_value(deposito, write_primary=False)
@@ -61,8 +62,15 @@ def render_deposito_missing_recovery() -> str:
     st.warning('Informe o depósito para gerar o estoque.')
     deposito = render_deposito_input()
     if not deposito:
-        st.error('Geração bloqueada: o CSV de estoque precisa do depósito.')
+        st.error('Geração bloqueada: a planilha final de estoque precisa do depósito.')
     return deposito
+
+
+def _source_dataframe_from_upload_or_site(df_origem_site: pd.DataFrame | None, upload: SmartUploadResult) -> pd.DataFrame | None:
+    if isinstance(df_origem_site, pd.DataFrame):
+        return df_origem_site
+    source_df = getattr(upload, 'source_df', None)
+    return source_df if isinstance(source_df, pd.DataFrame) else None
 
 
 def render_estoque_entrada_step() -> None:
@@ -82,15 +90,18 @@ def render_estoque_entrada_step() -> None:
     df_modelo = select_estoque_model(upload)
     render_estoque_model_contract(df_modelo)
     store_estoque_context(upload, df_origem_site, df_modelo)
+    df_origem = _source_dataframe_from_upload_or_site(df_origem_site, upload)
 
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty and site_origin:
         st.success('Origem por site pronta.')
+        render_ai_origin_analysis_panel(df_origem_site, df_modelo, operation='estoque')
     elif site_origin:
         st.info('Busque os produtos pelo site para liberar a geração.')
     else:
         source_files = source_files_from_upload(upload)
         if source_files:
             st.success(f'{len(source_files)} arquivo(s) detectado(s).')
+            render_ai_origin_analysis_panel(df_origem, df_modelo, operation='estoque')
         else:
             st.info('Envie o arquivo do fornecedor.')
 
