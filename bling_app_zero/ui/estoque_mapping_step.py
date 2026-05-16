@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.estoque_entry_step import render_deposito_missing_recovery
 from bling_app_zero.ui.estoque_mapping import render_manual_estoque_mapping
 from bling_app_zero.ui.estoque_wizard_state import (
@@ -23,7 +24,7 @@ def render_estoque_gerar_step() -> None:
     df_origem, source_name = current_stock_source()
 
     if deposito:
-        st.success(f'Depósito que será aplicado no CSV: {deposito}')
+        st.success(f'Depósito que será aplicado na planilha: {deposito}')
     else:
         deposito = render_deposito_missing_recovery()
         if not deposito:
@@ -37,7 +38,11 @@ def render_estoque_gerar_step() -> None:
         return
 
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
-    render_manual_estoque_mapping(df_origem, df_modelo, deposito)
+    df_para_mapear = render_cadastro_pricing(df_origem)
+    if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
+        st.success('Calculadora aplicada à origem. Se o modelo possuir campo de preço, o valor calculado poderá ser usado no mapeamento.')
+
+    render_manual_estoque_mapping(df_para_mapear, df_modelo, deposito)
 
     if sync_manual_stock_output(source_name):
         st.success('Mapeamento de estoque gerado. Continue para conferir o preview final.')
