@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-APP_VERSION = '3.6.0-MAPEIAPLAN-AI'
+APP_VERSION = '3.6.1-MAPEIA-AI'
 
 PAGE_CONFIG = {
-    'page_title': 'MapeiaPlan.AI',
+    'page_title': 'Mapeia.AI',
     'page_icon': '🧭',
     'layout': 'wide',
     'initial_sidebar_state': 'collapsed',
