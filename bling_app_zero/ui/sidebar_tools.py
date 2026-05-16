@@ -19,6 +19,12 @@ class SidebarTool:
     renderer: SidebarRenderer
 
 
+def _render_ai_sidebar_lazy() -> None:
+    from bling_app_zero.ui.ai_sidebar import render_ai_sidebar
+
+    render_ai_sidebar()
+
+
 def _render_support_diagnostic_panel_lazy() -> None:
     from bling_app_zero.ui.support_diagnostic_panel import render_support_diagnostic_panel
 
@@ -26,6 +32,7 @@ def _render_support_diagnostic_panel_lazy() -> None:
 
 
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
+    SidebarTool('IA do Mapeia.AI', _render_ai_sidebar_lazy),
     SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy),
 )
 
@@ -44,7 +51,7 @@ def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
             details={'tool': name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
         with st.sidebar:
-            st.error('Diagnóstico indisponível.')
+            st.error(f'{name} indisponível.')
             st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
 
 
