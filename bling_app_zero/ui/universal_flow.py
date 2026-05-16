@@ -21,16 +21,21 @@ UNIVERSAL_SIGNATURE_KEY = 'mapeiaai_universal_signature'
 UNIVERSAL_ENGINE_KEY = 'mapeiaai_universal_mapping_engine'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 EMPTY_OPTION = '(deixar vazio)'
+SUPPORTED_UPLOAD_LABEL = 'Formatos aceitos: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. No celular, o seletor fica livre para evitar bloqueio falso do Android.'
 
 
 def _read_upload(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
     try:
-        return read_uploaded_file(uploaded_file).fillna('')
+        df = read_uploaded_file(uploaded_file).fillna('')
     except Exception as exc:
         st.error(f'Não consegui ler o arquivo: {exc}')
         return None
+    if not isinstance(df, pd.DataFrame) or df.empty or not len(df.columns):
+        st.warning('Arquivo recebido, mas não encontrei uma tabela válida. Confira se o arquivo está em XLSX, XLS, CSV, XML, HTML, MHTML ou PDF.')
+        return None
+    return df
 
 
 def _store_df(key: str, df: pd.DataFrame | None) -> None:
@@ -86,10 +91,12 @@ def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame)
 def _render_model_step() -> pd.DataFrame | None:
     st.markdown('### 1. Modelo de destino')
     st.caption('Anexe a planilha exatamente no formato que você quer receber no final.')
+    st.caption(SUPPORTED_UPLOAD_LABEL)
     uploaded = st.file_uploader(
         'Modelo de destino',
-        type=['xlsx', 'xls', 'csv', 'xlsm', 'xlsb'],
+        type=None,
         key='mapeiaai_universal_model_upload',
+        help='O filtro de tipo fica aberto para evitar que o Android bloqueie CSV/planilhas válidas no seletor de arquivos.',
     )
     df_model = _read_upload(uploaded)
     if isinstance(df_model, pd.DataFrame):
@@ -111,10 +118,12 @@ def _render_model_step() -> pd.DataFrame | None:
 def _render_source_step() -> pd.DataFrame | None:
     st.markdown('### 2. Origem dos dados')
     st.caption('Anexe a planilha, CSV ou arquivo do fornecedor que contém os dados brutos.')
+    st.caption(SUPPORTED_UPLOAD_LABEL)
     uploaded = st.file_uploader(
         'Origem dos dados',
-        type=['xlsx', 'xls', 'csv', 'xlsm', 'xlsb', 'xml', 'html', 'htm'],
+        type=None,
         key='mapeiaai_universal_source_upload',
+        help='O filtro de tipo fica aberto para evitar que o Android bloqueie CSV/planilhas válidas no seletor de arquivos.',
     )
     df_source = _read_upload(uploaded)
     if isinstance(df_source, pd.DataFrame):
