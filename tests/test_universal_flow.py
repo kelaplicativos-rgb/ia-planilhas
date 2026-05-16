@@ -10,6 +10,9 @@ def test_universal_flow_modules_import() -> None:
     for module_name in [
         'bling_app_zero.ui.universal_flow',
         'bling_app_zero.ui.home_router',
+        'bling_app_zero.ui.shared_calculator',
+        'bling_app_zero.ui.shared_final_csv',
+        'bling_app_zero.ui.shared_mapping',
         'bling_app_zero.ai.ai_text_rules',
     ]:
         importlib.import_module(module_name)
@@ -48,7 +51,7 @@ def test_home_contract_upload_goes_to_universal_flow_only() -> None:
     assert 'home_contract_model_uploaded' in router
 
 
-def test_universal_flow_restores_full_system_steps() -> None:
+def test_universal_flow_uses_shared_modules_for_core_steps() -> None:
     flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
 
     assert 'Contrato final' in flow
@@ -56,19 +59,45 @@ def test_universal_flow_restores_full_system_steps() -> None:
     assert 'Buscar produtos por site' in flow
     assert 'Anexar arquivo de origem' in flow
     assert 'run_site_pipeline' in flow
-    assert 'Calculadora marketplace opcional' in flow
-    assert 'Recursos IA Real' in flow
-    assert 'Mapeamento manual com faróis' in flow
-    assert 'Resumo dos faróis do mapeamento' in flow
-    assert 'Preview final' in flow
-    assert 'Planilha final' in flow
-    assert 'Baixar planilha final mapeada' in flow
-    assert 'Planilha final fiel ao contrato anexado' in flow
+    assert 'render_shared_calculator' in flow
+    assert 'render_shared_contract_mapping' in flow
+    assert 'render_shared_final_csv' in flow
+    assert 'suggest_shared_mapping' in flow
+    assert 'clear_shared_mapping_widgets' in flow
+    assert 'Baixar planilha final mapeada' not in flow
+    assert 'Mapeamento manual com faróis' not in flow
+    assert 'Calculadora marketplace opcional' not in flow
+    assert 'Preview final' not in flow
+    assert 'Planilha final' not in flow
     assert 'Tipo detectado' not in flow
     assert 'detect_model_type' not in flow
     assert 'Modelo universal' not in flow
-    assert 'build_universal_output' in flow
-    assert 'validate_universal_output' in flow
+
+
+def test_shared_mapping_has_contract_farol_mapping() -> None:
+    shared_mapping = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
+
+    assert 'render_shared_contract_mapping' in shared_mapping
+    assert 'Mapeamento compartilhado com faróis' in shared_mapping
+    assert 'Resumo dos faróis do mapeamento' in shared_mapping
+    assert '🟢 alto' in shared_mapping
+    assert '🟡 revisar' in shared_mapping
+    assert '🔴 vazio' in shared_mapping
+    assert 'suggest_mapping_with_openai' in shared_mapping
+
+
+def test_shared_calculator_and_final_csv_exist() -> None:
+    calculator = Path('bling_app_zero/ui/shared_calculator.py').read_text(encoding='utf-8')
+    final_csv = Path('bling_app_zero/ui/shared_final_csv.py').read_text(encoding='utf-8')
+
+    assert 'render_shared_calculator' in calculator
+    assert 'Calculadora marketplace' in calculator
+    assert 'apply_marketplace_calculation' in calculator
+    assert 'render_shared_final_csv' in final_csv
+    assert 'Preview final' in final_csv
+    assert 'Planilha final' in final_csv
+    assert 'Baixar planilha final mapeada' in final_csv
+    assert 'build_shared_final_dataframe' in final_csv
 
 
 def test_universal_uploads_do_not_use_mobile_blocking_type_filters() -> None:
@@ -90,18 +119,7 @@ def test_universal_flow_state_is_signature_guarded() -> None:
     assert 'def _reset_universal_state_if_changed(' in flow
     assert "st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)" in flow
     assert "st.session_state.pop(UNIVERSAL_OUTPUT_KEY, None)" in flow
-    assert "str(key).startswith('mapeiaai_universal_map_')" in flow
-
-
-def test_universal_flow_uses_safe_widget_keys_and_openai_validated_suggester() -> None:
-    flow = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
-
-    assert 'suggest_mapping_with_openai' in flow
-    assert "operation='universal'" in flow
-    assert 'OpenAI validada' in flow
-    assert 'def _mapping_widget_key(' in flow
-    assert "mapeiaai_universal_map_{index}_" in flow
-    assert "key=f'mapeiaai_universal_map_{target_name}'" not in flow
+    assert "clear_shared_mapping_widgets('mapeiaai_universal')" in flow
 
 
 def test_universal_signature_changes_when_model_or_source_changes() -> None:
