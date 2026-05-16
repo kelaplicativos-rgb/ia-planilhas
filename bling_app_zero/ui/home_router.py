@@ -6,10 +6,12 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard import render_home_wizard
+from bling_app_zero.ui.universal_flow import render_universal_flow
 from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
+FLOW_UNIVERSAL = 'universal_model_flow'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_MULTISTORE = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
@@ -49,6 +51,10 @@ def _current_flow() -> str:
     return ''
 
 
+def _open_universal_flow() -> None:
+    _set_flow(FLOW_UNIVERSAL)
+
+
 def _open_cadastro_flow() -> None:
     st.session_state['home_slim_flow_operation'] = 'cadastro'
     _set_flow(FLOW_WIZARD)
@@ -73,8 +79,17 @@ def _render_action_card(*, icon: str, title: str, hint: str, button_label: str, 
 
 def _render_operation_choice() -> None:
     st.markdown('## O que você quer fazer?')
-    _render_action_card(icon='🧾', title='Cadastrar produtos', hint='Gerar CSV de cadastro.', button_label='Começar cadastro', button_key='home_open_cadastro_flow', on_click=_open_cadastro_flow)
-    _render_action_card(icon='📦', title='Atualizar estoque', hint='Gerar CSV de estoque.', button_label='Começar estoque', button_key='home_open_estoque_flow', on_click=_open_estoque_flow)
+    _render_action_card(
+        icon='🧭',
+        title='Preencher qualquer modelo',
+        hint='Anexe o modelo de destino e uma origem. A planilha final sai no mesmo formato do modelo.',
+        button_label='Começar pelo modelo universal',
+        button_key='home_open_universal_flow',
+        on_click=_open_universal_flow,
+    )
+    st.caption('Atalhos compatíveis')
+    _render_action_card(icon='🧾', title='Cadastrar produtos', hint='Fluxo antigo compatível para cadastro.', button_label='Começar cadastro', button_key='home_open_cadastro_flow', on_click=_open_cadastro_flow)
+    _render_action_card(icon='📦', title='Atualizar estoque', hint='Fluxo antigo compatível para estoque.', button_label='Começar estoque', button_key='home_open_estoque_flow', on_click=_open_estoque_flow)
     _render_action_card(icon='🏬', title='Preços multiloja', hint='Atualizar preços por marketplace.', button_label='Atualizar preços', button_key='home_open_multistore_price_flow', on_click=_open_multistore_price_flow)
 
 
@@ -95,6 +110,11 @@ def render_home_router() -> None:
     flow = _current_flow()
     if not flow:
         _render_operation_choice()
+        return
+
+    if flow == FLOW_UNIVERSAL:
+        _render_back_to_operations()
+        render_universal_flow()
         return
 
     if flow == FLOW_PRICE_MULTISTORE:
