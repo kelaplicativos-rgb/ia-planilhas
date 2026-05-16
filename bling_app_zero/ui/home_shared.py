@@ -138,7 +138,7 @@ def _kind_label(kind: str) -> str:
 
 
 def _operation_label(operation: str) -> str:
-    return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'Arquivo final')
+    return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'Planilha final')
 
 
 def _operation_badge(operation: str) -> str:
@@ -147,16 +147,16 @@ def _operation_badge(operation: str) -> str:
         return '📦 ESTOQUE'
     if op == 'cadastro':
         return '🧾 CADASTRO'
-    return '📄 ARQUIVO'
+    return '📄 PLANILHA'
 
 
 def _download_label(operation: str) -> str:
     op = str(operation or '').strip().lower()
     if op == 'estoque':
-        return '⬇️ Baixar CSV final de ESTOQUE'
+        return '⬇️ Baixar planilha final de ESTOQUE'
     if op == 'cadastro':
-        return '⬇️ Baixar CSV final de CADASTRO'
-    return '⬇️ Baixar CSV final'
+        return '⬇️ Baixar planilha final de CADASTRO'
+    return '⬇️ Baixar planilha final'
 
 
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -257,10 +257,10 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     operation_title = _operation_label(operation)
     st.markdown(f'##### {_operation_badge(operation)}')
-    st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
+    st.caption(f'Planilha final: {operation_title}. Confira a prévia acima antes de baixar.')
 
     if st.session_state.pop('final_download_done', False):
-        st.caption('✅ Download final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
+        st.caption('✅ Download da planilha final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
 
     errors = validate_final_df(df, operation)
     if errors:
