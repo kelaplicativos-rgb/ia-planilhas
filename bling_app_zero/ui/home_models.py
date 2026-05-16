@@ -78,7 +78,7 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
 def ensure_default_home_models() -> None:
     """Garante modelos padrão internos quando o usuário não anexar modelo.
 
-    Isso evita exigir upload em todo uso. Se o usuário anexar um modelo oficial,
+    Isso evita exigir upload em todo uso. Se o usuário anexar um modelo de destino,
     o upload substitui somente aquele tipo e o outro modelo já salvo é preservado.
     """
     if get_home_cadastro_model() is None:
@@ -162,20 +162,20 @@ def _render_loaded_summary() -> None:
 
 
 def render_home_bling_models() -> None:
-    """Conteúdo da etapa Modelo do Bling.
+    """Conteúdo da etapa Modelo de destino.
 
     O card visual externo fica no wizard para que explicação, upload, alerta
     e navegação fiquem no mesmo bloco, sem partes soltas na tela mobile.
     """
     ensure_default_home_models()
 
-    st.markdown('#### Modelo do Bling')
+    st.markdown('#### Modelo de destino')
     st.caption(
-        'Você pode anexar um modelo oficial novo ou continuar com os modelos padrão já salvos no sistema para Cadastro e Estoque.'
+        'Você pode anexar um modelo novo ou continuar com os modelos padrão já salvos no sistema para Cadastro e Estoque.'
     )
 
     upload = render_model_upload_box(
-        title='Modelos do Bling',
+        title='Modelos de destino',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
