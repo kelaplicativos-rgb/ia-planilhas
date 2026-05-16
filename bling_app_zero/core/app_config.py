@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-APP_VERSION = '3.5.46-BLINGMAP-SIMPLES'
+APP_VERSION = '3.6.0-MAPEIAPLAN-AI'
 
 PAGE_CONFIG = {
-    'page_title': 'IA Planilhas → Bling',
-    'page_icon': '🚀',
+    'page_title': 'MapeiaPlan.AI',
+    'page_icon': '🧭',
     'layout': 'wide',
     'initial_sidebar_state': 'collapsed',
 }
