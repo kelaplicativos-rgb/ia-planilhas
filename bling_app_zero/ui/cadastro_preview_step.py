@@ -15,7 +15,7 @@ from bling_app_zero.ui.preview_ai_actions import render_preview_ai_actions
 
 
 def _final_preview_df(df_final: pd.DataFrame) -> pd.DataFrame:
-    """Aplica no preview a mesma blindagem usada no CSV.
+    """Aplica no preview a mesma blindagem usada na planilha final.
 
     Como a etapa Regras agora fica depois do mapeamento, o preview precisa
     refletir as regras atuais antes do download.
@@ -26,7 +26,7 @@ def _final_preview_df(df_final: pd.DataFrame) -> pd.DataFrame:
 
 def render_cadastro_preview_step() -> None:
     st.markdown('### Preview final do cadastro')
-    st.caption('Confira o CSV final antes de baixar. Esta tela já reflete as configurações do arquivo final.')
+    st.caption('Confira a planilha final antes de baixar. Esta tela já reflete as configurações do arquivo final.')
 
     df_final = enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     mapping = st.session_state.get('mapping_cadastro', {})
