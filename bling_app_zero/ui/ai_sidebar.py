@@ -47,7 +47,7 @@ def _render_status() -> None:
 
 def render_ai_sidebar() -> None:
     with st.sidebar:
-        with st.expander('🤖 IA do Mapeia.AI', expanded=False):
+        with st.expander('🤖 IA do MapeiaAI', expanded=False):
             st.caption('Use sua própria chave OpenAI. A chave não é salva no GitHub, não entra nos logs e vale apenas para a sessão atual.')
 
             st.toggle('Ativar IA inteligente', key=AI_ENABLED_KEY, value=bool(st.session_state.get(AI_ENABLED_KEY, False)))
