@@ -6,12 +6,14 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_shared import read_upload_fast
 from bling_app_zero.ui.home_wizard import render_home_wizard
+from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_INTAKE_MODEL_KEY = 'mapeiaai_home_intake_model_df'
 HOME_INTAKE_MODEL_FILE_KEY = 'mapeiaai_home_intake_model_file'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
+FLOW_PRICE_UPDATE = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 
 
@@ -42,8 +44,20 @@ def _clear_flow_query_param() -> None:
 def _current_flow() -> str:
     allowed = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY))
     flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
+    if not flow:
+        try:
+            flow = str(st.query_params.get('operation_v2') or '').strip()
+        except Exception:
+            flow = ''
+        if flow:
+            st.session_state[ACTIVE_FLOW_KEY] = flow
+            st.session_state[HOME_ALLOW_FLOW_KEY] = True
+            allowed = True
+
     if allowed and flow:
-        return flow
+        if flow in {FLOW_WIZARD, FLOW_PRICE_UPDATE}:
+            return flow
+        return FLOW_WIZARD
 
     stale_flow = st.session_state.pop(ACTIVE_FLOW_KEY, None)
     st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
@@ -169,11 +183,15 @@ def render_home_router() -> None:
         _render_operation_choice()
         return
 
+    _render_back_to_operations()
+    if flow == FLOW_PRICE_UPDATE:
+        render_price_multistore_v2()
+        return
+
     if flow != FLOW_WIZARD:
         st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
 
-    _render_back_to_operations()
     render_home_wizard()
 
 
-__all__ = ['render_home_router']
+__all__ = ['FLOW_PRICE_UPDATE', 'FLOW_WIZARD', 'render_home_router']
