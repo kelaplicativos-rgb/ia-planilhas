@@ -9,6 +9,7 @@ CUSTOM_IMPORT_LINKS_KEY = 'custom_final_import_links_v2'
 CUSTOM_IMPORT_LINK_KEY = 'custom_final_import_link_url'
 CUSTOM_IMPORT_LABEL_KEY = 'custom_final_import_link_label'
 DEFAULT_BUTTON_LABEL = 'Abrir link personalizado'
+PRICE_UPDATE_FLOW = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_links_panel.py'
 
 _URL_RE = re.compile(r'^https?://[^\s]+$', re.IGNORECASE)
@@ -116,15 +117,35 @@ def _render_saved_buttons(links: list[dict[str, str]]) -> None:
                 st.rerun()
 
 
+def _go_to_price_update() -> None:
+    st.session_state['home_active_operation_v2'] = PRICE_UPDATE_FLOW
+    st.session_state['home_allow_operation_v2_session'] = True
+    try:
+        st.query_params['operation_v2'] = PRICE_UPDATE_FLOW
+    except Exception:
+        pass
+    st.rerun()
+
+
+def _render_next_steps() -> None:
+    st.markdown('#### Próximos passos')
+    st.caption('Depois de gerar a planilha de cadastro, você pode continuar para a atualização de preços por loja/canal.')
+    if st.button('Continuar para atualização de preços', use_container_width=True, key='continue_to_price_multistore_flow'):
+        _go_to_price_update()
+
+
 def render_bling_links_panel() -> None:
-    """Renderiza botões finais configuráveis sem citar marca/plataforma externa.
+    """Renderiza próximos passos e botões finais sem citar marca/plataforma externa.
 
     Regra comercial/white-label:
     - não exibir nomes comerciais fixos;
     - não manter URLs fixas para empresas específicas;
     - o usuário informa quantos destinos quiser;
-    - cada destino salvo vira um botão clicável no final do fluxo.
+    - cada destino salvo vira um botão clicável no final do fluxo;
+    - a continuação interna leva para o recurso separado de atualização de preços.
     """
+    _render_next_steps()
+
     st.markdown('#### Links finais personalizados')
     st.caption('Cadastre os botões que devem aparecer no final. O sistema não usa nomes nem links comerciais fixos.')
 
@@ -168,5 +189,6 @@ __all__ = [
     'CUSTOM_IMPORT_LABEL_KEY',
     'CUSTOM_IMPORT_LINK_KEY',
     'CUSTOM_IMPORT_LINKS_KEY',
+    'PRICE_UPDATE_FLOW',
     'render_bling_links_panel',
 ]
