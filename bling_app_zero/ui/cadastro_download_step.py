@@ -14,11 +14,11 @@ from bling_app_zero.ui.home_shared import download_final
 
 def render_cadastro_download_step() -> None:
     st.markdown('### Download do cadastro')
-    st.caption('Última etapa: baixe somente o CSV final de cadastro pronto para importação.')
+    st.caption('Última etapa: baixe somente a planilha final de cadastro pronta para importação.')
 
     df_final = enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
     if not valid_df(df_final):
-        st.warning('Ainda não há CSV final de cadastro. Volte para o preview.')
+        st.warning('Ainda não há planilha final de cadastro. Volte para o preview.')
         return
 
     render_supplier_price_master_notice(df_final)
