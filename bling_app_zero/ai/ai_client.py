@@ -52,14 +52,20 @@ def _extract_text(response_json: dict[str, Any]) -> str:
     return '\n'.join(texts).strip()
 
 
-def _parse_json_text(text: str) -> dict[str, Any]:
+def _strip_code_fence(text: str) -> str:
     cleaned = str(text or '').strip()
+    if not cleaned.startswith('```'):
+        return cleaned
+    cleaned = cleaned.strip('`').strip()
+    if cleaned.lower().startswith('json'):
+        cleaned = cleaned[4:].strip()
+    return cleaned
+
+
+def _parse_json_text(text: str) -> dict[str, Any]:
+    cleaned = _strip_code_fence(text)
     if not cleaned:
         return {}
-    if cleaned.startswith('```'):
-        cleaned = cleaned.strip('`')
-        if cleaned.lower().startswith('json'):
-            cleaned = cleaned[4:].strip()
     try:
         parsed = json.loads(cleaned)
     except Exception:
@@ -89,18 +95,23 @@ def call_openai_json(task: str, instructions: str, payload: dict[str, Any], *, s
     if isinstance(cached, dict):
         return AIResult(ok=True, task=task, data=cached, message='Resultado recuperado do cache.')
 
+    safe_instructions = (
+        instructions.strip()
+        + '\n\nResponda exclusivamente em JSON válido. Não use markdown, comentários ou texto fora do JSON.'
+    )
     request_payload = {
         'model': current.model,
         'input': [
             {
                 'role': 'system',
-                'content': instructions,
+                'content': safe_instructions,
             },
             {
                 'role': 'user',
                 'content': json.dumps(payload, ensure_ascii=False, default=str),
             },
         ],
+        'text': {'format': {'type': 'json_object'}},
         'temperature': 0,
     }
 
