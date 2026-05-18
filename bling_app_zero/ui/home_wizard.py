@@ -391,12 +391,16 @@ def _section_title(number: int, title: str, caption: str = '') -> None:
 
 def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
-    _section_title(1, 'Modelo de destino', 'Anexe ou confira o modelo final que será preenchido.')
+    _section_title(
+        1,
+        'Baixe e preencha a planilha modelo',
+        'Baixe a planilha modelo abaixo, preencha os dados necessários e depois anexe o arquivo preenchido para continuar.',
+    )
     with st.container(border=True):
         render_home_bling_models()
     _ensure_universal_operation_state()
     if not _has_home_models():
-        render_pending_notice('Anexe um modelo de destino para liberar as próximas seções.')
+        render_pending_notice('Atenção: baixe a planilha modelo, preencha os dados necessários e anexe o arquivo preenchido para liberar as próximas seções.')
 
 
 def _render_origin_explanation(origin: str) -> None:
@@ -516,7 +520,7 @@ def render_home_wizard() -> None:
     if not has_model:
         _force_model_first_when_missing()
         add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
-        st.info('Comece anexando a planilha modelo. As próximas etapas só aparecem depois que o modelo de destino estiver carregado.')
+        st.info('Comece baixando a planilha modelo. Depois preencha os dados necessários e anexe o arquivo preenchido para continuar.')
         _render_model_step()
         return
 
