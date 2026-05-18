@@ -314,10 +314,10 @@ def render_model_upload_box(
 ) -> ModelUploadResult:
     files = st.file_uploader(
         'Enviar modelos de importação',
-        type=MODEL_SPREADSHEET_TYPES,
+        type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie o modelo de cadastro, marketplace, estoque ou ambos.',
+        help='Envie o modelo de cadastro, marketplace, estoque ou ambos. No Android, escolha Arquivos/Downloads no seletor.',
         label_visibility='collapsed',
     )
 
@@ -341,6 +341,7 @@ def render_model_upload_box(
             'ignored_count': len(ignored_files),
             'files': [_file_audit_info(file) for file in selected_files],
             'ignored_files': [_file_audit_info(file) for file in ignored_files],
+            'android_picker_fix': 'type_none_validate_after_upload',
         },
     )
 
@@ -351,7 +352,7 @@ def render_model_upload_box(
             status='BLOQUEADO',
             details={'files': [_file_audit_info(file) for file in selected_files]},
         )
-        st.warning('Nenhuma planilha compatível encontrada.')
+        st.warning('Nenhuma planilha compatível encontrada. Use XLSX, XLS, CSV, XLSM ou XLSB.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
     with st.spinner('Lendo modelo...'):
