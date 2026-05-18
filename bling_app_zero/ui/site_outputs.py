@@ -18,10 +18,6 @@ def source_csv_bytes(df: pd.DataFrame) -> bytes:
     )
 
 
-def _label(operation: str) -> str:
-    return 'estoque' if normalize_site_operation(operation) == 'estoque' else 'cadastro'
-
-
 def _requested_columns(requested_columns: list[str] | None) -> list[str]:
     columns: list[str] = []
     seen: set[str] = set()
@@ -111,10 +107,9 @@ def render_site_source_summary(
     """
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
-    label = _label(operation)
-    st.success(f'Origem de {label} criada com {len(df_site)} produto(s) e {len(df_site.columns)} coluna(s).')
+    st.success(f'Origem por site criada com {len(df_site)} registro(s) e {len(df_site.columns)} coluna(s).')
     if normalize_site_operation(operation) == 'estoque' and st.session_state.get('site_stock_requested_columns_enforced'):
-        st.caption('Estoque por site: a origem salva respeita as colunas do modelo. Campo não encontrado fica vazio.')
+        st.caption('A origem salva respeita as colunas do modelo escolhido. Campo não encontrado fica vazio.')
     st.caption('Continue para a próxima etapa. O mapeamento, preview e download final ficam separados no Wizard.')
 
     if show_sample:
@@ -144,16 +139,15 @@ def render_generated_site_actions(
         return
 
     normalized = normalize_site_operation(operation)
-    label = _label(normalized)
     config = config_for_site_operation(normalized)
     df_to_save = _stock_contract_df(df_site, requested_columns) if normalized == 'estoque' else df_site
     save_site_source(df_to_save, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
 
-    st.success(f'Origem de {label} criada com sucesso. Siga para a próxima etapa.')
+    st.success('Origem por site criada com sucesso. Siga para a próxima etapa.')
     render_site_progress_history()
 
     st.download_button(
-        f'Baixar origem bruta de {label}',
+        'Baixar origem bruta',
         data=source_csv_bytes(df_to_save),
         file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
