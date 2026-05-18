@@ -351,7 +351,7 @@ def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
     if step == STEP_PRECIFICACAO:
         return True, 'Avançar →', None
     if step == STEP_ORIGEM:
-        return _current_origin_choice() in {'arquivo', 'site'}, 'Avançar →', 'Escolha Arquivo ou Site.'
+        return _current_origin_choice() in {'arquivo', 'site'}, 'Avançar →', 'Escolha se os dados virão de um arquivo ou de um site.'
     if step == STEP_ENTRADA:
         ready = estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
         return ready, 'Avançar →', 'Carregue ou capture os dados desta etapa.'
@@ -469,12 +469,34 @@ def _render_pricing_step() -> None:
         st.info('Calculadora desativada. O sistema manterá o preço da origem ou o valor definido no mapeamento.')
 
 
+def _origin_label(operation: str) -> str:
+    if operation == 'estoque':
+        return 'De onde vêm os dados de estoque que você quer atualizar?'
+    return 'De onde vêm os dados dos produtos que você quer transformar?'
+
+
+def _origin_help_text(operation: str) -> str:
+    if operation == 'estoque':
+        return 'Escolha Arquivo se você já tem uma planilha/CSV do fornecedor. Escolha Site se quer buscar quantidade, custo ou outros campos nos links do fornecedor.'
+    return 'Escolha Arquivo se você já tem uma planilha, CSV, XML ou PDF. Escolha Site se quer buscar os produtos diretamente nos links do fornecedor.'
+
+
+def _render_origin_explanation(origin: str) -> None:
+    if origin == 'arquivo':
+        st.success('Arquivo selecionado: na próxima etapa você vai anexar a planilha, CSV, XML ou PDF com os dados de origem.')
+    elif origin == 'site':
+        st.success('Site selecionado: na próxima etapa você vai colar os links do fornecedor para o sistema buscar os dados.')
+
+
 def _render_origin_step() -> None:
     operation = _selected_operation()
     _clear_legacy_origin_widget_state(operation)
 
-    st.markdown('### Origem')
-    options = {'arquivo': '📎 Arquivo', 'site': '🌐 Site'}
+    st.markdown('### Escolha a origem dos dados')
+    st.caption(_origin_label(operation))
+    st.info(_origin_help_text(operation))
+
+    options = {'arquivo': '📎 Arquivo do fornecedor', 'site': '🌐 Site do fornecedor'}
     labels = list(options.values())
     values = list(options.keys())
     selected = _current_origin_choice()
@@ -488,6 +510,7 @@ def _render_origin_step() -> None:
     previous_origin = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
     origin_changed = previous_origin != origin
     _sync_flow_state(origin, operation)
+    _render_origin_explanation(origin)
 
     if _manual_pause_matches(STEP_ORIGEM) and not origin_changed:
         st.info('Origem definida. Use Avançar para seguir ou Voltar para revisar outra etapa.')
@@ -496,7 +519,6 @@ def _render_origin_step() -> None:
     if origin_changed:
         _clear_manual_pause(STEP_ORIGEM)
 
-    st.success('Origem definida. Avançando para a próxima etapa.')
     signature = f'{operation}:{origin}'
     if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
         st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
