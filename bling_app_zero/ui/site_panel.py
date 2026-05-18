@@ -135,6 +135,10 @@ def _has_columns(columns: list[str] | None) -> bool:
     return bool([str(column).strip() for column in (columns or [])])
 
 
+def _has_urls(raw_urls: str) -> bool:
+    return bool(str(raw_urls or '').strip())
+
+
 def _orange_warning(message: str) -> None:
     st.markdown(
         f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
@@ -157,14 +161,6 @@ def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.'
             pass
 
 
-def _operation_badge(operation: str) -> str:
-    if operation == 'estoque':
-        return 'Entrada por site: o sistema busca somente os campos pedidos pelo modelo escolhido.'
-    if operation == 'cadastro':
-        return 'Entrada por site: o sistema busca dados do fornecedor para preencher o modelo escolhido no mapeamento.'
-    return 'Entrada por site: configure primeiro o objetivo do mapeamento.'
-
-
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
     upload = render_optional_site_model_upload(operation)
     df_modelo_cadastro = choose_site_cadastro_model_df(upload)
@@ -172,11 +168,12 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     df_modelo = choose_site_model_df(upload, operation)
     requested_columns = requested_columns_for_site_capture(operation, df_modelo_cadastro, df_modelo_estoque)
     if requested_columns:
-        show_contract(requested_columns)
+        with st.expander('Campos que serão buscados', expanded=False):
+            show_contract(requested_columns)
     elif operation == 'estoque':
-        st.error('Modelo de destino ausente. A busca será feita somente nas colunas do modelo escolhido.')
+        st.error('Modelo de destino ausente.')
     else:
-        st.info('Sem modelo de destino desta etapa. Vou capturar os campos principais e deixar vazio o que não encontrar.')
+        st.warning('Modelo de destino ausente. A captura usará campos principais.')
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
@@ -187,7 +184,7 @@ def _render_urls_input(operation: str) -> str:
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole um ou mais links públicos: categoria, busca ou itens individuais. Se o fornecedor exigir login, CAPTCHA, duas etapas, Cloudflare ou firewall, use a área de site protegido logo abaixo.',
+        help='Cole um ou mais links públicos.',
     )
 
 
@@ -218,17 +215,6 @@ def _clear_stuck_capture(operation: str) -> None:
     )
 
 
-def _render_protected_site_hint() -> None:
-    st.markdown(
-        '<div style="background:#fff8ed;border:1px solid #ffd59b;border-left:6px solid #fb8c00;border-radius:12px;padding:12px 14px;margin:10px 0;color:#4b2800;font-size:0.95rem;">'
-        '<b>Site com login, CAPTCHA, duas etapas, Cloudflare ou firewall?</b><br>'
-        'Não use o botão de busca pública acima para esse caso. Abra o fornecedor no Chrome, resolva a segurança e use a opção abaixo <b>Importar site protegido / colar HTML</b>. '
-        'Ela aceita Ctrl+U → Ctrl+A → Ctrl+C, HTML salvo, tabela copiada ou vários arquivos HTML de páginas diferentes.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-
 def _render_universal_fallback(
     *,
     operation: str,
@@ -238,11 +224,8 @@ def _render_universal_fallback(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('🔐 Importar site protegido / colar HTML, tabela, CSV ou XLSX', expanded=expanded):
-        _orange_warning(
-            'Use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, verificação em duas etapas, CAPTCHA, Cloudflare ou firewall. '
-            'O sistema não precisa da sua senha nem tenta burlar proteção: você acessa no Chrome e cola/envia aqui o HTML ou tabela já carregada.'
-        )
+    with st.expander('🔐 Site protegido ou com login', expanded=expanded):
+        _orange_warning('Use se o fornecedor bloquear robô, login, CAPTCHA, Cloudflare ou firewall. Você pode colar HTML, tabela, CSV ou XLSX.')
         render_manual_table_import_panel(
             operation=operation,
             requested_columns=requested_columns,
@@ -263,12 +246,12 @@ def _run_site_capture(
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
         _clear_site_df(operation, 'busca_publica_sem_links')
-        st.warning('Informe pelo menos um link antes de iniciar a busca por site.')
+        st.warning('Cole pelo menos um link para buscar.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
     if operation == 'estoque' and not _has_columns(requested_columns):
         _clear_site_df(operation, 'busca_sem_modelo_destino')
-        st.error('Busca bloqueada: carregue o modelo de destino para definir exatamente quais colunas serão preenchidas.')
+        st.error('Busca bloqueada: modelo de destino ausente.')
         add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
 
@@ -307,7 +290,7 @@ def _run_site_capture(
         _set_capture_state(operation=operation, running=False, finished=False, error=message)
         _finish_progress(progress_bar, status_box, text='Busca encerrada com erro.')
         add_audit_event('site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
-        st.error('A busca por site não conseguiu finalizar. Baixe o log debug para conferir o erro técnico.')
+        st.error('A busca por site não conseguiu finalizar. Baixe o log debug.')
         return
 
     rows = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
@@ -317,7 +300,7 @@ def _run_site_capture(
         _set_capture_state(operation=operation, running=False, finished=False, error='A busca por site não encontrou dados válidos.', rows=0, columns=0)
         _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados encontrados.')
         add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('A busca por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
+        st.warning('Nenhum dado encontrado. Confira os links ou use Site protegido.')
         return
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     _store_site_df(operation, df_site)
@@ -346,34 +329,35 @@ def render_site_panel() -> None:
 
     config = config_for_site_operation(operation)
     st.markdown(
-        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2><p class="bling-flow-card-text">A captura pública acontece aqui. Fornecedores com login, CAPTCHA, duas etapas ou firewall devem usar a área de site protegido logo abaixo.</p></section>',
+        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2></section>',
         unsafe_allow_html=True,
     )
-    st.info(_operation_badge(operation))
-    st.caption(config.description)
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
 
     running = bool(st.session_state.get('site_capture_running'))
+    has_urls = _has_urls(raw_urls)
     if running:
-        _orange_warning('Captura por site em andamento. Aguarde a origem aparecer antes de continuar.')
+        _orange_warning('Captura por site em andamento. Aguarde a origem aparecer.')
         if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             _clear_stuck_capture(operation)
             st.rerun()
 
     error = str(st.session_state.get('site_capture_error') or '').strip()
     if error:
-        st.error(f'Última captura por site falhou: {error}')
+        st.error(f'Última captura falhou: {error}')
 
     button_label = config.button_label
-    button_disabled = running or (operation == 'estoque' and not _has_columns(requested_columns))
+    button_disabled = running or not has_urls or (operation == 'estoque' and not _has_columns(requested_columns))
+
+    if not has_urls:
+        _orange_warning('Cole pelo menos um link para liberar a busca.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         add_audit_event('site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': operation, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
 
-    _render_protected_site_hint()
     _render_universal_fallback(
         operation=operation,
         requested_columns=requested_columns,
