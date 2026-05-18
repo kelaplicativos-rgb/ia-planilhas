@@ -57,7 +57,7 @@ ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_REGRAS, ST
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
-    STEP_OPERACAO: 'Operação',
+    STEP_OPERACAO: 'Objetivo',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
     STEP_REGRAS: 'Ajustes IA',
