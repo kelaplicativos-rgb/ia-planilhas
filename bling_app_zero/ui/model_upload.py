@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
+from bling_app_zero.ui.home_shared import read_upload_fast
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
 
@@ -78,6 +78,20 @@ def _df_audit_info(df: pd.DataFrame | None) -> dict[str, Any]:
         'columns_count': int(len(df.columns)),
         'columns': [str(column) for column in list(df.columns)[:80]],
     }
+
+
+def _df_short_summary(df: pd.DataFrame | None) -> str:
+    if not isinstance(df, pd.DataFrame):
+        return 'não lido'
+    return f'{len(df)} linha(s) · {len(df.columns)} coluna(s)'
+
+
+def _df_columns_summary(df: pd.DataFrame | None, *, limit: int = 12) -> str:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return ''
+    columns = [str(column) for column in list(df.columns)[:limit]]
+    suffix = '...' if len(df.columns) > limit else ''
+    return ', '.join(columns) + suffix
 
 
 def _safe_read(file: Any) -> pd.DataFrame | None:
@@ -246,12 +260,12 @@ def _pick_estoque(loaded: list[tuple[Any, pd.DataFrame | None]], used_file: Any 
 
 def _detected_message(cadastro_df: pd.DataFrame | None, estoque_df: pd.DataFrame | None) -> str:
     if isinstance(estoque_df, pd.DataFrame) and not isinstance(cadastro_df, pd.DataFrame):
-        return 'Modelo de estoque reconhecido automaticamente. Próximo fluxo: atualizar estoque.'
+        return 'Modelo de estoque reconhecido.'
     if isinstance(cadastro_df, pd.DataFrame) and not isinstance(estoque_df, pd.DataFrame):
-        return 'Modelo de cadastro/marketplace reconhecido automaticamente. Próximo fluxo: cadastrar produtos.'
+        return 'Modelo de cadastro reconhecido.'
     if isinstance(cadastro_df, pd.DataFrame) and isinstance(estoque_df, pd.DataFrame):
-        return 'Modelos de cadastro e estoque reconhecidos.'
-    return 'Arquivo recebido. Confira se é um modelo de importação válido.'
+        return 'Modelos reconhecidos.'
+    return 'Arquivo recebido.'
 
 
 def _render_detected_summary(
@@ -261,17 +275,34 @@ def _render_detected_summary(
     cadastro_df: pd.DataFrame | None,
     estoque_df: pd.DataFrame | None,
 ) -> None:
+    """Mostra apenas um resumo leve do modelo.
+
+    BLINGFIX: a versão anterior renderizava preview_df dentro do expander.
+    Mesmo fechado, o Streamlit ainda montava a tabela, gerando sensação de delay
+    depois do anexo na primeira tela.
+    """
     if not supported_files:
         return
+
     st.success(_detected_message(cadastro_df, estoque_df))
+
+    details: list[str] = []
+    if isinstance(cadastro_df, pd.DataFrame):
+        name = _file_name(cadastro_file) if cadastro_file else 'Cadastro/marketplace'
+        details.append(f'Cadastro: {name} · {_df_short_summary(cadastro_df)}')
+    if isinstance(estoque_df, pd.DataFrame):
+        name = _file_name(estoque_file) if estoque_file else 'Estoque'
+        details.append(f'Estoque: {name} · {_df_short_summary(estoque_df)}')
+
+    for detail in details:
+        st.caption(detail)
+
     if isinstance(cadastro_df, pd.DataFrame) or isinstance(estoque_df, pd.DataFrame):
-        with st.expander('Conferir modelos detectados', expanded=False):
+        with st.expander('Ver colunas detectadas', expanded=False):
             if isinstance(cadastro_df, pd.DataFrame):
-                st.caption(f'Cadastro/marketplace: {_file_name(cadastro_file)}' if cadastro_file else 'Cadastro/marketplace detectado')
-                preview_df('Cadastro/marketplace', cadastro_df)
+                st.caption('Cadastro: ' + _df_columns_summary(cadastro_df))
             if isinstance(estoque_df, pd.DataFrame):
-                st.caption(f'Estoque: {_file_name(estoque_file)}' if estoque_file else 'Estoque detectado')
-                preview_df('Estoque', estoque_df)
+                st.caption('Estoque: ' + _df_columns_summary(estoque_df))
 
 
 def render_model_upload_box(
@@ -283,7 +314,7 @@ def render_model_upload_box(
 ) -> ModelUploadResult:
     files = st.file_uploader(
         'Enviar modelos de importação',
-        type=None,
+        type=MODEL_SPREADSHEET_TYPES,
         accept_multiple_files=True,
         key=key,
         help='Envie o modelo de cadastro, marketplace, estoque ou ambos.',
@@ -323,11 +354,12 @@ def render_model_upload_box(
         st.warning('Nenhuma planilha compatível encontrada.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
-    loaded = [(file, _safe_read(file)) for file in supported_files]
-    cadastro_file, cadastro_df = _pick_cadastro(loaded)
-    if str(operation or '').strip().lower() == 'cadastro' and not isinstance(cadastro_df, pd.DataFrame):
-        cadastro_file, cadastro_df = _pick_generic_cadastro_contract(loaded)
-    estoque_file, estoque_df = _pick_estoque(loaded, cadastro_file)
+    with st.spinner('Lendo modelo...'):
+        loaded = [(file, _safe_read(file)) for file in supported_files]
+        cadastro_file, cadastro_df = _pick_cadastro(loaded)
+        if str(operation or '').strip().lower() == 'cadastro' and not isinstance(cadastro_df, pd.DataFrame):
+            cadastro_file, cadastro_df = _pick_generic_cadastro_contract(loaded)
+        estoque_file, estoque_df = _pick_estoque(loaded, cadastro_file)
 
     if isinstance(estoque_df, pd.DataFrame) and not isinstance(cadastro_df, pd.DataFrame):
         operation = 'estoque'
