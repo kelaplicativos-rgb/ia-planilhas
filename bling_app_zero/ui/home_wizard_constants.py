@@ -25,14 +25,14 @@ STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
 # Ordem oficial do wizard.
-# Os botões Voltar/Avançar usam índice -1/+1 em cima destas listas.
-# Portanto a ordem aqui precisa ser a ordem visual real do fluxo.
+# A etapa Regras deixa de ser uma tela solta: proteções globais e ajustes com IA
+# passam a morar no contexto de mapeamento/preview, onde o usuário decide coluna,
+# valor fixo, vazio ou ação assistida por IA.
 CADASTRO_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
-    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_MAPEAMENTO,
     STEP_PREVIEW,
@@ -47,24 +47,23 @@ ESTOQUE_STEPS = [
     STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_ORIGEM,
-    STEP_REGRAS,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
 
-ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR, STEP_PRECIFICACAO]))
+ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_REGRAS, STEP_PROCESSAR, STEP_PRECIFICACAO]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
     STEP_OPERACAO: 'Operação',
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
-    STEP_REGRAS: 'Regras',
+    STEP_REGRAS: 'Ajustes IA',
     STEP_ENTRADA: 'Entrada',
-    STEP_MAPEAMENTO: 'Mapeamento',
-    STEP_GERAR_ESTOQUE: 'Gerar',
+    STEP_MAPEAMENTO: 'Mapeamento + IA',
+    STEP_GERAR_ESTOQUE: 'Gerar + IA',
     STEP_PREVIEW: 'Preview',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
