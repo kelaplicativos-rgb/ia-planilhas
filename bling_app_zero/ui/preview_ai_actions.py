@@ -56,8 +56,8 @@ def _render_detected_columns(df: pd.DataFrame) -> None:
         'Marca apoio': columns.get('brand') or '(não encontrada)',
         'Categoria apoio': columns.get('category') or '(não encontrada)',
     }
-    with st.expander('Colunas que a IA usará', expanded=False):
-        st.dataframe(pd.DataFrame([detected]).astype(str), use_container_width=True, height=90)
+    st.caption('Colunas detectadas para IA')
+    st.dataframe(pd.DataFrame([detected]).astype(str), use_container_width=True, height=90)
 
 
 def _render_guard_alerts(df_final: pd.DataFrame, policy: dict) -> None:
@@ -70,9 +70,8 @@ def _render_guard_alerts(df_final: pd.DataFrame, policy: dict) -> None:
         st.success('Blindagem de texto: nenhum termo sensível ou descrição fora de contexto foi detectado no preview final.')
         return
     st.warning(f'Blindagem de texto encontrou {len(alerts_df)} alerta(s). Revise antes de baixar a planilha final.')
-    with st.expander('⚠️ Alertas de texto', expanded=False):
-        st.dataframe(alerts_df.astype(str), use_container_width=True, height=260)
-        st.caption('Por segurança, o sistema apenas alerta. Use a IA ou edite o mapeamento para corrigir antes do download.')
+    st.dataframe(alerts_df.astype(str), use_container_width=True, height=260)
+    st.caption('Por segurança, o sistema apenas alerta. Use a IA ou edite o mapeamento para corrigir antes do download.')
 
 
 def _store_applied_df(operation: str, df_applied: pd.DataFrame) -> None:
@@ -107,14 +106,15 @@ def _render_multitask_box(op: str, signature: str) -> str:
     if task_key not in st.session_state:
         st.session_state[task_key] = ''
 
-    with st.expander('🧠 Pedido livre para IA', expanded=False):
-        st.caption('Opcional. A IA gera sugestões por linha e você confirma antes de aplicar.')
-        custom_task = st.text_area(
-            'O que você quer que a IA faça na planilha?',
-            key=task_key,
-            height=96,
-            placeholder='Ex: reformule todos os títulos dos produtos com no máximo 60 caracteres.',
-        )
+    st.markdown('##### Pedido livre para IA')
+    st.caption('Opcional. A IA gera sugestões por linha e você confirma antes de aplicar.')
+    custom_task = st.text_area(
+        'O que você quer que a IA faça na planilha?',
+        key=task_key,
+        height=96,
+        placeholder='Ex: reformule todos os títulos dos produtos com no máximo 60 caracteres.',
+    )
+    with st.container(border=True):
         st.caption('Exemplos rápidos')
         for index, example in enumerate(AI_RESOURCE_EXAMPLE_TASKS, start=1):
             st.button(
@@ -124,7 +124,7 @@ def _render_multitask_box(op: str, signature: str) -> str:
                 on_click=_set_custom_task,
                 args=(task_key, example),
             )
-        st.caption('Proteção ativa: não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs sem coluna própria e segura.')
+    st.caption('Proteção ativa: não aplica automaticamente e não deve alterar preço, GTIN/EAN, estoque, depósito, SKU, imagens ou URLs sem coluna própria e segura.')
     return str(custom_task or '').strip()
 
 
@@ -316,8 +316,8 @@ def _render_preview_ai_actions_inner(df_final: pd.DataFrame, operation: str) -> 
 
     preview_result = apply_ai_resource_suggestions(df_final, edited)
     preview_applied = preview_result.df_applied if isinstance(preview_result.df_applied, pd.DataFrame) else df_final
-    with st.expander('Prévia se aplicar as sugestões marcadas', expanded=False):
-        preview_df(f'Prévia com IA · {label}', preview_applied)
+    st.caption('Prévia se aplicar as sugestões marcadas')
+    preview_df(f'Prévia com IA · {label}', preview_applied)
 
     apply_count = _marked_suggestions_count(edited)
     affected_products = _affected_products_count(edited)
