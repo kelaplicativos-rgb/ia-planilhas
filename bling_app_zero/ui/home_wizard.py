@@ -394,8 +394,6 @@ def _render_model_step() -> None:
     with st.container(border=True):
         render_home_bling_models()
     _ensure_universal_operation_state()
-    if not _has_home_models():
-        render_pending_notice('Anexe o modelo para liberar o fluxo.')
 
 
 def _render_origin_explanation(origin: str) -> None:
