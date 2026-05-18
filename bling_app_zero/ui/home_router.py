@@ -22,6 +22,7 @@ CADASTRO_SOURCE_KEY = 'home_modelo_cadastro_source'
 ESTOQUE_SOURCE_KEY = 'home_modelo_estoque_source'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
+SINGLE_PAGE_FLOW = True
 
 VALID_INTAKE_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.html', '.htm', '.mht', '.mhtml', '.xml', '.pdf')
 INVALID_DIAGNOSTIC_EXTENSIONS = ('.zip', '.txt', '.log', '.json')
@@ -31,21 +32,32 @@ def _model_has_columns(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
 
 
+def _activate_main_flow() -> None:
+    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
+    st.session_state[HOME_ALLOW_FLOW_KEY] = True
+    st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    st.session_state['home_single_page_flow_active'] = True
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        st.query_params['step'] = STEP_ORIGEM
+    except Exception:
+        pass
+
+
 def _set_flow(flow: str) -> None:
     previous = st.session_state.get(ACTIVE_FLOW_KEY)
-    st.session_state[ACTIVE_FLOW_KEY] = flow
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
     if flow == FLOW_WIZARD:
-        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+        _activate_main_flow()
+    else:
+        st.session_state[ACTIVE_FLOW_KEY] = flow
+        st.session_state[HOME_ALLOW_FLOW_KEY] = True
     add_audit_event(
         'home_model_contract_received',
         area='HOME',
-        details={'previous': previous, 'selected': flow, 'next_step': st.session_state.get(WIZARD_STEP_KEY), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'previous': previous, 'selected': flow, 'next_step': st.session_state.get(WIZARD_STEP_KEY), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['operation_v2'] = flow
-        if flow == FLOW_WIZARD:
-            st.query_params['step'] = STEP_ORIGEM
     except Exception:
         pass
     st.rerun()
@@ -84,7 +96,7 @@ def _current_flow() -> str:
         add_audit_event(
             'home_stale_flow_cleared',
             area='HOME',
-            details={'reason': 'home_must_start_on_sheet_contract_upload', 'stale_flow': stale_flow, 'responsible_file': RESPONSIBLE_FILE},
+            details={'reason': 'home_single_page_start', 'stale_flow': stale_flow, 'responsible_file': RESPONSIBLE_FILE},
         )
     return ''
 
@@ -130,7 +142,7 @@ def _clear_saved_intake_model() -> None:
         'operation_site',
     ):
         st.session_state.pop(key, None)
-    add_audit_event('home_contract_model_cleared', area='HOME', details={'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('home_contract_model_cleared', area='HOME', details={'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
@@ -148,7 +160,7 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
             'home_contract_invalid_extension_blocked',
             area='HOME',
             status='BLOQUEADO',
-            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'responsible_file': RESPONSIBLE_FILE},
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
         )
         return None
 
@@ -160,12 +172,10 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
             'home_contract_read_failed',
             area='HOME',
             status='ERRO',
-            details={'file_name': file_name, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+            details={'file_name': file_name, 'error': str(exc), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
         )
         return None
 
-    # BLINGFIX: modelo de destino pode ter somente cabeçalho e zero linhas.
-    # Para liberar o fluxo, o que importa é existir contrato de colunas.
     if not _model_has_columns(df):
         st.warning(
             'Arquivo recebido, mas não encontrei colunas válidas para mapear. '
@@ -175,7 +185,7 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
             'home_contract_without_columns_blocked',
             area='HOME',
             status='BLOQUEADO',
-            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'responsible_file': RESPONSIBLE_FILE},
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
         )
         return None
 
@@ -184,7 +194,7 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
             'home_contract_header_only_accepted',
             area='HOME',
             status='OK',
-            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'columns_count': int(len(df.columns)), 'rows_count': 0, 'responsible_file': RESPONSIBLE_FILE},
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'columns_count': int(len(df.columns)), 'rows_count': 0, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
         )
 
     return df.fillna('')
@@ -220,15 +230,12 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     ):
         st.session_state.pop(key, None)
 
-    try:
-        st.query_params.pop('operacao', None)
-    except Exception:
-        pass
+    _activate_main_flow()
 
     add_audit_event(
-        'home_contract_model_saved_without_operation_choice',
+        'home_contract_model_saved_single_page',
         area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'rows_count': int(len(clean_df)), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'rows_count': int(len(clean_df)), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -236,106 +243,84 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
     st.success('Planilha recebida como modelo de destino.')
     if df.empty:
         st.caption('Modelo sem linhas aceito: ele será usado como contrato de colunas para o arquivo final.')
-    st.caption('O próximo passo será escolher a origem dos dados. Não há mais escolha manual entre Cadastro e Estoque.')
+    st.caption('Continue rolando para baixo. O fluxo completo está nesta mesma tela.')
     st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s) · {len(df)} linha(s)')
     with st.expander('Conferir colunas da planilha', expanded=False):
         preview_df = df.head(8).astype(str) if not df.empty else pd.DataFrame(columns=list(df.columns))
         st.dataframe(preview_df, use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    col_continue, col_clear = st.columns(2)
-    with col_continue:
-        if st.button('Continuar para origem dos dados', use_container_width=True, key='home_continue_after_contract_upload'):
-            add_audit_event(
-                'home_contract_continue_clicked',
-                area='HOME',
-                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'rows_count': int(len(df)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_ORIGEM, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
-            )
-            _set_flow(FLOW_WIZARD)
-    with col_clear:
-        if st.button('Limpar e anexar outro', use_container_width=True, key='home_clear_contract_upload'):
-            _clear_saved_intake_model()
-            st.rerun()
+    if st.button('Limpar e anexar outro modelo', use_container_width=True, key='home_clear_contract_upload'):
+        _clear_saved_intake_model()
+        st.rerun()
 
 
-def _render_operation_choice() -> None:
-    st.markdown('## O que você quer mapear hoje?')
-    st.caption(
-        'Anexe o modelo de destino. O sistema usa as colunas desse arquivo como contrato final, '
-        'sem exigir escolha manual entre Cadastro e Estoque.'
-    )
+def _render_first_section() -> bool:
+    st.markdown('## MapeiaAI')
+    st.caption('Fluxo em tela única: anexe o modelo de destino e siga rolando para baixo até o download final.')
 
     uploaded = st.file_uploader(
-        'Planilha/modelo de destino',
+        '1. Modelo de destino',
         type=None,
         accept_multiple_files=False,
         key='home_single_model_intake_upload',
-        help='No celular o seletor fica livre para evitar bloqueio falso de CSV/planilhas válidas. A validação acontece dentro do MapeiaAI.',
+        help='Envie CSV, Excel, HTML/MHTML, XML ou PDF. Modelo com apenas cabeçalhos também é aceito.',
     )
 
-    if uploaded is None:
-        saved_df, saved_file_name = _saved_intake_model()
-        if isinstance(saved_df, pd.DataFrame):
-            add_audit_event(
-                'home_contract_model_reused_from_session',
-                area='HOME',
-                details={'file_name': saved_file_name, 'columns_count': int(len(saved_df.columns)), 'rows_count': int(len(saved_df)), 'responsible_file': RESPONSIBLE_FILE},
-            )
-            _render_contract_preview(saved_df, saved_file_name)
-            return
-        st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
-        st.caption('Depois disso você escolhe a origem dos dados, faz o mapeamento, confere o preview e baixa o arquivo final.')
-        return
+    if uploaded is not None:
+        df = _read_intake_file(uploaded)
+        if isinstance(df, pd.DataFrame):
+            file_name = _uploaded_name(uploaded)
+            _store_contract_model(df, file_name)
+            _render_contract_preview(df, file_name)
+            return True
 
-    df = _read_intake_file(uploaded)
-    if not isinstance(df, pd.DataFrame):
-        saved_df, saved_file_name = _saved_intake_model()
-        if isinstance(saved_df, pd.DataFrame):
-            st.info('Mantive o último modelo válido salvo. Você pode continuar com ele ou limpar e anexar outro.')
-            _render_contract_preview(saved_df, saved_file_name)
-            return
-        st.info('Anexe uma planilha/modelo válido para liberar o próximo passo.')
-        st.caption('Formatos aceitos: CSV, Excel, HTML/MHTML, XML ou PDF. ZIP/TXT/log não são modelos de destino.')
-        return
+    saved_df, saved_file_name = _saved_intake_model()
+    if isinstance(saved_df, pd.DataFrame):
+        add_audit_event(
+            'home_contract_model_reused_from_session_single_page',
+            area='HOME',
+            details={'file_name': saved_file_name, 'columns_count': int(len(saved_df.columns)), 'rows_count': int(len(saved_df)), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        _activate_main_flow()
+        _render_contract_preview(saved_df, saved_file_name)
+        return True
 
-    file_name = _uploaded_name(uploaded)
-    _store_contract_model(df, file_name)
-    add_audit_event(
-        'home_contract_model_uploaded',
-        area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'rows_count': int(len(df)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
-    )
-    _render_contract_preview(df, file_name)
+    st.info('Anexe a planilha ou modelo de destino para liberar as próximas seções abaixo.')
+    st.caption('Depois disso, tudo continua nesta mesma página: preço, origem, dados de origem, mapeamento, preview e download.')
+    return False
+
+
+def _render_operation_choice() -> None:
+    has_model = _render_first_section()
+    if has_model:
+        render_home_wizard()
 
 
 def _back_to_operations() -> None:
     st.session_state.pop(ACTIVE_FLOW_KEY, None)
     st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
     _clear_flow_query_param()
-    add_audit_event('home_contract_flow_cleared', area='HOME', details={'kept_contract': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('home_contract_flow_cleared', area='HOME', details={'kept_contract': True, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
 def _render_back_to_operations() -> None:
-    if st.button('← Voltar', use_container_width=True, key='home_back_to_operation_choice'):
-        _back_to_operations()
+    # Tela única: sem botão Voltar global prendendo o fluxo.
+    return
 
 
 def render_home_router() -> None:
-    flow = _current_flow()
-    if not flow:
-        _render_operation_choice()
-        return
+    st.session_state['home_single_page_flow_active'] = True
 
-    _render_back_to_operations()
+    flow = _current_flow()
     if flow == FLOW_PRICE_UPDATE:
         render_price_multistore_v2()
         return
 
-    if flow != FLOW_WIZARD:
-        st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
-
-    render_home_wizard()
+    has_model = _render_first_section()
+    if has_model:
+        render_home_wizard()
 
 
 __all__ = ['FLOW_PRICE_UPDATE', 'FLOW_WIZARD', 'render_home_router']
