@@ -357,21 +357,11 @@ def _render_origin_step() -> None:
         if st.button('🌐 Usar site do fornecedor', use_container_width=True, key='origin_choose_site'):
             _select_origin('site')
 
-    values = list(ORIGIN_OPTIONS.keys())
-    index = values.index(selected) if selected in values else None
-    origin = st.radio(
-        'Origem dos dados',
-        values,
-        index=index,
-        key=ORIGIN_RADIO_KEY,
-        format_func=lambda value: ORIGIN_OPTIONS.get(str(value), str(value)),
-    )
-    origin = _normalize_origin_value(origin)
-    if origin not in {'arquivo', 'site'}:
-        render_pending_notice('Escolha Arquivo ou Site para liberar a seção Dados de origem logo abaixo.')
+    if selected in {'arquivo', 'site'}:
+        _render_origin_explanation(selected)
         return
-    _sync_flow_state(origin)
-    _render_origin_explanation(origin)
+
+    render_pending_notice('Escolha Arquivo ou Site para liberar a seção Dados de origem logo abaixo.')
 
 
 def _render_cadastro_entrada() -> None:
