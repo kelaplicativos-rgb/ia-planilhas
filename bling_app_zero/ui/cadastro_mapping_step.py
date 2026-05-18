@@ -14,12 +14,21 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
+from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 
 
+def _render_mapping_ai_adjustments() -> None:
+    with st.expander('Ajustes com IA e proteções do arquivo final', expanded=False):
+        st.caption(
+            'Use esta área apenas para proteções globais. Valores fixos, campo vazio ou escolha de coluna devem ser definidos no mapeamento abaixo.'
+        )
+        render_rules_center_step()
+
+
 def render_cadastro_mapeamento_step() -> None:
-    st.markdown('### Mapeamento do cadastro')
-    st.caption('Conferência das colunas. Preview final e download ficam separados para deixar esta tela mais leve.')
+    st.markdown('### Mapeamento + IA do cadastro')
+    st.caption('Escolha colunas, escreva valores fixos, deixe vazio ou use ajustes assistidos antes do preview final.')
 
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
@@ -33,13 +42,14 @@ def render_cadastro_mapeamento_step() -> None:
 
     store_expected_source_rows(df_origem)
     st.caption(f'Origem em uso no mapeamento: {len(df_origem)} produto(s).')
+    _render_mapping_ai_adjustments()
 
     df_para_mapear = render_cadastro_pricing(df_origem)
     df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
     if isinstance(df_para_mapear, pd.DataFrame):
         st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_para_mapear
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço do Bling.')
+        st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço.')
 
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
