@@ -139,13 +139,13 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
 
 def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
     st.success('Planilha recebida como modelo de destino.')
-    st.caption('Agora escolha manualmente se este fluxo será Cadastro ou Estoque. O sistema não define isso sozinho.')
+    st.caption('Agora configure o objetivo do mapeamento. O sistema não define isso sozinho.')
     st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
     with st.expander('Conferir colunas da planilha', expanded=False):
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button('Escolher Cadastro ou Estoque', use_container_width=True, key='home_continue_after_contract_upload'):
+    if st.button('Continuar para configurar o mapeamento', use_container_width=True, key='home_continue_after_contract_upload'):
         add_audit_event(
             'home_contract_continue_clicked',
             area='HOME',
@@ -171,7 +171,7 @@ def _render_operation_choice() -> None:
     df = _read_intake_file(uploaded)
     if not isinstance(df, pd.DataFrame):
         st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
-        st.caption('Depois disso você escolhe Cadastro ou Estoque e continua com preço, origem, entrada, mapeamento, preview e download final.')
+        st.caption('Depois disso você configura o objetivo, preço, origem dos dados, entrada, mapeamento, preview e download final.')
         return
 
     file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
