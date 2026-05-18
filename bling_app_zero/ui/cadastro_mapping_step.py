@@ -27,21 +27,21 @@ def _render_mapping_ai_adjustments() -> None:
 
 
 def render_cadastro_mapeamento_step() -> None:
-    st.markdown('### Mapeamento + IA do cadastro')
+    st.markdown('### Mapeamento + IA do modelo final')
     st.caption('Escolha colunas, escreva valores fixos, deixe vazio ou use ajustes assistidos antes do preview final.')
 
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
     if not valid_df(df_origem):
-        st.warning('Nenhuma origem de cadastro carregada. Volte para a etapa Entrada.')
+        st.warning('Nenhuma origem de dados carregada. Volte para a etapa Entrada.')
         return
     if not valid_model(df_modelo):
-        st.warning('Modelo de cadastro ausente. Volte para a etapa Modelo.')
+        st.warning('Modelo de destino ausente. Volte para a etapa Modelo.')
         return
 
     store_expected_source_rows(df_origem)
-    st.caption(f'Origem em uso no mapeamento: {len(df_origem)} produto(s).')
+    st.caption(f'Origem em uso no mapeamento: {len(df_origem)} registro(s).')
     _render_mapping_ai_adjustments()
 
     df_para_mapear = render_cadastro_pricing(df_origem)
