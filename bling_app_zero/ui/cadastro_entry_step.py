@@ -22,6 +22,26 @@ from bling_app_zero.ui.home_shared import preview_df
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 
+def current_operation() -> str:
+    for key in (
+        'tipo_operacao_site',
+        'operacao_final',
+        'tipo_operacao_final',
+        'home_slim_flow_operation',
+        'home_detected_operation',
+    ):
+        value = str(st.session_state.get(key) or '').strip().lower()
+        if value in {'cadastro', 'estoque'}:
+            return value
+    try:
+        value = str(st.query_params.get('operacao', '') or '').strip().lower()
+        if value in {'cadastro', 'estoque'}:
+            return value
+    except Exception:
+        pass
+    return 'cadastro'
+
+
 def empty_cadastro_upload_result() -> SmartUploadResult:
     return SmartUploadResult(
         source_file=None,
@@ -44,26 +64,28 @@ def source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFram
 
 
 def render_cadastro_entrada_step() -> None:
+    operation = current_operation()
     site_origin = is_site_origin()
     if not site_origin:
         st.markdown('### Envie a origem dos dados')
         st.caption('Planilha, XML, PDF, HTML ou CSV do fornecedor, ERP, marketplace ou outro sistema.')
 
-    df_origem_site = get_site_source_for_operation('cadastro') if site_origin else None
+    df_origem_site = get_site_source_for_operation(operation) if site_origin else None
     upload = empty_cadastro_upload_result() if site_origin else render_cadastro_source_upload(None)
     df_origem = source_dataframe(df_origem_site, upload)
     clear_cadastro_outputs_if_source_changed(df_origem)
 
-    df_modelo = select_cadastro_model(upload)
+    df_modelo_cadastro = select_cadastro_model(upload)
     df_modelo_estoque = select_estoque_model_for_cadastro(upload)
+    df_modelo = df_modelo_estoque if operation == 'estoque' else df_modelo_cadastro
     store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
     if valid_df(df_origem) and site_origin:
         st.success(f'Origem pronta: {len(df_origem)} registro(s).')
-        render_ai_origin_analysis_panel(df_origem, df_modelo, operation='cadastro')
+        render_ai_origin_analysis_panel(df_origem, df_modelo, operation=operation)
     elif valid_df(df_origem):
         st.success(f'Origem carregada: {len(df_origem)} registro(s).')
-        render_ai_origin_analysis_panel(df_origem, df_modelo, operation='cadastro')
+        render_ai_origin_analysis_panel(df_origem, df_modelo, operation=operation)
         with st.expander('Ver origem dos dados', expanded=False):
             preview_df('Origem dos dados', df_origem)
     elif site_origin:
@@ -78,6 +100,7 @@ def render_cadastro_entrada_step() -> None:
 
 
 __all__ = [
+    'current_operation',
     'empty_cadastro_upload_result',
     'render_cadastro_entrada_step',
     'source_dataframe',
