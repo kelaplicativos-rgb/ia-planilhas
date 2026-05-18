@@ -323,6 +323,20 @@ def inject_unified_light_layout(force: bool = False) -> None:
         div[data-testid="stFileUploader"] {
             width: min(100%, var(--bling-card-width)) !important;
             margin: 0 auto 0.72rem auto !important;
+            position: relative !important;
+            z-index: 50 !important;
+            overflow: visible !important;
+            pointer-events: auto !important;
+            touch-action: manipulation !important;
+        }
+
+        div[data-testid="stFileUploader"] *,
+        div[data-testid="stFileUploader"] section,
+        div[data-testid="stFileUploader"] label,
+        div[data-testid="stFileUploader"] button,
+        div[data-testid="stFileUploader"] input {
+            pointer-events: auto !important;
+            touch-action: manipulation !important;
         }
 
         div[data-testid="stFileUploader"] section {
@@ -332,6 +346,15 @@ def inject_unified_light_layout(force: bool = False) -> None:
             box-shadow: var(--bling-shadow-soft) !important;
             padding: 0.85rem !important;
             min-height: 96px !important;
+            position: relative !important;
+            z-index: 51 !important;
+            overflow: visible !important;
+        }
+
+        div[data-testid="stFileUploader"] button,
+        div[data-testid="stFileUploader"] label {
+            position: relative !important;
+            z-index: 52 !important;
         }
 
         input,
@@ -515,6 +538,12 @@ def inject_unified_light_layout(force: bool = False) -> None:
 
             div[data-testid="stVerticalBlock"] { gap: 0.48rem !important; }
 
+            div[data-testid="column"],
+            div[data-testid="stElementContainer"],
+            div[data-testid="stHorizontalBlock"] {
+                overflow: visible !important;
+            }
+
             .bling-hero,
             .bling-flow-card,
             .bling-inline-card,
@@ -555,10 +584,32 @@ def inject_unified_light_layout(force: bool = False) -> None:
                 line-height: 1.30 !important;
             }
 
+            div[data-testid="stFileUploader"] {
+                position: relative !important;
+                z-index: 9999 !important;
+                overflow: visible !important;
+                pointer-events: auto !important;
+                -webkit-tap-highlight-color: rgba(79, 103, 165, 0.18) !important;
+            }
+
             div[data-testid="stFileUploader"] section {
-                min-height: 86px !important;
+                min-height: 104px !important;
                 padding: 0.72rem !important;
                 border-radius: 16px !important;
+                position: relative !important;
+                z-index: 10000 !important;
+                overflow: visible !important;
+                pointer-events: auto !important;
+            }
+
+            div[data-testid="stFileUploader"] button,
+            div[data-testid="stFileUploader"] label,
+            div[data-testid="stFileUploader"] input,
+            div[data-testid="stFileUploader"] [role="button"] {
+                position: relative !important;
+                z-index: 10001 !important;
+                pointer-events: auto !important;
+                touch-action: manipulation !important;
             }
 
             .stButton > button,
@@ -582,6 +633,7 @@ def inject_unified_light_layout(force: bool = False) -> None:
                 padding: 0.72rem !important;
                 border-radius: 14px !important;
                 margin: 0.42rem 0 !important;
+                overflow: visible !important;
             }
 
             .bling-map-title { font-size: 0.82rem !important; }
