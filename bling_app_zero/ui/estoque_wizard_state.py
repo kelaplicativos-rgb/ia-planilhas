@@ -10,21 +10,12 @@ ESTOQUE_SOURCE_SIGNATURE_KEY = 'estoque_source_signature_atual'
 ESTOQUE_UPLOAD_KEY = 'estoque_wizard_upload'
 ESTOQUE_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_MODELO_KEY = 'estoque_wizard_df_modelo'
-ESTOQUE_DEPOSITO_KEY = 'estoque_nome_deposito'
-ESTOQUE_DEPOSITO_SIGNATURE_KEY = 'estoque_deposito_signature_atual'
 ESTOQUE_FINAL_KEY = 'df_final_estoque'
 ESTOQUE_MAPPING_KEY = 'mapping_estoque'
 ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque'
 LEGACY_ESTOQUE_FINAL_KEY = 'df_final_estoque_from_cadastro'
 LEGACY_ESTOQUE_MAPPING_KEY = 'mapping_estoque_from_cadastro'
 LEGACY_ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque_from_cadastro'
-ESTOQUE_DEPOSITO_ALIAS_KEYS = [
-    ESTOQUE_DEPOSITO_KEY,
-    'deposito_estoque',
-    'nome_deposito_estoque',
-    'estoque_deposito',
-    'nome_deposito',
-]
 BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/importador.saldos.estoque.php'
 
 ESTOQUE_OUTPUT_KEYS = [
@@ -40,36 +31,6 @@ ESTOQUE_OUTPUT_KEYS = [
 
 def valid_model(df_modelo: pd.DataFrame | None) -> bool:
     return isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns) > 0
-
-
-def normalize_deposito(value: object) -> str:
-    text = str(value or '').strip()
-    if text.lower() in {'não definido', 'nao definido', 'undefined', 'none', 'null'}:
-        return ''
-    return text
-
-
-def store_deposito_value(deposito: str, *, write_primary: bool = True) -> None:
-    clean = normalize_deposito(deposito)
-    if write_primary:
-        st.session_state[ESTOQUE_DEPOSITO_KEY] = clean
-    for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
-        if key != ESTOQUE_DEPOSITO_KEY and (key in st.session_state or clean):
-            st.session_state[key] = clean
-
-
-def deposito_value() -> str:
-    for key in ESTOQUE_DEPOSITO_ALIAS_KEYS:
-        value = normalize_deposito(st.session_state.get(key))
-        if value:
-            if key != ESTOQUE_DEPOSITO_KEY and ESTOQUE_DEPOSITO_KEY not in st.session_state:
-                store_deposito_value(value, write_primary=True)
-            return value
-    return ''
-
-
-def valid_deposito() -> bool:
-    return bool(deposito_value())
 
 
 def is_site_origin() -> bool:
@@ -99,18 +60,6 @@ def clear_estoque_outputs_if_source_changed(df_origem_site: pd.DataFrame | None,
     st.session_state[ESTOQUE_SOURCE_SIGNATURE_KEY] = signature
 
 
-def clear_estoque_outputs_if_deposito_changed(deposito: str) -> None:
-    signature = normalize_deposito(deposito)
-    previous = st.session_state.get(ESTOQUE_DEPOSITO_SIGNATURE_KEY)
-    if previous is None:
-        st.session_state[ESTOQUE_DEPOSITO_SIGNATURE_KEY] = signature
-        return
-    if previous == signature:
-        return
-    clear_estoque_outputs()
-    st.session_state[ESTOQUE_DEPOSITO_SIGNATURE_KEY] = signature
-
-
 def store_estoque_context(upload, df_origem_site: pd.DataFrame | None, df_modelo: pd.DataFrame | None) -> None:
     st.session_state[ESTOQUE_UPLOAD_KEY] = upload
     if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
@@ -133,15 +82,10 @@ def has_stock_source(upload=None, df_site=None) -> bool:
 
 def estoque_context_ready() -> bool:
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
-    return has_stock_source() and valid_model(df_modelo) and valid_deposito()
+    return has_stock_source() and valid_model(df_modelo)
 
 
 def set_stock_output(df_final: pd.DataFrame | None, mapping: dict | None = None, confidence: dict | None = None) -> None:
-    """Salva saída de estoque nos nomes limpos e mantém aliases legados.
-
-    BLINGCLEAN: `*_from_cadastro` ficou confuso porque o motor de estoque hoje é independente.
-    As chaves novas viram a fonte oficial; as antigas continuam sincronizadas para não quebrar módulos existentes.
-    """
     if isinstance(df_final, pd.DataFrame):
         st.session_state[ESTOQUE_FINAL_KEY] = df_final
         st.session_state[LEGACY_ESTOQUE_FINAL_KEY] = df_final
@@ -236,24 +180,19 @@ def build_stock_outputs_if_possible() -> bool:
 __all__ = [
     'BLING_IMPORTADOR_ESTOQUE_URL',
     'ESTOQUE_CONFIDENCE_KEY',
-    'ESTOQUE_DEPOSITO_KEY',
     'ESTOQUE_FINAL_KEY',
     'ESTOQUE_MAPPING_KEY',
     'ESTOQUE_MODELO_KEY',
     'build_stock_outputs_if_possible',
-    'clear_estoque_outputs_if_deposito_changed',
     'clear_estoque_outputs_if_source_changed',
     'current_stock_source',
-    'deposito_value',
     'estoque_context_ready',
     'estoque_output_ready',
     'is_site_origin',
-    'normalize_deposito',
     'set_stock_output',
     'stock_confidence',
     'stock_final_df',
     'stock_mapping',
-    'store_deposito_value',
     'store_estoque_context',
     'sync_manual_stock_output',
     'valid_model',
