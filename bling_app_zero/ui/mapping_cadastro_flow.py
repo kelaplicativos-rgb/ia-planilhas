@@ -58,23 +58,40 @@ def _render_cadastro_actions(
     model: pd.DataFrame,
     source_columns: list[str],
 ) -> None:
-    with st.expander('Outras ações', expanded=False):
+    with st.expander('⚙️ Ações do mapeamento', expanded=False):
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button('Atualizar prévia', use_container_width=True, key=f'{mapping_key}_refresh'):
                 pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_refresh_by_user')
                 st.rerun()
         with col_b:
-            if st.button('Refazer sugestões', use_container_width=True, key=f'{mapping_key}_reset'):
+            if st.button('Refazer sugestões automáticas', use_container_width=True, key=f'{mapping_key}_reset'):
                 _reset_cadastro_mapping(mapping_key, order_key, df_source, model, source_columns)
 
 
 def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
     st.markdown('### Mapear campos')
-    st.caption(f'{len(df_source)} produto(s) carregado(s). Confira as ligações abaixo.')
-    st.info('Escolha a coluna correta para cada campo do modelo. Depois confirme o mapeamento.')
-    with st.expander('Ver dados de origem', expanded=False):
+    st.caption(f'{len(df_source)} produto(s) carregado(s). Primeiro revise os campos obrigatórios; depois confirme o mapeamento.')
+    with st.expander('📄 Ver dados de origem', expanded=False):
         preview_df('Origem', df_source)
+
+
+def _render_ai_mapping_panel(
+    df_source: pd.DataFrame,
+    target_columns: list[str],
+    current_mapping: dict[str, str],
+    mapping_key: str,
+) -> None:
+    with st.expander('🤖 Assistente IA do mapeamento · opcional', expanded=False):
+        st.caption('Use somente se quiser ajuda para analisar campos pendentes ou aplicar sugestões. O mapeamento manual continua sendo o fluxo principal.')
+        render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Analisar campos pendentes')
+        render_ai_mapping_apply_panel(
+            df_source,
+            target_columns,
+            current_mapping,
+            mapping_key,
+            operation='cadastro',
+        )
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -100,16 +117,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     _render_compact_mapping_header(df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    with st.expander('Ajuda da IA', expanded=False):
-        render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Analisar campos pendentes')
-
-    render_ai_mapping_apply_panel(
-        df_source,
-        target_columns,
-        current_mapping,
-        mapping_key,
-        operation='cadastro',
-    )
+    _render_ai_mapping_panel(df_source, target_columns, current_mapping, mapping_key)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
