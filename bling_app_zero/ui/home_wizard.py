@@ -244,6 +244,26 @@ def _reset_wizard() -> None:
     st.rerun()
 
 
+def _force_model_first_when_missing() -> None:
+    st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
+    for key in (
+        FLOW_ORIGIN_KEY,
+        FLOW_OPERATION_KEY,
+        'origem_final',
+        'tipo_operacao_site',
+        'home_slim_flow_origin',
+        'home_slim_flow_operation',
+    ):
+        st.session_state.pop(key, None)
+    try:
+        st.query_params['step'] = STEP_MODELO
+        st.query_params.pop('origem', None)
+        st.query_params.pop('flow', None)
+        st.query_params.pop('operacao', None)
+    except Exception:
+        pass
+
+
 def _render_step_header():
     st.caption('Fluxo em tela única: siga rolando para baixo.')
     return None
@@ -488,9 +508,18 @@ def _render_cadastro_download() -> None:
 
 def render_home_wizard() -> None:
     inject_scroll_guard('home_wizard')
+    has_model = _has_home_models()
     operation = _ensure_universal_operation_state()
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
+
+    if not has_model:
+        _force_model_first_when_missing()
+        add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+        st.info('Comece anexando a planilha modelo. As próximas etapas só aparecem depois que o modelo de destino estiver carregado.')
+        _render_model_step()
+        return
+
     add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     st.info('Fluxo em tela única: siga rolando para baixo. As seções abaixo ficam visíveis e mostram claramente o que falta liberar.')
     _render_model_step()
