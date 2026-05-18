@@ -214,7 +214,6 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
     st.session_state['mapeiaai_final_contract_df'] = clean_df
 
-    # Modelo neutro: serve como contrato de colunas, sem pedir Cadastro/Estoque ao usuário.
     _write_model_keys(CADASTRO_MODEL_KEYS, clean_df, source_key=CADASTRO_SOURCE_KEY)
     _write_model_keys(ESTOQUE_MODEL_KEYS, clean_df, source_key=ESTOQUE_SOURCE_KEY)
 
@@ -256,8 +255,7 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
 
 
 def _render_first_section() -> bool:
-    st.markdown('## MapeiaAI')
-    st.caption('Fluxo em tela única: anexe o modelo de destino e siga rolando para baixo até o download final.')
+    st.caption('Anexe o modelo de destino e siga rolando para baixo até o download final.')
 
     uploaded = st.file_uploader(
         '1. Modelo de destino',
@@ -306,7 +304,6 @@ def _back_to_operations() -> None:
 
 
 def _render_back_to_operations() -> None:
-    # Tela única: sem botão Voltar global prendendo o fluxo.
     return
 
 
