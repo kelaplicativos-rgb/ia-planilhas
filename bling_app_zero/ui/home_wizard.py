@@ -232,6 +232,15 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
         pass
 
 
+def _select_origin(origin: str) -> None:
+    origin = _normalize_origin_value(origin)
+    if origin not in {'arquivo', 'site'}:
+        return
+    st.session_state[ORIGIN_RADIO_KEY] = origin
+    _sync_flow_state(origin)
+    st.rerun()
+
+
 def _normalize_origin_value(value: object) -> str:
     text = str(value or '').strip().lower()
     if text in {'arquivo', 'site'}:
@@ -339,6 +348,15 @@ def _render_origin_step() -> None:
     _ensure_universal_operation_state()
     _clear_legacy_origin_widget_state()
     selected = _current_origin_choice()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button('📎 Usar arquivo do fornecedor', use_container_width=True, key='origin_choose_file'):
+            _select_origin('arquivo')
+    with col2:
+        if st.button('🌐 Usar site do fornecedor', use_container_width=True, key='origin_choose_site'):
+            _select_origin('site')
+
     values = list(ORIGIN_OPTIONS.keys())
     index = values.index(selected) if selected in values else None
     origin = st.radio(
