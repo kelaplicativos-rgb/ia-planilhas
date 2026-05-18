@@ -61,7 +61,7 @@ STEP_LABELS = {
     STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
     STEP_REGRAS: 'Ajustes IA',
-    STEP_ENTRADA: 'Entrada',
+    STEP_ENTRADA: 'Dados de origem',
     STEP_MAPEAMENTO: 'Mapeamento + IA',
     STEP_GERAR_ESTOQUE: 'Gerar + IA',
     STEP_PREVIEW: 'Preview',
