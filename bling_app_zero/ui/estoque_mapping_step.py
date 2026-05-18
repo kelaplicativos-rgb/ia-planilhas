@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.estoque_entry_step import render_deposito_missing_recovery
 from bling_app_zero.ui.estoque_mapping import render_manual_estoque_mapping
 from bling_app_zero.ui.estoque_wizard_state import (
@@ -13,6 +12,7 @@ from bling_app_zero.ui.estoque_wizard_state import (
     sync_manual_stock_output,
     valid_model,
 )
+from bling_app_zero.ui.shared_pricing import render_shared_pricing
 
 
 def render_estoque_gerar_step() -> None:
@@ -41,7 +41,7 @@ def render_estoque_gerar_step() -> None:
         return
 
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
-    df_para_mapear = render_cadastro_pricing(df_origem)
+    df_para_mapear = render_shared_pricing(df_origem, channel='estoque')
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success(
             'Calculadora aplicada à origem de estoque. Se o modelo possuir campo de preço/custo, '
