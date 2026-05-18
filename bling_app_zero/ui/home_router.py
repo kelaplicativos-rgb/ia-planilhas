@@ -21,7 +21,7 @@ ESTOQUE_MODEL_KEYS = ('home_modelo_estoque_df', 'df_modelo_estoque', 'modelo_est
 CADASTRO_SOURCE_KEY = 'home_modelo_cadastro_source'
 ESTOQUE_SOURCE_KEY = 'home_modelo_estoque_source'
 WIZARD_STEP_KEY = 'bling_wizard_step'
-STEP_OPERACAO = 'operacao'
+STEP_ORIGEM = 'origem'
 
 VALID_INTAKE_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.html', '.htm', '.mht', '.mhtml', '.xml', '.pdf')
 INVALID_DIAGNOSTIC_EXTENSIONS = ('.zip', '.txt', '.log', '.json')
@@ -32,16 +32,16 @@ def _set_flow(flow: str) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     if flow == FLOW_WIZARD:
-        st.session_state[WIZARD_STEP_KEY] = STEP_OPERACAO
+        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
     add_audit_event(
         'home_model_contract_received',
         area='HOME',
-        details={'previous': previous, 'selected': flow, 'next_step': st.session_state.get(WIZARD_STEP_KEY), 'responsible_file': RESPONSIBLE_FILE},
+        details={'previous': previous, 'selected': flow, 'next_step': st.session_state.get(WIZARD_STEP_KEY), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['operation_v2'] = flow
         if flow == FLOW_WIZARD:
-            st.query_params['step'] = STEP_OPERACAO
+            st.query_params['step'] = STEP_ORIGEM
     except Exception:
         pass
     st.rerun()
@@ -189,8 +189,7 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
     st.session_state['mapeiaai_final_contract_df'] = clean_df
 
-    # BLINGFIX: modelo de destino anexado pela Home é contrato neutro.
-    # Ele libera a etapa Objetivo sem tentar decidir automaticamente Cadastro/Estoque.
+    # Modelo neutro: serve como contrato de colunas, sem pedir Cadastro/Estoque ao usuário.
     _write_model_keys(CADASTRO_MODEL_KEYS, clean_df, source_key=CADASTRO_SOURCE_KEY)
     _write_model_keys(ESTOQUE_MODEL_KEYS, clean_df, source_key=ESTOQUE_SOURCE_KEY)
 
@@ -212,15 +211,15 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
         pass
 
     add_audit_event(
-        'home_contract_model_saved_without_detection',
+        'home_contract_model_saved_without_operation_choice',
         area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'operation_must_be_chosen_by_user': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
 def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
     st.success('Planilha recebida como modelo de destino.')
-    st.caption('Agora configure o objetivo do mapeamento. O sistema não define isso sozinho.')
+    st.caption('O próximo passo será escolher a origem dos dados. Não há mais escolha manual entre Cadastro e Estoque.')
     st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
     with st.expander('Conferir colunas da planilha', expanded=False):
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
@@ -228,11 +227,11 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
 
     col_continue, col_clear = st.columns(2)
     with col_continue:
-        if st.button('Continuar para configurar o mapeamento', use_container_width=True, key='home_continue_after_contract_upload'):
+        if st.button('Continuar para origem dos dados', use_container_width=True, key='home_continue_after_contract_upload'):
             add_audit_event(
                 'home_contract_continue_clicked',
                 area='HOME',
-                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_OPERACAO, 'responsible_file': RESPONSIBLE_FILE},
+                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_ORIGEM, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
             )
             _set_flow(FLOW_WIZARD)
     with col_clear:
@@ -244,8 +243,8 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
 def _render_operation_choice() -> None:
     st.markdown('## O que você quer mapear hoje?')
     st.caption(
-        'Use modelos de marketplaces, ERPs, atualização de estoque, cadastro de produtos, cálculo de lucro e preços multilojas. '
-        'O sistema lê a planilha, ajuda no mapeamento e prepara o arquivo certo para importar no ERP ou marketplace em instantes.'
+        'Anexe o modelo de destino. O sistema usa as colunas desse arquivo como contrato final, '
+        'sem exigir escolha manual entre Cadastro e Estoque.'
     )
 
     uploaded = st.file_uploader(
@@ -267,7 +266,7 @@ def _render_operation_choice() -> None:
             _render_contract_preview(saved_df, saved_file_name)
             return
         st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
-        st.caption('Depois disso você configura o objetivo, preço, origem dos dados, entrada, mapeamento, preview e download final.')
+        st.caption('Depois disso você escolhe a origem dos dados, faz o mapeamento, confere o preview e baixa o arquivo final.')
         return
 
     df = _read_intake_file(uploaded)
@@ -286,7 +285,7 @@ def _render_operation_choice() -> None:
     add_audit_event(
         'home_contract_model_uploaded',
         area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     _render_contract_preview(df, file_name)
 
