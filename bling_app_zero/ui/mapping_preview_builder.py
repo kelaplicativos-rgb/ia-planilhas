@@ -6,7 +6,6 @@ import streamlit as st
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_super_assistant import safe_default_for_target
-from bling_app_zero.core.text import normalize_key
 from bling_app_zero.ui.mapping_widget_state import (
     is_empty_mapping_value,
     is_manual_value,
@@ -100,20 +99,6 @@ def apply_calculated_price_lock(df_preview: pd.DataFrame, df_source: pd.DataFram
     return out
 
 
-def fill_deposito_manual(df: pd.DataFrame, deposito: str, protected_empty_targets: set[str] | None = None) -> pd.DataFrame:
-    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    protected = set(protected_empty_targets or set())
-    if not deposito:
-        return out
-    for column in out.columns:
-        if str(column) in protected:
-            out[column] = ''
-            continue
-        if 'deposito' in normalize_key(column):
-            out[column] = deposito
-    return out
-
-
 def _mapping_for_apply(mapping: dict[str, str]) -> dict[str, str]:
     return {
         target: value
@@ -144,12 +129,10 @@ def build_estoque_preview(
     mapping: dict[str, str],
     target_columns: list[str],
     mapping_key: str,
-    deposito: str,
 ) -> pd.DataFrame:
     protected_empty = explicit_empty_targets(mapping)
     preview = apply_mapping(df_source, model, _mapping_for_apply(mapping))
     preview = apply_manual_fixed_values(preview, mapping, target_columns, mapping_key)
-    preview = fill_deposito_manual(preview, deposito, protected_empty)
     preview = apply_explicit_empty_values(preview, mapping)
     return sanitize_for_bling(preview, operation='estoque', explicit_empty_columns=protected_empty)
 
@@ -162,5 +145,4 @@ __all__ = [
     'build_cadastro_preview',
     'build_estoque_preview',
     'explicit_empty_targets',
-    'fill_deposito_manual',
 ]
