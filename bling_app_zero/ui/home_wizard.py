@@ -95,10 +95,7 @@ def _ensure_universal_operation_state() -> str:
     st.session_state['operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
     st.session_state['tipo_operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
     st.session_state['home_operation_choice_removed'] = True
-    for key in ('home_detected_operation', 'tipo_operacao_site', 'operation_site'):
-        if key in {'tipo_operacao_site', 'operation_site'}:
-            continue
-        st.session_state.pop(key, None)
+    st.session_state.pop('home_detected_operation', None)
     return UNIVERSAL_INTERNAL_OPERATION
 
 
@@ -461,22 +458,19 @@ def _render_origin_step() -> None:
         return
 
     origin = values[labels.index(choice_label)]
-    previous_origin = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
-    origin_changed = previous_origin != origin
     _sync_flow_state(origin)
     _render_origin_explanation(origin)
 
-    if _manual_pause_matches(STEP_ORIGEM) and not origin_changed:
-        st.info('Origem definida. Use Avançar para seguir ou Voltar para revisar outra etapa.')
-        return
-
-    if origin_changed:
+    target = wizard_next_target(STEP_ORIGEM, UNIVERSAL_INTERNAL_OPERATION)
+    if target != STEP_ORIGEM:
+        add_audit_event(
+            'origin_selected_forced_auto_next',
+            area='WIZARD',
+            step=STEP_ORIGEM,
+            details={'origin': origin, 'target': target, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE},
+        )
         _clear_manual_pause(STEP_ORIGEM)
-
-    signature = f'universal:{origin}'
-    if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
-        st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
-        _go_to_step(wizard_next_target(STEP_ORIGEM, UNIVERSAL_INTERNAL_OPERATION), reason='origin_selected_auto_next')
+        _go_to_step(target, reason='origin_selected_forced_auto_next')
 
 
 def _render_cadastro_entrada() -> None:
