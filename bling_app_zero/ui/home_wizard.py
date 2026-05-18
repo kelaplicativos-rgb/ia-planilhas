@@ -62,6 +62,7 @@ AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
+MANUAL_OPERATION_OPTIONS = ['cadastro', 'estoque']
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -90,12 +91,11 @@ def _has_home_models() -> bool:
 
 
 def _available_operations() -> list[str]:
-    operations: list[str] = []
-    if _has_cadastro_model():
-        operations.append('cadastro')
-    if _has_estoque_model():
-        operations.append('estoque')
-    return operations
+    # BLINGFIX: a existencia ou a deteccao do modelo nao deve decidir o fluxo.
+    # Qualquer modelo valido de destino libera a escolha manual entre Cadastro e Estoque.
+    if _has_home_models():
+        return list(MANUAL_OPERATION_OPTIONS)
+    return []
 
 
 def _selected_operation() -> str:
@@ -427,6 +427,7 @@ def _render_model_step() -> None:
 def _render_operation_step() -> None:
     available = _available_operations()
     if not available:
+        st.warning('Anexe ou mantenha uma planilha/modelo de destino para escolher o objetivo.')
         return
 
     labels_by_value = {
@@ -435,22 +436,14 @@ def _render_operation_step() -> None:
     }
 
     st.markdown('### Configure o objetivo do mapeamento')
-    st.caption('A planilha já foi recebida. Escolha o caminho mais próximo do arquivo que você precisa gerar. O sistema não decide isso sozinho.')
-
-    if len(available) == 1:
-        selected = available[0]
-        st.session_state[FLOW_OPERATION_KEY] = selected
-        st.session_state['operacao_final'] = selected
-        st.session_state['tipo_operacao_final'] = selected
-        st.success(f'Objetivo disponível: {labels_by_value[selected]}')
-        return
+    st.caption('A planilha já foi recebida. Escolha manualmente o caminho mais próximo do arquivo que você precisa gerar. O sistema não decide isso sozinho.')
 
     labels = [labels_by_value[value] for value in available]
     current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
     index = available.index(current) if current in available else None
     choice_label = st.radio('Objetivo da planilha', labels, index=index, key='wizard_operation_radio')
     if not choice_label:
-        st.info('Escolha o objetivo do mapeamento para liberar as próximas etapas.')
+        st.info('Escolha Cadastro ou Estoque para liberar as próximas etapas.')
         return
 
     selected = available[labels.index(choice_label)]
@@ -604,7 +597,7 @@ def render_home_wizard() -> None:
     nav = _render_step_header()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation or 'nao_escolhida', 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation or 'nao_escolhida', 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'manual_operation_options': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
