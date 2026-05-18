@@ -313,23 +313,6 @@ def _render_model_step() -> None:
         render_pending_notice('Anexe um modelo de destino para liberar as próximas seções.')
 
 
-def _render_pricing_step() -> None:
-    _section_title(2, 'Preço', 'Opcional. Use apenas se quiser calcular preço antes do mapeamento.')
-    if not _has_home_models():
-        render_pending_notice('A seção de preço será liberada depois que o modelo de destino for anexado.')
-        return
-    current_config = get_home_pricing_config()
-    use_pricing = st.toggle('Usar calculadora compartilhada', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle', help='Quando ativada, o preço calculado pode ser usado antes do mapeamento final.')
-    if use_pricing:
-        with st.container(border=True):
-            st.success('Calculadora compartilhada ativa para este fluxo.')
-            config = render_home_pricing_config_form()
-            set_home_pricing_config(config)
-    else:
-        disable_home_pricing()
-        st.info('Calculadora desativada. O sistema manterá o preço da origem ou o valor definido no mapeamento.')
-
-
 def _render_origin_explanation(origin: str) -> None:
     if origin == 'arquivo':
         st.success('Arquivo selecionado. Role para baixo e anexe a planilha, CSV, XML ou PDF com os dados de origem.')
@@ -338,7 +321,7 @@ def _render_origin_explanation(origin: str) -> None:
 
 
 def _render_origin_step() -> None:
-    _section_title(3, 'Origem dos dados', 'Escolha de onde vêm os dados que preencherão o modelo.')
+    _section_title(2, 'Origem dos dados', 'Escolha de onde vêm os dados que preencherão o modelo.')
     if not _has_home_models():
         render_pending_notice('A origem dos dados será liberada depois que o modelo de destino for anexado.')
         return
@@ -360,7 +343,7 @@ def _render_origin_step() -> None:
 
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
-    _section_title(4, 'Dados de origem', 'Aqui entram os dados reais: arquivo do fornecedor ou links do site.')
+    _section_title(3, 'Dados de origem', 'Aqui entram os dados reais: arquivo do fornecedor ou links do site.')
     if not _has_home_models():
         render_pending_notice('Os dados de origem serão liberados depois que o modelo de destino for anexado.')
         return
@@ -372,6 +355,26 @@ def _render_cadastro_entrada() -> None:
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
     render_cadastro_entrada_step()
+
+
+def _render_pricing_step() -> None:
+    _section_title(4, 'Calculadora de preço', 'Opcional. Use depois de escolher a origem e carregar os dados.')
+    if not _has_home_models():
+        render_pending_notice('A calculadora será liberada depois que o modelo de destino for anexado.')
+        return
+    if not cadastro_context_ready():
+        render_pending_notice('Carregue ou capture os dados de origem antes de usar a calculadora.')
+        return
+    current_config = get_home_pricing_config()
+    use_pricing = st.toggle('Usar calculadora compartilhada', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle', help='Quando ativada, o preço calculado pode ser usado antes do mapeamento final.')
+    if use_pricing:
+        with st.container(border=True):
+            st.success('Calculadora compartilhada ativa para este fluxo.')
+            config = render_home_pricing_config_form()
+            set_home_pricing_config(config)
+    else:
+        disable_home_pricing()
+        st.info('Calculadora desativada. O sistema manterá o preço da origem ou o valor definido no mapeamento.')
 
 
 def _render_cadastro_mapeamento() -> None:
@@ -421,9 +424,9 @@ def render_home_wizard() -> None:
     add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': _selected_operation() or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     st.info('Fluxo em tela única: siga rolando para baixo. As seções abaixo ficam visíveis e mostram claramente o que falta liberar.')
     _render_model_step()
-    _render_pricing_step()
     _render_origin_step()
     _render_cadastro_entrada()
+    _render_pricing_step()
     _render_cadastro_mapeamento()
     _render_cadastro_preview()
     _render_cadastro_download()
