@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.text import normalize_key
 from bling_app_zero.ui.ai_mapping_apply_panel import render_ai_mapping_apply_panel
 from bling_app_zero.ui.estoque_wizard_state import (
     ESTOQUE_CONFIDENCE_KEY,
@@ -36,10 +35,6 @@ def _duplicated_source_columns(mapping: dict[str, str]) -> list[str]:
     return sorted({value for value in used_values if value and used_values.count(value) > 1})
 
 
-def _is_deposito_target(target: str) -> bool:
-    return 'deposito' in normalize_key(target)
-
-
 def _reset_stock_mapping(mapping_key: str, order_key: str) -> None:
     st.session_state.pop(mapping_key, None)
     for key in (
@@ -57,7 +52,7 @@ def _reset_stock_mapping(mapping_key: str, order_key: str) -> None:
     st.rerun()
 
 
-def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None, deposito: str) -> None:
+def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None, deposito: str = '') -> None:
     pause_home_autofluxo_for_manual_review('gerar_estoque', reason='stock_mapping_screen_visible')
     inject_mapping_css()
 
@@ -67,7 +62,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     sidebar_rule_targets = sidebar_rule_targets_from_columns(target_columns)
     options = [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
 
-    signature = df_signature(df_source) + ':' + '|'.join(target_columns) + f':{deposito}'
+    signature = df_signature(df_source) + ':' + '|'.join(target_columns)
     mapping_key = mapping_base('stk_map_', signature)
     order_key = f'{mapping_key}_order'
 
@@ -77,9 +72,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state.pop(order_key, None)
 
     st.markdown('##### Conferir campos do estoque')
-    if deposito:
-        st.success(f'Depósito aplicado automaticamente no arquivo final: {deposito}')
-    st.caption('Depósito não precisa ser mapeado: ele já vem do campo informado no fluxo. 🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 reflexo da Central de Regras e Padrões')
+    st.caption('Se o modelo tiver Depósito, preencha nessa própria coluna usando “escrever valor”, mapeie de uma coluna da origem ou deixe vazio. 🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 reflexo da Central de Regras e Padrões')
     with st.expander('Ver origem do estoque', expanded=False):
         preview_df('Origem para estoque', df_source)
 
@@ -99,25 +92,11 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
     filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required, sidebar_rule_targets)
-    visible = [target for target in visible_targets(mapping_key, filtered_targets) if not _is_deposito_target(target)]
+    visible = visible_targets(mapping_key, filtered_targets)
 
-    deposito_targets = [target for target in target_columns if _is_deposito_target(target)]
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
     edited_mapping: dict[str, str] = {target: current_mapping.get(target, '') for target in target_columns}
     edited_confidence: dict[str, dict[str, object]] = current_confidence.copy()
-
-    for target in deposito_targets:
-        edited_mapping[target] = ''
-        edited_confidence[target] = {
-            'level': 'verde',
-            'emoji': '🟢',
-            'label': 'aplicado automaticamente pelo depósito informado',
-            'score': 100,
-            'order': 2,
-            'strict': True,
-            'system_flow_value': True,
-            'hidden_from_mapping': True,
-        }
 
     for target in visible:
         target_index = target_index_by_name.get(target, len(edited_mapping))
@@ -138,10 +117,10 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         pause_home_autofluxo_for_manual_review('gerar_estoque', reason='stock_mapping_changed_by_user')
 
     st.session_state[mapping_key] = edited_mapping
-    df_preview_manual = build_estoque_preview(df_source, model, edited_mapping, target_columns, mapping_key, deposito)
+    df_preview_manual = build_estoque_preview(df_source, model, edited_mapping, target_columns, mapping_key, '')
     set_stock_output(df_preview_manual, edited_mapping, edited_confidence)
 
-    duplicated = _duplicated_source_columns({target: value for target, value in edited_mapping.items() if not _is_deposito_target(target)})
+    duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
         st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
 
@@ -161,12 +140,7 @@ def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.Data
         st.info('Envie o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
         return
 
-    deposito = str(st.session_state.get('deposito_manual') or '').strip()
-    if not deposito:
-        st.warning('Informe o depósito no passo inicial para preencher o modelo de estoque.')
-        return
-
-    render_manual_stock_mapping(df_source, df_modelo_estoque, deposito)
+    render_manual_stock_mapping(df_source, df_modelo_estoque, '')
     df_stock = stock_final_df()
     if isinstance(df_stock, pd.DataFrame) and not df_stock.empty:
         preview_df('Prévia do estoque', df_stock)
