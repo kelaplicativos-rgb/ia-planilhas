@@ -46,12 +46,10 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_ORIGEM,
     STEP_PRECIFICACAO,
     STEP_PREVIEW,
-    STEP_REGRAS,
     WIZARD_STEP_KEY,
     WizardNav,
 )
 from bling_app_zero.ui.home_wizard_ui import render_pending_notice, render_section_card, render_step_header
-from bling_app_zero.ui.rules_center_step import render_rules_center_step, rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 ORIGIN_AUTO_FORWARDED_KEY = 'wizard_origin_auto_forwarded_signature'
@@ -347,15 +345,13 @@ def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
     operation = _selected_operation()
 
     if step == STEP_MODELO:
-        return _has_home_models(), 'Avançar →', 'Envie ou mantenha um modelo do Bling para continuar.'
+        return _has_home_models(), 'Avançar →', 'Envie ou mantenha um modelo para continuar.'
     if step == STEP_OPERACAO:
         return operation in {'cadastro', 'estoque'}, 'Avançar →', 'Escolha Cadastro ou Estoque.'
     if step == STEP_PRECIFICACAO:
         return True, 'Avançar →', None
     if step == STEP_ORIGEM:
         return _current_origin_choice() in {'arquivo', 'site'}, 'Avançar →', 'Escolha Arquivo ou Site.'
-    if step == STEP_REGRAS:
-        return rules_center_ready(), 'Avançar →', 'Confirme as regras antes de continuar.'
     if step == STEP_ENTRADA:
         ready = estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
         return ready, 'Avançar →', 'Carregue ou capture os dados desta etapa.'
@@ -455,13 +451,13 @@ def _render_pricing_step() -> None:
     render_section_card(
         'Preço',
         'Calculadora compartilhada de preços',
-        'Use a mesma calculadora do Atualizar Preços Multiloja para calcular preço antes do mapeamento.',
+        'Use a calculadora para calcular preço antes do mapeamento.',
     )
     use_pricing = st.toggle(
         'Usar calculadora compartilhada',
         value=bool(current_config.get('enabled', False)),
         key='home_pricing_enabled_toggle',
-        help='Quando ativada, o cadastro por site ou anexo usa o motor compartilhado de preço antes do mapeamento.',
+        help='Quando ativada, cadastro ou estoque podem usar preço calculado antes do mapeamento.',
     )
     if use_pricing:
         with st.container(border=True):
@@ -505,10 +501,6 @@ def _render_origin_step() -> None:
     if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
         st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
         _go_to_step(wizard_next_target(STEP_ORIGEM, operation), reason='origin_selected_auto_next')
-
-
-def _render_rules_step() -> None:
-    render_rules_center_step()
 
 
 def _render_cadastro_entrada() -> None:
@@ -578,8 +570,6 @@ def render_home_wizard() -> None:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
-    elif step == STEP_REGRAS:
-        _render_rules_step()
     elif operation == 'cadastro' and step == STEP_ENTRADA:
         _render_cadastro_entrada()
     elif operation == 'cadastro' and step == STEP_MAPEAMENTO:
