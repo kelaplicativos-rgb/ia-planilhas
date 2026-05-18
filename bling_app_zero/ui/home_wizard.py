@@ -223,6 +223,28 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     st.rerun()
 
 
+def _force_origin_next(origin: str, *, reason: str) -> None:
+    origin = 'arquivo' if origin == 'arquivo' else 'site'
+    _sync_flow_state(origin)
+    _clear_manual_pause(STEP_ORIGEM)
+    st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
+    st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = f'universal:{origin}'
+    add_audit_event(
+        'origin_selected_direct_to_entry',
+        area='WIZARD',
+        step=STEP_ORIGEM,
+        details={'origin': origin, 'target': STEP_ENTRADA, 'reason': reason, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    try:
+        st.query_params['step'] = STEP_ENTRADA
+        st.query_params['origem'] = origin
+        st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
+        st.query_params.pop('operacao', None)
+    except Exception:
+        pass
+    st.rerun()
+
+
 def _back_to_home_choice() -> None:
     st.session_state.pop(HOME_ACTIVE_OPERATION_KEY, None)
     st.session_state.pop(HOME_ALLOW_OPERATION_KEY, None)
@@ -461,16 +483,14 @@ def _render_origin_step() -> None:
     _sync_flow_state(origin)
     _render_origin_explanation(origin)
 
-    target = wizard_next_target(STEP_ORIGEM, UNIVERSAL_INTERNAL_OPERATION)
-    if target != STEP_ORIGEM:
-        add_audit_event(
-            'origin_selected_forced_auto_next',
-            area='WIZARD',
-            step=STEP_ORIGEM,
-            details={'origin': origin, 'target': target, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE},
-        )
-        _clear_manual_pause(STEP_ORIGEM)
-        _go_to_step(target, reason='origin_selected_forced_auto_next')
+    # BLINGFIX: fallback visivel e deterministico. O radio sozinho pode rerenderizar
+    # sem trocar a etapa em algumas sessoes do Streamlit Cloud; este botao garante saída.
+    if st.button('Continuar para dados de origem', use_container_width=True, key=f'origin_force_continue_{origin}'):
+        _force_origin_next(origin, reason='origin_continue_button')
+
+    if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != f'universal:{origin}:auto_once':
+        st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = f'universal:{origin}:auto_once'
+        _force_origin_next(origin, reason='origin_selected_auto_direct')
 
 
 def _render_cadastro_entrada() -> None:
