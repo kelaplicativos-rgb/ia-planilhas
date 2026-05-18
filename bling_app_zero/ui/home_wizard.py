@@ -59,6 +59,8 @@ AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
 
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
+ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
+ORIGIN_OPTIONS = {'arquivo': '📎 Arquivo do fornecedor', 'site': '🌐 Site do fornecedor'}
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -230,20 +232,29 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
         pass
 
 
+def _normalize_origin_value(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'arquivo', 'site'}:
+        return text
+    if 'arquivo' in text or 'planilha' in text or 'xml' in text or 'pdf' in text:
+        return 'arquivo'
+    if 'site' in text:
+        return 'site'
+    return ''
+
+
 def _origin_from_radio_state(operation: str | None = None) -> str:
     _ = operation
-    for key in ('frontpage_origin_radio_universal', f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', LEGACY_ORIGIN_RADIO_KEY):
-        value = str(st.session_state.get(key) or '').strip().lower()
-        if 'arquivo' in value:
-            return 'arquivo'
-        if 'site' in value:
-            return 'site'
+    for key in (ORIGIN_RADIO_KEY, f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', LEGACY_ORIGIN_RADIO_KEY):
+        origin = _normalize_origin_value(st.session_state.get(key))
+        if origin:
+            return origin
     return ''
 
 
 def _current_origin_choice() -> str:
-    current = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
-    if current in {'arquivo', 'site'}:
+    current = _normalize_origin_value(st.session_state.get(FLOW_ORIGIN_KEY))
+    if current:
         return current
     radio_origin = _origin_from_radio_state()
     if radio_origin:
@@ -289,7 +300,7 @@ def _render_bottom_navigation_for_current_step() -> None:
 
 
 def _clear_legacy_origin_widget_state() -> None:
-    valid_keys = {'frontpage_origin_radio_universal', f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', 'home_pricing_enabled_toggle'}
+    valid_keys = {ORIGIN_RADIO_KEY, f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', 'home_pricing_enabled_toggle'}
     for key in list(st.session_state.keys()):
         text = str(key)
         if (text == LEGACY_ORIGIN_RADIO_KEY or text.startswith('frontpage_origin_radio')) and text not in valid_keys:
@@ -327,16 +338,20 @@ def _render_origin_step() -> None:
         return
     _ensure_universal_operation_state()
     _clear_legacy_origin_widget_state()
-    options = {'arquivo': '📎 Arquivo do fornecedor', 'site': '🌐 Site do fornecedor'}
-    labels = list(options.values())
-    values = list(options.keys())
     selected = _current_origin_choice()
+    values = list(ORIGIN_OPTIONS.keys())
     index = values.index(selected) if selected in values else None
-    choice_label = st.radio('Origem dos dados', labels, index=index, key='frontpage_origin_radio_universal')
-    if choice_label is None:
+    origin = st.radio(
+        'Origem dos dados',
+        values,
+        index=index,
+        key=ORIGIN_RADIO_KEY,
+        format_func=lambda value: ORIGIN_OPTIONS.get(str(value), str(value)),
+    )
+    origin = _normalize_origin_value(origin)
+    if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha Arquivo ou Site para liberar a seção Dados de origem logo abaixo.')
         return
-    origin = values[labels.index(choice_label)]
     _sync_flow_state(origin)
     _render_origin_explanation(origin)
 
