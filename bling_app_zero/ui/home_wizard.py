@@ -104,29 +104,30 @@ def _selected_operation() -> str:
         return ''
 
     operation = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
-    if operation not in available:
-        operation = available[0]
-        st.session_state[FLOW_OPERATION_KEY] = operation
-        st.session_state['operacao_final'] = operation
-        st.session_state['tipo_operacao_final'] = operation
-        add_audit_event(
-            'operation_auto_selected',
-            area='WIZARD',
-            step=st.session_state.get(WIZARD_STEP_KEY),
-            details={'operation': operation, 'available': available, 'responsible_file': RESPONSIBLE_FILE},
-        )
-    return operation
+    if operation in available:
+        return operation
+
+    # Não escolher cadastro automaticamente quando o mesmo modelo foi salvo para
+    # cadastro e estoque. A decisão precisa ser do usuário na etapa Operação.
+    for key in ('operacao_final', 'tipo_operacao_final', 'tipo_operacao_site', 'operation_site'):
+        st.session_state.pop(key, None)
+    return ''
 
 
 def wizard_steps_for_operation(operation: str) -> list[str]:
-    return list(ESTOQUE_STEPS if str(operation or '').strip().lower() == 'estoque' else CADASTRO_STEPS)
+    normalized = str(operation or '').strip().lower()
+    if normalized == 'estoque':
+        return list(ESTOQUE_STEPS)
+    if normalized == 'cadastro':
+        return list(CADASTRO_STEPS)
+    return [STEP_MODELO, STEP_OPERACAO]
 
 
 def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
     if current not in steps:
-        return STEP_MODELO
+        return STEP_OPERACAO if _has_home_models() else STEP_MODELO
     index = steps.index(current)
     if delta < 0 and index == 0:
         return HOME_CHOICE_TARGET
@@ -151,8 +152,10 @@ def _current_step() -> str:
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
     if not _has_home_models():
         step = STEP_MODELO
+    elif not _selected_operation() and step not in {STEP_MODELO, STEP_OPERACAO}:
+        step = STEP_OPERACAO
     elif step not in steps:
-        step = STEP_MODELO
+        step = STEP_OPERACAO if _has_home_models() and not _selected_operation() else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
 
@@ -201,7 +204,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     previous = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
     requested = step
     if step not in steps:
-        step = STEP_MODELO
+        step = STEP_OPERACAO if _has_home_models() and not _selected_operation() else STEP_MODELO
 
     if reason in MANUAL_NAVIGATION_REASONS:
         _pause_autofluxo_for_manual_navigation(step, reason=reason)
@@ -287,8 +290,12 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
 
 
 def _sync_flow_state(origin: str, operation: str) -> None:
+    operation = str(operation or '').strip().lower()
+    if operation not in {'cadastro', 'estoque'}:
+        st.warning('Escolha primeiro se o fluxo é Cadastro ou Estoque.')
+        return
+
     origin = 'arquivo' if origin == 'arquivo' else 'site'
-    operation = 'estoque' if operation == 'estoque' else 'cadastro'
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
     previous_operation = st.session_state.get(FLOW_OPERATION_KEY)
 
@@ -425,25 +432,34 @@ def _render_operation_step() -> None:
         return
 
     labels_by_value = {'cadastro': '🧾 Cadastro', 'estoque': '📦 Estoque'}
+
+    st.markdown('### Escolha o que será feito com esta planilha')
+    st.caption('A planilha já foi recebida. Agora selecione manualmente o tipo de operação. O sistema não escolhe por você.')
+
     if len(available) == 1:
         selected = available[0]
         st.session_state[FLOW_OPERATION_KEY] = selected
         st.session_state['operacao_final'] = selected
         st.session_state['tipo_operacao_final'] = selected
-        st.success(f'Operação: {labels_by_value[selected]}')
+        st.success(f'Operação disponível: {labels_by_value[selected]}')
         return
 
-    current = _selected_operation()
     labels = [labels_by_value[value] for value in available]
-    index = available.index(current) if current in available else 0
-    choice_label = st.radio('Operação', labels, index=index, key='wizard_operation_radio', label_visibility='collapsed')
-    selected = available[labels.index(choice_label)] if choice_label else current
+    current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
+    index = available.index(current) if current in available else None
+    choice_label = st.radio('Operação', labels, index=index, key='wizard_operation_radio')
+    if not choice_label:
+        st.info('Escolha Cadastro ou Estoque para liberar as próximas etapas.')
+        return
 
+    selected = available[labels.index(choice_label)]
     if selected != st.session_state.get(FLOW_OPERATION_KEY):
         _reset_outputs_for_operation_change()
+        st.session_state[WIZARD_STEP_KEY] = STEP_OPERACAO
     st.session_state[FLOW_OPERATION_KEY] = selected
     st.session_state['operacao_final'] = selected
     st.session_state['tipo_operacao_final'] = selected
+    st.success(f'Operação escolhida: {labels_by_value[selected]}')
 
 
 def _render_pricing_step() -> None:
@@ -490,6 +506,11 @@ def _render_origin_explanation(origin: str) -> None:
 
 def _render_origin_step() -> None:
     operation = _selected_operation()
+    if operation not in {'cadastro', 'estoque'}:
+        st.warning('Escolha primeiro se o fluxo é Cadastro ou Estoque.')
+        _go_to_step(STEP_OPERACAO, reason='operation_required_before_origin')
+        return
+
     _clear_legacy_origin_widget_state(operation)
 
     st.markdown('### Escolha a origem dos dados')
@@ -582,7 +603,7 @@ def render_home_wizard() -> None:
     nav = _render_step_header()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation, 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation or 'nao_escolhida', 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
@@ -610,7 +631,7 @@ def render_home_wizard() -> None:
         _render_estoque_download()
     else:
         add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('Etapa inválida. Recomece o fluxo.')
-        render_pending_notice('Fluxo inválido.')
+        st.warning('Etapa inválida ou operação ainda não escolhida. Escolha Cadastro ou Estoque para continuar.')
+        render_pending_notice('Escolha a operação antes de continuar.')
 
     _render_bottom_navigation_for_current_step()
