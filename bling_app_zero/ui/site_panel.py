@@ -159,10 +159,10 @@ def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.'
 
 def _operation_badge(operation: str) -> str:
     if operation == 'estoque':
-        return 'Entrada por site para estoque: o sistema busca somente os campos pedidos pelo modelo escolhido.'
+        return 'Entrada por site: o sistema busca somente os campos pedidos pelo modelo escolhido.'
     if operation == 'cadastro':
         return 'Entrada por site: o sistema busca dados do fornecedor para preencher o modelo escolhido no mapeamento.'
-    return 'Entrada por site: escolha Cadastro ou Estoque antes de buscar.'
+    return 'Entrada por site: configure primeiro o objetivo do mapeamento.'
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -174,9 +174,9 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     if requested_columns:
         show_contract(requested_columns)
     elif operation == 'estoque':
-        st.error('Para estoque por site, envie primeiro o modelo de estoque. A busca só será feita nas colunas desse modelo.')
+        st.error('Modelo de destino ausente. A busca será feita somente nas colunas do modelo escolhido.')
     else:
-        st.info('Sem modelo desta operação. Vou capturar os campos principais e deixar vazio o que não encontrar.')
+        st.info('Sem modelo de destino desta etapa. Vou capturar os campos principais e deixar vazio o que não encontrar.')
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
@@ -187,7 +187,7 @@ def _render_urls_input(operation: str) -> str:
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole um ou mais links públicos: categoria, busca ou produtos individuais. Se o fornecedor exigir login, CAPTCHA, duas etapas, Cloudflare ou firewall, use a área de site protegido logo abaixo.',
+        help='Cole um ou mais links públicos: categoria, busca ou itens individuais. Se o fornecedor exigir login, CAPTCHA, duas etapas, Cloudflare ou firewall, use a área de site protegido logo abaixo.',
     )
 
 
@@ -267,9 +267,9 @@ def _run_site_capture(
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
     if operation == 'estoque' and not _has_columns(requested_columns):
-        _clear_site_df(operation, 'busca_estoque_sem_modelo')
-        st.error('Busca bloqueada: carregue o modelo de estoque para definir exatamente quais colunas serão preenchidas.')
-        add_audit_event('site_capture_blocked_missing_stock_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
+        _clear_site_df(operation, 'busca_sem_modelo_destino')
+        st.error('Busca bloqueada: carregue o modelo de destino para definir exatamente quais colunas serão preenchidas.')
+        add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
 
     started_at = time.time()
@@ -336,7 +336,7 @@ def render_site_panel() -> None:
     _clear_legacy_authenticated_state()
     operation = _current_site_operation()
     if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro se a busca por site será para Cadastro ou Estoque.')
+        st.warning('Escolha primeiro o objetivo do mapeamento.')
         add_audit_event('site_panel_blocked_missing_operation', area='SITE', step='entrada', status='BLOQUEADO', details={'responsible_file': RESPONSIBLE_FILE})
         return
     if operation == 'estoque':
