@@ -19,29 +19,30 @@ from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 
 
 def _render_mapping_ai_adjustments() -> None:
-    with st.expander('Ajustes com IA e proteções do arquivo final', expanded=False):
-        st.caption(
-            'Use esta área apenas para proteções globais. Valores fixos, campo vazio ou escolha de coluna devem ser definidos no mapeamento abaixo.'
-        )
+    with st.expander('⚙️ Ajustes avançados do arquivo final', expanded=False):
+        st.caption('Opcional. Use somente quando precisar aplicar regras globais antes do preview.')
         render_rules_center_step()
 
 
 def render_cadastro_mapeamento_step() -> None:
-    st.markdown('### Mapeamento + IA do modelo final')
-    st.caption('Escolha colunas, escreva valores fixos, deixe vazio ou use ajustes assistidos antes do preview final.')
-
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
     if not valid_df(df_origem):
-        st.warning('Nenhuma origem de dados carregada. Volte para a etapa Entrada.')
+        st.warning('Nenhuma origem de dados carregada. Volte para Dados de origem.')
         return
     if not valid_model(df_modelo):
-        st.warning('Modelo de destino ausente. Volte para a etapa Modelo.')
+        st.warning('Modelo de destino ausente. Volte para Modelo de destino.')
         return
 
     store_expected_source_rows(df_origem)
-    st.caption(f'Origem em uso no mapeamento: {len(df_origem)} registro(s).')
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.metric('Produtos na origem', len(df_origem))
+    with col_b:
+        st.metric('Campos do modelo', len(df_modelo.columns))
+
     _render_mapping_ai_adjustments()
 
     df_para_mapear = render_cadastro_pricing(df_origem)
