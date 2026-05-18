@@ -184,7 +184,7 @@ def _render_loaded_summary() -> None:
     if parts:
         st.success('Modelo anexado reconhecido como: ' + ' + '.join(parts))
     else:
-        st.warning('Nenhum modelo salvo no sistema. Anexe uma planilha para definir o contrato final.')
+        st.warning('Nenhuma planilha modelo foi anexada ainda. Baixe o modelo, preencha os dados e anexe o arquivo aqui para continuar.')
         return
 
     with st.expander('Conferir modelo anexado', expanded=False):
@@ -204,13 +204,13 @@ def render_home_bling_models() -> None:
     """Conteúdo da etapa Modelo de destino."""
     clear_default_home_models()
 
-    st.markdown('#### Modelo de destino')
+    st.markdown('#### Anexe aqui a planilha modelo preenchida')
     st.caption(
-        'Anexe o modelo que você quer preencher. O sistema não usa mais modelo padrão salvo internamente.'
+        'Envie a planilha que você baixou e preencheu. O sistema usará esse arquivo como base para gerar o resultado final.'
     )
 
     upload = render_model_upload_box(
-        title='Modelo de destino',
+        title='Planilha modelo preenchida',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
