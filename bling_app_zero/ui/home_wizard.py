@@ -57,6 +57,7 @@ AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
+VALID_OPERATIONS = {'cadastro', 'estoque'}
 
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
@@ -88,15 +89,59 @@ def _has_home_models() -> bool:
     return _has_cadastro_model() or _has_estoque_model()
 
 
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name, '')
+        if isinstance(value, list):
+            return str(value[0] if value else '')
+        return str(value or '')
+    except Exception:
+        return ''
+
+
+def _normalize_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'cadastro', 'cadastro_site'}:
+        return 'cadastro'
+    if text in {'estoque', 'estoque_site', 'atualizacao_estoque', 'atualização de estoque'}:
+        return 'estoque'
+    if 'estoque' in text:
+        return 'estoque'
+    if 'cadastro' in text:
+        return 'cadastro'
+    return ''
+
+
+def _operation_from_runtime() -> str:
+    for value in (
+        _query_param('operacao'),
+        _query_param('operation'),
+        _query_param('operation_v2'),
+        st.session_state.get('home_detected_operation'),
+        st.session_state.get(FLOW_OPERATION_KEY),
+        st.session_state.get('operacao_final'),
+        st.session_state.get('tipo_operacao_final'),
+        st.session_state.get('tipo_operacao_site'),
+        st.session_state.get('home_slim_flow_operation'),
+    ):
+        operation = _normalize_operation(value)
+        if operation in VALID_OPERATIONS:
+            return operation
+    if _has_estoque_model() and not _has_cadastro_model():
+        return 'estoque'
+    return UNIVERSAL_INTERNAL_OPERATION
+
+
 def _ensure_universal_operation_state() -> str:
     if not _has_home_models():
         return ''
-    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_INTERNAL_OPERATION
-    st.session_state['operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
-    st.session_state['tipo_operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
+    operation = _operation_from_runtime()
+    st.session_state[FLOW_OPERATION_KEY] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['home_detected_operation'] = operation
     st.session_state['home_operation_choice_removed'] = True
-    st.session_state.pop('home_detected_operation', None)
-    return UNIVERSAL_INTERNAL_OPERATION
+    return operation
 
 
 def _selected_operation() -> str:
@@ -155,7 +200,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         step = STEP_ORIGEM if _has_home_models() else STEP_MODELO
     previous = st.session_state.get(WIZARD_STEP_KEY)
     st.session_state[WIZARD_STEP_KEY] = step
-    add_audit_event('wizard_single_page_step_marker_changed', area='WIZARD', step=step, details={'from': previous, 'to': step, 'reason': reason, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_page_step_marker_changed', area='WIZARD', step=step, details={'from': previous, 'to': step, 'reason': reason, 'operation': _selected_operation(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _back_to_home_choice() -> None:
@@ -208,8 +253,7 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
 
 
 def _sync_flow_state(origin: str, operation: str | None = None) -> None:
-    _ = operation
-    operation = UNIVERSAL_INTERNAL_OPERATION
+    operation = _normalize_operation(operation) or _operation_from_runtime()
     origin = 'arquivo' if origin == 'arquivo' else 'site'
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
     st.session_state[FLOW_ORIGIN_KEY] = origin
@@ -219,15 +263,16 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = origin
     st.session_state['tipo_operacao_site'] = operation if origin == 'site' else ''
+    st.session_state['home_slim_flow_operation'] = operation
     st.session_state['home_operation_choice_removed'] = True
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
     if previous_origin != origin:
-        add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'previous_origin': previous_origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
         st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
         st.query_params['step'] = STEP_ENTRADA
-        st.query_params.pop('operacao', None)
+        st.query_params['operacao'] = operation
     except Exception:
         pass
 
@@ -237,7 +282,7 @@ def _select_origin(origin: str) -> None:
     if origin not in {'arquivo', 'site'}:
         return
     st.session_state[ORIGIN_RADIO_KEY] = origin
-    _sync_flow_state(origin)
+    _sync_flow_state(origin, _selected_operation())
     st.rerun()
 
 
@@ -373,7 +418,7 @@ def _render_cadastro_entrada() -> None:
     if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha a origem dos dados acima para liberar esta seção.')
         return
-    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': _selected_operation(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
@@ -441,10 +486,10 @@ def _render_cadastro_download() -> None:
 
 
 def render_home_wizard() -> None:
-    _ensure_universal_operation_state()
+    operation = _ensure_universal_operation_state()
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': _selected_operation() or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     st.info('Fluxo em tela única: siga rolando para baixo. As seções abaixo ficam visíveis e mostram claramente o que falta liberar.')
     _render_model_step()
     _render_origin_step()
