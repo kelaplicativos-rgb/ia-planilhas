@@ -12,6 +12,10 @@ HOME_HAS_MODELS_KEY = 'home_modelos_bling_ok'
 HOME_CADASTRO_MODEL_SOURCE_KEY = 'home_modelo_cadastro_source'
 HOME_ESTOQUE_MODEL_SOURCE_KEY = 'home_modelo_estoque_source'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
+WIZARD_STEP_KEY = 'bling_wizard_step'
+STEP_ORIGEM = 'origem'
+MODEL_UPLOAD_SIGNATURE_KEY = 'home_model_upload_signature_v2'
+MODEL_UPLOAD_AUTOFORWARDED_KEY = 'home_model_upload_autoforwarded_signature_v2'
 
 GLOBAL_CADASTRO_MODEL_KEYS = [
     'df_modelo_cadastro',
@@ -29,6 +33,20 @@ def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         return df.copy().fillna('')
     return None
+
+
+def _df_signature(df: pd.DataFrame | None) -> str:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return 'empty'
+    try:
+        columns = '|'.join(map(str, df.columns))
+        return f'{len(df)}x{len(df.columns)}:{columns}'
+    except Exception:
+        return f'{len(df)}x{len(df.columns)}'
+
+
+def _models_signature(cadastro: pd.DataFrame | None, estoque: pd.DataFrame | None) -> str:
+    return f'cadastro={_df_signature(cadastro)}|estoque={_df_signature(estoque)}'
 
 
 def _save_model(key: str, df: pd.DataFrame | None, aliases: list[str], *, source: str = 'upload') -> None:
@@ -168,9 +186,9 @@ def _render_detection_badge(label: str, df: pd.DataFrame, source: object) -> Non
         f'({round(detection.confidence * 100)}%) · {_model_source_label(source)}'
     )
     if detection.model_type == 'personalizado':
-        st.info('Modelo personalizado: a planilha final ainda respeitará exatamente as colunas e a ordem do arquivo anexado.')
+        st.info('Modelo personalizado: a planilha final respeitará as colunas e a ordem do arquivo anexado.')
     else:
-        st.success(f'Modelo interpretado como {detection.model_type}. {detection.reason}')
+        st.success(f'Modelo interpretado como {detection.model_type}.')
 
 
 def _render_loaded_summary() -> None:
@@ -182,36 +200,46 @@ def _render_loaded_summary() -> None:
     if isinstance(estoque, pd.DataFrame):
         parts.append(f'estoque ({_model_source_label(st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))})')
     if parts:
-        st.success('Modelo de destino reconhecido como: ' + ' + '.join(parts))
+        st.caption('Modelo: ' + ' + '.join(parts))
     else:
-        st.warning(
-            'Nenhuma planilha modelo foi anexada ainda. Baixe o modelo no Bling ou marketplace, preencha os cabeçalhos/dados necessários e anexe aqui para continuar.'
-        )
+        st.warning('Anexe o modelo para continuar.')
         return
 
     with st.expander('Conferir modelo anexado', expanded=False):
         if isinstance(cadastro, pd.DataFrame):
             st.caption('Cadastro')
             _render_detection_badge('Modelo', cadastro, st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY))
-            st.dataframe(cadastro.head(1).astype(str), use_container_width=True, height=120)
             st.caption(f'{len(cadastro.columns)} coluna(s): ' + ', '.join(map(str, cadastro.columns)))
         if isinstance(estoque, pd.DataFrame):
             st.caption('Estoque')
             _render_detection_badge('Modelo', estoque, st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))
-            st.dataframe(estoque.head(1).astype(str), use_container_width=True, height=120)
             st.caption(f'{len(estoque.columns)} coluna(s): ' + ', '.join(map(str, estoque.columns)))
+
+
+def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, estoque_model: pd.DataFrame | None) -> None:
+    signature = _models_signature(cadastro_model, estoque_model)
+    if signature == 'cadastro=empty|estoque=empty':
+        return
+
+    st.session_state[MODEL_UPLOAD_SIGNATURE_KEY] = signature
+    if st.session_state.get(MODEL_UPLOAD_AUTOFORWARDED_KEY) == signature:
+        return
+
+    st.session_state[MODEL_UPLOAD_AUTOFORWARDED_KEY] = signature
+    st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    try:
+        st.query_params['step'] = STEP_ORIGEM
+    except Exception:
+        pass
+    st.rerun()
 
 
 def render_home_bling_models() -> None:
     """Conteúdo da etapa Modelo de destino."""
     clear_default_home_models()
 
-    st.markdown('#### Baixe a planilha modelo, preencha e anexe aqui')
-    st.caption(
-        'Use o modelo de destino que você quer preencher: cadastro, estoque ou marketplace. '
-        'Baixe esse modelo no sistema de destino, confira/preencha o que for necessário e anexe abaixo. '
-        'O arquivo anexado define exatamente as colunas e a ordem do CSV final.'
-    )
+    st.markdown('#### Modelo de destino')
+    st.caption('Anexe a planilha modelo que será preenchida.')
 
     upload = render_model_upload_box(
         title='Planilha modelo de destino',
@@ -226,6 +254,7 @@ def render_home_bling_models() -> None:
 
     if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
         save_home_models(cadastro_model, estoque_model, replace_missing=True)
+        _auto_forward_after_first_model_upload(cadastro_model, estoque_model)
 
     _render_loaded_summary()
 
