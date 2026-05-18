@@ -17,7 +17,10 @@ from bling_app_zero.ui.estoque_wizard_state import (
 
 def render_estoque_gerar_step() -> None:
     st.markdown('### Mapeamento do estoque')
-    st.caption('Mapeamento manual exclusivo de estoque. Nada deve ser criado sem você ver o campo correspondente.')
+    st.caption(
+        'Mapeamento manual exclusivo de estoque. Se o modelo do Bling tiver campo de preço/custo, '
+        'ele também pode ser preenchido junto com a atualização de saldo.'
+    )
 
     df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
     deposito = deposito_value()
@@ -40,7 +43,10 @@ def render_estoque_gerar_step() -> None:
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
     df_para_mapear = render_cadastro_pricing(df_origem)
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Calculadora aplicada à origem. Se o modelo possuir campo de preço, o valor calculado poderá ser usado no mapeamento.')
+        st.success(
+            'Calculadora aplicada à origem de estoque. Se o modelo possuir campo de preço/custo, '
+            'o valor calculado poderá ser enviado junto com o saldo no importador do Bling.'
+        )
 
     render_manual_estoque_mapping(df_para_mapear, df_modelo, deposito)
 
