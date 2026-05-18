@@ -12,13 +12,22 @@ from bling_app_zero.ui.estoque_wizard_state import (
     sync_manual_stock_output,
     valid_model,
 )
+from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.shared_pricing import render_shared_pricing
 
 
+def _render_stock_ai_adjustments() -> None:
+    with st.expander('Ajustes com IA e proteções do arquivo final', expanded=False):
+        st.caption(
+            'Use esta área apenas para proteções globais. Depósito, coluna de quantidade, preço/custo e valores fixos continuam no mapeamento de estoque.'
+        )
+        render_rules_center_step()
+
+
 def render_estoque_gerar_step() -> None:
-    st.markdown('### Mapeamento do estoque')
+    st.markdown('### Mapeamento + IA do estoque')
     st.caption(
-        'Mapeamento manual exclusivo de estoque. Se o modelo do Bling tiver campo de preço/custo, '
+        'Mapeamento manual exclusivo de estoque. Se o modelo tiver campo de preço/custo, '
         'ele também pode ser preenchido junto com a atualização de saldo.'
     )
 
@@ -41,11 +50,13 @@ def render_estoque_gerar_step() -> None:
         return
 
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de estoque"}')
+    _render_stock_ai_adjustments()
+
     df_para_mapear = render_shared_pricing(df_origem, channel='estoque')
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success(
             'Calculadora aplicada à origem de estoque. Se o modelo possuir campo de preço/custo, '
-            'o valor calculado poderá ser enviado junto com o saldo no importador do Bling.'
+            'o valor calculado poderá ser enviado junto com o saldo.'
         )
 
     render_manual_estoque_mapping(df_para_mapear, df_modelo, deposito)
