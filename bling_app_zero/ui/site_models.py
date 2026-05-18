@@ -7,7 +7,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
-from bling_app_zero.ui.model_upload import render_model_upload_box
 
 
 @dataclass
@@ -62,7 +61,7 @@ def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
 
 
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do cadastro/marketplace: troca opcional desta tela > modelo salvo na etapa Modelo."""
+    """Modelo do cadastro/marketplace salvo na etapa Modelo."""
     uploaded = _uploaded_cadastro_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -71,7 +70,7 @@ def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
 
 
 def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do estoque: troca opcional desta tela > modelo salvo na etapa Modelo."""
+    """Modelo do estoque salvo na etapa Modelo."""
     uploaded = _uploaded_estoque_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -114,34 +113,33 @@ def _home_model_summary(operation_key: str) -> str:
 
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
-    """Evita dois uploads aparentes no fluxo comum.
+    """Mantém a busca por site sem upload duplicado de modelo.
 
-    O modelo principal deve ser anexado na etapa Modelo. Na busca por site, o
-    upload extra aparece apenas como opção avançada para troca pontual, fechado
-    por padrão, para não confundir o usuário simples.
+    O modelo de destino deve ser anexado uma única vez na etapa Modelo de
+    destino. Esta etapa apenas lê o modelo já salvo para definir quais campos
+    serão buscados no site. Isso evita confundir o usuário com dois pontos de
+    anexo para o mesmo arquivo.
     """
     normalized = str(operation or '').strip().lower()
     operation_key = 'estoque' if normalized == 'estoque' else 'cadastro'
 
     if has_home_site_model_for_operation(operation_key):
         st.success(_home_model_summary(operation_key))
-        st.caption('A busca por site usará este modelo. Você não precisa anexar a mesma planilha novamente.')
-        with st.expander('Trocar modelo somente para esta busca', expanded=False):
-            st.caption('Use apenas se o arquivo desta busca for diferente do modelo escolhido no início.')
-            return render_model_upload_box(
-                title='Trocar modelo desta busca',
-                operation=operation_key,
-                key=f'model_upload_site_{operation_key}',
-                required_model=False,
-                caption='Opcional. Se não anexar nada aqui, vale o modelo já salvo na etapa Modelo.',
-            )
-        return EmptyModelUpload()
+        st.caption('A busca por site usará o modelo já anexado no início. Não é necessário anexar a mesma planilha novamente.')
+    else:
+        st.warning('Modelo de destino não encontrado nesta sessão. Volte na etapa Modelo de destino e anexe o modelo correto uma única vez.')
 
-    st.warning('Modelo da operação ainda não encontrado. Anexe aqui para continuar ou volte para a etapa Modelo.')
-    return render_model_upload_box(
-        title='Modelo de destino para esta busca',
-        operation=operation_key,
-        key=f'model_upload_site_{operation_key}',
-        required_model=False,
-        caption='Este modelo define quais colunas o sistema deve preencher.',
-    )
+    return EmptyModelUpload()
+
+
+__all__ = [
+    'EmptyModelUpload',
+    'choose_site_cadastro_model_df',
+    'choose_site_estoque_model_df',
+    'choose_site_model_df',
+    'columns_from_df',
+    'has_home_site_model_for_operation',
+    'render_optional_site_model_upload',
+    'requested_columns_for_site_capture',
+    'unique_columns',
+]
