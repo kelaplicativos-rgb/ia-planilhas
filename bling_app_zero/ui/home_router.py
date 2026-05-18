@@ -20,19 +20,25 @@ CADASTRO_MODEL_KEYS = ('home_modelo_cadastro_df', 'df_modelo_cadastro', 'modelo_
 ESTOQUE_MODEL_KEYS = ('home_modelo_estoque_df', 'df_modelo_estoque', 'modelo_estoque_df')
 CADASTRO_SOURCE_KEY = 'home_modelo_cadastro_source'
 ESTOQUE_SOURCE_KEY = 'home_modelo_estoque_source'
+WIZARD_STEP_KEY = 'bling_wizard_step'
+STEP_OPERACAO = 'operacao'
 
 
 def _set_flow(flow: str) -> None:
     previous = st.session_state.get(ACTIVE_FLOW_KEY)
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
+    if flow == FLOW_WIZARD:
+        st.session_state[WIZARD_STEP_KEY] = STEP_OPERACAO
     add_audit_event(
         'home_model_contract_received',
         area='HOME',
-        details={'previous': previous, 'selected': flow, 'responsible_file': RESPONSIBLE_FILE},
+        details={'previous': previous, 'selected': flow, 'next_step': st.session_state.get(WIZARD_STEP_KEY), 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['operation_v2'] = flow
+        if flow == FLOW_WIZARD:
+            st.query_params['step'] = STEP_OPERACAO
     except Exception:
         pass
     st.rerun()
@@ -98,11 +104,6 @@ def _write_model_keys(keys: tuple[str, ...], df: pd.DataFrame, *, source_key: st
 
 
 def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
-    """Salva o modelo sem tentar adivinhar se é cadastro ou estoque.
-
-    A escolha da operação pertence ao usuário. A planilha enviada aqui é apenas
-    o contrato de colunas que poderá ser usado no cadastro ou no estoque.
-    """
     clean_df = df.copy().fillna('')
 
     st.session_state[HOME_INTAKE_MODEL_KEY] = clean_df
@@ -119,6 +120,8 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
         'home_slim_flow_operation',
         'operacao_final',
         'tipo_operacao_final',
+        'tipo_operacao_site',
+        'operation_site',
     ):
         st.session_state.pop(key, None)
 
@@ -130,33 +133,23 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     add_audit_event(
         'home_contract_model_saved_without_detection',
         area='HOME',
-        details={
-            'file_name': file_name,
-            'columns_count': int(len(clean_df.columns)),
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'operation_must_be_chosen_by_user': True, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
 def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
     st.success('Planilha recebida como modelo de destino.')
-    st.caption('Agora escolha a operação no próximo passo: Cadastro ou Estoque. O sistema não vai tentar adivinhar por você.')
+    st.caption('Agora escolha manualmente se este fluxo será Cadastro ou Estoque. O sistema não define isso sozinho.')
     st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
     with st.expander('Conferir colunas da planilha', expanded=False):
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button('Continuar', use_container_width=True, key='home_continue_after_contract_upload'):
+    if st.button('Escolher Cadastro ou Estoque', use_container_width=True, key='home_continue_after_contract_upload'):
         add_audit_event(
             'home_contract_continue_clicked',
             area='HOME',
-            details={
-                'file_name': file_name,
-                'columns_count': int(len(df.columns)),
-                'flow': FLOW_WIZARD,
-                'detection_disabled': True,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_OPERACAO, 'responsible_file': RESPONSIBLE_FILE},
         )
         _set_flow(FLOW_WIZARD)
 
@@ -178,7 +171,7 @@ def _render_operation_choice() -> None:
     df = _read_intake_file(uploaded)
     if not isinstance(df, pd.DataFrame):
         st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
-        st.caption('Depois disso você continua com operação, preço, origem, entrada, mapeamento, preview e download final.')
+        st.caption('Depois disso você escolhe Cadastro ou Estoque e continua com preço, origem, entrada, mapeamento, preview e download final.')
         return
 
     file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
@@ -186,13 +179,7 @@ def _render_operation_choice() -> None:
     add_audit_event(
         'home_contract_model_uploaded',
         area='HOME',
-        details={
-            'file_name': file_name,
-            'columns_count': int(len(df.columns)),
-            'flow': FLOW_WIZARD,
-            'detection_disabled': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     _render_contract_preview(df, file_name)
 
