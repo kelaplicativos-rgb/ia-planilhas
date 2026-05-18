@@ -107,8 +107,6 @@ def _selected_operation() -> str:
     if operation in available:
         return operation
 
-    # Não escolher cadastro automaticamente quando o mesmo modelo foi salvo para
-    # cadastro e estoque. A decisão precisa ser do usuário na etapa Operação.
     for key in ('operacao_final', 'tipo_operacao_final', 'tipo_operacao_site', 'operation_site'):
         st.session_state.pop(key, None)
     return ''
@@ -292,7 +290,7 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
 def _sync_flow_state(origin: str, operation: str) -> None:
     operation = str(operation or '').strip().lower()
     if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro se o fluxo é Cadastro ou Estoque.')
+        st.warning('Escolha primeiro o objetivo do mapeamento.')
         return
 
     origin = 'arquivo' if origin == 'arquivo' else 'site'
@@ -354,7 +352,7 @@ def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
     if step == STEP_MODELO:
         return _has_home_models(), 'Avançar →', 'Envie ou mantenha um modelo para continuar.'
     if step == STEP_OPERACAO:
-        return operation in {'cadastro', 'estoque'}, 'Avançar →', 'Escolha Cadastro ou Estoque.'
+        return operation in {'cadastro', 'estoque'}, 'Avançar →', 'Escolha o objetivo do mapeamento.'
     if step == STEP_PRECIFICACAO:
         return True, 'Avançar →', None
     if step == STEP_ORIGEM:
@@ -431,25 +429,28 @@ def _render_operation_step() -> None:
     if not available:
         return
 
-    labels_by_value = {'cadastro': '🧾 Cadastro', 'estoque': '📦 Estoque'}
+    labels_by_value = {
+        'cadastro': '🧾 Produtos, catálogo, marketplace ou modelo completo',
+        'estoque': '📦 Estoque, saldo, custo ou atualização operacional',
+    }
 
-    st.markdown('### Escolha o que será feito com esta planilha')
-    st.caption('A planilha já foi recebida. Agora selecione manualmente o tipo de operação. O sistema não escolhe por você.')
+    st.markdown('### Configure o objetivo do mapeamento')
+    st.caption('A planilha já foi recebida. Escolha o caminho mais próximo do arquivo que você precisa gerar. O sistema não decide isso sozinho.')
 
     if len(available) == 1:
         selected = available[0]
         st.session_state[FLOW_OPERATION_KEY] = selected
         st.session_state['operacao_final'] = selected
         st.session_state['tipo_operacao_final'] = selected
-        st.success(f'Operação disponível: {labels_by_value[selected]}')
+        st.success(f'Objetivo disponível: {labels_by_value[selected]}')
         return
 
     labels = [labels_by_value[value] for value in available]
     current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
     index = available.index(current) if current in available else None
-    choice_label = st.radio('Operação', labels, index=index, key='wizard_operation_radio')
+    choice_label = st.radio('Objetivo da planilha', labels, index=index, key='wizard_operation_radio')
     if not choice_label:
-        st.info('Escolha Cadastro ou Estoque para liberar as próximas etapas.')
+        st.info('Escolha o objetivo do mapeamento para liberar as próximas etapas.')
         return
 
     selected = available[labels.index(choice_label)]
@@ -459,7 +460,7 @@ def _render_operation_step() -> None:
     st.session_state[FLOW_OPERATION_KEY] = selected
     st.session_state['operacao_final'] = selected
     st.session_state['tipo_operacao_final'] = selected
-    st.success(f'Operação escolhida: {labels_by_value[selected]}')
+    st.success(f'Objetivo escolhido: {labels_by_value[selected]}')
 
 
 def _render_pricing_step() -> None:
@@ -487,14 +488,14 @@ def _render_pricing_step() -> None:
 
 def _origin_label(operation: str) -> str:
     if operation == 'estoque':
-        return 'De onde vêm os dados de estoque que você quer atualizar?'
-    return 'De onde vêm os dados dos produtos que você quer transformar?'
+        return 'De onde vêm os dados de estoque/saldo que você quer atualizar?'
+    return 'De onde vêm os dados que você quer transformar para o modelo final?'
 
 
 def _origin_help_text(operation: str) -> str:
     if operation == 'estoque':
         return 'Escolha Arquivo se você já tem uma planilha/CSV do fornecedor. Escolha Site se quer buscar quantidade, custo ou outros campos nos links do fornecedor.'
-    return 'Escolha Arquivo se você já tem uma planilha, CSV, XML ou PDF. Escolha Site se quer buscar os produtos diretamente nos links do fornecedor.'
+    return 'Escolha Arquivo se você já tem uma planilha, CSV, XML ou PDF. Escolha Site se quer buscar os dados diretamente nos links do fornecedor.'
 
 
 def _render_origin_explanation(origin: str) -> None:
@@ -507,7 +508,7 @@ def _render_origin_explanation(origin: str) -> None:
 def _render_origin_step() -> None:
     operation = _selected_operation()
     if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro se o fluxo é Cadastro ou Estoque.')
+        st.warning('Escolha primeiro o objetivo do mapeamento.')
         _go_to_step(STEP_OPERACAO, reason='operation_required_before_origin')
         return
 
@@ -631,7 +632,7 @@ def render_home_wizard() -> None:
         _render_estoque_download()
     else:
         add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('Etapa inválida ou operação ainda não escolhida. Escolha Cadastro ou Estoque para continuar.')
-        render_pending_notice('Escolha a operação antes de continuar.')
+        st.warning('Etapa inválida ou objetivo ainda não escolhido. Configure o objetivo do mapeamento para continuar.')
+        render_pending_notice('Escolha o objetivo do mapeamento antes de continuar.')
 
     _render_bottom_navigation_for_current_step()
