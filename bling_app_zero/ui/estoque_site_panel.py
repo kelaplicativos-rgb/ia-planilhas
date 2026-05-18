@@ -142,14 +142,16 @@ def _render_urls_input() -> str:
 
 
 def _render_universal_fallback(*, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
-    _orange_warning('Compatibilidade universal: use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, captcha ou Cloudflare. O fluxo continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
-    render_manual_table_import_panel(
-        operation=OPERATION,
-        requested_columns=requested_columns,
-        df_modelo_cadastro=None,
-        df_modelo_estoque=df_modelo_estoque,
-        df_modelo=df_modelo_estoque,
-    )
+    with st.expander('🔐 Site protegido, bloqueado ou com login', expanded=False):
+        st.caption('Abra somente se a busca normal não funcionar ou se o fornecedor exigir login, CAPTCHA, Cloudflare, firewall ou tabela copiada.')
+        _orange_warning('Compatibilidade universal: use quando o site bloquear robô, iframe, sessão, login, CAPTCHA ou Cloudflare. Você pode colar HTML, tabela copiada ou enviar HTML/XLSX/CSV já salvo.')
+        render_manual_table_import_panel(
+            operation=OPERATION,
+            requested_columns=requested_columns,
+            df_modelo_cadastro=None,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo_estoque,
+        )
 
 
 def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
