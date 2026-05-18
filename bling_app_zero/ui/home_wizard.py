@@ -58,7 +58,6 @@ AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
 
-# Fluxo visual único. A etapa "Objetivo/Cadastro/Estoque" não existe mais para o usuário.
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 
 
@@ -154,12 +153,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         step = STEP_ORIGEM if _has_home_models() else STEP_MODELO
     previous = st.session_state.get(WIZARD_STEP_KEY)
     st.session_state[WIZARD_STEP_KEY] = step
-    add_audit_event(
-        'wizard_single_page_step_marker_changed',
-        area='WIZARD',
-        step=step,
-        details={'from': previous, 'to': step, 'reason': reason, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('wizard_single_page_step_marker_changed', area='WIZARD', step=step, details={'from': previous, 'to': step, 'reason': reason, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _back_to_home_choice() -> None:
@@ -216,7 +210,6 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
     operation = UNIVERSAL_INTERNAL_OPERATION
     origin = 'arquivo' if origin == 'arquivo' else 'site'
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
-
     st.session_state[FLOW_ORIGIN_KEY] = origin
     st.session_state[FLOW_OPERATION_KEY] = operation
     st.session_state.pop(FLOW_ACTIVE_KEY, None)
@@ -226,14 +219,8 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
     st.session_state['tipo_operacao_site'] = operation if origin == 'site' else ''
     st.session_state['home_operation_choice_removed'] = True
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
-
     if previous_origin != origin:
-        add_audit_event(
-            'single_page_origin_selected',
-            area='WIZARD',
-            step=STEP_ORIGEM,
-            details={'origin': origin, 'previous_origin': previous_origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'previous_origin': previous_origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
         st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
@@ -298,7 +285,6 @@ def _render_bottom_navigation(*, allow_next: bool, next_label: str, pending_mess
 
 
 def _render_bottom_navigation_for_current_step() -> None:
-    # Em tela única não existe navegação inferior bloqueante.
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
 
 
@@ -319,7 +305,6 @@ def _section_title(number: int, title: str, caption: str = '') -> None:
 
 def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
-
     _section_title(1, 'Modelo de destino', 'Anexe ou confira o modelo final que será preenchido.')
     with st.container(border=True):
         render_home_bling_models()
@@ -330,13 +315,11 @@ def _render_model_step() -> None:
 
 def _render_pricing_step() -> None:
     _section_title(2, 'Preço', 'Opcional. Use apenas se quiser calcular preço antes do mapeamento.')
+    if not _has_home_models():
+        render_pending_notice('A seção de preço será liberada depois que o modelo de destino for anexado.')
+        return
     current_config = get_home_pricing_config()
-    use_pricing = st.toggle(
-        'Usar calculadora compartilhada',
-        value=bool(current_config.get('enabled', False)),
-        key='home_pricing_enabled_toggle',
-        help='Quando ativada, o preço calculado pode ser usado antes do mapeamento final.',
-    )
+    use_pricing = st.toggle('Usar calculadora compartilhada', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle', help='Quando ativada, o preço calculado pode ser usado antes do mapeamento final.')
     if use_pricing:
         with st.container(border=True):
             st.success('Calculadora compartilhada ativa para este fluxo.')
@@ -356,20 +339,20 @@ def _render_origin_explanation(origin: str) -> None:
 
 def _render_origin_step() -> None:
     _section_title(3, 'Origem dos dados', 'Escolha de onde vêm os dados que preencherão o modelo.')
+    if not _has_home_models():
+        render_pending_notice('A origem dos dados será liberada depois que o modelo de destino for anexado.')
+        return
     _ensure_universal_operation_state()
     _clear_legacy_origin_widget_state()
-
     options = {'arquivo': '📎 Arquivo do fornecedor', 'site': '🌐 Site do fornecedor'}
     labels = list(options.values())
     values = list(options.keys())
     selected = _current_origin_choice()
     index = values.index(selected) if selected in values else None
-
     choice_label = st.radio('Origem dos dados', labels, index=index, key='frontpage_origin_radio_universal')
     if choice_label is None:
         render_pending_notice('Escolha Arquivo ou Site para liberar a seção Dados de origem logo abaixo.')
         return
-
     origin = values[labels.index(choice_label)]
     _sync_flow_state(origin)
     _render_origin_explanation(origin)
@@ -378,25 +361,24 @@ def _render_origin_step() -> None:
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
     _section_title(4, 'Dados de origem', 'Aqui entram os dados reais: arquivo do fornecedor ou links do site.')
+    if not _has_home_models():
+        render_pending_notice('Os dados de origem serão liberados depois que o modelo de destino for anexado.')
+        return
     if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha a origem dos dados acima para liberar esta seção.')
         return
-
-    add_audit_event(
-        'single_page_origin_data_rendered',
-        area='UNIVERSAL',
-        step=STEP_ENTRADA,
-        details={'origin': origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
-
         render_site_panel()
     render_cadastro_entrada_step()
 
 
 def _render_cadastro_mapeamento() -> None:
     _section_title(5, 'Mapeamento + IA', 'Ligue as colunas da origem nas colunas do modelo final.')
+    if not _has_home_models():
+        render_pending_notice('O mapeamento será liberado depois que o modelo e os dados de origem forem carregados.')
+        return
     if not cadastro_context_ready():
         render_pending_notice('Carregue ou capture os dados de origem na seção anterior para liberar o mapeamento.')
         return
@@ -405,6 +387,9 @@ def _render_cadastro_mapeamento() -> None:
 
 def _render_cadastro_preview() -> None:
     _section_title(6, 'Preview', 'Confira o arquivo final antes de baixar.')
+    if not _has_home_models():
+        render_pending_notice('O preview será liberado depois que o modelo, a origem e o mapeamento forem concluídos.')
+        return
     if not cadastro_mapping_ready():
         render_pending_notice('Confirme o mapeamento para liberar o preview.')
         return
@@ -419,6 +404,9 @@ def _render_reset_only_footer(key: str) -> None:
 
 def _render_cadastro_download() -> None:
     _section_title(7, 'Download', 'Baixe o CSV final pronto para importar.')
+    if not _has_home_models():
+        render_pending_notice('O download será liberado depois que todas as etapas anteriores forem concluídas.')
+        return
     if not cadastro_mapping_ready():
         render_pending_notice('O download será liberado depois do mapeamento confirmado e do preview.')
         return
@@ -430,20 +418,9 @@ def render_home_wizard() -> None:
     _ensure_universal_operation_state()
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-
-    add_audit_event(
-        'wizard_single_page_rendered',
-        area='WIZARD',
-        step='single_page',
-        details={'operation': _selected_operation() or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
-    )
-
-    st.info('Fluxo em tela única: siga rolando para baixo. As próximas seções aparecem na mesma página conforme você preenche os dados.')
-
+    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': _selected_operation() or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    st.info('Fluxo em tela única: siga rolando para baixo. As seções abaixo ficam visíveis e mostram claramente o que falta liberar.')
     _render_model_step()
-    if not _has_home_models():
-        return
-
     _render_pricing_step()
     _render_origin_step()
     _render_cadastro_entrada()
