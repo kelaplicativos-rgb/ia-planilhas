@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import streamlit as st
 
+from bling_app_zero.core.audit_file_store import persist_audit_event
+
 AUDIT_SESSION_KEY = 'audit_events'
 AUDIT_SESSION_ID_KEY = 'audit_session_id'
 AUDIT_STATE_SNAPSHOT_KEY = 'audit_state_snapshot'
@@ -166,6 +168,7 @@ def add_audit_event(
     if len(events) > AUDIT_MAX_ITEMS:
         del events[:-AUDIT_MAX_ITEMS]
     st.session_state[AUDIT_SESSION_KEY] = events
+    persist_audit_event(event, events)
 
 
 def audit_session_state_changes(stage: str = 'runtime') -> None:
