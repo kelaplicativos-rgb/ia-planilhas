@@ -124,25 +124,25 @@ def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | Non
     if requested_columns:
         with st.expander('Campos que serão buscados', expanded=False):
             show_contract(requested_columns)
-        st.caption('A busca de estoque por site vai tentar preencher somente as colunas acima. O que não for encontrado fica vazio.')
+        st.caption('A busca por site vai tentar preencher somente as colunas acima. O que não for encontrado fica vazio.')
     else:
-        st.error('Para estoque por site, carregue o modelo de estoque do Bling. A busca só será feita nas colunas desse modelo.')
+        st.error('Carregue o modelo de destino desta atualização. A busca só será feita nas colunas desse modelo.')
     return df_modelo, requested_columns
 
 
 def _render_urls_input() -> str:
     return st.text_area(
-        'Links para buscar estoque',
+        'Links do fornecedor',
         value=_query_urls_default(),
         height=120,
         key='urls_site_estoque_independente',
         placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole links de categoria, busca ou produto.',
+        help='Cole links de categoria, busca ou item individual.',
     )
 
 
 def _render_universal_fallback(*, requested_columns: list[str] | None, df_modelo_estoque: pd.DataFrame | None) -> None:
-    _orange_warning('Compatibilidade universal: use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, captcha ou Cloudflare. O fluxo de estoque continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
+    _orange_warning('Compatibilidade universal: use esta opção quando o fornecedor bloquear robô, iframe, sessão, login, captcha ou Cloudflare. O fluxo continua funcionando se você exportar, copiar ou salvar a tabela do fornecedor e importar aqui.')
     render_manual_table_import_panel(
         operation=OPERATION,
         requested_columns=requested_columns,
@@ -156,14 +156,14 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
         _clear_stock_site_df('busca_publica_sem_links')
-        st.warning('Informe pelo menos um link antes de iniciar a busca de estoque por site.')
+        st.warning('Informe pelo menos um link antes de iniciar a busca por site.')
         return
     if not _has_columns(requested_columns):
-        _clear_stock_site_df('busca_estoque_sem_modelo')
-        st.error('Busca bloqueada: o modelo de estoque precisa definir exatamente quais colunas serão preenchidas.')
+        _clear_stock_site_df('busca_sem_modelo')
+        st.error('Busca bloqueada: o modelo de destino precisa definir exatamente quais colunas serão preenchidas.')
         return
     reset_site_progress()
-    progress_bar = st.progress(0, text='Buscando dados de estoque no site...')
+    progress_bar = st.progress(0, text='Buscando dados no site...')
     status_box = st.empty()
     try:
         df_site = run_site_engine(operation=OPERATION, pipeline=load_site_pipeline(), raw_urls=raw_urls, requested_columns=requested_columns, all_products=True, max_pages=ALL_PAGES_LIMIT, max_products=ALL_PRODUCTS_LIMIT, progress_callback=make_site_progress_callback(progress_bar, status_box))
@@ -171,39 +171,39 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
         message = str(exc) or exc.__class__.__name__
         _clear_stock_site_df('busca_publica_exception')
         _set_stock_capture_state(running=False, error=message)
-        _finish_progress(progress_bar, status_box, text='Busca de estoque encerrada com erro.')
+        _finish_progress(progress_bar, status_box, text='Busca encerrada com erro.')
         add_audit_event('stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'error': message, 'error_type': exc.__class__.__name__, 'responsible_file': RESPONSIBLE_FILE})
-        st.error('A busca de estoque por site não conseguiu finalizar. Baixe o diagnóstico para correção na sidebar.')
+        st.error('A busca por site não conseguiu finalizar. Baixe o diagnóstico para correção na sidebar.')
         return
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_stock_site_df('busca_publica_vazia')
-        _set_stock_capture_state(running=False, error='A busca de estoque por site não encontrou dados válidos.')
-        _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados de estoque.')
+        _set_stock_capture_state(running=False, error='A busca por site não encontrou dados válidos.')
+        _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados.')
         add_audit_event('stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('A busca de estoque por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
+        st.warning('A busca por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
         return
     save_site_source(df_site=df_site, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=None, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo_estoque, operation=OPERATION)
     _store_stock_site_df(df_site)
     _set_stock_capture_state(running=False, error='')
-    _finish_progress(progress_bar, status_box, text='Busca de estoque concluída.')
+    _finish_progress(progress_bar, status_box, text='Busca por site concluída.')
     st.rerun()
 
 
 def render_estoque_site_panel() -> None:
-    st.markdown('<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada de estoque por site</div><h2 class="bling-flow-card-title">Motor independente de estoque</h2><p class="bling-flow-card-text">Este painel não usa a busca de cadastro. Ele lê o modelo de estoque e procura somente os campos pedidos nele.</p></section>', unsafe_allow_html=True)
-    st.info('Motor ativo: ESTOQUE POR SITE independente. Cadastro de produtos não entra neste fluxo.')
+    st.markdown('<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2><p class="bling-flow-card-text">Este painel usa o modelo de destino escolhido e procura somente os campos pedidos nele.</p></section>', unsafe_allow_html=True)
+    st.info('Entrada por site: o sistema busca dados do fornecedor para preencher o modelo escolhido no mapeamento.')
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
     raw_urls = _render_urls_input()
     running = bool(st.session_state.get('site_capture_running'))
     if running:
-        _orange_warning('Captura por site em andamento. Aguarde o preview da origem aparecer antes de continuar.')
+        _orange_warning('Captura por site em andamento. Aguarde a origem aparecer antes de continuar.')
         if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key='limpar_captura_travada_estoque'):
             _clear_stuck_capture()
             st.rerun()
-    button_label = 'Buscar somente estoque no site'
+    button_label = 'Buscar no site e gerar origem'
     button_disabled = running or not _has_columns(requested_columns)
     if not _has_columns(requested_columns):
-        st.caption('O botão será liberado quando o modelo de estoque estiver carregado.')
+        st.caption('O botão será liberado quando o modelo de destino estiver carregado.')
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key='buscar_site_estoque_independente'):
         add_audit_event('stock_site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': OPERATION, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_stock_site_capture(raw_urls, requested_columns, df_modelo_estoque)
@@ -211,7 +211,7 @@ def render_estoque_site_panel() -> None:
     df_site_bruto = _get_stock_site_df()
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         render_site_source_summary(df_site_bruto, OPERATION, show_history=False)
-        st.success('Origem de estoque por site pronta. Continue para gerar o preview de estoque.')
+        st.success('Origem por site pronta. Continue para gerar o preview.')
 
 
 __all__ = ['render_estoque_site_panel']
