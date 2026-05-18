@@ -22,6 +22,25 @@ def _label(operation: str) -> str:
     return 'estoque' if normalize_site_operation(operation) == 'estoque' else 'cadastro'
 
 
+def _requested_columns(requested_columns: list[str] | None) -> list[str]:
+    columns: list[str] = []
+    seen: set[str] = set()
+    for column in requested_columns or []:
+        text = str(column or '').strip()
+        if text and text not in seen:
+            columns.append(text)
+            seen.add(text)
+    return columns
+
+
+def _stock_contract_df(df_site: pd.DataFrame, requested_columns: list[str] | None) -> pd.DataFrame:
+    df = df_site.copy().fillna('') if isinstance(df_site, pd.DataFrame) else pd.DataFrame()
+    columns = _requested_columns(requested_columns)
+    if not columns:
+        return df
+    return df.reindex(columns=columns, fill_value='')
+
+
 def _mark_site_as_inline_source(normalized: str) -> None:
     """A busca por site vira origem interna para o fluxo atual."""
     st.session_state['tipo_operacao'] = normalized
@@ -58,9 +77,13 @@ def save_site_source(
     operation: str = 'cadastro',
 ) -> None:
     normalized = normalize_site_operation(operation)
+    df_to_save = _stock_contract_df(df_site, requested_columns) if normalized == 'estoque' else df_site
+    if normalized == 'estoque':
+        st.session_state['site_stock_requested_columns_enforced'] = True
+        st.session_state['site_stock_requested_columns_count'] = len(_requested_columns(requested_columns))
     save_home_models(df_modelo_cadastro, df_modelo_estoque)
     set_site_source_as_planilha(
-        df=df_site,
+        df=df_to_save,
         operation=normalized,
         raw_urls=raw_urls,
         requested_columns=requested_columns,
@@ -90,6 +113,8 @@ def render_site_source_summary(
         return
     label = _label(operation)
     st.success(f'Origem de {label} criada com {len(df_site)} produto(s) e {len(df_site.columns)} coluna(s).')
+    if normalize_site_operation(operation) == 'estoque' and st.session_state.get('site_stock_requested_columns_enforced'):
+        st.caption('Estoque por site: a origem salva respeita as colunas do modelo. Campo não encontrado fica vazio.')
     st.caption('Continue para a próxima etapa. O mapeamento, preview e download final ficam separados no Wizard.')
 
     if show_sample:
@@ -121,17 +146,18 @@ def render_generated_site_actions(
     normalized = normalize_site_operation(operation)
     label = _label(normalized)
     config = config_for_site_operation(normalized)
-    save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
+    df_to_save = _stock_contract_df(df_site, requested_columns) if normalized == 'estoque' else df_site
+    save_site_source(df_to_save, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
 
     st.success(f'Origem de {label} criada com sucesso. Siga para a próxima etapa.')
     render_site_progress_history()
 
     st.download_button(
         f'Baixar origem bruta de {label}',
-        data=source_csv_bytes(df_site),
+        data=source_csv_bytes(df_to_save),
         file_name=config.output_filename,
         mime='text/csv; charset=utf-8',
         use_container_width=True,
-        key=f'download_origem_site_{normalized}_{len(df_site)}_{len(df_site.columns)}',
+        key=f'download_origem_site_{normalized}_{len(df_to_save)}_{len(df_to_save.columns)}',
         help='Opcional: baixa apenas a origem bruta capturada no site; não é a planilha final.',
     )
