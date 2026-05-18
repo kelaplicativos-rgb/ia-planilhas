@@ -11,14 +11,6 @@ from bling_app_zero.ui.cadastro_wizard_steps import (
     render_cadastro_mapeamento_step,
     render_cadastro_preview_step,
 )
-from bling_app_zero.ui.estoque_wizard_steps import (
-    estoque_context_ready,
-    estoque_output_ready,
-    render_estoque_download_step,
-    render_estoque_entrada_step,
-    render_estoque_gerar_step,
-    render_estoque_preview_step,
-)
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
     get_home_pricing_config,
@@ -27,7 +19,6 @@ from bling_app_zero.ui.home_pricing_config import (
 )
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
-    ESTOQUE_STEPS,
     FLOW_ACTIVE_KEY,
     FLOW_OPERATION_KEY,
     FLOW_ORIGIN_KEY,
@@ -39,7 +30,6 @@ from bling_app_zero.ui.home_wizard_constants import (
     RESET_OUTPUT_KEYS,
     STEP_DOWNLOAD,
     STEP_ENTRADA,
-    STEP_GERAR_ESTOQUE,
     STEP_MAPEAMENTO,
     STEP_MODELO,
     STEP_OPERACAO,
@@ -62,7 +52,13 @@ AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
-MANUAL_OPERATION_OPTIONS = ['cadastro', 'estoque']
+
+# BLINGFIX: a pergunta Cadastro/Estoque foi extinta da interface.
+# O motor interno reutiliza o fluxo de cadastro apenas como pipeline universal
+# de mapeamento para respeitar exatamente as colunas do modelo anexado.
+UNIVERSAL_INTERNAL_OPERATION = 'cadastro'
+REMOVED_OPERATION_STEP = True
+UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -90,42 +86,40 @@ def _has_home_models() -> bool:
     return _has_cadastro_model() or _has_estoque_model()
 
 
-def _available_operations() -> list[str]:
-    # BLINGFIX: a existencia ou a deteccao do modelo nao deve decidir o fluxo.
-    # Qualquer modelo valido de destino libera a escolha manual entre Cadastro e Estoque.
-    if _has_home_models():
-        return list(MANUAL_OPERATION_OPTIONS)
-    return []
+def _ensure_universal_operation_state() -> str:
+    """Mantem o estado interno necessario sem exibir escolha Cadastro/Estoque."""
+    if not _has_home_models():
+        return ''
+
+    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_INTERNAL_OPERATION
+    st.session_state['operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
+    st.session_state['tipo_operacao_final'] = UNIVERSAL_INTERNAL_OPERATION
+    st.session_state['home_operation_choice_removed'] = True
+    for key in ('home_detected_operation', 'tipo_operacao_site', 'operation_site'):
+        if key in {'tipo_operacao_site', 'operation_site'}:
+            continue
+        st.session_state.pop(key, None)
+    return UNIVERSAL_INTERNAL_OPERATION
 
 
 def _selected_operation() -> str:
-    available = _available_operations()
-    if not available:
-        return ''
-
-    operation = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
-    if operation in available:
-        return operation
-
-    for key in ('operacao_final', 'tipo_operacao_final', 'tipo_operacao_site', 'operation_site'):
-        st.session_state.pop(key, None)
-    return ''
+    return _ensure_universal_operation_state()
 
 
-def wizard_steps_for_operation(operation: str) -> list[str]:
-    normalized = str(operation or '').strip().lower()
-    if normalized == 'estoque':
-        return list(ESTOQUE_STEPS)
-    if normalized == 'cadastro':
-        return list(CADASTRO_STEPS)
-    return [STEP_MODELO, STEP_OPERACAO]
+def wizard_steps_for_operation(operation: str | None = None) -> list[str]:
+    _ = operation
+    if _has_home_models():
+        return list(UNIVERSAL_STEPS)
+    return [STEP_MODELO]
 
 
 def _target_by_delta(current_step: str, operation: str, delta: int) -> str:
     steps = wizard_steps_for_operation(operation)
     current = str(current_step or '').strip().lower()
+    if current == STEP_OPERACAO:
+        current = STEP_ORIGEM if STEP_ORIGEM in steps else STEP_MODELO
     if current not in steps:
-        return STEP_OPERACAO if _has_home_models() else STEP_MODELO
+        return STEP_ORIGEM if _has_home_models() and STEP_ORIGEM in steps else STEP_MODELO
     index = steps.index(current)
     if delta < 0 and index == 0:
         return HOME_CHOICE_TARGET
@@ -150,10 +144,10 @@ def _current_step() -> str:
     step = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
     if not _has_home_models():
         step = STEP_MODELO
-    elif not _selected_operation() and step not in {STEP_MODELO, STEP_OPERACAO}:
-        step = STEP_OPERACAO
+    elif step == STEP_OPERACAO:
+        step = STEP_ORIGEM
     elif step not in steps:
-        step = STEP_OPERACAO if _has_home_models() and not _selected_operation() else STEP_MODELO
+        step = STEP_ORIGEM if STEP_ORIGEM in steps else STEP_MODELO
     st.session_state[WIZARD_STEP_KEY] = step
     return step
 
@@ -201,8 +195,10 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
     steps = _active_steps()
     previous = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
     requested = step
+    if step == STEP_OPERACAO:
+        step = STEP_ORIGEM
     if step not in steps:
-        step = STEP_OPERACAO if _has_home_models() and not _selected_operation() else STEP_MODELO
+        step = STEP_ORIGEM if _has_home_models() and STEP_ORIGEM in steps else STEP_MODELO
 
     if reason in MANUAL_NAVIGATION_REASONS:
         _pause_autofluxo_for_manual_navigation(step, reason=reason)
@@ -212,7 +208,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
             'wizard_step_kept',
             area='WIZARD',
             step=step,
-            details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
+            details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'operation_step_removed': REMOVED_OPERATION_STEP, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -221,7 +217,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         'wizard_step_changed',
         area='WIZARD',
         step=step,
-        details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'from': previous, 'to': step, 'requested': requested, 'reason': reason, 'operation': _selected_operation(), 'operation_step_removed': REMOVED_OPERATION_STEP, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['step'] = step
@@ -264,14 +260,15 @@ def _reset_outputs_for_operation_change() -> None:
         st.session_state.pop(key, None)
     st.session_state.pop(ORIGIN_AUTO_FORWARDED_KEY, None)
     _clear_manual_pause()
-    add_audit_event('wizard_outputs_reset', area='WIZARD', step=st.session_state.get(WIZARD_STEP_KEY), details={'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_outputs_reset', area='WIZARD', step=st.session_state.get(WIZARD_STEP_KEY), details={'removed_keys': removed, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _reset_wizard() -> None:
     _reset_outputs_for_operation_change()
-    for key in (FLOW_OPERATION_KEY, FLOW_ORIGIN_KEY, 'operacao_final', 'tipo_operacao_final', 'origem_final'):
+    for key in (FLOW_ORIGIN_KEY, 'origem_final'):
         st.session_state.pop(key, None)
-    add_audit_event('wizard_reset', area='WIZARD', step=_current_step(), details={'responsible_file': RESPONSIBLE_FILE})
+    _ensure_universal_operation_state()
+    add_audit_event('wizard_reset', area='WIZARD', step=_current_step(), details={'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
     _go_to_step(STEP_MODELO, reason='reset_wizard')
 
 
@@ -284,18 +281,13 @@ def _audit_step_blocked(current: str, pending_message: str | None) -> None:
     if st.session_state.get(marker_key):
         return
     st.session_state[marker_key] = True
-    add_audit_event('wizard_next_blocked', area='WIZARD', step=current, status='BLOQUEADO', details={'message': pending_message, 'operation': _selected_operation(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_next_blocked', area='WIZARD', step=current, status='BLOQUEADO', details={'message': pending_message, 'operation': _selected_operation(), 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
 
 
-def _sync_flow_state(origin: str, operation: str) -> None:
-    operation = str(operation or '').strip().lower()
-    if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro o objetivo do mapeamento.')
-        return
-
+def _sync_flow_state(origin: str, operation: str | None = None) -> None:
+    operation = UNIVERSAL_INTERNAL_OPERATION
     origin = 'arquivo' if origin == 'arquivo' else 'site'
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
-    previous_operation = st.session_state.get(FLOW_OPERATION_KEY)
 
     st.session_state[FLOW_ORIGIN_KEY] = origin
     st.session_state[FLOW_OPERATION_KEY] = operation
@@ -304,24 +296,27 @@ def _sync_flow_state(origin: str, operation: str) -> None:
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = origin
     st.session_state['tipo_operacao_site'] = operation if origin == 'site' else ''
+    st.session_state['home_operation_choice_removed'] = True
 
-    if previous_origin != origin or previous_operation != operation:
+    if previous_origin != origin:
         st.session_state.pop(ORIGIN_AUTO_FORWARDED_KEY, None)
-        add_audit_event('flow_state_synced', area='WIZARD', step=_current_step(), details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'previous_operation': previous_operation, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('flow_state_synced_universal', area='WIZARD', step=_current_step(), details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'operation_step_removed': REMOVED_OPERATION_STEP, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
-        st.query_params['operacao'] = operation
         st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
+        st.query_params.pop('operacao', None)
     except Exception:
         pass
 
 
-def _origin_from_radio_state(operation: str) -> str:
-    value = str(st.session_state.get(f'frontpage_origin_radio_{operation}') or '').strip().lower()
-    if 'arquivo' in value:
-        return 'arquivo'
-    if 'site' in value:
-        return 'site'
+def _origin_from_radio_state(operation: str | None = None) -> str:
+    _ = operation
+    for key in ('frontpage_origin_radio_universal', f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', LEGACY_ORIGIN_RADIO_KEY):
+        value = str(st.session_state.get(key) or '').strip().lower()
+        if 'arquivo' in value:
+            return 'arquivo'
+        if 'site' in value:
+            return 'site'
     return ''
 
 
@@ -329,7 +324,7 @@ def _current_origin_choice() -> str:
     current = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
     if current in {'arquivo', 'site'}:
         return current
-    radio_origin = _origin_from_radio_state(_selected_operation())
+    radio_origin = _origin_from_radio_state()
     if radio_origin:
         return radio_origin
     try:
@@ -347,26 +342,19 @@ def _current_origin_choice() -> str:
 
 def _nav_state_for_current_step() -> tuple[bool, str, str | None]:
     step = _current_step()
-    operation = _selected_operation()
 
     if step == STEP_MODELO:
         return _has_home_models(), 'Avançar →', 'Envie ou mantenha um modelo para continuar.'
-    if step == STEP_OPERACAO:
-        return operation in {'cadastro', 'estoque'}, 'Avançar →', 'Escolha o objetivo do mapeamento.'
     if step == STEP_PRECIFICACAO:
         return True, 'Avançar →', None
     if step == STEP_ORIGEM:
         return _current_origin_choice() in {'arquivo', 'site'}, 'Avançar →', 'Escolha se os dados virão de um arquivo ou de um site.'
     if step == STEP_ENTRADA:
-        ready = estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
-        return ready, 'Avançar →', 'Carregue ou capture os dados desta etapa.'
+        return cadastro_context_ready(), 'Avançar →', 'Carregue ou capture os dados desta etapa.'
     if step == STEP_MAPEAMENTO:
         return cadastro_mapping_ready(), 'Avançar →', 'Confirme o mapeamento obrigatório.'
-    if step == STEP_GERAR_ESTOQUE:
-        return estoque_output_ready(), 'Avançar →', 'Gere/confira o estoque antes do preview.'
     if step == STEP_PREVIEW:
-        ready = estoque_output_ready() if operation == 'estoque' else cadastro_mapping_ready()
-        return ready, 'Avançar →', 'O preview ainda depende da etapa anterior.'
+        return cadastro_mapping_ready(), 'Avançar →', 'O preview ainda depende da etapa anterior.'
     return False, 'Avançar →', None
 
 
@@ -392,7 +380,7 @@ def _render_bottom_navigation(*, allow_next: bool, next_label: str, pending_mess
             st.caption('Última etapa do fluxo.')
         elif allow_next:
             if st.button(next_label, use_container_width=True, key=f'wizard_bottom_next_{current}'):
-                add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'responsible_file': RESPONSIBLE_FILE})
+                add_audit_event('wizard_next_clicked', area='WIZARD', step=current, details={'label': next_label, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
                 _next_step()
         else:
             _audit_step_blocked(current, pending_message)
@@ -406,12 +394,11 @@ def _render_bottom_navigation_for_current_step() -> None:
     _render_bottom_navigation(allow_next=allow_next, next_label=next_label, pending_message=pending_message)
 
 
-def _clear_legacy_origin_widget_state(operation: str) -> None:
-    st.session_state.pop(LEGACY_ORIGIN_RADIO_KEY, None)
-    valid_keys = {f'frontpage_origin_radio_{operation}', 'home_pricing_enabled_toggle'}
+def _clear_legacy_origin_widget_state() -> None:
+    valid_keys = {'frontpage_origin_radio_universal', f'frontpage_origin_radio_{UNIVERSAL_INTERNAL_OPERATION}', 'home_pricing_enabled_toggle'}
     for key in list(st.session_state.keys()):
         text = str(key)
-        if text.startswith('frontpage_origin_radio') and text not in valid_keys:
+        if (text == LEGACY_ORIGIN_RADIO_KEY or text.startswith('frontpage_origin_radio')) and text not in valid_keys:
             st.session_state.pop(key, None)
 
 
@@ -420,40 +407,9 @@ def _render_model_step() -> None:
 
     with st.container(border=True):
         render_home_bling_models()
+        _ensure_universal_operation_state()
         if not _has_home_models():
-            add_audit_event('wizard_model_waiting_for_upload', area='WIZARD', step=STEP_MODELO, status='INFO', details={'responsible_file': RESPONSIBLE_FILE})
-
-
-def _render_operation_step() -> None:
-    available = _available_operations()
-    if not available:
-        st.warning('Anexe ou mantenha uma planilha/modelo de destino para escolher o objetivo.')
-        return
-
-    labels_by_value = {
-        'cadastro': '🧾 Produtos, catálogo, marketplace ou modelo completo',
-        'estoque': '📦 Estoque, saldo, custo ou atualização operacional',
-    }
-
-    st.markdown('### Configure o objetivo do mapeamento')
-    st.caption('A planilha já foi recebida. Escolha manualmente o caminho mais próximo do arquivo que você precisa gerar. O sistema não decide isso sozinho.')
-
-    labels = [labels_by_value[value] for value in available]
-    current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
-    index = available.index(current) if current in available else None
-    choice_label = st.radio('Objetivo da planilha', labels, index=index, key='wizard_operation_radio')
-    if not choice_label:
-        st.info('Escolha Cadastro ou Estoque para liberar as próximas etapas.')
-        return
-
-    selected = available[labels.index(choice_label)]
-    if selected != st.session_state.get(FLOW_OPERATION_KEY):
-        _reset_outputs_for_operation_change()
-        st.session_state[WIZARD_STEP_KEY] = STEP_OPERACAO
-    st.session_state[FLOW_OPERATION_KEY] = selected
-    st.session_state['operacao_final'] = selected
-    st.session_state['tipo_operacao_final'] = selected
-    st.success(f'Objetivo escolhido: {labels_by_value[selected]}')
+            add_audit_event('wizard_model_waiting_for_upload', area='WIZARD', step=STEP_MODELO, status='INFO', details={'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _render_pricing_step() -> None:
@@ -467,7 +423,7 @@ def _render_pricing_step() -> None:
         'Usar calculadora compartilhada',
         value=bool(current_config.get('enabled', False)),
         key='home_pricing_enabled_toggle',
-        help='Quando ativada, cadastro ou estoque podem usar preço calculado antes do mapeamento.',
+        help='Quando ativada, o preço calculado pode ser usado antes do mapeamento final.',
     )
     if use_pricing:
         with st.container(border=True):
@@ -479,18 +435,6 @@ def _render_pricing_step() -> None:
         st.info('Calculadora desativada. O sistema manterá o preço da origem ou o valor definido no mapeamento.')
 
 
-def _origin_label(operation: str) -> str:
-    if operation == 'estoque':
-        return 'De onde vêm os dados de estoque/saldo que você quer atualizar?'
-    return 'De onde vêm os dados que você quer transformar para o modelo final?'
-
-
-def _origin_help_text(operation: str) -> str:
-    if operation == 'estoque':
-        return 'Escolha Arquivo se você já tem uma planilha/CSV do fornecedor. Escolha Site se quer buscar quantidade, custo ou outros campos nos links do fornecedor.'
-    return 'Escolha Arquivo se você já tem uma planilha, CSV, XML ou PDF. Escolha Site se quer buscar os dados diretamente nos links do fornecedor.'
-
-
 def _render_origin_explanation(origin: str) -> None:
     if origin == 'arquivo':
         st.success('Arquivo selecionado: na próxima etapa você vai anexar a planilha, CSV, XML ou PDF com os dados de origem.')
@@ -499,17 +443,12 @@ def _render_origin_explanation(origin: str) -> None:
 
 
 def _render_origin_step() -> None:
-    operation = _selected_operation()
-    if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro o objetivo do mapeamento.')
-        _go_to_step(STEP_OPERACAO, reason='operation_required_before_origin')
-        return
-
-    _clear_legacy_origin_widget_state(operation)
+    _ensure_universal_operation_state()
+    _clear_legacy_origin_widget_state()
 
     st.markdown('### Escolha a origem dos dados')
-    st.caption(_origin_label(operation))
-    st.info(_origin_help_text(operation))
+    st.caption('De onde vêm os dados que você quer transformar para o modelo final?')
+    st.info('Escolha Arquivo se você já tem uma planilha, CSV, XML ou PDF. Escolha Site se quer buscar os dados diretamente nos links do fornecedor.')
 
     options = {'arquivo': '📎 Arquivo do fornecedor', 'site': '🌐 Site do fornecedor'}
     labels = list(options.values())
@@ -517,14 +456,14 @@ def _render_origin_step() -> None:
     selected = _current_origin_choice()
     index = values.index(selected) if selected in values else None
 
-    choice_label = st.radio('Origem dos dados', labels, index=index, key=f'frontpage_origin_radio_{operation}', label_visibility='collapsed')
+    choice_label = st.radio('Origem dos dados', labels, index=index, key='frontpage_origin_radio_universal', label_visibility='collapsed')
     if choice_label is None:
         return
 
     origin = values[labels.index(choice_label)]
     previous_origin = str(st.session_state.get(FLOW_ORIGIN_KEY) or '').strip().lower()
     origin_changed = previous_origin != origin
-    _sync_flow_state(origin, operation)
+    _sync_flow_state(origin)
     _render_origin_explanation(origin)
 
     if _manual_pause_matches(STEP_ORIGEM) and not origin_changed:
@@ -534,15 +473,15 @@ def _render_origin_step() -> None:
     if origin_changed:
         _clear_manual_pause(STEP_ORIGEM)
 
-    signature = f'{operation}:{origin}'
+    signature = f'universal:{origin}'
     if st.session_state.get(ORIGIN_AUTO_FORWARDED_KEY) != signature:
         st.session_state[ORIGIN_AUTO_FORWARDED_KEY] = signature
-        _go_to_step(wizard_next_target(STEP_ORIGEM, operation), reason='origin_selected_auto_next')
+        _go_to_step(wizard_next_target(STEP_ORIGEM, UNIVERSAL_INTERNAL_OPERATION), reason='origin_selected_auto_next')
 
 
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
-    add_audit_event('cadastro_entry_rendered', area='CADASTRO', step=STEP_ENTRADA, details={'origin': origin, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('universal_entry_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
 
@@ -569,63 +508,31 @@ def _render_cadastro_download() -> None:
     _render_reset_only_footer('wizard_download_reset')
 
 
-def _render_estoque_entrada() -> None:
-    origin = _current_origin_choice()
-    add_audit_event('estoque_entry_rendered', area='ESTOQUE', step=STEP_ENTRADA, details={'origin': origin, 'responsible_file': RESPONSIBLE_FILE})
-    if origin == 'site':
-        from bling_app_zero.ui.site_panel import render_site_panel
-
-        render_site_panel()
-    render_estoque_entrada_step()
-
-
-def _render_estoque_gerar() -> None:
-    render_estoque_gerar_step()
-
-
-def _render_estoque_preview() -> None:
-    render_estoque_preview_step()
-
-
-def _render_estoque_download() -> None:
-    render_estoque_download_step()
-    _render_reset_only_footer('wizard_estoque_download_reset')
-
-
 def render_home_wizard() -> None:
+    _ensure_universal_operation_state()
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = False
     nav = _render_step_header()
     step = _current_step()
     operation = _selected_operation()
-    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation or 'nao_escolhida', 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'manual_operation_options': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_step_rendered', area='WIZARD', step=step, details={'operation': operation or 'nao_escolhida', 'index': nav.index, 'total': nav.total, 'steps': nav.steps, 'bottom_navigation': True, 'back_always_clickable': True, 'linear_index_navigation': True, 'manual_navigation_pauses_autoflow': True, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
 
     if step == STEP_MODELO:
         _render_model_step()
-    elif step == STEP_OPERACAO:
-        _render_operation_step()
     elif step == STEP_PRECIFICACAO:
         _render_pricing_step()
     elif step == STEP_ORIGEM:
         _render_origin_step()
-    elif operation == 'cadastro' and step == STEP_ENTRADA:
+    elif step == STEP_ENTRADA:
         _render_cadastro_entrada()
-    elif operation == 'cadastro' and step == STEP_MAPEAMENTO:
+    elif step == STEP_MAPEAMENTO:
         _render_cadastro_mapeamento()
-    elif operation == 'cadastro' and step == STEP_PREVIEW:
+    elif step == STEP_PREVIEW:
         _render_cadastro_preview()
-    elif operation == 'cadastro' and step == STEP_DOWNLOAD:
+    elif step == STEP_DOWNLOAD:
         _render_cadastro_download()
-    elif operation == 'estoque' and step == STEP_ENTRADA:
-        _render_estoque_entrada()
-    elif operation == 'estoque' and step == STEP_GERAR_ESTOQUE:
-        _render_estoque_gerar()
-    elif operation == 'estoque' and step == STEP_PREVIEW:
-        _render_estoque_preview()
-    elif operation == 'estoque' and step == STEP_DOWNLOAD:
-        _render_estoque_download()
     else:
-        add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('Etapa inválida ou objetivo ainda não escolhido. Configure o objetivo do mapeamento para continuar.')
-        render_pending_notice('Escolha o objetivo do mapeamento antes de continuar.')
+        add_audit_event('wizard_invalid_step', area='WIZARD', step=step, status='ERRO', details={'operation': operation, 'operation_step_removed': REMOVED_OPERATION_STEP, 'responsible_file': RESPONSIBLE_FILE})
+        st.warning('Etapa inválida. O fluxo foi ajustado para continuar sem a escolha Cadastro/Estoque.')
+        render_pending_notice('Volte uma etapa ou recomece o fluxo para sincronizar a navegação.')
 
     _render_bottom_navigation_for_current_step()
