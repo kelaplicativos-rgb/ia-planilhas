@@ -23,6 +23,9 @@ ESTOQUE_SOURCE_KEY = 'home_modelo_estoque_source'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_OPERACAO = 'operacao'
 
+VALID_INTAKE_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.html', '.htm', '.mht', '.mhtml', '.xml', '.pdf')
+INVALID_DIAGNOSTIC_EXTENSIONS = ('.zip', '.txt', '.log', '.json')
+
 
 def _set_flow(flow: str) -> None:
     previous = st.session_state.get(ACTIVE_FLOW_KEY)
@@ -82,16 +85,92 @@ def _current_flow() -> str:
     return ''
 
 
+def _uploaded_name(uploaded_file) -> str:
+    return str(getattr(uploaded_file, 'name', 'arquivo') or 'arquivo').strip()
+
+
+def _file_extension(file_name: str) -> str:
+    name = str(file_name or '').strip().lower()
+    if '.' not in name:
+        return ''
+    return name[name.rfind('.'):]
+
+
+def _saved_intake_model() -> tuple[pd.DataFrame | None, str]:
+    df = st.session_state.get(HOME_INTAKE_MODEL_KEY)
+    file_name = str(st.session_state.get(HOME_INTAKE_MODEL_FILE_KEY) or 'planilha recebida').strip()
+    if isinstance(df, pd.DataFrame) and not df.empty and len(df.columns):
+        return df.copy().fillna(''), file_name
+    return None, file_name
+
+
+def _clear_saved_intake_model() -> None:
+    for key in (
+        HOME_INTAKE_MODEL_KEY,
+        HOME_INTAKE_MODEL_FILE_KEY,
+        'mapeiaai_final_contract_df',
+        'mapeiaai_home_intake_model_type',
+        'mapeiaai_home_intake_model_confidence',
+    ):
+        st.session_state.pop(key, None)
+    for key in CADASTRO_MODEL_KEYS + ESTOQUE_MODEL_KEYS:
+        st.session_state.pop(key, None)
+    for key in (
+        CADASTRO_SOURCE_KEY,
+        ESTOQUE_SOURCE_KEY,
+        'home_detected_operation',
+        'home_slim_flow_operation',
+        'operacao_final',
+        'tipo_operacao_final',
+        'tipo_operacao_site',
+        'operation_site',
+    ):
+        st.session_state.pop(key, None)
+    add_audit_event('home_contract_model_cleared', area='HOME', details={'responsible_file': RESPONSIBLE_FILE})
+
+
 def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
+
+    file_name = _uploaded_name(uploaded_file)
+    extension = _file_extension(file_name)
+    if extension in INVALID_DIAGNOSTIC_EXTENSIONS or (extension and extension not in VALID_INTAKE_EXTENSIONS):
+        st.warning(
+            'Arquivo recebido, mas ele não é uma planilha/modelo de destino válido. '
+            'Envie CSV, Excel, HTML/MHTML, XML ou PDF. ZIP, TXT e logs servem apenas para diagnóstico.'
+        )
+        add_audit_event(
+            'home_contract_invalid_extension_blocked',
+            area='HOME',
+            status='BLOQUEADO',
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return None
+
     try:
         df = read_upload_fast(uploaded_file)
     except Exception as exc:
         st.error(f'Não consegui ler essa planilha: {exc}')
+        add_audit_event(
+            'home_contract_read_failed',
+            area='HOME',
+            status='ERRO',
+            details={'file_name': file_name, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+        )
         return None
+
     if not isinstance(df, pd.DataFrame) or df.empty or not len(df.columns):
-        st.warning('Arquivo recebido, mas não encontrei uma tabela válida para mapear.')
+        st.warning(
+            'Arquivo recebido, mas não encontrei uma tabela válida para mapear. '
+            'Confira se a primeira linha tem cabeçalhos e se existe ao menos uma coluna.'
+        )
+        add_audit_event(
+            'home_contract_empty_dataframe_blocked',
+            area='HOME',
+            status='BLOQUEADO',
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'responsible_file': RESPONSIBLE_FILE},
+        )
         return None
     return df.fillna('')
 
@@ -110,6 +189,8 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     st.session_state[HOME_INTAKE_MODEL_FILE_KEY] = file_name
     st.session_state['mapeiaai_final_contract_df'] = clean_df
 
+    # BLINGFIX: modelo de destino anexado pela Home é contrato neutro.
+    # Ele libera a etapa Objetivo sem tentar decidir automaticamente Cadastro/Estoque.
     _write_model_keys(CADASTRO_MODEL_KEYS, clean_df, source_key=CADASTRO_SOURCE_KEY)
     _write_model_keys(ESTOQUE_MODEL_KEYS, clean_df, source_key=ESTOQUE_SOURCE_KEY)
 
@@ -145,13 +226,19 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button('Continuar para configurar o mapeamento', use_container_width=True, key='home_continue_after_contract_upload'):
-        add_audit_event(
-            'home_contract_continue_clicked',
-            area='HOME',
-            details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_OPERACAO, 'responsible_file': RESPONSIBLE_FILE},
-        )
-        _set_flow(FLOW_WIZARD)
+    col_continue, col_clear = st.columns(2)
+    with col_continue:
+        if st.button('Continuar para configurar o mapeamento', use_container_width=True, key='home_continue_after_contract_upload'):
+            add_audit_event(
+                'home_contract_continue_clicked',
+                area='HOME',
+                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_OPERACAO, 'responsible_file': RESPONSIBLE_FILE},
+            )
+            _set_flow(FLOW_WIZARD)
+    with col_clear:
+        if st.button('Limpar e anexar outro', use_container_width=True, key='home_clear_contract_upload'):
+            _clear_saved_intake_model()
+            st.rerun()
 
 
 def _render_operation_choice() -> None:
@@ -168,13 +255,33 @@ def _render_operation_choice() -> None:
         key='home_single_model_intake_upload',
         help='No celular o seletor fica livre para evitar bloqueio falso de CSV/planilhas válidas. A validação acontece dentro do MapeiaAI.',
     )
-    df = _read_intake_file(uploaded)
-    if not isinstance(df, pd.DataFrame):
+
+    if uploaded is None:
+        saved_df, saved_file_name = _saved_intake_model()
+        if isinstance(saved_df, pd.DataFrame):
+            add_audit_event(
+                'home_contract_model_reused_from_session',
+                area='HOME',
+                details={'file_name': saved_file_name, 'columns_count': int(len(saved_df.columns)), 'responsible_file': RESPONSIBLE_FILE},
+            )
+            _render_contract_preview(saved_df, saved_file_name)
+            return
         st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
         st.caption('Depois disso você configura o objetivo, preço, origem dos dados, entrada, mapeamento, preview e download final.')
         return
 
-    file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
+    df = _read_intake_file(uploaded)
+    if not isinstance(df, pd.DataFrame):
+        saved_df, saved_file_name = _saved_intake_model()
+        if isinstance(saved_df, pd.DataFrame):
+            st.info('Mantive o último modelo válido salvo. Você pode continuar com ele ou limpar e anexar outro.')
+            _render_contract_preview(saved_df, saved_file_name)
+            return
+        st.info('Anexe uma planilha/modelo válido para liberar o próximo passo.')
+        st.caption('Formatos aceitos: CSV, Excel, HTML/MHTML, XML ou PDF. ZIP/TXT/log não são modelos de destino.')
+        return
+
+    file_name = _uploaded_name(uploaded)
     _store_contract_model(df, file_name)
     add_audit_event(
         'home_contract_model_uploaded',
