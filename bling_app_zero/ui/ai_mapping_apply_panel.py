@@ -90,6 +90,34 @@ def _apply_suggestions(mapping_key: str, current_mapping: dict[str, str], rows: 
     return applied
 
 
+def _render_ai_suggestions_body(
+    *,
+    settings,
+    rows: list[dict[str, object]],
+    engine: str,
+    mapping_key: str,
+    current_mapping: dict[str, str],
+    operation: str,
+) -> None:
+    engine_label = 'OpenAI validada' if engine == 'openai_validated' else 'Local seguro'
+    st.caption(f'Modo {settings.mode} · Motor: {engine_label}. Preenche apenas campos vazios com confiança alta.')
+    if not rows:
+        st.info('Nenhuma sugestão nova com confiança alta para aplicar agora.')
+        return
+
+    display_rows = [{key: value for key, value in row.items() if key != 'confidence_float'} for row in rows]
+    st.dataframe(pd.DataFrame(display_rows).astype(str), use_container_width=True, height=220)
+    st.warning('Revise antes de continuar. A confirmação final do mapeamento continua manual.')
+
+    if st.button('Aplicar sugestões da IA', use_container_width=True, key=f'{mapping_key}_apply_ai_suggestions'):
+        applied = _apply_suggestions(mapping_key, current_mapping, rows, operation=operation, engine=engine)
+        if applied:
+            st.success(f'{applied} sugestão(ões) aplicada(s). Revise e confirme o mapeamento manualmente.')
+            st.rerun()
+        else:
+            st.info('Nenhuma sugestão foi aplicada porque os campos já estavam preenchidos.')
+
+
 def render_ai_mapping_apply_panel(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -97,47 +125,39 @@ def render_ai_mapping_apply_panel(
     mapping_key: str,
     *,
     operation: str,
+    embedded: bool = False,
 ) -> None:
-    """Aplica sugestões da IA somente com clique do usuário.
-
-    Regras de segurança:
-    - não roda se a IA estiver desativada no sidebar;
-    - usa OpenAI com chave do usuário quando disponível;
-    - se a OpenAI falhar, usa fallback local validado;
-    - só considera confiança >= 85%;
-    - só preenche campos vazios/sem escolha;
-    - nunca sobrescreve mapeamento já escolhido pelo usuário;
-    - sempre força revisão manual após aplicar.
-    """
+    """Aplica sugestões da IA somente com clique do usuário."""
     if not isinstance(df_source, pd.DataFrame) or df_source.empty or not target_columns:
         return
 
     if not ai_is_enabled():
+        st.caption('Sugestões automáticas inativas. Ative a IA na sidebar para usar este recurso.')
         return
 
     settings = get_ai_settings()
     rows, engine = _eligible_suggestions(df_source, target_columns, current_mapping, operation=operation)
 
-    with st.expander('🤖 Aplicar sugestões da IA', expanded=False):
-        engine_label = 'OpenAI validada' if engine == 'openai_validated' else 'Local seguro'
-        st.caption(
-            f'Modo {settings.mode} · Motor: {engine_label}. Somente campos vazios com confiança alta serão preenchidos. Nada será confirmado automaticamente.'
+    if embedded:
+        _render_ai_suggestions_body(
+            settings=settings,
+            rows=rows,
+            engine=engine,
+            mapping_key=mapping_key,
+            current_mapping=current_mapping,
+            operation=operation,
         )
-        if not rows:
-            st.info('Nenhuma sugestão nova com confiança alta para aplicar agora.')
-            return
+        return
 
-        display_rows = [{key: value for key, value in row.items() if key != 'confidence_float'} for row in rows]
-        st.dataframe(pd.DataFrame(display_rows).astype(str), use_container_width=True, height=220)
-        st.warning('Revise as sugestões antes de continuar. A confirmação final do mapeamento continua manual.')
-
-        if st.button('Aplicar sugestões da IA', use_container_width=True, key=f'{mapping_key}_apply_ai_suggestions'):
-            applied = _apply_suggestions(mapping_key, current_mapping, rows, operation=operation, engine=engine)
-            if applied:
-                st.success(f'{applied} sugestão(ões) aplicada(s). Revise e confirme o mapeamento manualmente.')
-                st.rerun()
-            else:
-                st.info('Nenhuma sugestão foi aplicada porque os campos já estavam preenchidos.')
+    with st.expander('🤖 Aplicar sugestões da IA', expanded=False):
+        _render_ai_suggestions_body(
+            settings=settings,
+            rows=rows,
+            engine=engine,
+            mapping_key=mapping_key,
+            current_mapping=current_mapping,
+            operation=operation,
+        )
 
 
 __all__ = ['MIN_CONFIDENCE_TO_APPLY', 'render_ai_mapping_apply_panel']
