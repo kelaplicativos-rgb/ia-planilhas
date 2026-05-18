@@ -13,10 +13,9 @@ FLOW_PRICE_UPDATE = 'price_multistore_v2'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
-SINGLE_PAGE_FLOW = True
 
 
-def _activate_main_flow() -> None:
+def _set_single_page_wizard_state() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
@@ -24,57 +23,42 @@ def _activate_main_flow() -> None:
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
         st.query_params['step'] = STEP_ORIGEM
+        for key in ('flow', 'origem', 'operacao'):
+            st.query_params.pop(key, None)
     except Exception:
         pass
 
 
-def _clear_flow_query_param() -> None:
-    for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao'):
-        try:
-            st.query_params.pop(key, None)
-        except Exception:
-            pass
-
-
-def _current_flow() -> str:
-    allowed = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY))
+def _requested_flow() -> str:
     flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
-    if not flow:
-        try:
-            flow = str(st.query_params.get('operation_v2') or '').strip()
-        except Exception:
-            flow = ''
-        if flow:
-            st.session_state[ACTIVE_FLOW_KEY] = flow
-            st.session_state[HOME_ALLOW_FLOW_KEY] = True
-            allowed = True
-
-    if allowed and flow:
-        if flow in {FLOW_WIZARD, FLOW_PRICE_UPDATE}:
-            return flow
-        return FLOW_WIZARD
-
-    stale_flow = st.session_state.pop(ACTIVE_FLOW_KEY, None)
-    st.session_state.pop(HOME_ALLOW_FLOW_KEY, None)
-    _clear_flow_query_param()
-    if stale_flow:
-        add_audit_event(
-            'home_stale_flow_cleared',
-            area='HOME',
-            details={'reason': 'home_single_page_start', 'stale_flow': stale_flow, 'responsible_file': RESPONSIBLE_FILE},
-        )
-    return ''
+    if flow:
+        return flow
+    try:
+        return str(st.query_params.get('operation_v2') or '').strip()
+    except Exception:
+        return ''
 
 
 def render_home_router() -> None:
     st.session_state['home_single_page_flow_active'] = True
 
-    flow = _current_flow()
-    if flow == FLOW_PRICE_UPDATE:
+    if _requested_flow() == FLOW_PRICE_UPDATE:
+        st.session_state[ACTIVE_FLOW_KEY] = FLOW_PRICE_UPDATE
+        st.session_state[HOME_ALLOW_FLOW_KEY] = True
+        add_audit_event(
+            'home_router_render_price_update',
+            area='HOME',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
         render_price_multistore_v2()
         return
 
-    _activate_main_flow()
+    _set_single_page_wizard_state()
+    add_audit_event(
+        'home_router_render_single_page_wizard',
+        area='HOME',
+        details={'responsible_file': RESPONSIBLE_FILE},
+    )
     render_home_wizard()
 
 
