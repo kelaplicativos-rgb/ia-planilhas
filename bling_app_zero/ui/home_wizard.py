@@ -42,6 +42,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     WIZARD_STEP_KEY,
 )
 from bling_app_zero.ui.home_wizard_ui import render_pending_notice, render_section_card
+from bling_app_zero.ui.scroll_guard import inject_scroll_guard
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 UNIVERSAL_INTERNAL_OPERATION = 'cadastro'
@@ -486,6 +487,7 @@ def _render_cadastro_download() -> None:
 
 
 def render_home_wizard() -> None:
+    inject_scroll_guard('home_wizard')
     operation = _ensure_universal_operation_state()
     st.session_state[BOTTOM_NAV_RENDERED_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
