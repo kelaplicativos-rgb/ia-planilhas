@@ -27,6 +27,10 @@ VALID_INTAKE_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.html', '
 INVALID_DIAGNOSTIC_EXTENSIONS = ('.zip', '.txt', '.log', '.json')
 
 
+def _model_has_columns(df: object) -> bool:
+    return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
 def _set_flow(flow: str) -> None:
     previous = st.session_state.get(ACTIVE_FLOW_KEY)
     st.session_state[ACTIVE_FLOW_KEY] = flow
@@ -99,7 +103,7 @@ def _file_extension(file_name: str) -> str:
 def _saved_intake_model() -> tuple[pd.DataFrame | None, str]:
     df = st.session_state.get(HOME_INTAKE_MODEL_KEY)
     file_name = str(st.session_state.get(HOME_INTAKE_MODEL_FILE_KEY) or 'planilha recebida').strip()
-    if isinstance(df, pd.DataFrame) and not df.empty and len(df.columns):
+    if _model_has_columns(df):
         return df.copy().fillna(''), file_name
     return None, file_name
 
@@ -160,18 +164,29 @@ def _read_intake_file(uploaded_file) -> pd.DataFrame | None:
         )
         return None
 
-    if not isinstance(df, pd.DataFrame) or df.empty or not len(df.columns):
+    # BLINGFIX: modelo de destino pode ter somente cabeçalho e zero linhas.
+    # Para liberar o fluxo, o que importa é existir contrato de colunas.
+    if not _model_has_columns(df):
         st.warning(
-            'Arquivo recebido, mas não encontrei uma tabela válida para mapear. '
-            'Confira se a primeira linha tem cabeçalhos e se existe ao menos uma coluna.'
+            'Arquivo recebido, mas não encontrei colunas válidas para mapear. '
+            'Confira se a primeira linha tem cabeçalhos.'
         )
         add_audit_event(
-            'home_contract_empty_dataframe_blocked',
+            'home_contract_without_columns_blocked',
             area='HOME',
             status='BLOQUEADO',
             details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'responsible_file': RESPONSIBLE_FILE},
         )
         return None
+
+    if df.empty:
+        add_audit_event(
+            'home_contract_header_only_accepted',
+            area='HOME',
+            status='OK',
+            details={'file_name': file_name, 'extension': extension or 'sem_extensao', 'columns_count': int(len(df.columns)), 'rows_count': 0, 'responsible_file': RESPONSIBLE_FILE},
+        )
+
     return df.fillna('')
 
 
@@ -213,16 +228,19 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
     add_audit_event(
         'home_contract_model_saved_without_operation_choice',
         area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'file_name': file_name, 'columns_count': int(len(clean_df.columns)), 'rows_count': int(len(clean_df)), 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
 def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
     st.success('Planilha recebida como modelo de destino.')
+    if df.empty:
+        st.caption('Modelo sem linhas aceito: ele será usado como contrato de colunas para o arquivo final.')
     st.caption('O próximo passo será escolher a origem dos dados. Não há mais escolha manual entre Cadastro e Estoque.')
-    st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s)')
+    st.caption(f'Arquivo: {file_name} · {len(df.columns)} coluna(s) · {len(df)} linha(s)')
     with st.expander('Conferir colunas da planilha', expanded=False):
-        st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
+        preview_df = df.head(8).astype(str) if not df.empty else pd.DataFrame(columns=list(df.columns))
+        st.dataframe(preview_df, use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
     col_continue, col_clear = st.columns(2)
@@ -231,7 +249,7 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
             add_audit_event(
                 'home_contract_continue_clicked',
                 area='HOME',
-                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_ORIGEM, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+                details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'rows_count': int(len(df)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'next_step': STEP_ORIGEM, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
             )
             _set_flow(FLOW_WIZARD)
     with col_clear:
@@ -261,7 +279,7 @@ def _render_operation_choice() -> None:
             add_audit_event(
                 'home_contract_model_reused_from_session',
                 area='HOME',
-                details={'file_name': saved_file_name, 'columns_count': int(len(saved_df.columns)), 'responsible_file': RESPONSIBLE_FILE},
+                details={'file_name': saved_file_name, 'columns_count': int(len(saved_df.columns)), 'rows_count': int(len(saved_df)), 'responsible_file': RESPONSIBLE_FILE},
             )
             _render_contract_preview(saved_df, saved_file_name)
             return
@@ -285,7 +303,7 @@ def _render_operation_choice() -> None:
     add_audit_event(
         'home_contract_model_uploaded',
         area='HOME',
-        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'file_name': file_name, 'columns_count': int(len(df.columns)), 'rows_count': int(len(df)), 'flow': FLOW_WIZARD, 'detection_disabled': True, 'cadastro_estoque_step_removed': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     _render_contract_preview(df, file_name)
 
