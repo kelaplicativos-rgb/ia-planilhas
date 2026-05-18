@@ -190,6 +190,12 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
 
 
 def render_estoque_site_panel() -> None:
+    df_site_bruto = _get_stock_site_df()
+    if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
+        render_site_source_summary(df_site_bruto, OPERATION, show_history=False)
+        st.success('Dados capturados por site enviados para Dados de origem. Continue no mapeamento abaixo.')
+        return
+
     st.markdown('<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2><p class="bling-flow-card-text">Este painel usa o modelo de destino escolhido e procura somente os campos pedidos nele.</p></section>', unsafe_allow_html=True)
     st.info('Entrada por site: o sistema busca dados do fornecedor para preencher o modelo escolhido no mapeamento.')
     df_modelo_estoque, requested_columns = _render_stock_model_contract()
@@ -208,10 +214,6 @@ def render_estoque_site_panel() -> None:
         add_audit_event('stock_site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': OPERATION, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_stock_site_capture(raw_urls, requested_columns, df_modelo_estoque)
     _render_universal_fallback(requested_columns=requested_columns, df_modelo_estoque=df_modelo_estoque)
-    df_site_bruto = _get_stock_site_df()
-    if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        render_site_source_summary(df_site_bruto, OPERATION, show_history=False)
-        st.success('Origem por site pronta. Continue para gerar o preview.')
 
 
 __all__ = ['render_estoque_site_panel']
