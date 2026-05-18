@@ -117,7 +117,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         pause_home_autofluxo_for_manual_review('gerar_estoque', reason='stock_mapping_changed_by_user')
 
     st.session_state[mapping_key] = edited_mapping
-    df_preview_manual = build_estoque_preview(df_source, model, edited_mapping, target_columns, mapping_key, '')
+    df_preview_manual = build_estoque_preview(df_source, model, edited_mapping, target_columns, mapping_key)
     set_stock_output(df_preview_manual, edited_mapping, edited_confidence)
 
     duplicated = _duplicated_source_columns(edited_mapping)
