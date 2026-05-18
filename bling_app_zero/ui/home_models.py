@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.model_upload import render_model_upload_box
 from bling_app_zero.universal.model_detector import detect_model_type
 
@@ -16,6 +17,7 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
 MODEL_UPLOAD_SIGNATURE_KEY = 'home_model_upload_signature_v2'
 MODEL_UPLOAD_AUTOFORWARDED_KEY = 'home_model_upload_autoforwarded_signature_v2'
+RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models.py'
 
 GLOBAL_CADASTRO_MODEL_KEYS = [
     'df_modelo_cadastro',
@@ -43,6 +45,17 @@ def _df_signature(df: pd.DataFrame | None) -> str:
         return f'{len(df)}x{len(df.columns)}:{columns}'
     except Exception:
         return f'{len(df)}x{len(df.columns)}'
+
+
+def _df_log_summary(df: pd.DataFrame | None) -> dict[str, object]:
+    if not isinstance(df, pd.DataFrame):
+        return {'valid': False}
+    return {
+        'valid': True,
+        'rows': int(len(df)),
+        'columns_count': int(len(df.columns)),
+        'columns': [str(column) for column in list(df.columns)[:60]],
+    }
 
 
 def _models_signature(cadastro: pd.DataFrame | None, estoque: pd.DataFrame | None) -> str:
@@ -108,12 +121,35 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
         st.session_state.pop(FLOW_OPERATION_KEY, None)
         st.session_state.pop('operacao_final', None)
         st.session_state.pop('tipo_operacao_final', None)
+        add_audit_event(
+            'home_model_operation_not_detected',
+            area='MODELO',
+            step=st.session_state.get(WIZARD_STEP_KEY),
+            status='AVISO',
+            details={
+                'has_cadastro': has_cadastro,
+                'has_estoque': has_estoque,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
         return
 
     st.session_state[FLOW_OPERATION_KEY] = operation
     st.session_state['operacao_final'] = operation
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['home_detected_operation'] = operation
+    add_audit_event(
+        'home_model_operation_detected',
+        area='MODELO',
+        step=st.session_state.get(WIZARD_STEP_KEY),
+        status='OK',
+        details={
+            'operation': operation,
+            'has_cadastro': has_cadastro,
+            'has_estoque': has_estoque,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
     try:
         st.query_params['operacao'] = operation
     except Exception:
@@ -148,6 +184,19 @@ def save_home_models(
 
     _sync_detected_operation(get_home_cadastro_model(), get_home_estoque_model())
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
+    add_audit_event(
+        'home_models_saved_to_session',
+        area='MODELO',
+        step=st.session_state.get(WIZARD_STEP_KEY),
+        status='OK',
+        details={
+            'has_home_models': bool(st.session_state.get(HOME_HAS_MODELS_KEY)),
+            'cadastro': _df_log_summary(get_home_cadastro_model()),
+            'estoque': _df_log_summary(get_home_estoque_model()),
+            'replace_missing': replace_missing,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
 
 
 def get_home_cadastro_model() -> pd.DataFrame | None:
@@ -219,18 +268,62 @@ def _render_loaded_summary() -> None:
 def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, estoque_model: pd.DataFrame | None) -> None:
     signature = _models_signature(cadastro_model, estoque_model)
     if signature == 'cadastro=empty|estoque=empty':
+        add_audit_event(
+            'home_model_uploaded_empty_no_autoforward',
+            area='MODELO',
+            step=st.session_state.get(WIZARD_STEP_KEY),
+            status='BLOQUEADO',
+            details={
+                'signature': signature,
+                'cadastro': _df_log_summary(cadastro_model),
+                'estoque': _df_log_summary(estoque_model),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
         return
 
     st.session_state[MODEL_UPLOAD_SIGNATURE_KEY] = signature
-    if st.session_state.get(MODEL_UPLOAD_AUTOFORWARDED_KEY) == signature:
+    previous_signature = st.session_state.get(MODEL_UPLOAD_AUTOFORWARDED_KEY)
+    if previous_signature == signature:
+        add_audit_event(
+            'home_model_autoforward_already_done',
+            area='MODELO',
+            step=st.session_state.get(WIZARD_STEP_KEY),
+            status='OK',
+            details={
+                'signature': signature,
+                'current_step': st.session_state.get(WIZARD_STEP_KEY),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
         return
 
     st.session_state[MODEL_UPLOAD_AUTOFORWARDED_KEY] = signature
     st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    add_audit_event(
+        'home_model_uploaded_auto_forward_to_origin',
+        area='MODELO',
+        step=STEP_ORIGEM,
+        status='OK',
+        details={
+            'signature': signature,
+            'previous_signature': previous_signature,
+            'target_step': STEP_ORIGEM,
+            'cadastro': _df_log_summary(cadastro_model),
+            'estoque': _df_log_summary(estoque_model),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
     try:
         st.query_params['step'] = STEP_ORIGEM
-    except Exception:
-        pass
+    except Exception as exc:
+        add_audit_event(
+            'home_model_autoforward_query_param_failed',
+            area='MODELO',
+            step=STEP_ORIGEM,
+            status='AVISO',
+            details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+        )
     st.rerun()
 
 
@@ -253,6 +346,17 @@ def render_home_bling_models() -> None:
     estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
 
     if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
+        add_audit_event(
+            'home_model_upload_ready_to_save',
+            area='MODELO',
+            step=st.session_state.get(WIZARD_STEP_KEY),
+            status='OK',
+            details={
+                'cadastro': _df_log_summary(cadastro_model),
+                'estoque': _df_log_summary(estoque_model),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
         save_home_models(cadastro_model, estoque_model, replace_missing=True)
         _auto_forward_after_first_model_upload(cadastro_model, estoque_model)
 
