@@ -139,8 +139,6 @@ def _store_contract_model(df: pd.DataFrame, file_name: str) -> None:
         _write_model_keys(CADASTRO_MODEL_KEYS, clean_df, source_key=CADASTRO_SOURCE_KEY)
         _clear_model_keys(ESTOQUE_MODEL_KEYS, source_key=ESTOQUE_SOURCE_KEY)
     else:
-        # Modelo personalizado/preços/multiloja pode servir como contrato final flexível.
-        # Mantemos disponível nos dois fluxos, mas registramos o tipo detectado para deixar claro na UI.
         _write_model_keys(CADASTRO_MODEL_KEYS, clean_df, source_key=CADASTRO_SOURCE_KEY)
         _write_model_keys(ESTOQUE_MODEL_KEYS, clean_df, source_key=ESTOQUE_SOURCE_KEY)
 
@@ -197,7 +195,7 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
         st.dataframe(df.head(8).astype(str), use_container_width=True, height=220)
         st.caption(', '.join(map(str, df.columns)))
 
-    if st.button('Continuar para o fluxo do sistema', use_container_width=True, key='home_continue_after_contract_upload'):
+    if st.button('Continuar para o mapeamento', use_container_width=True, key='home_continue_after_contract_upload'):
         add_audit_event(
             'home_contract_continue_clicked',
             area='HOME',
@@ -214,13 +212,14 @@ def _render_contract_preview(df: pd.DataFrame, file_name: str) -> None:
 
 
 def _render_operation_choice() -> None:
-    st.markdown('## O que você quer preencher no Bling?')
+    st.markdown('## O que você quer mapear hoje?')
     st.caption(
-        'Comece anexando a planilha/modelo de destino. O sistema detecta se parece cadastro, estoque, preço ou modelo personalizado e usa esse arquivo como contrato fiel do download final.'
+        'Use modelos de marketplaces, ERPs, atualização de estoque, cadastro de produtos, cálculo de lucro e preços multilojas. '
+        'O sistema lê a planilha, ajuda no mapeamento e prepara o arquivo certo para importar no ERP ou marketplace em instantes.'
     )
 
     uploaded = st.file_uploader(
-        'Planilha/modelo de destino do Bling',
+        'Planilha/modelo de destino',
         type=None,
         accept_multiple_files=False,
         key='home_single_model_intake_upload',
@@ -228,8 +227,8 @@ def _render_operation_choice() -> None:
     )
     df = _read_intake_file(uploaded)
     if not isinstance(df, pd.DataFrame):
-        st.info('Anexe a planilha de destino para liberar o próximo passo.')
-        st.caption('Depois disso você escolhe/continua o fluxo com site, arquivo, calculadora, regras, mapeamento, preview e download final.')
+        st.info('Anexe a planilha ou modelo de destino para liberar o próximo passo.')
+        st.caption('Depois disso você continua com site, arquivo, calculadora, regras, mapeamento, preview e download final.')
         return
 
     file_name = str(getattr(uploaded, 'name', 'planilha')).strip()
