@@ -159,10 +159,10 @@ def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.'
 
 def _operation_badge(operation: str) -> str:
     if operation == 'estoque':
-        return 'Motor ativo: ESTOQUE POR SITE — busca apenas as colunas do modelo escolhido.'
+        return 'Entrada por site para estoque: o sistema busca somente os campos pedidos pelo modelo escolhido.'
     if operation == 'cadastro':
-        return 'Motor ativo: CADASTRO POR SITE — busca dados de produtos para preencher o modelo escolhido.'
-    return 'Motor de site ainda não definido. Escolha Cadastro ou Estoque antes de buscar.'
+        return 'Entrada por site: o sistema busca dados do fornecedor para preencher o modelo escolhido no mapeamento.'
+    return 'Entrada por site: escolha Cadastro ou Estoque antes de buscar.'
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -288,7 +288,7 @@ def _run_site_capture(
         },
     )
     reset_site_progress()
-    progress_bar = st.progress(0, text='Buscando produtos no site...')
+    progress_bar = st.progress(0, text='Buscando dados no site...')
     status_box = st.empty()
     try:
         df_site = run_site_engine(
@@ -314,10 +314,10 @@ def _run_site_capture(
     columns = len(df_site.columns) if isinstance(df_site, pd.DataFrame) else 0
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_site_df(operation, 'busca_publica_vazia')
-        _set_capture_state(operation=operation, running=False, finished=False, error='A busca por site não encontrou produtos válidos.', rows=0, columns=0)
-        _finish_progress(progress_bar, status_box, text='Busca encerrada sem produtos encontrados.')
+        _set_capture_state(operation=operation, running=False, finished=False, error='A busca por site não encontrou dados válidos.', rows=0, columns=0)
+        _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados encontrados.')
         add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('A busca por site não encontrou produtos válidos. Confira os links ou use a compatibilidade universal.')
+        st.warning('A busca por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
         return
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     _store_site_df(operation, df_site)
@@ -357,7 +357,7 @@ def render_site_panel() -> None:
 
     running = bool(st.session_state.get('site_capture_running'))
     if running:
-        _orange_warning('Captura por site em andamento. Aguarde o preview da origem aparecer antes de continuar.')
+        _orange_warning('Captura por site em andamento. Aguarde a origem aparecer antes de continuar.')
         if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             _clear_stuck_capture(operation)
             st.rerun()
@@ -366,7 +366,7 @@ def render_site_panel() -> None:
     if error:
         st.error(f'Última captura por site falhou: {error}')
 
-    button_label = 'Buscar no site e gerar origem de cadastro'
+    button_label = config.button_label
     button_disabled = running or (operation == 'estoque' and not _has_columns(requested_columns))
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
