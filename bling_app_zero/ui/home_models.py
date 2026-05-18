@@ -182,9 +182,11 @@ def _render_loaded_summary() -> None:
     if isinstance(estoque, pd.DataFrame):
         parts.append(f'estoque ({_model_source_label(st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))})')
     if parts:
-        st.success('Modelo anexado reconhecido como: ' + ' + '.join(parts))
+        st.success('Modelo de destino reconhecido como: ' + ' + '.join(parts))
     else:
-        st.warning('Nenhuma planilha modelo foi anexada ainda. Baixe o modelo, preencha os dados e anexe o arquivo aqui para continuar.')
+        st.warning(
+            'Nenhuma planilha modelo foi anexada ainda. Baixe o modelo no Bling ou marketplace, preencha os cabeçalhos/dados necessários e anexe aqui para continuar.'
+        )
         return
 
     with st.expander('Conferir modelo anexado', expanded=False):
@@ -204,13 +206,15 @@ def render_home_bling_models() -> None:
     """Conteúdo da etapa Modelo de destino."""
     clear_default_home_models()
 
-    st.markdown('#### Anexe aqui a planilha modelo preenchida')
+    st.markdown('#### Baixe a planilha modelo, preencha e anexe aqui')
     st.caption(
-        'Envie a planilha que você baixou e preencheu. O sistema usará esse arquivo como base para gerar o resultado final.'
+        'Use o modelo de destino que você quer preencher: cadastro, estoque ou marketplace. '
+        'Baixe esse modelo no sistema de destino, confira/preencha o que for necessário e anexe abaixo. '
+        'O arquivo anexado define exatamente as colunas e a ordem do CSV final.'
     )
 
     upload = render_model_upload_box(
-        title='Planilha modelo preenchida',
+        title='Planilha modelo de destino',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
