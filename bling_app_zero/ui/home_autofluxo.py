@@ -204,6 +204,9 @@ def pause_home_autofluxo_for_manual_review(step: str, *, reason: str = 'manual_m
     normalized = str(step or '').strip().lower()
     if not normalized:
         return
+    current_lock = st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY)
+    if isinstance(current_lock, dict) and current_lock.get('target_step') == normalized and current_lock.get('reason') == reason:
+        return
     st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = normalized
     st.session_state[AUTOFLOW_MANUAL_LOCK_KEY] = {
         'target_step': normalized,
@@ -257,17 +260,19 @@ def _manual_navigation_is_locked() -> bool:
 
 
 def _autoflow_enabled() -> bool:
+    # Estabilização urgente: autoavanço agressivo desligado por padrão.
+    # Ele causava reruns e saltos de tela em qualquer ação do usuário.
     if AUTOFLOW_ENABLED_KEY not in st.session_state:
-        st.session_state[AUTOFLOW_ENABLED_KEY] = True
-    return bool(st.session_state.get(AUTOFLOW_ENABLED_KEY, True))
+        st.session_state[AUTOFLOW_ENABLED_KEY] = False
+    return bool(st.session_state.get(AUTOFLOW_ENABLED_KEY, False))
 
 
 def run_home_autofluxo() -> None:
     """Autoavanço seguro do wizard.
 
-    BLINGFIX FLUIDEZ: o padrão agora é ligado para retirar cliques sem lógica.
-    O auto-next continua bloqueado em mapeamento, geração de estoque, preview,
-    download e qualquer etapa com pendência real.
+    O auto-next fica desligado por padrão para preservar estabilidade visual.
+    Fluxos manuais continuam funcionando sem a tela trocar de lugar após cada
+    seleção, digitação ou clique.
     """
     if _manual_navigation_is_locked():
         add_audit_event(
