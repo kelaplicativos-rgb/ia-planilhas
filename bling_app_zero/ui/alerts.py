@@ -20,10 +20,48 @@ _NAVIGATION_LABELS = (
     'liberar',
 )
 
+_ATTENTION_TERMS = (
+    'atenção',
+    'atencao',
+    'bloquead',
+    'bloqueio',
+    'pendente',
+    'pré-requisito',
+    'pre-requisito',
+    'requisito',
+    'obrigatório',
+    'obrigatorio',
+    'ausente',
+    'não encontrado',
+    'nao encontrado',
+    'não foi anexad',
+    'nao foi anexad',
+    'anexe',
+    'carregue',
+    'envie',
+    'escolha',
+    'confirme',
+    'volte',
+    'erro',
+    'falhou',
+    'falha',
+)
+
+
+def _normalize_text(value: object) -> str:
+    return str(value or '').strip().lower()
+
 
 def _is_navigation_label(label: object) -> bool:
-    text = str(label or '').strip().lower()
+    text = _normalize_text(label)
     return any(term in text for term in _NAVIGATION_LABELS)
+
+
+def _looks_like_attention_message(message: object) -> bool:
+    text = _normalize_text(message)
+    if not text:
+        return False
+    return any(term in text for term in _ATTENTION_TERMS)
 
 
 def inject_alert_theme() -> None:
@@ -38,7 +76,7 @@ def render_alert(message: str, *, title: str | None = None, variant: str = 'warn
     prefix = str(title or '').strip()
     output = f'{prefix}: {text}' if prefix else text
     method_name = variant if variant in {'warning', 'error', 'success', 'info'} else 'warning'
-    if method_name == 'info':
+    if method_name == 'info' and _looks_like_attention_message(output):
         method_name = 'warning'
     getattr(st, method_name)(output)
 
@@ -46,9 +84,12 @@ def render_alert(message: str, *, title: str | None = None, variant: str = 'warn
 def enforce_attention_alert_policy() -> None:
     """Aplica a regra visual global de atenção/bloqueio.
 
-    Vale da primeira tela até o download final:
-    - mensagens informativas passam a usar o visual de aviso, evitando balão azul em pré-requisito pendente;
-    - botão de navegação desabilitado não aparece como ação normal, sendo substituído por aviso de bloqueio.
+    BLINGFIX:
+    - mensagens neutras continuam podendo usar `st.info`;
+    - mensagens com pré-requisito, bloqueio, ausência de arquivo/modelo ou erro
+      passam a usar o visual de aviso;
+    - botão de navegação desabilitado não aparece como ação normal, sendo
+      substituído por aviso claro de bloqueio.
     """
     global _ORIGINAL_BUTTON, _ORIGINAL_INFO, _POLICY_INSTALLED
 
@@ -59,7 +100,11 @@ def enforce_attention_alert_policy() -> None:
     _ORIGINAL_BUTTON = st.button
 
     def attention_info(*args: Any, **kwargs: Any) -> Any:
-        return st.warning(*args, **kwargs)
+        if args and _looks_like_attention_message(args[0]):
+            return st.warning(*args, **kwargs)
+        if _ORIGINAL_INFO is None:
+            return None
+        return _ORIGINAL_INFO(*args, **kwargs)
 
     def guarded_button(label: str, *args: Any, **kwargs: Any) -> Any:
         disabled = bool(kwargs.get('disabled', False))
