@@ -60,10 +60,12 @@ def _current_site_operation() -> str:
         value = str(st.session_state.get(key) or '').strip().lower()
         if value in {'cadastro', 'estoque'}:
             return value
-    flow = str(_query_param('flow') or _query_param('operacao') or '').strip().lower()
+    flow = str(_query_param('operacao') or '').strip().lower()
+    if flow in {'cadastro', 'cadastro_site'}:
+        return 'cadastro'
     if flow in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
         return 'estoque'
-    return 'cadastro'
+    return ''
 
 
 def _site_df_key(operation: str) -> str:
@@ -157,8 +159,10 @@ def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.'
 
 def _operation_badge(operation: str) -> str:
     if operation == 'estoque':
-        return 'Motor ativo: ESTOQUE POR SITE - somente colunas do modelo de estoque.'
-    return 'Motor ativo: CADASTRO POR SITE - origem completa para cadastro de produtos.'
+        return 'Motor ativo: ESTOQUE POR SITE — busca apenas as colunas do modelo escolhido.'
+    if operation == 'cadastro':
+        return 'Motor ativo: CADASTRO POR SITE — busca dados de produtos para preencher o modelo escolhido.'
+    return 'Motor de site ainda não definido. Escolha Cadastro ou Estoque antes de buscar.'
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -170,7 +174,7 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     if requested_columns:
         show_contract(requested_columns)
     elif operation == 'estoque':
-        st.error('Para estoque por site, envie primeiro o modelo de estoque do Bling. A busca só será feita nas colunas desse modelo.')
+        st.error('Para estoque por site, envie primeiro o modelo de estoque. A busca só será feita nas colunas desse modelo.')
     else:
         st.info('Sem modelo desta operação. Vou capturar os campos principais e deixar vazio o que não encontrar.')
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
@@ -331,6 +335,10 @@ def _run_site_capture(
 def render_site_panel() -> None:
     _clear_legacy_authenticated_state()
     operation = _current_site_operation()
+    if operation not in {'cadastro', 'estoque'}:
+        st.warning('Escolha primeiro se a busca por site será para Cadastro ou Estoque.')
+        add_audit_event('site_panel_blocked_missing_operation', area='SITE', step='entrada', status='BLOQUEADO', details={'responsible_file': RESPONSIBLE_FILE})
+        return
     if operation == 'estoque':
         from bling_app_zero.ui.estoque_site_panel import render_estoque_site_panel
         render_estoque_site_panel()
