@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import streamlit as st
 
@@ -16,6 +17,9 @@ AI_MODE_AUTO = 'automatico'
 AI_ALLOWED_MODES = (AI_MODE_SAFE, AI_MODE_ASSISTED, AI_MODE_AUTO)
 DEFAULT_AI_MODE = AI_MODE_ASSISTED
 DEFAULT_AI_MODEL = 'gpt-4o-mini'
+SECRET_SECTION_CANDIDATES = ('openai', 'OPENAI', 'ai', 'AI')
+SECRET_KEY_CANDIDATES = ('api_key', 'OPENAI_API_KEY', 'openai_api_key')
+SECRET_MODEL_CANDIDATES = ('model', 'OPENAI_MODEL', 'openai_model')
 
 
 @dataclass(frozen=True)
@@ -32,14 +36,44 @@ def _clean_api_key(value: object) -> str:
     return str(value or '').strip()
 
 
-def get_user_openai_key() -> str:
-    """Retorna somente a chave digitada pelo usuário na sessão atual.
+def _secret_get(path: tuple[str, ...]) -> Any:
+    current: Any = st.secrets
+    try:
+        for part in path:
+            if isinstance(current, dict):
+                current = current.get(part)
+            else:
+                current = current[part]
+        return current
+    except Exception:
+        return None
 
-    Regra BYOK do Mapeia.AI: não buscar chave em st.secrets, arquivo .env,
-    variável de ambiente ou fallback administrativo. Cada usuário informa a
-    própria chave na sidebar para ativar a IA naquela sessão.
+
+def get_openai_key_from_secrets() -> str:
+    """Lê a chave OpenAI do Secrets do app.
+
+    Regra atual do MapeiaAI:
+    - a IA não aparece na sidebar;
+    - o usuário final não informa chave;
+    - o app usa a chave configurada pelo administrador no Streamlit Secrets.
     """
-    return _clean_api_key(st.session_state.get(AI_USER_API_KEY))
+    for section in SECRET_SECTION_CANDIDATES:
+        for key in SECRET_KEY_CANDIDATES:
+            value = _secret_get((section, key))
+            cleaned = _clean_api_key(value)
+            if cleaned:
+                return cleaned
+    for key in SECRET_KEY_CANDIDATES:
+        value = _secret_get((key,))
+        cleaned = _clean_api_key(value)
+        if cleaned:
+            return cleaned
+    return ''
+
+
+def get_user_openai_key() -> str:
+    """Compatibilidade: retorna a chave do Secrets, não da sessão do usuário."""
+    return get_openai_key_from_secrets()
 
 
 def get_ai_mode() -> str:
@@ -48,19 +82,30 @@ def get_ai_mode() -> str:
 
 
 def get_ai_model() -> str:
+    for section in SECRET_SECTION_CANDIDATES:
+        for key in SECRET_MODEL_CANDIDATES:
+            value = _secret_get((section, key))
+            model = str(value or '').strip()
+            if model:
+                return model
+    for key in SECRET_MODEL_CANDIDATES:
+        value = _secret_get((key,))
+        model = str(value or '').strip()
+        if model:
+            return model
     model = str(st.session_state.get(AI_MODEL_KEY) or DEFAULT_AI_MODEL).strip()
     return model or DEFAULT_AI_MODEL
 
 
 def ai_is_enabled() -> bool:
-    return bool(st.session_state.get(AI_ENABLED_KEY)) and bool(get_user_openai_key())
+    return bool(get_openai_key_from_secrets())
 
 
 def get_ai_settings() -> AISettings:
-    api_key = get_user_openai_key()
-    enabled = bool(st.session_state.get(AI_ENABLED_KEY))
+    api_key = get_openai_key_from_secrets()
+    enabled = bool(api_key)
     ready = enabled and bool(api_key)
-    status = 'IA pronta' if ready else ('Informe sua chave OpenAI para ativar a IA.' if enabled else 'IA desativada')
+    status = 'IA pronta via Secrets' if ready else 'Configure a chave OpenAI no Secrets para ativar a IA.'
     st.session_state[AI_STATUS_KEY] = status
     return AISettings(
         enabled=enabled,
@@ -73,9 +118,10 @@ def get_ai_settings() -> AISettings:
 
 
 def clear_ai_key() -> None:
+    """Não remove Secrets. Apenas limpa estados legados de sessão."""
     st.session_state.pop(AI_USER_API_KEY, None)
-    st.session_state[AI_ENABLED_KEY] = False
-    st.session_state[AI_STATUS_KEY] = 'IA desativada'
+    st.session_state.pop(AI_ENABLED_KEY, None)
+    st.session_state[AI_STATUS_KEY] = 'IA controlada pelo Secrets'
 
 
 __all__ = [
@@ -96,5 +142,6 @@ __all__ = [
     'get_ai_mode',
     'get_ai_model',
     'get_ai_settings',
+    'get_openai_key_from_secrets',
     'get_user_openai_key',
 ]
