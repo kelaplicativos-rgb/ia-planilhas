@@ -10,7 +10,6 @@ from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.column_contract import build_contract
-from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.template_download_exporter import (
@@ -134,13 +133,6 @@ def df_signature(df: pd.DataFrame) -> str:
     return f'{shape}:{columns}:{sample}'
 
 
-@st.cache_data(show_spinner=False)
-def _csv_bytes_cached(df: pd.DataFrame, operation: str, signature: str, rules_sig: str) -> bytes:
-    _ = signature
-    _ = rules_sig
-    return to_bling_csv_bytes(df, operation=operation)
-
-
 def _kind_label(kind: str) -> str:
     return KIND_LABELS.get(str(kind or '').strip(), 'Campo personalizado')
 
@@ -158,15 +150,8 @@ def _operation_badge(operation: str) -> str:
     return '📄 PLANILHA'
 
 
-def _download_label(operation: str, *, template_mode: bool = False) -> str:
-    if template_mode:
-        return '⬇️ Baixar modelo preenchido fiel ao arquivo anexado'
-    op = str(operation or '').strip().lower()
-    if op == 'estoque':
-        return '⬇️ Baixar planilha final de ESTOQUE'
-    if op == 'cadastro':
-        return '⬇️ Baixar planilha final de CADASTRO'
-    return '⬇️ Baixar planilha final'
+def _download_label() -> str:
+    return '⬇️ Baixar modelo preenchido fiel ao arquivo anexado'
 
 
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -284,12 +269,16 @@ def _get_template_upload() -> tuple[str, bytes] | None:
 def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
     template = _get_template_upload()
     if template is None:
+        st.error('Modelo original ausente. Reenvie a planilha modelo para gerar o arquivo final no próprio layout anexado.')
+        add_audit_event('template_download_original_missing', area='DOWNLOAD', status='BLOQUEADO')
         return None
+
     template_name, template_bytes = template
     if not can_export_from_template(template_name, template_bytes):
-        st.error('Contrato rígido: o modelo anexado precisa estar disponível em XLSX ou XLSM para preservar 100% o arquivo de marketplace.')
+        st.error('O download final fiel exige o próprio modelo em XLSX ou XLSM. Reenvie o modelo nesse formato para preservar o arquivo exatamente como entrou.')
         add_audit_event('template_download_not_supported', area='DOWNLOAD', status='BLOQUEADO', details={'template_name': template_name})
         return None
+
     try:
         data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
         return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -302,7 +291,7 @@ def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
         )
         st.error('Contrato rígido bloqueou o download final.')
         st.warning(str(exc))
-        st.caption('O sistema não vai gerar CSV alternativo porque isso quebraria a promessa de sair 100% fiel ao modelo anexado.')
+        st.caption('Nenhum outro arquivo será gerado porque o sistema só pode baixar o próprio modelo anexado preenchido.')
         return None
 
 
@@ -323,6 +312,10 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         st.success('Contrato aplicado: colunas e ordem seguem o modelo de destino anexado.')
         with st.expander('Contrato aplicado no download', expanded=False):
             st.caption('Colunas do arquivo final: ' + ', '.join(model_columns))
+    else:
+        st.error('Contrato de destino ausente. Reenvie a planilha modelo antes de baixar.')
+        add_audit_event('download_contract_missing', area='DOWNLOAD', status='BLOQUEADO')
+        return
 
     errors = validate_final_df(download_df, operation)
     if errors:
@@ -339,36 +332,19 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
-    template = _get_template_upload()
     template_export = _build_template_download(download_df.copy())
-
-    if template_export is not None:
-        template_bytes, template_file_name, template_mime = template_export
-        st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM foram preservadas.')
-        st.download_button(
-            _download_label(operation, template_mode=True),
-            data=template_bytes,
-            file_name=template_file_name,
-            mime=template_mime,
-            use_container_width=True,
-            key=f'download_template_{key}_{signature}_{rules_sig}',
-            on_click=_after_final_download,
-            args=(operation, signature, rules_sig),
-        )
+    if template_export is None:
         return
 
-    if template is not None:
-        return
-
-    csv_bytes = _csv_bytes_cached(download_df.copy(), operation, signature, rules_sig)
-    st.warning('Nenhum modelo XLSX/XLSM original está disponível nesta sessão. CSV liberado apenas como modo legado.')
+    template_bytes, template_file_name, template_mime = template_export
+    st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM foram preservadas.')
     st.download_button(
-        _download_label(operation),
-        data=csv_bytes,
-        file_name=filename_for_operation(operation),
-        mime='text/csv; charset=utf-8',
+        _download_label(),
+        data=template_bytes,
+        file_name=template_file_name,
+        mime=template_mime,
         use_container_width=True,
-        key=f'download_{key}_{signature}_{rules_sig}',
+        key=f'download_template_{key}_{signature}_{rules_sig}',
         on_click=_after_final_download,
         args=(operation, signature, rules_sig),
     )
