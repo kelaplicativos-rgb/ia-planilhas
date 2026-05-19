@@ -287,17 +287,22 @@ def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
         return None
     template_name, template_bytes = template
     if not can_export_from_template(template_name, template_bytes):
+        st.error('Contrato rígido: o modelo anexado precisa estar disponível em XLSX ou XLSM para preservar 100% o arquivo de marketplace.')
+        add_audit_event('template_download_not_supported', area='DOWNLOAD', status='BLOQUEADO', details={'template_name': template_name})
         return None
     try:
         data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
         return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     except Exception as exc:
         add_audit_event(
-            'template_download_build_failed',
+            'template_download_contract_blocked',
             area='DOWNLOAD',
-            status='ERRO',
+            status='BLOQUEADO',
             details={'template_name': template_name, 'error': str(exc)},
         )
+        st.error('Contrato rígido bloqueou o download final.')
+        st.warning(str(exc))
+        st.caption('O sistema não vai gerar CSV alternativo porque isso quebraria a promessa de sair 100% fiel ao modelo anexado.')
         return None
 
 
@@ -315,7 +320,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     download_df, contract_applied, model_columns = _download_dataframe_for_contract(df, operation)
     if contract_applied:
-        st.success('Download fiel ao modelo anexado: colunas e ordem seguem o arquivo de destino.')
+        st.success('Contrato aplicado: colunas e ordem seguem o modelo de destino anexado.')
         with st.expander('Contrato aplicado no download', expanded=False):
             st.caption('Colunas do arquivo final: ' + ', '.join(model_columns))
 
@@ -334,11 +339,12 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
+    template = _get_template_upload()
     template_export = _build_template_download(download_df.copy())
 
     if template_export is not None:
         template_bytes, template_file_name, template_mime = template_export
-        st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM são preservadas sempre que o formato permitir.')
+        st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM foram preservadas.')
         st.download_button(
             _download_label(operation, template_mode=True),
             data=template_bytes,
@@ -351,8 +357,11 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         )
         return
 
+    if template is not None:
+        return
+
     csv_bytes = _csv_bytes_cached(download_df.copy(), operation, signature, rules_sig)
-    st.warning('Fallback CSV usado porque o modelo original não está disponível como XLSX/XLSM preservável nesta sessão.')
+    st.warning('Nenhum modelo XLSX/XLSM original está disponível nesta sessão. CSV liberado apenas como modo legado.')
     st.download_button(
         _download_label(operation),
         data=csv_bytes,
