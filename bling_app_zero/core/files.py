@@ -3,14 +3,18 @@ from __future__ import annotations
 import csv
 import re
 import xml.etree.ElementTree as ET
-from email import message_from_bytes
-from email.message import Message
-from email.policy import default as email_default_policy
 from io import BytesIO, StringIO
 from typing import Any
 
 import pandas as pd
-from bs4 import BeautifulSoup
+
+from bling_app_zero.core.html_product_extractor import (
+    clean_columns as _clean_html_columns,
+    clean_text as _html_clean,
+    decode_html_bytes,
+    read_html_product_bytes,
+    read_mhtml_product_bytes,
+)
 
 try:
     from pypdf import PdfReader
@@ -26,29 +30,10 @@ SUPPORTED_SUPPLIER_EXTENSIONS = SPREADSHEET_EXTENSIONS + ('.csv', '.xml', '.pdf'
 NFE_ITEM_TAGS = {'det'}
 NFE_PRODUCT_TAGS = {'prod'}
 COMMON_ITEM_TAGS = {'item', 'produto', 'product', 'det', 'row', 'linha'}
-PRODUCT_CARD_SELECTORS = [
-    '[data-sku]',
-    '[data-id].item',
-    '.item[data-id]',
-    '.produto',
-    '.product',
-    '.product-item',
-    '.product-card',
-    '.card-produto',
-    '.card-product',
-    'li[class*=product]',
-    'div[class*=product]',
-    'div[class*=produto]',
-]
 
 
 def _decode_bytes(data: bytes) -> str:
-    for encoding in ('utf-8-sig', 'utf-8', 'latin1', 'cp1252'):
-        try:
-            return data.decode(encoding)
-        except Exception:
-            continue
-    return data.decode('utf-8', errors='ignore')
+    return decode_html_bytes(data)
 
 
 def _detect_separator(text: str) -> str:
@@ -62,16 +47,11 @@ def _detect_separator(text: str) -> str:
 
 
 def _clean(value: object) -> str:
-    return ' '.join(str(value or '').replace('\ufeff', '').replace('\xa0', ' ').split()).strip()
+    return _html_clean(value)
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy().fillna('')
-    out.columns = [_clean(c) or f'Coluna {idx + 1}' for idx, c in enumerate(out.columns)]
-    unnamed = [c for c in out.columns if not c or c.lower().startswith('unnamed')]
-    if unnamed:
-        out = out.drop(columns=unnamed, errors='ignore')
-    return out.fillna('').astype(str)
+    return _clean_html_columns(df)
 
 
 def _best_frame(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -79,7 +59,7 @@ def _best_frame(frames: list[pd.DataFrame]) -> pd.DataFrame:
     if not valid:
         return pd.DataFrame()
     valid.sort(key=lambda df: len(df) * max(1, len(df.columns)), reverse=True)
-    return valid[0].fillna('').astype(str)
+    return valid[0].fillna('').astype(str).reset_index(drop=True)
 
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
@@ -113,173 +93,25 @@ def _read_excel_bytes(data: bytes, file_name: str) -> pd.DataFrame:
         return _clean_columns(df)
 
 
-def _extract_tables_from_html(html_text: str) -> list[pd.DataFrame]:
-    soup = BeautifulSoup(html_text or '', 'html.parser')
-    frames: list[pd.DataFrame] = []
-
-    for table in soup.find_all('table'):
-        rows: list[list[str]] = []
-        for tr in table.find_all('tr'):
-            cells = tr.find_all(['th', 'td'])
-            row = [_clean(cell.get_text(' ', strip=True)) for cell in cells]
-            if any(row):
-                rows.append(row)
-
-        if len(rows) < 2:
-            continue
-
-        width = max(len(row) for row in rows)
-        normalized_rows = [row + [''] * (width - len(row)) for row in rows]
-        columns = [_clean(value) or f'Coluna {idx + 1}' for idx, value in enumerate(normalized_rows[0])]
-        frame = pd.DataFrame(normalized_rows[1:], columns=columns).fillna('').astype(str)
-        if not frame.empty:
-            frames.append(frame)
-
-    return frames
-
-
-def _all_money(text: str) -> list[str]:
-    return [_clean(value) for value in re.findall(r'R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}|R\$\s*\d+,\d{2}', text or '')]
-
-
-def _extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
-    soup = BeautifulSoup(html_text or '', 'html.parser')
-    candidates = []
-    for selector in PRODUCT_CARD_SELECTORS:
-        candidates.extend(soup.select(selector))
-
-    rows: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for card in candidates:
-        text = _clean(card.get_text(' ', strip=True))
-        if len(text) < 10:
-            continue
-
-        link = card.find('a', href=True)
-        img = card.find('img')
-        title = _clean(img.get('alt')) if img else ''
-        if not title and link:
-            title = _clean(link.get_text(' ', strip=True)).split(' R$')[0]
-        if not title:
-            title = text.split(' R$')[0]
-        title = _clean(title)
-
-        prices = _all_money(text)
-        price = prices[-1] if prices else ''
-        old_price = prices[0] if len(prices) > 1 else ''
-        sku = _clean(card.get('data-sku')) or _clean(card.get('data-id'))
-        url = _clean(link.get('href')) if link else ''
-        image_url = _clean(img.get('src') or img.get('data-src') or '') if img else ''
-
-        if not title and not sku:
-            continue
-        key = f'{sku}|{title}|{url}'
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append({
-            'Nome': title,
-            'SKU': sku,
-            'Preço': price,
-            'Preço antigo': old_price if old_price != price else '',
-            'URL': url,
-            'Imagem': image_url,
-            'Texto bruto': text[:1200],
-        })
-
-    return _clean_columns(pd.DataFrame(rows).fillna('')) if rows else pd.DataFrame()
-
-
 def _read_html_bytes(data: bytes) -> pd.DataFrame:
-    html_text = _decode_bytes(data)
-    frames = _extract_tables_from_html(html_text)
-    if frames:
-        return _best_frame(frames)
+    """Leitor universal de HTML.
 
-    product_cards = _extract_product_cards_from_html(html_text)
-    if isinstance(product_cards, pd.DataFrame) and not product_cards.empty:
-        return product_cards
-
-    text = BeautifulSoup(html_text or '', 'html.parser').get_text('\n')
-    rows = []
-    for line in text.splitlines():
-        if '\t' in line:
-            rows.append([_clean(part) for part in line.split('\t')])
-    if len(rows) < 2:
-        return pd.DataFrame()
-
-    width = max(len(row) for row in rows)
-    rows = [row + [''] * (width - len(row)) for row in rows]
-    columns = [_clean(value) or f'Coluna {idx + 1}' for idx, value in enumerate(rows[0])]
-    return _clean_columns(pd.DataFrame(rows[1:], columns=columns))
-
-
-def _message_part_to_text(part: Message) -> str:
-    payload = part.get_payload(decode=True)
-    if payload is None:
-        raw_payload = part.get_payload()
-        if isinstance(raw_payload, str):
-            return raw_payload
-        return ''
-
-    charset = part.get_content_charset() or 'utf-8'
-    try:
-        return payload.decode(charset, errors='replace')
-    except Exception:
-        return _decode_bytes(payload)
-
-
-def _extract_html_parts_from_mhtml(data: bytes) -> list[str]:
-    html_parts: list[str] = []
-    try:
-        message = message_from_bytes(data, policy=email_default_policy)
-    except Exception:
-        text = _decode_bytes(data)
-        return [text] if '<html' in text.lower() or '<table' in text.lower() else []
-
-    if message.is_multipart():
-        for part in message.walk():
-            content_type = str(part.get_content_type() or '').lower()
-            if content_type == 'text/html':
-                html_text = _message_part_to_text(part)
-                if html_text.strip():
-                    html_parts.append(html_text)
-    else:
-        content_type = str(message.get_content_type() or '').lower()
-        text = _message_part_to_text(message)
-        if content_type == 'text/html' or '<html' in text.lower() or '<table' in text.lower():
-            html_parts.append(text)
-
-    if not html_parts:
-        fallback = _decode_bytes(data)
-        if '<html' in fallback.lower() or '<table' in fallback.lower():
-            html_parts.append(fallback)
-
-    return html_parts
+    A saída fica mais rica para o mapeamento, mas o download continua fiel ao
+    modelo anexado na primeira etapa. Este leitor apenas cria aliases úteis
+    como Descrição Produto/Título/Nome/Produto para aumentar a chance de
+    preencher campos de nome quando o fornecedor usa tabelas ou cards.
+    """
+    return read_html_product_bytes(data)
 
 
 def _read_mhtml_bytes(data: bytes) -> pd.DataFrame:
-    html_parts = _extract_html_parts_from_mhtml(data)
-    frames: list[pd.DataFrame] = []
-    for html_text in html_parts:
-        frames.extend(_extract_tables_from_html(html_text))
-    if frames:
-        return _best_frame(frames)
+    """Leitor universal de MHTML/MHT.
 
-    product_frames: list[pd.DataFrame] = []
-    for html_text in html_parts:
-        product_frame = _extract_product_cards_from_html(html_text)
-        if isinstance(product_frame, pd.DataFrame) and not product_frame.empty:
-            product_frames.append(product_frame)
-    if product_frames:
-        return _best_frame(product_frames)
-
-    fallback_frames: list[pd.DataFrame] = []
-    for html_text in html_parts:
-        frame = _read_html_bytes(html_text.encode('utf-8', errors='ignore'))
-        if isinstance(frame, pd.DataFrame) and not frame.empty:
-            fallback_frames.append(frame)
-    return _best_frame(fallback_frames)
+    Usa o extrator modular para encontrar tabelas, cards e títulos salvos no
+    arquivo do navegador, sem distinguir estoque/cadastro. A distinção continua
+    sendo exclusivamente o contrato/modelo anexado pelo usuário.
+    """
+    return read_mhtml_product_bytes(data)
 
 
 def _xml_tag_name(tag: str) -> str:
