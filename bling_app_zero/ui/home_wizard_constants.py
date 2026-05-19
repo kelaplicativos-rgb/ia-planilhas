@@ -2,31 +2,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Chaves históricas mantidas como aliases de compatibilidade.
+# No fluxo atual elas representam o modelo de destino anexado na primeira etapa,
+# não contratos separados de cadastro/estoque.
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
 GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
 GLOBAL_ESTOQUE_MODEL_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
+
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ACTIVE_KEY = 'home_slim_active_panel'
 LEGACY_ORIGIN_RADIO_KEY = 'frontpage_origin_radio'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 
+UNIVERSAL_OPERATION_VALUE = 'universal'
+
 STEP_MODELO = 'modelo'
-STEP_OPERACAO = 'operacao'
+STEP_OPERACAO = 'operacao'  # legado: oculto no fluxo atual
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_REGRAS = 'regras'
 STEP_MAPEAMENTO = 'mapeamento'
-STEP_GERAR_ESTOQUE = 'gerar_estoque'
+STEP_GERAR_ESTOQUE = 'gerar_estoque'  # legado: não usado no fluxo atual
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
-CADASTRO_STEPS = [
+UNIVERSAL_STEPS = [
     STEP_MODELO,
-    STEP_OPERACAO,
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_PRECIFICACAO,
@@ -36,31 +41,22 @@ CADASTRO_STEPS = [
     STEP_DOWNLOAD,
 ]
 
-ESTOQUE_STEPS = [
-    STEP_MODELO,
-    STEP_OPERACAO,
-    STEP_ORIGEM,
-    STEP_ENTRADA,
-    STEP_PRECIFICACAO,
-    STEP_GERAR_ESTOQUE,
-    STEP_REGRAS,
-    STEP_PREVIEW,
-    STEP_DOWNLOAD,
-]
-
-ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
+# Aliases legados preservados para não quebrar imports externos.
+CADASTRO_STEPS = list(UNIVERSAL_STEPS)
+ESTOQUE_STEPS = list(UNIVERSAL_STEPS)
+ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_OPERACAO, STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
 
 STEP_LABELS = {
-    STEP_MODELO: 'Enviar modelo',
-    STEP_OPERACAO: 'Escolher o que fazer',
-    STEP_ORIGEM: 'Escolher origem',
-    STEP_ENTRADA: 'Enviar dados',
-    STEP_PRECIFICACAO: 'Calcular preço',
-    STEP_MAPEAMENTO: 'Ligar colunas',
-    STEP_GERAR_ESTOQUE: 'Ligar colunas',
-    STEP_REGRAS: 'IA Real',
-    STEP_PREVIEW: 'Conferir resultado',
-    STEP_DOWNLOAD: 'Baixar arquivo',
+    STEP_MODELO: 'Modelo de destino',
+    STEP_OPERACAO: 'Etapa legada ocultada',
+    STEP_ORIGEM: 'Origem dos dados',
+    STEP_ENTRADA: 'Dados do fornecedor',
+    STEP_PRECIFICACAO: 'Preço',
+    STEP_MAPEAMENTO: 'Mapear campos',
+    STEP_GERAR_ESTOQUE: 'Etapa legada ocultada',
+    STEP_REGRAS: 'IA / Revisão',
+    STEP_PREVIEW: 'Preview',
+    STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
 }
 
@@ -79,6 +75,8 @@ RESET_OUTPUT_KEYS = [
     'tipo_operacao',
     'operacao_final',
     'tipo_operacao_final',
+    'home_detected_operation',
+    'home_slim_flow_operation',
     'bling_autofluxo_last_step',
     'bling_autofluxo_pause_step',
     'bling_autofluxo_last_move',
