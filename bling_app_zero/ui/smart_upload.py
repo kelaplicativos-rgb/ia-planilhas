@@ -236,14 +236,16 @@ def _render_upload_header(title: str, allow_model: bool, accepted_types: list[st
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
-    st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
-    with st.expander('Conferir arquivos detectados', expanded=False):
+    if not supported_files:
+        return
+    st.success(f'Arquivo recebido: {len(supported_files)}')
+    with st.expander('Ver detalhes do arquivo', expanded=False):
         for file in supported_files:
-            role = 'Origem do fornecedor'
+            role = 'Planilha de produtos'
             if allow_model and result.cadastro_model_file is file:
-                role = 'Modelo de cadastro Bling'
+                role = 'Modelo de cadastro'
             elif allow_model and result.estoque_model_file is file:
-                role = 'Modelo de estoque Bling'
+                role = 'Modelo de estoque'
             st.write(f'**{role}:** {_file_name(file)}')
 
 
@@ -283,8 +285,8 @@ def render_smart_upload_box(
     _render_detected_files(result, supported_files, allow_model=allow_model)
 
     if result.source_df is not None:
-        with st.expander('Ver origem detectada', expanded=False):
-            preview_df('Origem detectada', result.source_df)
+        with st.expander('Ver planilha enviada', expanded=False):
+            preview_df('Planilha enviada', result.source_df)
     elif result.source_file is not None:
         st.warning(f'Arquivo recebido, mas nenhuma tabela foi detectada em {_file_name(result.source_file)}.')
 
