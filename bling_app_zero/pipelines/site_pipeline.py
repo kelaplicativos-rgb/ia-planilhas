@@ -164,18 +164,18 @@ def _description_columns_to_clean(df: pd.DataFrame) -> list[str]:
 
 
 def _clean_site_description_columns(df: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica a blindagem de descrição em qualquer motor de site.
+    """Aplica a blindagem de descrição no fluxo unificado de busca por site.
 
     BLINGFIX:
     - antes a limpeza só pegava colunas como "Descrição complementar";
-    - alguns fornecedores jogam o bloco sujo inteiro dentro da coluna simples
-      "Descrição", incluindo avaliação, frete, botões e título repetido;
-    - agora a coluna "Descrição" também é limpa quando o conteúdo tem sinais de
-      ruído ou tamanho de descrição longa, preservando descrição curta legítima.
+    - depois ainda havia uma trava por operação "estoque";
+    - como o fluxo atual é unificado e o tipo de modelo não é mais separado pelo
+      usuário, a limpeza passa a valer para qualquer operação recebida;
+    - a proteção continua segura porque só limpa "Descrição" simples quando há
+      ruído conhecido ou texto longo de página, preservando descrição curta.
     """
+    _ = operation
     if not isinstance(df, pd.DataFrame) or df.empty:
-        return df
-    if _normalize_operation(operation) == 'estoque':
         return df
 
     description_columns = _description_columns_to_clean(df)
