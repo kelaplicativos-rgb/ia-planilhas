@@ -97,28 +97,26 @@ def render_site_source_summary(
     operation: str = 'cadastro',
     *,
     show_history: bool = False,
-    show_sample: bool = True,
+    show_sample: bool = False,
     sample_in_expander: bool = True,
 ) -> None:
-    """Resumo leve para o Wizard: sem mapeamento, preview final ou download final.
+    """Resumo mínimo antes do mapeamento.
 
-    sample_in_expander=False evita erro do Streamlit quando este resumo é chamado
-    dentro de outro expander.
+    A etapa Dados não deve virar uma tela longa depois da captura. O objetivo é
+    confirmar que a origem ficou pronta e deixar o usuário seguir direto para o
+    mapeamento manual.
     """
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
-    st.success(f'Origem por site criada com {len(df_site)} registro(s) e {len(df_site.columns)} coluna(s).')
-    if normalize_site_operation(operation) == 'estoque' and st.session_state.get('site_stock_requested_columns_enforced'):
-        st.caption('A origem salva respeita as colunas do modelo escolhido. Campo não encontrado fica vazio.')
-    st.caption('Continue para a próxima etapa. O mapeamento, preview e download final ficam separados no Wizard.')
+    st.success(f'Origem pronta: {len(df_site)} registro(s). Siga para o mapeamento abaixo.')
 
     if show_sample:
         sample = df_site.head(20).fillna('').astype(str)
         if sample_in_expander:
-            with st.expander('Conferir uma amostra da origem por site', expanded=False):
+            with st.expander('Ver amostra da origem', expanded=False):
                 st.dataframe(sample, use_container_width=True)
         else:
-            st.caption('Amostra da origem por site')
+            st.caption('Amostra da origem')
             st.dataframe(sample, use_container_width=True)
 
     if show_history:
@@ -143,7 +141,7 @@ def render_generated_site_actions(
     df_to_save = _stock_contract_df(df_site, requested_columns) if normalized == 'estoque' else df_site
     save_site_source(df_to_save, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
 
-    st.success('Origem por site criada com sucesso. Siga para a próxima etapa.')
+    st.success('Origem por site criada. Siga para o mapeamento abaixo.')
     render_site_progress_history()
 
     st.download_button(
