@@ -3,8 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.ai_mapping_apply_panel import render_ai_mapping_apply_panel
-from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
@@ -76,22 +74,14 @@ def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
         preview_df('Origem', df_source)
 
 
-def _render_ai_mapping_panel(
+def _render_smart_help_button(
     df_source: pd.DataFrame,
     target_columns: list[str],
     current_mapping: dict[str, str],
     mapping_key: str,
 ) -> None:
-    with st.expander('🤖 Assistente IA do mapeamento · opcional', expanded=False):
-        st.caption('Use somente se quiser ajuda para analisar campos pendentes ou aplicar sugestões. O mapeamento manual continua sendo o fluxo principal.')
-        render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Analisar campos pendentes')
-        render_ai_mapping_apply_panel(
-            df_source,
-            target_columns,
-            current_mapping,
-            mapping_key,
-            operation='cadastro',
-        )
+    """Mostra somente um botão simples de ajuda rápida no mapeamento."""
+    render_ai_button(df_source, target_columns, current_mapping, mapping_key, '💡 Ajuda inteligente')
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -117,7 +107,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     _render_compact_mapping_header(df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
-    _render_ai_mapping_panel(df_source, target_columns, current_mapping, mapping_key)
+    _render_smart_help_button(df_source, target_columns, current_mapping, mapping_key)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
