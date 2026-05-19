@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import re
 from email import message_from_bytes
 from email.message import Message
@@ -9,6 +8,7 @@ from typing import Iterable
 
 import pandas as pd
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 PRODUCT_CARD_SELECTORS = [
     '[data-sku]',
@@ -202,6 +202,46 @@ def _stock_quantity(value: str) -> str:
     return clean_text(match.group(1)) if match else ''
 
 
+def _candidate_identity(card: Tag) -> str:
+    title_node = card.select_one('h1, h2, h3.produto, h3[title], h3, .title, .titulo, .nome, [class*=title], [class*=titulo]')
+    title = ''
+    if title_node:
+        title = clean_text(title_node.get('title') or title_node.get_text(' ', strip=True))
+    link = card.find('a', href=True)
+    url = clean_text(link.get('href')) if link else ''
+    sku = clean_text(card.get('data-sku')) or clean_text(card.get('data-id'))
+    return f'{sku}|{title}|{url}'
+
+
+def _is_probably_product_container(card: Tag) -> bool:
+    """Evita capturar container geral e título solto como se fossem produtos.
+
+    Exemplo real dos MHTML testados:
+    - `.item[data-sku]` é o card correto;
+    - `h3.produto` é apenas o título dentro do card;
+    - `.produtos` é o container da lista inteira.
+    """
+    if not isinstance(card, Tag):
+        return False
+
+    own_sku = bool(clean_text(card.get('data-sku')) or clean_text(card.get('data-id')))
+    own_link = card.find('a', href=True) is not None
+    own_money = bool(_money_values(clean_text(card.get_text(' ', strip=True))))
+
+    if card.name in {'h1', 'h2', 'h3', 'h4', 'h5'} and not own_sku:
+        return False
+
+    nested_sku_cards = card.select('[data-sku], .item[data-id], [data-id].item')
+    if not own_sku and len(nested_sku_cards) > 1:
+        return False
+
+    nested_title_cards = card.select('h3.produto, .product-card, .card-produto, .product-item')
+    if not own_sku and len(nested_title_cards) > 3:
+        return False
+
+    return own_sku or own_link or own_money
+
+
 def normalize_product_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = clean_columns(df)
     if out.empty:
@@ -280,12 +320,20 @@ def extract_tables_from_html(html_text: str) -> list[pd.DataFrame]:
 
 def extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
     soup = BeautifulSoup(html_text or '', 'html.parser')
-    candidates = []
+    candidates: list[Tag] = []
+    seen_candidates: set[str] = set()
     for selector in PRODUCT_CARD_SELECTORS:
-        candidates.extend(soup.select(selector))
+        for candidate in soup.select(selector):
+            if not isinstance(candidate, Tag) or not _is_probably_product_container(candidate):
+                continue
+            identity = _candidate_identity(candidate) or str(id(candidate))
+            if identity in seen_candidates:
+                continue
+            seen_candidates.add(identity)
+            candidates.append(candidate)
 
     rows: list[dict[str, str]] = []
-    seen: set[str] = set()
+    seen_rows: set[str] = set()
     for card in candidates:
         text = clean_text(card.get_text(' ', strip=True))
         if len(text) < 10:
@@ -314,10 +362,10 @@ def extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
 
         if not title and not sku:
             continue
-        key = f'{sku}|{title}|{url}'
-        if key in seen:
+        row_key = f'{sku}|{title}|{url}'
+        if row_key in seen_rows:
             continue
-        seen.add(key)
+        seen_rows.add(row_key)
         rows.append({
             'Codigo produto *': sku,
             'Código produto': sku,
