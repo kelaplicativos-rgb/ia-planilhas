@@ -6,15 +6,21 @@ import pandas as pd
 
 from bling_app_zero.engines.site_operations.cadastro_engine import run_cadastro_site_engine
 from bling_app_zero.engines.site_operations.estoque_engine import run_estoque_site_engine
+from bling_app_zero.engines.site_operations.universal_engine import run_universal_site_engine
 
-VALID_OPERATIONS = {'cadastro', 'estoque'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 def normalize_operation(operation: str | None) -> str:
-    value = str(operation or 'cadastro').strip().lower()
+    value = str(operation or 'universal').strip().lower()
     if value in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
         return 'estoque'
-    return 'cadastro'
+    if value in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
+        return 'cadastro'
+    if value in UNIVERSAL_ALIASES:
+        return 'universal'
+    return 'universal'
 
 
 def run_site_operation_engine(
@@ -27,10 +33,11 @@ def run_site_operation_engine(
     stop_early: bool = False,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    """Roteador central de motores por operação.
+    """Roteador central dos motores por site.
 
-    Mantém cadastro e estoque desacoplados. A UI chama uma única entrada,
-    mas cada operação evolui no seu próprio motor sem contaminar a outra.
+    A UI moderna opera como origem única/universal. Cadastro e estoque seguem
+    existindo como motores internos especializados, mas o usuário não precisa
+    escolher entre eles quando o modelo de destino já informa as colunas.
     """
     selected = normalize_operation(operation)
     if selected == 'estoque':
@@ -43,7 +50,17 @@ def run_site_operation_engine(
             progress_callback=progress_callback,
         )
 
-    return run_cadastro_site_engine(
+    if selected == 'cadastro':
+        return run_cadastro_site_engine(
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            max_pages=max_pages,
+            max_products=max_products,
+            stop_early=stop_early,
+            progress_callback=progress_callback,
+        )
+
+    return run_universal_site_engine(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
         max_pages=max_pages,
@@ -51,3 +68,6 @@ def run_site_operation_engine(
         stop_early=stop_early,
         progress_callback=progress_callback,
     )
+
+
+__all__ = ['normalize_operation', 'run_site_operation_engine']
