@@ -7,33 +7,19 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ai.ai_openai_mapping_suggester import suggest_mapping_with_openai
-from bling_app_zero.engines.cadastro_engine import default_model as cadastro_default_model
-from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
-from bling_app_zero.ui.estoque_wizard_state import stock_confidence, stock_mapping
 from bling_app_zero.ui.mapping_cadastro_flow import render_manual_mapping
 from bling_app_zero.ui.mapping_estoque_flow import render_manual_stock_mapping
-from bling_app_zero.ui.mapping_review_panel import render_mapping_review_panel
 
 EMPTY_OPTION = '(deixar vazio)'
 
 
-def _model_columns(df_modelo: pd.DataFrame | None, operation: str) -> list[str]:
-    if isinstance(df_modelo, pd.DataFrame) and len(df_modelo.columns):
-        return [str(column) for column in df_modelo.columns]
-    if operation == 'estoque':
-        return [str(column) for column in estoque_default_model().columns]
-    return [str(column) for column in cadastro_default_model().columns]
-
-
 def render_shared_cadastro_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
+    """Renderiza somente o mapeamento manual.
+
+    Regra de UX: qualquer painel de IA/revisão deve aparecer somente depois de
+    Mapear campos e antes do Preview da planilha final.
+    """
     render_manual_mapping(df_source, df_modelo)
-    render_mapping_review_panel(
-        operation='cadastro',
-        mapping=st.session_state.get('mapping_cadastro'),
-        confidence=st.session_state.get('mapping_confidence_cadastro'),
-        df_source=df_source,
-        target_columns=_model_columns(df_modelo, 'cadastro'),
-    )
 
 
 def render_shared_stock_mapping(
@@ -41,14 +27,8 @@ def render_shared_stock_mapping(
     df_modelo_estoque: pd.DataFrame | None,
     deposito: str,
 ) -> None:
+    """Renderiza somente o mapeamento manual de estoque."""
     render_manual_stock_mapping(df_source, df_modelo_estoque, deposito)
-    render_mapping_review_panel(
-        operation='estoque',
-        mapping=stock_mapping(),
-        confidence=stock_confidence(),
-        df_source=df_source,
-        target_columns=_model_columns(df_modelo_estoque, 'estoque'),
-    )
 
 
 def short_hash(value: str, size: int = 8) -> str:
@@ -89,8 +69,8 @@ def render_shared_contract_mapping(
     engine_state_key: str,
     key_prefix: str = 'mapeiaai_shared',
 ) -> dict[str, str]:
-    st.markdown('### Mapeamento compartilhado com faróis')
-    st.caption('Cada coluna do contrato final aponta para uma coluna da origem. O que não existir fica vazio.')
+    st.markdown('### Sugestão de IA para campos')
+    st.caption('Opcional. Use apenas se quiser revisar ou ajustar sugestões antes do preview final.')
 
     if mapping_state_key not in st.session_state:
         suggested, engine = suggest_shared_mapping(source, target, operation='universal')
@@ -126,7 +106,7 @@ def render_shared_contract_mapping(
         )
 
     st.session_state[mapping_state_key] = edited
-    with st.expander('Resumo dos faróis do mapeamento', expanded=True):
+    with st.expander('Resumo dos faróis da IA', expanded=False):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=260)
     return edited
 
