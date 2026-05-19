@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.flows.site_as_source import get_site_source_for_operation
-from bling_app_zero.ui.ai_analysis_panel import render_ai_origin_analysis_panel
 from bling_app_zero.ui.cadastro_sources import (
     render_cadastro_source_upload,
     select_cadastro_model,
@@ -78,11 +77,9 @@ def render_cadastro_entrada_step() -> None:
     store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
     if valid_df(df_origem) and site_origin:
-        st.success(f'Origem pronta: {len(df_origem)} registro(s).')
-        render_ai_origin_analysis_panel(df_origem, df_modelo, operation=operation)
+        st.success(f'Origem pronta: {len(df_origem)} registro(s). Siga para o mapeamento abaixo.')
     elif valid_df(df_origem):
-        st.success(f'Origem carregada: {len(df_origem)} registro(s).')
-        render_ai_origin_analysis_panel(df_origem, df_modelo, operation=operation)
+        st.success(f'Origem carregada: {len(df_origem)} registro(s). Siga para o mapeamento abaixo.')
         with st.expander('Ver origem dos dados', expanded=False):
             preview_df('Origem dos dados', df_origem)
     elif site_origin:
