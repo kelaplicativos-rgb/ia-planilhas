@@ -18,13 +18,18 @@ class SiteEngineConfig:
     required_model: bool
 
 
+UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+
+
 def normalize_site_operation(operation: str | None) -> str:
     text = str(operation or '').strip().lower()
     if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
         return 'estoque'
     if text in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
         return 'cadastro'
-    return ''
+    if text in UNIVERSAL_ALIASES:
+        return 'universal'
+    return 'universal'
 
 
 def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
@@ -40,15 +45,26 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
             default_max_products=300,
             required_model=True,
         )
+    if normalized == 'cadastro':
+        return SiteEngineConfig(
+            operation='cadastro',
+            title='Entrada por site',
+            description='Busca dados no site do fornecedor para preencher o modelo escolhido no mapeamento.',
+            button_label='Buscar no site e gerar origem',
+            output_filename='origem_site.csv',
+            default_max_pages=120,
+            default_max_products=300,
+            required_model=False,
+        )
     return SiteEngineConfig(
-        operation='cadastro',
+        operation='universal',
         title='Entrada por site',
-        description='Busca dados no site do fornecedor para preencher o modelo escolhido no mapeamento.',
-        button_label='Buscar no site e gerar origem',
-        output_filename='origem_site.csv',
+        description='Busca no site os campos pedidos pelo modelo anexado e gera uma origem unica.',
+        button_label='Buscar no site e gerar origem unica',
+        output_filename='origem_site_universal.csv',
         default_max_pages=120,
         default_max_products=300,
-        required_model=False,
+        required_model=True,
     )
 
 
@@ -64,8 +80,6 @@ def run_site_engine(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     normalized = normalize_site_operation(operation)
-    if normalized not in {'cadastro', 'estoque'}:
-        raise ValueError('Operação por site não definida. Escolha Cadastro ou Estoque antes de buscar no site.')
     return pipeline(
         raw_urls,
         requested_columns=requested_columns,
