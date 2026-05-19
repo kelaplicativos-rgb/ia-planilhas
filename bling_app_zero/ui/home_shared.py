@@ -15,6 +15,7 @@ from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.template_download_exporter import (
     build_template_download_bytes,
     can_export_from_template,
+    mime_for_template_output,
     output_name_for_template,
 )
 from bling_app_zero.core.validators import validate_final_df
@@ -55,8 +56,8 @@ KIND_LABELS = {
 }
 
 OPERATION_LABELS = {
-    'cadastro': 'Cadastro de produtos',
-    'estoque': 'Atualização de estoque',
+    'cadastro': 'Modelo final preenchido',
+    'estoque': 'Modelo final preenchido',
     'universal': 'Modelo final preenchido',
 }
 
@@ -151,13 +152,7 @@ def _operation_label(operation: str) -> str:
 
 
 def _operation_badge(operation: str) -> str:
-    op = str(operation or '').strip().lower()
-    if op in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
-        op = 'universal'
-    if op == 'estoque':
-        return '📦 ESTOQUE'
-    if op == 'cadastro':
-        return '🧾 CADASTRO'
+    _ = operation
     return '📄 MODELO FINAL'
 
 
@@ -177,7 +172,7 @@ def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
 
 def _render_contract_body(columns: list[str]) -> None:
     contract = build_contract(columns)
-    st.caption('Serão buscados somente estes campos. Se algum dado não existir no site, ele ficará vazio.')
+    st.caption('Serão buscados somente estes campos. Se algum dado não existir na origem, ele ficará vazio.')
     st.dataframe(pd.DataFrame([
         {'Coluna solicitada': field.original, 'Tipo detectado': _kind_label(field.kind), 'Obrigatório': 'Sim' if field.required else 'Não'}
         for field in contract
@@ -188,12 +183,12 @@ def show_contract(columns: list[str]) -> None:
     if not columns:
         return
     try:
-        with st.expander('Campos que serão buscados', expanded=False):
+        with st.expander('Campos que serão preenchidos', expanded=False):
             _render_contract_body(columns)
     except StreamlitAPIException as exc:
         if 'Expanders may not be nested' not in str(exc):
             raise
-        st.markdown('##### Campos que serão buscados')
+        st.markdown('##### Campos que serão preenchidos')
         _render_contract_body(columns)
 
 
@@ -282,22 +277,22 @@ def _get_template_upload() -> tuple[str, bytes] | None:
 def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
     template = _get_template_upload()
     if template is None:
-        st.warning('Reenvie a planilha modelo para gerar o arquivo final no próprio layout anexado.')
+        st.warning('Reenvie a planilha modelo para gerar o arquivo final fiel ao layout anexado.')
         add_audit_event('template_download_original_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
         return None
 
     template_name, template_bytes = template
     if not can_export_from_template(template_name, template_bytes):
-        st.warning('Reenvie o modelo em XLSX ou XLSM para preservar o arquivo exatamente como entrou.')
+        st.warning('Este formato ainda não permite download 100% fiel. Use CSV, XLSX ou XLSM como modelo de destino.')
         add_audit_event('template_download_not_supported', area='DOWNLOAD', status='AGUARDANDO_MODELO_VALIDO', details={'template_name': template_name})
         return None
 
     try:
         data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
-        return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        return data, output_name_for_template(template_name), mime_for_template_output(template_name)
     except Exception as exc:
         add_audit_event('template_download_not_ready', area='DOWNLOAD', status='AGUARDANDO_AJUSTE_CONTRATO', details={'template_name': template_name, 'error': str(exc)})
-        st.warning('A planilha modelo ainda não está pronta para download final.')
+        st.warning('A planilha modelo ainda não está pronta para download final fiel ao layout anexado.')
         st.caption(str(exc))
         return None
 
@@ -338,7 +333,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     operation_title = _operation_label(operation)
     st.markdown(f'##### {_operation_badge(operation)}')
-    st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
+    st.caption(f'Arquivo final: {operation_title}. A saída respeita o modelo anexado como contrato absoluto.')
 
     if st.session_state.pop('final_download_done', False):
         st.success('✅ Download concluído. Os dados continuam preservados nesta tela para você continuar usando o sistema.')
@@ -349,7 +344,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
         return
 
-    st.success('Modelo de destino aplicado. O arquivo final será gerado no próprio layout anexado.')
+    st.success('Modelo de destino aplicado. O arquivo final será gerado fiel ao modelo anexado.')
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
 
