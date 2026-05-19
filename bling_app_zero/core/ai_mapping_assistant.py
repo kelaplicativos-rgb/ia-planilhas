@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,9 +14,9 @@ from bling_app_zero.core.mapping_confidence import confidence_for_mapping
 
 OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 DEFAULT_MODEL = 'gpt-4o-mini'
-MAX_TARGETS = 45
-MAX_SOURCE_COLUMNS = 80
-MAX_SAMPLES = 4
+MAX_TARGETS = 120
+MAX_SOURCE_COLUMNS = 160
+MAX_SAMPLES = 3
 SESSION_AI_LIMIT_DEFAULT = 5
 SESSION_AI_LIMIT_KEY = 'ai_real_mapping_session_limit'
 SESSION_AI_USED_KEY = 'ai_real_mapping_session_used'
@@ -27,6 +28,14 @@ class AIMappingResult:
     applied: int
     suggestions: dict[str, str]
     reason: str = ''
+
+
+def _normalize_header(value: object) -> str:
+    text = str(value or '').strip().lower()
+    text = unicodedata.normalize('NFKD', text)
+    text = ''.join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def _read_streamlit_secret(path: tuple[str, ...]) -> str:
@@ -47,19 +56,6 @@ def _read_streamlit_secret(path: tuple[str, ...]) -> str:
 
 
 def _get_secret_value(key: str) -> str:
-    """Lê somente a chave do app/admin, nunca uma chave digitada pelo usuário final.
-
-    Formatos aceitos no Streamlit Secrets:
-    OPENAI_API_KEY = "..."
-    OPENAI_MODEL = "..."
-
-    ou:
-
-    [openai]
-    api_key = "..."
-    model = "gpt-4o-mini"
-    session_limit = 5
-    """
     key = str(key or '').strip()
     if not key:
         return ''
@@ -144,35 +140,71 @@ def _samples(df: pd.DataFrame, column: str, limit: int = MAX_SAMPLES) -> list[st
     if not isinstance(df, pd.DataFrame) or column not in df.columns:
         return []
     values: list[str] = []
-    for value in df[column].dropna().astype(str).head(30):
+    for value in df[column].dropna().astype(str).head(20):
         text = str(value or '').strip()
         if not text or text.lower() in {'nan', 'none', 'null'}:
             continue
-        if len(text) > 120:
-            text = text[:120] + '...'
+        if len(text) > 90:
+            text = text[:90] + '...'
         values.append(text)
         if len(values) >= limit:
             break
     return values
 
 
+def _exact_header_suggestions(source_columns: list[str], target_columns: list[str]) -> dict[str, str]:
+    """Mapeia cabeçalhos idênticos antes da IA Real.
+
+    Isso garante que campos como Fornecedor, Meses Garantia no Fornecedor e
+    GTIN/EAN da embalagem sejam preenchidos imediatamente quando os nomes batem.
+    """
+    normalized_sources: dict[str, str] = {}
+    for source in source_columns:
+        normalized = _normalize_header(source)
+        if normalized and normalized not in normalized_sources:
+            normalized_sources[normalized] = source
+
+    suggestions: dict[str, str] = {}
+    used: set[str] = set()
+    for target in target_columns:
+        normalized = _normalize_header(target)
+        source = normalized_sources.get(normalized, '')
+        if source and source not in used:
+            suggestions[str(target)] = source
+            used.add(source)
+    return suggestions
+
+
 def _build_payload(df_source: pd.DataFrame, target_columns: list[str], current_mapping: dict[str, str]) -> dict[str, Any]:
     source_columns = [str(c) for c in list(df_source.columns)[:MAX_SOURCE_COLUMNS]]
     targets = [str(c) for c in target_columns[:MAX_TARGETS]]
+    exact_suggestions = _exact_header_suggestions(source_columns, targets)
     return {
-        'rules': [
-            'Return only JSON object: {"mapping": {target_column: source_column_or_empty_string}}.',
-            'Use exact same source column names. Do not invent source columns.',
-            'If unsure, return empty string for that target.',
-            'Never map a source column if its sample values are not compatible with the target meaning.',
-            'Prefer exact name matches, normalized matches, and semantically equivalent names.',
-            'Do not map dimensions, tax, stock, price, GTIN, images, or URL unless values match the expected type.',
+        'task': 'Map target template headers to supplier/source spreadsheet headers.',
+        'priority': [
+            '1. If a target header and source header are identical after normalization, map them.',
+            '2. If they are semantically equivalent, map them only when highly confident.',
+            '3. Use exact source column names from source_columns. Never invent source columns.',
+            '4. If unsure, return empty string for that target.',
+            '5. Do not map a column just because samples look numeric. Header meaning must match.',
         ],
+        'examples': {
+            'Fornecedor': 'Fornecedor',
+            'Meses Garantia no Fornecedor': 'Meses Garantia no Fornecedor',
+            'GTIN/EAN da embalagem': 'GTIN/EAN da embalagem',
+        },
+        'response_format': 'Return only JSON object: {"mapping": {target_column: source_column_or_empty_string}}.',
         'target_columns': targets,
         'source_columns': [
-            {'name': column, 'samples': _samples(df_source, column)} for column in source_columns
+            {
+                'name': column,
+                'normalized_name': _normalize_header(column),
+                'samples': _samples(df_source, column),
+            }
+            for column in source_columns
         ],
         'current_mapping': {str(k): str(v or '') for k, v in dict(current_mapping or {}).items() if str(k) in targets},
+        'precomputed_exact_header_matches': exact_suggestions,
     }
 
 
@@ -208,7 +240,11 @@ def _call_openai(payload: dict[str, Any]) -> dict[str, str]:
         'messages': [
             {
                 'role': 'system',
-                'content': 'You are a careful data mapping assistant for Brazilian ecommerce spreadsheets and Bling import templates. Be conservative and precise.',
+                'content': (
+                    'You are a precise spreadsheet header mapping assistant. '
+                    'Your job is to correlate source spreadsheet headers with template headers. '
+                    'Prefer exact header matches. Be conservative. Return JSON only.'
+                ),
             },
             {
                 'role': 'user',
@@ -247,6 +283,38 @@ def _valid_source(source: str, source_columns: set[str]) -> bool:
     return bool(source) and source in source_columns
 
 
+def _accept_suggestions(
+    suggestions: dict[str, str],
+    targets: list[str],
+    source_columns: set[str],
+    current_mapping: dict[str, str],
+    df_source: pd.DataFrame,
+) -> dict[str, str]:
+    accepted: dict[str, str] = {}
+    used = {value for value in dict(current_mapping or {}).values() if value}
+    used.update({value for value in accepted.values() if value})
+
+    for target, source in suggestions.items():
+        target = str(target)
+        source = str(source or '')
+        if target not in targets or not _valid_source(source, source_columns):
+            continue
+        if source in used and current_mapping.get(target) != source:
+            continue
+
+        if _normalize_header(target) == _normalize_header(source):
+            accepted[target] = source
+            used.add(source)
+            continue
+
+        info = confidence_for_mapping(df_source, target, source)
+        if str(info.get('level')) in {'verde', 'amarelo'}:
+            accepted[target] = source
+            used.add(source)
+
+    return accepted
+
+
 def apply_ai_mapping_assist(
     df_source: pd.DataFrame,
     target_columns: list[str],
@@ -260,35 +328,28 @@ def apply_ai_mapping_assist(
     if not isinstance(df_source, pd.DataFrame) or df_source.empty:
         return AIMappingResult(True, 0, {}, 'origem vazia')
 
-    source_columns = {str(c) for c in df_source.columns}
-    targets = [str(t) for t in target_columns]
+    source_columns_list = [str(c) for c in df_source.columns]
+    source_columns = set(source_columns_list)
+    all_targets = [str(t) for t in target_columns]
+    targets = all_targets
     if only_uncertain:
-        targets = [target for target in targets if _needs_ai(target, current_mapping, df_source)]
+        targets = [target for target in all_targets if _needs_ai(target, current_mapping, df_source)]
     if not targets:
         return AIMappingResult(True, 0, {}, 'sem campos incertos')
 
+    exact = _exact_header_suggestions(source_columns_list, targets)
+
     if not _consume_session_call():
-        return AIMappingResult(False, 0, {}, 'limite de IA da sessão atingido')
+        return AIMappingResult(False, 0, exact, 'limite de IA da sessão atingido')
 
     payload = _build_payload(df_source, targets, current_mapping)
-    suggestions = _call_openai(payload)
-    if not suggestions:
+    ai_suggestions = _call_openai(payload)
+    combined = {**ai_suggestions, **exact}
+
+    if not combined:
         return AIMappingResult(True, 0, {}, 'sem sugestoes da IA')
 
-    accepted: dict[str, str] = {}
-    used = {value for value in dict(current_mapping or {}).values() if value}
-    for target, source in suggestions.items():
-        target = str(target)
-        source = str(source or '')
-        if target not in targets or not _valid_source(source, source_columns):
-            continue
-        if source in used and current_mapping.get(target) != source:
-            continue
-        info = confidence_for_mapping(df_source, target, source)
-        if str(info.get('level')) in {'verde', 'amarelo'}:
-            accepted[target] = source
-            used.add(source)
-
+    accepted = _accept_suggestions(combined, targets, source_columns, current_mapping, df_source)
     return AIMappingResult(True, len(accepted), accepted, 'ok')
 
 
