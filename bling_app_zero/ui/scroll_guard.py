@@ -6,15 +6,15 @@ import streamlit.components.v1 as components
 def inject_scroll_guard(namespace: str = 'mapeiaai') -> None:
     """Preserva a posição da tela entre reruns causados por widgets.
 
-    Streamlit reexecuta o script quando selectbox, radio, input, upload ou botão
-    muda. Em mobile, o DOM pode demorar mais para estabilizar; por isso a
-    restauração precisa ser repetida por mais tempo para evitar que a tela suba
-    depois da ação.
+    Regra de UX: depois de clicar, anexar, selecionar ou buscar, a tela deve
+    permanecer na região da ação. O guard salva a posição antes da interação e
+    evita que o rerun do Streamlit sobrescreva a posição salva com o topo da tela.
     """
     safe_namespace = ''.join(ch for ch in str(namespace or 'mapeiaai') if ch.isalnum() or ch in {'_', '-'})
     storage_key = f'{safe_namespace}_scroll_y'
     installed_key = f'__{safe_namespace}_scroll_guard_installed__'
     pending_restore_key = f'{safe_namespace}_scroll_pending_restore'
+    restoring_until_key = f'{safe_namespace}_scroll_restoring_until'
 
     components.html(
         f"""
@@ -25,6 +25,9 @@ def inject_scroll_guard(namespace: str = 'mapeiaai') -> None:
   const storageKey = {storage_key!r};
   const installedKey = {installed_key!r};
   const pendingRestoreKey = {pending_restore_key!r};
+  const restoringUntilKey = {restoring_until_key!r};
+
+  function now() {{ return Date.now ? Date.now() : new Date().getTime(); }}
 
   function candidates() {{
     const items = [
@@ -52,18 +55,52 @@ def inject_scroll_guard(namespace: str = 'mapeiaai') -> None:
     return y;
   }}
 
-  function saveScroll() {{
+  function readSavedY() {{
+    try {{ return parseInt(w.sessionStorage.getItem(storageKey) || '0', 10) || 0; }} catch (e) {{ return 0; }}
+  }}
+
+  function isRestoring() {{
+    try {{
+      const until = parseInt(w.sessionStorage.getItem(restoringUntilKey) || '0', 10) || 0;
+      return until > now();
+    }} catch (e) {{
+      return false;
+    }}
+  }}
+
+  function markPendingRestore(durationMs) {{
+    try {{
+      w.sessionStorage.setItem(pendingRestoreKey, '1');
+      w.sessionStorage.setItem(restoringUntilKey, String(now() + (durationMs || 3200)));
+    }} catch (e) {{}}
+  }}
+
+  function saveScroll(force) {{
     try {{
       const y = currentY();
+      const saved = readSavedY();
+
+      // Durante o rerun, o Streamlit pode jogar a tela para 0 antes de remontar.
+      // Não deixe esse 0 apagar a posição real onde o usuário clicou.
+      if (!force && isRestoring() && y < Math.max(20, saved - 80)) return;
+
       if (y >= 0) {{
         w.sessionStorage.setItem(storageKey, String(y));
-        w.sessionStorage.setItem(pendingRestoreKey, '1');
+        markPendingRestore(3400);
       }}
     }} catch (e) {{}}
   }}
 
-  function readSavedY() {{
-    try {{ return parseInt(w.sessionStorage.getItem(storageKey) || '0', 10) || 0; }} catch (e) {{ return 0; }}
+  function saveInteractionPosition(event) {{
+    try {{
+      const y = currentY();
+      if (y > 0) {{
+        w.sessionStorage.setItem(storageKey, String(y));
+        markPendingRestore(3600);
+      }}
+    }} catch (e) {{
+      saveScroll(true);
+    }}
   }}
 
   function shouldRestore(y) {{
@@ -89,36 +126,38 @@ def inject_scroll_guard(namespace: str = 'mapeiaai') -> None:
   function restoreScroll() {{
     const y = readSavedY();
     if (!shouldRestore(y)) return;
+    markPendingRestore(3600);
 
-    const delays = [0, 40, 90, 160, 260, 420, 650, 900, 1250, 1650, 2200];
+    const delays = [0, 35, 80, 140, 220, 340, 520, 760, 1050, 1400, 1850, 2400, 3100];
     for (const delay of delays) {{
       w.setTimeout(function () {{
         const target = readSavedY();
-        if (shouldRestore(target)) {{
-          applyScroll(target);
-        }}
+        if (shouldRestore(target)) applyScroll(target);
       }}, delay);
     }}
 
     w.setTimeout(function () {{
-      try {{ w.sessionStorage.removeItem(pendingRestoreKey); }} catch (e) {{}}
-    }}, 2600);
+      try {{
+        w.sessionStorage.removeItem(pendingRestoreKey);
+        w.sessionStorage.removeItem(restoringUntilKey);
+      }} catch (e) {{}}
+    }}, 3800);
   }}
 
   restoreScroll();
 
   if (!w[installedKey]) {{
     w[installedKey] = true;
-    const events = ['mousedown', 'touchstart', 'touchend', 'pointerdown', 'keydown', 'focusin', 'input', 'change', 'click', 'submit'];
-    for (const eventName of events) {{
-      d.addEventListener(eventName, saveScroll, true);
+    const interactionEvents = ['mousedown', 'touchstart', 'touchend', 'pointerdown', 'keydown', 'focusin', 'input', 'change', 'click', 'submit'];
+    for (const eventName of interactionEvents) {{
+      d.addEventListener(eventName, saveInteractionPosition, true);
     }}
-    w.addEventListener('beforeunload', saveScroll, true);
-    w.addEventListener('pagehide', saveScroll, true);
-    w.addEventListener('visibilitychange', saveScroll, true);
+    w.addEventListener('beforeunload', function () {{ saveScroll(true); }}, true);
+    w.addEventListener('pagehide', function () {{ saveScroll(true); }}, true);
+    w.addEventListener('visibilitychange', function () {{ saveScroll(true); }}, true);
     w.addEventListener('scroll', function () {{
       if (w.__mapeiaai_scroll_timer__) w.clearTimeout(w.__mapeiaai_scroll_timer__);
-      w.__mapeiaai_scroll_timer__ = w.setTimeout(saveScroll, 100);
+      w.__mapeiaai_scroll_timer__ = w.setTimeout(function () {{ saveScroll(false); }}, 120);
     }}, true);
   }}
 }})();
