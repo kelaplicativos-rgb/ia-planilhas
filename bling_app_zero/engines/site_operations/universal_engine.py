@@ -37,13 +37,13 @@ def run_universal_site_engine(
     único DataFrame com exatamente as colunas solicitadas.
     """
     columns = cadastro_columns(requested_columns)
-    plan = build_submotor_plan('cadastro', columns)
+    plan = build_submotor_plan('universal', columns)
     _emit(progress_callback, {
         'stage': 'Motor universal',
         'message': f'Origem única por modelo. Submotores ativos: {plan.summary}.',
         'progress': 0.04,
         'submotors': plan.active,
-        'operation': 'universal',
+        'operation': plan.operation,
     })
 
     # Em sites Stoqui/React, a API interna deve operar primeiro porque o HTML
