@@ -13,11 +13,18 @@ from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.rules_signature import rules_signature
+from bling_app_zero.core.template_download_exporter import (
+    build_template_download_bytes,
+    can_export_from_template,
+    output_name_for_template,
+)
 from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.universal.contract_adapter import adapt_dataframe_to_model_contract, model_for_operation
 
 PREVIEW_ROWS = 50
 _PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
+DESTINATION_MODEL_UPLOAD_OBJECT_KEY = 'destination_model_upload_object'
+DESTINATION_MODEL_UPLOAD_NAME_KEY = 'destination_model_upload_name'
 
 KIND_LABELS = {
     'id_produto': 'Identificador do produto',
@@ -151,7 +158,9 @@ def _operation_badge(operation: str) -> str:
     return '📄 PLANILHA'
 
 
-def _download_label(operation: str) -> str:
+def _download_label(operation: str, *, template_mode: bool = False) -> str:
+    if template_mode:
+        return '⬇️ Baixar modelo preenchido fiel ao arquivo anexado'
     op = str(operation or '').strip().lower()
     if op == 'estoque':
         return '⬇️ Baixar planilha final de ESTOQUE'
@@ -239,7 +248,6 @@ def _preserve_flow_after_download(operation: str) -> None:
 
 
 def _after_final_download(operation: str, signature: str, rules_sig: str) -> None:
-    """Registra o download sem limpar a sessão nem derrubar a navegação."""
     _preserve_flow_after_download(operation)
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
@@ -257,6 +265,40 @@ def _download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[
     applied = isinstance(model, pd.DataFrame) and len(model.columns) > 0
     model_columns = [str(column) for column in model.columns] if applied else []
     return adapted, applied, model_columns
+
+
+def _get_template_upload() -> tuple[str, bytes] | None:
+    uploaded = st.session_state.get(DESTINATION_MODEL_UPLOAD_OBJECT_KEY)
+    if uploaded is None:
+        return None
+    name = str(getattr(uploaded, 'name', '') or st.session_state.get(DESTINATION_MODEL_UPLOAD_NAME_KEY) or '').strip()
+    try:
+        data = uploaded.getvalue()
+    except Exception:
+        data = None
+    if not name or not data:
+        return None
+    return name, bytes(data)
+
+
+def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
+    template = _get_template_upload()
+    if template is None:
+        return None
+    template_name, template_bytes = template
+    if not can_export_from_template(template_name, template_bytes):
+        return None
+    try:
+        data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
+        return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    except Exception as exc:
+        add_audit_event(
+            'template_download_build_failed',
+            area='DOWNLOAD',
+            status='ERRO',
+            details={'template_name': template_name, 'error': str(exc)},
+        )
+        return None
 
 
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
@@ -292,8 +334,25 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
-    csv_bytes = _csv_bytes_cached(download_df.copy(), operation, signature, rules_sig)
+    template_export = _build_template_download(download_df.copy())
 
+    if template_export is not None:
+        template_bytes, template_file_name, template_mime = template_export
+        st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM são preservadas sempre que o formato permitir.')
+        st.download_button(
+            _download_label(operation, template_mode=True),
+            data=template_bytes,
+            file_name=template_file_name,
+            mime=template_mime,
+            use_container_width=True,
+            key=f'download_template_{key}_{signature}_{rules_sig}',
+            on_click=_after_final_download,
+            args=(operation, signature, rules_sig),
+        )
+        return
+
+    csv_bytes = _csv_bytes_cached(download_df.copy(), operation, signature, rules_sig)
+    st.warning('Fallback CSV usado porque o modelo original não está disponível como XLSX/XLSM preservável nesta sessão.')
     st.download_button(
         _download_label(operation),
         data=csv_bytes,
