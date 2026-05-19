@@ -58,6 +58,12 @@ ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
+STALE_CADASTRO_OPERATION_KEYS = (
+    'df_final_download_operation',
+    'df_final_preview_operation',
+    'final_download_operation',
+    'bling_wizard_state_guard_last_operation',
+)
 
 
 def _looks_like_loaded_df(value: object) -> bool:
@@ -95,13 +101,45 @@ def _query_param(name: str) -> str:
         return ''
 
 
+def _clear_stale_cadastro_operation_state() -> None:
+    """Remove operações antigas que faziam o download universal aparecer como CADASTRO."""
+    removed: list[str] = []
+    for key in STALE_CADASTRO_OPERATION_KEYS:
+        if str(st.session_state.get(key) or '').strip().lower() == 'cadastro':
+            st.session_state.pop(key, None)
+            removed.append(key)
+
+    # Widget antigo inclui `_cadastro_` na chave e mantém o botão/estado visual antigo.
+    widget_key = str(st.session_state.get('final_download_widget_key') or '')
+    if '_cadastro_' in widget_key or widget_key.endswith('_cadastro'):
+        st.session_state.pop('final_download_widget_key', None)
+        removed.append('final_download_widget_key')
+
+    for key in list(st.session_state.keys()):
+        text_key = str(key)
+        if text_key.startswith('download_template_modelo_anexado_cadastro'):
+            st.session_state.pop(key, None)
+            removed.append(text_key)
+
+    if removed:
+        add_audit_event(
+            'universal_flow_stale_cadastro_state_cleared',
+            area='WIZARD',
+            step='download',
+            status='OK',
+            details={'removed_keys': removed[:30], 'removed_count': len(removed), 'responsible_file': RESPONSIBLE_FILE},
+        )
+
+
 def _ensure_universal_operation_state() -> str:
     if not _has_home_models():
         return ''
+    _clear_stale_cadastro_operation_state()
     st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
     st.session_state['operacao_final'] = UNIVERSAL_OPERATION
     st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
     st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION
+    st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
     st.session_state.pop('tipo_operacao_site', None)
     return UNIVERSAL_OPERATION
 
@@ -226,6 +264,7 @@ def _select_origin(origin: str) -> None:
     st.session_state['origem_final'] = origin
     st.session_state.pop('tipo_operacao_site', None)
     st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
+    _clear_stale_cadastro_operation_state()
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
     _set_scroll_target(STEP_ENTRADA)
     add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': UNIVERSAL_OPERATION, 'previous_origin': previous_origin, 'scroll_target': STEP_ENTRADA, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
@@ -378,6 +417,7 @@ def _render_cadastro_download() -> None:
     if not cadastro_mapping_ready():
         render_pending_notice('Confirme o mapeamento primeiro.')
         return
+    _clear_stale_cadastro_operation_state()
     render_cadastro_download_step()
     if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset_single_page'):
         _reset_wizard()
