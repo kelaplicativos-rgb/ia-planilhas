@@ -226,7 +226,7 @@ def run_pipeline(
     )
 
     if progress_callback:
-        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados no padrao do Bling...', 'progress': 0.96})
+        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados conforme o modelo anexado...', 'progress': 0.96})
     cleaned_result = _clean_site_description_columns(df_result, selected_operation)
     safe = sanitize_for_bling(cleaned_result, operation=selected_operation)
     if progress_callback:
