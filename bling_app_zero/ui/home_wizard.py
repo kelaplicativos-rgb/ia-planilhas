@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.cadastro_wizard_steps import (
@@ -59,6 +60,7 @@ AUTOFLOW_LAST_STEP_KEY = 'bling_autofluxo_last_step'
 AUTOFLOW_LAST_MOVE_KEY = 'bling_autofluxo_last_move'
 MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}
 VALID_OPERATIONS = {'cadastro', 'estoque'}
+SCROLL_TARGET_KEY = 'home_wizard_scroll_target_step'
 
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
@@ -188,6 +190,78 @@ def _current_step() -> str:
     return step
 
 
+def _set_scroll_target(step: str) -> None:
+    if step == STEP_OPERACAO:
+        step = STEP_ORIGEM
+    if step:
+        st.session_state[SCROLL_TARGET_KEY] = step
+
+
+def _render_step_anchor(step: str) -> None:
+    safe_step = ''.join(ch for ch in str(step or '') if ch.isalnum() or ch in {'_', '-'})
+    if not safe_step:
+        return
+    st.markdown(
+        f'<div id="bling-step-{safe_step}" data-bling-step="{safe_step}" style="position:relative; top:-84px; height:1px;"></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _inject_scroll_to_target() -> None:
+    target = str(st.session_state.pop(SCROLL_TARGET_KEY, '') or '').strip().lower()
+    if not target:
+        return
+    safe_target = ''.join(ch for ch in target if ch.isalnum() or ch in {'_', '-'})
+    if not safe_target:
+        return
+    components.html(
+        f"""
+<script>
+(function () {{
+  const w = window.parent;
+  const d = w.document;
+  const targetId = 'bling-step-{safe_target}';
+  const storageKey = 'home_wizard_scroll_y';
+  const pendingKey = 'home_wizard_scroll_pending_restore';
+  const restoringUntilKey = 'home_wizard_scroll_restoring_until';
+
+  function now() {{ return Date.now ? Date.now() : new Date().getTime(); }}
+  function findTarget() {{ return d.getElementById(targetId) || d.querySelector('[data-bling-step="{safe_target}"]'); }}
+  function scrollToTarget() {{
+    const target = findTarget();
+    if (!target) return false;
+    const rect = target.getBoundingClientRect();
+    const currentY = w.scrollY || w.pageYOffset || d.documentElement.scrollTop || d.body.scrollTop || 0;
+    const y = Math.max(0, currentY + rect.top - 72);
+    try {{
+      w.sessionStorage.setItem(storageKey, String(y));
+      w.sessionStorage.setItem(pendingKey, '1');
+      w.sessionStorage.setItem(restoringUntilKey, String(now() + 3200));
+    }} catch (e) {{}}
+    try {{ w.scrollTo({{ top: y, behavior: 'auto' }}); }} catch (e) {{ w.scrollTo(0, y); }}
+    try {{ d.documentElement.scrollTop = y; d.body.scrollTop = y; }} catch (e) {{}}
+    return true;
+  }}
+
+  const delays = [0, 60, 140, 260, 420, 700, 1050, 1450, 2000];
+  for (const delay of delays) {{
+    w.setTimeout(scrollToTarget, delay);
+  }}
+}})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+    add_audit_event(
+        'wizard_scroll_target_requested',
+        area='WIZARD',
+        step=target,
+        status='OK',
+        details={'target_step': target, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _clear_manual_pause(step: str | None = None) -> None:
     _ = step
     for key in (AUTOFLOW_PAUSE_STEP_KEY, AUTOFLOW_MANUAL_LOCK_KEY, AUTOFLOW_LAST_MOVE_KEY):
@@ -201,6 +275,7 @@ def _go_to_step(step: str, *, reason: str = 'navigation') -> None:
         step = STEP_ORIGEM if _has_home_models() else STEP_MODELO
     previous = st.session_state.get(WIZARD_STEP_KEY)
     st.session_state[WIZARD_STEP_KEY] = step
+    _set_scroll_target(step)
     add_audit_event('wizard_single_page_step_marker_changed', area='WIZARD', step=step, details={'from': previous, 'to': step, 'reason': reason, 'operation': _selected_operation(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
 
 
@@ -286,8 +361,9 @@ def _sync_flow_state(origin: str, operation: str | None = None) -> None:
     st.session_state['home_slim_flow_operation'] = operation
     st.session_state['home_operation_choice_removed'] = True
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
+    _set_scroll_target(STEP_ENTRADA)
     if previous_origin != origin:
-        add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'scroll_target': STEP_ENTRADA, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
         st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
@@ -390,6 +466,7 @@ def _section_title(number: int, title: str, caption: str = '') -> None:
 
 def _render_model_step() -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
+    _render_step_anchor(STEP_MODELO)
     _section_title(1, 'Modelo')
     with st.container(border=True):
         render_home_bling_models()
@@ -404,6 +481,7 @@ def _render_origin_explanation(origin: str) -> None:
 
 
 def _render_origin_step() -> None:
+    _render_step_anchor(STEP_ORIGEM)
     _section_title(2, 'Origem')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
@@ -429,6 +507,7 @@ def _render_origin_step() -> None:
 
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
+    _render_step_anchor(STEP_ENTRADA)
     _section_title(3, 'Dados')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
@@ -444,6 +523,7 @@ def _render_cadastro_entrada() -> None:
 
 
 def _render_pricing_step() -> None:
+    _render_step_anchor(STEP_PRECIFICACAO)
     _section_title(4, 'Preço')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
@@ -463,6 +543,7 @@ def _render_pricing_step() -> None:
 
 
 def _render_cadastro_mapeamento() -> None:
+    _render_step_anchor(STEP_MAPEAMENTO)
     _section_title(5, 'Mapeamento')
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e dados.')
@@ -474,6 +555,7 @@ def _render_cadastro_mapeamento() -> None:
 
 
 def _render_cadastro_preview() -> None:
+    _render_step_anchor(STEP_PREVIEW)
     _section_title(6, 'Preview')
     if not _has_home_models():
         render_pending_notice('Liberado após o mapeamento.')
@@ -490,6 +572,7 @@ def _render_reset_only_footer(key: str) -> None:
 
 
 def _render_cadastro_download() -> None:
+    _render_step_anchor(STEP_DOWNLOAD)
     _section_title(7, 'Download')
     if not _has_home_models():
         render_pending_notice('Liberado no final.')
@@ -512,6 +595,7 @@ def render_home_wizard() -> None:
         _force_model_first_when_missing()
         add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
         _render_model_step()
+        _inject_scroll_to_target()
         return
 
     add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
@@ -522,6 +606,7 @@ def render_home_wizard() -> None:
     _render_cadastro_mapeamento()
     _render_cadastro_preview()
     _render_cadastro_download()
+    _inject_scroll_to_target()
 
 
 __all__ = [
