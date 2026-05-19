@@ -108,11 +108,11 @@ def render_model_upload_box(
     caption: str | None = None,
 ) -> ModelUploadResult:
     files = st.file_uploader(
-        'Enviar modelos de importação',
+        'Enviar modelo de destino',
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie a planilha modelo que será preenchida no final.',
+        help='Envie a planilha modelo que será preenchida no final. Ela precisa ter cabeçalho com os nomes das colunas.',
         label_visibility='collapsed',
     )
 
@@ -148,7 +148,10 @@ def render_model_upload_box(
         destination_file, destination_df = _pick_destination_model(loaded)
 
     if not _valid_model(destination_df):
-        st.warning('Não encontrei cabeçalho válido na planilha modelo. Envie uma planilha com colunas.')
+        st.warning(
+            'Não encontrei colunas válidas nesse arquivo. '
+            'Verifique se a planilha possui cabeçalho na primeira linha ou envie o modelo correto que será preenchido no final.'
+        )
         return ModelUploadResult(attachments=supported_files, ignored_files=ignored_files)
 
     add_audit_event(
