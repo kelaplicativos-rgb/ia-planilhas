@@ -25,10 +25,10 @@ def _safe_widget_scope(value: object) -> str:
 
 
 def _render_rules_header() -> None:
-    st.markdown('### Proteções do arquivo final')
+    st.markdown('### Conferir arquivo final')
     st.caption(
-        'Aqui ficam somente proteções globais da IA Real antes do preview final. '
-        'Preenchimento de campo agora é feito no mapeamento: escolher coluna, escrever valor fixo ou deixar vazio.'
+        'A IA Real confere o arquivo antes de mostrar o resultado. '
+        'Aqui você pode ligar ou desligar proteções simples, como limpar GTIN inválido e organizar imagens.'
     )
 
 
@@ -69,17 +69,17 @@ def render_rules_center_step(key_scope: str = 'ia_real') -> None:
         normalized = set_user_rules(rules)
         auto_save_rules_if_changed(normalized, previous_signature)
 
-        st.info('Valores padrão como Altura, Unidade, Situação ou Clonar dados do pai devem ser definidos em “escrever valor fixo” no mapeamento.')
+        st.info('Para preencher campos fixos, como Altura, Unidade ou Situação, use a opção “escrever valor fixo” ao ligar as colunas.')
 
         st.divider()
         col_save, col_reset = st.columns(2)
         with col_save:
-            if st.button('Salvar proteções', use_container_width=True, key=f'rules_center_{widget_scope}_save'):
+            if st.button('Salvar conferência', use_container_width=True, key=f'rules_center_{widget_scope}_save'):
                 mark_rules_ready(_strip_fill_rules(normalized), source='save_button')
                 clear_mapping_rule_cache()
-                st.success('Proteções salvas para esta sessão.')
+                st.success('Conferência salva.')
         with col_reset:
-            if st.button('Restaurar proteções padrão', use_container_width=True, key=f'rules_center_{widget_scope}_reset'):
+            if st.button('Voltar ao padrão', use_container_width=True, key=f'rules_center_{widget_scope}_reset'):
                 restored = _strip_fill_rules(get_user_rules())
                 restored['clean_invalid_gtin'] = True
                 restored['normalize_image_separator'] = True
@@ -89,10 +89,10 @@ def render_rules_center_step(key_scope: str = 'ia_real') -> None:
                 st.session_state[RULES_CENTER_AUTOSAVE_SIGNATURE_KEY] = rules_signature(normalized)
                 st.session_state[RULES_CENTER_READY_KEY] = True
                 clear_mapping_rule_cache()
-                st.success('Proteções padrão restauradas.')
+                st.success('Padrão restaurado.')
                 st.rerun()
 
-    st.caption('Use Avançar para seguir. O que for escolhido no mapeamento terá prioridade no CSV final.')
+    st.caption('Depois disso, confira o resultado final antes de baixar.')
 
 
 __all__ = [
