@@ -136,12 +136,6 @@ def _has_all_column_groups(df: pd.DataFrame | None, terms: list[str]) -> bool:
 
 
 def _official_stock_model(file: Any, df: pd.DataFrame | None) -> bool:
-    """Reconhece os modelos oficiais de saldo/estoque do Bling.
-
-    Os modelos oficiais de estoque têm colunas como Depósito e Balanço/Saldo.
-    Mesmo quando também possuem GTIN, descrição e preço unitário, eles não devem
-    ser tratados como cadastro de produto.
-    """
     name = _normalize_text(_file_name(file))
     columns = _column_text(df)
     if not columns:
@@ -160,12 +154,6 @@ def _official_stock_model(file: Any, df: pd.DataFrame | None) -> bool:
 
 
 def _official_cadastro_model(file: Any, df: pd.DataFrame | None) -> bool:
-    """Reconhece os modelos oficiais de cadastro/produtos do Bling.
-
-    O modelo de cadastro pode ter uma coluna "Estoque", mas não tem o par
-    obrigatorio "Deposito" + "Balanco". Por isso ele deve ser classificado como
-    cadastro quando aparecer com colunas fortes de produto.
-    """
     if _official_stock_model(file, df):
         return False
 
@@ -231,12 +219,6 @@ def _pick_cadastro(loaded: list[tuple[Any, pd.DataFrame | None]]) -> tuple[Any |
 
 
 def _pick_generic_cadastro_contract(loaded: list[tuple[Any, pd.DataFrame | None]]) -> tuple[Any | None, pd.DataFrame | None]:
-    """Fallback para modelos de marketplace que não parecem Bling.
-
-    Quando o usuário está no fluxo de cadastro e anexou uma planilha modelo de
-    marketplace, como Magalu, Mercado Livre ou outro canal, ela deve virar
-    contrato do arquivo final mesmo sem colunas oficiais do Bling.
-    """
     candidates: list[tuple[Any, pd.DataFrame]] = []
     for file, df in loaded:
         if _official_stock_model(file, df):
@@ -258,16 +240,6 @@ def _pick_estoque(loaded: list[tuple[Any, pd.DataFrame | None]], used_file: Any 
     return file, df
 
 
-def _detected_message(cadastro_df: pd.DataFrame | None, estoque_df: pd.DataFrame | None) -> str:
-    if isinstance(estoque_df, pd.DataFrame) and not isinstance(cadastro_df, pd.DataFrame):
-        return 'Modelo de estoque reconhecido.'
-    if isinstance(cadastro_df, pd.DataFrame) and not isinstance(estoque_df, pd.DataFrame):
-        return 'Modelo de cadastro reconhecido.'
-    if isinstance(cadastro_df, pd.DataFrame) and isinstance(estoque_df, pd.DataFrame):
-        return 'Modelos reconhecidos.'
-    return 'Arquivo recebido.'
-
-
 def _render_detected_summary(
     supported_files: list[Any],
     cadastro_file: Any | None,
@@ -275,34 +247,23 @@ def _render_detected_summary(
     cadastro_df: pd.DataFrame | None,
     estoque_df: pd.DataFrame | None,
 ) -> None:
-    """Mostra apenas um resumo leve do modelo.
+    """Resumo neutro do modelo anexado.
 
-    BLINGFIX: a versão anterior renderizava preview_df dentro do expander.
-    Mesmo fechado, o Streamlit ainda montava a tabela, gerando sensação de delay
-    depois do anexo na primeira tela.
+    A etapa Modelo não deve afirmar cadastro/estoque. O usuário ainda escolherá
+    a origem e o sistema deve apenas garantir que o arquivo final seguirá o
+    modelo anexado.
     """
     if not supported_files:
         return
 
-    st.success(_detected_message(cadastro_df, estoque_df))
+    df = cadastro_df if isinstance(cadastro_df, pd.DataFrame) else estoque_df
+    file = cadastro_file if isinstance(cadastro_df, pd.DataFrame) else estoque_file
 
-    details: list[str] = []
-    if isinstance(cadastro_df, pd.DataFrame):
-        name = _file_name(cadastro_file) if cadastro_file else 'Cadastro/marketplace'
-        details.append(f'Cadastro: {name} · {_df_short_summary(cadastro_df)}')
-    if isinstance(estoque_df, pd.DataFrame):
-        name = _file_name(estoque_file) if estoque_file else 'Estoque'
-        details.append(f'Estoque: {name} · {_df_short_summary(estoque_df)}')
-
-    for detail in details:
-        st.caption(detail)
-
-    if isinstance(cadastro_df, pd.DataFrame) or isinstance(estoque_df, pd.DataFrame):
-        with st.expander('Ver colunas detectadas', expanded=False):
-            if isinstance(cadastro_df, pd.DataFrame):
-                st.caption('Cadastro: ' + _df_columns_summary(cadastro_df))
-            if isinstance(estoque_df, pd.DataFrame):
-                st.caption('Estoque: ' + _df_columns_summary(estoque_df))
+    st.success('Modelo anexado.')
+    if isinstance(df, pd.DataFrame):
+        st.caption(f'{_file_name(file)} · {_df_short_summary(df)}')
+        with st.expander('Ver colunas do modelo', expanded=False):
+            st.caption(_df_columns_summary(df))
 
 
 def render_model_upload_box(
@@ -317,7 +278,7 @@ def render_model_upload_box(
         type=None,
         accept_multiple_files=True,
         key=key,
-        help='Envie o modelo de cadastro, marketplace, estoque ou ambos. No Android, escolha Arquivos/Downloads no seletor.',
+        help='Envie a planilha modelo que será preenchida. No Android, escolha Arquivos/Downloads no seletor.',
         label_visibility='collapsed',
     )
 
@@ -369,16 +330,17 @@ def render_model_upload_box(
 
     model_file, model_df = (estoque_file, estoque_df) if operation == 'estoque' else (cadastro_file, cadastro_df)
     add_audit_event(
-        'model_upload_classified',
+        'model_upload_classified_internal_only',
         area='MODELO',
         details={
-            'operation': operation,
+            'operation_internal': operation,
             'cadastro_file': _file_audit_info(cadastro_file) if cadastro_file else None,
             'estoque_file': _file_audit_info(estoque_file) if estoque_file else None,
             'selected_model_file': _file_audit_info(model_file) if model_file else None,
             'cadastro_df': _df_audit_info(cadastro_df),
             'estoque_df': _df_audit_info(estoque_df),
             'selected_df': _df_audit_info(model_df),
+            'visual_message': 'neutral_model_uploaded',
         },
     )
     _render_detected_summary(supported_files, cadastro_file, estoque_file, cadastro_df, estoque_df)
