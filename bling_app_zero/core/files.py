@@ -55,11 +55,34 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _best_frame(frames: list[pd.DataFrame]) -> pd.DataFrame:
-    valid = [_clean_columns(frame) for frame in frames if isinstance(frame, pd.DataFrame) and not frame.empty and len(frame.columns)]
-    if not valid:
-        return pd.DataFrame()
-    valid.sort(key=lambda df: len(df) * max(1, len(df.columns)), reverse=True)
-    return valid[0].fillna('').astype(str).reset_index(drop=True)
+    """Escolhe a melhor aba preservando planilhas modelo sem linhas.
+
+    Modelos de importação do Bling normalmente vêm apenas com cabeçalho.
+    O pandas lê esses arquivos como DataFrame vazio, mas com colunas válidas.
+    Antes essa função descartava DataFrames vazios e fazia o upload do modelo
+    parecer sem cabeçalho, bloqueando a próxima fase do wizard.
+    """
+    structured: list[pd.DataFrame] = []
+    header_only: list[pd.DataFrame] = []
+
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or len(frame.columns) == 0:
+            continue
+        cleaned = _clean_columns(frame).fillna('').astype(str).reset_index(drop=True)
+        if cleaned.empty:
+            header_only.append(cleaned)
+        else:
+            structured.append(cleaned)
+
+    if structured:
+        structured.sort(key=lambda df: len(df) * max(1, len(df.columns)), reverse=True)
+        return structured[0]
+
+    if header_only:
+        header_only.sort(key=lambda df: len(df.columns), reverse=True)
+        return header_only[0]
+
+    return pd.DataFrame()
 
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
