@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 
 import pandas as pd
@@ -10,6 +11,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_shared import read_upload_fast
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
+EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xlsm'}
 
 
 @dataclass
@@ -55,9 +57,99 @@ def _df_audit_info(df: pd.DataFrame | None) -> dict[str, Any]:
     }
 
 
+def _clean_header_value(value: Any) -> str:
+    text = str(value or '').replace('\ufeff', '').strip()
+    text = ' '.join(text.split())
+    return text
+
+
+def _dedupe_columns(columns: list[str]) -> list[str]:
+    seen: dict[str, int] = {}
+    fixed: list[str] = []
+    for index, column in enumerate(columns):
+        base = _clean_header_value(column) or f'Coluna {index + 1}'
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        fixed.append(base if count == 0 else f'{base} ({count + 1})')
+    return fixed
+
+
+def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
+    """Recupera cabeçalho de modelos XLSX/XLSM sem linhas.
+
+    Alguns modelos do Bling têm somente cabeçalho e linhas vazias. Quando o
+    cache/leitor antigo devolve DataFrame 0x0, este fallback lê a primeira linha
+    diretamente com openpyxl e devolve um DataFrame 0 linhas x N colunas.
+    """
+    if _file_ext(file) not in EXCEL_HEADER_FALLBACK_TYPES:
+        return None
+
+    try:
+        from openpyxl import load_workbook
+
+        file_bytes = file.getvalue()
+        workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+        best_columns: list[str] = []
+        best_sheet = ''
+
+        for sheet in workbook.worksheets:
+            max_rows_to_scan = min(int(sheet.max_row or 1), 10)
+            max_cols_to_scan = int(sheet.max_column or 0)
+            if max_cols_to_scan <= 0:
+                continue
+
+            for row_index in range(1, max_rows_to_scan + 1):
+                values = [sheet.cell(row=row_index, column=col_index).value for col_index in range(1, max_cols_to_scan + 1)]
+                columns = [_clean_header_value(value) for value in values]
+                columns = [column for column in columns if column]
+                if len(columns) > len(best_columns):
+                    best_columns = columns
+                    best_sheet = sheet.title
+
+        try:
+            workbook.close()
+        except Exception:
+            pass
+
+        if not best_columns:
+            add_audit_event(
+                'destination_model_header_fallback_empty',
+                area='MODELO',
+                status='AVISO',
+                details={'file': _file_audit_info(file)},
+            )
+            return None
+
+        df = pd.DataFrame(columns=_dedupe_columns(best_columns))
+        add_audit_event(
+            'destination_model_header_fallback_applied',
+            area='MODELO',
+            status='OK',
+            details={
+                'file': _file_audit_info(file),
+                'sheet': best_sheet,
+                'dataframe': _df_audit_info(df),
+                'reason': 'reader_returned_without_columns_or_header_only_model',
+            },
+        )
+        return df
+    except Exception as exc:
+        add_audit_event(
+            'destination_model_header_fallback_failed',
+            area='MODELO',
+            status='ERRO',
+            details={'file': _file_audit_info(file), 'error': str(exc)},
+        )
+        return None
+
+
 def _safe_read(file: Any) -> pd.DataFrame | None:
     try:
         df = read_upload_fast(file)
+        if not _valid_model(df):
+            fallback_df = _read_excel_header_fallback(file)
+            if _valid_model(fallback_df):
+                df = fallback_df
         add_audit_event(
             'destination_model_file_read',
             area='MODELO',
@@ -65,6 +157,15 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
         )
         return df
     except Exception as exc:
+        fallback_df = _read_excel_header_fallback(file)
+        if _valid_model(fallback_df):
+            add_audit_event(
+                'destination_model_file_read_recovered_by_header_fallback',
+                area='MODELO',
+                status='OK',
+                details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'original_error': str(exc)},
+            )
+            return fallback_df
         add_audit_event(
             'destination_model_file_read_failed',
             area='MODELO',
