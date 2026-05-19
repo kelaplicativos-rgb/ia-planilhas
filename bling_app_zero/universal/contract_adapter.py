@@ -29,32 +29,61 @@ def adapt_dataframe_to_model_contract(df: pd.DataFrame, df_model: pd.DataFrame |
     return adapted.reset_index(drop=True)
 
 
-def model_for_operation(operation: str) -> pd.DataFrame | None:
-    """Busca modelo salvo na sessão para preservar contrato do download."""
-    import streamlit as st
+def _first_valid_model_from_session(candidate_keys: list[str]) -> pd.DataFrame | None:
+    """Retorna o primeiro modelo válido salvo na sessão.
 
-    op = str(operation or '').strip().lower()
-    candidate_keys: list[str]
-    if op == 'estoque':
-        candidate_keys = [
-            'home_modelo_estoque_df',
-            'df_modelo_estoque',
-            'modelo_estoque_df',
-        ]
-    elif op == 'cadastro':
-        candidate_keys = [
-            'home_modelo_cadastro_df',
-            'df_modelo_cadastro',
-            'modelo_cadastro_df',
-        ]
-    else:
-        candidate_keys = []
+    O fluxo atual é universal: o usuário anexa um modelo de destino único e o
+    sistema usa esse contrato para preencher a saída. Por compatibilidade, as
+    chaves antigas de cadastro/estoque continuam sendo aceitas.
+    """
+    import streamlit as st
 
     for key in candidate_keys:
         value = st.session_state.get(key)
         if isinstance(value, pd.DataFrame) and len(value.columns):
             return value.copy().fillna('')
     return None
+
+
+def model_for_operation(operation: str) -> pd.DataFrame | None:
+    """Busca modelo salvo na sessão para preservar contrato do download."""
+    op = str(operation or '').strip().lower()
+
+    universal_keys = [
+        'home_modelo_cadastro_df',
+        'home_modelo_estoque_df',
+        'df_modelo_cadastro',
+        'df_modelo_estoque',
+        'modelo_cadastro_df',
+        'modelo_estoque_df',
+        'cadastro_wizard_df_modelo',
+        'cadastro_wizard_df_modelo_estoque',
+        'estoque_wizard_df_modelo',
+        'mapeiaai_universal_model_df',
+    ]
+
+    if op in {'universal', 'modelo', 'modelo_destino', 'planilha'}:
+        return _first_valid_model_from_session(universal_keys)
+
+    if op == 'estoque':
+        return _first_valid_model_from_session([
+            'home_modelo_estoque_df',
+            'df_modelo_estoque',
+            'modelo_estoque_df',
+            'estoque_wizard_df_modelo',
+            *universal_keys,
+        ])
+
+    if op == 'cadastro':
+        return _first_valid_model_from_session([
+            'home_modelo_cadastro_df',
+            'df_modelo_cadastro',
+            'modelo_cadastro_df',
+            'cadastro_wizard_df_modelo',
+            *universal_keys,
+        ])
+
+    return _first_valid_model_from_session(universal_keys)
 
 
 __all__ = ['adapt_dataframe_to_model_contract', 'model_for_operation']
