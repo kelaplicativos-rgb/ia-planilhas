@@ -63,7 +63,7 @@ def _normalize_site_operation_value(value: object) -> str:
     if text in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
         return 'cadastro'
     if text in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
-        return 'estoque'
+        return UNIVERSAL_OPERATION
     if text in UNIVERSAL_ALIASES:
         return UNIVERSAL_OPERATION
     return ''
@@ -323,7 +323,7 @@ def _run_site_capture(
         st.warning('Cole pelo menos um link para buscar.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
-    if operation in {'estoque', UNIVERSAL_OPERATION} and not _has_columns(requested_columns):
+    if operation in {UNIVERSAL_OPERATION} and not _has_columns(requested_columns):
         _clear_site_df(operation, 'busca_sem_modelo_destino')
         st.error('Busca bloqueada: modelo de destino ausente.')
         add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
@@ -402,12 +402,8 @@ def _run_site_capture(
 def render_site_panel() -> None:
     _clear_legacy_authenticated_state()
     operation = _current_site_operation()
-    if operation not in {'cadastro', 'estoque', UNIVERSAL_OPERATION}:
+    if operation not in {'cadastro', UNIVERSAL_OPERATION}:
         operation = UNIVERSAL_OPERATION
-    if operation == 'estoque':
-        from bling_app_zero.ui.estoque_site_panel import render_estoque_site_panel
-        render_estoque_site_panel()
-        return
 
     df_site_bruto = _get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
@@ -445,7 +441,7 @@ def render_site_panel() -> None:
     button_label = config.button_label
     if bool(deep_options.get('enabled')):
         button_label = '🌐 Buscar no site com captura profunda controlada'
-    button_disabled = running or not has_urls or (operation in {'estoque', UNIVERSAL_OPERATION} and not _has_columns(requested_columns))
+    button_disabled = running or not has_urls or (operation in {UNIVERSAL_OPERATION} and not _has_columns(requested_columns))
 
     if not has_urls:
         _orange_warning('Cole pelo menos um link para liberar a busca.')
