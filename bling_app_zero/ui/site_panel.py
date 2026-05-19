@@ -16,7 +16,7 @@ from bling_app_zero.ui.site_models import (
     render_optional_site_model_upload,
     requested_columns_for_site_capture,
 )
-from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
+from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_site_progress
 
 ALL_PAGES_LIMIT = 1_000_000
@@ -327,6 +327,17 @@ def render_site_panel() -> None:
         render_estoque_site_panel()
         return
 
+    df_site_bruto = _get_site_df(operation)
+    if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
+        add_audit_event(
+            'site_panel_compacted_after_origin_ready',
+            area='SITE',
+            step='entrada',
+            status='OK',
+            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return
+
     config = config_for_site_operation(operation)
     st.markdown(
         '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2></section>',
@@ -365,10 +376,6 @@ def render_site_panel() -> None:
         df_modelo_estoque=df_modelo_estoque,
         df_modelo=df_modelo,
     )
-
-    df_site_bruto = _get_site_df(operation)
-    if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
-        render_site_source_summary(df_site_bruto, operation, show_history=False)
 
 
 __all__ = ['render_site_panel']
