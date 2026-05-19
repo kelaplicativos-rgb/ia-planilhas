@@ -14,14 +14,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
-from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
-
-
-def _render_mapping_ai_adjustments() -> None:
-    with st.expander('⚙️ Ajustes avançados do arquivo final', expanded=False):
-        st.caption('Opcional. Use somente quando precisar aplicar regras globais antes do preview.')
-        render_rules_center_step()
 
 
 def render_cadastro_mapeamento_step() -> None:
@@ -29,28 +22,26 @@ def render_cadastro_mapeamento_step() -> None:
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
     if not valid_df(df_origem):
-        st.warning('Nenhuma origem de dados carregada. Volte para Dados de origem.')
+        st.warning('Nenhuma planilha com dados carregada. Volte para Enviar dados.')
         return
     if not valid_model(df_modelo):
-        st.warning('Modelo de destino ausente. Volte para Modelo de destino.')
+        st.warning('Planilha modelo ausente. Volte para Enviar modelo.')
         return
 
     store_expected_source_rows(df_origem)
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.metric('Produtos na origem', len(df_origem))
+        st.metric('Produtos encontrados', len(df_origem))
     with col_b:
-        st.metric('Campos do modelo', len(df_modelo.columns))
-
-    _render_mapping_ai_adjustments()
+        st.metric('Colunas para preencher', len(df_modelo.columns))
 
     df_para_mapear = render_cadastro_pricing(df_origem)
     df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
     if isinstance(df_para_mapear, pd.DataFrame):
         st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_para_mapear
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Precificação aplicada. O campo Preço de venda será usado como base para os campos de preço.')
+        st.success('Preço calculado. O campo Preço de venda será usado nas colunas de preço.')
 
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
