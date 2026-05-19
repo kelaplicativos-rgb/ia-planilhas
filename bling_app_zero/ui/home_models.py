@@ -13,6 +13,7 @@ HOME_CADASTRO_MODEL_SOURCE_KEY = 'home_modelo_cadastro_source'
 HOME_ESTOQUE_MODEL_SOURCE_KEY = 'home_modelo_estoque_source'
 DESTINATION_MODEL_UPLOAD_OBJECT_KEY = 'destination_model_upload_object'
 DESTINATION_MODEL_UPLOAD_NAME_KEY = 'destination_model_upload_name'
+DESTINATION_MODEL_UPLOAD_BYTES_KEY = 'destination_model_upload_bytes'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
@@ -241,13 +242,30 @@ def _remember_original_model_upload(upload: object) -> None:
     model_file = getattr(upload, 'model_file', None) or getattr(upload, 'cadastro_model_file', None) or getattr(upload, 'estoque_model_file', None)
     if model_file is None:
         return
+
+    file_name = str(getattr(model_file, 'name', 'modelo'))
+    file_bytes = b''
+    try:
+        raw = model_file.getvalue()
+        file_bytes = bytes(raw) if raw is not None else b''
+    except Exception:
+        file_bytes = b''
+
     st.session_state[DESTINATION_MODEL_UPLOAD_OBJECT_KEY] = model_file
-    st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = str(getattr(model_file, 'name', 'modelo'))
+    st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = file_name
+    if file_bytes:
+        st.session_state[DESTINATION_MODEL_UPLOAD_BYTES_KEY] = file_bytes
+
     add_audit_event(
         'destination_model_upload_object_saved',
         area='MODELO',
         status='OK',
-        details={'name': st.session_state.get(DESTINATION_MODEL_UPLOAD_NAME_KEY), 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'name': file_name,
+            'bytes_saved': bool(file_bytes),
+            'bytes_len': len(file_bytes),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
 
 
@@ -270,6 +288,7 @@ def render_home_bling_models() -> None:
 
 
 __all__ = [
+    'DESTINATION_MODEL_UPLOAD_BYTES_KEY',
     'DESTINATION_MODEL_UPLOAD_NAME_KEY',
     'DESTINATION_MODEL_UPLOAD_OBJECT_KEY',
     'clear_default_home_models',
