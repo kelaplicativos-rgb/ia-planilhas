@@ -220,11 +220,11 @@ def has_home_models() -> bool:
 def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
-        st.warning('Anexe o modelo para continuar.')
+        st.warning('Envie a planilha modelo para continuar.')
         return
 
-    st.caption(f'Modelo anexado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
-    with st.expander('Conferir colunas do modelo', expanded=False):
+    st.caption(f'Modelo enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    with st.expander('Ver colunas do modelo', expanded=False):
         columns = [str(column) for column in list(df.columns)]
         st.caption(', '.join(columns))
 
@@ -277,14 +277,14 @@ def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, 
 
 
 def render_home_bling_models() -> None:
-    """Conteúdo da etapa Modelo de destino."""
+    """Conteúdo da etapa de envio da planilha modelo."""
     clear_default_home_models()
 
-    st.markdown('#### Modelo de destino')
-    st.caption('Anexe a planilha modelo que será preenchida.')
+    st.markdown('#### Planilha modelo para o mapeamento')
+    st.caption('Envie a planilha modelo que o sistema vai preencher no final.')
 
     upload = render_model_upload_box(
-        title='Planilha modelo de destino',
+        title='Enviar planilha modelo',
         operation='cadastro',
         key='home_model_upload_bling',
         required_model=False,
