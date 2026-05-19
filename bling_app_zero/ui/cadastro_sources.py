@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import streamlit as st
 
 from bling_app_zero.core.bling_models import cadastro_default_model, estoque_default_model
 from bling_app_zero.flows.site_as_source import get_site_estoque_model, get_site_model_for_operation
@@ -100,8 +99,6 @@ def render_cadastro_source_upload(df_origem_site: pd.DataFrame | None):
     if isinstance(df_origem_site, pd.DataFrame):
         return _site_origin_upload_result(df_origem_site)
 
-    if home_has_models:
-        st.info('Modelo do Bling já carregado. Envie abaixo a planilha, XML, PDF, HTML, MHT ou MHTML do fornecedor.')
     return render_smart_upload_box(
         title='Arquivo do fornecedor',
         operation='cadastro',
