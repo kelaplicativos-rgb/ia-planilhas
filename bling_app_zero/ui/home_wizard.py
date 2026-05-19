@@ -52,6 +52,7 @@ from bling_app_zero.ui.scroll_guard import inject_scroll_guard
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 SINGLE_PAGE_FLOW = True
+HOME_CHOICE_TARGET = '__home_choice__'
 SCROLL_TARGET_KEY = 'home_wizard_scroll_target_step'
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
 VALID_OPERATIONS = {'cadastro', 'estoque'}
@@ -370,17 +371,17 @@ def _render_ai_review_step() -> None:
         df_source = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
-    with st.expander('🤖 Revisão IA do mapeamento', expanded=False):
-        render_mapping_review_panel(
-            operation='cadastro',
-            mapping=st.session_state.get('mapping_cadastro'),
-            confidence=st.session_state.get('mapping_confidence_cadastro'),
-            df_source=df_source,
-            target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
-        )
+    st.caption('Opcional. Use para revisar o mapeamento e ajustar proteções antes do preview final.')
+    render_mapping_review_panel(
+        operation='cadastro',
+        mapping=st.session_state.get('mapping_cadastro'),
+        confidence=st.session_state.get('mapping_confidence_cadastro'),
+        df_source=df_source,
+        target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
+    )
 
-    with st.expander('⚙️ Ajustes avançados do arquivo final', expanded=False):
-        render_rules_center_step()
+    st.markdown('#### Ajustes avançados do arquivo final')
+    render_rules_center_step()
 
 
 def _render_cadastro_preview() -> None:
