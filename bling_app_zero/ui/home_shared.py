@@ -24,6 +24,7 @@ PREVIEW_ROWS = 50
 _PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
 DESTINATION_MODEL_UPLOAD_OBJECT_KEY = 'destination_model_upload_object'
 DESTINATION_MODEL_UPLOAD_NAME_KEY = 'destination_model_upload_name'
+DESTINATION_MODEL_UPLOAD_BYTES_KEY = 'destination_model_upload_bytes'
 
 KIND_LABELS = {
     'id_produto': 'Identificador do produto',
@@ -45,10 +46,7 @@ KIND_LABELS = {
     'custom': 'Campo personalizado',
 }
 
-OPERATION_LABELS = {
-    'cadastro': 'Cadastro de produtos',
-    'estoque': 'Atualização de estoque',
-}
+OPERATION_LABELS = {'cadastro': 'Cadastro de produtos', 'estoque': 'Atualização de estoque'}
 
 
 class _NamedBytesIO(BytesIO):
@@ -99,28 +97,24 @@ def read_upload_fast(uploaded_file: Any | None) -> pd.DataFrame | None:
 @st.cache_resource(show_spinner=False)
 def load_cadastro_pipeline() -> Callable:
     from bling_app_zero.pipelines.cadastro_pipeline import run_pipeline
-
     return run_pipeline
 
 
 @st.cache_resource(show_spinner=False)
 def load_estoque_pipeline() -> Callable:
     from bling_app_zero.pipelines.estoque_pipeline import run_pipeline
-
     return run_pipeline
 
 
 @st.cache_resource(show_spinner=False)
 def load_site_pipeline() -> Callable:
     from bling_app_zero.pipelines.site_pipeline import run_pipeline
-
     return run_pipeline
 
 
 @st.cache_resource(show_spinner=False)
 def load_requested_columns_from_model() -> Callable:
     from bling_app_zero.flows.estoque_contract import requested_columns_from_model
-
     return requested_columns_from_model
 
 
@@ -167,18 +161,10 @@ def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
 def _render_contract_body(columns: list[str]) -> None:
     contract = build_contract(columns)
     st.caption('Serão buscados somente estes campos. Se algum dado não existir no site, ele ficará vazio.')
-    st.dataframe(
-        pd.DataFrame([
-            {
-                'Coluna solicitada': field.original,
-                'Tipo detectado': _kind_label(field.kind),
-                'Obrigatório': 'Sim' if field.required else 'Não',
-            }
-            for field in contract
-        ]),
-        use_container_width=True,
-        height=260,
-    )
+    st.dataframe(pd.DataFrame([
+        {'Coluna solicitada': field.original, 'Tipo detectado': _kind_label(field.kind), 'Obrigatório': 'Sim' if field.required else 'Não'}
+        for field in contract
+    ]), use_container_width=True, height=260)
 
 
 def show_contract(columns: list[str]) -> None:
@@ -195,14 +181,10 @@ def show_contract(columns: list[str]) -> None:
 
 
 def _render_mapping_body(mapping: dict[str, str]) -> None:
-    st.dataframe(
-        pd.DataFrame([
-            {'Campo do modelo': key, 'Origem usada': value or '(vazio)'}
-            for key, value in mapping.items()
-        ]).astype(str),
-        use_container_width=True,
-        height=260,
-    )
+    st.dataframe(pd.DataFrame([
+        {'Campo do modelo': key, 'Origem usada': value or '(vazio)'}
+        for key, value in mapping.items()
+    ]).astype(str), use_container_width=True, height=260)
 
 
 def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
@@ -237,11 +219,7 @@ def _after_final_download(operation: str, signature: str, rules_sig: str) -> Non
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
     st.session_state['final_download_operation'] = operation
-    add_audit_event(
-        'final_download_completed_navigation_preserved',
-        area='DOWNLOAD',
-        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig},
-    )
+    add_audit_event('final_download_completed_navigation_preserved', area='DOWNLOAD', details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig})
 
 
 def _download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[pd.DataFrame, bool, list[str]]:
@@ -253,17 +231,25 @@ def _download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[
 
 
 def _get_template_upload() -> tuple[str, bytes] | None:
+    name = str(st.session_state.get(DESTINATION_MODEL_UPLOAD_NAME_KEY) or '').strip()
+    data = st.session_state.get(DESTINATION_MODEL_UPLOAD_BYTES_KEY)
+    if name and isinstance(data, (bytes, bytearray)) and data:
+        return name, bytes(data)
+
     uploaded = st.session_state.get(DESTINATION_MODEL_UPLOAD_OBJECT_KEY)
     if uploaded is None:
         return None
-    name = str(getattr(uploaded, 'name', '') or st.session_state.get(DESTINATION_MODEL_UPLOAD_NAME_KEY) or '').strip()
+    name = str(getattr(uploaded, 'name', '') or name).strip()
     try:
         data = uploaded.getvalue()
     except Exception:
         data = None
     if not name or not data:
         return None
-    return name, bytes(data)
+    data_bytes = bytes(data)
+    st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = name
+    st.session_state[DESTINATION_MODEL_UPLOAD_BYTES_KEY] = data_bytes
+    return name, data_bytes
 
 
 def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
@@ -283,12 +269,7 @@ def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
         data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
         return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     except Exception as exc:
-        add_audit_event(
-            'template_download_not_ready',
-            area='DOWNLOAD',
-            status='AGUARDANDO_AJUSTE_CONTRATO',
-            details={'template_name': template_name, 'error': str(exc)},
-        )
+        add_audit_event('template_download_not_ready', area='DOWNLOAD', status='AGUARDANDO_AJUSTE_CONTRATO', details={'template_name': template_name, 'error': str(exc)})
         st.warning('A planilha modelo ainda não está pronta para download final.')
         st.caption(str(exc))
         return None
@@ -337,16 +318,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     template_bytes, template_file_name, template_mime = template_export
     st.success('Modelo preenchido pronto para download.')
-    st.download_button(
-        _download_label(),
-        data=template_bytes,
-        file_name=template_file_name,
-        mime=template_mime,
-        use_container_width=True,
-        key=f'download_template_{key}_{signature}_{rules_sig}',
-        on_click=_after_final_download,
-        args=(operation, signature, rules_sig),
-    )
+    st.download_button(_download_label(), data=template_bytes, file_name=template_file_name, mime=template_mime, use_container_width=True, key=f'download_template_{key}_{signature}_{rules_sig}', on_click=_after_final_download, args=(operation, signature, rules_sig))
 
 
 def _render_preview_body(df: pd.DataFrame | None) -> None:
