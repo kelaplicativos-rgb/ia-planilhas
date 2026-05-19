@@ -151,7 +151,7 @@ def _operation_badge(operation: str) -> str:
 
 
 def _download_label() -> str:
-    return '⬇️ Baixar modelo preenchido fiel ao arquivo anexado'
+    return '⬇️ Baixar modelo preenchido'
 
 
 def _preview_safe_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -269,14 +269,14 @@ def _get_template_upload() -> tuple[str, bytes] | None:
 def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
     template = _get_template_upload()
     if template is None:
-        st.error('Modelo original ausente. Reenvie a planilha modelo para gerar o arquivo final no próprio layout anexado.')
-        add_audit_event('template_download_original_missing', area='DOWNLOAD', status='BLOQUEADO')
+        st.warning('Reenvie a planilha modelo para gerar o arquivo final no próprio layout anexado.')
+        add_audit_event('template_download_original_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
         return None
 
     template_name, template_bytes = template
     if not can_export_from_template(template_name, template_bytes):
-        st.error('O download final fiel exige o próprio modelo em XLSX ou XLSM. Reenvie o modelo nesse formato para preservar o arquivo exatamente como entrou.')
-        add_audit_event('template_download_not_supported', area='DOWNLOAD', status='BLOQUEADO', details={'template_name': template_name})
+        st.warning('Reenvie o modelo em XLSX ou XLSM para preservar o arquivo exatamente como entrou.')
+        add_audit_event('template_download_not_supported', area='DOWNLOAD', status='AGUARDANDO_MODELO_VALIDO', details={'template_name': template_name})
         return None
 
     try:
@@ -284,14 +284,13 @@ def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
         return data, output_name_for_template(template_name), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     except Exception as exc:
         add_audit_event(
-            'template_download_contract_blocked',
+            'template_download_not_ready',
             area='DOWNLOAD',
-            status='BLOQUEADO',
+            status='AGUARDANDO_AJUSTE_CONTRATO',
             details={'template_name': template_name, 'error': str(exc)},
         )
-        st.error('Contrato rígido bloqueou o download final.')
-        st.warning(str(exc))
-        st.caption('Nenhum outro arquivo será gerado porque o sistema só pode baixar o próprio modelo anexado preenchido.')
+        st.warning('A planilha modelo ainda não está pronta para download final.')
+        st.caption(str(exc))
         return None
 
 
@@ -308,14 +307,14 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         st.caption('✅ Download da planilha final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
 
     download_df, contract_applied, model_columns = _download_dataframe_for_contract(df, operation)
-    if contract_applied:
-        st.success('Contrato aplicado: colunas e ordem seguem o modelo de destino anexado.')
-        with st.expander('Contrato aplicado no download', expanded=False):
-            st.caption('Colunas do arquivo final: ' + ', '.join(model_columns))
-    else:
-        st.error('Contrato de destino ausente. Reenvie a planilha modelo antes de baixar.')
-        add_audit_event('download_contract_missing', area='DOWNLOAD', status='BLOQUEADO')
+    if not contract_applied:
+        st.warning('Reenvie a planilha modelo antes de baixar.')
+        add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
         return
+
+    st.success('Modelo de destino aplicado. O arquivo final será gerado no próprio layout anexado.')
+    with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
+        st.caption(', '.join(model_columns))
 
     errors = validate_final_df(download_df, operation)
     if errors:
@@ -337,7 +336,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         return
 
     template_bytes, template_file_name, template_mime = template_export
-    st.success('Arquivo final gerado sobre o próprio modelo anexado. Formatação, abas e estrutura do XLSX/XLSM foram preservadas.')
+    st.success('Modelo preenchido pronto para download.')
     st.download_button(
         _download_label(),
         data=template_bytes,
