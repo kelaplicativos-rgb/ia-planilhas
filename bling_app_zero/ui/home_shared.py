@@ -57,7 +57,7 @@ KIND_LABELS = {
 OPERATION_LABELS = {
     'cadastro': 'Cadastro de produtos',
     'estoque': 'Atualização de estoque',
-    'universal': 'Planilha final',
+    'universal': 'Modelo final preenchido',
 }
 
 
@@ -144,16 +144,21 @@ def _kind_label(kind: str) -> str:
 
 
 def _operation_label(operation: str) -> str:
-    return OPERATION_LABELS.get(str(operation or '').strip().lower(), 'Planilha final')
+    op = str(operation or '').strip().lower()
+    if op in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
+        op = 'universal'
+    return OPERATION_LABELS.get(op, 'Modelo final preenchido')
 
 
 def _operation_badge(operation: str) -> str:
     op = str(operation or '').strip().lower()
+    if op in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
+        op = 'universal'
     if op == 'estoque':
         return '📦 ESTOQUE'
     if op == 'cadastro':
         return '🧾 CADASTRO'
-    return '📄 PLANILHA FINAL'
+    return '📄 MODELO FINAL'
 
 
 def _download_label() -> str:
@@ -328,12 +333,12 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
             return
 
     operation = str(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or 'universal').strip().lower()
-    if operation in {'modelo', 'modelo_destino', 'planilha'}:
+    if operation in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
         operation = 'universal'
 
     operation_title = _operation_label(operation)
     st.markdown(f'##### {_operation_badge(operation)}')
-    st.caption(f'Planilha final: {operation_title}. Confira a prévia acima antes de baixar.')
+    st.caption(f'Arquivo final: {operation_title}. Confira a prévia acima antes de baixar.')
 
     if st.session_state.pop('final_download_done', False):
         st.success('✅ Download concluído. Os dados continuam preservados nesta tela para você continuar usando o sistema.')
