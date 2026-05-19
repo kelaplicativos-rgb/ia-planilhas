@@ -208,10 +208,13 @@ def has_home_models() -> bool:
 def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
-        st.warning('Envie a planilha modelo para continuar.')
+        st.warning(
+            'Envie o modelo de destino para continuar. '
+            'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
+        )
         return
     st.caption(f'Modelo enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
-    with st.expander('Ver colunas do modelo', expanded=False):
+    with st.expander('Ver colunas do modelo de destino', expanded=False):
         columns = [str(column) for column in list(df.columns)]
         st.caption(', '.join(columns))
 
@@ -271,10 +274,14 @@ def _remember_original_model_upload(upload: object) -> None:
 
 def render_home_bling_models() -> None:
     clear_default_home_models()
-    st.markdown('#### Planilha modelo para o mapeamento')
-    st.caption('Envie a planilha modelo que o sistema vai preencher no final.')
+    st.markdown('#### Modelo de destino')
+    st.caption(
+        'Baixe ou envie aqui a planilha modelo que será preenchida no final. '
+        'Ela precisa ter cabeçalho com os nomes das colunas. '
+        'Exemplos: cadastro de produtos, atualização de estoque ou outro modelo final de importação.'
+    )
 
-    upload = render_model_upload_box(title='Enviar planilha modelo', operation='cadastro', key='home_model_upload_bling', required_model=False, caption=None)
+    upload = render_model_upload_box(title='Enviar modelo de destino', operation='cadastro', key='home_model_upload_bling', required_model=False, caption=None)
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
     estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
 
