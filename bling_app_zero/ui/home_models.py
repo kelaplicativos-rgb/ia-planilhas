@@ -17,8 +17,10 @@ DESTINATION_MODEL_UPLOAD_BYTES_KEY = 'destination_model_upload_bytes'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
+UNIVERSAL_OPERATION = 'universal'
 MODEL_UPLOAD_SIGNATURE_KEY = 'home_model_upload_signature_v2'
 MODEL_UPLOAD_AUTOFORWARDED_KEY = 'home_model_upload_autoforwarded_signature_v2'
+MODEL_SAVE_SIGNATURE_KEY = 'home_model_save_signature_v3'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models.py'
 
 GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
@@ -108,15 +110,21 @@ def clear_default_home_models() -> None:
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
 
 
-def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_model_df: pd.DataFrame | None) -> None:
+def _sync_universal_operation(cadastro_model_df: pd.DataFrame | None, estoque_model_df: pd.DataFrame | None) -> None:
+    """Mantém o fluxo de modelo final como universal.
+
+    BLINGFIX #Loop:
+    - antes este arquivo detectava um modelo único como `cadastro` ou `estoque`;
+    - em seguida o wizard principal forçava `universal`;
+    - como o upload permanece renderizado no Streamlit, isso criava ping-pong de
+      estado a cada rerun: cadastro/estoque -> universal -> cadastro/estoque;
+    - agora qualquer modelo válido entra como contrato universal, sem depender
+      do tipo do modelo anexado.
+    """
     has_cadastro = isinstance(cadastro_model_df, pd.DataFrame) and len(cadastro_model_df.columns) > 0
     has_estoque = isinstance(estoque_model_df, pd.DataFrame) and len(estoque_model_df.columns) > 0
 
-    if has_estoque and not has_cadastro:
-        operation = 'estoque'
-    elif has_cadastro and not has_estoque:
-        operation = 'cadastro'
-    else:
+    if not has_cadastro and not has_estoque:
         st.session_state.pop('home_detected_operation', None)
         st.session_state.pop(FLOW_OPERATION_KEY, None)
         st.session_state.pop('operacao_final', None)
@@ -130,21 +138,28 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
         )
         return
 
-    st.session_state[FLOW_OPERATION_KEY] = operation
-    st.session_state['operacao_final'] = operation
-    st.session_state['tipo_operacao_final'] = operation
-    st.session_state['home_detected_operation'] = operation
+    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
+    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION
+    try:
+        if str(st.query_params.get('operacao') or '').strip().lower() not in {'', UNIVERSAL_OPERATION}:
+            st.query_params.pop('operacao', None)
+    except Exception:
+        pass
     add_audit_event(
-        'home_model_operation_detected_internal_only',
+        'home_model_operation_universal_synced',
         area='MODELO',
         step=st.session_state.get(WIZARD_STEP_KEY),
         status='OK',
-        details={'operation': operation, 'has_cadastro': has_cadastro, 'has_estoque': has_estoque, 'visual_message': 'neutral_model_uploaded', 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'operation': UNIVERSAL_OPERATION,
+            'has_cadastro': has_cadastro,
+            'has_estoque': has_estoque,
+            'reason': 'generic_destination_contract_no_model_type_detection',
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
-    try:
-        st.query_params['operacao'] = operation
-    except Exception:
-        pass
 
 
 def ensure_default_home_models() -> None:
@@ -155,18 +170,23 @@ def save_home_models(cadastro_model_df: pd.DataFrame | None = None, estoque_mode
     clear_default_home_models()
     cadastro = _copy_df(cadastro_model_df)
     estoque = _copy_df(estoque_model_df)
+    signature = _models_signature(cadastro, estoque)
+    previous_signature = str(st.session_state.get(MODEL_SAVE_SIGNATURE_KEY) or '')
 
-    if cadastro is not None:
-        _save_model(HOME_CADASTRO_MODEL_KEY, cadastro, GLOBAL_CADASTRO_MODEL_KEYS, source='upload')
-    elif replace_missing:
-        _forget_model(HOME_CADASTRO_MODEL_KEY, GLOBAL_CADASTRO_MODEL_KEYS)
+    if previous_signature != signature:
+        if cadastro is not None:
+            _save_model(HOME_CADASTRO_MODEL_KEY, cadastro, GLOBAL_CADASTRO_MODEL_KEYS, source='upload')
+        elif replace_missing:
+            _forget_model(HOME_CADASTRO_MODEL_KEY, GLOBAL_CADASTRO_MODEL_KEYS)
 
-    if estoque is not None:
-        _save_model(HOME_ESTOQUE_MODEL_KEY, estoque, GLOBAL_ESTOQUE_MODEL_KEYS, source='upload')
-    elif replace_missing:
-        _forget_model(HOME_ESTOQUE_MODEL_KEY, GLOBAL_ESTOQUE_MODEL_KEYS)
+        if estoque is not None:
+            _save_model(HOME_ESTOQUE_MODEL_KEY, estoque, GLOBAL_ESTOQUE_MODEL_KEYS, source='upload')
+        elif replace_missing:
+            _forget_model(HOME_ESTOQUE_MODEL_KEY, GLOBAL_ESTOQUE_MODEL_KEYS)
 
-    _sync_detected_operation(get_home_cadastro_model(), get_home_estoque_model())
+        st.session_state[MODEL_SAVE_SIGNATURE_KEY] = signature
+
+    _sync_universal_operation(get_home_cadastro_model(), get_home_estoque_model())
     st.session_state[HOME_HAS_MODELS_KEY] = has_home_models()
     add_audit_event(
         'home_models_saved_to_session',
@@ -178,6 +198,7 @@ def save_home_models(cadastro_model_df: pd.DataFrame | None = None, estoque_mode
             'cadastro': _df_log_summary(get_home_cadastro_model()),
             'estoque': _df_log_summary(get_home_estoque_model()),
             'replace_missing': replace_missing,
+            'signature_changed': previous_signature != signature,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -276,12 +297,12 @@ def render_home_bling_models() -> None:
     clear_default_home_models()
     st.markdown('#### Modelo de destino')
     st.caption(
-        'Baixe ou envie aqui a planilha modelo que será preenchida no final. '
+        'Envie aqui a planilha modelo que será preenchida no final. '
         'Ela precisa ter cabeçalho com os nomes das colunas. '
-        'Exemplos: cadastro de produtos, atualização de estoque ou outro modelo final de importação.'
+        'Pode ser modelo do Bling, marketplace, fornecedor ou qualquer layout final com cabeçalho.'
     )
 
-    upload = render_model_upload_box(title='Enviar modelo de destino', operation='cadastro', key='home_model_upload_bling', required_model=False, caption=None)
+    upload = render_model_upload_box(title='Enviar modelo de destino', operation='universal', key='home_model_upload_bling', required_model=False, caption=None)
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
     estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
 
