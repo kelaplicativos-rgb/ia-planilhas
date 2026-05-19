@@ -6,10 +6,8 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.cadastro_wizard_state import cadastro_context_ready
-from bling_app_zero.ui.estoque_wizard_state import estoque_context_ready
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
-    ESTOQUE_STEPS,
     FLOW_OPERATION_KEY,
     FLOW_ORIGIN_KEY,
     GLOBAL_CADASTRO_MODEL_KEYS,
@@ -26,6 +24,8 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_PRECIFICACAO,
     STEP_PREVIEW,
     STEP_REGRAS,
+    UNIVERSAL_OPERATION_VALUE,
+    UNIVERSAL_STEPS,
     WIZARD_STEP_KEY,
 )
 from bling_app_zero.ui.rules_center_step import rules_center_ready
@@ -67,43 +67,40 @@ def _has_home_model() -> bool:
     return _has_cadastro_model() or _has_estoque_model()
 
 
-def _available_operations() -> list[str]:
-    operations: list[str] = []
-    if _has_cadastro_model():
-        operations.append('cadastro')
-    if _has_estoque_model():
-        operations.append('estoque')
-    return operations
-
-
 def _sync_operation_from_model() -> str:
-    available = _available_operations()
-    current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
+    """Mantém o autoavanço no mesmo contrato universal do wizard.
 
-    if not available:
+    BLINGFIX:
+    - o fluxo atual não identifica tipo do modelo;
+    - modelos de marketplace, fornecedor, Bling ou planilha própria são todos
+      contratos de destino;
+    - portanto o autofluxo não pode escolher cadastro/estoque pelo modelo, pois
+      isso reabre ping-pong contra o wizard universal.
+    """
+    if not _has_home_model():
         return ''
 
-    if current not in available:
-        current = available[0]
-        st.session_state[FLOW_OPERATION_KEY] = current
-        st.session_state['operacao_final'] = current
-        st.session_state['tipo_operacao_final'] = current
+    current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
+    if current != UNIVERSAL_OPERATION_VALUE:
+        st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION_VALUE
+        st.session_state['operacao_final'] = UNIVERSAL_OPERATION_VALUE
+        st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION_VALUE
+        st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION_VALUE
         add_audit_event(
-            'autofluxo_operation_selected',
+            'autofluxo_operation_synced_universal',
             area='AUTOFLOW',
             step=st.session_state.get(WIZARD_STEP_KEY),
             details={
-                'operation': current,
-                'available': available,
-                'reason': 'model_detected_operation',
+                'operation': UNIVERSAL_OPERATION_VALUE,
+                'reason': 'generic_destination_contract_no_model_type_detection',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-    return current
+    return UNIVERSAL_OPERATION_VALUE
 
 
 def _active_steps() -> list[str]:
-    return ESTOQUE_STEPS if _sync_operation_from_model() == 'estoque' else CADASTRO_STEPS
+    return list(UNIVERSAL_STEPS or CADASTRO_STEPS)
 
 
 def _current_step() -> str:
@@ -137,16 +134,17 @@ def _pricing_is_active() -> bool:
 
 
 def _step_ready_for_autonext(step: str, operation: str) -> bool:
+    _ = operation
     if step == STEP_MODELO:
         return _has_home_model()
     if step == STEP_OPERACAO:
-        return operation in {'cadastro', 'estoque'}
+        return True
     if step == STEP_PRECIFICACAO:
-        return operation == 'cadastro' and not _pricing_is_active()
+        return not _pricing_is_active()
     if step == STEP_ORIGEM:
         return _current_origin() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
-        return estoque_context_ready() if operation == 'estoque' else cadastro_context_ready()
+        return cadastro_context_ready()
     if step in MANUAL_REVIEW_STEPS:
         return False
     if step == STEP_REGRAS:
@@ -155,7 +153,8 @@ def _step_ready_for_autonext(step: str, operation: str) -> bool:
 
 
 def _next_step_for(step: str, operation: str) -> str:
-    steps = ESTOQUE_STEPS if operation == 'estoque' else CADASTRO_STEPS
+    _ = operation
+    steps = _active_steps()
     if step in {STEP_PREVIEW, STEP_DOWNLOAD}:
         return step
     if step not in steps:
@@ -271,8 +270,8 @@ def run_home_autofluxo() -> None:
     """Autoavanço seguro do wizard.
 
     O auto-next fica desligado por padrão para preservar estabilidade visual.
-    Fluxos manuais continuam funcionando sem a tela trocar de lugar após cada
-    seleção, digitação ou clique.
+    Quando for reativado, opera no contrato universal e não tenta classificar o
+    modelo como cadastro/estoque.
     """
     if _manual_navigation_is_locked():
         add_audit_event(
@@ -319,9 +318,9 @@ def run_home_autofluxo() -> None:
     if current == STEP_PRECIFICACAO:
         reason = 'optional_pricing_skipped_when_disabled'
     elif current == STEP_OPERACAO:
-        reason = 'operation_already_detected'
+        reason = 'operation_legacy_step_skipped'
     elif current == STEP_MODELO:
-        reason = 'bling_model_already_loaded'
+        reason = 'destination_model_already_loaded'
     elif current == STEP_ORIGEM:
         reason = 'origin_already_selected'
     elif current == STEP_REGRAS:
