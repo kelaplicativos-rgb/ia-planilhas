@@ -26,6 +26,20 @@ SUPPORTED_SUPPLIER_EXTENSIONS = SPREADSHEET_EXTENSIONS + ('.csv', '.xml', '.pdf'
 NFE_ITEM_TAGS = {'det'}
 NFE_PRODUCT_TAGS = {'prod'}
 COMMON_ITEM_TAGS = {'item', 'produto', 'product', 'det', 'row', 'linha'}
+PRODUCT_CARD_SELECTORS = [
+    '[data-sku]',
+    '[data-id].item',
+    '.item[data-id]',
+    '.produto',
+    '.product',
+    '.product-item',
+    '.product-card',
+    '.card-produto',
+    '.card-product',
+    'li[class*=product]',
+    'div[class*=product]',
+    'div[class*=produto]',
+]
 
 
 def _decode_bytes(data: bytes) -> str:
@@ -124,11 +138,67 @@ def _extract_tables_from_html(html_text: str) -> list[pd.DataFrame]:
     return frames
 
 
+def _all_money(text: str) -> list[str]:
+    return [_clean(value) for value in re.findall(r'R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}|R\$\s*\d+,\d{2}', text or '')]
+
+
+def _extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
+    soup = BeautifulSoup(html_text or '', 'html.parser')
+    candidates = []
+    for selector in PRODUCT_CARD_SELECTORS:
+        candidates.extend(soup.select(selector))
+
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for card in candidates:
+        text = _clean(card.get_text(' ', strip=True))
+        if len(text) < 10:
+            continue
+
+        link = card.find('a', href=True)
+        img = card.find('img')
+        title = _clean(img.get('alt')) if img else ''
+        if not title and link:
+            title = _clean(link.get_text(' ', strip=True)).split(' R$')[0]
+        if not title:
+            title = text.split(' R$')[0]
+        title = _clean(title)
+
+        prices = _all_money(text)
+        price = prices[-1] if prices else ''
+        old_price = prices[0] if len(prices) > 1 else ''
+        sku = _clean(card.get('data-sku')) or _clean(card.get('data-id'))
+        url = _clean(link.get('href')) if link else ''
+        image_url = _clean(img.get('src') or img.get('data-src') or '') if img else ''
+
+        if not title and not sku:
+            continue
+        key = f'{sku}|{title}|{url}'
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            'Nome': title,
+            'SKU': sku,
+            'Preço': price,
+            'Preço antigo': old_price if old_price != price else '',
+            'URL': url,
+            'Imagem': image_url,
+            'Texto bruto': text[:1200],
+        })
+
+    return _clean_columns(pd.DataFrame(rows).fillna('')) if rows else pd.DataFrame()
+
+
 def _read_html_bytes(data: bytes) -> pd.DataFrame:
     html_text = _decode_bytes(data)
     frames = _extract_tables_from_html(html_text)
     if frames:
         return _best_frame(frames)
+
+    product_cards = _extract_product_cards_from_html(html_text)
+    if isinstance(product_cards, pd.DataFrame) and not product_cards.empty:
+        return product_cards
 
     text = BeautifulSoup(html_text or '', 'html.parser').get_text('\n')
     rows = []
@@ -193,12 +263,23 @@ def _read_mhtml_bytes(data: bytes) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for html_text in html_parts:
         frames.extend(_extract_tables_from_html(html_text))
-    if not frames:
-        for html_text in html_parts:
-            frame = _read_html_bytes(html_text.encode('utf-8', errors='ignore'))
-            if isinstance(frame, pd.DataFrame) and not frame.empty:
-                frames.append(frame)
-    return _best_frame(frames)
+    if frames:
+        return _best_frame(frames)
+
+    product_frames: list[pd.DataFrame] = []
+    for html_text in html_parts:
+        product_frame = _extract_product_cards_from_html(html_text)
+        if isinstance(product_frame, pd.DataFrame) and not product_frame.empty:
+            product_frames.append(product_frame)
+    if product_frames:
+        return _best_frame(product_frames)
+
+    fallback_frames: list[pd.DataFrame] = []
+    for html_text in html_parts:
+        frame = _read_html_bytes(html_text.encode('utf-8', errors='ignore'))
+        if isinstance(frame, pd.DataFrame) and not frame.empty:
+            fallback_frames.append(frame)
+    return _best_frame(fallback_frames)
 
 
 def _xml_tag_name(tag: str) -> str:
