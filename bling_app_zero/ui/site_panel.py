@@ -23,6 +23,8 @@ from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_s
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
+UNIVERSAL_OPERATION = 'universal'
+UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 LEGACY_AUTH_KEYS = (
     'guided_login_confirmed_logged_in',
     'guided_login_capture_config',
@@ -56,17 +58,24 @@ def _query_urls_default() -> str:
     return _query_param('urls') or _query_param('url')
 
 
+def _normalize_site_operation_value(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
+        return 'cadastro'
+    if text in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
+        return 'estoque'
+    if text in UNIVERSAL_ALIASES:
+        return UNIVERSAL_OPERATION
+    return ''
+
+
 def _current_site_operation() -> str:
     for key in ('tipo_operacao_site', 'operacao_final', 'tipo_operacao_final', 'home_slim_flow_operation'):
-        value = str(st.session_state.get(key) or '').strip().lower()
-        if value in {'cadastro', 'estoque'}:
-            return value
-    flow = str(_query_param('operacao') or '').strip().lower()
-    if flow in {'cadastro', 'cadastro_site'}:
-        return 'cadastro'
-    if flow in {'estoque', 'estoque_site', 'stock', 'stock_site', 'atualizacao_estoque', 'atualização de estoque'}:
-        return 'estoque'
-    return ''
+        normalized = _normalize_site_operation_value(st.session_state.get(key))
+        if normalized:
+            return normalized
+    normalized_query = _normalize_site_operation_value(_query_param('operacao'))
+    return normalized_query or UNIVERSAL_OPERATION
 
 
 def _site_df_key(operation: str) -> str:
@@ -76,8 +85,8 @@ def _site_df_key(operation: str) -> str:
 def _store_site_df(operation: str, df_site: pd.DataFrame) -> None:
     st.session_state[_site_df_key(operation)] = df_site
     st.session_state['df_site_bruto'] = df_site
-    other = 'estoque' if operation == 'cadastro' else 'cadastro'
-    st.session_state.pop(_site_df_key(other), None)
+    for other in {'cadastro', 'estoque', UNIVERSAL_OPERATION} - {operation}:
+        st.session_state.pop(_site_df_key(other), None)
 
 
 def _clear_site_df(operation: str, reason: str) -> None:
@@ -126,7 +135,7 @@ def _get_site_df(operation: str) -> pd.DataFrame | None:
     if isinstance(df_current, pd.DataFrame):
         return df_current
     df_legacy = st.session_state.get('df_site_bruto')
-    legacy_operation = str(st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site') or '').strip().lower()
+    legacy_operation = _normalize_site_operation_value(st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site'))
     if legacy_operation == operation and isinstance(df_legacy, pd.DataFrame):
         return df_legacy
     return None
@@ -171,10 +180,8 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     if requested_columns:
         with st.expander('Campos que serão buscados', expanded=False):
             show_contract(requested_columns)
-    elif operation == 'estoque':
-        st.error('Modelo de destino ausente.')
     else:
-        st.warning('Modelo de destino ausente. A captura usará campos principais.')
+        st.error('Modelo de destino ausente. Anexe o modelo no início para definir quais campos serão buscados no site.')
     return upload, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns
 
 
@@ -316,7 +323,7 @@ def _run_site_capture(
         st.warning('Cole pelo menos um link para buscar.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
-    if operation == 'estoque' and not _has_columns(requested_columns):
+    if operation in {'estoque', UNIVERSAL_OPERATION} and not _has_columns(requested_columns):
         _clear_site_df(operation, 'busca_sem_modelo_destino')
         st.error('Busca bloqueada: modelo de destino ausente.')
         add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
@@ -395,10 +402,8 @@ def _run_site_capture(
 def render_site_panel() -> None:
     _clear_legacy_authenticated_state()
     operation = _current_site_operation()
-    if operation not in {'cadastro', 'estoque'}:
-        st.warning('Escolha primeiro o objetivo do mapeamento.')
-        add_audit_event('site_panel_blocked_missing_operation', area='SITE', step='entrada', status='BLOQUEADO', details={'responsible_file': RESPONSIBLE_FILE})
-        return
+    if operation not in {'cadastro', 'estoque', UNIVERSAL_OPERATION}:
+        operation = UNIVERSAL_OPERATION
     if operation == 'estoque':
         from bling_app_zero.ui.estoque_site_panel import render_estoque_site_panel
         render_estoque_site_panel()
@@ -440,7 +445,7 @@ def render_site_panel() -> None:
     button_label = config.button_label
     if bool(deep_options.get('enabled')):
         button_label = '🌐 Buscar no site com captura profunda controlada'
-    button_disabled = running or not has_urls or (operation == 'estoque' and not _has_columns(requested_columns))
+    button_disabled = running or not has_urls or (operation in {'estoque', UNIVERSAL_OPERATION} and not _has_columns(requested_columns))
 
     if not has_urls:
         _orange_warning('Cole pelo menos um link para liberar a busca.')
