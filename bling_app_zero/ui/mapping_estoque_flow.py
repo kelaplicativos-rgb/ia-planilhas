@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.ai_mapping_apply_panel import render_ai_mapping_apply_panel
 from bling_app_zero.ui.estoque_wizard_state import (
     ESTOQUE_CONFIDENCE_KEY,
     ESTOQUE_FINAL_KEY,
@@ -17,7 +16,6 @@ from bling_app_zero.ui.estoque_wizard_state import (
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
-from bling_app_zero.ui.mapping_ai_actions import render_ai_button
 from bling_app_zero.ui.mapping_auto_suggestions import build_stock_auto_mapping
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
 from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
@@ -71,21 +69,13 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
         st.session_state[mapping_key] = build_stock_auto_mapping(df_source, model)
         st.session_state.pop(order_key, None)
 
-    st.markdown('##### Conferir campos do estoque')
-    st.caption('Se o modelo tiver Depósito, preencha nessa própria coluna usando “escrever valor”, mapeie de uma coluna da origem ou deixe vazio. 🔴 precisa escolher · 🟡 sugestão para conferir · 🟢 sugestão forte/valor confirmado · 🟣 reflexo da Central de Regras e Padrões')
-    with st.expander('Ver origem do estoque', expanded=False):
-        preview_df('Origem para estoque', df_source)
-
-    current_mapping = dict(st.session_state.get(mapping_key, {}))
-    render_ai_button(df_source, target_columns, current_mapping, mapping_key, 'Pedir ajuda da IA no estoque')
-
-    render_ai_mapping_apply_panel(
-        df_source,
-        target_columns,
-        current_mapping,
-        mapping_key,
-        operation='estoque',
+    st.markdown('##### Ligar colunas do estoque')
+    st.caption(
+        'O sistema tenta ligar as colunas automaticamente lendo os nomes das colunas e o conteúdo dos produtos. '
+        'Confira principalmente quantidade, balanço e depósito antes de continuar.'
     )
+    with st.expander('Ver planilha enviada', expanded=False):
+        preview_df('Planilha enviada', df_source)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
@@ -126,11 +116,11 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button('Atualizar prévia do estoque', use_container_width=True, key=f'{mapping_key}_refresh'):
+        if st.button('Atualizar resultado', use_container_width=True, key=f'{mapping_key}_refresh'):
             pause_home_autofluxo_for_manual_review('gerar_estoque', reason='stock_mapping_refresh_by_user')
             st.rerun()
     with col_b:
-        if st.button('Refazer sugestões do estoque', use_container_width=True, key=f'{mapping_key}_reset'):
+        if st.button('Tentar ligar colunas de novo', use_container_width=True, key=f'{mapping_key}_reset'):
             _reset_stock_mapping(mapping_key, order_key)
 
 
