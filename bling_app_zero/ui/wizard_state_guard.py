@@ -7,7 +7,7 @@ FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
 STATE_GUARD_LAST_OPERATION_KEY = 'bling_wizard_state_guard_last_operation'
-STATE_GUARD_VERSION = '2026-05-16-wizard-guard-stock-no-price-1'
+STATE_GUARD_VERSION = '2026-05-19-wizard-guard-universal-download-preserve-1'
 
 VALID_STEPS = {
     'modelo',
@@ -22,7 +22,7 @@ VALID_STEPS = {
     'download',
     'processar',
 }
-VALID_OPERATIONS = {'cadastro', 'estoque'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
 VALID_ORIGINS = {'arquivo', 'site'}
 STOCK_FORBIDDEN_STEPS = {'precificacao', 'mapeamento'}
 
@@ -35,12 +35,15 @@ LEGACY_WIDGET_PREFIXES = (
 CURRENT_WIDGET_PREFIXES = (
     'frontpage_origin_radio_cadastro',
     'frontpage_origin_radio_estoque',
+    'frontpage_origin_radio_universal',
     'cad_map_',
     'stk_map_',
     'urls_site_cadastro',
     'urls_site_estoque',
     'buscar_site_cadastro',
     'buscar_site_estoque',
+    'origin_choose_file',
+    'origin_choose_site',
 )
 
 DANGEROUS_LEGACY_KEYS = {
@@ -132,7 +135,7 @@ def _clear_legacy_widgets() -> None:
 
 def _clear_cross_operation_site_state() -> None:
     operation = _selected_operation()
-    if not operation:
+    if not operation or operation == 'universal':
         return
     other = 'estoque' if operation == 'cadastro' else 'cadastro'
 
@@ -160,7 +163,7 @@ def _needs_heavy_cleanup(force: bool, operation: str) -> bool:
         return True
     if st.session_state.get(STATE_GUARD_VERSION_KEY) != STATE_GUARD_VERSION:
         return True
-    return bool(operation and st.session_state.get(STATE_GUARD_LAST_OPERATION_KEY) != operation)
+    return bool(operation and operation != 'universal' and st.session_state.get(STATE_GUARD_LAST_OPERATION_KEY) != operation)
 
 
 def run_wizard_state_guard(force: bool = False) -> None:
@@ -168,6 +171,13 @@ def run_wizard_state_guard(force: bool = False) -> None:
 
     Evita varrer/remover estados em todo rerun. Isso melhora fluidez em celular
     antigo e reduz custo nas telas do wizard.
+
+    BLINGFIX download final:
+    - o clique no st.download_button causa rerun;
+    - no fluxo universal, esse rerun não pode apagar estado de cadastro/estoque,
+      nem voltar para modelo/home;
+    - por isso `universal` agora é uma operação válida e não dispara limpeza
+      cruzada pesada.
     """
     _normalize_scalar_state()
     operation = _selected_operation()
