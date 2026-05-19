@@ -9,6 +9,7 @@ import pandas as pd
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
+from bling_app_zero.pipelines.site_pipeline import _clean_site_description_columns
 from bling_app_zero.ui.site_models import choose_site_cadastro_model_df, choose_site_estoque_model_df, requested_columns_for_site_capture
 
 
@@ -155,6 +156,27 @@ class TestSiteFluxo(unittest.TestCase):
 
         self.assertEqual(list(cadastro.columns), ['URL', 'Descrição'])
         self.assertEqual(list(estoque.columns), ['Código', 'Balanço (OBRIGATÓRIO)'])
+
+    def test_site_pipeline_limpa_descricao_suja_de_qualquer_motor(self) -> None:
+        df = pd.DataFrame([
+            {
+                'Descrição': 'Teclado USB AL-507',
+                'Descrição complementar': (
+                    'Descrição Teclado USB AL-507, perfeito para escritório ou home office. '
+                    'Conexão USB plug-and-play sem instalação de drivers. '
+                    'Ainda não há para este produto Teclado USB AL-507'
+                ),
+            }
+        ])
+
+        cleaned = _clean_site_description_columns(df, 'cadastro')
+        value = cleaned.loc[0, 'Descrição complementar']
+
+        self.assertIn('Teclado USB AL-507, perfeito para escritório ou home office', value)
+        self.assertIn('Conexão USB plug-and-play sem instalação de drivers', value)
+        self.assertNotIn('Descrição Teclado', value)
+        self.assertNotIn('Ainda não há', value)
+        self.assertFalse(value.endswith('Teclado USB AL-507'))
 
     def test_plano_de_submotores_muda_por_operacao(self) -> None:
         cadastro_plan = build_submotor_plan(
