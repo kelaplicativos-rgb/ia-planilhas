@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_deep_product_urls
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
@@ -188,6 +189,31 @@ def _render_urls_input(operation: str) -> str:
     )
 
 
+def _render_deep_capture_options(operation: str) -> dict[str, int | bool]:
+    with st.expander('🌐 Captura profunda controlada do fornecedor', expanded=False):
+        st.caption('Opcional. Use quando colar a página inicial ou uma categoria e quiser que o sistema procure mais links de produtos no mesmo domínio. Se desligado, o fluxo antigo continua igual.')
+        enabled = st.checkbox(
+            'Ativar captura profunda controlada',
+            value=False,
+            key=f'site_deep_capture_enabled_{operation}',
+            help='Não baixa arquivos inúteis do site. Apenas varre páginas do mesmo domínio e transforma produtos encontrados em links para o motor atual.',
+        )
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            max_pages = st.number_input('Limite de páginas', min_value=20, max_value=5000, value=250, step=50, key=f'site_deep_capture_pages_{operation}')
+        with col2:
+            max_products = st.number_input('Limite de produtos', min_value=20, max_value=10000, value=500, step=50, key=f'site_deep_capture_products_{operation}')
+        with col3:
+            max_depth = st.number_input('Profundidade', min_value=0, max_value=5, value=2, step=1, key=f'site_deep_capture_depth_{operation}')
+        st.caption('Recomendado: profundidade 1 ou 2. Profundidade alta pode demorar em sites grandes.')
+    return {
+        'enabled': bool(enabled),
+        'max_pages': int(max_pages),
+        'max_products': int(max_products),
+        'max_depth': int(max_depth),
+    }
+
+
 def _set_capture_state(*, operation: str, running: bool, finished: bool, error: str = '', rows: int = 0, columns: int = 0) -> None:
     st.session_state['site_capture_running'] = running
     st.session_state['site_capture_finished'] = finished
@@ -235,6 +261,46 @@ def _render_universal_fallback(
         )
 
 
+def _prepare_raw_urls_for_capture(
+    *,
+    operation: str,
+    raw_urls: str,
+    deep_options: dict[str, int | bool] | None,
+    progress_bar,
+    status_box,
+) -> tuple[str, dict[str, object]]:
+    options = deep_options or {}
+    if not bool(options.get('enabled')):
+        return raw_urls, {'deep_capture_enabled': False}
+
+    callback = make_site_progress_callback(progress_bar, status_box)
+    result = discover_deep_product_urls(
+        raw_urls,
+        max_pages=int(options.get('max_pages') or 250),
+        max_products=int(options.get('max_products') or 500),
+        max_depth=int(options.get('max_depth') or 2),
+        progress_callback=callback,
+    )
+
+    if not result.product_urls:
+        return raw_urls, {
+            'deep_capture_enabled': True,
+            'deep_capture_found_products': 0,
+            'deep_capture_visited_pages': result.visited_pages,
+        }
+
+    st.session_state[f'site_deep_capture_urls_{operation}'] = result.raw_urls
+    st.session_state[f'site_deep_capture_found_{operation}'] = len(result.product_urls)
+    return result.raw_urls, {
+        'deep_capture_enabled': True,
+        'deep_capture_found_products': len(result.product_urls),
+        'deep_capture_visited_pages': result.visited_pages,
+        'deep_capture_scanned_pages': result.scanned_pages,
+        'deep_capture_ignored_external_links': result.ignored_external_links,
+        'deep_capture_max_depth': result.max_depth,
+    }
+
+
 def _run_site_capture(
     operation: str,
     raw_urls: str,
@@ -242,6 +308,7 @@ def _run_site_capture(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
+    deep_options: dict[str, int | bool] | None = None,
 ) -> None:
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
@@ -267,6 +334,7 @@ def _run_site_capture(
             'requested_columns_count': len(requested_columns or []),
             'has_cadastro_model': isinstance(df_modelo_cadastro, pd.DataFrame),
             'has_estoque_model': isinstance(df_modelo_estoque, pd.DataFrame),
+            'deep_capture_requested': bool((deep_options or {}).get('enabled')),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -274,10 +342,17 @@ def _run_site_capture(
     progress_bar = st.progress(0, text='Buscando dados no site...')
     status_box = st.empty()
     try:
+        prepared_urls, deep_details = _prepare_raw_urls_for_capture(
+            operation=operation,
+            raw_urls=raw_urls,
+            deep_options=deep_options,
+            progress_bar=progress_bar,
+            status_box=status_box,
+        )
         df_site = run_site_engine(
             operation=operation,
             pipeline=load_site_pipeline(),
-            raw_urls=raw_urls,
+            raw_urls=prepared_urls,
             requested_columns=requested_columns,
             all_products=True,
             max_pages=ALL_PAGES_LIMIT,
@@ -310,7 +385,9 @@ def _run_site_capture(
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = 'site'
     _set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
-    add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+    details = {'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE}
+    details.update(deep_details)
+    add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
     _finish_progress(progress_bar, status_box, text='Busca por site concluída.')
     st.rerun()
 
@@ -346,6 +423,7 @@ def render_site_panel() -> None:
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
+    deep_options = _render_deep_capture_options(operation)
 
     running = bool(st.session_state.get('site_capture_running'))
     has_urls = _has_urls(raw_urls)
@@ -360,14 +438,16 @@ def render_site_panel() -> None:
         st.error(f'Última captura falhou: {error}')
 
     button_label = config.button_label
+    if bool(deep_options.get('enabled')):
+        button_label = '🌐 Buscar no site com captura profunda controlada'
     button_disabled = running or not has_urls or (operation == 'estoque' and not _has_columns(requested_columns))
 
     if not has_urls:
         _orange_warning('Cole pelo menos um link para liberar a busca.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
-        add_audit_event('site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': operation, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
-        _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo)
+        add_audit_event('site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': operation, 'capture_mode': 'deep' if bool(deep_options.get('enabled')) else 'public', 'responsible_file': RESPONSIBLE_FILE})
+        _run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, deep_options=deep_options)
 
     _render_universal_fallback(
         operation=operation,
