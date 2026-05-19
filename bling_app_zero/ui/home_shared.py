@@ -25,6 +25,14 @@ _PREVIEW_NESTING_KEY = '_bling_preview_nesting_level'
 DESTINATION_MODEL_UPLOAD_OBJECT_KEY = 'destination_model_upload_object'
 DESTINATION_MODEL_UPLOAD_NAME_KEY = 'destination_model_upload_name'
 DESTINATION_MODEL_UPLOAD_BYTES_KEY = 'destination_model_upload_bytes'
+FINAL_DOWNLOAD_DF_SNAPSHOT_KEY = 'final_download_df_snapshot'
+FINAL_DOWNLOAD_FILE_BYTES_KEY = 'final_download_file_bytes'
+FINAL_DOWNLOAD_FILE_NAME_KEY = 'final_download_file_name'
+FINAL_DOWNLOAD_MIME_KEY = 'final_download_mime'
+FINAL_DOWNLOAD_SIGNATURE_KEY = 'final_download_signature'
+FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
+FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
+FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 
 KIND_LABELS = {
     'id_produto': 'Identificador do produto',
@@ -46,7 +54,11 @@ KIND_LABELS = {
     'custom': 'Campo personalizado',
 }
 
-OPERATION_LABELS = {'cadastro': 'Cadastro de produtos', 'estoque': 'Atualização de estoque'}
+OPERATION_LABELS = {
+    'cadastro': 'Cadastro de produtos',
+    'estoque': 'Atualização de estoque',
+    'universal': 'Planilha final',
+}
 
 
 class _NamedBytesIO(BytesIO):
@@ -141,7 +153,7 @@ def _operation_badge(operation: str) -> str:
         return '📦 ESTOQUE'
     if op == 'cadastro':
         return '🧾 CADASTRO'
-    return '📄 PLANILHA'
+    return '📄 PLANILHA FINAL'
 
 
 def _download_label() -> str:
@@ -205,21 +217,31 @@ def show_mapping(mapping: dict[str, str], operation: str | None = None) -> None:
 
 def _preserve_flow_after_download(operation: str) -> None:
     op = str(operation or '').strip().lower()
-    if op in {'cadastro', 'estoque'}:
-        st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
-        st.session_state['home_slim_flow_operation'] = op
-        try:
-            st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
-        except Exception:
-            pass
+    preserved_operation = op if op in {'cadastro', 'estoque', 'universal'} else 'universal'
+    st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+    st.session_state['home_slim_flow_operation'] = preserved_operation
+    st.session_state['operacao_final'] = preserved_operation
+    st.session_state['tipo_operacao_final'] = preserved_operation
+    st.session_state['home_detected_operation'] = preserved_operation
+    st.session_state['bling_wizard_step'] = 'download'
+    st.session_state['home_single_page_flow_active'] = True
+    try:
+        st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        st.query_params['step'] = 'download'
+    except Exception:
+        pass
 
 
 def _after_final_download(operation: str, signature: str, rules_sig: str) -> None:
     _preserve_flow_after_download(operation)
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
-    st.session_state['final_download_operation'] = operation
-    add_audit_event('final_download_completed_navigation_preserved', area='DOWNLOAD', details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig})
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = operation
+    add_audit_event(
+        'final_download_completed_navigation_preserved',
+        area='DOWNLOAD',
+        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True},
+    )
 
 
 def _download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[pd.DataFrame, bool, list[str]]:
@@ -275,17 +297,46 @@ def _build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
         return None
 
 
+def _save_download_snapshot(
+    *,
+    download_df: pd.DataFrame,
+    file_bytes: bytes,
+    file_name: str,
+    mime: str,
+    operation: str,
+    signature: str,
+    rules_sig: str,
+    widget_key: str,
+) -> None:
+    st.session_state[FINAL_DOWNLOAD_DF_SNAPSHOT_KEY] = download_df.copy().fillna('')
+    st.session_state[FINAL_DOWNLOAD_FILE_BYTES_KEY] = bytes(file_bytes)
+    st.session_state[FINAL_DOWNLOAD_FILE_NAME_KEY] = file_name
+    st.session_state[FINAL_DOWNLOAD_MIME_KEY] = mime
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = operation
+    st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = signature
+    st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
+    st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
+
+
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
-        st.warning('Ainda não há dados finais para baixar.')
-        return
+        snapshot = st.session_state.get(FINAL_DOWNLOAD_DF_SNAPSHOT_KEY)
+        if isinstance(snapshot, pd.DataFrame) and not snapshot.empty:
+            df = snapshot.copy().fillna('')
+        else:
+            st.warning('Ainda não há dados finais para baixar.')
+            return
+
+    operation = str(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or 'universal').strip().lower()
+    if operation in {'modelo', 'modelo_destino', 'planilha'}:
+        operation = 'universal'
 
     operation_title = _operation_label(operation)
     st.markdown(f'##### {_operation_badge(operation)}')
     st.caption(f'Planilha final: {operation_title}. Confira a prévia acima antes de baixar.')
 
     if st.session_state.pop('final_download_done', False):
-        st.caption('✅ Download da planilha final concluído. A etapa atual foi preservada para você continuar sem voltar para a Home.')
+        st.success('✅ Download concluído. Os dados continuam preservados nesta tela para você continuar usando o sistema.')
 
     download_df, contract_applied, model_columns = _download_dataframe_for_contract(df, operation)
     if not contract_applied:
@@ -317,8 +368,29 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         return
 
     template_bytes, template_file_name, template_mime = template_export
+    widget_key = f'download_template_{key}_{signature}_{rules_sig}'
+    _save_download_snapshot(
+        download_df=download_df,
+        file_bytes=template_bytes,
+        file_name=template_file_name,
+        mime=template_mime,
+        operation=operation,
+        signature=signature,
+        rules_sig=rules_sig,
+        widget_key=widget_key,
+    )
+
     st.success('Modelo preenchido pronto para download.')
-    st.download_button(_download_label(), data=template_bytes, file_name=template_file_name, mime=template_mime, use_container_width=True, key=f'download_template_{key}_{signature}_{rules_sig}', on_click=_after_final_download, args=(operation, signature, rules_sig))
+    st.download_button(
+        _download_label(),
+        data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, template_bytes),
+        file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or template_file_name),
+        mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or template_mime),
+        use_container_width=True,
+        key=widget_key,
+        on_click=_after_final_download,
+        args=(operation, signature, rules_sig),
+    )
 
 
 def _render_preview_body(df: pd.DataFrame | None) -> None:
