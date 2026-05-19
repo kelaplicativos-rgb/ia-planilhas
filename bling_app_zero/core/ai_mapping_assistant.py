@@ -10,13 +10,15 @@ import httpx
 import pandas as pd
 
 from bling_app_zero.core.mapping_confidence import confidence_for_mapping
-from bling_app_zero.core.text import normalize_key
 
 OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 DEFAULT_MODEL = 'gpt-4o-mini'
 MAX_TARGETS = 45
 MAX_SOURCE_COLUMNS = 80
 MAX_SAMPLES = 4
+SESSION_AI_LIMIT_DEFAULT = 5
+SESSION_AI_LIMIT_KEY = 'ai_real_mapping_session_limit'
+SESSION_AI_USED_KEY = 'ai_real_mapping_session_used'
 
 
 @dataclass(frozen=True)
@@ -27,19 +29,115 @@ class AIMappingResult:
     reason: str = ''
 
 
-def _get_secret_value(key: str) -> str:
-    value = os.getenv(key, '')
-    if value:
-        return str(value).strip()
+def _read_streamlit_secret(path: tuple[str, ...]) -> str:
     try:
         import streamlit as st
-        return str(st.secrets.get(key, '') or '').strip()
+
+        current: Any = st.secrets
+        for part in path:
+            if hasattr(current, 'get'):
+                current = current.get(part, '')
+            else:
+                current = current[part]
+            if current in (None, ''):
+                return ''
+        return str(current or '').strip()
     except Exception:
         return ''
 
 
+def _get_secret_value(key: str) -> str:
+    """Lê somente a chave do app/admin, nunca uma chave digitada pelo usuário final.
+
+    Formatos aceitos no Streamlit Secrets:
+    OPENAI_API_KEY = "..."
+    OPENAI_MODEL = "..."
+
+    ou:
+
+    [openai]
+    api_key = "..."
+    model = "gpt-4o-mini"
+    session_limit = 5
+    """
+    key = str(key or '').strip()
+    if not key:
+        return ''
+
+    env_value = os.getenv(key, '')
+    if env_value:
+        return str(env_value).strip()
+
+    direct = _read_streamlit_secret((key,))
+    if direct:
+        return direct
+
+    lower_key = key.lower()
+    if lower_key == 'openai_api_key':
+        for path in (
+            ('openai', 'api_key'),
+            ('openai', 'OPENAI_API_KEY'),
+            ('openai', 'key'),
+            ('openai_api_key',),
+            ('api_key',),
+        ):
+            value = _read_streamlit_secret(path)
+            if value:
+                return value
+
+    if lower_key == 'openai_model':
+        for path in (
+            ('openai', 'model'),
+            ('OPENAI_MODEL',),
+            ('openai_model',),
+        ):
+            value = _read_streamlit_secret(path)
+            if value:
+                return value
+
+    return ''
+
+
+def _get_session_limit() -> int:
+    try:
+        import streamlit as st
+
+        configured = _read_streamlit_secret(('openai', 'session_limit')) or _read_streamlit_secret(('OPENAI_SESSION_LIMIT',))
+        limit = int(str(configured or '').strip() or SESSION_AI_LIMIT_DEFAULT)
+        st.session_state.setdefault(SESSION_AI_LIMIT_KEY, limit)
+        return max(0, int(st.session_state.get(SESSION_AI_LIMIT_KEY) or limit))
+    except Exception:
+        return SESSION_AI_LIMIT_DEFAULT
+
+
 def ai_mapping_enabled() -> bool:
     return bool(_get_secret_value('OPENAI_API_KEY'))
+
+
+def ai_mapping_remaining_session_calls() -> int:
+    limit = _get_session_limit()
+    try:
+        import streamlit as st
+
+        used = int(st.session_state.get(SESSION_AI_USED_KEY, 0) or 0)
+        return max(0, limit - used)
+    except Exception:
+        return limit
+
+
+def _consume_session_call() -> bool:
+    if not ai_mapping_enabled():
+        return False
+    remaining = ai_mapping_remaining_session_calls()
+    if remaining <= 0:
+        return False
+    try:
+        import streamlit as st
+
+        st.session_state[SESSION_AI_USED_KEY] = int(st.session_state.get(SESSION_AI_USED_KEY, 0) or 0) + 1
+    except Exception:
+        pass
+    return True
 
 
 def _samples(df: pd.DataFrame, column: str, limit: int = MAX_SAMPLES) -> list[str]:
@@ -157,6 +255,8 @@ def apply_ai_mapping_assist(
 ) -> AIMappingResult:
     if not ai_mapping_enabled():
         return AIMappingResult(False, 0, {}, 'OPENAI_API_KEY ausente')
+    if ai_mapping_remaining_session_calls() <= 0:
+        return AIMappingResult(False, 0, {}, 'limite de IA da sessão atingido')
     if not isinstance(df_source, pd.DataFrame) or df_source.empty:
         return AIMappingResult(True, 0, {}, 'origem vazia')
 
@@ -166,6 +266,9 @@ def apply_ai_mapping_assist(
         targets = [target for target in targets if _needs_ai(target, current_mapping, df_source)]
     if not targets:
         return AIMappingResult(True, 0, {}, 'sem campos incertos')
+
+    if not _consume_session_call():
+        return AIMappingResult(False, 0, {}, 'limite de IA da sessão atingido')
 
     payload = _build_payload(df_source, targets, current_mapping)
     suggestions = _call_openai(payload)
