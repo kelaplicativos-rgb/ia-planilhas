@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import csv
 from copy import copy
 from dataclasses import dataclass
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import Any
 
 import pandas as pd
@@ -12,9 +13,13 @@ try:
 except Exception:  # pragma: no cover
     load_workbook = None
 
-SUPPORTED_TEMPLATE_EXTENSIONS = {'xlsx', 'xlsm'}
+SUPPORTED_TEMPLATE_EXTENSIONS = {'xlsx', 'xlsm', 'csv'}
+SPREADSHEET_TEMPLATE_EXTENSIONS = {'xlsx', 'xlsm'}
+TEXT_TEMPLATE_EXTENSIONS = {'csv'}
 DEFAULT_HEADER_SCAN_ROWS = 80
 MIN_CONTRACT_MATCH_RATIO = 1.0
+DEFAULT_CSV_SEPARATOR = ';'
+CSV_SEPARATOR_CANDIDATES = (';', ',', '\t', '|')
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,10 @@ def _template_extension(file_name: str) -> str:
 def can_export_from_template(file_name: str | None, file_bytes: bytes | None) -> bool:
     if not file_name or not file_bytes:
         return False
-    return _template_extension(file_name) in SUPPORTED_TEMPLATE_EXTENSIONS and callable(load_workbook)
+    extension = _template_extension(file_name)
+    if extension in TEXT_TEMPLATE_EXTENSIONS:
+        return True
+    return extension in SPREADSHEET_TEMPLATE_EXTENSIONS and callable(load_workbook)
 
 
 def output_name_for_template(file_name: str | None) -> str:
@@ -52,6 +60,56 @@ def output_name_for_template(file_name: str | None) -> str:
         return f'{name}_preenchido.xlsx'
     stem, ext = name.rsplit('.', 1)
     return f'{stem}_preenchido.{ext}'
+
+
+def mime_for_template_output(file_name: str | None) -> str:
+    extension = _template_extension(file_name)
+    if extension == 'csv':
+        return 'text/csv'
+    if extension == 'xlsm':
+        return 'application/vnd.ms-excel.sheet.macroEnabled.12'
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+def _decode_template_text(template_bytes: bytes) -> str:
+    if not template_bytes:
+        return ''
+    for encoding in ('utf-8-sig', 'utf-8', 'latin-1'):
+        try:
+            return template_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return template_bytes.decode('utf-8', errors='replace')
+
+
+def _detect_csv_separator(template_bytes: bytes) -> str:
+    text = _decode_template_text(template_bytes)
+    first_lines = [line for line in text.splitlines()[:10] if line.strip()]
+    if not first_lines:
+        return DEFAULT_CSV_SEPARATOR
+
+    try:
+        dialect = csv.Sniffer().sniff('\n'.join(first_lines), delimiters=';,\t|')
+        if dialect.delimiter in CSV_SEPARATOR_CANDIDATES:
+            return dialect.delimiter
+    except Exception:
+        pass
+
+    header = first_lines[0]
+    counts = {separator: header.count(separator) for separator in CSV_SEPARATOR_CANDIDATES}
+    best = max(counts, key=counts.get)
+    return best if counts.get(best, 0) > 0 else DEFAULT_CSV_SEPARATOR
+
+
+def build_csv_template_download_bytes(*, template_bytes: bytes, df: pd.DataFrame) -> bytes:
+    """Gera CSV respeitando o contrato e o separador do modelo CSV anexado."""
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError('DataFrame final inválido.')
+    separator = _detect_csv_separator(template_bytes)
+    safe_df = df.copy().fillna('')
+    output = StringIO()
+    safe_df.to_csv(output, sep=separator, index=False, lineterminator='\n')
+    return output.getvalue().encode('utf-8-sig')
 
 
 def _build_column_positions(ws: Any, header_row: int, columns: list[str]) -> dict[str, int]:
@@ -173,14 +231,14 @@ def _write_dataframe_to_sheet(ws: Any, df: pd.DataFrame, match: TemplateSheetMat
             ws.cell(row=excel_row, column=col_index).value = None
 
 
-def build_template_download_bytes(
+def build_spreadsheet_template_download_bytes(
     *,
     template_bytes: bytes,
     template_name: str,
     df: pd.DataFrame,
 ) -> bytes:
-    if not can_export_from_template(template_name, template_bytes):
-        raise ValueError('Modelo XLSX/XLSM indisponível para exportação fiel.')
+    if not callable(load_workbook):
+        raise ValueError('Leitor de planilha indisponível para exportação fiel.')
     if not isinstance(df, pd.DataFrame):
         raise ValueError('DataFrame final inválido.')
 
@@ -196,11 +254,32 @@ def build_template_download_bytes(
     return output.getvalue()
 
 
+def build_template_download_bytes(
+    *,
+    template_bytes: bytes,
+    template_name: str,
+    df: pd.DataFrame,
+) -> bytes:
+    extension = _template_extension(template_name)
+    if extension == 'csv':
+        return build_csv_template_download_bytes(template_bytes=template_bytes, df=df)
+    if extension in SPREADSHEET_TEMPLATE_EXTENSIONS:
+        return build_spreadsheet_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
+    raise ValueError('Formato de modelo ainda não suportado para download 100% fiel. Use CSV, XLSX ou XLSM.')
+
+
 __all__ = [
+    'CSV_SEPARATOR_CANDIDATES',
+    'DEFAULT_CSV_SEPARATOR',
     'SUPPORTED_TEMPLATE_EXTENSIONS',
+    'SPREADSHEET_TEMPLATE_EXTENSIONS',
+    'TEXT_TEMPLATE_EXTENSIONS',
     'TemplateSheetMatch',
+    'build_csv_template_download_bytes',
+    'build_spreadsheet_template_download_bytes',
     'build_template_download_bytes',
     'can_export_from_template',
     'find_best_template_sheet',
+    'mime_for_template_output',
     'output_name_for_template',
 ]
