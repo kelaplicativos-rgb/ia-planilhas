@@ -232,10 +232,7 @@ def _render_upload_header(title: str, allow_model: bool, accepted_types: list[st
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
     if allow_model:
-        caption = f'Envie origem e modelo, se necessário. Formatos: {_accepted_label(accepted_types)}.'
-    else:
-        caption = f'Formatos aceitos: {_accepted_label(accepted_types)}.'
-    st.caption(caption)
+        st.caption('Envie o arquivo de origem. O modelo também pode ser enviado junto se ainda não foi anexado.')
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
