@@ -5,7 +5,6 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.model_upload import render_model_upload_box
-from bling_app_zero.universal.model_detector import detect_model_type
 
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
@@ -58,6 +57,16 @@ def _df_log_summary(df: pd.DataFrame | None) -> dict[str, object]:
     }
 
 
+def _model_summary_df() -> pd.DataFrame | None:
+    cadastro = get_home_cadastro_model()
+    estoque = get_home_estoque_model()
+    if isinstance(cadastro, pd.DataFrame):
+        return cadastro
+    if isinstance(estoque, pd.DataFrame):
+        return estoque
+    return None
+
+
 def _models_signature(cadastro: pd.DataFrame | None, estoque: pd.DataFrame | None) -> str:
     return f'cadastro={_df_signature(cadastro)}|estoque={_df_signature(estoque)}'
 
@@ -86,11 +95,7 @@ def _forget_model(key: str, aliases: list[str]) -> None:
 
 
 def clear_default_home_models() -> None:
-    """Remove modelos internos/padrão que tenham ficado salvos na sessão.
-
-    Regra atual do fluxo: modelo de destino deve vir somente do arquivo anexado
-    pelo usuário. Nada de cadastro/estoque padrão salvo dentro do sistema.
-    """
+    """Remove modelos internos/padrão que tenham ficado salvos na sessão."""
     if st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY) == DEFAULT_MODEL_SOURCE:
         _forget_model(HOME_CADASTRO_MODEL_KEY, GLOBAL_CADASTRO_MODEL_KEYS)
     if st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY) == DEFAULT_MODEL_SOURCE:
@@ -126,11 +131,7 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
             area='MODELO',
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='AVISO',
-            details={
-                'has_cadastro': has_cadastro,
-                'has_estoque': has_estoque,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'has_cadastro': has_cadastro, 'has_estoque': has_estoque, 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -139,16 +140,11 @@ def _sync_detected_operation(cadastro_model_df: pd.DataFrame | None, estoque_mod
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['home_detected_operation'] = operation
     add_audit_event(
-        'home_model_operation_detected',
+        'home_model_operation_detected_internal_only',
         area='MODELO',
         step=st.session_state.get(WIZARD_STEP_KEY),
         status='OK',
-        details={
-            'operation': operation,
-            'has_cadastro': has_cadastro,
-            'has_estoque': has_estoque,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'operation': operation, 'has_cadastro': has_cadastro, 'has_estoque': has_estoque, 'visual_message': 'neutral_model_uploaded', 'responsible_file': RESPONSIBLE_FILE},
     )
     try:
         st.query_params['operacao'] = operation
@@ -221,48 +217,16 @@ def has_home_models() -> bool:
     return get_home_cadastro_model() is not None or get_home_estoque_model() is not None
 
 
-def _model_source_label(source: object) -> str:
-    text = str(source or '').strip()
-    if text == 'upload':
-        return 'modelo anexado'
-    return 'modelo disponível'
-
-
-def _render_detection_badge(label: str, df: pd.DataFrame, source: object) -> None:
-    detection = detect_model_type(df)
-    st.caption(
-        f'{label}: {len(df.columns)} coluna(s) · tipo detectado: {detection.model_type} '
-        f'({round(detection.confidence * 100)}%) · {_model_source_label(source)}'
-    )
-    if detection.model_type == 'personalizado':
-        st.info('Modelo personalizado: a planilha final respeitará as colunas e a ordem do arquivo anexado.')
-    else:
-        st.success(f'Modelo interpretado como {detection.model_type}.')
-
-
 def _render_loaded_summary() -> None:
-    cadastro = get_home_cadastro_model()
-    estoque = get_home_estoque_model()
-    parts: list[str] = []
-    if isinstance(cadastro, pd.DataFrame):
-        parts.append(f'cadastro ({_model_source_label(st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY))})')
-    if isinstance(estoque, pd.DataFrame):
-        parts.append(f'estoque ({_model_source_label(st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))})')
-    if parts:
-        st.caption('Modelo: ' + ' + '.join(parts))
-    else:
+    df = _model_summary_df()
+    if not isinstance(df, pd.DataFrame):
         st.warning('Anexe o modelo para continuar.')
         return
 
-    with st.expander('Conferir modelo anexado', expanded=False):
-        if isinstance(cadastro, pd.DataFrame):
-            st.caption('Cadastro')
-            _render_detection_badge('Modelo', cadastro, st.session_state.get(HOME_CADASTRO_MODEL_SOURCE_KEY))
-            st.caption(f'{len(cadastro.columns)} coluna(s): ' + ', '.join(map(str, cadastro.columns)))
-        if isinstance(estoque, pd.DataFrame):
-            st.caption('Estoque')
-            _render_detection_badge('Modelo', estoque, st.session_state.get(HOME_ESTOQUE_MODEL_SOURCE_KEY))
-            st.caption(f'{len(estoque.columns)} coluna(s): ' + ', '.join(map(str, estoque.columns)))
+    st.caption(f'Modelo anexado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    with st.expander('Conferir colunas do modelo', expanded=False):
+        columns = [str(column) for column in list(df.columns)]
+        st.caption(', '.join(columns))
 
 
 def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, estoque_model: pd.DataFrame | None) -> None:
@@ -273,12 +237,7 @@ def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, 
             area='MODELO',
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='BLOQUEADO',
-            details={
-                'signature': signature,
-                'cadastro': _df_log_summary(cadastro_model),
-                'estoque': _df_log_summary(estoque_model),
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'signature': signature, 'cadastro': _df_log_summary(cadastro_model), 'estoque': _df_log_summary(estoque_model), 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -290,11 +249,7 @@ def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, 
             area='MODELO',
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='OK',
-            details={
-                'signature': signature,
-                'current_step': st.session_state.get(WIZARD_STEP_KEY),
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'signature': signature, 'current_step': st.session_state.get(WIZARD_STEP_KEY), 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -317,13 +272,7 @@ def _auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, 
     try:
         st.query_params['step'] = STEP_ORIGEM
     except Exception as exc:
-        add_audit_event(
-            'home_model_autoforward_query_param_failed',
-            area='MODELO',
-            step=STEP_ORIGEM,
-            status='AVISO',
-            details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('home_model_autoforward_query_param_failed', area='MODELO', step=STEP_ORIGEM, status='AVISO', details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
@@ -351,11 +300,7 @@ def render_home_bling_models() -> None:
             area='MODELO',
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='OK',
-            details={
-                'cadastro': _df_log_summary(cadastro_model),
-                'estoque': _df_log_summary(estoque_model),
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'cadastro': _df_log_summary(cadastro_model), 'estoque': _df_log_summary(estoque_model), 'responsible_file': RESPONSIBLE_FILE},
         )
         save_home_models(cadastro_model, estoque_model, replace_missing=True)
         _auto_forward_after_first_model_upload(cadastro_model, estoque_model)
