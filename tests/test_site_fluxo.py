@@ -210,6 +210,36 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertNotIn('Ainda não há', value)
         self.assertFalse(value.endswith('Teclado USB AL-507'))
 
+    def test_site_pipeline_limpa_coluna_descricao_simples_quando_vem_suja(self) -> None:
+        df = pd.DataFrame([
+            {
+                'Descrição': (
+                    'Descrição Teclado USB AL-507, perfeito para escritório ou home office. '
+                    'Conexão USB plug-and-play sem instalação de drivers, compatível com Windows, macOS e notebooks. '
+                    'Layout completo com teclado numérico, tecla Windows dedicada e atalhos úteis para acelerar tarefas diárias. '
+                    'Digitação estável, resposta tátil agradável e construção durável para uso contínuo em qualquer estação de trabalho. '
+                    'Ainda não há para este produto Teclado USB AL-507'
+                ),
+            }
+        ])
+
+        cleaned = _clean_site_description_columns(df, 'cadastro')
+        value = cleaned.loc[0, 'Descrição']
+
+        self.assertIn('Teclado USB AL-507, perfeito para escritório ou home office', value)
+        self.assertIn('Conexão USB plug-and-play sem instalação de drivers', value)
+        self.assertIn('Layout completo com teclado numérico', value)
+        self.assertNotIn('Descrição Teclado', value)
+        self.assertNotIn('Ainda não há', value)
+        self.assertFalse(value.endswith('Teclado USB AL-507'))
+
+    def test_site_pipeline_preserva_descricao_curta_legitima(self) -> None:
+        df = pd.DataFrame([{'Descrição': 'Teclado USB AL-507'}])
+
+        cleaned = _clean_site_description_columns(df, 'cadastro')
+
+        self.assertEqual(cleaned.loc[0, 'Descrição'], 'Teclado USB AL-507')
+
     def test_plano_de_submotores_muda_por_operacao(self) -> None:
         cadastro_plan = build_submotor_plan(
             'cadastro',
