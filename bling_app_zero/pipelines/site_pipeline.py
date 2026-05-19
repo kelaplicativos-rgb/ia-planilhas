@@ -10,7 +10,8 @@ from bling_app_zero.engines.fast_site_scraper.text_cleaner import clean_product_
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 
 
-VALID_OPERATIONS = {'cadastro', 'estoque'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
 DESCRIPTION_COLUMN_SIGNALS = (
@@ -39,8 +40,14 @@ TITLE_COLUMN_SIGNALS = (
 
 
 def _normalize_operation(operation: str | None) -> str:
-    value = str(operation or 'cadastro').strip().lower()
-    return value if value in VALID_OPERATIONS else 'cadastro'
+    value = str(operation or 'universal').strip().lower()
+    if value in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
+        return 'estoque'
+    if value in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
+        return 'cadastro'
+    if value in UNIVERSAL_ALIASES:
+        return 'universal'
+    return 'universal'
 
 
 def _column_key(column: object) -> str:
@@ -69,17 +76,10 @@ def _best_title_column(df: pd.DataFrame) -> str:
 
 
 def _clean_site_description_columns(df: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica a blindagem de descrição em qualquer motor de site.
-
-    BLINGFIX:
-    - o motor genérico já limpava a descrição no extractor;
-    - o motor Stoqui/API interna montava o DataFrame direto e podia escapar;
-    - esta camada comum roda antes do sanitize/export e impede que avaliações,
-      títulos repetidos e seções fora da descrição cheguem ao mapeamento.
-    """
+    """Aplica a blindagem de descrição em qualquer motor de site."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
-    if _normalize_operation(operation) != 'cadastro':
+    if _normalize_operation(operation) == 'estoque':
         return df
 
     description_columns = [str(column) for column in df.columns if _is_description_column(column)]
@@ -103,7 +103,7 @@ def run_pipeline(
     all_products: bool = True,
     max_pages: int = ALL_PAGES_LIMIT,
     max_products: int = ALL_PRODUCTS_LIMIT,
-    operation: str = 'cadastro',
+    operation: str = 'universal',
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     selected_operation = _normalize_operation(operation)
@@ -113,7 +113,7 @@ def run_pipeline(
     if progress_callback:
         progress_callback({
             'stage': 'Preparando',
-            'message': 'Preparando motor separado por operacao...',
+            'message': 'Preparando motor por modelo de destino...',
             'progress': 0.02,
         })
 
