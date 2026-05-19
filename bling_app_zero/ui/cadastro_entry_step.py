@@ -76,21 +76,20 @@ def render_cadastro_entrada_step() -> None:
     df_modelo = df_modelo_estoque if operation == 'estoque' else df_modelo_cadastro
     store_cadastro_context(df_origem, df_modelo, df_modelo_estoque)
 
-    if valid_df(df_origem) and site_origin:
-        st.success(f'Origem pronta: {len(df_origem)} registro(s). Siga para o mapeamento abaixo.')
-    elif valid_df(df_origem):
-        st.success(f'Origem carregada: {len(df_origem)} registro(s). Siga para o mapeamento abaixo.')
-        with st.expander('Ver origem dos dados', expanded=False):
-            preview_df('Origem dos dados', df_origem)
+    if valid_df(df_origem):
+        origem_nome = 'Busca do site' if site_origin else 'Planilha enviada'
+        st.success(f'{origem_nome} com sucesso. {len(df_origem)} produto(s) encontrados. Próximo passo: ligar as colunas.')
+        with st.expander('Ver detalhes da planilha', expanded=False):
+            preview_df('Planilha enviada', df_origem)
     elif site_origin:
-        st.warning('Busque os dados pelo site para liberar o mapeamento.')
+        st.warning('Busque os produtos no site para continuar.')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
     else:
-        st.warning('Envie o arquivo do fornecedor para liberar o mapeamento.')
+        st.warning('Envie a planilha de produtos para continuar.')
 
     if not valid_model(df_modelo):
-        st.error('Modelo de destino ausente. Volte em Modelo e envie o arquivo correto.')
+        st.error('Planilha modelo ausente. Volte em Enviar modelo e envie o arquivo correto.')
 
 
 __all__ = [
