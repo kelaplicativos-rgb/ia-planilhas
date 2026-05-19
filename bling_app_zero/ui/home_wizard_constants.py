@@ -24,46 +24,41 @@ STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
-# Ordem oficial do wizard.
-# A etapa Regras deixa de ser uma tela solta: proteções globais e ajustes com IA
-# passam a morar no contexto de mapeamento/preview, onde o usuário decide coluna,
-# valor fixo, vazio ou ação assistida por IA.
 CADASTRO_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
-    STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_ENTRADA,
+    STEP_PRECIFICACAO,
     STEP_MAPEAMENTO,
+    STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
 
-# Calculadora compartilhada em todos os fluxos principais.
-# No estoque ela fica disponível com toggle on/off para manter padrão global,
-# mesmo quando o usuário optar por não alterar preço nesta operação.
 ESTOQUE_STEPS = [
     STEP_MODELO,
     STEP_OPERACAO,
-    STEP_PRECIFICACAO,
     STEP_ORIGEM,
     STEP_ENTRADA,
+    STEP_PRECIFICACAO,
     STEP_GERAR_ESTOQUE,
+    STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
 
-ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_REGRAS, STEP_PROCESSAR, STEP_PRECIFICACAO]))
+ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo',
     STEP_OPERACAO: 'Objetivo',
-    STEP_PRECIFICACAO: 'Preço',
     STEP_ORIGEM: 'Origem',
-    STEP_REGRAS: 'Ajustes IA',
     STEP_ENTRADA: 'Dados de origem',
-    STEP_MAPEAMENTO: 'Mapeamento + IA',
-    STEP_GERAR_ESTOQUE: 'Gerar + IA',
+    STEP_PRECIFICACAO: 'Preço',
+    STEP_MAPEAMENTO: 'Mapear campos',
+    STEP_GERAR_ESTOQUE: 'Mapear campos',
+    STEP_REGRAS: 'IA / Revisão',
     STEP_PREVIEW: 'Preview',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
