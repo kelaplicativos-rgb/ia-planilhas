@@ -6,7 +6,6 @@ import streamlit as st
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
-from bling_app_zero.ui.mapping_ai_actions import render_ai_button
 from bling_app_zero.ui.mapping_auto_suggestions import build_super_mapping
 from bling_app_zero.ui.mapping_confirmation import render_confirm_mapping_button
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
@@ -56,32 +55,26 @@ def _render_cadastro_actions(
     model: pd.DataFrame,
     source_columns: list[str],
 ) -> None:
-    with st.expander('⚙️ Ações do mapeamento', expanded=False):
+    with st.expander('Ajustar colunas', expanded=False):
+        st.caption('Use aqui se quiser atualizar o resultado ou tentar ligar as colunas novamente.')
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button('Atualizar prévia', use_container_width=True, key=f'{mapping_key}_refresh'):
+            if st.button('Atualizar resultado', use_container_width=True, key=f'{mapping_key}_refresh'):
                 pause_home_autofluxo_for_manual_review('mapeamento', reason='cadastro_mapping_refresh_by_user')
                 st.rerun()
         with col_b:
-            if st.button('Refazer sugestões automáticas', use_container_width=True, key=f'{mapping_key}_reset'):
+            if st.button('Tentar ligar colunas de novo', use_container_width=True, key=f'{mapping_key}_reset'):
                 _reset_cadastro_mapping(mapping_key, order_key, df_source, model, source_columns)
 
 
 def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
-    st.markdown('### Mapear campos')
-    st.caption(f'{len(df_source)} produto(s) carregado(s). Primeiro revise os campos obrigatórios; depois confirme o mapeamento.')
-    with st.expander('📄 Ver dados de origem', expanded=False):
-        preview_df('Origem', df_source)
-
-
-def _render_smart_help_button(
-    df_source: pd.DataFrame,
-    target_columns: list[str],
-    current_mapping: dict[str, str],
-    mapping_key: str,
-) -> None:
-    """Mostra somente um botão simples de ajuda rápida no mapeamento."""
-    render_ai_button(df_source, target_columns, current_mapping, mapping_key, '💡 Ajuda inteligente')
+    st.markdown('### Ligar colunas')
+    st.caption(
+        f'{len(df_source)} produto(s) carregado(s). '
+        'O sistema tenta ligar as colunas automaticamente lendo os nomes das colunas e o conteúdo dos produtos. Confira antes de continuar.'
+    )
+    with st.expander('Ver planilha enviada', expanded=False):
+        preview_df('Planilha enviada', df_source)
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -105,9 +98,6 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
 
     _render_compact_mapping_header(df_source)
-
-    current_mapping = dict(st.session_state.get(mapping_key, {}))
-    _render_smart_help_button(df_source, target_columns, current_mapping, mapping_key)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
