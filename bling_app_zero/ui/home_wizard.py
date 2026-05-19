@@ -55,7 +55,8 @@ SINGLE_PAGE_FLOW = True
 HOME_CHOICE_TARGET = '__home_choice__'
 SCROLL_TARGET_KEY = 'home_wizard_scroll_target_step'
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
-VALID_OPERATIONS = {'cadastro', 'estoque'}
+UNIVERSAL_OPERATION = 'universal'
+UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 
 
@@ -94,43 +95,15 @@ def _query_param(name: str) -> str:
         return ''
 
 
-def _normalize_operation(value: object) -> str:
-    text = str(value or '').strip().lower()
-    if text in {'cadastro', 'cadastro_site'} or 'cadastro' in text:
-        return 'cadastro'
-    if text in {'estoque', 'estoque_site', 'atualizacao_estoque', 'atualização de estoque'} or 'estoque' in text:
-        return 'estoque'
-    return ''
-
-
-def _operation_from_runtime() -> str:
-    for value in (
-        _query_param('operacao'),
-        _query_param('operation'),
-        st.session_state.get('home_detected_operation'),
-        st.session_state.get(FLOW_OPERATION_KEY),
-        st.session_state.get('operacao_final'),
-        st.session_state.get('tipo_operacao_final'),
-        st.session_state.get('tipo_operacao_site'),
-        st.session_state.get('home_slim_flow_operation'),
-    ):
-        operation = _normalize_operation(value)
-        if operation in VALID_OPERATIONS:
-            return operation
-    if _has_estoque_model() and not _has_cadastro_model():
-        return 'estoque'
-    return 'cadastro'
-
-
 def _ensure_universal_operation_state() -> str:
     if not _has_home_models():
         return ''
-    operation = _operation_from_runtime()
-    st.session_state[FLOW_OPERATION_KEY] = operation
-    st.session_state['operacao_final'] = operation
-    st.session_state['tipo_operacao_final'] = operation
-    st.session_state['home_detected_operation'] = operation
-    return operation
+    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
+    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION
+    st.session_state.pop('tipo_operacao_site', None)
+    return UNIVERSAL_OPERATION
 
 
 def _selected_operation() -> str:
@@ -244,24 +217,24 @@ def _select_origin(origin: str) -> None:
     origin = _normalize_origin_value(origin)
     if origin not in {'arquivo', 'site'}:
         return
-    operation = _selected_operation() or 'cadastro'
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
     st.session_state[ORIGIN_RADIO_KEY] = origin
     st.session_state[FLOW_ORIGIN_KEY] = origin
-    st.session_state[FLOW_OPERATION_KEY] = operation
-    st.session_state['operacao_final'] = operation
-    st.session_state['tipo_operacao_final'] = operation
+    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
+    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
     st.session_state['origem_final'] = origin
-    st.session_state['tipo_operacao_site'] = operation if origin == 'site' else ''
-    st.session_state['home_slim_flow_operation'] = operation
+    st.session_state.pop('tipo_operacao_site', None)
+    st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
     _set_scroll_target(STEP_ENTRADA)
-    add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': operation, 'previous_origin': previous_origin, 'scroll_target': STEP_ENTRADA, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('single_page_origin_selected', area='WIZARD', step=STEP_ORIGEM, details={'origin': origin, 'operation': UNIVERSAL_OPERATION, 'previous_origin': previous_origin, 'scroll_target': STEP_ENTRADA, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     try:
         st.query_params['origem'] = origin
-        st.query_params['flow'] = 'site' if origin == 'site' else 'planilha'
+        st.query_params['flow'] = 'site' if origin == 'site' else 'arquivo'
         st.query_params['step'] = STEP_ENTRADA
-        st.query_params['operacao'] = operation
+        st.query_params.pop('operacao', None)
+        st.query_params.pop('operation', None)
     except Exception:
         pass
     st.rerun()
@@ -288,7 +261,7 @@ def _render_model_step() -> None:
 
 def _render_origin_step() -> None:
     _render_step_anchor(STEP_ORIGEM)
-    _section_title(2, 'Origem')
+    _section_title(2, 'Origem dos dados')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
@@ -310,14 +283,14 @@ def _render_origin_step() -> None:
 def _render_cadastro_entrada() -> None:
     origin = _current_origin_choice()
     _render_step_anchor(STEP_ENTRADA)
-    _section_title(3, 'Dados')
+    _section_title(3, 'Dados do fornecedor')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
     if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha a origem primeiro.')
         return
-    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': _selected_operation(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': UNIVERSAL_OPERATION, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
@@ -373,7 +346,7 @@ def _render_ai_review_step() -> None:
 
     st.caption('Opcional. Use para revisar o mapeamento e ajustar proteções antes do preview final.')
     render_mapping_review_panel(
-        operation='cadastro',
+        operation=UNIVERSAL_REVIEW_OPERATION,
         mapping=st.session_state.get('mapping_cadastro'),
         confidence=st.session_state.get('mapping_confidence_cadastro'),
         df_source=df_source,
@@ -425,7 +398,7 @@ def render_home_wizard() -> None:
         _inject_scroll_to_target()
         return
 
-    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'nao_escolhida', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     _render_model_step()
     _render_origin_step()
     _render_cadastro_entrada()
