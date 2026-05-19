@@ -118,16 +118,49 @@ def _samples(df: pd.DataFrame, column: str, limit: int = MAX_SAMPLES) -> list[st
     if not isinstance(df, pd.DataFrame) or column not in df.columns:
         return []
     values: list[str] = []
-    for value in df[column].dropna().astype(str).head(40):
+    for value in df[column].dropna().astype(str).head(60):
         text = str(value or '').strip()
         if not text or text.lower() in {'nan', 'none', 'null'}:
             continue
-        if len(text) > 120:
-            text = text[:120] + '...'
+        if len(text) > 160:
+            text = text[:160] + '...'
         values.append(text)
         if len(values) >= limit:
             break
     return values
+
+
+def _number_from_text(value: str) -> float | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    text = re.sub(r'[^0-9,.-]+', '', text)
+    if not text:
+        return None
+    if ',' in text and '.' in text:
+        text = text.replace('.', '').replace(',', '.')
+    elif ',' in text:
+        text = text.replace(',', '.')
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def _is_integer_quantity_text(value: str) -> bool:
+    text = str(value or '').strip().lower()
+    if not text or any(token in text for token in ['r$', '$', '€', 'preco', 'preço', 'valor']):
+        return False
+    if re.search(r'\d+[\.,]\d{1,4}', text):
+        return False
+    digits = re.sub(r'\D+', '', text)
+    if not digits:
+        return False
+    try:
+        number = int(digits)
+    except Exception:
+        return False
+    return 0 <= number <= 1_000_000 and len(digits) <= 7
 
 
 def _column_profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
@@ -136,24 +169,33 @@ def _column_profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
     digits_only = [re.sub(r'\D+', '', sample) for sample in samples]
     numeric_like = 0
     price_like = 0
+    money_decimal_like = 0
     gtin_like = 0
     url_like = 0
     image_like = 0
     integer_like = 0
     month_like = 0
+    stock_quantity_like = 0
 
     for raw, digits in zip(samples, digits_only):
         text = str(raw or '').strip().lower()
+        number = _number_from_text(text)
+        has_money_marker = bool(re.search(r'(r\$|\$|€|preco|preço|valor)', text))
+        has_decimal = bool(re.search(r'\d+[\.,]\d{1,4}', text))
         if re.fullmatch(r'\d{8}|\d{12}|\d{13}|\d{14}', digits or ''):
             gtin_like += 1
         if re.search(r'https?://|www\.', text):
             url_like += 1
         if re.search(r'\.(jpg|jpeg|png|webp|gif)(\?|$)|cdn|image|imagem|foto', text):
             image_like += 1
-        if re.search(r'(r\$|\d+[\.,]\d{2})', text):
+        if has_money_marker or (has_decimal and number is not None and 0 <= number <= 1_000_000):
             price_like += 1
-        if re.fullmatch(r'\d+', digits or ''):
+        if has_money_marker or has_decimal:
+            money_decimal_like += 1
+        if re.fullmatch(r'\d+', digits or '') and not has_decimal:
             integer_like += 1
+        if _is_integer_quantity_text(text):
+            stock_quantity_like += 1
         if re.search(r'\b(mes|meses|garantia)\b', text) or (digits and digits.isdigit() and 0 < int(digits[:4]) <= 120):
             month_like += 1
         if re.search(r'\d', text):
@@ -167,7 +209,9 @@ def _column_profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
         'url_score': url_like / count,
         'image_score': image_like / count,
         'price_score': price_like / count,
+        'money_decimal_score': money_decimal_like / count,
         'integer_score': integer_like / count,
+        'stock_quantity_score': stock_quantity_like / count,
         'month_score': month_like / count,
         'numeric_score': numeric_like / count,
         'text_score': 1.0 if samples and len(joined) > 0 else 0.0,
@@ -178,14 +222,14 @@ def _target_kind(target: str) -> str:
     key = _normalize_header(target)
     if any(term in key for term in ['gtin', 'ean', 'codigo barras', 'barra embalagem']):
         return 'gtin'
+    if any(term in key for term in ['estoque', 'saldo', 'quantidade', 'balanco']):
+        return 'stock'
     if any(term in key for term in ['preco', 'valor', 'custo', 'unitario']):
         return 'price'
     if any(term in key for term in ['url imagem', 'imagem', 'foto']):
         return 'image'
     if any(term in key for term in ['url', 'link']):
         return 'url'
-    if any(term in key for term in ['estoque', 'saldo', 'quantidade', 'balanco']):
-        return 'stock'
     if any(term in key for term in ['garantia', 'meses garantia']):
         return 'warranty_months'
     if any(term in key for term in ['fornecedor', 'marca', 'categoria', 'descricao', 'nome', 'titulo']):
@@ -193,17 +237,34 @@ def _target_kind(target: str) -> str:
     return 'generic'
 
 
-def _profile_matches_kind(profile: dict[str, Any], kind: str) -> bool:
-    if kind == 'gtin':
-        return float(profile.get('gtin_score') or 0) >= 0.55
+def _header_matches_kind(source: str, kind: str) -> bool:
+    key = _normalize_header(source)
+    if kind == 'stock':
+        return any(term in key for term in ['estoque', 'saldo', 'quantidade', 'qtd', 'balanco'])
     if kind == 'price':
-        return float(profile.get('price_score') or 0) >= 0.45
+        return any(term in key for term in ['preco', 'valor', 'custo', 'unitario'])
+    if kind == 'gtin':
+        return any(term in key for term in ['gtin', 'ean', 'codigo barras', 'barra'])
+    if kind == 'image':
+        return any(term in key for term in ['imagem', 'foto', 'url imagem'])
+    if kind == 'url':
+        return any(term in key for term in ['url', 'link'])
+    return True
+
+
+def _profile_matches_kind(profile: dict[str, Any], kind: str, source: str = '') -> bool:
+    if kind == 'gtin':
+        return float(profile.get('gtin_score') or 0) >= 0.55 or (_header_matches_kind(source, kind) and float(profile.get('numeric_score') or 0) >= 0.5)
+    if kind == 'price':
+        return float(profile.get('price_score') or 0) >= 0.45 or (_header_matches_kind(source, kind) and float(profile.get('numeric_score') or 0) >= 0.45)
     if kind == 'image':
         return float(profile.get('image_score') or 0) >= 0.35 or float(profile.get('url_score') or 0) >= 0.65
     if kind == 'url':
         return float(profile.get('url_score') or 0) >= 0.55
     if kind == 'stock':
-        return float(profile.get('integer_score') or 0) >= 0.50
+        if float(profile.get('money_decimal_score') or 0) >= 0.35:
+            return False
+        return float(profile.get('stock_quantity_score') or 0) >= 0.55 or (_header_matches_kind(source, kind) and float(profile.get('integer_score') or 0) >= 0.50)
     if kind == 'warranty_months':
         return float(profile.get('month_score') or 0) >= 0.45 or float(profile.get('integer_score') or 0) >= 0.70
     if kind == 'text':
@@ -211,7 +272,7 @@ def _profile_matches_kind(profile: dict[str, Any], kind: str) -> bool:
     return True
 
 
-def _exact_header_suggestions(source_columns: list[str], target_columns: list[str]) -> dict[str, str]:
+def _exact_header_suggestions(source_columns: list[str], target_columns: list[str], df_source: pd.DataFrame | None = None) -> dict[str, str]:
     normalized_sources: dict[str, str] = {}
     for source in source_columns:
         normalized = _normalize_header(source)
@@ -223,14 +284,20 @@ def _exact_header_suggestions(source_columns: list[str], target_columns: list[st
     for target in target_columns:
         normalized = _normalize_header(target)
         source = normalized_sources.get(normalized, '')
-        if source and source not in used:
-            suggestions[str(target)] = source
-            used.add(source)
+        if not source or source in used:
+            continue
+        if isinstance(df_source, pd.DataFrame):
+            kind = _target_kind(target)
+            profile = _column_profile(df_source, source)
+            if not _profile_matches_kind(profile, kind, source):
+                continue
+        suggestions[str(target)] = source
+        used.add(source)
     return suggestions
 
 
 def _content_based_suggestions(df_source: pd.DataFrame, target_columns: list[str], source_columns: list[str]) -> dict[str, str]:
-    """Segunda camada: usa conteúdo das linhas quando cabeçalho não resolve."""
+    """Usa cabeçalho + conteúdo real das linhas para evitar ligação errada."""
     profiles = {source: _column_profile(df_source, source) for source in source_columns}
     suggestions: dict[str, str] = {}
     used: set[str] = set()
@@ -246,11 +313,13 @@ def _content_based_suggestions(df_source: pd.DataFrame, target_columns: list[str
                 continue
             source_key = _normalize_header(source)
             profile = profiles[source]
-            if not _profile_matches_kind(profile, kind):
+            if not _profile_matches_kind(profile, kind, source):
                 continue
             name_bonus = 0.0
             if target_key == source_key:
                 name_bonus = 1.0
+            elif _header_matches_kind(source, kind):
+                name_bonus = 0.85
             elif target_key and source_key and (target_key in source_key or source_key in target_key):
                 name_bonus = 0.75
             elif any(piece and piece in source_key for piece in target_key.split() if len(piece) >= 4):
@@ -261,11 +330,11 @@ def _content_based_suggestions(df_source: pd.DataFrame, target_columns: list[str
                 'price': float(profile.get('price_score') or 0),
                 'image': max(float(profile.get('image_score') or 0), float(profile.get('url_score') or 0)),
                 'url': float(profile.get('url_score') or 0),
-                'stock': float(profile.get('integer_score') or 0),
+                'stock': float(profile.get('stock_quantity_score') or 0),
                 'warranty_months': max(float(profile.get('month_score') or 0), float(profile.get('integer_score') or 0)),
                 'text': float(profile.get('text_score') or 0),
             }.get(kind, 0.0)
-            score = (content_score * 0.70) + (name_bonus * 0.30)
+            score = (content_score * 0.75) + (name_bonus * 0.25)
             candidates.append((score, source))
 
         candidates.sort(reverse=True)
@@ -278,24 +347,19 @@ def _content_based_suggestions(df_source: pd.DataFrame, target_columns: list[str
 def _build_payload(df_source: pd.DataFrame, target_columns: list[str], current_mapping: dict[str, str]) -> dict[str, Any]:
     source_columns = [str(c) for c in list(df_source.columns)[:MAX_SOURCE_COLUMNS]]
     targets = [str(c) for c in target_columns[:MAX_TARGETS]]
-    exact_suggestions = _exact_header_suggestions(source_columns, targets)
+    exact_suggestions = _exact_header_suggestions(source_columns, targets, df_source)
     content_suggestions = _content_based_suggestions(df_source, targets, source_columns)
     return {
-        'task': 'Map target template headers to supplier/source spreadsheet headers using header names and real row content.',
+        'task': 'Map target template headers to source spreadsheet headers using header names and real row content.',
         'priority': [
-            '1. If target and source headers are identical after normalization, map them.',
-            '2. If header names differ, inspect sample row content and map only when the content type and business meaning match.',
-            '3. GTIN/EAN must map only to columns containing GTIN/EAN-like values or matching GTIN/EAN headers.',
-            '4. Price must map only to monetary values or matching price/cost headers.',
-            '5. Warranty months must map only to month/garantia numeric columns.',
+            '1. Always compare target header with source header first.',
+            '2. Then inspect real row samples from the source column before accepting the mapping.',
+            '3. Stock/balance/quantity fields must map only to integer quantity columns. Never map stock/balance to price, cost, value, or decimal monetary values like 31,00.',
+            '4. Price fields must map only to monetary columns or clear price/cost headers.',
+            '5. GTIN/EAN must map only to columns containing GTIN/EAN-like values or matching GTIN/EAN headers.',
             '6. Use exact source column names from source_columns. Never invent source columns.',
-            '7. If unsure, return empty string.',
+            '7. If header and content do not both make business sense, return empty string.',
         ],
-        'examples': {
-            'Fornecedor': 'Fornecedor',
-            'Meses Garantia no Fornecedor': 'Meses Garantia no Fornecedor',
-            'GTIN/EAN da embalagem': 'GTIN/EAN da embalagem',
-        },
         'response_format': 'Return only JSON object: {"mapping": {target_column: source_column_or_empty_string}}.',
         'target_columns': targets,
         'source_columns': [
@@ -346,7 +410,8 @@ def _call_openai(payload: dict[str, Any]) -> dict[str, str]:
                 'role': 'system',
                 'content': (
                     'You are a precise spreadsheet mapping assistant. '
-                    'Correlate template headers with supplier headers using both header names and sample row content. '
+                    'You must compare source headers and real row samples before mapping. '
+                    'Never map stock/balance/quantity targets to price, cost, value, or decimal money columns. '
                     'Be conservative. Return JSON only.'
                 ),
             },
@@ -376,6 +441,9 @@ def _needs_ai(target: str, current_mapping: dict[str, str], df_source: pd.DataFr
     selected = str(current_mapping.get(target, '') or '')
     if not selected:
         return True
+    kind = _target_kind(target)
+    if selected in df_source.columns and not _profile_matches_kind(_column_profile(df_source, selected), kind, selected):
+        return True
     info = confidence_for_mapping(df_source, target, selected)
     return str(info.get('level')) in {'vermelho', 'amarelo'}
 
@@ -392,13 +460,17 @@ def _accept_suggestions(suggestions: dict[str, str], targets: list[str], source_
         source = str(source or '')
         if target not in targets or not _valid_source(source, source_columns):
             continue
+        kind = _target_kind(target)
+        profile = _column_profile(df_source, source)
+        if not _profile_matches_kind(profile, kind, source):
+            continue
         if source in used and current_mapping.get(target) != source:
             continue
         if _normalize_header(target) == _normalize_header(source):
             accepted[target] = source
             used.add(source)
             continue
-        if _profile_matches_kind(_column_profile(df_source, source), _target_kind(target)):
+        if _header_matches_kind(source, kind):
             accepted[target] = source
             used.add(source)
             continue
@@ -426,7 +498,7 @@ def apply_ai_mapping_assist(df_source: pd.DataFrame, target_columns: list[str], 
     if not targets:
         return AIMappingResult(True, 0, {}, 'sem campos incertos')
 
-    exact = _exact_header_suggestions(source_columns_list, targets)
+    exact = _exact_header_suggestions(source_columns_list, targets, df_source)
     content = _content_based_suggestions(df_source, targets, source_columns_list)
 
     if not _consume_session_call():
