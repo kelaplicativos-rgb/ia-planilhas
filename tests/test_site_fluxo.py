@@ -34,6 +34,17 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(requested, ['Descrição', 'Preço de venda', 'GTIN/EAN', 'URL Imagens'])
         self.assertNotIn('Balanço (OBRIGATÓRIO)', requested or [])
 
+    def test_site_universal_junta_modelo_cadastro_e_estoque(self) -> None:
+        modelo_cadastro = pd.DataFrame(columns=['Descrição', 'Preço de venda', 'GTIN/EAN', 'URL Imagens'])
+        modelo_estoque = pd.DataFrame(columns=['Código', 'Descrição', 'Balanço (OBRIGATÓRIO)', 'Depósito (OBRIGATÓRIO)'])
+
+        requested = requested_columns_for_site_capture('universal', modelo_cadastro, modelo_estoque)
+
+        self.assertEqual(
+            requested,
+            ['Descrição', 'Preço de venda', 'GTIN/EAN', 'URL Imagens', 'Código', 'Balanço (OBRIGATÓRIO)', 'Depósito (OBRIGATÓRIO)'],
+        )
+
     def test_site_sem_modelo_estoque_nao_devolve_colunas_solicitadas(self) -> None:
         modelo_cadastro = pd.DataFrame(columns=['Descrição', 'Preço de venda'])
 
@@ -125,6 +136,19 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens'])
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
 
+    def test_motor_universal_respeita_contrato_unico(self) -> None:
+        with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
+            df = run_site_operation_engine(
+                operation='universal',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'],
+                max_pages=1,
+                max_products=1,
+            )
+
+        self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
+        self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
+
     def test_motor_estoque_sem_contrato_nao_cai_no_cadastro(self) -> None:
         df = run_site_operation_engine(
             operation='estoque',
@@ -153,9 +177,17 @@ class TestSiteFluxo(unittest.TestCase):
                 max_pages=1,
                 max_products=1,
             )
+            universal = run_site_operation_engine(
+                operation='universal',
+                raw_urls='https://fornecedor.com/p/1',
+                requested_columns=['URL', 'URL', 'Descrição', 'Descrição', 'Balanço (OBRIGATÓRIO)'],
+                max_pages=1,
+                max_products=1,
+            )
 
         self.assertEqual(list(cadastro.columns), ['URL', 'Descrição'])
         self.assertEqual(list(estoque.columns), ['Código', 'Balanço (OBRIGATÓRIO)'])
+        self.assertEqual(list(universal.columns), ['URL', 'Descrição', 'Balanço (OBRIGATÓRIO)'])
 
     def test_site_pipeline_limpa_descricao_suja_de_qualquer_motor(self) -> None:
         df = pd.DataFrame([
@@ -187,6 +219,10 @@ class TestSiteFluxo(unittest.TestCase):
             'estoque',
             ['Código', 'Balanço (OBRIGATÓRIO)'],
         )
+        universal_plan = build_submotor_plan(
+            'universal',
+            ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'URL Imagens', 'Balanço (OBRIGATÓRIO)'],
+        )
 
         self.assertEqual(cadastro_plan.operation, 'cadastro')
         self.assertIn('preco', cadastro_plan.active)
@@ -196,6 +232,10 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertIn('identificacao', estoque_plan.active)
         self.assertIn('estoque', estoque_plan.active)
         self.assertNotIn('imagens', estoque_plan.active)
+        self.assertEqual(universal_plan.operation, 'universal')
+        self.assertIn('preco', universal_plan.active)
+        self.assertIn('estoque', universal_plan.active)
+        self.assertIn('imagens', universal_plan.active)
 
 
 if __name__ == '__main__':
