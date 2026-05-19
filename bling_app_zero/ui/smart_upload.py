@@ -11,7 +11,7 @@ from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
 SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'txt', 'html', 'htm', 'mht', 'mhtml']
 MODEL_HINTS = ['modelo', 'bling', 'cadastro', 'estoque', 'layout', 'importacao', 'importação']
 SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export', 'html', 'mht', 'mhtml']
-SOURCE_MULTI_EXTS = {'mht', 'mhtml', 'html', 'htm', 'csv'}
+SOURCE_MULTI_EXTS = set(SUPPORTED_TYPES)
 
 
 @dataclass
@@ -233,15 +233,17 @@ def _render_upload_header(title: str, allow_model: bool, accepted_types: list[st
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
     if allow_model:
         st.caption('Envie o arquivo de origem. O modelo também pode ser enviado junto se ainda não foi anexado.')
+    else:
+        st.caption('Envie um ou vários arquivos do fornecedor. Todos os compatíveis serão unidos para o mapeamento.')
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
     if not supported_files:
         return
-    st.success(f'Arquivo recebido: {len(supported_files)}')
+    st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
     with st.expander('Ver detalhes do arquivo', expanded=False):
         for file in supported_files:
-            role = 'Planilha de produtos'
+            role = 'Dados do fornecedor'
             if allow_model and result.cadastro_model_file is file:
                 role = 'Modelo de cadastro'
             elif allow_model and result.estoque_model_file is file:
@@ -264,7 +266,7 @@ def render_smart_upload_box(
         type=None,
         accept_multiple_files=True,
         key=key,
-        help=f'Formatos aceitos: {_accepted_label(accepted_types)}.',
+        help=f'Formatos aceitos: {_accepted_label(accepted_types)}. Você pode selecionar vários arquivos de uma vez.',
         label_visibility='collapsed',
     )
 
@@ -285,8 +287,9 @@ def render_smart_upload_box(
     _render_detected_files(result, supported_files, allow_model=allow_model)
 
     if result.source_df is not None:
-        with st.expander('Ver planilha enviada', expanded=False):
-            preview_df('Planilha enviada', result.source_df)
+        with st.expander('Ver base unificada enviada', expanded=False):
+            preview_df('Base unificada do fornecedor', result.source_df)
+        st.caption(f'Base de origem pronta para mapeamento: {len(result.source_df)} linha(s) × {len(result.source_df.columns)} coluna(s).')
     elif result.source_file is not None:
         st.warning(f'Arquivo recebido, mas nenhuma tabela foi detectada em {_file_name(result.source_file)}.')
 
