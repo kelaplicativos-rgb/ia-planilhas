@@ -231,10 +231,11 @@ def _classify(files: list[Any], operation: str, allow_model: bool, ignored_files
 def _render_upload_header(title: str, allow_model: bool, accepted_types: list[str] | None) -> None:
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
-    caption = f'Envie arquivo { _accepted_label(accepted_types) } do fornecedor para transformar em CSV final.'
     if allow_model:
-        caption = f'Envie o arquivo do fornecedor. Se ainda não enviou o modelo do Bling, pode enviar junto. Formatos aceitos: {_accepted_label(accepted_types)}.'
-    st.markdown(f'<div class="bling-upload-caption">{caption}</div>', unsafe_allow_html=True)
+        caption = f'Envie origem e modelo, se necessário. Formatos: {_accepted_label(accepted_types)}.'
+    else:
+        caption = f'Formatos aceitos: {_accepted_label(accepted_types)}.'
+    st.caption(caption)
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
