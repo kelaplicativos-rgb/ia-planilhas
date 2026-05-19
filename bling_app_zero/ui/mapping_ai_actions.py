@@ -16,16 +16,21 @@ def apply_ai_to_session_mapping(
     current_mapping: dict[str, str],
     mapping_key: str,
 ) -> None:
-    with st.spinner('IA analisando os campos pendentes...'):
+    """Aplica ajuda inteligente sem deixar balões permanentes na tela.
+
+    BLINGFIX: dentro de Mapear campos, a ajuda deve ser discreta. A etapa
+    completa de IA/Revisão fica separada depois do mapeamento. Por isso esta
+    ação não renderiza st.info/st.success com blocos grandes abaixo do botão.
+    """
+    with st.spinner('Analisando campos...'):
         result = apply_ai_mapping_assist(df_source, target_columns, current_mapping, only_uncertain=True)
 
     if not result.enabled:
-        st.warning('IA não configurada. Configure OPENAI_API_KEY nos secrets do Streamlit.')
-        st.session_state[f'{mapping_key}_ai_last_status'] = 'IA não configurada.'
+        st.session_state[f'{mapping_key}_ai_last_status'] = 'inactive'
         return
+
     if result.applied <= 0:
-        st.info('IA terminou: nenhum ajuste seguro encontrado agora.')
-        st.session_state[f'{mapping_key}_ai_last_status'] = 'IA terminou sem ajustes seguros.'
+        st.session_state[f'{mapping_key}_ai_last_status'] = 'no_safe_changes'
         return
 
     st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
@@ -33,8 +38,7 @@ def apply_ai_to_session_mapping(
     st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     clear_mapping_widgets(mapping_key)
     st.session_state.pop(f'{mapping_key}_order', None)
-    st.session_state[f'{mapping_key}_ai_last_status'] = f'IA aplicou {result.applied} ajuste(s).'
-    st.success(f'IA aplicou {result.applied} ajuste(s).')
+    st.session_state[f'{mapping_key}_ai_last_status'] = f'applied:{result.applied}'
     st.rerun()
 
 
@@ -45,15 +49,12 @@ def render_ai_button(
     mapping_key: str,
     label: str,
 ) -> None:
+    """Mostra apenas um botão simples de ajuda inteligente."""
     if not ai_mapping_enabled():
-        st.caption('IA opcional inativa. Configure OPENAI_API_KEY para ajudar nos campos em dúvida.')
         return
 
-    last_status = str(st.session_state.get(f'{mapping_key}_ai_last_status') or '').strip()
-    if last_status:
-        st.caption(last_status)
-
-    if st.button(label, use_container_width=True, key=f'{mapping_key}_ai'):
+    button_label = '💡 Ajuda inteligente' if 'Ajuda' in str(label or '') else label
+    if st.button(button_label, use_container_width=True, key=f'{mapping_key}_ai'):
         apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
 
 
