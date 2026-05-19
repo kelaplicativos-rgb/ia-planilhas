@@ -16,6 +16,9 @@ class EmptyModelUpload:
     model_df: pd.DataFrame | None = None
 
 
+UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+
+
 def unique_columns(columns: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -44,7 +47,6 @@ def _upload_attr(upload: Any, name: str) -> pd.DataFrame | None:
 
 
 def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
-    """Retorna modelo classificado como cadastro/marketplace."""
     cadastro = _upload_attr(upload, 'cadastro_model_df')
     if isinstance(cadastro, pd.DataFrame):
         return cadastro
@@ -56,12 +58,22 @@ def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
 
 
 def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
-    """Retorna somente modelo classificado como estoque."""
     return _upload_attr(upload, 'estoque_model_df')
 
 
+def _combine_model_columns(*models: pd.DataFrame | None) -> pd.DataFrame | None:
+    columns: list[str] = []
+    for model in models:
+        columns.extend(columns_from_df(model))
+    unique = unique_columns(columns)
+    return pd.DataFrame(columns=unique) if unique else None
+
+
+def _is_universal(operation: str | None) -> bool:
+    return str(operation or '').strip().lower() in UNIVERSAL_ALIASES
+
+
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do cadastro/marketplace salvo na etapa Modelo."""
     uploaded = _uploaded_cadastro_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -70,7 +82,6 @@ def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
 
 
 def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
-    """Modelo do estoque salvo na etapa Modelo."""
     uploaded = _uploaded_estoque_model(upload)
     if isinstance(uploaded, pd.DataFrame):
         return uploaded
@@ -79,6 +90,11 @@ def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
 
 
 def choose_site_model_df(upload, operation: str = 'cadastro') -> pd.DataFrame | None:
+    if _is_universal(operation):
+        return _combine_model_columns(
+            choose_site_cadastro_model_df(upload),
+            choose_site_estoque_model_df(upload),
+        )
     if str(operation or '').strip().lower() == 'estoque':
         return choose_site_estoque_model_df(upload)
     return choose_site_cadastro_model_df(upload)
@@ -89,10 +105,11 @@ def requested_columns_for_site_capture(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
 ) -> list[str] | None:
-    """Retorna somente as colunas do modelo da operação atual."""
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         columns = unique_columns(columns_from_df(df_modelo_estoque))
+    elif normalized in UNIVERSAL_ALIASES:
+        columns = unique_columns(columns_from_df(df_modelo_cadastro) + columns_from_df(df_modelo_estoque))
     else:
         columns = unique_columns(columns_from_df(df_modelo_cadastro))
     return columns or None
@@ -102,10 +119,15 @@ def has_home_site_model_for_operation(operation: str) -> bool:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         return isinstance(get_home_estoque_model(), pd.DataFrame)
+    if normalized in UNIVERSAL_ALIASES:
+        return isinstance(get_home_cadastro_model(), pd.DataFrame) or isinstance(get_home_estoque_model(), pd.DataFrame)
     return isinstance(get_home_cadastro_model(), pd.DataFrame)
 
 
 def _home_model_summary(operation_key: str) -> str:
+    if operation_key in UNIVERSAL_ALIASES:
+        total = len(unique_columns(columns_from_df(get_home_cadastro_model()) + columns_from_df(get_home_estoque_model())))
+        return f'Modelo de destino já definido: {total} coluna(s) na origem única.' if total else 'Nenhum modelo foi encontrado na etapa Modelo.'
     df = get_home_estoque_model() if operation_key == 'estoque' else get_home_cadastro_model()
     if isinstance(df, pd.DataFrame):
         return f'Modelo já definido na etapa Modelo: {len(df.columns)} coluna(s).'
@@ -113,15 +135,8 @@ def _home_model_summary(operation_key: str) -> str:
 
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
-    """Mantém a busca por site sem upload duplicado de modelo.
-
-    O modelo de destino deve ser anexado uma única vez na etapa Modelo de
-    destino. Esta etapa apenas lê o modelo já salvo para definir quais campos
-    serão buscados no site. Isso evita confundir o usuário com dois pontos de
-    anexo para o mesmo arquivo.
-    """
     normalized = str(operation or '').strip().lower()
-    operation_key = 'estoque' if normalized == 'estoque' else 'cadastro'
+    operation_key = 'estoque' if normalized == 'estoque' else 'universal' if normalized in UNIVERSAL_ALIASES else 'cadastro'
 
     if has_home_site_model_for_operation(operation_key):
         st.success(_home_model_summary(operation_key))
