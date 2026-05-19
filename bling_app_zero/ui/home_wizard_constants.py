@@ -51,20 +51,20 @@ ESTOQUE_STEPS = [
 ALL_STEPS = list(dict.fromkeys(CADASTRO_STEPS + ESTOQUE_STEPS + [STEP_PROCESSAR]))
 
 STEP_LABELS = {
-    STEP_MODELO: 'Modelo',
-    STEP_OPERACAO: 'Objetivo',
-    STEP_ORIGEM: 'Origem',
-    STEP_ENTRADA: 'Dados de origem',
-    STEP_PRECIFICACAO: 'Preço',
-    STEP_MAPEAMENTO: 'Mapear campos',
-    STEP_GERAR_ESTOQUE: 'Mapear campos',
-    STEP_REGRAS: 'IA / Revisão',
-    STEP_PREVIEW: 'Preview',
-    STEP_DOWNLOAD: 'Download',
+    STEP_MODELO: 'Enviar modelo',
+    STEP_OPERACAO: 'Escolher o que fazer',
+    STEP_ORIGEM: 'Escolher origem',
+    STEP_ENTRADA: 'Enviar dados',
+    STEP_PRECIFICACAO: 'Calcular preço',
+    STEP_MAPEAMENTO: 'Ligar colunas',
+    STEP_GERAR_ESTOQUE: 'Ligar colunas',
+    STEP_REGRAS: 'IA Real',
+    STEP_PREVIEW: 'Conferir resultado',
+    STEP_DOWNLOAD: 'Baixar arquivo',
     STEP_PROCESSAR: 'Processar',
 }
 
-DEFAULT_PENDING_MESSAGE = 'Complete esta etapa para liberar o avanço.'
+DEFAULT_PENDING_MESSAGE = 'Conclua esta parte para continuar.'
 
 RESET_OUTPUT_KEYS = [
     FLOW_ORIGIN_KEY,
