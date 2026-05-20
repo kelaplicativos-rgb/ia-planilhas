@@ -199,14 +199,14 @@ def _payload_for_ai(df_source: pd.DataFrame | None, df_modelo: pd.DataFrame | No
 def _ask_ai_for_explanation(df_source: pd.DataFrame | None, df_modelo: pd.DataFrame | None, df_final: pd.DataFrame | None, local: AIRealReport) -> tuple[str, str, bool]:
     settings = get_ai_settings()
     if not settings.ready:
-        return '', 'IA Real indisponível: configure a chave OpenAI no Secrets do app.', False
+        return '', 'A conferência local foi concluída. A explicação avançada não está disponível neste momento.', False
 
     instructions = '''Você é a IA Real do MapeiaAI. Sua função é ajudar o usuário final a entender se a planilha final está pronta.
 Retorne JSON com: {"summary":"resumo curto em português simples", "actions":["ação prática"], "warnings":["aviso"], "ready_to_download":true/false}.
 Não invente informações ausentes. Não mande o usuário configurar chave. Não fale de código.'''
     result: AIResult = call_openai_json('ai_real_final_check', instructions, _payload_for_ai(df_source, df_modelo, df_final, local), settings=settings)
     if not result.ok:
-        return '', result.message or result.error or 'IA Real não concluiu a análise.', False
+        return '', 'A conferência local foi concluída. A explicação avançada não está disponível neste momento.', False
     data = result.data if isinstance(result.data, dict) else {}
     summary = str(data.get('summary') or '').strip()
     actions = data.get('actions') if isinstance(data.get('actions'), list) else []
