@@ -13,12 +13,12 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_ORIGEM_PRICED_KEY,
 )
 from bling_app_zero.ui.cadastro_wizard_steps import (
-    cadastro_context_ready,
-    cadastro_mapping_ready,
-    render_cadastro_download_step,
-    render_cadastro_entrada_step,
-    render_cadastro_mapeamento_step,
-    render_cadastro_preview_step,
+    render_universal_download_step,
+    render_universal_entrada_step,
+    render_universal_mapeamento_step,
+    render_universal_preview_step,
+    universal_context_ready,
+    universal_mapping_ready,
 )
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
@@ -325,7 +325,7 @@ def _render_origin_step() -> None:
         render_pending_notice('Escolha Arquivo ou Site.')
 
 
-def _render_cadastro_entrada() -> None:
+def _render_universal_entrada() -> None:
     origin = _current_origin_choice()
     _render_step_anchor(STEP_ENTRADA)
     _section_title(3, 'Dados do fornecedor')
@@ -339,7 +339,7 @@ def _render_cadastro_entrada() -> None:
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
-    render_cadastro_entrada_step()
+    render_universal_entrada_step()
 
 
 def _render_pricing_step() -> None:
@@ -348,7 +348,7 @@ def _render_pricing_step() -> None:
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
-    if not cadastro_context_ready():
+    if not universal_context_ready():
         render_pending_notice('Carregue os dados primeiro.')
         return
     current_config = get_home_pricing_config()
@@ -362,16 +362,16 @@ def _render_pricing_step() -> None:
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
-def _render_cadastro_mapeamento() -> None:
+def _render_universal_mapeamento() -> None:
     _render_step_anchor(STEP_MAPEAMENTO)
     _section_title(5, 'Mapear campos')
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e dados.')
         return
-    if not cadastro_context_ready():
+    if not universal_context_ready():
         render_pending_notice('Carregue os dados primeiro.')
         return
-    render_cadastro_mapeamento_step()
+    render_universal_mapeamento_step()
 
 
 def _run_final_checker(df_source: object, df_modelo: object, df_final: object) -> object:
@@ -536,7 +536,7 @@ def _render_ai_review_step() -> None:
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e mapeamento.')
         return
-    if not cadastro_mapping_ready():
+    if not universal_mapping_ready():
         render_pending_notice('Confirme o mapeamento manual primeiro.')
         return
 
@@ -562,29 +562,29 @@ def _render_ai_review_step() -> None:
     render_rules_center_step()
 
 
-def _render_cadastro_preview() -> None:
+def _render_universal_preview() -> None:
     _render_step_anchor(STEP_PREVIEW)
     _section_title(7, 'Preview')
     if not _has_home_models():
         render_pending_notice('Liberado após o mapeamento.')
         return
-    if not cadastro_mapping_ready():
+    if not universal_mapping_ready():
         render_pending_notice('Confirme o mapeamento primeiro.')
         return
-    render_cadastro_preview_step()
+    render_universal_preview_step()
 
 
-def _render_cadastro_download() -> None:
+def _render_universal_download() -> None:
     _render_step_anchor(STEP_DOWNLOAD)
     _section_title(8, 'Download')
     if not _has_home_models():
         render_pending_notice('Liberado no final.')
         return
-    if not cadastro_mapping_ready():
+    if not universal_mapping_ready():
         render_pending_notice('Confirme o mapeamento primeiro.')
         return
     _clear_stale_cadastro_operation_state()
-    render_cadastro_download_step()
+    render_universal_download_step()
     if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset_single_page'):
         _reset_wizard()
 
@@ -607,12 +607,12 @@ def render_home_wizard() -> None:
     add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     _render_model_step()
     _render_origin_step()
-    _render_cadastro_entrada()
+    _render_universal_entrada()
     _render_pricing_step()
-    _render_cadastro_mapeamento()
+    _render_universal_mapeamento()
     _render_ai_review_step()
-    _render_cadastro_preview()
-    _render_cadastro_download()
+    _render_universal_preview()
+    _render_universal_download()
     _inject_scroll_to_target()
 
 
