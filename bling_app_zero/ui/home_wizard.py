@@ -369,7 +369,7 @@ def _render_cadastro_mapeamento() -> None:
 
 def _render_ai_review_step() -> None:
     _render_step_anchor(STEP_REGRAS)
-    _section_title(6, 'IA / Revisão')
+    _section_title(6, 'Revisão final')
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e mapeamento.')
         return
@@ -382,7 +382,7 @@ def _render_ai_review_step() -> None:
         df_source = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
-    st.caption('Etapa de revisão e proteções do arquivo final. A IA Real incorreta de pós-mapeamento foi removida no BLINGCLEAN.')
+    st.caption('Revise os campos ligados e aplique as proteções finais antes do preview.')
     render_mapping_review_panel(
         operation=UNIVERSAL_REVIEW_OPERATION,
         mapping=st.session_state.get('mapping_cadastro'),
