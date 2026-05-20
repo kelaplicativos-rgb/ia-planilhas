@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -58,6 +60,7 @@ ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
+FINAL_CHECK_REPORT_KEY = 'home_wizard_final_check_report'
 STALE_CADASTRO_OPERATION_KEYS = (
     'df_final_download_operation',
     'df_final_preview_operation',
@@ -367,6 +370,87 @@ def _render_cadastro_mapeamento() -> None:
     render_cadastro_mapeamento_step()
 
 
+def _run_final_checker(df_source: object, df_modelo: object, df_final: object) -> object:
+    module = importlib.import_module('bling_app_zero.ai.ai_real_engine')
+    checker = getattr(module, 'run_ai_real_final_check')
+    return checker(
+        df_source=df_source if _looks_like_loaded_df(df_source) else None,
+        df_modelo=df_modelo if _looks_like_loaded_df(df_modelo) else None,
+        df_final=df_final if _looks_like_loaded_df(df_final) else None,
+    )
+
+
+def _render_checker_item(item: object) -> None:
+    level = str(getattr(item, 'level', '') or '')
+    title = str(getattr(item, 'title', '') or '')
+    message = str(getattr(item, 'message', '') or '')
+    column = str(getattr(item, 'column', '') or '')
+    prefix = '⛔' if level == 'erro' else '⚠️' if level == 'aviso' else '✅'
+    text = f'{prefix} **{title}** — {message}'
+    if column:
+        text += f'  \nCampo: `{column}`'
+    if level == 'erro':
+        st.error(text)
+    elif level == 'aviso':
+        st.warning(text)
+    else:
+        st.success(text)
+
+
+def _render_final_checker(df_source: object, df_modelo: object) -> None:
+    df_final = st.session_state.get('df_final_cadastro')
+    if not _looks_like_loaded_df(df_final):
+        st.warning('Conferência aguardando o arquivo final gerado pelo mapeamento.')
+        return
+
+    st.markdown('#### Conferência inteligente')
+    st.caption('Verifica modelo, campos vazios, descrições, imagens e GTIN antes do preview/download. Não altera seus dados automaticamente.')
+
+    if st.button('Verificar planilha agora', use_container_width=True, key='home_wizard_final_checker_run'):
+        with st.spinner('Conferindo planilha final...'):
+            report = _run_final_checker(df_source, df_modelo, df_final)
+        st.session_state[FINAL_CHECK_REPORT_KEY] = report
+        add_audit_event(
+            'home_wizard_final_checker_finished',
+            area='FINAL_CHECK',
+            step=STEP_REGRAS,
+            status='OK' if bool(getattr(report, 'ok', False)) else 'AVISO',
+            details={
+                'summary': str(getattr(report, 'summary', '') or ''),
+                'findings_count': len(getattr(report, 'findings', []) or []),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+
+    report = st.session_state.get(FINAL_CHECK_REPORT_KEY)
+    if report is None:
+        st.caption('Clique em verificar para receber um diagnóstico antes do preview.')
+        return
+
+    summary = str(getattr(report, 'summary', '') or '')
+    if bool(getattr(report, 'ok', False)):
+        st.success(f'Conferência concluída: {summary}')
+    else:
+        st.warning(f'Conferência concluída: {summary}')
+
+    ai_message = str(getattr(report, 'ai_message', '') or '')
+    if ai_message:
+        st.info(ai_message)
+
+    actions = getattr(report, 'actions', []) or []
+    if actions:
+        st.markdown('##### Próximos passos')
+        for action in list(actions)[:6]:
+            st.write(f'• {action}')
+
+    findings = getattr(report, 'findings', []) or []
+    with st.expander('Detalhes encontrados pela conferência', expanded=not bool(getattr(report, 'ok', False))):
+        if not findings:
+            st.success('Nenhum problema encontrado.')
+        for item in list(findings)[:30]:
+            _render_checker_item(item)
+
+
 def _render_ai_review_step() -> None:
     _render_step_anchor(STEP_REGRAS)
     _section_title(6, 'Revisão final')
@@ -390,6 +474,8 @@ def _render_ai_review_step() -> None:
         df_source=df_source,
         target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
     )
+
+    _render_final_checker(df_source, df_modelo)
 
     st.markdown('#### Ajustes avançados do arquivo final')
     render_rules_center_step()
