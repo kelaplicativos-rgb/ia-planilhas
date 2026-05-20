@@ -31,6 +31,11 @@ def _get_df_final_universal() -> pd.DataFrame | None:
     return value if _looks_like_df(value) else None
 
 
+def _current_or_base_df(base: pd.DataFrame) -> pd.DataFrame:
+    current = _get_df_final_universal()
+    return current if _looks_like_df(current) else base
+
+
 def _save_df_final_universal(df: pd.DataFrame) -> None:
     safe = df.copy().fillna('')
     st.session_state[FINAL_UNIVERSAL_LEGACY_KEY] = safe
@@ -169,8 +174,10 @@ def render_ai_real_advanced_panel() -> None:
     st.caption('Recursos de enriquecimento, revisão e relatório. Todos respeitam o modelo anexado como contrato final.')
 
     _render_enrichment(df_final)
-    _render_ncm_review(_get_df_final_universal() or df_final)
-    _render_final_report(_get_df_final_universal() or df_final)
+    df_after_enrichment = _current_or_base_df(df_final)
+    _render_ncm_review(df_after_enrichment)
+    df_after_ncm = _current_or_base_df(df_after_enrichment)
+    _render_final_report(df_after_ncm)
 
 
 __all__ = ['render_ai_real_advanced_panel']
