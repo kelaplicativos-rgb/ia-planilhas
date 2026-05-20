@@ -61,6 +61,8 @@ UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 FINAL_CHECK_REPORT_KEY = 'home_wizard_final_check_report'
+SAFE_FIX_SUGGESTIONS_KEY = 'home_wizard_safe_fix_suggestions'
+FINAL_UNIVERSAL_LEGACY_KEY = 'df_final_cadastro'
 STALE_CADASTRO_OPERATION_KEYS = (
     'df_final_download_operation',
     'df_final_preview_operation',
@@ -380,6 +382,15 @@ def _run_final_checker(df_source: object, df_modelo: object, df_final: object) -
     )
 
 
+def _safe_fixes_module():
+    return importlib.import_module('bling_app_zero.ai.ai_real_safe_fixes')
+
+
+def _get_df_final_universal():
+    # Chave técnica legada: historicamente chama df_final_cadastro, mas hoje representa o modelo final universal.
+    return st.session_state.get(FINAL_UNIVERSAL_LEGACY_KEY)
+
+
 def _render_checker_item(item: object) -> None:
     level = str(getattr(item, 'level', '') or '')
     title = str(getattr(item, 'title', '') or '')
@@ -398,8 +409,8 @@ def _render_checker_item(item: object) -> None:
 
 
 def _render_final_checker(df_source: object, df_modelo: object) -> None:
-    df_final = st.session_state.get('df_final_cadastro')
-    if not _looks_like_loaded_df(df_final):
+    df_final_universal = _get_df_final_universal()
+    if not _looks_like_loaded_df(df_final_universal):
         st.warning('Conferência aguardando o arquivo final gerado pelo mapeamento.')
         return
 
@@ -408,7 +419,7 @@ def _render_final_checker(df_source: object, df_modelo: object) -> None:
 
     if st.button('Verificar planilha agora', use_container_width=True, key='home_wizard_final_checker_run'):
         with st.spinner('Conferindo planilha final...'):
-            report = _run_final_checker(df_source, df_modelo, df_final)
+            report = _run_final_checker(df_source, df_modelo, df_final_universal)
         st.session_state[FINAL_CHECK_REPORT_KEY] = report
         add_audit_event(
             'home_wizard_final_checker_finished',
@@ -451,6 +462,63 @@ def _render_final_checker(df_source: object, df_modelo: object) -> None:
             _render_checker_item(item)
 
 
+def _render_safe_fixes() -> None:
+    df_final_universal = _get_df_final_universal()
+    if not _looks_like_loaded_df(df_final_universal):
+        return
+
+    fixes = _safe_fixes_module()
+    suggestions = fixes.build_safe_fix_suggestions(df_final_universal)
+    st.markdown('#### Correções seguras')
+    st.caption('Sugere ajustes automáticos de baixo risco. Nada é aplicado sem você clicar.')
+
+    if not suggestions:
+        st.success('Nenhuma correção segura pendente encontrada.')
+        return
+
+    options = [item.id for item in suggestions]
+    labels = {item.id: f'{item.title} · {item.rows} linha(s) · {item.column}' for item in suggestions}
+    selected = st.multiselect(
+        'Escolha as correções para aplicar',
+        options=options,
+        default=options,
+        format_func=lambda value: labels.get(value, value),
+        key='home_wizard_safe_fix_selected',
+    )
+
+    with st.expander('Ver detalhes das correções sugeridas', expanded=True):
+        for item in suggestions:
+            st.write(f'• **{item.title}** — {item.description} ({item.rows} linha(s))')
+
+    if not selected:
+        st.caption('Selecione pelo menos uma correção para liberar o botão de aplicar.')
+        return
+
+    if st.button('Aplicar correções seguras', use_container_width=True, key='home_wizard_safe_fix_apply'):
+        fixed_df, applied = fixes.apply_safe_fixes(df_final_universal, selected)
+        if _looks_like_loaded_df(fixed_df):
+            st.session_state[FINAL_UNIVERSAL_LEGACY_KEY] = fixed_df
+            st.session_state['df_final_universal'] = fixed_df
+            st.session_state.pop('df_final_cadastro_preview_rules_applied', None)
+            st.session_state.pop(FINAL_CHECK_REPORT_KEY, None)
+            st.session_state[SAFE_FIX_SUGGESTIONS_KEY] = [getattr(item, 'id', '') for item in applied]
+            add_audit_event(
+                'home_wizard_safe_fixes_applied',
+                area='FINAL_CHECK',
+                step=STEP_REGRAS,
+                status='OK',
+                details={
+                    'applied_count': len(applied),
+                    'applied_ids': [getattr(item, 'id', '') for item in applied],
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            st.success(f'{len(applied)} correção(ões) segura(s) aplicada(s). Confira o preview antes de baixar.')
+            st.rerun()
+        else:
+            st.warning('Nenhuma alteração foi aplicada.')
+
+
 def _render_ai_review_step() -> None:
     _render_step_anchor(STEP_REGRAS)
     _section_title(6, 'Revisão final')
@@ -476,6 +544,7 @@ def _render_ai_review_step() -> None:
     )
 
     _render_final_checker(df_source, df_modelo)
+    _render_safe_fixes()
 
     st.markdown('#### Ajustes avançados do arquivo final')
     render_rules_center_step()
