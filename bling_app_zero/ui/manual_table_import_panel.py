@@ -8,10 +8,12 @@ import streamlit as st
 from bs4 import BeautifulSoup
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.origin_recovery import recover_from_file, recover_from_plain_text
 from bling_app_zero.ui.html_capture_helper import render_html_capture_helper
 from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/manual_table_import_panel.py'
+UNIVERSAL_OPERATION = 'universal'
 PRICE_RE = re.compile(r'(?:R\$\s*)?\d{1,3}(?:\.\d{3})*,\d{2}|(?:R\$\s*)?\d+\.\d{2}')
 SKU_RE = re.compile(r'\b(?:SKU|C[ÓO]D(?:IGO)?|REF(?:ER[ÊE]NCIA)?|ID)\s*[:#-]?\s*([A-Za-z0-9._/-]{2,})', re.IGNORECASE)
 GTIN_RE = re.compile(r'\b(\d{8}|\d{12}|\d{13}|\d{14})\b')
@@ -20,6 +22,15 @@ STOCK_RE = re.compile(r'\b(?:estoque|saldo|qtd|quantidade)\s*[:#-]?\s*(-?\d+(?:[
 
 def _clean(value: object) -> str:
     return ' '.join(str(value or '').replace('\xa0', ' ').split()).strip()
+
+
+def _normalize_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'estoque', 'stock', 'estoque_site', 'atualizacao_estoque', 'atualização de estoque'}:
+        return UNIVERSAL_OPERATION
+    if text in {'cadastro', 'cadastro_site', 'produtos', 'produto'}:
+        return UNIVERSAL_OPERATION
+    return UNIVERSAL_OPERATION
 
 
 def _orange_info(message: str) -> None:
@@ -33,25 +44,20 @@ def _render_copy_steps_box() -> None:
     st.markdown(
         '''
 <div style="background:#fff8ed;border:1px solid #ffd59b;border-left:6px solid #fb8c00;border-radius:12px;padding:14px 16px;margin:10px 0;color:#4b2800;">
-  <div style="font-weight:800;margin-bottom:6px;">🔐 Captura segura para site protegido, login, duas etapas, CAPTCHA, Cloudflare ou firewall</div>
+  <div style="font-weight:800;margin-bottom:6px;">🔐 Captura segura para site protegido, PDF, XML, HTML difícil ou tabela copiada</div>
   <div style="font-size:0.94rem;line-height:1.55;">
-    <b>Desktop ou notebook — caminho recomendado:</b><br>
+    <b>Desktop ou notebook:</b><br>
     1. Abra o fornecedor em outra aba pelo Chrome, Edge ou navegador normal.<br>
-    2. Faça login e resolva a segurança, CAPTCHA ou verificação em duas etapas.<br>
+    2. Se houver login, entre normalmente pelo seu navegador.<br>
     3. Entre na tela/listagem dos produtos.<br>
-    4. Se existir filtro de quantidade por página, selecione a <b>maior quantidade disponível</b> antes de copiar ou salvar.<br>
-    5. Use <b>Ctrl + U</b> para abrir o código-fonte da página.<br>
-    6. Use <b>Ctrl + A</b> para selecionar tudo.<br>
-    7. Use <b>Ctrl + C</b> para copiar.<br>
-    8. Volte aqui, cole no campo <b>Ou cole aqui a tabela/HTML copiado</b> e clique em <b>Importar tabela para o fluxo</b>.<br><br>
-    <b>Mobile/celular — caminho diferente:</b><br>
-    1. Abra o fornecedor no Chrome do celular e faça login normalmente.<br>
+    4. Se existir filtro de quantidade por página, selecione a maior quantidade disponível.<br>
+    5. Copie a tabela, cole o HTML ou envie o arquivo exportado/salvo.<br><br>
+    <b>Mobile/celular:</b><br>
+    1. Abra o fornecedor no Chrome do celular.<br>
     2. Vá até a página de produtos, categoria, listagem ou produto atual.<br>
-    3. Filtre para exibir a <b>maior quantidade de produtos visível na tela</b>, quando existir essa opção.<br>
-    4. Toque na <b>setinha apontada para baixo</b> do Chrome para fazer o download da página atual.<br>
-    5. Volte aqui e envie o arquivo baixado no campo <b>Enviar HTML/CSV/XLSX exportado ou salvo do fornecedor</b>.<br>
-    6. Se os produtos estiverem em várias páginas, baixe <b>cada página individualmente</b> e envie todos os arquivos juntos. O sistema junta tudo e remove duplicados.<br><br>
-    <b>Resumo:</b> desktop/notebook é melhor para copiar HTML ou usar o capturador. No mobile, o caminho mais confiável é baixar a página atual e anexar o arquivo salvo aqui.
+    3. Baixe a página atual ou envie PDF/XML/HTML/CSV/XLSX quando disponível.<br>
+    4. Se os produtos estiverem em várias páginas, envie os arquivos em conjunto.<br><br>
+    <b>Fallback inteligente:</b> se a tabela normal não for encontrada, o sistema tenta recuperar nome, preço, SKU, GTIN, estoque, imagem e NCM apenas com base no conteúdo enviado e nas colunas do modelo.
   </div>
 </div>
         ''',
@@ -60,10 +66,8 @@ def _render_copy_steps_box() -> None:
 
 
 def _render_safety_notes(operation: str) -> None:
-    if operation == 'estoque':
-        _orange_info('No fluxo de estoque, a importação continuará respeitando as colunas solicitadas pelo modelo de estoque. O que não for encontrado no HTML fica vazio. No mobile, baixe cada página pela setinha do Chrome e envie os arquivos aqui.')
-    else:
-        _orange_info('Esta área é o caminho seguro para fornecedores protegidos. No desktop/notebook você pode copiar HTML; no mobile, baixe a página atual pela setinha do Chrome e envie o arquivo salvo. O sistema não pede senha nem cookies.')
+    _ = operation
+    _orange_info('Este fallback respeita o modelo anexado: busca apenas os campos solicitados e deixa vazio o que não conseguir encontrar. O sistema não pede senha nem cookies.')
 
 
 def _read_spreadsheet(file_bytes: bytes, file_name: str) -> pd.DataFrame:
@@ -216,18 +220,30 @@ def _combine_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return combined
 
 
-def _read_uploaded_files(uploaded_files: list[object]) -> tuple[pd.DataFrame, str]:
+def _read_uploaded_files(uploaded_files: list[object], requested_columns: list[str] | None = None) -> tuple[pd.DataFrame, str, list[str]]:
     frames: list[pd.DataFrame] = []
     labels: list[str] = []
+    recovery_messages: list[str] = []
     for uploaded in uploaded_files:
         name = getattr(uploaded, 'name', 'fornecedor.html')
         labels.append(str(name))
         file_bytes = uploaded.getvalue()
-        if str(name).lower().endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb')):
-            frames.append(_read_spreadsheet(file_bytes, name))
+        lower_name = str(name).lower()
+        if lower_name.endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb')):
+            frame = _read_spreadsheet(file_bytes, name)
+        elif lower_name.endswith(('.pdf', '.xml', '.nfe')):
+            recovered = recover_from_file(file_bytes, name, requested_columns=requested_columns)
+            frame = recovered.df
+            recovery_messages.append(recovered.message)
         else:
-            frames.append(_html_to_table(file_bytes.decode('utf-8', errors='ignore')))
-    return _combine_frames(frames), 'tabela_fornecedor:' + ','.join(labels)
+            text = file_bytes.decode('utf-8', errors='ignore')
+            frame = _html_to_table(text)
+            if frame.empty:
+                recovered = recover_from_file(file_bytes, name, requested_columns=requested_columns)
+                frame = recovered.df
+                recovery_messages.append(recovered.message)
+        frames.append(frame)
+    return _combine_frames(frames), 'tabela_fornecedor:' + ','.join(labels), recovery_messages
 
 
 def _store_manual_source(
@@ -240,7 +256,7 @@ def _store_manual_source(
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
 ) -> None:
-    operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
+    operation = _normalize_operation(operation)
     clean_df = df.copy().fillna('').astype(str) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if clean_df.empty:
         st.warning('Não encontrei uma tabela ou blocos de produtos no conteúdo enviado.')
@@ -248,6 +264,11 @@ def _store_manual_source(
 
     st.session_state[f'df_site_bruto_{operation}'] = clean_df
     st.session_state['df_site_bruto'] = clean_df
+    st.session_state['operation_site'] = operation
+    st.session_state['tipo_operacao_site'] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['origem_final'] = 'site'
     save_site_source(
         df_site=clean_df,
         raw_urls=raw_label,
@@ -269,7 +290,7 @@ def _store_manual_source(
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    st.success(f'Origem criada com {len(clean_df)} linha(s) e {len(clean_df.columns)} coluna(s).')
+    st.success(f'Origem universal criada com {len(clean_df)} linha(s) e {len(clean_df.columns)} coluna(s).')
 
 
 def _render_html_capture_toggle(operation: str) -> None:
@@ -291,39 +312,47 @@ def render_manual_table_import_panel(
     df_modelo_estoque: pd.DataFrame | None = None,
     df_modelo: pd.DataFrame | None = None,
 ) -> None:
-    operation = 'estoque' if str(operation).lower() == 'estoque' else 'cadastro'
-    st.markdown('###### Importar site protegido / tabela do fornecedor')
-    st.caption('Use quando você já abriu o fornecedor no Chrome e consegue exportar, salvar ou copiar a lista de produtos depois do login.')
+    operation = _normalize_operation(operation)
+    st.markdown('###### Fallback inteligente de origem difícil')
+    st.caption('Use quando site, HTML, PDF, XML ou tabela copiada não forem lidos corretamente pela captura normal.')
 
     _render_safety_notes(operation)
     _render_copy_steps_box()
     _render_html_capture_toggle(operation)
 
     uploaded_files = st.file_uploader(
-        'Enviar HTML/CSV/XLSX exportado ou salvo do fornecedor',
-        type=['html', 'htm', 'csv', 'xlsx', 'xls', 'xlsm', 'xlsb'],
+        'Enviar HTML/XML/PDF/CSV/XLSX exportado ou salvo do fornecedor',
+        type=['html', 'htm', 'xml', 'nfe', 'pdf', 'csv', 'xlsx', 'xls', 'xlsm', 'xlsb'],
         key=f'manual_supplier_table_upload_{operation}',
         accept_multiple_files=True,
-        help='Pode enviar um HTML único, vários HTMLs de páginas diferentes, ou o arquivo gerado pelo capturador em Varrer páginas.',
+        help='Pode enviar arquivos difíceis. O fallback tenta recuperar apenas os campos solicitados pelo modelo.',
     )
     pasted = st.text_area(
-        'Ou cole aqui a tabela/HTML copiado',
-        placeholder='Cole aqui o HTML copiado com Ctrl+U > Ctrl+A > Ctrl+C, uma tabela copiada da página, ou blocos de produto copiados do fornecedor.',
+        'Ou cole aqui a tabela/HTML/XML/texto copiado',
+        placeholder='Cole HTML, XML, tabela, texto de PDF ou blocos de produtos copiados do fornecedor.',
         height=180,
         key=f'manual_supplier_table_pasted_{operation}',
-        help='Para página protegida, faça login no Chrome primeiro. No mobile, prefira baixar a página atual pela setinha do Chrome e enviar o arquivo salvo.',
+        help='Se a tabela normal não for detectada, o fallback tenta recuperar produtos pelo texto.',
     )
 
-    if st.button('📥 Importar tabela para o fluxo', use_container_width=True, key=f'manual_supplier_table_import_{operation}'):
+    if st.button('📥 Importar origem difícil para o fluxo', use_container_width=True, key=f'manual_supplier_table_import_{operation}'):
+        recovery_messages: list[str] = []
         if uploaded_files:
-            df, raw_label = _read_uploaded_files(list(uploaded_files))
+            df, raw_label, recovery_messages = _read_uploaded_files(list(uploaded_files), requested_columns=requested_columns)
         elif pasted.strip():
             df = _html_to_table(pasted)
-            raw_label = 'tabela_fornecedor:conteudo_colado_html_ou_tabela'
+            raw_label = 'origem_dificil:conteudo_colado'
+            if df.empty:
+                recovered_df = recover_from_plain_text(pasted, requested_columns=requested_columns)
+                df = recovered_df
+                recovery_messages.append(f'{len(df)} linha(s) recuperada(s) do conteúdo colado.')
         else:
-            st.warning('Envie um arquivo ou cole uma tabela/HTML antes de importar.')
+            st.warning('Envie um arquivo ou cole uma tabela/HTML/XML/texto antes de importar.')
             return
 
+        for message in recovery_messages[:5]:
+            if message:
+                st.info(message)
         _store_manual_source(
             df,
             operation=operation,
