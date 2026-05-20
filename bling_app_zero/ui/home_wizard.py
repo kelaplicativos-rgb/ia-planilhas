@@ -6,6 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
@@ -545,6 +546,7 @@ def _render_ai_review_step() -> None:
 
     _render_final_checker(df_source, df_modelo)
     _render_safe_fixes()
+    render_ai_real_advanced_panel()
 
     st.markdown('#### Ajustes avançados do arquivo final')
     render_rules_center_step()
