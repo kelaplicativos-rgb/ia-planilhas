@@ -63,6 +63,7 @@ UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 FINAL_CHECK_REPORT_KEY = 'home_wizard_final_check_report'
 SAFE_FIX_SUGGESTIONS_KEY = 'home_wizard_safe_fix_suggestions'
+FINAL_UNIVERSAL_KEY = 'df_final_universal'
 FINAL_UNIVERSAL_LEGACY_KEY = 'df_final_cadastro'
 STALE_CADASTRO_OPERATION_KEYS = (
     'df_final_download_operation',
@@ -388,8 +389,20 @@ def _safe_fixes_module():
 
 
 def _get_df_final_universal():
+    current = st.session_state.get(FINAL_UNIVERSAL_KEY)
+    if _looks_like_loaded_df(current):
+        return current
     # Chave técnica legada: historicamente chama df_final_cadastro, mas hoje representa o modelo final universal.
     return st.session_state.get(FINAL_UNIVERSAL_LEGACY_KEY)
+
+
+def _set_df_final_universal(df_final: object) -> None:
+    if not _looks_like_loaded_df(df_final):
+        return
+    st.session_state[FINAL_UNIVERSAL_KEY] = df_final
+    st.session_state[FINAL_UNIVERSAL_LEGACY_KEY] = df_final
+    st.session_state.pop('df_final_cadastro_preview_rules_applied', None)
+    st.session_state.pop(FINAL_CHECK_REPORT_KEY, None)
 
 
 def _render_checker_item(item: object) -> None:
@@ -498,10 +511,7 @@ def _render_safe_fixes() -> None:
     if st.button('Aplicar correções seguras', use_container_width=True, key='home_wizard_safe_fix_apply'):
         fixed_df, applied = fixes.apply_safe_fixes(df_final_universal, selected)
         if _looks_like_loaded_df(fixed_df):
-            st.session_state[FINAL_UNIVERSAL_LEGACY_KEY] = fixed_df
-            st.session_state['df_final_universal'] = fixed_df
-            st.session_state.pop('df_final_cadastro_preview_rules_applied', None)
-            st.session_state.pop(FINAL_CHECK_REPORT_KEY, None)
+            _set_df_final_universal(fixed_df)
             st.session_state[SAFE_FIX_SUGGESTIONS_KEY] = [getattr(item, 'id', '') for item in applied]
             add_audit_event(
                 'home_wizard_safe_fixes_applied',
