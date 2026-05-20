@@ -4,7 +4,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.ai_review_step import render_ai_real_review_step
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
@@ -383,19 +382,13 @@ def _render_ai_review_step() -> None:
         df_source = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
 
-    st.caption('Use esta etapa para a IA Real revisar o mapeamento confirmado e ajustar proteções antes do preview final.')
+    st.caption('Etapa de revisão e proteções do arquivo final. A IA Real incorreta de pós-mapeamento foi removida no BLINGCLEAN.')
     render_mapping_review_panel(
         operation=UNIVERSAL_REVIEW_OPERATION,
         mapping=st.session_state.get('mapping_cadastro'),
         confidence=st.session_state.get('mapping_confidence_cadastro'),
         df_source=df_source,
         target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
-    )
-
-    render_ai_real_review_step(
-        df_source=df_source,
-        df_modelo=df_modelo,
-        mapping=st.session_state.get('mapping_cadastro'),
     )
 
     st.markdown('#### Ajustes avançados do arquivo final')
