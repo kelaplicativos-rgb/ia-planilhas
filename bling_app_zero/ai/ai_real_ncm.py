@@ -17,12 +17,11 @@ class NCMSuggestion:
 
 
 NCM_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
-    (('cabo', 'usb', 'hdmi', 'adaptador', 'carregador', 'fonte'), '85444200', 'acessório/cabo elétrico ou eletrônico'),
-    (('fone', 'headset', 'caixa de som', 'alto falante', 'speaker'), '85183000', 'áudio/fone ou alto-falante'),
-    (('teclado', 'mouse', 'controle gamer', 'joystick'), '8471605', 'periférico de informática'),
-    (('camera', 'câmera', 'webcam', 'filmadora'), '85258029', 'câmera ou equipamento de captura de imagem'),
-    (('smartwatch', 'relogio inteligente', 'relógio inteligente'), '85176259', 'dispositivo eletrônico de comunicação'),
-    (('pelicula', 'película', 'capa', 'case'), '39269090', 'acessório plástico'),
+    (('cabo', 'usb', 'hdmi', 'adaptador', 'carregador', 'fonte'), '85444200', 'sugestão inicial para acessório/cabo elétrico ou eletrônico; revise antes de aplicar'),
+    (('fone', 'headset', 'caixa de som', 'alto falante', 'speaker'), '85183000', 'sugestão inicial para áudio/fone ou alto-falante; revise antes de aplicar'),
+    (('camera', 'câmera', 'webcam', 'filmadora'), '85258029', 'sugestão inicial para câmera ou equipamento de captura de imagem; revise antes de aplicar'),
+    (('smartwatch', 'relogio inteligente', 'relógio inteligente'), '85176259', 'sugestão inicial para dispositivo eletrônico de comunicação; revise antes de aplicar'),
+    (('pelicula', 'película', 'capa', 'case'), '39269090', 'sugestão inicial para acessório plástico; revise antes de aplicar'),
 )
 
 
@@ -57,14 +56,14 @@ def _best_col(df: pd.DataFrame, predicate) -> str:
 
 def _valid_ncm(value: object) -> str:
     digits = ''.join(ch for ch in str(value or '') if ch.isdigit())
-    return digits if len(digits) in {7, 8} else ''
+    return digits if len(digits) == 8 else ''
 
 
 def _suggest_for_name(name: str) -> tuple[str, str, str]:
     normalized = normalize_key(name)
     for terms, ncm, reason in NCM_RULES:
         if any(normalize_key(term) in normalized for term in terms):
-            return ncm, 'média', reason
+            return ncm, 'baixa', reason
     return '', '', ''
 
 
