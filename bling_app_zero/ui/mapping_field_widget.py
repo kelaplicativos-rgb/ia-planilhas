@@ -52,7 +52,6 @@ def render_manual_value_input(target: str, widget_key: str, mapping_key: str) ->
 
     manual_value = st.text_input(
         f'Valor fixo para {target}',
-        value=initial_value,
         key=value_key,
         placeholder='Digite o valor que será repetido no arquivo final',
     )
