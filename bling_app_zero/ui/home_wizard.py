@@ -49,6 +49,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     WIZARD_STEP_KEY,
 )
 from bling_app_zero.ui.home_wizard_ui import render_pending_notice
+from bling_app_zero.ui.links_uteis import render_links_uteis
 from bling_app_zero.ui.mapping_review_panel import render_mapping_review_panel
 from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.scroll_guard import inject_scroll_guard
@@ -585,6 +586,8 @@ def _render_universal_download() -> None:
         return
     _clear_stale_cadastro_operation_state()
     render_universal_download_step()
+    with st.expander('Links úteis após o download', expanded=True):
+        render_links_uteis()
     if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset_single_page'):
         _reset_wizard()
 
