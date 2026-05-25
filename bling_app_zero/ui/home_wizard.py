@@ -58,6 +58,7 @@ SINGLE_PAGE_FLOW = True
 HOME_CHOICE_TARGET = '__home_choice__'
 SCROLL_TARGET_KEY = 'home_wizard_scroll_target_step'
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
+QUICK_MODEL_READY_KEY = 'bling_quick_model_ready_origin'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
@@ -96,6 +97,10 @@ def _has_estoque_model() -> bool:
 
 def _has_home_models() -> bool:
     return _has_cadastro_model() or _has_estoque_model()
+
+
+def _came_from_bling_quick_model() -> bool:
+    return bool(st.session_state.get(QUICK_MODEL_READY_KEY)) and _has_home_models()
 
 
 def _query_param(name: str) -> str:
@@ -290,6 +295,7 @@ def _reset_wizard() -> None:
         st.session_state.pop(key, None)
     st.session_state.pop(FLOW_ORIGIN_KEY, None)
     st.session_state.pop('origem_final', None)
+    st.session_state.pop(QUICK_MODEL_READY_KEY, None)
     add_audit_event('wizard_reset', area='WIZARD', step=STEP_DOWNLOAD, details={'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
@@ -304,9 +310,9 @@ def _render_model_step() -> None:
     _ensure_universal_operation_state()
 
 
-def _render_origin_step() -> None:
+def _render_origin_step(section_number: int = 2) -> None:
     _render_step_anchor(STEP_ORIGEM)
-    _section_title(2, 'Origem dos dados')
+    _section_title(section_number, 'Origem dos dados')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
@@ -325,10 +331,10 @@ def _render_origin_step() -> None:
         render_pending_notice('Escolha Arquivo ou Site.')
 
 
-def _render_universal_entrada() -> None:
+def _render_universal_entrada(section_number: int = 3) -> None:
     origin = _current_origin_choice()
     _render_step_anchor(STEP_ENTRADA)
-    _section_title(3, 'Dados do fornecedor')
+    _section_title(section_number, 'Dados do fornecedor')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
@@ -342,9 +348,9 @@ def _render_universal_entrada() -> None:
     render_universal_entrada_step()
 
 
-def _render_pricing_step() -> None:
+def _render_pricing_step(section_number: int = 4) -> None:
     _render_step_anchor(STEP_PRECIFICACAO)
-    _section_title(4, 'Preço')
+    _section_title(section_number, 'Preço')
     if not _has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
@@ -362,9 +368,9 @@ def _render_pricing_step() -> None:
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
-def _render_universal_mapeamento() -> None:
+def _render_universal_mapeamento(section_number: int = 5) -> None:
     _render_step_anchor(STEP_MAPEAMENTO)
-    _section_title(5, 'Mapear campos')
+    _section_title(section_number, 'Mapear campos')
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e dados.')
         return
@@ -530,9 +536,9 @@ def _render_safe_fixes() -> None:
             st.warning('Nenhuma alteração foi aplicada.')
 
 
-def _render_ai_review_step() -> None:
+def _render_ai_review_step(section_number: int = 6) -> None:
     _render_step_anchor(STEP_REGRAS)
-    _section_title(6, 'Revisão final')
+    _section_title(section_number, 'Revisão final')
     if not _has_home_models():
         render_pending_notice('Liberado após modelo e mapeamento.')
         return
@@ -562,9 +568,9 @@ def _render_ai_review_step() -> None:
     render_rules_center_step()
 
 
-def _render_universal_preview() -> None:
+def _render_universal_preview(section_number: int = 7) -> None:
     _render_step_anchor(STEP_PREVIEW)
-    _section_title(7, 'Preview')
+    _section_title(section_number, 'Preview')
     if not _has_home_models():
         render_pending_notice('Liberado após o mapeamento.')
         return
@@ -574,9 +580,9 @@ def _render_universal_preview() -> None:
     render_universal_preview_step()
 
 
-def _render_universal_download() -> None:
+def _render_universal_download(section_number: int = 8) -> None:
     _render_step_anchor(STEP_DOWNLOAD)
-    _section_title(8, 'Download')
+    _section_title(section_number, 'Download')
     if not _has_home_models():
         render_pending_notice('Liberado no final.')
         return
@@ -604,7 +610,20 @@ def render_home_wizard() -> None:
         _inject_scroll_to_target()
         return
 
-    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    start_at_origin = _came_from_bling_quick_model()
+    add_audit_event('wizard_single_page_rendered', area='WIZARD', step='single_page', details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'responsible_file': RESPONSIBLE_FILE})
+
+    if start_at_origin:
+        _render_origin_step(1)
+        _render_universal_entrada(2)
+        _render_pricing_step(3)
+        _render_universal_mapeamento(4)
+        _render_ai_review_step(5)
+        _render_universal_preview(6)
+        _render_universal_download(7)
+        _inject_scroll_to_target()
+        return
+
     _render_model_step()
     _render_origin_step()
     _render_universal_entrada()
