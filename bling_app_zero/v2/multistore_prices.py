@@ -14,14 +14,13 @@ REQUIRED_ID_COLUMNS = ('IdProduto', 'ID na Loja')
 PRICE_OUTPUT_COLUMNS = ('Preco', 'Preço')
 PROMO_OUTPUT_COLUMNS = ('Preco Promocional', 'Preço Promocional')
 
-# Regras genéricas por canal lógico. Mantém compatibilidade com chaves antigas,
-# mas não força nomes comerciais na experiência white-label.
+# Regras genericas por canal logico. Mantem compatibilidade com chaves antigas,
+# mas nao forca nomes comerciais na experiencia white-label.
 GENERIC_RULE_BY_CHANNEL = {
     'canal_1': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'canal_2': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'canal_3': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'outro': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
-    # Compatibilidade silenciosa com perfis antigos salvos em sessão.
     'mercado_livre': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'olist': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
     'madeira_madeira': {'rule_type': 'standard', 'threshold': '0', 'fixed_fee': '0', 'capital_days': '15'},
@@ -62,9 +61,9 @@ def _sample_invalid_cost_rows(df: pd.DataFrame, cost_col: str, limit: int = 10) 
         return ()
     mask = ~_valid_cost_mask(df, cost_col)
     rows = [int(index) + 2 for index in df.index[mask].tolist()]
-    messages = [f'Custo vazio ou inválido na linha {row}.' for row in rows[:limit]]
+    messages = [f'Custo vazio ou invalido na linha {row}.' for row in rows[:limit]]
     if len(rows) > limit:
-        messages.append(f'Custo vazio ou inválido em mais {len(rows) - limit} linha(s).')
+        messages.append(f'Custo vazio ou invalido em mais {len(rows) - limit} linha(s).')
     return tuple(messages)
 
 
@@ -86,6 +85,26 @@ def _promo_price(sale_price: Decimal, rules: dict) -> Decimal:
     return sale_price * (Decimal('1') - discount)
 
 
+def _fill_promo_from_price(df: pd.DataFrame, price_col: str, promo_col: str, rules: dict) -> tuple[pd.DataFrame, int]:
+    if not price_col or not promo_col or price_col not in df.columns or promo_col not in df.columns:
+        return df, 0
+    if _decimal_rule(rules, 'promo_discount_percent') <= Decimal('0'):
+        return df, 0
+    output = df.copy().fillna('')
+    values: list[str] = []
+    generated = 0
+    for raw_price in output[price_col].tolist():
+        base_price = D(raw_price)
+        promo_price = _promo_price(base_price, rules)
+        if base_price > Decimal('0') and promo_price > Decimal('0') and promo_price < base_price:
+            values.append(money(promo_price))
+            generated += 1
+        else:
+            values.append('')
+    output[promo_col] = values
+    return output, generated
+
+
 def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str, ...]]:
     df = payload.df
     if not isinstance(df, pd.DataFrame) or df.empty:
@@ -93,7 +112,7 @@ def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str,
     errors: list[str] = []
     for required in REQUIRED_ID_COLUMNS:
         if not _find_column(df, (required,)):
-            errors.append(f'Coluna obrigatória ausente: {required}')
+            errors.append(f'Coluna obrigatoria ausente: {required}')
     if not (_find_column(df, PRICE_OUTPUT_COLUMNS) or _find_column(df, PROMO_OUTPUT_COLUMNS)):
         errors.append('Modelo precisa ter coluna de preço ou preço promocional.')
     return not errors, tuple(errors)
@@ -113,7 +132,7 @@ def _has_valid_costs(df: pd.DataFrame, cost_col: str) -> bool:
 def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     ok, errors = validate_multistore_payload(payload)
     if not ok:
-        return ModuleResult(False, payload, 'Planilha de preços inválida.', errors=errors)
+        return ModuleResult(False, payload, 'Planilha de preços invalida.', errors=errors)
 
     df = payload.df.copy().fillna('')
     profile = payload.store_profile
@@ -123,7 +142,10 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     promo_col = _find_column(df, PROMO_OUTPUT_COLUMNS)
 
     if not _has_valid_costs(df, cost_col):
-        message = 'Nenhum custo/preço base válido foi encontrado. A calculadora foi pulada e a planilha seguirá com os preços existentes no modelo.'
+        df, promo_generated = _fill_promo_from_price(df, price_col, promo_col, rules)
+        message = 'Sem custo/preco base valido. A calculadora principal foi pulada e a planilha seguira com os precos existentes no modelo.'
+        if promo_generated:
+            message += f' Preco promocional calculado para {promo_generated} linha(s).'
         return ModuleResult(
             True,
             payload.with_df(df, stage='calculate'),
@@ -131,6 +153,7 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
             metrics={
                 'rows': len(df),
                 'skipped_rows_without_valid_cost': len(df),
+                'promotional_prices_generated': promo_generated,
                 'channel': profile.channel,
                 'store_id': profile.store_id,
                 'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
@@ -153,13 +176,14 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
         aliases=(PRICE_OUTPUT_COLUMN,),
     )
     if not plugin_result.applied:
-        return ModuleResult(False, payload.with_df(df, stage='calculate'), plugin_result.message or 'Não foi possível aplicar a calculadora.', errors=(plugin_result.message,))
+        return ModuleResult(False, payload.with_df(df, stage='calculate'), plugin_result.message or 'Nao foi possivel aplicar a calculadora.', errors=(plugin_result.message,))
 
     df = plugin_result.df.copy().fillna('')
     if price_col:
         df[price_col] = df[PRICE_OUTPUT_COLUMN]
+    promo_generated = 0
     if promo_col:
-        df[promo_col] = [money(_promo_price(D(value), rules)) if _promo_price(D(value), rules) else '' for value in df[PRICE_OUTPUT_COLUMN].tolist()]
+        df, promo_generated = _fill_promo_from_price(df, PRICE_OUTPUT_COLUMN, promo_col, rules)
     if PRICE_OUTPUT_COLUMN in df.columns and PRICE_OUTPUT_COLUMN not in set(PRICE_OUTPUT_COLUMNS):
         df = df.drop(columns=[PRICE_OUTPUT_COLUMN])
 
@@ -167,9 +191,11 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
         if column in df.columns:
             df[column] = str(value)
 
-    message = 'Preços calculados com a calculadora plugável.'
+    message = 'Precos calculados com a calculadora plugavel.'
+    if promo_generated:
+        message += f' Preco promocional calculado para {promo_generated} linha(s).'
     if skipped_rows:
-        message += f' {skipped_rows} linha(s) sem custo válido foram ignoradas para evitar preço zerado.'
+        message += f' {skipped_rows} linha(s) sem custo valido foram ignoradas para evitar preco zerado.'
 
     normalized_rules = _pricing_rules_for_plugin(profile.channel, rules)
     return ModuleResult(
@@ -179,6 +205,7 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
         metrics={
             'rows': len(df),
             'skipped_rows_without_valid_cost': skipped_rows,
+            'promotional_prices_generated': promo_generated,
             'channel': profile.channel,
             'store_id': profile.store_id,
             'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
@@ -193,8 +220,8 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
 
 MULTISTORE_PRICE_SPEC = ModuleSpec(
     key='v2_multistore_price_calculator',
-    title='Calculadora plugável de preços',
-    description='Calcula preço e preço promocional para atualização por loja/canal com lucro nominal, margem ou preço fixo.',
+    title='Calculadora plugavel de precos',
+    description='Calcula preco e preco promocional para atualizacao por loja/canal com lucro nominal, margem ou preco fixo.',
     operation='preco',
     stage='calculate',
     version='2.2.0',
