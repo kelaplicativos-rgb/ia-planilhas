@@ -18,6 +18,7 @@ HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_ORIGEM = 'origem'
+QUICK_MODEL_READY_KEY = 'bling_quick_model_ready_origin'
 UNIVERSAL_OPERATION = 'universal'
 
 BLING_LINKS = (
@@ -70,6 +71,8 @@ def _activate_model_and_go_to_origin(*, model_type: str, df_model: pd.DataFrame,
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
     st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    st.session_state[QUICK_MODEL_READY_KEY] = True
+    st.session_state['bling_quick_model_type'] = model_type
     st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
     st.session_state['operacao_final'] = UNIVERSAL_OPERATION
     st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
