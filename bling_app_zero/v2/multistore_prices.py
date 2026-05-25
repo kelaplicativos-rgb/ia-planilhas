@@ -94,14 +94,6 @@ def validate_multistore_payload(payload: TablePayload) -> tuple[bool, tuple[str,
     for required in REQUIRED_ID_COLUMNS:
         if not _find_column(df, (required,)):
             errors.append(f'Coluna obrigatória ausente: {required}')
-    cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
-    if not cost_col:
-        errors.append('Coluna de custo/preço base ausente.')
-    else:
-        valid_costs = int(_valid_cost_mask(df, cost_col).sum())
-        if valid_costs <= 0:
-            errors.append('Nenhum custo/preço base válido foi encontrado para calcular.')
-            errors.extend(_sample_invalid_cost_rows(df, cost_col, limit=5))
     if not (_find_column(df, PRICE_OUTPUT_COLUMNS) or _find_column(df, PROMO_OUTPUT_COLUMNS)):
         errors.append('Modelo precisa ter coluna de preço ou preço promocional.')
     return not errors, tuple(errors)
@@ -112,6 +104,10 @@ def _pricing_rules_for_plugin(profile_channel: str, rules: dict) -> dict:
     output.update(_channel_rule_defaults(profile_channel, output))
     output['enabled'] = True
     return output
+
+
+def _has_valid_costs(df: pd.DataFrame, cost_col: str) -> bool:
+    return bool(cost_col and cost_col in df.columns and int(_valid_cost_mask(df, cost_col).sum()) > 0)
 
 
 def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
@@ -125,6 +121,23 @@ def run_multistore_price_calculator(payload: TablePayload) -> ModuleResult:
     cost_col = _find_column(df, PRICE_COLUMN_CANDIDATES)
     price_col = _find_column(df, PRICE_OUTPUT_COLUMNS)
     promo_col = _find_column(df, PROMO_OUTPUT_COLUMNS)
+
+    if not _has_valid_costs(df, cost_col):
+        message = 'Nenhum custo/preço base válido foi encontrado. A calculadora foi pulada e a planilha seguirá com os preços existentes no modelo.'
+        return ModuleResult(
+            True,
+            payload.with_df(df, stage='calculate'),
+            message,
+            metrics={
+                'rows': len(df),
+                'skipped_rows_without_valid_cost': len(df),
+                'channel': profile.channel,
+                'store_id': profile.store_id,
+                'calculator_mode': str(rules.get('calculator_mode') or 'nominal_profit'),
+                'calculator_skipped': 'missing_valid_cost',
+                'plugin': 'price_calculator_plugin',
+            },
+        )
 
     valid_mask = _valid_cost_mask(df, cost_col)
     skipped_rows = int((~valid_mask).sum())
