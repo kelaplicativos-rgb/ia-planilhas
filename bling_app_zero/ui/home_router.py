@@ -10,6 +10,8 @@ from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
+HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
+FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_LINKS_UTEIS = 'links_uteis'
@@ -51,6 +53,39 @@ def _current_wizard_step() -> str:
     return step if step in VALID_SINGLE_PAGE_STEPS else ''
 
 
+def _clear_navigation_params() -> None:
+    try:
+        for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
+def _set_home_flow() -> None:
+    st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
+    st.session_state[HOME_ALLOW_FLOW_KEY] = False
+    st.session_state['home_single_page_flow_active'] = False
+    _clear_navigation_params()
+
+
+def _set_flow(flow: str, step: str | None = None) -> None:
+    st.session_state[ACTIVE_FLOW_KEY] = flow
+    st.session_state[HOME_ALLOW_FLOW_KEY] = True
+    st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
+    if step:
+        st.session_state[WIZARD_STEP_KEY] = step
+    try:
+        st.query_params['operation_v2'] = flow
+        if step:
+            st.query_params['step'] = step
+        else:
+            st.query_params.pop('step', None)
+        for key in ('flow', 'origem', 'operacao'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
 def _set_single_page_wizard_state() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
@@ -71,21 +106,27 @@ def _set_single_page_wizard_state() -> None:
 
 
 def _requested_flow() -> str:
+    if not bool(st.session_state.get(HOME_BOOT_LOCK_KEY)):
+        st.session_state[HOME_BOOT_LOCK_KEY] = True
+        _set_home_flow()
+        return FLOW_HOME
+
     query_flow = _query_param('operation_v2')
-    if query_flow:
+    allow_flow = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY, False))
+    if query_flow and allow_flow:
         return query_flow
 
     flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
     if flow:
         return flow
 
-    return FLOW_WIZARD
+    return FLOW_HOME
 
 
 def _activate_non_wizard_flow(flow: str) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['home_single_page_flow_active'] = False
 
     try:
         st.query_params['operation_v2'] = flow
@@ -96,9 +137,73 @@ def _activate_non_wizard_flow(flow: str) -> None:
         pass
 
 
+def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str) -> None:
+    with st.container(border=True):
+        st.markdown(f'#### {title}')
+        st.caption(subtitle)
+        if st.button(button, use_container_width=True, key=key):
+            _set_flow(flow, step)
+            st.rerun()
+
+
+def render_professional_home() -> None:
+    add_audit_event(
+        'home_router_render_professional_home',
+        area='HOME',
+        status='OK',
+        details={'responsible_file': RESPONSIBLE_FILE},
+    )
+
+    st.markdown('### Comece pelo fluxo certo')
+    st.caption('A home é o ponto inicial do sistema. Escolha uma operação abaixo para abrir o módulo somente quando precisar.')
+
+    col1, col2 = st.columns(2)
+    with col1:
+        _render_home_card(
+            'Modelo universal',
+            'Transforme planilhas, XML, PDF ou dados de site no modelo final anexado.',
+            'Abrir fluxo universal',
+            FLOW_WIZARD,
+            step=STEP_MODELO,
+            key='home_card_open_universal',
+        )
+    with col2:
+        _render_home_card(
+            'Preços multiloja',
+            'Atualize preços e preço promocional por loja, canal ou vínculo multiloja.',
+            'Abrir preços multiloja',
+            FLOW_PRICE_UPDATE,
+            key='home_card_open_prices',
+        )
+
+    col3, col4 = st.columns(2)
+    with col3:
+        _render_home_card(
+            'Modelos Bling',
+            'Baixe modelos base e confira estruturas de cadastro, estoque e preços.',
+            'Abrir modelos Bling',
+            FLOW_MODELOS_BLING,
+            key='home_card_open_bling',
+        )
+    with col4:
+        _render_home_card(
+            'Links úteis',
+            'Acesse atalhos oficiais e links de trabalho sem misturar com os fluxos.',
+            'Abrir links úteis',
+            FLOW_LINKS_UTEIS,
+            key='home_card_open_links',
+        )
+
+    st.info('Nenhum módulo é aberto automaticamente. O sistema sempre nasce na home e só entra em um fluxo após sua escolha.')
+
+
 def render_home_router() -> None:
-    st.session_state['home_single_page_flow_active'] = True
     requested_flow = _requested_flow()
+
+    if requested_flow in {'', FLOW_HOME}:
+        _set_home_flow()
+        render_professional_home()
+        return
 
     if requested_flow == FLOW_PRICE_UPDATE:
         _activate_non_wizard_flow(FLOW_PRICE_UPDATE)
@@ -145,9 +250,11 @@ def render_home_router() -> None:
 
 
 __all__ = [
+    'FLOW_HOME',
     'FLOW_LINKS_UTEIS',
     'FLOW_MODELOS_BLING',
     'FLOW_PRICE_UPDATE',
     'FLOW_WIZARD',
     'render_home_router',
+    'render_professional_home',
 ]
