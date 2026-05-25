@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.ui.cadastro_wizard_state import LEGACY_CADASTRO_FINAL_KEY, UNIVERSAL_FINAL_KEY, set_universal_final_df
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
@@ -37,7 +38,8 @@ def _reset_cadastro_mapping(
     source_columns: list[str],
 ) -> None:
     st.session_state[mapping_key] = build_super_mapping(df_source, model, source_columns)
-    st.session_state.pop('df_final_cadastro', None)
+    st.session_state.pop(UNIVERSAL_FINAL_KEY, None)
+    st.session_state.pop(LEGACY_CADASTRO_FINAL_KEY, None)
     st.session_state.pop('mapping_cadastro', None)
     st.session_state.pop('mapping_confidence_cadastro', None)
     st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
@@ -136,7 +138,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     st.session_state['mapping_confidence_cadastro'] = edited_confidence
 
     df_preview_manual = build_cadastro_preview(df_source, model, edited_mapping, target_columns, mapping_key)
-    st.session_state['df_final_cadastro'] = df_preview_manual
+    set_universal_final_df(df_preview_manual)
     st.session_state['mapping_cadastro'] = edited_mapping
 
     duplicated = _duplicated_source_columns(edited_mapping)
