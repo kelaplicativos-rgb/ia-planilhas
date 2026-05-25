@@ -13,7 +13,7 @@ FLOW_MODELOS_BLING = 'modelos_bling'
 def _set_flow(flow: str, step: str | None = None) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
     if step:
         st.session_state['bling_wizard_step'] = step
     try:
@@ -35,26 +35,23 @@ def _active_flow() -> str:
 
 
 def render_bottom_nav() -> None:
-    active = _active_flow()
+    _ = _active_flow()
     st.markdown('---')
-    st.caption('Menu rapido do sistema')
+    st.caption('Menu rápido do sistema')
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        label = 'Precos ativo' if active == FLOW_PRICE_UPDATE else 'Precos'
-        if st.button(label, key='bottom_nav_precos', use_container_width=True):
+        if st.button('Preços multiloja', key='bottom_nav_precos', use_container_width=True):
             _set_flow(FLOW_PRICE_UPDATE)
             st.rerun()
 
     with col2:
-        label = 'Bling ativo' if active == FLOW_MODELOS_BLING else 'Bling'
-        if st.button(label, key='bottom_nav_bling', use_container_width=True):
+        if st.button('Modelos Bling', key='bottom_nav_bling', use_container_width=True):
             _set_flow(FLOW_MODELOS_BLING)
             st.rerun()
 
     with col3:
-        label = 'Universal ativo' if active == FLOW_WIZARD else 'Universal'
-        if st.button(label, key='bottom_nav_universal', use_container_width=True):
+        if st.button('Modelo universal', key='bottom_nav_universal', use_container_width=True):
             _set_flow(FLOW_WIZARD, 'modelo')
             st.rerun()
 
