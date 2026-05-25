@@ -26,6 +26,8 @@ CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY = 'cadastro_supplier_price_master_filt
 CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY = 'cadastro_supplier_price_master_rows'
 CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY = 'cadastro_supplier_price_master_signature'
 CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME = 'REGRA_FILTRO_MESTRE_FORNECEDOR_PRECOS'
+UNIVERSAL_FINAL_KEY = 'df_final_universal'
+LEGACY_CADASTRO_FINAL_KEY = 'df_final_cadastro'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/importador.produtos.php'
 
 CADASTRO_STOCK_OUTPUT_KEYS = [
@@ -38,7 +40,8 @@ CADASTRO_STOCK_OUTPUT_KEYS = [
 ]
 
 CADASTRO_OUTPUT_KEYS = [
-    'df_final_cadastro',
+    UNIVERSAL_FINAL_KEY,
+    LEGACY_CADASTRO_FINAL_KEY,
     'mapping_cadastro',
     'mapping_confidence_cadastro',
     'df_origem_cadastro_precificada',
@@ -55,6 +58,35 @@ def valid_df(df: object) -> bool:
 
 def valid_model(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
+def get_universal_final_df() -> pd.DataFrame | None:
+    """Retorna a planilha final usando a chave universal como fonte principal.
+
+    BLINGFIX:
+    - o fluxo atual é universal/modelo final;
+    - a chave antiga df_final_cadastro continua sendo lida por compatibilidade;
+    - sempre que possível, sincronizamos as duas para não quebrar módulos antigos.
+    """
+    current = st.session_state.get(UNIVERSAL_FINAL_KEY)
+    if valid_df(current):
+        return current
+
+    legacy = st.session_state.get(LEGACY_CADASTRO_FINAL_KEY)
+    if valid_df(legacy):
+        st.session_state[UNIVERSAL_FINAL_KEY] = legacy
+        return legacy
+
+    return current if isinstance(current, pd.DataFrame) else None
+
+
+def set_universal_final_df(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
+    if not isinstance(df_final, pd.DataFrame):
+        return df_final
+    fixed = df_final.copy()
+    st.session_state[UNIVERSAL_FINAL_KEY] = fixed
+    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
+    return fixed
 
 
 def is_site_origin() -> bool:
@@ -110,7 +142,7 @@ def enforce_supplier_price_master_filter(df_final: pd.DataFrame | None) -> pd.Da
 
     if len(df_final) > expected:
         fixed = df_final.iloc[:expected].copy()
-        st.session_state['df_final_cadastro'] = fixed
+        set_universal_final_df(fixed)
         st.session_state['cadastro_supplier_price_master_excess_rows_removed'] = int(len(df_final) - expected)
         return fixed
 
@@ -140,14 +172,22 @@ def render_supplier_price_master_notice(df_final: pd.DataFrame | None = None) ->
         st.caption(f'Blindagem aplicada: {removed} linha(s) excedente(s) foram removida(s) antes do preview/download.')
 
 
-def enforce_cadastro_model_columns(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
-    """Mantém o cadastro fiel ao modelo anexado na primeira etapa."""
+def enforce_cadastro_model_columns(df_final: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    """Mantém o modelo final fiel ao modelo anexado na primeira etapa."""
+    if df_final is None:
+        df_final = get_universal_final_df()
+
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
     if not isinstance(df_final, pd.DataFrame) or not valid_model(df_modelo):
-        return enforce_supplier_price_master_filter(df_final)
+        fixed = enforce_supplier_price_master_filter(df_final)
+        if isinstance(fixed, pd.DataFrame):
+            set_universal_final_df(fixed)
+        return fixed
+
     fixed = df_final.reindex(columns=list(df_modelo.columns), fill_value='')
     fixed = enforce_supplier_price_master_filter(fixed)
-    st.session_state['df_final_cadastro'] = fixed
+    if isinstance(fixed, pd.DataFrame):
+        set_universal_final_df(fixed)
     return fixed
 
 
@@ -243,7 +283,7 @@ def cadastro_context_ready() -> bool:
 
 
 def cadastro_mapping_ready() -> bool:
-    df_final = enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
+    df_final = enforce_cadastro_model_columns(get_universal_final_df())
     mapping = st.session_state.get('mapping_cadastro')
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
     return valid_df(df_final) and row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
@@ -266,6 +306,8 @@ __all__ = [
     'CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY',
     'CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME',
     'CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY',
+    'LEGACY_CADASTRO_FINAL_KEY',
+    'UNIVERSAL_FINAL_KEY',
     'activate_supplier_price_master_filter',
     'cadastro_context_ready',
     'cadastro_mapping_ready',
@@ -274,10 +316,12 @@ __all__ = [
     'enforce_cadastro_model_columns',
     'enforce_supplier_price_master_filter',
     'expected_source_rows',
+    'get_universal_final_df',
     'is_site_origin',
     'render_row_count_blocker',
     'render_supplier_price_master_notice',
     'row_count_matches_source',
+    'set_universal_final_df',
     'store_cadastro_context',
     'store_expected_source_rows',
     'supplier_price_master_expected_rows',
