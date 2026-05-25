@@ -66,11 +66,26 @@ def _keep_multistore_route_alive() -> None:
 def _read(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
-    try:
-        return load_table(uploaded_file).fillna('')
-    except Exception as exc:
-        st.error(f'Não consegui ler a planilha: {exc}')
+
+    files = uploaded_file if isinstance(uploaded_file, list) else [uploaded_file]
+    frames: list[pd.DataFrame] = []
+
+    for file in files:
+        if file is None:
+            continue
+        filename = str(getattr(file, 'name', '') or 'arquivo')
+        try:
+            df = load_table(file).fillna('')
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                df['_arquivo_origem'] = filename
+                frames.append(df)
+        except Exception as exc:
+            st.error(f'Não consegui ler a planilha {filename}: {exc}')
+
+    if not frames:
         return None
+
+    return pd.concat(frames, ignore_index=True, sort=False).fillna('')
 
 
 def _df_signature(df: pd.DataFrame | None) -> str:
@@ -286,12 +301,12 @@ def _render_import_downloads(result_df: pd.DataFrame) -> None:
     total_rows = len(result_df)
     total_parts = len(parts)
     set_state('multistore_result_csv_bytes', to_csv_bytes(result_df))
-    if total_rows <= MAX_IMPORT_ROWS:
-        _render_success_action(f'Arquivo dentro do limite configurado: {total_rows} linha(s).')
+    if total_rows <= MAX_BLING_IMPORT_ROWS:
+        _render_success_action(f'Arquivo dentro do limite do Bling: {total_rows} linha(s).')
         st.download_button('Baixar planilha limpa de preços', data=to_csv_bytes(result_df), file_name='atualizacao_precos.csv', mime='text/csv; charset=utf-8', use_container_width=True, key=widget_key('multistore_download'))
         return
-    _render_alert(f'Este resultado tem {total_rows} linhas e foi dividido em {total_parts} partes de até {MAX_IMPORT_ROWS} linhas.')
-    st.download_button(f'Baixar ZIP com {total_parts} planilhas de até {MAX_IMPORT_ROWS} linhas', data=_csv_zip_bytes(parts), file_name='atualizacao_precos_partes.zip', mime='application/zip', use_container_width=True, key=widget_key('multistore_download_zip_parts'))
+    _render_alert(f'O resultado tem {total_rows} linhas. Como o Bling só importa até {MAX_BLING_IMPORT_ROWS} linhas por arquivo, o sistema dividiu em {total_parts} partes.')
+    st.download_button(f'Baixar ZIP com {total_parts} planilhas de até {MAX_BLING_IMPORT_ROWS} linhas', data=_csv_zip_bytes(parts), file_name='atualizacao_precos_partes.zip', mime='application/zip', use_container_width=True, key=widget_key('multistore_download_zip_parts'))
 
 
 def _render_ready_result(result_df: pd.DataFrame) -> None:
@@ -299,11 +314,11 @@ def _render_ready_result(result_df: pd.DataFrame) -> None:
     st.markdown('### Etapa 6 · Conferência')
     preview_cols = [column for column in ['IdProduto', 'ID na Loja', 'Preço', 'Preco', 'Preço Promocional', 'Preco Promocional', 'Nome da Loja'] if column in result_df.columns]
     _render_closed_preview('Preview final limpo para importação', result_df[preview_cols].copy() if preview_cols else result_df.copy(), rows=80, height=340)
-    total_parts = max(1, math.ceil(len(result_df) / MAX_IMPORT_ROWS)) if len(result_df) else 0
-    st.caption(f'{len(result_df)} linha(s) prontas para importação · {total_parts} arquivo(s) respeitando o limite de {MAX_IMPORT_ROWS} linhas.')
+    total_parts = max(1, math.ceil(len(result_df) / MAX_BLING_IMPORT_ROWS)) if len(result_df) else 0
+    st.caption(f'{len(result_df)} linha(s) prontas para importação · {total_parts} arquivo(s) respeitando o limite do Bling de {MAX_BLING_IMPORT_ROWS} linhas por arquivo.')
     _render_audit_download()
     st.markdown('### Etapa 7 · Download e importação')
-    _render_info('Baixe os arquivos limpos. Quando passar do limite de linhas, importe uma parte por vez no destino desejado.')
+    _render_info('Baixe os arquivos limpos. Quando passar de 200 linhas, o sistema divide automaticamente em partes compatíveis com o Bling.')
     _render_import_downloads(result_df)
     _render_bling_import_actions()
 
@@ -327,7 +342,7 @@ def render_price_multistore_v2() -> None:
     _render_marketplace_manager(channel, profile)
 
     st.markdown('### Etapa 2 · Modelo de preços')
-    model_upload = st.file_uploader('Planilha 1 — Modelo de preços', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_model_upload'))
+    model_upload = st.file_uploader('Planilha 1 — Modelo de preços', type=['csv', 'xlsx', 'xls', 'zip'], accept_multiple_files=True, key=widget_key('multistore_model_upload'))
     model_df = _read(model_upload)
     if isinstance(model_df, pd.DataFrame):
         detection = detect_multistore_model(model_df)
@@ -342,14 +357,14 @@ def render_price_multistore_v2() -> None:
         if isinstance(result_df, pd.DataFrame) and not result_df.empty:
             _render_ready_result(result_df.copy().fillna(''))
             return
-        _render_alert('Anexe a Planilha 1 — Modelo de preços para continuar.')
+        _render_alert('Anexe uma ou mais planilhas do Modelo de preços para continuar.')
         return
 
     st.markdown('### Etapa 3 · Origem do custo')
     source_origin = st.radio('Origem dos dados de custo', ['Arquivo', 'Site capturado'], horizontal=True, key=widget_key('multistore_source_origin'))
     source_upload = None
     if source_origin == 'Arquivo':
-        source_upload = st.file_uploader('Planilha 2 — Origem de custo dos produtos', type=['csv', 'xlsx', 'xls', 'zip'], key=widget_key('multistore_source_upload'))
+        source_upload = st.file_uploader('Planilha 2 — Origem de custo dos produtos', type=['csv', 'xlsx', 'xls', 'zip'], accept_multiple_files=True, key=widget_key('multistore_source_upload'))
     else:
         st.caption('Usa a última captura por site salva na sessão. Primeiro faça a captura por site no fluxo de origem, depois volte para preços por loja/canal.')
     source_df = _source_df_from_choice(source_origin, source_upload)
@@ -357,7 +372,7 @@ def render_price_multistore_v2() -> None:
         st.success(f'Origem de custo carregada por {source_origin.lower()} · {len(source_df)} linha(s) × {len(source_df.columns)} coluna(s).')
         _render_closed_preview('Preview da origem/custo', source_df, rows=12, height=180)
     else:
-        _render_alert('Para calcular, carregue uma origem de custo por arquivo ou por site capturado.')
+        _render_alert('Para calcular, carregue uma ou mais origens de custo por arquivo ou por site capturado.')
 
     mapping = render_multistore_shared_mapping(model_df, source_df if isinstance(source_df, pd.DataFrame) else pd.DataFrame())
     signature = f'{source_origin}|{_df_signature(model_df)}|{_df_signature(source_df)}|{mapping.model_identifier_column}|{mapping.source_identifier_column}|{mapping.source_cost_column}'
