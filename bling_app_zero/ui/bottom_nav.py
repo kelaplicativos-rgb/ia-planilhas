@@ -38,7 +38,7 @@ def render_bottom_nav() -> None:
     active = _active_flow()
     st.markdown('---')
     st.caption('Menu rapido do sistema')
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         label = 'Precos ativo' if active == FLOW_PRICE_UPDATE else 'Precos'
@@ -47,18 +47,12 @@ def render_bottom_nav() -> None:
             st.rerun()
 
     with col2:
-        label = 'Links ativo' if active == FLOW_LINKS_UTEIS else 'Links'
-        if st.button(label, key='bottom_nav_links', use_container_width=True):
-            _set_flow(FLOW_LINKS_UTEIS)
-            st.rerun()
-
-    with col3:
         label = 'Bling ativo' if active == FLOW_MODELOS_BLING else 'Bling'
         if st.button(label, key='bottom_nav_bling', use_container_width=True):
             _set_flow(FLOW_MODELOS_BLING)
             st.rerun()
 
-    with col4:
+    with col3:
         label = 'Universal ativo' if active == FLOW_WIZARD else 'Universal'
         if st.button(label, key='bottom_nav_universal', use_container_width=True):
             _set_flow(FLOW_WIZARD, 'modelo')
