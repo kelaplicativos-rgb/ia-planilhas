@@ -4,6 +4,7 @@ import streamlit as st
 
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
+    get_universal_final_df,
     render_row_count_blocker,
     valid_df,
 )
@@ -63,7 +64,7 @@ def render_cadastro_download_step() -> None:
     st.markdown('### Download da planilha final')
     st.caption('Baixe o arquivo final no mesmo modelo anexado no início.')
 
-    df_final = enforce_cadastro_model_columns(st.session_state.get('df_final_cadastro'))
+    df_final = enforce_cadastro_model_columns(get_universal_final_df())
     if not valid_df(df_final):
         st.warning('A planilha final ainda não foi gerada. Volte ao preview.')
         return
