@@ -169,29 +169,29 @@ def render_professional_home() -> None:
         )
     with col2:
         _render_home_card(
-            'Preços multiloja',
-            'Atualize preços e preço promocional por loja, canal ou vínculo multiloja.',
-            'Abrir preços multiloja',
+            'Calculadora principal',
+            'Central para cálculos rápidos, edição de taxas e adição de marketplaces.',
+            'Abrir calculadora',
             FLOW_PRICE_UPDATE,
-            key='home_card_open_prices',
+            key='home_card_open_calculator',
         )
 
     col3, col4 = st.columns(2)
     with col3:
         _render_home_card(
-            'Modelos Bling',
-            'Baixe modelos base e confira estruturas de cadastro, estoque e preços.',
-            'Abrir modelos Bling',
+            'Bling',
+            'Modelos, importadores, ajuda e atalhos oficiais do Bling em uma única aba.',
+            'Abrir Bling',
             FLOW_MODELOS_BLING,
             key='home_card_open_bling',
         )
     with col4:
         _render_home_card(
-            'Links úteis',
-            'Acesse atalhos oficiais e links de trabalho sem misturar com os fluxos.',
-            'Abrir links úteis',
+            'Sistema',
+            'Links do app publicado e repositório, sem misturar com os atalhos do Bling.',
+            'Abrir sistema',
             FLOW_LINKS_UTEIS,
-            key='home_card_open_links',
+            key='home_card_open_system_links',
         )
 
     st.info('Nenhum módulo é aberto automaticamente. O sistema sempre nasce na home e só entra em um fluxo após sua escolha.')
@@ -210,7 +210,7 @@ def render_home_router() -> None:
         add_audit_event(
             'home_router_render_price_update',
             area='HOME',
-            details={'responsible_file': RESPONSIBLE_FILE},
+            details={'responsible_file': RESPONSIBLE_FILE, 'module_label': 'calculadora_principal'},
         )
         render_price_multistore_v2()
         return
