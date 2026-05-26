@@ -230,12 +230,12 @@ def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
         st.warning(
-            'Envie o modelo universal de destino para continuar. '
+            'Envie o modelo final de destino para continuar. '
             'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
         )
         return
-    st.caption(f'Modelo universal enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
-    with st.expander('Ver colunas do modelo universal', expanded=False):
+    st.caption(f'Modelo de destino enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    with st.expander('Ver colunas do modelo de destino', expanded=False):
         columns = [str(column) for column in list(df.columns)]
         st.caption(', '.join(columns))
 
@@ -293,17 +293,45 @@ def _remember_original_model_upload(upload: object) -> None:
     )
 
 
-def render_home_bling_models() -> None:
-    # Nome legado mantido por compatibilidade. Visualmente esta tela representa Modelos Universal.
-    clear_default_home_models()
-    st.markdown('#### Modelos Universal')
+def _render_model_type_guidance() -> None:
+    st.markdown('#### Bling')
     st.caption(
-        'Envie aqui a planilha modelo que será preenchida no final. '
-        'Ela precisa ter cabeçalho com os nomes das colunas. '
-        'Pode ser modelo do Bling, marketplace, fornecedor ou qualquer layout final com cabeçalho.'
+        'Configure aqui a estrutura final da planilha. Esta etapa não faz parte da calculadora de preço.'
     )
 
-    upload = render_model_upload_box(title='Enviar modelo universal de destino', operation='universal', key='home_model_upload_bling', required_model=False, caption=None)
+    col_bling, col_universal = st.columns(2)
+    with col_bling:
+        with st.container(border=True):
+            st.markdown('##### Modelos Bling')
+            st.caption(
+                'Para modelos oficiais do Bling, como cadastro de produtos, estoque ou atualização de preços.'
+            )
+    with col_universal:
+        with st.container(border=True):
+            st.markdown('##### Modelos Universal')
+            st.caption(
+                'Para marketplace, fornecedor ou qualquer layout final com cabeçalho próprio.'
+            )
+
+
+def render_home_bling_models() -> None:
+    # Nome legado mantido por compatibilidade. Visualmente esta tela representa a central Bling/Universal.
+    clear_default_home_models()
+    _render_model_type_guidance()
+
+    st.markdown('#### Modelo de destino')
+    st.caption(
+        'Anexe abaixo o modelo que será preenchido no final. '
+        'Pode ser modelo Bling ou modelo universal com cabeçalho próprio.'
+    )
+
+    upload = render_model_upload_box(
+        title='Enviar modelo final de destino',
+        operation='universal',
+        key='home_model_upload_bling',
+        required_model=False,
+        caption=None,
+    )
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
     estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
 
