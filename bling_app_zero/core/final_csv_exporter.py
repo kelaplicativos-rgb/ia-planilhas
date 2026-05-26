@@ -59,6 +59,32 @@ def clean_columns(columns: Sequence[object] | None) -> list[str]:
     return cleaned
 
 
+def exact_contract_columns(columns: Sequence[object] | None) -> list[str]:
+    """Preserva o contrato do modelo anexado na ordem exata recebida.
+
+    BLINGFIX contrato bytes:
+    - o download final não deve criar, remover nem reordenar colunas;
+    - quando o fluxo fornece colunas do modelo anexado, elas são a fonte da verdade;
+    - não aplicamos deduplicação nem normalização agressiva no cabeçalho explícito,
+      porque o contrato precisa acompanhar o modelo usado pelo usuário.
+    """
+    if columns is None:
+        return []
+    out: list[str] = []
+    for column in _as_list(columns):
+        text = '' if column is None else str(column)
+        text = text.replace('\ufeff', '').replace('\x00', '')
+        text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+        out.append(text.strip())
+    return out
+
+
+def contract_columns_from_model(df_model: pd.DataFrame | None) -> list[str]:
+    if not isinstance(df_model, pd.DataFrame):
+        return []
+    return exact_contract_columns(df_model.columns)
+
+
 def clean_explicit_empty_columns(columns: Sequence[object] | None) -> set[str]:
     return {clean_text(column) for column in _as_list(columns) if clean_text(column)}
 
@@ -83,7 +109,7 @@ def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False)
 
 
 def contract_from_df(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> list[str]:
-    explicit = clean_columns(contract_columns)
+    explicit = exact_contract_columns(contract_columns)
     if explicit:
         return explicit
     if isinstance(df, pd.DataFrame):
@@ -101,13 +127,32 @@ def force_empty_columns(df: pd.DataFrame, columns: Sequence[object] | None = Non
 
 
 def enforce_contract(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> pd.DataFrame:
-    columns = clean_columns(contract_columns)
+    columns = contract_from_df(None, contract_columns)
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=columns)
     out = normalize_dataframe(df, keep_internal=False)
     if not columns:
         return out
     return out.reindex(columns=columns, fill_value='').fillna('')
+
+
+def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> list[str]:
+    contract = contract_from_df(None, contract_columns)
+    if not contract:
+        return []
+    if not isinstance(df, pd.DataFrame):
+        return ['A planilha final não é uma tabela válida.']
+    output_columns = exact_contract_columns(df.columns)
+    errors: list[str] = []
+    if output_columns != contract:
+        errors.append('A planilha final não está byte-a-byte fiel ao contrato de colunas do modelo anexado.')
+    missing = [column for column in contract if column not in output_columns]
+    extra = [column for column in output_columns if column not in contract]
+    if missing:
+        errors.append('Colunas ausentes no download final: ' + ', '.join(missing))
+    if extra:
+        errors.append('Colunas extras no download final: ' + ', '.join(extra))
+    return errors
 
 
 def sanitize_final_dataframe(
@@ -118,7 +163,13 @@ def sanitize_final_dataframe(
     explicit_empty_columns: Sequence[object] | None = None,
     run_download_features: bool = True,
 ) -> pd.DataFrame:
-    """Blindagem única antes do CSV final dos fluxos Bling."""
+    """Blindagem única antes do CSV final dos fluxos Bling.
+
+    Quando `contract_columns` é informado, esse contrato vem do modelo usado no
+    fluxo e passa a mandar no download final: mesmas colunas, mesma ordem e sem
+    colunas extras. As features de download podem limpar valores, mas ao final o
+    contrato é reaplicado obrigatoriamente.
+    """
     if df is None:
         return enforce_contract(None, contract_columns)
 
@@ -133,7 +184,10 @@ def sanitize_final_dataframe(
             operation=str(operation or 'global').strip().lower() or 'global',
             stage='download',
             final_df=input_df.copy().fillna(''),
-            config={'explicit_empty_columns': sorted(protected_empty)},
+            config={
+                'contract_columns': list(contract),
+                'explicit_empty_columns': sorted(protected_empty),
+            },
         )
         safe = context.final_df if isinstance(getattr(context, 'final_df', None), pd.DataFrame) else input_df
 
@@ -213,13 +267,16 @@ __all__ = [
     'clean_columns',
     'clean_explicit_empty_columns',
     'clean_text',
+    'contract_columns_from_model',
     'contract_from_df',
     'drop_internal_columns',
     'enforce_contract',
+    'exact_contract_columns',
     'filename_for_operation',
     'final_csv_bytes',
     'force_empty_columns',
     'normalize_dataframe',
     'normalize_image_urls',
     'sanitize_final_dataframe',
+    'validate_contract_identity',
 ]
