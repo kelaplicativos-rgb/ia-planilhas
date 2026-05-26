@@ -22,11 +22,16 @@ def _show_model(model_type: str) -> None:
         if st.button('Remover', key=f'remove_{model_type}', use_container_width=True):
             remove_user_model(model_type)
             st.rerun()
-    uploaded = st.file_uploader('Anexar modelo', type=['csv', 'xlsx', 'xls', 'xlsm', 'xlsb'], key=f'upload_{model_type}')
+
+    st.caption('No celular, o seletor fica aberto para evitar arquivo CSV/XLSX cinza ou bloqueado. A validação do formato acontece após anexar.')
+    uploaded = st.file_uploader('Anexar modelo', key=f'upload_{model_type}')
     if uploaded is not None:
-        save_user_model(model_type, uploaded.name, uploaded.getvalue())
-        st.success('Salvo')
-        st.rerun()
+        try:
+            save_user_model(model_type, uploaded.name, uploaded.getvalue())
+            st.success('Salvo')
+            st.rerun()
+        except Exception as exc:
+            st.error(f'Arquivo não aceito: {exc}')
 
 
 def render_modelos_bling_user_screen() -> None:
