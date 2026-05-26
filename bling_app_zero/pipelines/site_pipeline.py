@@ -75,6 +75,18 @@ def _normalize_operation(operation: str | None) -> str:
     return 'universal'
 
 
+def _safe_positive_int(value: int | None, fallback: int) -> int:
+    try:
+        parsed = int(value or 0)
+    except Exception:
+        parsed = 0
+    return parsed if parsed > 0 else fallback
+
+
+def _bounded_limit(value: int | None, fallback: int, hard_limit: int) -> int:
+    return min(_safe_positive_int(value, fallback), hard_limit)
+
+
 def _column_key(column: object) -> str:
     return normalize_key(str(column or '').replace('\n', ' ').replace('\r', ' ')).replace(' ', '_')
 
@@ -137,8 +149,6 @@ def _looks_like_dirty_description(value: object) -> bool:
     if any(normalize_key(signal) in key for signal in DESCRIPTION_NOISE_SIGNALS):
         return True
 
-    # Quando o site despeja o bloco inteiro da página dentro da coluna "Descrição",
-    # geralmente vem como parágrafo grande. Produto curto legítimo não deve ser mexido.
     return len(text) >= LONG_DESCRIPTION_MIN_CHARS and _word_count(text) >= LONG_DESCRIPTION_MIN_WORDS
 
 
@@ -164,16 +174,7 @@ def _description_columns_to_clean(df: pd.DataFrame) -> list[str]:
 
 
 def _clean_site_description_columns(df: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica a blindagem de descrição no fluxo unificado de busca por site.
-
-    BLINGFIX:
-    - antes a limpeza só pegava colunas como "Descrição complementar";
-    - depois ainda havia uma trava por operação "estoque";
-    - como o fluxo atual é unificado e o tipo de modelo não é mais separado pelo
-      usuário, a limpeza passa a valer para qualquer operação recebida;
-    - a proteção continua segura porque só limpa "Descrição" simples quando há
-      ruído conhecido ou texto longo de página, preservando descrição curta.
-    """
+    """Aplica a blindagem de descrição no fluxo unificado de busca por site."""
     _ = operation
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
@@ -205,14 +206,17 @@ def run_pipeline(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     selected_operation = _normalize_operation(operation)
-    selected_max_pages = max(max_pages or 0, ALL_PAGES_LIMIT) if all_products else max_pages
-    selected_max_products = max(max_products or 0, ALL_PRODUCTS_LIMIT) if all_products else max_products
+    selected_max_pages = _bounded_limit(max_pages, ALL_PAGES_LIMIT, ALL_PAGES_LIMIT)
+    selected_max_products = _bounded_limit(max_products, ALL_PRODUCTS_LIMIT, ALL_PRODUCTS_LIMIT)
 
     if progress_callback:
         progress_callback({
             'stage': 'Preparando',
             'message': 'Preparando motor por modelo de destino...',
             'progress': 0.02,
+            'max_pages': selected_max_pages,
+            'max_products': selected_max_products,
+            'all_products': bool(all_products),
         })
 
     df_result = run_site_operation_engine(
@@ -232,3 +236,6 @@ def run_pipeline(
     if progress_callback:
         progress_callback({'stage': 'Pronto', 'message': f'{len(safe)} produto(s) preparados na origem.', 'progress': 1.0})
     return safe
+
+
+__all__ = ['run_pipeline']
