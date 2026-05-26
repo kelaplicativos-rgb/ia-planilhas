@@ -29,7 +29,6 @@ VALID_SINGLE_PAGE_STEPS = {
     'preview',
     'download',
     'regras',
-    'gerar_estoque',
 }
 
 
@@ -45,11 +44,17 @@ def _query_param(name: str) -> str:
 
 def _current_wizard_step() -> str:
     query_step = _query_param('step').lower()
+    if query_step == 'gerar_estoque':
+        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+        return STEP_ORIGEM
     if query_step in VALID_SINGLE_PAGE_STEPS:
         st.session_state[WIZARD_STEP_KEY] = query_step
         return query_step
 
     step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    if step == 'gerar_estoque':
+        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+        return STEP_ORIGEM
     return step if step in VALID_SINGLE_PAGE_STEPS else ''
 
 
@@ -242,7 +247,7 @@ def render_home_router() -> None:
             'responsible_file': RESPONSIBLE_FILE,
             'wizard_step': st.session_state.get(WIZARD_STEP_KEY),
             'step_preserved': True,
-            'bottom_nav_enabled': True,
+            'single_page_flow_enabled': True,
         },
     )
     render_home_wizard()
