@@ -22,9 +22,9 @@ QUICK_MODEL_READY_KEY = 'bling_quick_model_ready_origin'
 UNIVERSAL_OPERATION = 'universal'
 
 BLING_LINKS = (
-    ('Abrir Bling', 'https://www.bling.com.br/'),
+    ('Importar e atualizar produtos', 'https://www.bling.com.br/importador.produtos.php'),
     ('Importador de preços multiloja', 'https://www.bling.com.br/importador.precos.produtos.multiloja.php'),
-    ('Central de ajuda Bling', 'https://ajuda.bling.com.br/'),
+    ('Importar saldos de estoque', 'https://www.bling.com.br/importador.saldos.estoque.php'),
 )
 
 
