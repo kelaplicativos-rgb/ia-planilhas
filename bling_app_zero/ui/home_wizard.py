@@ -301,12 +301,12 @@ def _reset_wizard() -> None:
 
 
 def _render_model_step() -> None:
-    from bling_app_zero.ui.home_models import render_home_universal_models
+    from bling_app_zero.ui.home_models import render_home_bling_models
 
     _render_step_anchor(STEP_MODELO)
     _section_title(1, 'Modelos Universal')
     with st.container(border=True):
-        render_home_universal_models()
+        render_home_bling_models()
     _ensure_universal_operation_state()
 
 
