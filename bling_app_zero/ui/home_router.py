@@ -152,54 +152,47 @@ def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step
             st.rerun()
 
 
+def _render_admin_links() -> None:
+    with st.expander('Administração e links úteis', expanded=False):
+        st.caption('Área auxiliar para links do app, repositório e manutenção. Não faz parte do fluxo principal.')
+        if st.button('Abrir links úteis do sistema', use_container_width=True, key='home_admin_open_system_links'):
+            _set_flow(FLOW_LINKS_UTEIS)
+            st.rerun()
+
+
 def render_professional_home() -> None:
     add_audit_event(
         'home_router_render_professional_home',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'home_order': 'bling_universal_system_calculator'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'home_order': 'bling_then_universal_then_internal_price_step'},
     )
 
-    st.markdown('### Comece pelo fluxo certo')
-    st.caption('A home é o ponto inicial do sistema. O Bling fica primeiro, o modelo universal no meio e a calculadora no fim.')
+    st.markdown('### O que você quer fazer agora?')
+    st.caption(
+        'Comece pelos modelos. Depois escolha a origem dos dados, mapeie os campos, revise o preview e baixe a planilha final. '
+        'A calculadora aparece somente na etapa Preço, dentro do fluxo.'
+    )
 
     _render_home_card(
         'Bling: Modelos Bling',
-        'Cadastre, substitua ou reutilize os modelos oficiais do Bling: cadastro, estoque e atualização de preços.',
+        'Gerencie os modelos oficiais do Bling, como cadastro de produtos, estoque e atualização de preços.',
         'Abrir Modelos Bling',
         FLOW_MODELOS_BLING,
         key='home_card_open_bling',
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        _render_home_card(
-            'Modelos Universal',
-            'Transforme planilhas, XML, PDF ou dados de site em um modelo final escolhido por você.',
-            'Abrir Modelos Universal',
-            FLOW_WIZARD,
-            step=STEP_MODELO,
-            key='home_card_open_universal',
-        )
-    with col2:
-        _render_home_card(
-            'Sistema',
-            'Links do app publicado e repositório, sem misturar com os atalhos do Bling.',
-            'Abrir Sistema',
-            FLOW_LINKS_UTEIS,
-            key='home_card_open_system_links',
-        )
-
     st.markdown('---')
     _render_home_card(
-        'Calculadora principal',
-        'Use no fim quando precisar calcular preço, editar taxas ou adicionar marketplaces.',
-        'Abrir Calculadora',
-        FLOW_PRICE_UPDATE,
-        key='home_card_open_calculator',
+        'Modelos Universal',
+        'Use qualquer modelo final com cabeçalho próprio: Bling, marketplace, fornecedor ou layout personalizado.',
+        'Iniciar fluxo com Modelo Universal',
+        FLOW_WIZARD,
+        step=STEP_MODELO,
+        key='home_card_open_universal',
     )
 
-    st.info('Nenhum módulo é aberto automaticamente. O sistema sempre nasce na home e só entra em um fluxo após sua escolha.')
+    _render_admin_links()
 
 
 def render_home_router() -> None:
@@ -219,6 +212,7 @@ def render_home_router() -> None:
                 'responsible_file': RESPONSIBLE_FILE,
                 'module_label': 'calculadora_principal',
                 'quick_calculator_enabled': True,
+                'legacy_direct_access': True,
             },
         )
         render_quick_price_calculator()
