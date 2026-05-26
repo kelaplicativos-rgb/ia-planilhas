@@ -10,21 +10,21 @@ from bling_app_zero.ui.home_models_state import (
     df_log_summary,
     get_home_cadastro_model,
     get_home_estoque_model,
+    get_home_preco_model,
+    get_home_universal_model,
     save_home_models,
 )
 from bling_app_zero.ui.home_models_upload import auto_forward_after_first_model_upload, remember_original_model_upload
 from bling_app_zero.ui.model_upload import render_model_upload_box
+from bling_app_zero.universal.model_contract_detector import CONTRACT_LABELS, MODEL_CONTRACT_TYPE_KEY
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models_view.py'
 
 
 def _model_summary_df() -> pd.DataFrame | None:
-    cadastro = get_home_cadastro_model()
-    estoque = get_home_estoque_model()
-    if isinstance(cadastro, pd.DataFrame):
-        return cadastro
-    if isinstance(estoque, pd.DataFrame):
-        return estoque
+    for df in (get_home_cadastro_model(), get_home_estoque_model(), get_home_preco_model(), get_home_universal_model()):
+        if isinstance(df, pd.DataFrame):
+            return df
     return None
 
 
@@ -36,7 +36,9 @@ def _render_loaded_summary() -> None:
             'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
         )
         return
-    st.caption(f'Modelo de destino enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    contract_type = str(st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
+    label = CONTRACT_LABELS.get(contract_type, CONTRACT_LABELS['universal'])
+    st.caption(f'{label} carregado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
     with st.expander('Ver colunas do modelo de destino', expanded=False):
         columns = [str(column) for column in list(df.columns)]
         st.caption(', '.join(columns))
@@ -44,61 +46,64 @@ def _render_loaded_summary() -> None:
 
 def _render_model_type_guidance() -> None:
     st.markdown('#### Bling')
-    st.caption(
-        'Configure aqui a estrutura final da planilha. Esta etapa não faz parte da calculadora de preço.'
-    )
+    st.caption('Configure aqui a estrutura final da planilha. O sistema detecta se é Bling Cadastro, Bling Estoque, Atualização de Preços ou Universal.')
 
-    col_bling, col_universal = st.columns(2)
-    with col_bling:
+    col1, col2 = st.columns(2)
+    with col1:
         with st.container(border=True):
             st.markdown('##### Modelos Bling')
-            st.caption(
-                'Para modelos oficiais do Bling, como cadastro de produtos, estoque ou atualização de preços.'
-            )
-    with col_universal:
+            st.caption('Cadastro de produtos, estoque/saldo e atualização de preços usam contrato real e motor correspondente.')
+    with col2:
         with st.container(border=True):
             st.markdown('##### Modelos Universal')
-            st.caption(
-                'Para marketplace, fornecedor ou qualquer layout final com cabeçalho próprio.'
-            )
+            st.caption('Para marketplace, fornecedor ou qualquer layout final com cabeçalho próprio.')
+
+
+def _split_models_by_contract(upload) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    df = upload.model_df if isinstance(upload.model_df, pd.DataFrame) else None
+    contract_type = str(getattr(upload, 'contract_type', '') or st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
+    cadastro = df if contract_type == 'cadastro' else None
+    estoque = df if contract_type == 'estoque' else None
+    preco = df if contract_type == 'atualizacao_preco' else None
+    universal = df if contract_type == 'universal' else None
+    return cadastro, estoque, preco, universal
 
 
 def render_home_bling_models() -> None:
-    # Nome legado mantido por compatibilidade. Visualmente esta tela representa a central Bling/Universal.
     clear_default_home_models()
     _render_model_type_guidance()
 
     st.markdown('#### Modelo de destino')
-    st.caption(
-        'Anexe abaixo o modelo que será preenchido no final. '
-        'Pode ser modelo Bling ou modelo universal com cabeçalho próprio.'
-    )
+    st.caption('Anexe abaixo o modelo que será preenchido no final. Pode ser Bling Cadastro, Bling Estoque, Atualização de Preços ou Universal.')
 
     upload = render_model_upload_box(
         title='Enviar modelo final de destino',
-        operation='universal',
+        operation='detectar_contrato_real',
         key='home_model_upload_bling',
         required_model=False,
         caption=None,
     )
-    cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
-    estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
+    cadastro_model, estoque_model, preco_model, universal_model = _split_models_by_contract(upload)
 
-    if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
+    if any(isinstance(df, pd.DataFrame) for df in (cadastro_model, estoque_model, preco_model, universal_model)):
         remember_original_model_upload(upload)
         add_audit_event(
-            'home_universal_model_upload_ready_to_save',
+            'home_real_contract_model_upload_ready_to_save',
             area='MODELO',
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='OK',
             details={
+                'contract_type': getattr(upload, 'contract_type', 'universal'),
+                'contract_label': getattr(upload, 'contract_label', 'Modelo Universal'),
                 'cadastro': df_log_summary(cadastro_model),
                 'estoque': df_log_summary(estoque_model),
+                'preco': df_log_summary(preco_model),
+                'universal': df_log_summary(universal_model),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-        save_home_models(cadastro_model, estoque_model, replace_missing=True)
-        auto_forward_after_first_model_upload(cadastro_model, estoque_model)
+        save_home_models(cadastro_model, estoque_model, preco_model, universal_model, replace_missing=True)
+        auto_forward_after_first_model_upload(cadastro_model or estoque_model or preco_model or universal_model, None)
 
     _render_loaded_summary()
 
