@@ -4,7 +4,14 @@ from decimal import Decimal, ROUND_HALF_UP
 
 import streamlit as st
 
-QUICK_MODES = ['Lucro nominal', 'Margem de contribuição', 'Preço fixo']
+AD_TYPES = {
+    'Clássico (11,5%)': Decimal('11.5'),
+    'Premium (16,5%)': Decimal('16.5'),
+}
+DEFAULT_CATEGORY = 'MLB456027 - Argamassas'
+DEFAULT_CATEGORY_PATH = 'Construção > Materiais de Obra > Obra Grossa > Argamassas'
+FREIGHT_THRESHOLD = Decimal('79')
+DEFAULT_FREIGHT_ABOVE_THRESHOLD = Decimal('30')
 
 
 def _to_decimal(value: object) -> Decimal:
@@ -26,61 +33,73 @@ def _rate(value: Decimal) -> Decimal:
     return value / Decimal('100')
 
 
-def _denominator(rate: Decimal) -> Decimal:
-    denominator = Decimal('1') - rate
-    return denominator if denominator > Decimal('0.01') else Decimal('0.01')
+def _metric_card(label: str, value: str, extra: str = '') -> None:
+    st.markdown(
+        f'''
+<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:16px;padding:1.05rem 1.15rem;margin:.35rem 0;">
+  <div style="font-size:.9rem;color:#64748b;font-weight:900;letter-spacing:.01em;">{label}</div>
+  <div style="font-size:1.55rem;color:#334155;font-weight:950;line-height:1.2;margin-top:.35rem;">{value} <span style="font-size:1rem;font-weight:700;color:#64748b;">{extra}</span></div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
 
 
-def _calc(
+def _profit_card(profit: Decimal, margin: Decimal) -> None:
+    color = '#22c55e' if profit >= 0 else '#ef4444'
+    st.markdown(
+        f'''
+<div style="background:{color};border-radius:18px;padding:1.45rem 1rem;margin:.75rem 0;color:white;text-align:center;">
+  <div style="font-size:1.08rem;font-weight:850;">Lucro Líquido</div>
+  <div style="font-size:1.85rem;font-weight:950;margin:.35rem 0;">{_money(profit)}</div>
+  <div style="font-size:1rem;font-weight:650;">Margem de Lucro: {_percent(margin)}</div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
+def _calc_result(
     *,
+    ad_fee_percent: Decimal,
     cost: Decimal,
-    freight: Decimal,
-    fixed_cost: Decimal,
-    marketplace_fee: Decimal,
-    tax: Decimal,
-    other_fee: Decimal,
-    mode: str,
-    nominal_profit: Decimal,
-    desired_margin: Decimal,
-    fixed_price: Decimal,
-    promo: Decimal,
+    sale_price: Decimal,
+    tax_percent: Decimal,
+    freight_input: Decimal,
+    fixed_fee: Decimal,
 ) -> dict[str, Decimal]:
-    base_cost = cost + freight + fixed_cost
-    variable_rate = _rate(marketplace_fee) + _rate(tax) + _rate(other_fee)
+    freight = freight_input
+    if freight_input <= 0 and sale_price > FREIGHT_THRESHOLD:
+        freight = DEFAULT_FREIGHT_ABOVE_THRESHOLD
 
-    if mode == 'Margem de contribuição':
-        sale_price = base_cost / _denominator(variable_rate + _rate(desired_margin))
-    elif mode == 'Preço fixo':
-        sale_price = fixed_price
-    else:
-        sale_price = (base_cost + nominal_profit) / _denominator(variable_rate)
-
-    sale_price = max(sale_price, Decimal('0'))
-    fees_value = sale_price * variable_rate
-    profit = sale_price - fees_value - base_cost
+    marketplace_fee = sale_price * _rate(ad_fee_percent)
+    tax = sale_price * _rate(tax_percent)
+    total_cost = cost + marketplace_fee + fixed_fee + freight + tax
+    profit = sale_price - total_cost
     margin = (profit / sale_price * Decimal('100')) if sale_price > 0 else Decimal('0')
-    break_even = base_cost / _denominator(variable_rate) if base_cost > 0 else Decimal('0')
-    promo_price = sale_price * (Decimal('1') - _rate(promo)) if promo > 0 else sale_price
 
     return {
-        'sale_price': sale_price,
+        'marketplace_fee': marketplace_fee,
+        'fixed_fee': fixed_fee,
+        'freight': freight,
+        'tax': tax,
+        'total_cost': total_cost,
         'profit': profit,
         'margin': margin,
-        'break_even': break_even,
-        'promo_price': promo_price,
-        'fees_percent': variable_rate * Decimal('100'),
-        'fees_value': fees_value,
-        'base_cost': base_cost,
     }
 
 
-def _card(label: str, value: str, help_text: str = '') -> None:
+def _render_observations(ad_type: str, freight: Decimal) -> None:
     st.markdown(
         f'''
-<div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:1rem;box-shadow:0 8px 20px rgba(15,23,42,.06);">
-  <div style="font-size:.8rem;color:#64748b;font-weight:800;">{label}</div>
-  <div style="font-size:1.25rem;color:#0f172a;font-weight:900;line-height:1.2;margin-top:.2rem;">{value}</div>
-  <div style="font-size:.76rem;color:#64748b;margin-top:.25rem;">{help_text}</div>
+<div style="background:#dbeafe;border:1px solid #bfdbfe;border-radius:16px;padding:1rem 1.2rem;color:#1e3a5f;margin-top:.8rem;">
+  <div style="font-weight:900;margin-bottom:.55rem;">Observações:</div>
+  <ul style="margin:.2rem 0 0 1.15rem;padding:0;line-height:1.65;">
+    <li>Frete padrão: <b>{_money(DEFAULT_FREIGHT_ABOVE_THRESHOLD)}</b> para pedidos acima de <b>{_money(FREIGHT_THRESHOLD)}</b>.</li>
+    <li>A taxa do Mercado Livre varia conforme a categoria e o tipo de anúncio.</li>
+    <li>Tipo selecionado: <b>{ad_type}</b>.</li>
+    <li>Frete considerado neste cálculo: <b>{_money(freight)}</b>.</li>
+  </ul>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -88,90 +107,68 @@ def _card(label: str, value: str, help_text: str = '') -> None:
 
 
 def render_quick_price_calculator() -> None:
-    st.markdown('### Calculadora rápida de preço')
-    st.caption('Digite os valores e veja o resultado na hora, sem anexar planilha e sem iniciar fluxo.')
+    st.markdown('### Calculadora rápida Mercado Livre')
+    st.caption('Simule preço, taxas e lucro sem anexar planilha e sem iniciar o fluxo completo.')
 
     with st.container(border=True):
-        mode = st.radio('Como deseja calcular?', QUICK_MODES, horizontal=True, key='quick_price_mode')
+        st.markdown('## Configurações')
+        st.caption('Defina os parâmetros para o cálculo')
 
-        c1, c2, c3 = st.columns(3)
-        cost = _to_decimal(c1.number_input('Custo do produto R$', min_value=0.0, value=0.0, step=1.0, key='quick_price_cost'))
-        freight = _to_decimal(c2.number_input('Frete / embalagem R$', min_value=0.0, value=0.0, step=1.0, key='quick_price_freight'))
-        fixed_cost = _to_decimal(c3.number_input('Custo fixo extra R$', min_value=0.0, value=0.0, step=1.0, key='quick_price_fixed_cost'))
-
-        c4, c5, c6 = st.columns(3)
-        marketplace_fee = _to_decimal(c4.number_input('Taxa marketplace %', min_value=0.0, value=20.0, step=0.5, key='quick_price_marketplace_fee'))
-        tax = _to_decimal(c5.number_input('Imposto %', min_value=0.0, value=0.0, step=0.5, key='quick_price_tax'))
-        other_fee = _to_decimal(c6.number_input('Outras taxas %', min_value=0.0, value=0.0, step=0.5, key='quick_price_other_fee'))
-
-        c7, c8, c9 = st.columns(3)
-        nominal_profit = Decimal('0')
-        desired_margin = Decimal('0')
-        fixed_price = Decimal('0')
-
-        if mode == 'Lucro nominal':
-            nominal_profit = _to_decimal(c7.number_input('Quero ganhar R$', min_value=0.0, value=0.0, step=1.0, key='quick_price_nominal_profit'))
-        elif mode == 'Margem de contribuição':
-            desired_margin = _to_decimal(c7.number_input('Quero margem de %', min_value=0.0, value=15.0, step=0.5, key='quick_price_desired_margin'))
-        else:
-            fixed_price = _to_decimal(c7.number_input('Quero vender por R$', min_value=0.0, value=0.0, step=1.0, key='quick_price_fixed_price'))
-
-        promo = _to_decimal(c8.number_input('Desconto promo %', min_value=0.0, value=0.0, step=0.5, key='quick_price_promo'))
-        round_90 = c9.checkbox('Arredondar para final ,90', value=False, key='quick_price_round_90')
-
-        result = _calc(
-            cost=cost,
-            freight=freight,
-            fixed_cost=fixed_cost,
-            marketplace_fee=marketplace_fee,
-            tax=tax,
-            other_fee=other_fee,
-            mode=mode,
-            nominal_profit=nominal_profit,
-            desired_margin=desired_margin,
-            fixed_price=fixed_price,
-            promo=promo,
+        st.markdown('#### Categoria')
+        st.markdown(
+            f'''
+<div style="background:#e2e8f0;border-radius:14px;padding:1rem 1.15rem;margin:.3rem 0 1rem 0;color:#475569;">
+  <div style="font-size:.82rem;line-height:1.45;">{DEFAULT_CATEGORY_PATH}</div>
+  <div style="font-size:1.05rem;font-weight:950;margin-top:.4rem;color:#334155;">{DEFAULT_CATEGORY}</div>
+  <div style="font-size:.82rem;font-style:italic;margin-top:.35rem;">Clássico: 11,5% / Premium: 16,5%</div>
+</div>
+''',
+            unsafe_allow_html=True,
         )
 
-        if round_90 and result['sale_price'] > 0:
-            rounded = result['sale_price'].quantize(Decimal('1'), rounding=ROUND_HALF_UP) - Decimal('0.10')
-            result = _calc(
-                cost=cost,
-                freight=freight,
-                fixed_cost=fixed_cost,
-                marketplace_fee=marketplace_fee,
-                tax=tax,
-                other_fee=other_fee,
-                mode='Preço fixo',
-                nominal_profit=Decimal('0'),
-                desired_margin=Decimal('0'),
-                fixed_price=max(rounded, Decimal('0.90')),
-                promo=promo,
-            )
+        ad_type = st.selectbox('Tipo de Anúncio', list(AD_TYPES.keys()), index=0, key='quick_ml_ad_type')
+        ad_fee_percent = AD_TYPES[ad_type]
+        st.caption('O anúncio Premium oferece maior visibilidade, porém possui uma taxa mais alta.')
 
-        st.markdown('#### Resultado')
-        r1, r2, r3 = st.columns(3)
-        with r1:
-            _card('Preço de venda', _money(result['sale_price']), 'Valor sugerido para anunciar')
-        with r2:
-            _card('Lucro estimado', _money(result['profit']), 'Depois de custos, taxas e imposto')
-        with r3:
-            _card('Margem real', _percent(result['margin']), 'Margem final estimada')
+        cost = _to_decimal(st.number_input('Custo do Produto', min_value=0.0, value=65.0, step=1.0, key='quick_ml_cost'))
+        sale_price = _to_decimal(st.number_input('Preço de Venda (R$)', min_value=0.0, value=130.0, step=1.0, key='quick_ml_sale_price'))
+        tax_percent = _to_decimal(st.number_input('Imposto (%)', min_value=0.0, value=6.0, step=0.5, key='quick_ml_tax'))
+        freight_input = _to_decimal(st.number_input('Custo do Frete (R$)', min_value=0.0, value=0.0, step=1.0, key='quick_ml_freight'))
+        fixed_fee = _to_decimal(st.number_input('Taxa Fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_ml_fixed_fee'))
 
-        r4, r5, r6 = st.columns(3)
-        with r4:
-            _card('Preço promocional', _money(result['promo_price']), 'Com desconto aplicado')
-        with r5:
-            _card('Ponto de equilíbrio', _money(result['break_even']), 'Preço mínimo sem lucro')
-        with r6:
-            _card('Taxas variáveis', _percent(result['fees_percent']), f"Total: {_money(result['fees_value'])}")
+        clicked = st.button('🧮 Calcular', use_container_width=True, key='quick_ml_calculate')
+        if clicked:
+            st.session_state['quick_ml_has_calculated'] = True
 
-        if cost <= 0:
-            st.info('Digite o custo do produto para fazer uma conta real.')
+        if not st.session_state.get('quick_ml_has_calculated'):
+            st.info('Preencha os valores e toque em Calcular para ver a simulação.')
+            return
+
+        result = _calc_result(
+            ad_fee_percent=ad_fee_percent,
+            cost=cost,
+            sale_price=sale_price,
+            tax_percent=tax_percent,
+            freight_input=freight_input,
+            fixed_fee=fixed_fee,
+        )
+
+        st.markdown('## Resultado da Precificação')
+        st.caption('Simulação dos cálculos')
+        _metric_card('Taxa Mercado Livre', _money(result['marketplace_fee']), f'({_percent(ad_fee_percent)})')
+        _metric_card('Taxa Fixa', _money(result['fixed_fee']))
+        _metric_card('Frete', _money(result['freight']))
+        _metric_card('Imposto', _money(result['tax']))
+        _metric_card('Custo Total', _money(result['total_cost']))
+        _profit_card(result['profit'], result['margin'])
+        _render_observations(ad_type, result['freight'])
+
+        if sale_price <= 0:
+            st.warning('Informe o preço de venda para calcular lucro e margem.')
         elif result['profit'] < 0:
-            st.warning('Atenção: o lucro ficou negativo. Ajuste preço, custo, taxas ou margem.')
+            st.warning('Atenção: o lucro líquido ficou negativo. Revise custo, preço, frete, imposto ou tipo de anúncio.')
         else:
-            st.success('Cálculo rápido concluído. Nada foi aplicado em planilhas do fluxo.')
+            st.success('Simulação concluída. Estes valores não alteram nenhuma planilha do fluxo.')
 
 
 __all__ = ['render_quick_price_calculator']
