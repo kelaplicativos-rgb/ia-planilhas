@@ -6,6 +6,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.ui.links_uteis import render_links_uteis
 from bling_app_zero.ui.modelos_bling import render_modelos_bling
+from bling_app_zero.v2.price_multistore.quick_ui import render_quick_price_calculator
 from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
@@ -214,8 +215,14 @@ def render_home_router() -> None:
         add_audit_event(
             'home_router_render_price_update',
             area='HOME',
-            details={'responsible_file': RESPONSIBLE_FILE, 'module_label': 'calculadora_principal'},
+            details={
+                'responsible_file': RESPONSIBLE_FILE,
+                'module_label': 'calculadora_principal',
+                'quick_calculator_enabled': True,
+            },
         )
+        render_quick_price_calculator()
+        st.markdown('---')
         render_price_multistore_v2()
         return
 
