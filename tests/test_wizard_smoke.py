@@ -20,6 +20,9 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home_models',
     'bling_app_zero.ui.home_shared',
     'bling_app_zero.ui.home_download',
+    'bling_app_zero.ui.site_panel',
+    'bling_app_zero.ui.site_panel_state',
+    'bling_app_zero.ui.site_panel_capture',
     'bling_app_zero.ui.modelos_bling',
     'bling_app_zero.ui.modelos_bling_user_screen_min',
     'bling_app_zero.ui.cadastro_wizard_steps',
@@ -78,7 +81,12 @@ def test_light_critical_wizard_modules_import() -> None:
 
 
 def test_site_critical_modules_import_without_running_scraper() -> None:
-    for module_name in ['bling_app_zero.ui.site_panel', 'bling_app_zero.ui.site_outputs']:
+    for module_name in [
+        'bling_app_zero.ui.site_panel',
+        'bling_app_zero.ui.site_panel_state',
+        'bling_app_zero.ui.site_panel_capture',
+        'bling_app_zero.ui.site_outputs',
+    ]:
         importlib.import_module(module_name)
 
 
@@ -192,6 +200,21 @@ def test_mapping_step_exposes_quick_download_before_ai_review() -> None:
     assert 'render_universal_mapeamento_step()' in wizard_source
     assert '_render_ai_review_step' in wizard_source
     assert wizard_source.index('render_universal_mapeamento_step()') < wizard_source.index('_render_ai_review_step')
+
+
+def test_site_panel_is_modularized_after_blingmodular() -> None:
+    site_panel = Path('bling_app_zero/ui/site_panel.py').read_text(encoding='utf-8')
+    site_state = Path('bling_app_zero/ui/site_panel_state.py').read_text(encoding='utf-8')
+    site_capture = Path('bling_app_zero/ui/site_panel_capture.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.site_panel_state import (' in site_panel
+    assert 'from bling_app_zero.ui.site_panel_capture import run_site_capture' in site_panel
+    assert 'def render_site_panel() -> None:' in site_panel
+    assert 'def run_site_capture(' in site_capture
+    assert 'def current_site_operation() -> str:' in site_state
+    assert 'def clear_stuck_capture(operation: str) -> None:' in site_state
+    assert 'discover_deep_product_urls' in site_capture
+    assert 'run_site_engine' in site_capture
 
 
 def test_ai_sidebar_byok_without_secrets_fallback() -> None:
