@@ -12,33 +12,27 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
 )
 from bling_app_zero.ui.home_shared import preview_df
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_preview_step.py'
-VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 LEGACY_OPERATION_ALIASES = {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 def _normalize_operation(value: object) -> str:
-    operation = str(value or '').strip().lower()
-    if operation in LEGACY_OPERATION_ALIASES:
-        return 'universal'
-    if operation in VALID_OPERATIONS:
+    operation = normalize_contract_operation(value)
+    if operation:
         return operation
+    text = str(value or '').strip().lower()
+    if text in LEGACY_OPERATION_ALIASES:
+        return 'universal'
     return ''
 
 
 def _current_operation() -> str:
-    """Resolve a operação real do fluxo antes de aplicar regras do preview.
-
-    BLINGFIX:
-    - o wizard atual pode operar como universal/modelo final;
-    - antes o preview aceitava só cadastro/estoque e fazia fallback para cadastro;
-    - agora universal é válido e tem prioridade quando o single-page flow está ativo.
-    """
-    if bool(st.session_state.get('home_single_page_flow_active')):
-        return 'universal'
-
+    """Resolve a operação real do contrato antes de aplicar regras do preview."""
     for key in (
+        MODEL_CONTRACT_TYPE_KEY,
         'df_final_preview_operation',
         'df_final_download_operation',
         'final_download_operation',
