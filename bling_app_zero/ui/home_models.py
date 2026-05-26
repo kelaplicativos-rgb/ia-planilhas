@@ -230,12 +230,12 @@ def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
         st.warning(
-            'Envie o modelo de destino para continuar. '
+            'Envie o modelo universal de destino para continuar. '
             'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
         )
         return
-    st.caption(f'Modelo enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
-    with st.expander('Ver colunas do modelo de destino', expanded=False):
+    st.caption(f'Modelo universal enviado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    with st.expander('Ver colunas do modelo universal', expanded=False):
         columns = [str(column) for column in list(df.columns)]
         st.caption(', '.join(columns))
 
@@ -294,21 +294,22 @@ def _remember_original_model_upload(upload: object) -> None:
 
 
 def render_home_bling_models() -> None:
+    # Nome legado mantido por compatibilidade. Visualmente esta tela representa Modelos Universal.
     clear_default_home_models()
-    st.markdown('#### Modelo de destino')
+    st.markdown('#### Modelos Universal')
     st.caption(
         'Envie aqui a planilha modelo que será preenchida no final. '
         'Ela precisa ter cabeçalho com os nomes das colunas. '
         'Pode ser modelo do Bling, marketplace, fornecedor ou qualquer layout final com cabeçalho.'
     )
 
-    upload = render_model_upload_box(title='Enviar modelo de destino', operation='universal', key='home_model_upload_bling', required_model=False, caption=None)
+    upload = render_model_upload_box(title='Enviar modelo universal de destino', operation='universal', key='home_model_upload_bling', required_model=False, caption=None)
     cadastro_model = upload.cadastro_model_df if isinstance(upload.cadastro_model_df, pd.DataFrame) else None
     estoque_model = upload.estoque_model_df if isinstance(upload.estoque_model_df, pd.DataFrame) else None
 
     if isinstance(cadastro_model, pd.DataFrame) or isinstance(estoque_model, pd.DataFrame):
         _remember_original_model_upload(upload)
-        add_audit_event('home_model_upload_ready_to_save', area='MODELO', step=st.session_state.get(WIZARD_STEP_KEY), status='OK', details={'cadastro': _df_log_summary(cadastro_model), 'estoque': _df_log_summary(estoque_model), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('home_universal_model_upload_ready_to_save', area='MODELO', step=st.session_state.get(WIZARD_STEP_KEY), status='OK', details={'cadastro': _df_log_summary(cadastro_model), 'estoque': _df_log_summary(estoque_model), 'responsible_file': RESPONSIBLE_FILE})
         save_home_models(cadastro_model, estoque_model, replace_missing=True)
         _auto_forward_after_first_model_upload(cadastro_model, estoque_model)
 
