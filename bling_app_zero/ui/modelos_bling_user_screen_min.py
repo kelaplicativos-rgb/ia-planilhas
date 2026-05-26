@@ -15,9 +15,15 @@ STEP_ORIGEM = 'origem'
 UNIVERSAL_OPERATION = 'universal'
 
 MODEL_TITLES = {
-    'cadastro': 'Anexar modelo Bling cadastro',
-    'estoque': 'Anexar modelo Bling estoque',
-    'precos': 'Anexar modelo Bling atualizar preços',
+    'cadastro': 'Modelo Bling cadastro',
+    'estoque': 'Modelo Bling estoque',
+    'precos': 'Modelo Bling atualização de preços',
+}
+
+MODEL_UPLOAD_LABELS = {
+    'cadastro': 'Anexar ou substituir modelo Bling cadastro',
+    'estoque': 'Anexar ou substituir modelo Bling estoque',
+    'precos': 'Anexar ou substituir modelo Bling atualização de preços',
 }
 
 
@@ -44,43 +50,44 @@ def _go_to_origin(model_type: str) -> None:
 
 def _show_model(model_type: str) -> None:
     label = MODEL_LABELS.get(model_type, model_type)
-    title = MODEL_TITLES.get(model_type, f'Anexar {label}')
+    title = MODEL_TITLES.get(model_type, label)
+    upload_label = MODEL_UPLOAD_LABELS.get(model_type, f'Anexar ou substituir {label}')
 
     st.markdown('---')
     st.markdown(f'#### {title}')
 
     df, info = get_user_model(model_type)
     if df is not None and info:
-        st.success('Modelo salvo')
+        st.success('Modelo Bling salvo')
         st.caption(str(info.get('name') or ''))
         st.caption('Colunas: ' + str(len(df.columns)))
-        if st.button('Usar e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
+        if st.button('Usar este modelo e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
             _go_to_origin(model_type)
         if st.button('Remover modelo salvo', key=f'remove_{model_type}', use_container_width=True):
             remove_user_model(model_type)
             st.rerun()
     else:
-        st.warning('Nenhum modelo salvo ainda.')
+        st.warning('Nenhum modelo Bling salvo ainda.')
 
     uploaded = st.file_uploader(
-        title,
+        upload_label,
         key=f'upload_{model_type}',
-        help='No celular, o seletor fica sem filtro para evitar arquivo CSV ou XLSX cinza/bloqueado. O sistema valida o formato depois do anexo.',
+        help='Anexe o arquivo oficial do Bling apenas uma vez. Depois ele ficará disponível para reutilizar, remover ou substituir.',
     )
 
     if uploaded is not None:
         try:
             save_user_model(model_type, uploaded.name, uploaded.getvalue())
-            st.success('Modelo salvo com sucesso. Indo para Origem dos dados...')
+            st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
             _go_to_origin(model_type)
         except Exception as exc:
             st.error(f'Arquivo não aceito: {exc}')
 
 
 def render_modelos_bling_user_screen() -> None:
-    st.markdown('### Bling')
-    st.caption('Modelos base do usuário')
-    st.info('Anexe os modelos uma vez. Eles ficarão disponíveis até você remover ou substituir.')
+    st.markdown('### Modelos Bling')
+    st.caption('Cadastre uma vez os modelos oficiais do Bling e reutilize quando precisar.')
+    st.info('Esta área é somente para modelos do Bling. Para preencher um modelo próprio, use Modelos Universal na Home.')
 
     for model_type in MODEL_TYPES:
         _show_model(model_type)
