@@ -86,21 +86,23 @@ def test_streamlit_entrypoint_uses_home_router() -> None:
     assert 'render_home_router' in home_source or 'render_home_wizard' in home_source
 
 
-def test_home_router_order_is_bling_universal_system_calculator() -> None:
+def test_home_router_order_is_bling_then_universal_with_calculator_inside_flow() -> None:
     source = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
 
     assert "'Bling: Modelos Bling'" in source
     assert "'Modelos Universal'" in source
-    assert "'Calculadora principal'" in source
-    assert "'home_order': 'bling_universal_system_calculator'" in source
+    assert "'Administração e links úteis'" in source
+    assert "'Calculadora principal'" not in source
+    assert "'home_order': 'bling_then_universal_then_internal_price_step'" in source
+    assert 'A calculadora aparece somente na etapa Preço, dentro do fluxo.' in source
     assert source.index("'Bling: Modelos Bling'") < source.index("'Modelos Universal'")
-    assert source.index("'Modelos Universal'") < source.index("'Calculadora principal'")
+    assert source.index("'Modelos Universal'") < source.index('_render_admin_links()')
 
 
 def test_modelos_bling_screen_is_not_universal_screen() -> None:
     source = Path('bling_app_zero/ui/modelos_bling_user_screen_min.py').read_text(encoding='utf-8')
 
-    assert "### Modelos Bling" in source
+    assert '### Modelos Bling' in source
     assert 'Esta área é somente para modelos do Bling' in source
     assert 'Modelos Universal na Home' in source
     assert 'Modelo Bling cadastro' in source
@@ -167,6 +169,19 @@ def test_home_models_syncs_any_destination_model_as_universal(monkeypatch) -> No
     assert st.session_state['tipo_operacao_final'] == 'universal'
     assert st.session_state['home_detected_operation'] == 'universal'
     assert home_models.has_home_models() is True
+
+
+def test_mapping_step_exposes_quick_download_before_ai_review() -> None:
+    mapping_source = Path('bling_app_zero/ui/cadastro_mapping_step.py').read_text(encoding='utf-8')
+    wizard_source = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+
+    assert 'Download imediato' in mapping_source
+    assert 'cadastro_mapping_ready' in mapping_source
+    assert "download_final(df_final, 'universal', 'atalho_pos_mapeamento_universal')" in mapping_source
+    assert 'Revisão final / IA Real' in mapping_source
+    assert 'render_universal_mapeamento_step()' in wizard_source
+    assert '_render_ai_review_step' in wizard_source
+    assert wizard_source.index('render_universal_mapeamento_step()') < wizard_source.index('_render_ai_review_step')
 
 
 def test_ai_sidebar_byok_without_secrets_fallback() -> None:
@@ -257,11 +272,15 @@ def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> Non
     assert steps.cadastro_mapping_ready() is True
 
 
-def test_download_final_uses_official_exporter() -> None:
+def test_download_final_uses_template_exporter_for_attached_model() -> None:
     home_shared = Path('bling_app_zero/ui/home_shared.py').read_text(encoding='utf-8')
 
-    assert 'from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes' in home_shared
-    assert 'to_bling_csv_bytes(df, operation=operation)' in home_shared
+    assert 'from bling_app_zero.core.template_download_exporter import (' in home_shared
+    assert 'build_template_download_bytes' in home_shared
+    assert 'can_export_from_template' in home_shared
+    assert 'output_name_for_template' in home_shared
+    assert 'mime_for_template_output' in home_shared
+    assert '_build_template_download(download_df.copy())' in home_shared
     assert '.to_csv(' not in home_shared
 
 
