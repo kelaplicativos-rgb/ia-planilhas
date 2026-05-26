@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.cadastro_pricing import render_cadastro_pricing
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
@@ -56,6 +55,19 @@ def _render_quick_download_after_mapping(df_origem: pd.DataFrame) -> None:
         download_final(df_final, 'universal', 'atalho_pos_mapeamento_universal')
 
 
+def _df_for_mapping(df_origem: pd.DataFrame) -> pd.DataFrame:
+    """Retorna a origem que o mapeamento deve consumir.
+
+    BLINGMODULAR 2: a calculadora não roda mais nesta tela. Se a etapa Preço
+    gerou uma origem precificada, ela é usada; caso contrário, o mapeamento usa a
+    origem bruta do fornecedor.
+    """
+    df_precificado = st.session_state.get(CADASTRO_ORIGEM_PRICED_KEY)
+    if isinstance(df_precificado, pd.DataFrame) and not df_precificado.empty:
+        return df_precificado
+    return df_origem
+
+
 def render_cadastro_mapeamento_step() -> None:
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
@@ -69,18 +81,16 @@ def render_cadastro_mapeamento_step() -> None:
 
     store_expected_source_rows(df_origem)
 
+    df_para_mapear = _df_for_mapping(df_origem)
+
     col_a, col_b = st.columns(2)
     with col_a:
         st.metric('Produtos encontrados', len(df_origem))
     with col_b:
         st.metric('Colunas para preencher', len(df_modelo.columns))
 
-    df_para_mapear = render_cadastro_pricing(df_origem)
-    df_para_mapear = st.session_state.get('df_origem_cadastro_precificada', df_para_mapear)
-    if isinstance(df_para_mapear, pd.DataFrame):
-        st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_para_mapear
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Preço calculado. O campo Preço de venda será usado nas colunas de preço.')
+        st.success('Preço calculado na etapa Preço. O campo Preço de venda está disponível para o mapeamento.')
 
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
