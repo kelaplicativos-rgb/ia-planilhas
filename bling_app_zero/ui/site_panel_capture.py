@@ -7,7 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_deep_product_urls
-from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
+from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
@@ -49,7 +49,7 @@ def prepare_raw_urls_for_capture(
 ) -> tuple[str, dict[str, object]]:
     options = deep_options or {}
     if not bool(options.get('enabled')):
-        return raw_urls, {'deep_capture_enabled': False}
+        return raw_urls, {'deep_capture_enabled': False, 'scan_mode': 'full_public_scan'}
 
     callback = make_site_progress_callback(progress_bar, status_box)
     result = discover_deep_product_urls(
@@ -65,6 +65,7 @@ def prepare_raw_urls_for_capture(
             'deep_capture_enabled': True,
             'deep_capture_found_products': 0,
             'deep_capture_visited_pages': result.visited_pages,
+            'scan_mode': 'full_deep_scan_no_links_found',
         }
 
     st.session_state[f'site_deep_capture_urls_{operation}'] = result.raw_urls
@@ -76,29 +77,28 @@ def prepare_raw_urls_for_capture(
         'deep_capture_scanned_pages': result.scanned_pages,
         'deep_capture_ignored_external_links': result.ignored_external_links,
         'deep_capture_max_depth': result.max_depth,
+        'scan_mode': 'full_deep_scan',
     }
 
 
 def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
-    """Define limites seguros para a busca pública e ampla para captura profunda.
+    """Mantém o objetivo do sistema: varrer o site completo por padrão.
 
-    BLINGFIX:
-    - antes a busca pública usava 1_000_000 páginas/produtos;
-    - ao colar a home do fornecedor, isso podia deixar `site_capture_running=True`
-      sem finalizar dentro do tempo útil do Streamlit;
-    - agora o modo público usa o padrão seguro da operação;
-    - a captura profunda continua usando os limites escolhidos pelo usuário.
+    O limite baixo usado temporariamente para evitar travamento cortava o objetivo
+    principal do produto. A busca normal volta a ser ampla. A captura profunda
+    ainda pode ter limites visuais para descoberta de links, mas o motor final
+    recebe `all_products=True` e limites amplos para não retornar só uma amostra.
     """
+    _ = operation
     options = deep_options or {}
     if bool(options.get('enabled')):
         return (
-            int(options.get('max_pages') or ALL_PAGES_LIMIT),
-            int(options.get('max_products') or ALL_PRODUCTS_LIMIT),
+            max(int(options.get('max_pages') or 0), ALL_PAGES_LIMIT),
+            max(int(options.get('max_products') or 0), ALL_PRODUCTS_LIMIT),
             True,
         )
 
-    config = config_for_site_operation(operation)
-    return int(config.default_max_pages), int(config.default_max_products), False
+    return ALL_PAGES_LIMIT, ALL_PRODUCTS_LIMIT, True
 
 
 def run_site_capture(
@@ -139,11 +139,12 @@ def run_site_capture(
             'all_products': bool(all_products),
             'max_pages': int(max_pages),
             'max_products': int(max_products),
+            'scan_goal': 'site_completo_sem_amostra',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     reset_site_progress()
-    progress_bar = st.progress(0, text='Buscando dados no site...')
+    progress_bar = st.progress(0, text='Escaneando o site completo atrás de produtos...')
     status_box = st.empty()
     try:
         prepared_urls, deep_details = prepare_raw_urls_for_capture(
@@ -198,6 +199,7 @@ def run_site_capture(
         'max_pages': int(max_pages),
         'max_products': int(max_products),
         'all_products': bool(all_products),
+        'scan_goal': 'site_completo_sem_amostra',
         'responsible_file': RESPONSIBLE_FILE,
     }
     details.update(deep_details)
