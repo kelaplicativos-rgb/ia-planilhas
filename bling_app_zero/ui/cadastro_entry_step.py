@@ -16,7 +16,18 @@ from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_esto
 from bling_app_zero.ui.home_shared import preview_df
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
-SOURCE_FLOW_OPERATION = 'fornecedor'
+SITE_SOURCE_FALLBACK_KEYS = (
+    'df_origem_site_como_planilha_universal',
+    'df_origem_site_como_planilha_cadastro',
+    'df_origem_site_como_planilha_estoque',
+    'df_origem_site_como_planilha',
+    'df_site_bruto_universal',
+    'df_site_bruto_cadastro',
+    'df_site_bruto_estoque',
+    'df_site_bruto',
+)
+SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
+RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
 
 
 def empty_cadastro_upload_result() -> SmartUploadResult:
@@ -33,11 +44,42 @@ def empty_cadastro_upload_result() -> SmartUploadResult:
     )
 
 
+def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.copy().fillna('')
+    return None
+
+
+def site_source_dataframe() -> pd.DataFrame | None:
+    """Busca a origem do site em todas as chaves usadas pelo fluxo atual.
+
+    BLINGFIX:
+    - a etapa Preço depende de `cadastro_wizard_df_origem`;
+    - antes a entrada procurava apenas operação fixa "fornecedor";
+    - quando o SCAN TOTAL salvava a origem como universal/cadastro/estoque,
+      a etapa Preço podia ficar bloqueada e a calculadora não aparecia.
+    """
+    for operation in SITE_SOURCE_OPERATIONS:
+        df = get_site_source_for_operation(operation)
+        copied = _copy_df(df)
+        if copied is not None:
+            st.session_state['cadastro_entry_site_source_resolved_from'] = f'operation:{operation}'
+            return copied
+
+    for key in SITE_SOURCE_FALLBACK_KEYS:
+        copied = _copy_df(st.session_state.get(key))
+        if copied is not None:
+            st.session_state['cadastro_entry_site_source_resolved_from'] = f'key:{key}'
+            return copied
+
+    return None
+
+
 def source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFrame | None:
-    if isinstance(df_origem_site, pd.DataFrame):
-        return df_origem_site
+    if isinstance(df_origem_site, pd.DataFrame) and not df_origem_site.empty:
+        return df_origem_site.copy().fillna('')
     source_df = getattr(upload, 'source_df', None)
-    return source_df if isinstance(source_df, pd.DataFrame) else None
+    return source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) and not source_df.empty else None
 
 
 def _destination_model(upload) -> pd.DataFrame:
@@ -55,7 +97,7 @@ def _destination_model(upload) -> pd.DataFrame:
 def render_cadastro_entrada_step() -> None:
     site_origin = is_site_origin()
 
-    df_origem_site = get_site_source_for_operation(SOURCE_FLOW_OPERATION) if site_origin else None
+    df_origem_site = site_source_dataframe() if site_origin else None
     upload = empty_cadastro_upload_result() if site_origin else render_cadastro_source_upload(None)
     df_origem = source_dataframe(df_origem_site, upload)
     clear_cadastro_outputs_if_source_changed(df_origem)
@@ -65,7 +107,11 @@ def render_cadastro_entrada_step() -> None:
 
     if valid_df(df_origem):
         origem_nome = 'Busca do site' if site_origin else 'Dados do fornecedor'
-        st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear com o modelo.')
+        st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo.')
+        if site_origin:
+            resolved_from = str(st.session_state.get('cadastro_entry_site_source_resolved_from') or '').strip()
+            if resolved_from:
+                st.caption(f'Origem do site vinculada ao fluxo: {resolved_from}.')
         with st.expander('Ver dados do fornecedor', expanded=False):
             preview_df('Dados do fornecedor', df_origem)
     elif site_origin:
@@ -82,5 +128,6 @@ def render_cadastro_entrada_step() -> None:
 __all__ = [
     'empty_cadastro_upload_result',
     'render_cadastro_entrada_step',
+    'site_source_dataframe',
     'source_dataframe',
 ]
