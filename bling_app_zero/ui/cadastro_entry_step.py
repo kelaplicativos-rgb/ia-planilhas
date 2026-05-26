@@ -12,7 +12,12 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
-from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
+from bling_app_zero.ui.home_models import (
+    get_home_cadastro_model,
+    get_home_estoque_model,
+    get_home_preco_model,
+    get_home_universal_model,
+)
 from bling_app_zero.ui.home_shared import preview_df
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
@@ -36,7 +41,7 @@ def empty_cadastro_upload_result() -> SmartUploadResult:
         source_df=None,
         model_file=None,
         cadastro_model_file=None,
-        cadastro_model_df=get_home_cadastro_model(),
+        cadastro_model_df=get_home_cadastro_model() or get_home_preco_model() or get_home_universal_model(),
         estoque_model_file=None,
         estoque_model_df=get_home_estoque_model(),
         attachments=[],
@@ -50,15 +55,14 @@ def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
-def site_source_dataframe() -> pd.DataFrame | None:
-    """Busca a origem do site em todas as chaves usadas pelo fluxo atual.
+def _copy_model(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if isinstance(df, pd.DataFrame) and len(df.columns):
+        return df.copy().fillna('')
+    return None
 
-    BLINGFIX:
-    - a etapa Preço depende de `cadastro_wizard_df_origem`;
-    - antes a entrada procurava apenas operação fixa "fornecedor";
-    - quando o SCAN TOTAL salvava a origem como universal/cadastro/estoque,
-      a etapa Preço podia ficar bloqueada e a calculadora não aparecia.
-    """
+
+def site_source_dataframe() -> pd.DataFrame | None:
+    """Busca a origem do site em todas as chaves usadas pelo fluxo atual."""
     for operation in SITE_SOURCE_OPERATIONS:
         df = get_site_source_for_operation(operation)
         copied = _copy_df(df)
@@ -83,13 +87,15 @@ def source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFram
 
 
 def _destination_model(upload) -> pd.DataFrame:
-    model = get_home_cadastro_model()
-    if isinstance(model, pd.DataFrame) and len(model.columns):
-        return model.copy().fillna('')
-
-    estoque_model = get_home_estoque_model()
-    if isinstance(estoque_model, pd.DataFrame) and len(estoque_model.columns):
-        return estoque_model.copy().fillna('')
+    for model in (
+        get_home_cadastro_model(),
+        get_home_estoque_model(),
+        get_home_preco_model(),
+        get_home_universal_model(),
+    ):
+        copied = _copy_model(model)
+        if copied is not None:
+            return copied
 
     return select_cadastro_model(upload)
 
