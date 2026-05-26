@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
+from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
@@ -129,6 +131,27 @@ def _render_universal_entrada(section_number: int = 3) -> None:
     render_universal_entrada_step()
 
 
+def _source_dataframe_for_pricing() -> pd.DataFrame | None:
+    df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
+    return df_origem if isinstance(df_origem, pd.DataFrame) else None
+
+
+def _apply_pricing_step_result() -> None:
+    df_origem = _source_dataframe_for_pricing()
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        clear_cadastro_pricing_state()
+        render_pending_notice('Carregue os dados primeiro.')
+        return
+
+    df_precificado = apply_cadastro_pricing(df_origem, channel='home_price_step')
+    if isinstance(df_precificado, pd.DataFrame):
+        st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_precificado
+    if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
+        st.success('Preço calculado. O campo Preço de venda será usado no mapeamento e no preview.')
+    else:
+        st.warning('Calcule um preço para aplicar a referência de precificação aos dados carregados.')
+
+
 def _render_pricing_step(section_number: int = 4) -> None:
     render_step_anchor(STEP_PRECIFICACAO)
     _section_title(section_number, 'Preço')
@@ -144,8 +167,10 @@ def _render_pricing_step(section_number: int = 4) -> None:
         with st.container(border=True):
             config = render_home_pricing_config_form()
             set_home_pricing_config(config)
+            _apply_pricing_step_result()
     else:
         disable_home_pricing()
+        clear_cadastro_pricing_state()
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
