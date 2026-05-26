@@ -9,9 +9,10 @@ from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.engines.fast_site_scraper.text_cleaner import clean_product_description
 from bling_app_zero.engines.site_operations import run_site_operation_engine
+from bling_app_zero.universal.model_contract_detector import normalize_contract_operation
 
 
-VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
@@ -23,6 +24,28 @@ ESTOQUE_COLUMN_SIGNALS = (
     'balanço',
     'deposito',
     'depósito',
+)
+PRICE_UPDATE_COLUMN_SIGNALS = (
+    'preco',
+    'preço',
+    'preco_unitario',
+    'preço_unitário',
+    'preco unitario',
+    'preço unitário',
+    'valor',
+    'valor_unitario',
+    'valor unitario',
+    'custo',
+)
+ID_COLUMN_SIGNALS = (
+    'id',
+    'id_produto',
+    'id produto',
+    'codigo',
+    'código',
+    'sku',
+    'gtin',
+    'ean',
 )
 CADASTRO_ONLY_COLUMN_SIGNALS = (
     'imagem',
@@ -88,6 +111,9 @@ LONG_DESCRIPTION_MIN_WORDS = 14
 
 
 def _normalize_operation(operation: str | None) -> str:
+    normalized = normalize_contract_operation(operation)
+    if normalized in VALID_OPERATIONS:
+        return normalized
     value = str(operation or 'universal').strip().lower()
     if value in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
         return 'estoque'
@@ -114,6 +140,10 @@ def _column_key(column: object) -> str:
     return normalize_key(str(column or '').replace('\n', ' ').replace('\r', ' ')).replace(' ', '_')
 
 
+def _has_any_signal(key: str, signals: tuple[str, ...]) -> bool:
+    return any(normalize_key(signal).replace(' ', '_') in key for signal in signals)
+
+
 def _infer_operation_from_columns(operation: str, requested_columns: list[str] | None) -> str:
     """Preserva o fluxo universal, mas escolhe o motor correto pelo modelo anexado."""
     normalized = _normalize_operation(operation)
@@ -121,10 +151,15 @@ def _infer_operation_from_columns(operation: str, requested_columns: list[str] |
         return normalized
 
     keys = [_column_key(column) for column in (requested_columns or [])]
-    has_estoque_signal = any(any(signal in key for signal in ESTOQUE_COLUMN_SIGNALS) for key in keys)
-    has_cadastro_only_signal = any(any(signal in key for signal in CADASTRO_ONLY_COLUMN_SIGNALS) for key in keys)
+    has_estoque_signal = any(_has_any_signal(key, ESTOQUE_COLUMN_SIGNALS) for key in keys)
+    has_cadastro_only_signal = any(_has_any_signal(key, CADASTRO_ONLY_COLUMN_SIGNALS) for key in keys)
+    has_price_signal = any(_has_any_signal(key, PRICE_UPDATE_COLUMN_SIGNALS) for key in keys)
+    has_id_signal = any(_has_any_signal(key, ID_COLUMN_SIGNALS) for key in keys)
+
     if has_estoque_signal and not has_cadastro_only_signal:
         return 'estoque'
+    if has_price_signal and has_id_signal and not has_estoque_signal and not has_cadastro_only_signal:
+        return 'atualizacao_preco'
     return normalized
 
 
