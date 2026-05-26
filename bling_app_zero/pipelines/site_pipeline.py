@@ -15,6 +15,29 @@ VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
+ESTOQUE_COLUMN_SIGNALS = (
+    'estoque',
+    'saldo',
+    'quantidade',
+    'balanco',
+    'balanço',
+    'deposito',
+    'depósito',
+)
+CADASTRO_ONLY_COLUMN_SIGNALS = (
+    'imagem',
+    'imagens',
+    'url_imagens',
+    'marca',
+    'categoria',
+    'ncm',
+    'descricao_complementar',
+    'descrição_complementar',
+    'caracteristicas',
+    'características',
+    'ficha_tecnica',
+    'ficha_técnica',
+)
 DESCRIPTION_COLUMN_SIGNALS = (
     'descricao_complementar',
     'descrição_complementar',
@@ -89,6 +112,20 @@ def _bounded_limit(value: int | None, fallback: int, hard_limit: int) -> int:
 
 def _column_key(column: object) -> str:
     return normalize_key(str(column or '').replace('\n', ' ').replace('\r', ' ')).replace(' ', '_')
+
+
+def _infer_operation_from_columns(operation: str, requested_columns: list[str] | None) -> str:
+    """Preserva o fluxo universal, mas escolhe o motor correto pelo modelo anexado."""
+    normalized = _normalize_operation(operation)
+    if normalized != 'universal':
+        return normalized
+
+    keys = [_column_key(column) for column in (requested_columns or [])]
+    has_estoque_signal = any(any(signal in key for signal in ESTOQUE_COLUMN_SIGNALS) for key in keys)
+    has_cadastro_only_signal = any(any(signal in key for signal in CADASTRO_ONLY_COLUMN_SIGNALS) for key in keys)
+    if has_estoque_signal and not has_cadastro_only_signal:
+        return 'estoque'
+    return normalized
 
 
 def _value_key(value: object) -> str:
@@ -205,7 +242,7 @@ def run_pipeline(
     operation: str = 'universal',
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    selected_operation = _normalize_operation(operation)
+    selected_operation = _infer_operation_from_columns(operation, requested_columns)
     selected_max_pages = _bounded_limit(max_pages, ALL_PAGES_LIMIT, ALL_PAGES_LIMIT)
     selected_max_products = _bounded_limit(max_products, ALL_PRODUCTS_LIMIT, ALL_PRODUCTS_LIMIT)
 
@@ -214,6 +251,7 @@ def run_pipeline(
             'stage': 'Preparando',
             'message': 'Preparando motor por modelo de destino...',
             'progress': 0.02,
+            'operation': selected_operation,
             'max_pages': selected_max_pages,
             'max_products': selected_max_products,
             'all_products': bool(all_products),
