@@ -8,6 +8,8 @@ from bling_app_zero.ui.home_models_state import (
     ensure_default_home_models,
     get_home_cadastro_model,
     get_home_estoque_model,
+    get_home_preco_model,
+    get_home_universal_model,
     has_home_models,
     save_home_models,
 )
@@ -21,6 +23,8 @@ __all__ = [
     'ensure_default_home_models',
     'get_home_cadastro_model',
     'get_home_estoque_model',
+    'get_home_preco_model',
+    'get_home_universal_model',
     'has_home_models',
     'render_home_bling_models',
     'save_home_models',
