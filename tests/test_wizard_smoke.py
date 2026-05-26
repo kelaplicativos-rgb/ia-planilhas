@@ -110,14 +110,19 @@ def test_modelos_bling_screen_is_not_universal_screen() -> None:
     assert 'Modelo Bling atualização de preços' in source
 
 
-def test_universal_model_step_uses_universal_title_with_legacy_safe_renderer() -> None:
+def test_universal_model_step_uses_bling_universal_destination_screen() -> None:
     wizard_source = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
     models_source = Path('bling_app_zero/ui/home_models.py').read_text(encoding='utf-8')
 
     assert "_section_title(1, 'Modelos Universal')" in wizard_source
     assert 'render_home_bling_models()' in wizard_source
     assert 'def render_home_bling_models() -> None:' in models_source
-    assert 'Pode ser modelo do Bling, marketplace, fornecedor ou qualquer layout final com cabeçalho.' in models_source
+    assert "st.markdown('#### Bling')" in models_source
+    assert "st.markdown('##### Modelos Bling')" in models_source
+    assert "st.markdown('##### Modelos Universal')" in models_source
+    assert "st.markdown('#### Modelo de destino')" in models_source
+    assert 'Esta etapa não faz parte da calculadora de preço.' in models_source
+    assert 'Pode ser modelo Bling ou modelo universal com cabeçalho próprio.' in models_source
 
 
 def test_wizard_step_order_matches_current_single_page_universal_flow() -> None:
