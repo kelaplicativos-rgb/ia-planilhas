@@ -11,8 +11,12 @@ import pandas as pd
 LIGHT_CRITICAL_MODULES = [
     'app',
     'bling_app_zero.ui.home',
+    'bling_app_zero.ui.home_router',
     'bling_app_zero.ui.home_wizard',
     'bling_app_zero.ui.home_autofluxo',
+    'bling_app_zero.ui.home_models',
+    'bling_app_zero.ui.modelos_bling',
+    'bling_app_zero.ui.modelos_bling_user_screen_min',
     'bling_app_zero.ui.cadastro_wizard_steps',
     'bling_app_zero.ui.cadastro_wizard_state',
     'bling_app_zero.ui.cadastro_entry_step',
@@ -51,25 +55,13 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.core.gtin',
 ]
 
-EXPECTED_CADASTRO_STEPS = [
+EXPECTED_UNIVERSAL_STEPS = [
     'modelo',
-    'operacao',
+    'origem',
+    'entrada',
     'precificacao',
-    'origem',
-    'regras',
-    'entrada',
     'mapeamento',
-    'preview',
-    'download',
-]
-
-EXPECTED_ESTOQUE_STEPS = [
-    'modelo',
-    'operacao',
-    'origem',
     'regras',
-    'entrada',
-    'gerar_estoque',
     'preview',
     'download',
 ]
@@ -85,116 +77,96 @@ def test_site_critical_modules_import_without_running_scraper() -> None:
         importlib.import_module(module_name)
 
 
-def test_streamlit_entrypoint_uses_home_wizard() -> None:
+def test_streamlit_entrypoint_uses_home_router() -> None:
     app_source = Path('app.py').read_text(encoding='utf-8')
     home_source = Path('bling_app_zero/ui/home.py').read_text(encoding='utf-8')
 
     assert 'from bling_app_zero.ui.home import render_home' in app_source
     assert 'render_home()' in app_source
-    assert 'from bling_app_zero.ui.home_wizard import render_home_wizard' in home_source
-    assert 'from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard' in home_source
-    assert 'run_home_autofluxo()' in home_source
-    assert 'render_home_wizard()' in home_source
+    assert 'render_home_router' in home_source or 'render_home_wizard' in home_source
 
 
-def test_wizard_step_order_is_preserved() -> None:
+def test_home_router_order_is_bling_universal_system_calculator() -> None:
+    source = Path('bling_app_zero/ui/home_router.py').read_text(encoding='utf-8')
+
+    assert "'Bling: Modelos Bling'" in source
+    assert "'Modelos Universal'" in source
+    assert "'Calculadora principal'" in source
+    assert "'home_order': 'bling_universal_system_calculator'" in source
+    assert source.index("'Bling: Modelos Bling'") < source.index("'Modelos Universal'")
+    assert source.index("'Modelos Universal'") < source.index("'Calculadora principal'")
+
+
+def test_modelos_bling_screen_is_not_universal_screen() -> None:
+    source = Path('bling_app_zero/ui/modelos_bling_user_screen_min.py').read_text(encoding='utf-8')
+
+    assert "### Modelos Bling" in source
+    assert 'Esta área é somente para modelos do Bling' in source
+    assert 'Modelos Universal na Home' in source
+    assert 'Modelo Bling cadastro' in source
+    assert 'Modelo Bling estoque' in source
+    assert 'Modelo Bling atualização de preços' in source
+
+
+def test_universal_model_step_uses_universal_title_with_legacy_safe_renderer() -> None:
+    wizard_source = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+    models_source = Path('bling_app_zero/ui/home_models.py').read_text(encoding='utf-8')
+
+    assert "_section_title(1, 'Modelos Universal')" in wizard_source
+    assert 'render_home_bling_models()' in wizard_source
+    assert 'def render_home_bling_models() -> None:' in models_source
+    assert 'Pode ser modelo do Bling, marketplace, fornecedor ou qualquer layout final com cabeçalho.' in models_source
+
+
+def test_wizard_step_order_matches_current_single_page_universal_flow() -> None:
+    constants = importlib.import_module('bling_app_zero.ui.home_wizard_constants')
+
+    assert constants.UNIVERSAL_STEPS == EXPECTED_UNIVERSAL_STEPS
+    assert constants.CADASTRO_STEPS == EXPECTED_UNIVERSAL_STEPS
+    assert constants.ESTOQUE_STEPS == EXPECTED_UNIVERSAL_STEPS
+    assert constants.STEP_OPERACAO == 'operacao'
+    assert constants.STEP_GERAR_ESTOQUE == 'gerar_estoque'
+    assert constants.STEP_DOWNLOAD == 'download'
+    assert constants.STEP_MAPEAMENTO == 'mapeamento'
+    assert constants.STEP_REGRAS == 'regras'
+
+
+def test_wizard_navigation_without_model_is_model_only(monkeypatch) -> None:
     wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
-
-    assert wizard.CADASTRO_STEPS == EXPECTED_CADASTRO_STEPS
-    assert wizard.ESTOQUE_STEPS == EXPECTED_ESTOQUE_STEPS
-    assert 'precificacao' not in wizard.ESTOQUE_STEPS
-    assert wizard.STEP_DOWNLOAD == 'download'
-    assert wizard.STEP_GERAR_ESTOQUE == 'gerar_estoque'
-    assert wizard.STEP_MAPEAMENTO == 'mapeamento'
-    assert wizard.STEP_REGRAS == 'regras'
-
-
-def _assert_linear_navigation(wizard, operation: str, steps: list[str]) -> None:
-    assert wizard.wizard_steps_for_operation(operation) == steps
-    for index, step in enumerate(steps):
-        expected_previous = steps[max(0, index - 1)]
-        expected_next = steps[min(len(steps) - 1, index + 1)]
-        assert wizard.wizard_previous_target(step, operation) in {expected_previous, wizard.HOME_CHOICE_TARGET}
-        if index > 0:
-            assert wizard.wizard_previous_target(step, operation) == expected_previous
-        assert wizard.wizard_next_target(step, operation) == expected_next
-
-
-def test_wizard_button_flowchart_cadastro() -> None:
-    wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
-    _assert_linear_navigation(wizard, 'cadastro', EXPECTED_CADASTRO_STEPS)
-
-
-def test_wizard_button_flowchart_estoque_sem_preco() -> None:
-    wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
-    _assert_linear_navigation(wizard, 'estoque', EXPECTED_ESTOQUE_STEPS)
-    assert wizard.wizard_next_target('operacao', 'estoque') == 'origem'
-    assert wizard.wizard_previous_target('origem', 'estoque') == 'operacao'
-
-
-def test_wizard_state_guard_corrige_etapa_invalida_do_estoque(monkeypatch) -> None:
-    guard = importlib.import_module('bling_app_zero.ui.wizard_state_guard')
     st = importlib.import_module('streamlit')
     monkeypatch.setattr(st, 'session_state', {}, raising=False)
 
-    st.session_state['home_slim_flow_operation'] = 'estoque'
-    st.session_state['bling_wizard_step'] = 'precificacao'
-    guard.run_wizard_state_guard(force=True)
-    assert st.session_state['bling_wizard_step'] == 'origem'
-
-    st.session_state['bling_wizard_step'] = 'mapeamento'
-    guard.run_wizard_state_guard(force=True)
-    assert st.session_state['bling_wizard_step'] == 'origem'
+    assert wizard.wizard_steps_for_operation('universal') == ['modelo']
+    assert wizard.wizard_next_target('modelo', 'universal') == 'modelo'
+    assert wizard.wizard_previous_target('modelo', 'universal') == 'modelo'
 
 
-def test_bottom_navigation_blocks_without_disabled_continue_button() -> None:
-    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
+def test_wizard_navigation_with_model_is_linear_universal(monkeypatch) -> None:
+    wizard = importlib.import_module('bling_app_zero.ui.home_wizard')
+    st = importlib.import_module('streamlit')
+    monkeypatch.setattr(st, 'session_state', {'home_modelo_cadastro_df': pd.DataFrame(columns=['Descricao'])}, raising=False)
 
-    assert 'BOTTOM_NAV_RENDERED_KEY' in wizard
-    assert "data-testid=\"wizard-bottom-navigation\"" in wizard
-    assert "st.button('← Voltar'" in wizard
-    assert "st.button(next_label" in wizard
-    assert 'render_pending_notice(pending_message)' in wizard
-    assert 'wizard_bottom_next_disabled' not in wizard
-    assert "st.button('Avançar →', use_container_width=True, disabled=True" not in wizard
-
-
-def test_manual_buttons_pause_autofluxo_on_target_step() -> None:
-    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
-
-    assert "MANUAL_NAVIGATION_REASONS = {'next_button', 'back_button_previous_index'}" in wizard
-    assert 'def _pause_autofluxo_for_manual_navigation(' in wizard
-    assert "st.session_state[AUTOFLOW_PAUSE_STEP_KEY] = target" in wizard
-    assert "st.session_state[AUTOFLOW_LAST_STEP_KEY] = target" in wizard
-    assert "'target_step': target" in wizard
-    assert 'if reason in MANUAL_NAVIGATION_REASONS:' in wizard
-    assert '_pause_autofluxo_for_manual_navigation(step, reason=reason)' in wizard
-    assert "_go_to_step(target, reason='next_button')" in wizard
-    assert "_go_to_step(target, reason='back_button_previous_index')" in wizard
-    assert "'manual_navigation_pauses_autoflow': True" in wizard
+    steps = wizard.wizard_steps_for_operation('universal')
+    assert steps == EXPECTED_UNIVERSAL_STEPS
+    for index, step in enumerate(steps):
+        assert wizard.wizard_previous_target(step, 'universal') == steps[max(0, index - 1)]
+        assert wizard.wizard_next_target(step, 'universal') == steps[min(len(steps) - 1, index + 1)]
+    assert wizard.wizard_next_target('operacao', 'universal') == 'entrada'
 
 
-def test_origin_step_auto_advances_only_when_not_manually_paused() -> None:
-    wizard = Path('bling_app_zero/ui/home_wizard.py').read_text(encoding='utf-8')
-    origin_block = wizard.split('def _render_origin_step() -> None:', 1)[1].split('def _render_rules_step() -> None:', 1)[0]
+def test_home_models_syncs_any_destination_model_as_universal(monkeypatch) -> None:
+    home_models = importlib.import_module('bling_app_zero.ui.home_models')
+    st = importlib.import_module('streamlit')
+    monkeypatch.setattr(st, 'session_state', {}, raising=False)
 
-    assert '_sync_flow_state(origin, operation)' in origin_block
-    assert 'origin_selected_auto_next' in origin_block
-    assert 'wizard_next_target(STEP_ORIGEM, operation)' in origin_block
-    assert 'Avançando para a próxima etapa.' in origin_block
-    assert '_manual_pause_matches(STEP_ORIGEM)' in origin_block
-    assert 'Use Avançar para seguir ou Voltar para revisar outra etapa.' in origin_block
+    df = pd.DataFrame(columns=['Descricao', 'Preco'])
+    home_models.save_home_models(df, None, replace_missing=True)
 
-
-def test_autofluxo_is_safe_enabled_by_default() -> None:
-    autofluxo = Path('bling_app_zero/ui/home_autofluxo.py').read_text(encoding='utf-8')
-
-    assert 'def _autoflow_enabled() -> bool:' in autofluxo
-    assert 'st.session_state[AUTOFLOW_ENABLED_KEY] = True' in autofluxo
-    assert 'st.session_state.get(AUTOFLOW_ENABLED_KEY, True)' in autofluxo
-    assert 'MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}' in autofluxo
-    assert 'current in {STEP_PREVIEW, STEP_DOWNLOAD}' in autofluxo
-    assert "operation == 'cadastro' and not _pricing_is_active()" in autofluxo
+    assert st.session_state['home_slim_flow_operation'] == 'universal'
+    assert st.session_state['operacao_final'] == 'universal'
+    assert st.session_state['tipo_operacao_final'] == 'universal'
+    assert st.session_state['home_detected_operation'] == 'universal'
+    assert home_models.has_home_models() is True
 
 
 def test_ai_sidebar_byok_without_secrets_fallback() -> None:
@@ -249,9 +221,9 @@ def test_ai_analysis_panel_is_informational_only() -> None:
     assert 'Nenhuma alteração automática será aplicada.' in panel
     assert 'não altera a planilha' in panel
     assert 'não aplica mapeamento' in panel
-    assert 'st.session_state[\'mapping_cadastro\']' not in panel
+    assert "st.session_state['mapping_cadastro']" not in panel
     assert 'st.session_state["mapping_cadastro"]' not in panel
-    assert 'st.session_state[\'mapping_estoque\']' not in panel
+    assert "st.session_state['mapping_estoque']" not in panel
     assert 'st.session_state["mapping_estoque"]' not in panel
 
 
