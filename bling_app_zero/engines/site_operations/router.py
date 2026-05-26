@@ -7,12 +7,16 @@ import pandas as pd
 from bling_app_zero.engines.site_operations.cadastro_engine import run_cadastro_site_engine
 from bling_app_zero.engines.site_operations.estoque_engine import run_estoque_site_engine
 from bling_app_zero.engines.site_operations.universal_engine import run_universal_site_engine
+from bling_app_zero.universal.model_contract_detector import normalize_contract_operation
 
-VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 def normalize_operation(operation: str | None) -> str:
+    normalized = normalize_contract_operation(operation)
+    if normalized in VALID_OPERATIONS:
+        return normalized
     value = str(operation or 'universal').strip().lower()
     if value in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'estoque_site'}:
         return 'estoque'
@@ -35,9 +39,9 @@ def run_site_operation_engine(
 ) -> pd.DataFrame:
     """Roteador central dos motores por site.
 
-    A UI moderna opera como origem única/universal. Cadastro e estoque seguem
-    existindo como motores internos especializados, mas o usuário não precisa
-    escolher entre eles quando o modelo de destino já informa as colunas.
+    Atualização de preço usa o motor de cadastro como extrator de produto/preço,
+    mas preserva a operação `atualizacao_preco` no restante do fluxo para que o
+    contrato/download final use o modelo correto.
     """
     selected = normalize_operation(operation)
     if selected == 'estoque':
@@ -50,7 +54,7 @@ def run_site_operation_engine(
             progress_callback=progress_callback,
         )
 
-    if selected == 'cadastro':
+    if selected in {'cadastro', 'atualizacao_preco'}:
         return run_cadastro_site_engine(
             raw_urls=raw_urls,
             requested_columns=requested_columns,
