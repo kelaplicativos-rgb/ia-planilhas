@@ -9,6 +9,13 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_shared import read_upload_fast
+from bling_app_zero.universal.model_contract_detector import (
+    MODEL_CONTRACT_CONFIDENCE_KEY,
+    MODEL_CONTRACT_LABEL_KEY,
+    MODEL_CONTRACT_REASON_KEY,
+    MODEL_CONTRACT_TYPE_KEY,
+    detect_model_contract,
+)
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
 EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xlsm'}
@@ -24,6 +31,10 @@ class ModelUploadResult:
     model_df: pd.DataFrame | None = None
     attachments: list[Any] | None = None
     ignored_files: list[Any] | None = None
+    contract_type: str = 'universal'
+    contract_label: str = 'Modelo Universal'
+    contract_confidence: float = 0.0
+    contract_reason: str = ''
 
 
 def _file_name(file: Any | None) -> str:
@@ -75,12 +86,7 @@ def _dedupe_columns(columns: list[str]) -> list[str]:
 
 
 def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
-    """Recupera cabeçalho de modelos XLSX/XLSM sem linhas.
-
-    Alguns modelos do Bling têm somente cabeçalho e linhas vazias. Quando o
-    cache/leitor antigo devolve DataFrame 0x0, este fallback lê a primeira linha
-    diretamente com openpyxl e devolve um DataFrame 0 linhas x N colunas.
-    """
+    """Recupera cabeçalho de modelos XLSX/XLSM sem linhas."""
     if _file_ext(file) not in EXCEL_HEADER_FALLBACK_TYPES:
         return None
 
@@ -112,12 +118,7 @@ def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
             pass
 
         if not best_columns:
-            add_audit_event(
-                'destination_model_header_fallback_empty',
-                area='MODELO',
-                status='AVISO',
-                details={'file': _file_audit_info(file)},
-            )
+            add_audit_event('destination_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
             return None
 
         df = pd.DataFrame(columns=_dedupe_columns(best_columns))
@@ -134,12 +135,7 @@ def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
         )
         return df
     except Exception as exc:
-        add_audit_event(
-            'destination_model_header_fallback_failed',
-            area='MODELO',
-            status='ERRO',
-            details={'file': _file_audit_info(file), 'error': str(exc)},
-        )
+        add_audit_event('destination_model_header_fallback_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
 
 
@@ -150,11 +146,7 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
             fallback_df = _read_excel_header_fallback(file)
             if _valid_model(fallback_df):
                 df = fallback_df
-        add_audit_event(
-            'destination_model_file_read',
-            area='MODELO',
-            details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)},
-        )
+        add_audit_event('destination_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)})
         return df
     except Exception as exc:
         fallback_df = _read_excel_header_fallback(file)
@@ -166,12 +158,7 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
                 details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'original_error': str(exc)},
             )
             return fallback_df
-        add_audit_event(
-            'destination_model_file_read_failed',
-            area='MODELO',
-            status='ERRO',
-            details={'file': _file_audit_info(file), 'error': str(exc)},
-        )
+        add_audit_event('destination_model_file_read_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
 
 
@@ -192,13 +179,48 @@ def _columns_caption(df: pd.DataFrame, limit: int = 18) -> str:
     return ', '.join(columns) + suffix
 
 
-def _render_model_summary(file: Any | None, df: pd.DataFrame | None) -> None:
+def _remember_contract_detection(detection) -> None:
+    st.session_state[MODEL_CONTRACT_TYPE_KEY] = detection.contract_type
+    st.session_state[MODEL_CONTRACT_LABEL_KEY] = detection.label
+    st.session_state[MODEL_CONTRACT_CONFIDENCE_KEY] = float(detection.confidence)
+    st.session_state[MODEL_CONTRACT_REASON_KEY] = detection.reason
+    st.session_state['home_detected_operation'] = detection.contract_type
+    st.session_state['operacao_final'] = detection.contract_type
+    st.session_state['tipo_operacao_final'] = detection.contract_type
+    st.session_state['home_slim_flow_operation'] = detection.contract_type
+
+
+def _render_model_summary(file: Any | None, df: pd.DataFrame | None, detection=None) -> None:
     if not isinstance(df, pd.DataFrame):
         return
-    st.success('Modelo de destino anexado.')
-    st.caption(f'{_file_name(file)} · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
+    label = getattr(detection, 'label', 'Modelo de destino')
+    confidence = float(getattr(detection, 'confidence', 0.0) or 0.0)
+    st.success(f'{label} anexado como contrato final.')
+    st.caption(f'{_file_name(file)} · {len(df)} linha(s) · {len(df.columns)} coluna(s) · confiança {confidence:.0%}')
     with st.expander('Ver colunas do modelo de destino', expanded=False):
         st.caption(_columns_caption(df))
+
+
+def _classified_result(destination_file: Any, destination_df: pd.DataFrame, detection, supported_files: list[Any], ignored_files: list[Any]) -> ModelUploadResult:
+    contract = detection.contract_type
+    cadastro_df = destination_df if contract in {'cadastro', 'atualizacao_preco', 'universal'} else None
+    estoque_df = destination_df if contract == 'estoque' else None
+    cadastro_file = destination_file if cadastro_df is not None else None
+    estoque_file = destination_file if estoque_df is not None else None
+    return ModelUploadResult(
+        cadastro_model_file=cadastro_file,
+        cadastro_model_df=cadastro_df,
+        estoque_model_file=estoque_file,
+        estoque_model_df=estoque_df,
+        model_file=destination_file,
+        model_df=destination_df,
+        attachments=supported_files,
+        ignored_files=ignored_files,
+        contract_type=contract,
+        contract_label=detection.label,
+        contract_confidence=float(detection.confidence),
+        contract_reason=detection.reason,
+    )
 
 
 def render_model_upload_box(
@@ -236,7 +258,7 @@ def render_model_upload_box(
             'supported_count': len(supported_files),
             'ignored_count': len(ignored_files),
             'files': [_file_audit_info(file) for file in selected_files],
-            'model_policy': 'first_valid_spreadsheet_is_destination_contract',
+            'model_policy': 'detect_real_bling_or_universal_contract',
         },
     )
 
@@ -249,12 +271,11 @@ def render_model_upload_box(
         destination_file, destination_df = _pick_destination_model(loaded)
 
     if not _valid_model(destination_df):
-        st.warning(
-            'Não encontrei colunas válidas nesse arquivo. '
-            'Verifique se a planilha possui cabeçalho na primeira linha ou envie o modelo correto que será preenchido no final.'
-        )
+        st.warning('Não encontrei colunas válidas nesse arquivo. Verifique se a planilha possui cabeçalho na primeira linha ou envie o modelo correto que será preenchido no final.')
         return ModelUploadResult(attachments=supported_files, ignored_files=ignored_files)
 
+    detection = detect_model_contract(destination_df)
+    _remember_contract_detection(detection)
     add_audit_event(
         'destination_model_selected',
         area='MODELO',
@@ -262,21 +283,17 @@ def render_model_upload_box(
         details={
             'selected_model_file': _file_audit_info(destination_file),
             'selected_df': _df_audit_info(destination_df),
-            'model_policy': 'generic_destination_contract',
+            'model_policy': 'real_contract_detection',
+            'contract_type': detection.contract_type,
+            'contract_label': detection.label,
+            'contract_confidence': detection.confidence,
+            'contract_reason': detection.reason,
+            'scores': detection.scores,
         },
     )
-    _render_model_summary(destination_file, destination_df)
+    _render_model_summary(destination_file, destination_df, detection)
 
-    return ModelUploadResult(
-        cadastro_model_file=destination_file,
-        cadastro_model_df=destination_df,
-        estoque_model_file=None,
-        estoque_model_df=None,
-        model_file=destination_file,
-        model_df=destination_df,
-        attachments=supported_files,
-        ignored_files=ignored_files,
-    )
+    return _classified_result(destination_file, destination_df, detection, supported_files, ignored_files)
 
 
 __all__ = ['MODEL_SPREADSHEET_TYPES', 'ModelUploadResult', 'render_model_upload_box']
