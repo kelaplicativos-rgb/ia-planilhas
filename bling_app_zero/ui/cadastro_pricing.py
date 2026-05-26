@@ -12,6 +12,10 @@ from bling_app_zero.core.price_calculator_plugin import (
 from bling_app_zero.ui.home_pricing_config import get_home_pricing_config
 from bling_app_zero.ui.home_shared import df_signature
 
+PRICED_SOURCE_KEY = 'df_origem_cadastro_precificada'
+PRICING_ACTIVE_KEY = 'cadastro_preco_calculado_ativo'
+PRICING_SOURCE_KEY = 'shared_price_calculator_source'
+
 
 def apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
     return apply_price_aliases(df, calculated_column, PRICE_TARGET_ALIASES)
@@ -26,21 +30,25 @@ def _pricing_enabled() -> bool:
 
 
 def _store_pricing_state(signature: str, selected_cost_column: str) -> None:
-    st.session_state['cadastro_preco_calculado_ativo'] = True
+    st.session_state[PRICING_ACTIVE_KEY] = True
     st.session_state[f'cadastro_coluna_custo_{signature}'] = selected_cost_column
-    st.session_state['shared_price_calculator_source'] = 'price_calculator_plugin'
+    st.session_state[PRICING_SOURCE_KEY] = 'price_step_plugin'
 
 
-def _clear_pricing_state() -> None:
-    st.session_state['cadastro_preco_calculado_ativo'] = False
-    st.session_state.pop('df_origem_cadastro_precificada', None)
+def clear_cadastro_pricing_state() -> None:
+    st.session_state[PRICING_ACTIVE_KEY] = False
+    st.session_state.pop(PRICED_SOURCE_KEY, None)
+    st.session_state.pop('cadastro_origem_priced_key', None)
 
 
-def render_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'cadastro_estoque') -> pd.DataFrame:
-    """Aplica a calculadora plugável em qualquer origem tabular.
+def apply_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'etapa_preco') -> pd.DataFrame:
+    """Aplica a precificação configurada na etapa Preço.
 
-    A configuração visual fica na etapa Preço da Home. Esta função é apenas uma
-    ponte de compatibilidade para cadastro/estoque chamarem o plugin universal.
+    BLINGMODULAR 2:
+    - a calculadora visual pertence à etapa Preço;
+    - o mapeamento não deve abrir nem recalcular a calculadora;
+    - esta função apenas transforma a origem em origem precificada e salva o
+      resultado em session_state para as próximas etapas consumirem.
     """
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         return df_origem
@@ -56,18 +64,31 @@ def render_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'cadastro
     )
 
     if not result.applied:
-        _clear_pricing_state()
+        clear_cadastro_pricing_state()
         return result.df
 
     origem_signature = df_signature(df_origem)
     _store_pricing_state(origem_signature, result.source_column)
-    st.session_state['df_origem_cadastro_precificada'] = result.df
+    st.session_state[PRICED_SOURCE_KEY] = result.df
     return result.df
+
+
+def render_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'compatibilidade') -> pd.DataFrame:
+    """Compatibilidade legado.
+
+    Mantido para imports antigos, mas o fluxo principal agora chama
+    `apply_cadastro_pricing()` diretamente na etapa Preço.
+    """
+    return apply_cadastro_pricing(df_origem, channel=channel)
 
 
 __all__ = [
     'PRICE_TARGET_ALIASES',
+    'PRICED_SOURCE_KEY',
+    'PRICING_ACTIVE_KEY',
     'apply_calculated_price_aliases',
+    'apply_cadastro_pricing',
     'best_cost_column',
+    'clear_cadastro_pricing_state',
     'render_cadastro_pricing',
 ]
