@@ -7,7 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_deep_product_urls
-from bling_app_zero.flows.site_operation_router import run_site_engine
+from bling_app_zero.flows.site_operation_router import config_for_site_operation, run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
@@ -79,6 +79,28 @@ def prepare_raw_urls_for_capture(
     }
 
 
+def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
+    """Define limites seguros para a busca pública e ampla para captura profunda.
+
+    BLINGFIX:
+    - antes a busca pública usava 1_000_000 páginas/produtos;
+    - ao colar a home do fornecedor, isso podia deixar `site_capture_running=True`
+      sem finalizar dentro do tempo útil do Streamlit;
+    - agora o modo público usa o padrão seguro da operação;
+    - a captura profunda continua usando os limites escolhidos pelo usuário.
+    """
+    options = deep_options or {}
+    if bool(options.get('enabled')):
+        return (
+            int(options.get('max_pages') or ALL_PAGES_LIMIT),
+            int(options.get('max_products') or ALL_PRODUCTS_LIMIT),
+            True,
+        )
+
+    config = config_for_site_operation(operation)
+    return int(config.default_max_pages), int(config.default_max_products), False
+
+
 def run_site_capture(
     operation: str,
     raw_urls: str,
@@ -103,6 +125,7 @@ def run_site_capture(
     started_at = time.time()
     st.session_state['site_capture_started_at'] = started_at
     set_capture_state(operation=operation, running=True, finished=False)
+    max_pages, max_products, all_products = capture_limits_for_operation(operation, deep_options)
     add_audit_event(
         'site_capture_started',
         area='SITE',
@@ -113,6 +136,9 @@ def run_site_capture(
             'has_cadastro_model': isinstance(df_modelo_cadastro, pd.DataFrame),
             'has_estoque_model': isinstance(df_modelo_estoque, pd.DataFrame),
             'deep_capture_requested': bool((deep_options or {}).get('enabled')),
+            'all_products': bool(all_products),
+            'max_pages': int(max_pages),
+            'max_products': int(max_products),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -132,9 +158,9 @@ def run_site_capture(
             pipeline=load_site_pipeline(),
             raw_urls=prepared_urls,
             requested_columns=requested_columns,
-            all_products=True,
-            max_pages=ALL_PAGES_LIMIT,
-            max_products=ALL_PRODUCTS_LIMIT,
+            all_products=all_products,
+            max_pages=max_pages,
+            max_products=max_products,
             progress_callback=make_site_progress_callback(progress_bar, status_box),
         )
     except Exception as exc:
@@ -164,11 +190,20 @@ def run_site_capture(
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = 'site'
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
-    details = {'operation': operation, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE}
+    details = {
+        'operation': operation,
+        'rows': rows,
+        'columns': columns,
+        'elapsed_seconds': round(time.time() - started_at, 2),
+        'max_pages': int(max_pages),
+        'max_products': int(max_products),
+        'all_products': bool(all_products),
+        'responsible_file': RESPONSIBLE_FILE,
+    }
     details.update(deep_details)
     add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
     finish_progress(progress_bar, status_box, text='Busca por site concluída.')
     st.rerun()
 
 
-__all__ = ['run_site_capture']
+__all__ = ['capture_limits_for_operation', 'run_site_capture']
