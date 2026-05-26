@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -8,6 +10,7 @@ from bling_app_zero.core.audit import add_audit_event
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+SITE_CAPTURE_STALE_SECONDS = 90
 LEGACY_AUTH_KEYS = (
     'guided_login_confirmed_logged_in',
     'guided_login_capture_config',
@@ -166,6 +169,48 @@ def clear_stuck_capture(operation: str) -> None:
     )
 
 
+def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SITE_CAPTURE_STALE_SECONDS) -> bool:
+    """Destrava captura que ficou marcada como rodando após rerun/interrupção.
+
+    No Streamlit, se a busca por site for interrompida por rerun, refresh ou limite
+    de execução, o `finally` do fluxo anterior pode não limpar o estado. Sem esta
+    guarda, a tela fica presa em "captura em andamento" sem erro e sem resultado.
+    """
+    if not bool(st.session_state.get('site_capture_running', False)):
+        return False
+
+    try:
+        started_at = float(st.session_state.get('site_capture_started_at') or 0.0)
+    except Exception:
+        started_at = 0.0
+    age = time.time() - started_at if started_at > 0 else max_age_seconds + 1
+    has_result = isinstance(get_site_df(operation), pd.DataFrame)
+
+    if has_result or age < max_age_seconds:
+        return False
+
+    clear_site_df(operation, 'captura_travada_auto_timeout')
+    set_capture_state(
+        operation=operation,
+        running=False,
+        finished=False,
+        error='A captura anterior demorou demais ou foi interrompida. Execute novamente com captura profunda controlada ou cole links de categoria/produto.',
+    )
+    add_audit_event(
+        'site_capture_unstuck_auto_timeout',
+        area='SITE',
+        step='entrada',
+        status='AVISO',
+        details={
+            'operation': operation,
+            'age_seconds': round(age, 2),
+            'max_age_seconds': max_age_seconds,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return True
+
+
 __all__ = [
     'UNIVERSAL_OPERATION',
     'clear_legacy_authenticated_state',
@@ -177,6 +222,7 @@ __all__ = [
     'has_urls',
     'orange_warning',
     'query_urls_default',
+    'recover_stale_capture_if_needed',
     'set_capture_state',
     'store_site_df',
 ]
