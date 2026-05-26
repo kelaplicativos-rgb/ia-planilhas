@@ -35,20 +35,6 @@ SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
 
 
-def empty_cadastro_upload_result() -> SmartUploadResult:
-    return SmartUploadResult(
-        source_file=None,
-        source_df=None,
-        model_file=None,
-        cadastro_model_file=None,
-        cadastro_model_df=get_home_cadastro_model() or get_home_preco_model() or get_home_universal_model(),
-        estoque_model_file=None,
-        estoque_model_df=get_home_estoque_model(),
-        attachments=[],
-        ignored_files=[],
-    )
-
-
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if isinstance(df, pd.DataFrame) and not df.empty:
         return df.copy().fillna('')
@@ -59,6 +45,32 @@ def _copy_model(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         return df.copy().fillna('')
     return None
+
+
+def _first_contract_model() -> pd.DataFrame | None:
+    for model in (
+        get_home_cadastro_model(),
+        get_home_preco_model(),
+        get_home_universal_model(),
+    ):
+        copied = _copy_model(model)
+        if copied is not None:
+            return copied
+    return None
+
+
+def empty_cadastro_upload_result() -> SmartUploadResult:
+    return SmartUploadResult(
+        source_file=None,
+        source_df=None,
+        model_file=None,
+        cadastro_model_file=None,
+        cadastro_model_df=_first_contract_model(),
+        estoque_model_file=None,
+        estoque_model_df=get_home_estoque_model(),
+        attachments=[],
+        ignored_files=[],
+    )
 
 
 def site_source_dataframe() -> pd.DataFrame | None:
