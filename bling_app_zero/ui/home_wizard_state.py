@@ -19,6 +19,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_ORIGEM,
     WIZARD_STEP_KEY,
 )
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_state.py'
 SINGLE_PAGE_FLOW = True
@@ -38,6 +39,20 @@ STALE_CADASTRO_OPERATION_KEYS = (
     'final_download_operation',
     'bling_wizard_state_guard_last_operation',
 )
+
+
+def _contract_operation() -> str:
+    for value in (
+        st.session_state.get(MODEL_CONTRACT_TYPE_KEY),
+        st.session_state.get(FLOW_OPERATION_KEY),
+        st.session_state.get('home_detected_operation'),
+        st.session_state.get('operacao_final'),
+        st.session_state.get('tipo_operacao_final'),
+    ):
+        operation = normalize_contract_operation(value)
+        if operation:
+            return operation
+    return UNIVERSAL_OPERATION
 
 
 def looks_like_loaded_df(value: object) -> bool:
@@ -61,8 +76,16 @@ def has_estoque_model() -> bool:
     return has_any_model([HOME_ESTOQUE_MODEL_KEY, *GLOBAL_ESTOQUE_MODEL_KEYS])
 
 
+def has_preco_model() -> bool:
+    return has_any_model(['home_modelo_atualizacao_preco_df', 'df_modelo_atualizacao_preco', 'modelo_atualizacao_preco_df'])
+
+
+def has_universal_model() -> bool:
+    return has_any_model(['home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'])
+
+
 def has_home_models() -> bool:
-    return has_cadastro_model() or has_estoque_model()
+    return has_cadastro_model() or has_estoque_model() or has_preco_model() or has_universal_model()
 
 
 def came_from_bling_quick_model() -> bool:
@@ -82,19 +105,20 @@ def query_param(name: str) -> str:
 def clear_stale_cadastro_operation_state() -> None:
     """Remove estados antigos que faziam o download universal aparecer como CADASTRO."""
     removed: list[str] = []
+    current_contract = _contract_operation()
     for key in STALE_CADASTRO_OPERATION_KEYS:
-        if str(st.session_state.get(key) or '').strip().lower() == 'cadastro':
+        if str(st.session_state.get(key) or '').strip().lower() == 'cadastro' and current_contract != 'cadastro':
             st.session_state.pop(key, None)
             removed.append(key)
 
     widget_key = str(st.session_state.get('final_download_widget_key') or '')
-    if '_cadastro_' in widget_key or widget_key.endswith('_cadastro'):
+    if current_contract != 'cadastro' and ('_cadastro_' in widget_key or widget_key.endswith('_cadastro')):
         st.session_state.pop('final_download_widget_key', None)
         removed.append('final_download_widget_key')
 
     for key in list(st.session_state.keys()):
         text_key = str(key)
-        if text_key.startswith('download_template_modelo_anexado_cadastro'):
+        if current_contract != 'cadastro' and text_key.startswith('download_template_modelo_anexado_cadastro'):
             st.session_state.pop(key, None)
             removed.append(text_key)
 
@@ -104,21 +128,24 @@ def clear_stale_cadastro_operation_state() -> None:
             area='WIZARD',
             step='download',
             status='OK',
-            details={'removed_keys': removed[:30], 'removed_count': len(removed), 'responsible_file': RESPONSIBLE_FILE},
+            details={'removed_keys': removed[:30], 'removed_count': len(removed), 'contract': current_contract, 'responsible_file': RESPONSIBLE_FILE},
         )
 
 
 def ensure_universal_operation_state() -> str:
     if not has_home_models():
         return ''
+    operation = _contract_operation()
     clear_stale_cadastro_operation_state()
-    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
-    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
-    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
-    st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION
-    st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
+    st.session_state[FLOW_OPERATION_KEY] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['home_detected_operation'] = operation
+    st.session_state['home_slim_flow_operation'] = operation
+    if operation != 'universal':
+        st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     st.session_state.pop('tipo_operacao_site', None)
-    return UNIVERSAL_OPERATION
+    return operation
 
 
 def selected_operation() -> str:
@@ -176,14 +203,17 @@ def select_origin(origin: str, *, set_scroll_target) -> None:
     if origin not in {'arquivo', 'site'}:
         return
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
+    operation = _contract_operation()
     st.session_state[ORIGIN_RADIO_KEY] = origin
     st.session_state[FLOW_ORIGIN_KEY] = origin
-    st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION
-    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
-    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
+    st.session_state[FLOW_OPERATION_KEY] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
     st.session_state['origem_final'] = origin
     st.session_state.pop('tipo_operacao_site', None)
-    st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
+    st.session_state['home_slim_flow_operation'] = operation
+    if operation != 'universal':
+        st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     clear_stale_cadastro_operation_state()
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
     set_scroll_target(STEP_ENTRADA)
@@ -193,7 +223,7 @@ def select_origin(origin: str, *, set_scroll_target) -> None:
         step=STEP_ORIGEM,
         details={
             'origin': origin,
-            'operation': UNIVERSAL_OPERATION,
+            'operation': operation,
             'previous_origin': previous_origin,
             'scroll_target': STEP_ENTRADA,
             'single_page_flow': SINGLE_PAGE_FLOW,
@@ -204,8 +234,8 @@ def select_origin(origin: str, *, set_scroll_target) -> None:
         st.query_params['origem'] = origin
         st.query_params['flow'] = 'site' if origin == 'site' else 'arquivo'
         st.query_params['step'] = STEP_ENTRADA
-        st.query_params.pop('operacao', None)
-        st.query_params.pop('operation', None)
+        st.query_params['operacao'] = operation
+        st.query_params['operation'] = operation
     except Exception:
         pass
     st.rerun()
@@ -238,16 +268,12 @@ def set_df_final_universal(df_final: object) -> None:
 
 
 __all__ = [
-    'CADASTRO_STEPS',
-    'ESTOQUE_STEPS',
     'FINAL_CHECK_REPORT_KEY',
     'HOME_CHOICE_TARGET',
-    'QUICK_MODEL_READY_KEY',
     'SAFE_FIX_SUGGESTIONS_KEY',
     'SINGLE_PAGE_FLOW',
     'UNIVERSAL_OPERATION',
     'UNIVERSAL_REVIEW_OPERATION',
-    'UNIVERSAL_STEPS',
     'came_from_bling_quick_model',
     'clear_stale_cadastro_operation_state',
     'current_origin_choice',
@@ -255,6 +281,7 @@ __all__ = [
     'get_df_final_universal',
     'has_home_models',
     'looks_like_loaded_df',
+    'query_param',
     'reset_wizard',
     'select_origin',
     'selected_operation',
