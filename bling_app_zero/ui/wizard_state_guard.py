@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
+
 WIZARD_STEP_KEY = 'bling_wizard_step'
 FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
 STATE_GUARD_LAST_OPERATION_KEY = 'bling_wizard_state_guard_last_operation'
-STATE_GUARD_VERSION = '2026-05-19-wizard-guard-universal-download-preserve-1'
+STATE_GUARD_VERSION = '2026-05-26-wizard-guard-real-contract-2'
 
 VALID_STEPS = {
     'modelo',
@@ -22,7 +24,7 @@ VALID_STEPS = {
     'download',
     'processar',
 }
-VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 VALID_ORIGINS = {'arquivo', 'site'}
 STOCK_FORBIDDEN_STEPS = {'precificacao', 'mapeamento'}
 
@@ -36,12 +38,17 @@ CURRENT_WIDGET_PREFIXES = (
     'frontpage_origin_radio_cadastro',
     'frontpage_origin_radio_estoque',
     'frontpage_origin_radio_universal',
+    'frontpage_origin_radio_atualizacao_preco',
     'cad_map_',
     'stk_map_',
     'urls_site_cadastro',
     'urls_site_estoque',
+    'urls_site_universal',
+    'urls_site_atualizacao_preco',
     'buscar_site_cadastro',
     'buscar_site_estoque',
+    'buscar_site_universal',
+    'buscar_site_atualizacao_preco',
     'origin_choose_file',
     'origin_choose_site',
 )
@@ -59,10 +66,12 @@ DANGEROUS_LEGACY_KEYS = {
 SITE_RAW_BY_OPERATION = {
     'cadastro': 'df_site_bruto_cadastro',
     'estoque': 'df_site_bruto_estoque',
+    'atualizacao_preco': 'df_site_bruto_atualizacao_preco',
 }
 SITE_INTERNAL_BY_OPERATION = {
     'cadastro': 'df_origem_site_como_planilha_cadastro',
     'estoque': 'df_origem_site_como_planilha_estoque',
+    'atualizacao_preco': 'df_origem_site_como_planilha_atualizacao_preco',
 }
 SITE_OUTPUT_KEYS_BY_OPERATION = {
     'cadastro': [
@@ -81,6 +90,11 @@ SITE_OUTPUT_KEYS_BY_OPERATION = {
         'mapping_estoque',
         'estoque_wizard_df_origem_site',
     ],
+    'atualizacao_preco': [
+        'df_final_atualizacao_preco',
+        'mapping_atualizacao_preco',
+        'mapping_confidence_atualizacao_preco',
+    ],
 }
 
 
@@ -93,8 +107,17 @@ def _is_legacy_widget_key(key: str) -> bool:
 
 
 def _selected_operation() -> str:
-    operation = str(st.session_state.get(FLOW_OPERATION_KEY) or st.session_state.get('operacao_final') or '').strip().lower()
-    return operation if operation in VALID_OPERATIONS else ''
+    for value in (
+        st.session_state.get(MODEL_CONTRACT_TYPE_KEY),
+        st.session_state.get(FLOW_OPERATION_KEY),
+        st.session_state.get('operacao_final'),
+        st.session_state.get('tipo_operacao_final'),
+        st.session_state.get('home_detected_operation'),
+    ):
+        operation = normalize_contract_operation(value)
+        if operation in VALID_OPERATIONS:
+            return operation
+    return ''
 
 
 def _normalize_scalar_state() -> None:
@@ -108,6 +131,9 @@ def _normalize_scalar_state() -> None:
         st.session_state[FLOW_OPERATION_KEY] = operation
         st.session_state['operacao_final'] = operation
         st.session_state['tipo_operacao_final'] = operation
+        st.session_state['home_detected_operation'] = operation
+        if operation != 'universal':
+            st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     else:
         raw_operation = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
         if raw_operation:
@@ -137,21 +163,22 @@ def _clear_cross_operation_site_state() -> None:
     operation = _selected_operation()
     if not operation or operation == 'universal':
         return
-    other = 'estoque' if operation == 'cadastro' else 'cadastro'
+    others = [candidate for candidate in ('cadastro', 'estoque', 'atualizacao_preco') if candidate != operation]
 
-    for key in [
-        SITE_RAW_BY_OPERATION.get(other, ''),
-        SITE_INTERNAL_BY_OPERATION.get(other, ''),
-        f'site_source_urls_como_planilha_{other}',
-        f'site_requested_columns_como_planilha_{other}',
-    ]:
-        if key:
+    for other in others:
+        for key in [
+            SITE_RAW_BY_OPERATION.get(other, ''),
+            SITE_INTERNAL_BY_OPERATION.get(other, ''),
+            f'site_source_urls_como_planilha_{other}',
+            f'site_requested_columns_como_planilha_{other}',
+        ]:
+            if key:
+                st.session_state.pop(key, None)
+
+        for key in SITE_OUTPUT_KEYS_BY_OPERATION.get(other, []):
             st.session_state.pop(key, None)
 
-    for key in SITE_OUTPUT_KEYS_BY_OPERATION.get(other, []):
-        st.session_state.pop(key, None)
-
-    legacy_operation = str(st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site') or '').strip().lower()
+    legacy_operation = normalize_contract_operation(st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site'))
     if legacy_operation and legacy_operation != operation:
         st.session_state.pop('df_site_bruto', None)
         st.session_state.pop('operation_site', None)
@@ -167,18 +194,7 @@ def _needs_heavy_cleanup(force: bool, operation: str) -> bool:
 
 
 def run_wizard_state_guard(force: bool = False) -> None:
-    """Guard rápido: limpeza pesada só quando necessário.
-
-    Evita varrer/remover estados em todo rerun. Isso melhora fluidez em celular
-    antigo e reduz custo nas telas do wizard.
-
-    BLINGFIX download final:
-    - o clique no st.download_button causa rerun;
-    - no fluxo universal, esse rerun não pode apagar estado de cadastro/estoque,
-      nem voltar para modelo/home;
-    - por isso `universal` agora é uma operação válida e não dispara limpeza
-      cruzada pesada.
-    """
+    """Guard rápido: limpeza pesada só quando necessário e sem apagar contrato real."""
     _normalize_scalar_state()
     operation = _selected_operation()
     if not _needs_heavy_cleanup(force, operation):
