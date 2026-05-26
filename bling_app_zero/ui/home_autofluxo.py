@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -10,10 +8,6 @@ from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     FLOW_OPERATION_KEY,
     FLOW_ORIGIN_KEY,
-    GLOBAL_CADASTRO_MODEL_KEYS,
-    GLOBAL_ESTOQUE_MODEL_KEYS,
-    HOME_CADASTRO_MODEL_KEY,
-    HOME_ESTOQUE_MODEL_KEY,
     STEP_DOWNLOAD,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
@@ -28,6 +22,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     UNIVERSAL_STEPS,
     WIZARD_STEP_KEY,
 )
+from bling_app_zero.ui.home_wizard_state import has_home_models
 from bling_app_zero.ui.rules_center_step import rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_autofluxo.py'
@@ -42,31 +37,6 @@ AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}
 
 
-def _looks_like_loaded_df(value: Any) -> bool:
-    if value is None or not hasattr(value, 'columns'):
-        return False
-    try:
-        return len(getattr(value, 'columns', [])) > 0
-    except Exception:
-        return False
-
-
-def _has_any_model(keys: list[str]) -> bool:
-    return any(_looks_like_loaded_df(st.session_state.get(key)) for key in keys)
-
-
-def _has_cadastro_model() -> bool:
-    return _has_any_model([HOME_CADASTRO_MODEL_KEY, *GLOBAL_CADASTRO_MODEL_KEYS])
-
-
-def _has_estoque_model() -> bool:
-    return _has_any_model([HOME_ESTOQUE_MODEL_KEY, *GLOBAL_ESTOQUE_MODEL_KEYS])
-
-
-def _has_home_model() -> bool:
-    return _has_cadastro_model() or _has_estoque_model()
-
-
 def _sync_operation_from_model() -> str:
     """Mantém o autoavanço no mesmo contrato universal do wizard.
 
@@ -77,7 +47,7 @@ def _sync_operation_from_model() -> str:
     - portanto o autofluxo não pode escolher cadastro/estoque pelo modelo, pois
       isso reabre ping-pong contra o wizard universal.
     """
-    if not _has_home_model():
+    if not has_home_models():
         return ''
 
     current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
@@ -106,7 +76,7 @@ def _active_steps() -> list[str]:
 def _current_step() -> str:
     steps = _active_steps()
     current = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
-    if not _has_home_model():
+    if not has_home_models():
         current = STEP_MODELO
     elif current not in steps:
         current = STEP_MODELO
@@ -136,7 +106,7 @@ def _pricing_is_active() -> bool:
 def _step_ready_for_autonext(step: str, operation: str) -> bool:
     _ = operation
     if step == STEP_MODELO:
-        return _has_home_model()
+        return has_home_models()
     if step == STEP_OPERACAO:
         return True
     if step == STEP_PRECIFICACAO:
@@ -281,7 +251,6 @@ def run_home_autofluxo() -> None:
             details={'lock': st.session_state.get(AUTOFLOW_MANUAL_LOCK_KEY), 'responsible_file': RESPONSIBLE_FILE},
         )
         return
-
     if not _autoflow_enabled():
         return
     if st.session_state.get(HOME_ACTIVE_OPERATION_KEY) != FLOW_WIZARD_VALUE:
