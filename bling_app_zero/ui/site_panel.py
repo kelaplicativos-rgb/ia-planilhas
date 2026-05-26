@@ -25,6 +25,7 @@ from bling_app_zero.ui.site_panel_state import (
     has_urls,
     orange_warning,
     query_urls_default,
+    recover_stale_capture_if_needed,
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
@@ -57,7 +58,7 @@ def _render_urls_input(operation: str) -> str:
 
 def _render_deep_capture_options(operation: str) -> dict[str, int | bool]:
     with st.expander('🌐 Captura profunda controlada do fornecedor', expanded=False):
-        st.caption('Opcional. Use quando colar a página inicial ou uma categoria e quiser que o sistema procure mais links de produtos no mesmo domínio. Se desligado, o fluxo antigo continua igual.')
+        st.caption('Opcional. Use quando colar a página inicial ou uma categoria e quiser que o sistema procure mais links de produtos no mesmo domínio. Se desligado, o modo público usa um limite seguro para não travar a sessão.')
         enabled = st.checkbox(
             'Ativar captura profunda controlada',
             value=False,
@@ -105,6 +106,10 @@ def render_site_panel() -> None:
     operation = current_site_operation()
     if operation not in {'cadastro', UNIVERSAL_OPERATION}:
         operation = UNIVERSAL_OPERATION
+
+    recovered = recover_stale_capture_if_needed(operation)
+    if recovered:
+        orange_warning('A captura anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
 
     df_site_bruto = get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
