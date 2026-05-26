@@ -13,6 +13,7 @@ from bling_app_zero.ui.user_bling_models_store import (
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 STEP_ORIGEM = 'origem'
 UNIVERSAL_OPERATION = 'universal'
+PRICE_MODEL_TYPE = 'precos'
 
 MODEL_TITLES = {
     'cadastro': 'Modelo Bling cadastro',
@@ -26,8 +27,17 @@ MODEL_UPLOAD_LABELS = {
     'precos': 'Anexar ou substituir modelo Bling atualização de preços',
 }
 
+PRICE_MODEL_WARNING = (
+    'Atualização de preços precisa de um fluxo próprio antes de seguir para Origem dos dados. '
+    'O modelo pode ficar salvo aqui, mas ainda não deve abrir o wizard universal automaticamente.'
+)
+
 
 def _go_to_origin(model_type: str) -> None:
+    if model_type == PRICE_MODEL_TYPE:
+        st.session_state['bling_price_model_waiting_own_flow'] = True
+        return
+
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
     st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
@@ -48,6 +58,11 @@ def _go_to_origin(model_type: str) -> None:
     st.rerun()
 
 
+def _show_price_model_block() -> None:
+    st.warning(PRICE_MODEL_WARNING)
+    st.caption('Use por enquanto os modelos de cadastro ou estoque para liberar Origem dos dados. O modelo de preços fica guardado para o fluxo específico de atualização de preços.')
+
+
 def _show_model(model_type: str) -> None:
     label = MODEL_LABELS.get(model_type, model_type)
     title = MODEL_TITLES.get(model_type, label)
@@ -56,12 +71,17 @@ def _show_model(model_type: str) -> None:
     st.markdown('---')
     st.markdown(f'#### {title}')
 
+    if model_type == PRICE_MODEL_TYPE:
+        _show_price_model_block()
+
     df, info = get_user_model(model_type)
     if df is not None and info:
         st.success('Modelo Bling salvo')
         st.caption(str(info.get('name') or ''))
         st.caption('Colunas: ' + str(len(df.columns)))
-        if st.button('Usar este modelo e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
+        if model_type == PRICE_MODEL_TYPE:
+            st.button('Aguardando fluxo próprio de atualização de preços', key=f'use_{model_type}', use_container_width=True, disabled=True)
+        elif st.button('Usar este modelo e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
             _go_to_origin(model_type)
         if st.button('Remover modelo salvo', key=f'remove_{model_type}', use_container_width=True):
             remove_user_model(model_type)
@@ -78,8 +98,12 @@ def _show_model(model_type: str) -> None:
     if uploaded is not None:
         try:
             save_user_model(model_type, uploaded.name, uploaded.getvalue())
-            st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
-            _go_to_origin(model_type)
+            if model_type == PRICE_MODEL_TYPE:
+                st.success('Modelo Bling de atualização de preços salvo com sucesso.')
+                st.warning(PRICE_MODEL_WARNING)
+            else:
+                st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
+                _go_to_origin(model_type)
         except Exception as exc:
             st.error(f'Arquivo não aceito: {exc}')
 
