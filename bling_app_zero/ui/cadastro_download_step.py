@@ -9,33 +9,27 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
 )
 from bling_app_zero.ui.home_shared import download_final
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_download_step.py'
-VALID_OPERATIONS = {'cadastro', 'estoque', 'universal'}
+VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 LEGACY_OPERATION_ALIASES = {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 def _normalize_operation(value: object) -> str:
-    operation = str(value or '').strip().lower()
-    if operation in LEGACY_OPERATION_ALIASES:
-        return 'universal'
-    if operation in VALID_OPERATIONS:
+    operation = normalize_contract_operation(value)
+    if operation:
         return operation
+    text = str(value or '').strip().lower()
+    if text in LEGACY_OPERATION_ALIASES:
+        return 'universal'
     return ''
 
 
 def _current_operation() -> str:
-    """Resolve a operação real antes de gerar o botão de download.
-
-    BLINGFIX:
-    - o wizard atual é universal e não deve cair visualmente como CADASTRO;
-    - antes esta função só aceitava cadastro/estoque e fazia fallback para cadastro;
-    - agora universal é operação válida e tem prioridade no single-page flow.
-    """
-    if bool(st.session_state.get('home_single_page_flow_active')):
-        return 'universal'
-
+    """Resolve a operação real antes de gerar o botão de download."""
     for key in (
+        MODEL_CONTRACT_TYPE_KEY,
         'df_final_download_operation',
         'final_download_operation',
         'home_slim_flow_operation',
