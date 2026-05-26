@@ -114,7 +114,7 @@ def _query_param(name: str) -> str:
 
 
 def _clear_stale_cadastro_operation_state() -> None:
-    """Remove operações antigas que faziam o download universal aparecer como CADASTRO."""
+    """Remove operacoes antigas que faziam o download universal aparecer como CADASTRO."""
     removed: list[str] = []
     for key in STALE_CADASTRO_OPERATION_KEYS:
         if str(st.session_state.get(key) or '').strip().lower() == 'cadastro':
@@ -301,12 +301,12 @@ def _reset_wizard() -> None:
 
 
 def _render_model_step() -> None:
-    from bling_app_zero.ui.home_models import render_home_bling_models
+    from bling_app_zero.ui.home_models import render_home_universal_models
 
     _render_step_anchor(STEP_MODELO)
-    _section_title(1, 'Modelo')
+    _section_title(1, 'Modelos Universal')
     with st.container(border=True):
-        render_home_bling_models()
+        render_home_universal_models()
     _ensure_universal_operation_state()
 
 
@@ -398,7 +398,6 @@ def _get_df_final_universal():
     current = st.session_state.get(FINAL_UNIVERSAL_KEY)
     if _looks_like_loaded_df(current):
         return current
-    # Chave técnica legada: historicamente chama df_final_cadastro, mas hoje representa o modelo final universal.
     return st.session_state.get(FINAL_UNIVERSAL_LEGACY_KEY)
 
 
