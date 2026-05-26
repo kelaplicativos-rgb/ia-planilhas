@@ -18,6 +18,8 @@ LIGHT_CRITICAL_MODULES = [
     'bling_app_zero.ui.home_wizard_review',
     'bling_app_zero.ui.home_autofluxo',
     'bling_app_zero.ui.home_models',
+    'bling_app_zero.ui.home_shared',
+    'bling_app_zero.ui.home_download',
     'bling_app_zero.ui.modelos_bling',
     'bling_app_zero.ui.modelos_bling_user_screen_min',
     'bling_app_zero.ui.cadastro_wizard_steps',
@@ -282,14 +284,19 @@ def test_cadastro_mapping_ready_requires_manual_confirmation(monkeypatch) -> Non
 
 def test_download_final_uses_template_exporter_for_attached_model() -> None:
     home_shared = Path('bling_app_zero/ui/home_shared.py').read_text(encoding='utf-8')
+    home_download = Path('bling_app_zero/ui/home_download.py').read_text(encoding='utf-8')
 
-    assert 'from bling_app_zero.core.template_download_exporter import (' in home_shared
-    assert 'build_template_download_bytes' in home_shared
-    assert 'can_export_from_template' in home_shared
-    assert 'output_name_for_template' in home_shared
-    assert 'mime_for_template_output' in home_shared
-    assert '_build_template_download(download_df.copy())' in home_shared
+    assert 'from bling_app_zero.ui.home_download import (' in home_shared
+    assert 'download_final' in home_shared
+    assert 'df_signature' in home_shared
+    assert 'from bling_app_zero.core.template_download_exporter import (' in home_download
+    assert 'build_template_download_bytes' in home_download
+    assert 'can_export_from_template' in home_download
+    assert 'output_name_for_template' in home_download
+    assert 'mime_for_template_output' in home_download
+    assert 'build_template_download(download_df.copy())' in home_download
     assert '.to_csv(' not in home_shared
+    assert '.to_csv(' not in home_download
 
 
 def test_gtin_invalid_values_are_cleaned() -> None:
