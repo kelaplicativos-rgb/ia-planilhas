@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.flows.site_operation_router import config_for_site_operation
 from bling_app_zero.ui.home_shared import show_contract
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
@@ -29,6 +28,9 @@ from bling_app_zero.ui.site_panel_state import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
+SCAN_TOTAL_MAX_PAGES = 1_000_000
+SCAN_TOTAL_MAX_PRODUCTS = 1_000_000
+SCAN_TOTAL_MAX_DEPTH = 5
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -51,34 +53,29 @@ def _render_urls_input(operation: str) -> str:
         value=query_urls_default(),
         height=120,
         key=f'urls_site_{operation}',
-        placeholder='https://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole um ou mais links públicos.',
+        placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
+        help='Cole a página inicial, categorias ou produtos. O sistema vai escanear o site inteiro atrás de produtos.',
     )
 
 
-def _render_deep_capture_options(operation: str) -> dict[str, int | bool]:
-    with st.expander('🌐 Captura profunda controlada do fornecedor', expanded=False):
-        st.caption('Opcional. Use quando colar a página inicial ou uma categoria e quiser que o sistema procure mais links de produtos no mesmo domínio. Se desligado, o modo público usa um limite seguro para não travar a sessão.')
-        enabled = st.checkbox(
-            'Ativar captura profunda controlada',
-            value=False,
-            key=f'site_deep_capture_enabled_{operation}',
-            help='Não baixa arquivos inúteis do site. Apenas varre páginas do mesmo domínio e transforma produtos encontrados em links para o motor atual.',
-        )
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            max_pages = st.number_input('Limite de páginas', min_value=20, max_value=5000, value=250, step=50, key=f'site_deep_capture_pages_{operation}')
-        with col2:
-            max_products = st.number_input('Limite de produtos', min_value=20, max_value=10000, value=500, step=50, key=f'site_deep_capture_products_{operation}')
-        with col3:
-            max_depth = st.number_input('Profundidade', min_value=0, max_value=5, value=2, step=1, key=f'site_deep_capture_depth_{operation}')
-        st.caption('Recomendado: profundidade 1 ou 2. Profundidade alta pode demorar em sites grandes.')
+def _scan_total_options() -> dict[str, int | bool]:
+    """SCAN TOTAL UI: sem modo teste e sem limite baixo manual."""
     return {
-        'enabled': bool(enabled),
-        'max_pages': int(max_pages),
-        'max_products': int(max_products),
-        'max_depth': int(max_depth),
+        'enabled': True,
+        'max_pages': SCAN_TOTAL_MAX_PAGES,
+        'max_products': SCAN_TOTAL_MAX_PRODUCTS,
+        'max_depth': SCAN_TOTAL_MAX_DEPTH,
+        'scan_total_ui': True,
     }
+
+
+def _render_scan_total_notice() -> None:
+    st.markdown(
+        '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">'
+        '🚀 <b>SCAN TOTAL UI ativo:</b> o sistema não usa modo teste. Ao clicar no botão, ele procura produtos no site inteiro e prepara a origem conforme o modelo anexado.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_universal_fallback(
@@ -122,20 +119,20 @@ def render_site_panel() -> None:
         )
         return
 
-    config = config_for_site_operation(operation)
     st.markdown(
-        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Cole os links do fornecedor</h2></section>',
+        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">SCAN TOTAL UI · Escanear site inteiro</h2></section>',
         unsafe_allow_html=True,
     )
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
-    deep_options = _render_deep_capture_options(operation)
+    deep_options = _scan_total_options()
+    _render_scan_total_notice()
 
     running = bool(st.session_state.get('site_capture_running'))
     has_urls_value = has_urls(raw_urls)
     if running:
-        orange_warning('Captura por site em andamento. Aguarde a origem aparecer.')
+        orange_warning('SCAN TOTAL em andamento. Aguarde a origem aparecer.')
         if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             st.rerun()
@@ -144,16 +141,26 @@ def render_site_panel() -> None:
     if error:
         st.error(f'Última captura falhou: {error}')
 
-    button_label = config.button_label
-    if bool(deep_options.get('enabled')):
-        button_label = '🌐 Buscar no site com captura profunda controlada'
+    button_label = '🚀 Escanear site inteiro agora'
     button_disabled = running or not has_urls_value or (operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
 
     if not has_urls_value:
-        orange_warning('Cole pelo menos um link para liberar a busca.')
+        orange_warning('Cole pelo menos um link para liberar o SCAN TOTAL.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
-        add_audit_event('site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': operation, 'capture_mode': 'deep' if bool(deep_options.get('enabled')) else 'public', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event(
+            'site_capture_main_button_clicked',
+            area='SITE',
+            step='entrada',
+            details={
+                'operation': operation,
+                'capture_mode': 'scan_total_ui',
+                'max_pages': SCAN_TOTAL_MAX_PAGES,
+                'max_products': SCAN_TOTAL_MAX_PRODUCTS,
+                'max_depth': SCAN_TOTAL_MAX_DEPTH,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
         run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, deep_options=deep_options)
 
     _render_universal_fallback(
