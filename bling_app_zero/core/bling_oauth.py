@@ -14,7 +14,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import clear_token, get_user_session_id, load_token, save_token
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
-AUTH_URL_DEFAULT = 'https://www.bling.com.br/OAuth2/views/authorization.php'
+AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
 CLIENT_ID_DEFAULT = '4ef4b0753ae8a4c319f7f8d5e0a7abce08954be2'
 DEFAULT_SCOPES = [
