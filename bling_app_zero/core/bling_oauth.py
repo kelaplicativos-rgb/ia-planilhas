@@ -17,7 +17,7 @@ from bling_app_zero.core.oauth_return_snapshot import restore_download_oauth_ret
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
-PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas.streamlit.app'
+PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas.streamlit.app/'
 CLIENT_ID_DEFAULT = ''
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
@@ -50,7 +50,7 @@ def client_secret() -> str:
 def redirect_uri() -> str:
     configured = _secret('redirect_uri', '')
     if configured:
-        return configured.rstrip('/')
+        return configured.strip()
     return PUBLIC_REDIRECT_URI_DEFAULT
 
 
