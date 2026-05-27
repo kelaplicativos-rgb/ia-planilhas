@@ -4,6 +4,11 @@ import pandas as pd
 
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
+
 
 def adapt_dataframe_to_model_contract(df: pd.DataFrame, df_model: pd.DataFrame | None) -> pd.DataFrame:
     """Adapta a saída final para ficar fiel ao modelo anexado."""
@@ -33,6 +38,17 @@ def _first_valid_model_from_session(candidate_keys: list[str]) -> pd.DataFrame |
     return None
 
 
+def _entry_context() -> str:
+    import streamlit as st
+
+    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if value == 'bling':
+        return CONTEXT_BLING_API
+    if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
+        return value
+    return ''
+
+
 def _resolved_operation(operation: str) -> str:
     import streamlit as st
 
@@ -43,58 +59,77 @@ def _resolved_operation(operation: str) -> str:
     return detected or 'universal'
 
 
-def model_for_operation(operation: str) -> pd.DataFrame | None:
-    """Busca modelo salvo na sessão para preservar contrato real no download."""
-    op = _resolved_operation(operation)
-
-    universal_keys = [
+def _universal_model_keys() -> list[str]:
+    return [
         'home_modelo_universal_df',
         'df_modelo_universal',
         'modelo_universal_df',
         'mapeiaai_universal_model_df',
-        'home_modelo_cadastro_df',
-        'home_modelo_estoque_df',
-        'home_modelo_atualizacao_preco_df',
-        'df_modelo_cadastro',
-        'df_modelo_estoque',
-        'df_modelo_atualizacao_preco',
-        'modelo_cadastro_df',
-        'modelo_estoque_df',
-        'modelo_atualizacao_preco_df',
         'cadastro_wizard_df_modelo',
+    ]
+
+
+def _bling_cadastro_model_keys() -> list[str]:
+    return [
+        'home_modelo_cadastro_df',
+        'df_modelo_cadastro',
+        'modelo_cadastro_df',
+        'cadastro_wizard_df_modelo',
+    ]
+
+
+def _bling_estoque_model_keys() -> list[str]:
+    return [
+        'home_modelo_estoque_df',
+        'df_modelo_estoque',
+        'modelo_estoque_df',
         'cadastro_wizard_df_modelo_estoque',
         'estoque_wizard_df_modelo',
     ]
 
+
+def _bling_preco_model_keys() -> list[str]:
+    return [
+        'home_modelo_atualizacao_preco_df',
+        'df_modelo_atualizacao_preco',
+        'modelo_atualizacao_preco_df',
+        'cadastro_wizard_df_modelo',
+    ]
+
+
+def _bling_model_keys_for_operation(op: str) -> list[str]:
     if op == 'estoque':
-        return _first_valid_model_from_session([
-            'home_modelo_estoque_df',
-            'df_modelo_estoque',
-            'modelo_estoque_df',
-            'cadastro_wizard_df_modelo_estoque',
-            'estoque_wizard_df_modelo',
-            *universal_keys,
-        ])
-
+        return _bling_estoque_model_keys()
     if op == 'atualizacao_preco':
-        return _first_valid_model_from_session([
-            'home_modelo_atualizacao_preco_df',
-            'df_modelo_atualizacao_preco',
-            'modelo_atualizacao_preco_df',
-            'cadastro_wizard_df_modelo',
-            *universal_keys,
-        ])
-
+        return _bling_preco_model_keys()
     if op == 'cadastro':
-        return _first_valid_model_from_session([
-            'home_modelo_cadastro_df',
-            'df_modelo_cadastro',
-            'modelo_cadastro_df',
-            'cadastro_wizard_df_modelo',
-            *universal_keys,
-        ])
+        return _bling_cadastro_model_keys()
+    return _bling_cadastro_model_keys() + _bling_estoque_model_keys() + _bling_preco_model_keys()
 
-    return _first_valid_model_from_session(universal_keys)
+
+def model_for_operation(operation: str) -> pd.DataFrame | None:
+    """Busca modelo salvo na sessão respeitando o caminho da Home.
+
+    BLINGRESET:
+    - Bling API não usa modelo de planilha.
+    - Bling CSV só pode usar modelos Bling.
+    - Modelo Universal só pode usar modelo Universal.
+    """
+    context = _entry_context()
+    op = _resolved_operation(operation)
+
+    if context == CONTEXT_BLING_API:
+        return None
+
+    if context == CONTEXT_UNIVERSAL:
+        return _first_valid_model_from_session(_universal_model_keys())
+
+    if context == CONTEXT_BLING_CSV:
+        return _first_valid_model_from_session(_bling_model_keys_for_operation(op))
+
+    if op == 'universal':
+        return _first_valid_model_from_session(_universal_model_keys())
+    return _first_valid_model_from_session(_bling_model_keys_for_operation(op))
 
 
 __all__ = ['adapt_dataframe_to_model_contract', 'model_for_operation']
