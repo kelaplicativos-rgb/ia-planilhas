@@ -5,6 +5,7 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.template_download_exporter import (
     build_template_download_bytes,
@@ -28,8 +29,9 @@ FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 
 OPERATION_LABELS = {
-    'cadastro': 'Modelo final preenchido',
-    'estoque': 'Modelo final preenchido',
+    'cadastro': 'Cadastro de produtos',
+    'estoque': 'Atualização de estoque',
+    'atualizacao_preco': 'Atualização de preços',
     'universal': 'Modelo final preenchido',
 }
 
@@ -43,25 +45,37 @@ def df_signature(df: pd.DataFrame) -> str:
     return f'{shape}:{columns}:{sample}'
 
 
-def operation_label(operation: str) -> str:
+def _normalize_operation(operation: str) -> str:
     op = str(operation or '').strip().lower()
     if op in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
-        op = 'universal'
-    return OPERATION_LABELS.get(op, 'Modelo final preenchido')
+        return 'universal'
+    if op in {'precos', 'preco', 'atualizar_precos', 'atualizacao_precos'}:
+        return 'atualizacao_preco'
+    return op or 'universal'
+
+
+def operation_label(operation: str) -> str:
+    return OPERATION_LABELS.get(_normalize_operation(operation), 'Modelo final preenchido')
 
 
 def operation_badge(operation: str) -> str:
-    _ = operation
-    return '📄 MODELO FINAL'
+    op = _normalize_operation(operation)
+    if op == 'cadastro':
+        return '📄 CSV BLING · CADASTRO'
+    if op == 'estoque':
+        return '📦 CSV BLING · ESTOQUE'
+    if op == 'atualizacao_preco':
+        return '💲 CSV BLING · PREÇOS'
+    return '📄 CSV BLING · MODELO FINAL'
 
 
 def download_label() -> str:
-    return '⬇️ Baixar modelo preenchido'
+    return '⬇️ Baixar CSV Bling pronto para importar'
 
 
 def preserve_flow_after_download(operation: str) -> None:
-    op = str(operation or '').strip().lower()
-    preserved_operation = op if op in {'cadastro', 'estoque', 'universal'} else 'universal'
+    op = _normalize_operation(operation)
+    preserved_operation = op if op in {'cadastro', 'estoque', 'universal', 'atualizacao_preco'} else 'universal'
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
     st.session_state['home_slim_flow_operation'] = preserved_operation
     st.session_state['operacao_final'] = preserved_operation
@@ -80,9 +94,9 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     preserve_flow_after_download(operation)
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
-    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = operation
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = _normalize_operation(operation)
     add_audit_event(
-        'final_download_completed_navigation_preserved',
+        'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
         details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True},
     )
@@ -121,21 +135,17 @@ def get_template_upload() -> tuple[str, bytes] | None:
 def build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
     template = get_template_upload()
     if template is None:
-        st.warning('Reenvie a planilha modelo para gerar o arquivo final fiel ao layout anexado.')
-        add_audit_event('template_download_original_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
+        add_audit_event('template_download_original_missing_optional', area='DOWNLOAD', status='SEM_MODELO_ORIGINAL')
         return None
     template_name, template_bytes = template
     if not can_export_from_template(template_name, template_bytes):
-        st.warning('Este formato ainda não permite download 100% fiel. Use CSV, XLSX ou XLSM como modelo de destino.')
-        add_audit_event('template_download_not_supported', area='DOWNLOAD', status='AGUARDANDO_MODELO_VALIDO', details={'template_name': template_name})
+        add_audit_event('template_download_not_supported_optional', area='DOWNLOAD', status='MODELO_NAO_SUPORTADO', details={'template_name': template_name})
         return None
     try:
         data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
         return data, output_name_for_template(template_name), mime_for_template_output(template_name)
     except Exception as exc:
-        add_audit_event('template_download_not_ready', area='DOWNLOAD', status='AGUARDANDO_AJUSTE_CONTRATO', details={'template_name': template_name, 'error': str(exc)})
-        st.warning('A planilha modelo ainda não está pronta para download final fiel ao layout anexado.')
-        st.caption(str(exc))
+        add_audit_event('template_download_not_ready_optional', area='DOWNLOAD', status='AGUARDANDO_AJUSTE_CONTRATO', details={'template_name': template_name, 'error': str(exc)})
         return None
 
 
@@ -154,10 +164,29 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_FILE_BYTES_KEY] = bytes(file_bytes)
     st.session_state[FINAL_DOWNLOAD_FILE_NAME_KEY] = file_name
     st.session_state[FINAL_DOWNLOAD_MIME_KEY] = mime
-    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = operation
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = _normalize_operation(operation)
     st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
+
+
+def _render_optional_template_download(download_df: pd.DataFrame, key: str, signature: str, rules_sig: str) -> None:
+    template_export = build_template_download(download_df.copy())
+    if template_export is None:
+        st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora. O CSV Bling acima continua pronto para importação.')
+        return
+
+    template_bytes, template_file_name, template_mime = template_export
+    with st.expander('Opcional · Baixar também no formato do modelo anexado', expanded=False):
+        st.caption('Use esta opção apenas se quiser manter o formato original do modelo. Para importar no Bling, prefira o CSV principal acima.')
+        st.download_button(
+            '⬇️ Baixar modelo preenchido',
+            data=template_bytes,
+            file_name=template_file_name,
+            mime=template_mime,
+            use_container_width=True,
+            key=f'download_template_optional_{key}_{signature}_{rules_sig}',
+        )
 
 
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
@@ -169,13 +198,10 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
             st.warning('Ainda não há dados finais para baixar.')
             return
 
-    operation = str(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or 'universal').strip().lower()
-    if operation in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
-        operation = 'universal'
-
+    operation = _normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or 'universal')
     operation_title = operation_label(operation)
     st.markdown(f'##### {operation_badge(operation)}')
-    st.caption(f'Arquivo final: {operation_title}. A saída respeita o modelo anexado como contrato absoluto.')
+    st.caption(f'Arquivo final: {operation_title}. A saída principal agora é CSV com separador ; e UTF-8-SIG.')
 
     if st.session_state.pop('final_download_done', False):
         st.success('✅ Download concluído. Os dados continuam preservados nesta tela para você continuar usando o sistema.')
@@ -186,7 +212,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
         return
 
-    st.success('Modelo de destino aplicado. O arquivo final será gerado fiel ao modelo anexado.')
+    st.success('Modelo de destino aplicado. O CSV final será gerado respeitando as colunas do modelo.')
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
 
@@ -205,34 +231,33 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
-    template_export = build_template_download(download_df.copy())
-    if template_export is None:
-        return
-
-    template_bytes, template_file_name, template_mime = template_export
-    widget_key = f'download_template_{key}_{signature}_{rules_sig}'
+    csv_bytes = to_bling_csv_bytes(download_df.copy(), operation=operation, contract_columns=model_columns)
+    csv_file_name = filename_for_operation(operation)
+    widget_key = f'download_csv_bling_{key}_{signature}_{rules_sig}'
     save_download_snapshot(
         download_df=download_df,
-        file_bytes=template_bytes,
-        file_name=template_file_name,
-        mime=template_mime,
+        file_bytes=csv_bytes,
+        file_name=csv_file_name,
+        mime='text/csv',
         operation=operation,
         signature=signature,
         rules_sig=rules_sig,
         widget_key=widget_key,
     )
 
-    st.success('Modelo preenchido pronto para download.')
+    st.success('CSV Bling pronto para importação.')
     st.download_button(
         download_label(),
-        data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, template_bytes),
-        file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or template_file_name),
-        mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or template_mime),
+        data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, csv_bytes),
+        file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or csv_file_name),
+        mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or 'text/csv'),
         use_container_width=True,
         key=widget_key,
         on_click=after_final_download,
         args=(operation, signature, rules_sig),
     )
+
+    _render_optional_template_download(download_df, key, signature, rules_sig)
 
 
 __all__ = [
