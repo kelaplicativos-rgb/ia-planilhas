@@ -10,6 +10,7 @@ from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_download_resources.py'
+MAX_IMAGE_URLS_PER_PRODUCT = 12
 
 IMAGE_COLUMN_TERMS = (
     'imagem', 'imagens', 'image', 'images', 'foto', 'fotos',
@@ -74,10 +75,10 @@ def is_empty_text(value: object) -> bool:
     return normalize_key(text) in EMPTY_TEXT_KEYS
 
 
-def normalize_image_urls(value: object) -> str:
+def image_url_parts(value: object) -> list[str]:
     text = clean_cell(value)
     if not text:
-        return ''
+        return []
     raw_parts = re.split(r'\s*\|\s*|\s*[\n\r,;]+\s*', text)
     parts: list[str] = []
     seen: set[str] = set()
@@ -87,6 +88,13 @@ def normalize_image_urls(value: object) -> str:
             continue
         seen.add(item)
         parts.append(item)
+    return parts
+
+
+def normalize_image_urls(value: object, *, max_urls: int = MAX_IMAGE_URLS_PER_PRODUCT) -> str:
+    parts = image_url_parts(value)
+    if max_urls and max_urls > 0:
+        parts = parts[:max_urls]
     return '|'.join(parts)
 
 
@@ -115,14 +123,27 @@ def clean_invalid_gtin_resource(df: pd.DataFrame | None, *, enabled: bool = True
     return ResourceResult(out, changed=changed, columns=tuple(columns), message=f'GTIN limpo em {changed} célula(s).')
 
 
-def normalize_image_separator_resource(df: pd.DataFrame | None, *, enabled: bool = True) -> ResourceResult:
+def normalize_image_separator_resource(
+    df: pd.DataFrame | None,
+    *,
+    enabled: bool = True,
+    max_urls: int = MAX_IMAGE_URLS_PER_PRODUCT,
+) -> ResourceResult:
     out = _df(df)
     if out.empty or not enabled:
         return ResourceResult(out, message='Normalização de imagens desativada ou sem dados.')
     columns = [str(column) for column in out.columns if looks_like_image_column(column)]
+    clipped_rows = 0
     for column in columns:
-        out[column] = out[column].apply(normalize_image_urls)
-    return ResourceResult(out, changed=len(columns), columns=tuple(columns), message=f'Imagens normalizadas em {len(columns)} coluna(s).')
+        before_counts = out[column].apply(lambda value: len(image_url_parts(value)))
+        out[column] = out[column].apply(lambda value: normalize_image_urls(value, max_urls=max_urls))
+        after_counts = out[column].apply(lambda value: len(image_url_parts(value)))
+        clipped_rows += int(((before_counts > after_counts) & (before_counts > max_urls)).sum()) if max_urls and max_urls > 0 else 0
+    if clipped_rows:
+        message = f'Imagens normalizadas em {len(columns)} coluna(s); {clipped_rows} produto(s) foram limitados a {max_urls} imagem(ns).'
+    else:
+        message = f'Imagens normalizadas em {len(columns)} coluna(s). Limite por produto: {max_urls}.'
+    return ResourceResult(out, changed=len(columns), columns=tuple(columns), message=message)
 
 
 def stock_status_to_quantity(value: object, defaults: dict[str, str] | None = None) -> str:
@@ -244,6 +265,7 @@ __all__ = [
     'EMPTY_TEXT_KEYS',
     'IMAGE_COLUMN_TERMS',
     'LOW_PATTERNS',
+    'MAX_IMAGE_URLS_PER_PRODUCT',
     'OUT_PATTERNS',
     'PRODUCT_CODE_COLUMN_TERMS',
     'PRODUCT_NAME_COLUMN_TERMS',
@@ -254,6 +276,7 @@ __all__ = [
     'clean_invalid_gtin_resource',
     'fallback_code_from_row',
     'gtin_code_from_row',
+    'image_url_parts',
     'is_empty_text',
     'looks_like_image_column',
     'looks_like_product_code_column',
