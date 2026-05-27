@@ -5,6 +5,7 @@ from typing import Any, Callable
 import streamlit as st
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/alerts.py'
+ALERT_THEME_STYLE_ID = 'bling-alert-theme-style-v2'
 
 _ORIGINAL_INFO: Callable[..., Any] | None = None
 _ORIGINAL_BUTTON: Callable[..., Any] | None = None
@@ -65,7 +66,52 @@ def _looks_like_attention_message(message: object) -> bool:
 
 
 def inject_alert_theme() -> None:
-    return None
+    """Injeta o visual mestre para mensagens de atenção, erro e sucesso."""
+    st.markdown(
+        f'''
+<style id="{ALERT_THEME_STYLE_ID}">
+[data-testid="stAlert"] {{
+    border-radius: 16px !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.045) !important;
+}}
+[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stAlert"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stAlert"] [data-testid="stMarkdownContainer"] strong {{
+    color: inherit !important;
+}}
+[data-testid="stAlert"][kind="warning"] {{
+    background: #fff7ed !important;
+    border-color: #fed7aa !important;
+    color: #c2410c !important;
+}}
+[data-testid="stAlert"][kind="error"] {{
+    background: #fef2f2 !important;
+    border-color: #fecaca !important;
+    color: #dc2626 !important;
+}}
+[data-testid="stAlert"][kind="success"] {{
+    background: #ecfdf5 !important;
+    border-color: #bbf7d0 !important;
+    color: #16a34a !important;
+}}
+.bling-attention-card {{
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 16px;
+    color: #c2410c;
+    padding: .85rem .95rem;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.045);
+}}
+.bling-attention-card p,
+.bling-attention-card span,
+.bling-attention-card strong {{
+    color: #c2410c;
+}}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
 
 
 def render_alert(message: str, *, title: str | None = None, variant: str = 'warning', icon: str | None = None) -> None:
@@ -73,6 +119,7 @@ def render_alert(message: str, *, title: str | None = None, variant: str = 'warn
     text = str(message or '').strip()
     if not text:
         return
+    inject_alert_theme()
     prefix = str(title or '').strip()
     output = f'{prefix}: {text}' if prefix else text
     method_name = variant if variant in {'warning', 'error', 'success', 'info'} else 'warning'
@@ -92,6 +139,8 @@ def enforce_attention_alert_policy() -> None:
       substituído por aviso claro de bloqueio.
     """
     global _ORIGINAL_BUTTON, _ORIGINAL_INFO, _POLICY_INSTALLED
+
+    inject_alert_theme()
 
     if _POLICY_INSTALLED:
         return
