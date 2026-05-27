@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZipFile, is_zipfile
 
 import pandas as pd
 import streamlit as st
@@ -31,6 +31,7 @@ MODEL_FILE_NAMES = {
 }
 SPREADSHEET_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.xlsm', '.xlsb'}
 VALID_EXTENSIONS = SPREADSHEET_EXTENSIONS | {'.zip'}
+FORMAT_ERROR = 'Formato nao aceito. Use CSV, XLSX, XLS, XLSM, XLSB ou o ZIP original do Bling.'
 
 
 def ensure_dir() -> None:
@@ -54,13 +55,24 @@ def save_manifest(manifest: dict[str, dict[str, str]]) -> None:
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-def safe_suffix(file_name: str) -> str:
+def _looks_like_zip(file_bytes: bytes) -> bool:
+    try:
+        return is_zipfile(io.BytesIO(file_bytes))
+    except Exception:
+        return False
+
+
+def safe_suffix(file_name: str, file_bytes: bytes | None = None) -> str:
     suffix = Path(str(file_name or '')).suffix.lower().strip()
-    return suffix if suffix in VALID_EXTENSIONS else '.csv'
+    if suffix in VALID_EXTENSIONS:
+        return suffix
+    if file_bytes is not None and _looks_like_zip(file_bytes):
+        return '.zip'
+    return '.csv'
 
 
-def path_for_model(model_type: str, file_name: str) -> Path:
-    return MODELS_DIR / f'{MODEL_FILE_NAMES[model_type]}{safe_suffix(file_name)}'
+def path_for_model(model_type: str, file_name: str, file_bytes: bytes | None = None) -> Path:
+    return MODELS_DIR / f'{MODEL_FILE_NAMES[model_type]}{safe_suffix(file_name, file_bytes)}'
 
 
 def _read_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
@@ -76,7 +88,7 @@ def _read_spreadsheet_bytes(file_name: str, file_bytes: bytes) -> pd.DataFrame:
         return _read_csv_bytes(file_bytes)
     if suffix in {'.xlsx', '.xls', '.xlsm', '.xlsb'}:
         return pd.read_excel(io.BytesIO(file_bytes), dtype=str).fillna('')
-    raise ValueError('Formato interno nao aceito. Use CSV, XLSX, XLS, XLSM ou XLSB.')
+    raise ValueError('Formato interno nao aceito. Use CSV, XLSX, XLS, XLSM ou XLSB dentro do ZIP.')
 
 
 def _candidate_files_from_zip(file_name: str, file_bytes: bytes) -> list[tuple[str, bytes]]:
@@ -103,7 +115,7 @@ def _candidate_files_from_zip(file_name: str, file_bytes: bytes) -> list[tuple[s
 def _read_zip_model(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     candidates = _candidate_files_from_zip(file_name, file_bytes)
     if not candidates:
-        raise ValueError('O ZIP enviado nao contem CSV, XLSX, XLS, XLSM ou XLSB do Bling.')
+        raise ValueError('O ZIP original do Bling nao contem CSV, XLSX, XLS, XLSM ou XLSB valido para leitura.')
 
     errors: list[str] = []
     for inner_name, inner_bytes in candidates:
@@ -114,28 +126,23 @@ def _read_zip_model(file_name: str, file_bytes: bytes) -> pd.DataFrame:
                     'user_bling_model_zip_extracted',
                     area='MODELOS_BLING',
                     status='OK',
-                    details={
-                        'zip_file': file_name,
-                        'inner_file': inner_name,
-                        'columns': len(df.columns),
-                        'responsible_file': RESPONSIBLE_FILE,
-                    },
+                    details={'zip_file': file_name, 'inner_file': inner_name, 'columns': len(df.columns), 'responsible_file': RESPONSIBLE_FILE},
                 )
                 return df.fillna('')
         except Exception as exc:
             errors.append(f'{inner_name}: {exc}')
 
     joined_errors = ' | '.join(errors[:5])
-    raise ValueError(f'Nao consegui abrir a planilha dentro do ZIP. {joined_errors}')
+    raise ValueError(f'Nao consegui abrir a planilha dentro do ZIP original do Bling. {joined_errors}')
 
 
 def read_model_bytes(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     suffix = Path(str(file_name or '')).suffix.lower().strip()
-    if suffix == '.zip':
+    if suffix == '.zip' or _looks_like_zip(file_bytes):
         return _read_zip_model(file_name, file_bytes)
     if suffix in SPREADSHEET_EXTENSIONS:
         return _read_spreadsheet_bytes(file_name, file_bytes)
-    raise ValueError('Formato nao aceito. Use CSV, XLSX, XLS, XLSM, XLSB ou ZIP original do Bling.')
+    raise ValueError(FORMAT_ERROR)
 
 
 def csv_bytes(df: pd.DataFrame) -> bytes:
@@ -157,7 +164,6 @@ def sync_model_to_flow(model_type: str, df_model: pd.DataFrame, file_name: str) 
         st.session_state['df_modelo_estoque'] = df_model.copy()
         st.session_state['modelo_estoque_df'] = df_model.copy()
     elif model_type == 'precos':
-        # Chaves antigas + chaves reais usadas pelo fluxo de atualizacao de precos.
         st.session_state['home_modelo_precos_df'] = df_model.copy()
         st.session_state['df_modelo_precos'] = df_model.copy()
         st.session_state['modelo_precos_df'] = df_model.copy()
@@ -179,14 +185,14 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
     if not isinstance(df, pd.DataFrame) or not len(df.columns):
         raise ValueError('A planilha enviada nao possui colunas validas.')
     ensure_dir()
-    target = path_for_model(model_type, file_name)
+    target = path_for_model(model_type, file_name, file_bytes)
     target.write_bytes(file_bytes)
     manifest = load_manifest()
     manifest[model_type] = {
         'name': file_name,
         'path': str(target),
         'saved_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'format': safe_suffix(file_name).lstrip('.'),
+        'format': safe_suffix(file_name, file_bytes).lstrip('.'),
     }
     save_manifest(manifest)
     sync_model_to_flow(model_type, df, file_name)
@@ -194,13 +200,7 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
         'user_bling_model_saved',
         area='MODELOS_BLING',
         status='OK',
-        details={
-            'model_type': model_type,
-            'file_name': file_name,
-            'format': safe_suffix(file_name),
-            'columns': [str(c) for c in df.columns],
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'model_type': model_type, 'file_name': file_name, 'format': safe_suffix(file_name, file_bytes), 'columns': [str(c) for c in df.columns], 'responsible_file': RESPONSIBLE_FILE},
     )
     return df.fillna('')
 
@@ -216,9 +216,10 @@ def get_user_model(model_type: str) -> tuple[pd.DataFrame | None, dict[str, str]
         save_manifest(manifest)
         return None, None
     try:
-        df = read_model_bytes(path.name, path.read_bytes())
+        file_bytes = path.read_bytes()
+        df = read_model_bytes(path.name, file_bytes)
         sync_model_to_flow(model_type, df, str(info.get('name') or path.name))
-        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or path.suffix.lstrip('.'))}
+        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or safe_suffix(path.name, file_bytes).lstrip('.'))}
     except Exception as exc:
         add_audit_event('user_bling_model_read_error', area='MODELOS_BLING', status='ERRO', details={'model_type': model_type, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
         return None, info
