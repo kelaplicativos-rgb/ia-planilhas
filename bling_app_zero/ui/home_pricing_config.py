@@ -10,6 +10,9 @@ from bling_app_zero.core.shared_price_calculator import normalize_shared_price_c
 from bling_app_zero.v2.price_multistore.quick_ui import (
     GLOBAL_PRICE_READY_KEY,
     GLOBAL_PRICE_RESULT_KEY,
+    PRICE_CALCULATOR_MODE_KEY,
+    PRICE_CALCULATOR_READY_KEY,
+    PRICE_CALCULATOR_RESULT_KEY,
     render_quick_price_calculator,
 )
 
@@ -95,11 +98,31 @@ def _mode_label(config: dict[str, Any]) -> str:
     return CALCULATOR_MODE_LABELS.get(mode, 'Lucro nominal')
 
 
+def _current_calculation_mode(*, has_source: bool) -> str:
+    mode = str(st.session_state.get(PRICE_CALCULATOR_MODE_KEY) or '').strip()
+    if mode in CALCULATOR_MODE_LABELS:
+        return mode
+    if mode in CALCULATOR_MODE_MAP:
+        return CALCULATOR_MODE_MAP[mode]
+    return 'fixed_sale_price' if not has_source else 'nominal_profit'
+
+
+def _calculator_result():
+    result = st.session_state.get(PRICE_CALCULATOR_RESULT_KEY)
+    if result is not None:
+        return result
+    return st.session_state.get(GLOBAL_PRICE_RESULT_KEY)
+
+
+def _calculator_ready() -> bool:
+    return bool(st.session_state.get(PRICE_CALCULATOR_READY_KEY, st.session_state.get(GLOBAL_PRICE_READY_KEY, False)))
+
+
 def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict[str, Any]:
-    result = st.session_state.get(GLOBAL_PRICE_RESULT_KEY)
+    result = _calculator_result()
     if result is None:
         current = get_home_pricing_config()
-        current['enabled'] = bool(st.session_state.get(GLOBAL_PRICE_READY_KEY, False))
+        current['enabled'] = _calculator_ready()
         return current
 
     sale_price = float(getattr(result, 'sale_price', 0.0) or 0.0)
@@ -113,16 +136,19 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
     tax_percent = (tax_value / sale_price * 100.0) if sale_price else 0.0
     extra_cost = float(getattr(result, 'extra_cost', 0.0) or 0.0)
     has_source = isinstance(source_df, pd.DataFrame) and not source_df.empty
+    calculator_mode = _current_calculation_mode(has_source=has_source)
 
-    if has_source:
-        calculator_mode = 'nominal_profit'
-        desired_sale_price = 0.0
-        desired_nominal_profit = max(profit, 0.0)
-        desired_contribution_margin_percent = max(margin, 0.0)
-    else:
-        calculator_mode = 'fixed_sale_price'
+    if calculator_mode == 'fixed_sale_price':
         desired_sale_price = sale_price
         desired_nominal_profit = 0.0
+        desired_contribution_margin_percent = 0.0
+    elif calculator_mode == 'contribution_margin':
+        desired_sale_price = 0.0
+        desired_nominal_profit = 0.0
+        desired_contribution_margin_percent = max(margin, 0.0)
+    else:
+        desired_sale_price = 0.0
+        desired_nominal_profit = max(profit, 0.0)
         desired_contribution_margin_percent = 0.0
 
     return normalize_home_pricing_config(
@@ -151,7 +177,7 @@ def render_home_pricing_config_form(source_df: pd.DataFrame | None = None) -> di
     config = _config_from_global_result(source_df=source_df)
     if bool(config.get('enabled', False)):
         if isinstance(source_df, pd.DataFrame) and not source_df.empty:
-            st.success(f'Calculadora pronta para aplicar preço linha a linha. Modo: {_mode_label(config)}.')
+            st.success(f'Calculadora pronta para aplicar preço. Modo: {_mode_label(config)}.')
         else:
             st.success('Simulação avulsa concluída. O preço calculado aparece apenas na tela enquanto não houver fonte de dados.')
     else:
