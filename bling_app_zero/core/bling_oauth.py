@@ -211,12 +211,28 @@ def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> boo
     return not expected
 
 
+def _clear_legacy_query_params() -> None:
+    for key in ('operation', 'flow', 'origem', 'operacao'):
+        try:
+            st.query_params.pop(key, None)
+        except Exception:
+            pass
+
+
+def _force_start_query_params() -> None:
+    try:
+        st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        st.query_params.pop('step', None)
+        _clear_legacy_query_params()
+    except Exception:
+        pass
+
+
 def _force_download_query_params() -> None:
     try:
         st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
         st.query_params['step'] = 'download'
-        st.query_params.pop('operation', None)
-        st.query_params.pop('flow', None)
+        _clear_legacy_query_params()
     except Exception:
         pass
 
@@ -224,21 +240,36 @@ def _force_download_query_params() -> None:
 def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
     session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
-    if return_to != 'download':
-        return
-    restored = restore_download_oauth_return(session_id)
-    st.session_state[RESTORED_AFTER_CALLBACK_KEY] = bool(restored)
-    st.session_state['bling_wizard_step'] = 'download'
+
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+    st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
-    _force_download_query_params()
+    st.session_state['home_entry_context'] = 'bling'
+
+    if return_to == 'start':
+        st.session_state.pop('bling_wizard_step', None)
+        st.session_state.pop('bling_finish_mode', None)
+        st.session_state.pop('skip_direct_bling_connection_this_flow', None)
+        _force_start_query_params()
+        return
+
+    if return_to == 'download':
+        restored = restore_download_oauth_return(session_id)
+        st.session_state[RESTORED_AFTER_CALLBACK_KEY] = bool(restored)
+        st.session_state['bling_wizard_step'] = 'download'
+        _force_download_query_params()
+        return
+
+    _force_start_query_params()
 
 
 def process_oauth_callback() -> None:
     code = _query_param('code')
     if not code:
+        _clear_legacy_query_params()
         return
     if st.session_state.get(CALLBACK_DONE_KEY) == code:
+        _clear_legacy_query_params()
         return
 
     state = _query_param('state')
@@ -252,6 +283,7 @@ def process_oauth_callback() -> None:
             status='ERRO',
             details={'has_expected': bool(expected), 'has_state': bool(state), 'decoded': bool(state_payload), 'responsible_file': RESPONSIBLE_FILE},
         )
+        _clear_legacy_query_params()
         return
 
     ok, message = exchange_code_for_token(code)
@@ -262,12 +294,12 @@ def process_oauth_callback() -> None:
         try:
             st.query_params.pop('code', None)
             st.query_params.pop('state', None)
-            if str(state_payload.get('return_to') or '').strip().lower() == 'download':
-                _force_download_query_params()
+            _restore_oauth_return_context(state_payload)
         except Exception:
             pass
     else:
         st.warning(message)
+        _clear_legacy_query_params()
 
 
 def disconnect() -> None:
