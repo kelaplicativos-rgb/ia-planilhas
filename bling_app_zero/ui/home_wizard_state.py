@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -33,6 +35,7 @@ FINAL_CHECK_REPORT_KEY = 'home_wizard_final_check_report'
 SAFE_FIX_SUGGESTIONS_KEY = 'home_wizard_safe_fix_suggestions'
 FINAL_UNIVERSAL_KEY = 'df_final_universal'
 FINAL_UNIVERSAL_LEGACY_KEY = 'df_final_cadastro'
+SCROLL_TARGET_KEY = 'home_wizard_scroll_target_step'
 STALE_CADASTRO_OPERATION_KEYS = (
     'df_final_download_operation',
     'df_final_preview_operation',
@@ -198,7 +201,16 @@ def current_origin_choice() -> str:
     return origem
 
 
-def select_origin(origin: str, *, set_scroll_target) -> None:
+def _set_scroll_target_safe(set_scroll_target: Callable[[str], None] | None, target_step: str) -> bool:
+    """Define o alvo de rolagem mesmo quando o chamador não envia callback."""
+    if callable(set_scroll_target):
+        set_scroll_target(target_step)
+        return True
+    st.session_state[SCROLL_TARGET_KEY] = target_step
+    return False
+
+
+def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | None = None) -> None:
     origin = normalize_origin_value(origin)
     if origin not in {'arquivo', 'site'}:
         return
@@ -216,7 +228,7 @@ def select_origin(origin: str, *, set_scroll_target) -> None:
         st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     clear_stale_cadastro_operation_state()
     st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
-    set_scroll_target(STEP_ENTRADA)
+    scroll_callback_used = _set_scroll_target_safe(set_scroll_target, STEP_ENTRADA)
     add_audit_event(
         'single_page_origin_selected',
         area='WIZARD',
@@ -226,6 +238,7 @@ def select_origin(origin: str, *, set_scroll_target) -> None:
             'operation': operation,
             'previous_origin': previous_origin,
             'scroll_target': STEP_ENTRADA,
+            'scroll_callback_used': scroll_callback_used,
             'single_page_flow': SINGLE_PAGE_FLOW,
             'responsible_file': RESPONSIBLE_FILE,
         },
