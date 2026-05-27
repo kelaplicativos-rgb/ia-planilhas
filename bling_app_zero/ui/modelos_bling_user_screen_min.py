@@ -28,14 +28,14 @@ MODEL_UPLOAD_LABELS = {
 }
 
 MODEL_UPLOAD_HELP = {
-    'cadastro': 'Anexe o arquivo oficial do Bling em CSV, XLSX, XLS, XLSM ou XLSB. Depois ele ficará salvo para reutilizar, remover ou substituir.',
-    'estoque': 'Anexe o arquivo oficial do Bling em CSV, XLSX, XLS, XLSM ou XLSB. Depois ele ficará salvo para reutilizar, remover ou substituir.',
-    'precos': 'Aceita o arquivo original do Bling, inclusive quando vier compactado em ZIP. O sistema extrai a planilha interna e salva o modelo para atualização de preços.',
+    'cadastro': 'Anexe o arquivo oficial do Bling. Aceita CSV, XLSX, XLS, XLSM, XLSB e também pacote ZIP quando o Bling entregar compactado.',
+    'estoque': 'Anexe o arquivo oficial do Bling. Aceita CSV, XLSX, XLS, XLSM, XLSB e também pacote ZIP quando o Bling entregar compactado.',
+    'precos': 'Anexe o arquivo original baixado do Bling. Pode ser ZIP; o sistema abre o pacote e procura a planilha interna automaticamente.',
 }
 
 PRICE_MODEL_WARNING = (
-    'Atualização de preços aceita o formato original do Bling, inclusive ZIP. '
-    'Depois de salvo, o modelo será usado no fluxo próprio de atualização de preços.'
+    'Atualização de preços aceita o arquivo original do Bling, inclusive quando vier em ZIP. '
+    'O sistema extrai a planilha interna e guarda o modelo para o fluxo próprio de preços.'
 )
 
 
@@ -70,14 +70,14 @@ def _go_to_origin(model_type: str) -> None:
 
 def _show_price_model_block() -> None:
     st.warning(PRICE_MODEL_WARNING)
-    st.caption('Pode anexar o ZIP original baixado do Bling. O sistema vai procurar a planilha dentro do pacote automaticamente.')
+    st.caption('Sem bloqueio por extensão no upload: se o arquivo for ZIP original do Bling, o sistema detecta e extrai automaticamente.')
 
 
 def _show_model(model_type: str) -> None:
     label = MODEL_LABELS.get(model_type, model_type)
     title = MODEL_TITLES.get(model_type, label)
     upload_label = MODEL_UPLOAD_LABELS.get(model_type, f'Anexar ou substituir {label}')
-    upload_help = MODEL_UPLOAD_HELP.get(model_type, 'Anexe o arquivo oficial do Bling apenas uma vez. Depois ele ficará disponível para reutilizar, remover ou substituir.')
+    upload_help = MODEL_UPLOAD_HELP.get(model_type, 'Anexe o arquivo oficial do Bling. O sistema valida o conteúdo após o upload.')
 
     st.markdown('---')
     st.markdown(f'#### {title}')
@@ -105,7 +105,7 @@ def _show_model(model_type: str) -> None:
     uploaded = st.file_uploader(
         upload_label,
         key=f'upload_{model_type}',
-        type=['csv', 'xlsx', 'xls', 'xlsm', 'xlsb', 'zip'],
+        accept_multiple_files=False,
         help=upload_help,
     )
 
@@ -113,7 +113,7 @@ def _show_model(model_type: str) -> None:
         try:
             save_user_model(model_type, uploaded.name, uploaded.getvalue())
             if model_type == PRICE_MODEL_TYPE:
-                st.success('Modelo Bling de atualização de preços salvo com sucesso. ZIP original aceito quando houver planilha interna válida.')
+                st.success('Modelo Bling de atualização de preços salvo com sucesso. Arquivo original/ZIP aceito quando houver planilha interna válida.')
                 st.warning(PRICE_MODEL_WARNING)
             else:
                 st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
