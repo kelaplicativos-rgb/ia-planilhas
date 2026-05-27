@@ -12,6 +12,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import clear_token, get_user_session_id, load_token, save_token
+from bling_app_zero.core.oauth_return_snapshot import restore_download_oauth_return
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
@@ -24,6 +25,8 @@ TOKEN_CONNECTED_AT_KEY = 'bling_oauth_connected_at'
 LAST_ERROR_KEY = 'bling_oauth_last_error'
 EXPECTED_STATE_KEY = 'bling_oauth_expected_state'
 CALLBACK_DONE_KEY = 'bling_oauth_callback_done_for_code'
+RETURN_CONTEXT_KEY = 'bling_oauth_return_context'
+RESTORED_AFTER_CALLBACK_KEY = 'bling_oauth_restored_after_callback'
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -58,23 +61,43 @@ def token_url() -> str:
     return _secret('token_url', TOKEN_URL_DEFAULT)
 
 
-def _new_state() -> str:
-    payload = {
+def _encode_state_payload(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
+def _decode_state_payload(state: str) -> dict[str, Any]:
+    if not state:
+        return {}
+    try:
+        padded = state + '=' * (-len(state) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode('ascii'))
+        data = json.loads(raw.decode('utf-8'))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _new_state(extra_context: dict[str, Any] | None = None) -> str:
+    payload: dict[str, Any] = {
         'nonce': secrets.token_urlsafe(24),
         'created_at': datetime.now().isoformat(timespec='seconds'),
         'source': 'ia_planilhas_bling',
         'session_id': get_user_session_id(),
     }
-    raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+    if isinstance(extra_context, dict):
+        payload.update({k: v for k, v in extra_context.items() if isinstance(k, str)})
+    return _encode_state_payload(payload)
 
 
-def build_authorization_url() -> str:
+def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
     cid = client_id()
     if not cid:
         return ''
-    state = _new_state()
+    state = _new_state(extra_context)
     st.session_state[EXPECTED_STATE_KEY] = state
+    if isinstance(extra_context, dict):
+        st.session_state[RETURN_CONTEXT_KEY] = dict(extra_context)
     params = {
         'response_type': 'code',
         'client_id': cid,
@@ -178,6 +201,21 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
         return False, f'Falha ao conectar ao Bling: {exc}'
 
 
+def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
+    return_to = str(state_payload.get('return_to') or '').strip().lower()
+    session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
+    if return_to != 'download':
+        return
+    restored = restore_download_oauth_return(session_id)
+    st.session_state[RESTORED_AFTER_CALLBACK_KEY] = bool(restored)
+    if restored:
+        try:
+            st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+            st.query_params['step'] = 'download'
+        except Exception:
+            pass
+
+
 def process_oauth_callback() -> None:
     code = _query_param('code')
     if not code:
@@ -187,6 +225,7 @@ def process_oauth_callback() -> None:
 
     state = _query_param('state')
     expected = str(st.session_state.get(EXPECTED_STATE_KEY) or '')
+    state_payload = _decode_state_payload(state)
     if expected and state and state != expected:
         st.session_state[LAST_ERROR_KEY] = 'Retorno OAuth com state diferente do esperado.'
         add_audit_event('bling_oauth_state_mismatch', area='BLING_OAUTH', status='ERRO', details={'responsible_file': RESPONSIBLE_FILE})
@@ -195,10 +234,14 @@ def process_oauth_callback() -> None:
     ok, message = exchange_code_for_token(code)
     st.session_state[CALLBACK_DONE_KEY] = code
     if ok:
+        _restore_oauth_return_context(state_payload)
         st.success(message)
         try:
             st.query_params.pop('code', None)
             st.query_params.pop('state', None)
+            if str(state_payload.get('return_to') or '').strip().lower() == 'download':
+                st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+                st.query_params['step'] = 'download'
         except Exception:
             pass
     else:
@@ -207,7 +250,7 @@ def process_oauth_callback() -> None:
 
 def disconnect() -> None:
     clear_token()
-    for key in (TOKEN_STATE_KEY, TOKEN_CONNECTED_AT_KEY, LAST_ERROR_KEY, EXPECTED_STATE_KEY, CALLBACK_DONE_KEY):
+    for key in (TOKEN_STATE_KEY, TOKEN_CONNECTED_AT_KEY, LAST_ERROR_KEY, EXPECTED_STATE_KEY, CALLBACK_DONE_KEY, RETURN_CONTEXT_KEY, RESTORED_AFTER_CALLBACK_KEY):
         st.session_state.pop(key, None)
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE})
 
