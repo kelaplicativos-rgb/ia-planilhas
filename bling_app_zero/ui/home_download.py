@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from html import escape
-
 import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import is_direct_send_available, send_dataframe_to_bling
-from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
+from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
-from bling_app_zero.core.oauth_return_snapshot import prepare_download_oauth_return
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
     OP_CADASTRO,
@@ -180,37 +177,6 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
         )
 
 
-def _authorization_url_for_download(download_df: pd.DataFrame, operation: str, signature: str) -> str:
-    context = prepare_download_oauth_return(download_df, operation, signature=signature)
-    return build_authorization_url(context)
-
-
-def _render_same_tab_oauth_link(auth_url: str) -> None:
-    safe_url = escape(str(auth_url or ''), quote=True)
-    if not safe_url:
-        return
-    st.markdown(
-        f'''
-<a href="{safe_url}" target="_self" style="
-    display:block;
-    width:100%;
-    box-sizing:border-box;
-    text-align:center;
-    text-decoration:none;
-    font-weight:800;
-    padding:0.72rem 1rem;
-    border-radius:0.75rem;
-    border:1px solid #d1d5db;
-    color:#111827;
-    background:#ffffff;
-">
-    Conectar ao Bling
-</a>
-''',
-        unsafe_allow_html=True,
-    )
-
-
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
@@ -221,13 +187,7 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     status = connection_status()
     connected = bool(status.get('connected')) and is_direct_send_available()
     if not connected:
-        st.warning('Bling não conectado. Conecte o app para liberar o envio direto. Ao voltar do Bling, esta etapa será restaurada automaticamente.')
-        try:
-            auth_url = _authorization_url_for_download(download_df, operation, signature)
-        except Exception as exc:
-            auth_url = ''
-            st.caption(f'Não consegui preparar o retorno automático: {exc}')
-        _render_same_tab_oauth_link(auth_url)
+        st.warning('Bling não conectado. Para usar envio direto, conecte o Bling na primeira etapa do fluxo. O CSV acima continua pronto para importação manual.')
         return
 
     if operation == OP_UNIVERSAL:
