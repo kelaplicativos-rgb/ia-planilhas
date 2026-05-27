@@ -7,20 +7,6 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_api_contract import OP_ATUALIZACAO_PRECO as PRICE_UPDATE_OPERATION
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
 from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
-from bling_app_zero.ui.cadastro_wizard_state import (
-    CADASTRO_MODELO_KEY,
-    CADASTRO_ORIGEM_KEY,
-    CADASTRO_ORIGEM_PRICED_KEY,
-    store_cadastro_context,
-)
-from bling_app_zero.ui.cadastro_wizard_steps import (
-    render_universal_download_step,
-    render_universal_entrada_step,
-    render_universal_mapeamento_step,
-    render_universal_preview_step,
-    universal_context_ready,
-    universal_mapping_ready,
-)
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
     CONTEXT_BLING_CSV,
@@ -78,6 +64,18 @@ from bling_app_zero.ui.home_wizard_ui import render_pending_notice
 from bling_app_zero.ui.mapping_review_panel import render_mapping_review_panel
 from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.scroll_guard import inject_scroll_guard
+from bling_app_zero.ui.universal_download_step import render_universal_download_step
+from bling_app_zero.ui.universal_entry_step import render_universal_entrada_step
+from bling_app_zero.ui.universal_mapping_step import render_universal_mapeamento_step
+from bling_app_zero.ui.universal_preview_step import render_universal_preview_step
+from bling_app_zero.ui.universal_wizard_state import (
+    UNIVERSAL_MODELO_KEY as CADASTRO_MODELO_KEY,
+    UNIVERSAL_ORIGEM_KEY as CADASTRO_ORIGEM_KEY,
+    UNIVERSAL_ORIGEM_PRICED_KEY as CADASTRO_ORIGEM_PRICED_KEY,
+    store_universal_context as store_cadastro_context,
+    universal_context_ready,
+    universal_mapping_ready,
+)
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
