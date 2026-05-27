@@ -6,6 +6,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.ui.links_uteis import render_links_uteis
 from bling_app_zero.ui.modelos_bling import render_modelos_bling
+from bling_app_zero.ui.scroll_position import request_scroll_top
 from bling_app_zero.v2.price_multistore.quick_ui import render_quick_price_calculator
 from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 
@@ -75,6 +76,7 @@ def _set_home_flow() -> None:
 
 
 def _set_flow(flow: str, step: str | None = None) -> None:
+    request_scroll_top()
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
