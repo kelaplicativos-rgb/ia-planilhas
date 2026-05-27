@@ -39,6 +39,10 @@ FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
 
 DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
@@ -46,6 +50,22 @@ DIRECT_SEND_TEXT = {
     OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
     OP_UNIVERSAL: 'Envio direto ao Bling',
 }
+
+
+def _entry_context() -> str:
+    return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+
+
+def _is_api_context() -> bool:
+    return _entry_context() == CONTEXT_BLING_API
+
+
+def _is_universal_context() -> bool:
+    return _entry_context() == CONTEXT_UNIVERSAL
+
+
+def _is_bling_csv_context() -> bool:
+    return _entry_context() == CONTEXT_BLING_CSV
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -58,7 +78,7 @@ def df_signature(df: pd.DataFrame) -> str:
 
 
 def download_label() -> str:
-    return '⬇️ Baixar CSV Bling pronto para importar'
+    return '⬇️ Baixar CSV pronto'
 
 
 def preserve_flow_after_download(operation: str) -> None:
@@ -74,6 +94,7 @@ def preserve_flow_after_download(operation: str) -> None:
     try:
         st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
         st.query_params['step'] = 'download'
+        st.query_params.pop('operation', None)
     except Exception:
         pass
 
@@ -86,7 +107,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     add_audit_event(
         'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
-        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True},
+        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context()},
     )
 
 
@@ -161,12 +182,12 @@ def save_download_snapshot(
 def _render_optional_template_download(download_df: pd.DataFrame, key: str, signature: str, rules_sig: str) -> None:
     template_export = build_template_download(download_df.copy())
     if template_export is None:
-        st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora. O CSV Bling acima continua pronto para importação.')
+        st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora.')
         return
 
     template_bytes, template_file_name, template_mime = template_export
     with st.expander('Opcional · Baixar também no formato do modelo anexado', expanded=False):
-        st.caption('Use esta opção apenas se quiser manter o formato original do modelo. Para importar no Bling, prefira o CSV principal acima.')
+        st.caption('Use esta opção apenas se quiser manter o formato original do modelo.')
         st.download_button(
             '⬇️ Baixar modelo preenchido',
             data=template_bytes,
@@ -182,20 +203,23 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
 
     st.markdown('##### Envio direto ao Bling')
-    st.caption('Use esta opção para mandar o mesmo resultado final para o Bling conectado, sem baixar e importar manualmente.')
+    st.caption('Envia o resultado final diretamente para o Bling conectado.')
 
     status = connection_status()
     connected = bool(status.get('connected')) and is_direct_send_available()
     if not connected:
-        st.warning('Bling não conectado. Para usar envio direto, conecte o Bling na primeira etapa do fluxo. O CSV acima continua pronto para importação manual.')
+        st.warning('Bling não conectado. Volte ao início do caminho Bling API e conecte antes de enviar.')
         return
 
     if operation == OP_UNIVERSAL:
-        st.warning('Envio direto exige operação definida: cadastro, estoque ou atualização de preços. Use o CSV se este fluxo for universal.')
+        st.warning('Envio direto exige operação definida: cadastro, estoque ou atualização de preços.')
         return
 
-    st.success('Bling conectado. Você pode usar o envio direto pela API do app.')
+    st.success('Bling conectado. Envio direto disponível.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
+
+    with st.expander('Prévia dos dados que serão enviados', expanded=False):
+        st.dataframe(download_df.head(50), use_container_width=True)
 
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
@@ -211,30 +235,32 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
             st.caption(error)
 
 
-def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
-    if df is None or df.empty:
-        snapshot = st.session_state.get(FINAL_DOWNLOAD_DF_SNAPSHOT_KEY)
-        if isinstance(snapshot, pd.DataFrame) and not snapshot.empty:
-            df = snapshot.copy().fillna('')
-        else:
-            st.warning('Ainda não há dados finais para baixar.')
-            return
+def _render_api_final(df: pd.DataFrame, operation: str, key: str) -> None:
+    operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or st.session_state.get('home_slim_flow_operation') or OP_UNIVERSAL)
+    signature = df_signature(df)
+    rules_sig = rules_signature()
+    st.markdown(f'##### {operation_badge(operation)}')
+    st.caption('Saída principal deste caminho: envio direto pela API. Não é necessário gerar CSV nem anexar modelo.')
+    _render_direct_bling_send(df.copy().fillna(''), operation, key, signature, rules_sig)
 
+
+def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or OP_UNIVERSAL)
     operation_title = operation_label(operation)
     st.markdown(f'##### {operation_badge(operation)}')
-    st.caption(f'Arquivo final: {operation_title}. A saída principal agora é CSV com separador ; e UTF-8-SIG.')
+    st.caption(f'Arquivo final: {operation_title}. A saída principal é CSV com separador ; e UTF-8-SIG.')
 
     if st.session_state.pop('final_download_done', False):
-        st.success('✅ Download concluído. Os dados continuam preservados nesta tela para você continuar usando o sistema.')
+        st.success('✅ Download concluído. Os dados continuam preservados nesta tela.')
 
     download_df, contract_applied, model_columns = download_dataframe_for_contract(df, operation)
     if not contract_applied:
-        st.warning('Reenvie a planilha modelo antes de baixar.')
-        add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO')
+        message = 'Reenvie a planilha modelo antes de baixar.' if not _is_universal_context() else 'Reenvie o modelo universal antes de baixar.'
+        st.warning(message)
+        add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO', details={'home_entry_context': _entry_context()})
         return
 
-    st.success('Modelo de destino aplicado. O CSV final será gerado respeitando as colunas do modelo.')
+    st.success('Modelo de destino aplicado. O arquivo final será gerado respeitando as colunas do modelo.')
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
 
@@ -255,7 +281,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     rules_sig = rules_signature()
     csv_bytes = to_bling_csv_bytes(download_df.copy(), operation=operation, contract_columns=model_columns)
     csv_file_name = filename_for_operation(operation)
-    widget_key = f'download_csv_bling_{key}_{signature}_{rules_sig}'
+    widget_key = f'download_csv_{_entry_context() or "fluxo"}_{key}_{signature}_{rules_sig}'
     save_download_snapshot(
         download_df=download_df,
         file_bytes=csv_bytes,
@@ -267,9 +293,10 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         widget_key=widget_key,
     )
 
-    st.success('CSV Bling pronto para importação.')
+    label = '⬇️ Baixar CSV Bling pronto para importar' if _is_bling_csv_context() else '⬇️ Baixar arquivo final'
+    st.success('Arquivo final pronto.')
     st.download_button(
-        download_label(),
+        label,
         data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, csv_bytes),
         file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or csv_file_name),
         mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or 'text/csv'),
@@ -279,8 +306,23 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         args=(operation, signature, rules_sig),
     )
 
-    _render_direct_bling_send(download_df, operation, key, signature, rules_sig)
     _render_optional_template_download(download_df, key, signature, rules_sig)
+
+
+def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
+    if df is None or df.empty:
+        snapshot = st.session_state.get(FINAL_DOWNLOAD_DF_SNAPSHOT_KEY)
+        if isinstance(snapshot, pd.DataFrame) and not snapshot.empty:
+            df = snapshot.copy().fillna('')
+        else:
+            st.warning('Ainda não há dados finais para concluir.')
+            return
+
+    if _is_api_context():
+        _render_api_final(df, operation, key)
+        return
+
+    _render_csv_final(df, operation, key)
 
 
 __all__ = [
