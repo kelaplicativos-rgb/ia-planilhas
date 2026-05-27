@@ -10,6 +10,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
     CADASTRO_ORIGEM_PRICED_KEY,
+    store_cadastro_context,
 )
 from bling_app_zero.ui.cadastro_wizard_steps import (
     render_universal_download_step,
@@ -63,13 +64,87 @@ from bling_app_zero.ui.home_wizard_ui import render_pending_notice
 from bling_app_zero.ui.mapping_review_panel import render_mapping_review_panel
 from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.scroll_guard import inject_scroll_guard
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
+PRICE_UPDATE_OPERATION = 'atualizacao_preco'
 
 
 def _section_title(number: int, title: str) -> None:
     st.markdown('---')
     st.markdown(f'### {number}. {title}')
+
+
+def _current_contract_operation() -> str:
+    for value in (
+        st.session_state.get(MODEL_CONTRACT_TYPE_KEY),
+        st.session_state.get('home_slim_flow_operation'),
+        st.session_state.get('home_detected_operation'),
+        st.session_state.get('operacao_final'),
+        st.session_state.get('tipo_operacao_final'),
+    ):
+        operation = normalize_contract_operation(value)
+        if operation:
+            return operation
+    return UNIVERSAL_OPERATION
+
+
+def _is_price_update_contract() -> bool:
+    return _current_contract_operation() == PRICE_UPDATE_OPERATION
+
+
+def _price_update_model_df() -> pd.DataFrame | None:
+    for key in (
+        'home_modelo_atualizacao_preco_df',
+        'df_modelo_atualizacao_preco',
+        'modelo_atualizacao_preco_df',
+        CADASTRO_MODELO_KEY,
+    ):
+        df = st.session_state.get(key)
+        if isinstance(df, pd.DataFrame) and len(df.columns):
+            return df.copy().fillna('')
+    return None
+
+
+def _bind_price_update_single_sheet() -> bool:
+    """Atualização de preços usa a mesma planilha como origem e contrato final."""
+    df_modelo = _price_update_model_df()
+    if not isinstance(df_modelo, pd.DataFrame) or not len(df_modelo.columns):
+        return False
+
+    df_origem = df_modelo.copy().fillna('')
+    store_cadastro_context(df_origem, df_modelo, None)
+    st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_origem.copy().fillna('')
+    st.session_state['home_slim_flow_origin'] = 'arquivo'
+    st.session_state['origem_final'] = 'arquivo'
+    st.session_state['operacao_final'] = PRICE_UPDATE_OPERATION
+    st.session_state['tipo_operacao_final'] = PRICE_UPDATE_OPERATION
+    st.session_state['home_detected_operation'] = PRICE_UPDATE_OPERATION
+    st.session_state['home_slim_flow_operation'] = PRICE_UPDATE_OPERATION
+    st.session_state[MODEL_CONTRACT_TYPE_KEY] = PRICE_UPDATE_OPERATION
+    add_audit_event(
+        'price_update_single_sheet_bound',
+        area='PRECOS',
+        step='entrada',
+        status='OK',
+        details={
+            'rows': len(df_origem),
+            'columns': len(df_origem.columns),
+            'mode': 'same_sheet_as_source_and_contract',
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return True
+
+
+def _render_price_update_single_sheet_notice() -> None:
+    if _bind_price_update_single_sheet():
+        st.success('Atualização de preços detectada: a planilha anexada será usada como origem e como modelo final. Não é necessário enviar outra planilha.')
+        df = st.session_state.get(CADASTRO_ORIGEM_KEY)
+        if isinstance(df, pd.DataFrame):
+            st.caption(f'Planilha única vinculada · {len(df)} linha(s) · {len(df.columns)} coluna(s).')
+    else:
+        render_pending_notice('Anexe a planilha de atualização de preços para continuar.')
 
 
 def _render_model_step() -> None:
@@ -80,10 +155,17 @@ def _render_model_step() -> None:
     with st.container(border=True):
         render_home_bling_models()
     ensure_universal_operation_state()
+    if _is_price_update_contract():
+        _bind_price_update_single_sheet()
 
 
 def _render_origin_step(section_number: int = 2) -> None:
     render_step_anchor(STEP_ORIGEM)
+    if _is_price_update_contract():
+        _section_title(section_number, 'Planilha única de atualização de preços')
+        _render_price_update_single_sheet_notice()
+        return
+
     _section_title(section_number, 'Origem dos dados')
     if not has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
@@ -106,6 +188,11 @@ def _render_origin_step(section_number: int = 2) -> None:
 def _render_universal_entrada(section_number: int = 3) -> None:
     origin = current_origin_choice()
     render_step_anchor(STEP_ENTRADA)
+    if _is_price_update_contract():
+        _section_title(section_number, 'Dados da atualização de preços')
+        _render_price_update_single_sheet_notice()
+        return
+
     _section_title(section_number, 'Dados do fornecedor')
     if not has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
@@ -119,7 +206,7 @@ def _render_universal_entrada(section_number: int = 3) -> None:
         step=STEP_ENTRADA,
         details={
             'origin': origin,
-            'operation': UNIVERSAL_OPERATION,
+            'operation': _current_contract_operation(),
             'single_page_flow': SINGLE_PAGE_FLOW,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -154,7 +241,13 @@ def _apply_pricing_step_result() -> None:
 
 def _render_pricing_step(section_number: int = 4) -> None:
     render_step_anchor(STEP_PRECIFICACAO)
-    _section_title(section_number, 'Preço')
+    if _is_price_update_contract():
+        _section_title(section_number, 'Preço')
+        _render_price_update_single_sheet_notice()
+        st.caption('A planilha de atualização de preços já contém a estrutura e a origem. Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
+
+    else:
+        _section_title(section_number, 'Preço')
     if not has_home_models():
         render_pending_notice('Liberado após anexar o modelo.')
         return
@@ -170,19 +263,23 @@ def _render_pricing_step(section_number: int = 4) -> None:
             _apply_pricing_step_result()
     else:
         disable_home_pricing()
-        clear_cadastro_pricing_state()
+        if not _is_price_update_contract():
+            clear_cadastro_pricing_state()
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
 def _render_universal_mapeamento(section_number: int = 5) -> None:
     render_step_anchor(STEP_MAPEAMENTO)
-    _section_title(section_number, 'Mapear campos')
+    title = 'Conferir campos da atualização' if _is_price_update_contract() else 'Mapear campos'
+    _section_title(section_number, title)
     if not has_home_models():
         render_pending_notice('Liberado após modelo e dados.')
         return
     if not universal_context_ready():
         render_pending_notice('Carregue os dados primeiro.')
         return
+    if _is_price_update_contract():
+        st.caption('A mesma planilha foi vinculada como origem e modelo. Confirme os campos para manter o contrato do arquivo final.')
     render_universal_mapeamento_step()
 
 
