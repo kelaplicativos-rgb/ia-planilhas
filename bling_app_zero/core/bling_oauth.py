@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -11,6 +11,7 @@ import requests
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_token_store import clear_token, get_user_session_id, load_token, save_token
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/OAuth2/views/authorization.php'
@@ -79,6 +80,7 @@ def _new_state() -> str:
         'nonce': secrets.token_urlsafe(24),
         'created_at': datetime.now().isoformat(timespec='seconds'),
         'source': 'ia_planilhas_bling',
+        'session_id': get_user_session_id(),
     }
     raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
     return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
@@ -100,20 +102,21 @@ def build_authorization_url() -> str:
 
 
 def is_connected() -> bool:
-    token = st.session_state.get(TOKEN_STATE_KEY)
+    token, _meta = load_token()
     return isinstance(token, dict) and bool(token.get('access_token'))
 
 
 def connection_status() -> dict[str, Any]:
-    token = st.session_state.get(TOKEN_STATE_KEY)
+    token, meta = load_token()
     if not isinstance(token, dict):
-        return {'connected': False, 'message': 'Bling não conectado.'}
-    connected_at = str(st.session_state.get(TOKEN_CONNECTED_AT_KEY) or '')
-    expires_in = token.get('expires_in')
+        return {'connected': False, 'message': 'Bling não conectado.', **meta}
     return {
         'connected': bool(token.get('access_token')),
-        'connected_at': connected_at,
-        'expires_in': expires_in,
+        'connected_at': meta.get('connected_at', ''),
+        'expires_at': meta.get('expires_at', ''),
+        'expires_in': token.get('expires_in'),
+        'store_mode': meta.get('store_mode', ''),
+        'user_session_id': meta.get('user_session_id', ''),
         'message': 'Bling conectado.' if token.get('access_token') else 'Bling não conectado.',
     }
 
@@ -168,14 +171,13 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
             )
             return False, f'Falha ao conectar ao Bling. Status {response.status_code}.'
         data = response.json()
-        st.session_state[TOKEN_STATE_KEY] = data
-        st.session_state[TOKEN_CONNECTED_AT_KEY] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        save_token(data)
         st.session_state.pop(LAST_ERROR_KEY, None)
         add_audit_event(
             'bling_oauth_connected',
             area='BLING_OAUTH',
             status='OK',
-            details={'expires_in': data.get('expires_in'), 'responsible_file': RESPONSIBLE_FILE},
+            details={'expires_in': data.get('expires_in'), 'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE},
         )
         return True, 'Bling conectado com sucesso.'
     except Exception as exc:
@@ -222,9 +224,10 @@ def process_oauth_callback() -> None:
 
 
 def disconnect() -> None:
+    clear_token()
     for key in (TOKEN_STATE_KEY, TOKEN_CONNECTED_AT_KEY, LAST_ERROR_KEY, EXPECTED_STATE_KEY, CALLBACK_DONE_KEY):
         st.session_state.pop(key, None)
-    add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = [
