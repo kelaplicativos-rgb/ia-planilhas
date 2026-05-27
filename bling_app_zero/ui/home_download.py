@@ -5,6 +5,8 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_direct_sender import is_direct_send_available, send_dataframe_to_bling
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
@@ -37,6 +39,13 @@ FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
+
+DIRECT_SEND_TEXT = {
+    OP_CADASTRO: 'Cadastrar produtos no Bling',
+    OP_ESTOQUE: 'Atualizar estoque no Bling',
+    OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
+    OP_UNIVERSAL: 'Enviar fluxo direto ao Bling',
+}
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -168,6 +177,51 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
         )
 
 
+def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
+    operation = normalize_operation(operation)
+    title = DIRECT_SEND_TEXT.get(operation, 'Enviar fluxo direto ao Bling')
+
+    st.markdown('##### Enviar direto ao Bling')
+    st.caption('Use esta opção para mandar o mesmo resultado final do fluxo para o Bling conectado, sem baixar e importar manualmente.')
+
+    status = connection_status()
+    connected = bool(status.get('connected')) and is_direct_send_available()
+    if not connected:
+        st.warning('Bling não conectado. Conecte o app para liberar o envio direto.')
+        try:
+            auth_url = build_authorization_url()
+        except Exception:
+            auth_url = ''
+        if auth_url:
+            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+        return
+
+    if operation == OP_UNIVERSAL:
+        st.warning('Envio direto exige operação definida: cadastro, estoque ou atualização de preços. Use o CSV se este fluxo for universal.')
+        return
+
+    st.success('Bling conectado. Você pode enviar este fluxo diretamente pela API do app.')
+    st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
+
+    confirm_key = f'confirm_direct_bling_{key}_{signature}_{rules_sig}'
+    confirmed = st.checkbox(
+        'Confirmo que revisei o preview final e quero enviar este fluxo direto ao Bling.',
+        key=confirm_key,
+    )
+    button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
+    if st.button(f'🚀 {title}', use_container_width=True, disabled=not confirmed, key=button_key):
+        with st.spinner('Enviando fluxo ao Bling...'):
+            result = send_dataframe_to_bling(download_df.copy(), operation)
+        if result.sent and not result.failed and not result.skipped:
+            st.success(f'Envio concluído: {result.sent} linha(s) enviada(s) ao Bling.')
+        elif result.sent:
+            st.warning(f'Envio parcial: {result.sent} enviada(s), {result.failed} falha(s), {result.skipped} ignorada(s).')
+        else:
+            st.error(f'Nenhuma linha foi enviada. Falhas: {result.failed}. Ignoradas: {result.skipped}.')
+        for error in result.errors:
+            st.caption(error)
+
+
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
         snapshot = st.session_state.get(FINAL_DOWNLOAD_DF_SNAPSHOT_KEY)
@@ -236,6 +290,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         args=(operation, signature, rules_sig),
     )
 
+    _render_direct_bling_send(download_df, operation, key, signature, rules_sig)
     _render_optional_template_download(download_df, key, signature, rules_sig)
 
 
