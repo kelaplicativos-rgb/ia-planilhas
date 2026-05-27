@@ -4,9 +4,7 @@ import streamlit as st
 
 from bling_app_zero.production.production_config import (
     PRODUCTION_MODE_KEY,
-    admin_mode_enabled,
     get_production_config,
-    set_admin_mode,
 )
 from bling_app_zero.production.user_context import clear_current_user, get_current_user, set_demo_user
 
@@ -14,9 +12,6 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/production_sidebar.py'
 
 
 def render_production_sidebar() -> None:
-    if not admin_mode_enabled():
-        return
-
     with st.sidebar:
         with st.expander('🚀 Produção MapeiaAI', expanded=False):
             config = get_production_config()
@@ -47,9 +42,6 @@ def render_production_sidebar() -> None:
                     st.rerun()
 
             st.caption('Produção real: substituir usuário demo por Supabase Auth/Clerk/Auth0.')
-            if st.button('Bloquear painel técnico', use_container_width=True, key='mapeiaai_disable_admin_mode'):
-                set_admin_mode(False)
-                st.rerun()
 
 
 __all__ = ['render_production_sidebar']
