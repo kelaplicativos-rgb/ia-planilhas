@@ -17,7 +17,7 @@ from bling_app_zero.core.oauth_return_snapshot import restore_download_oauth_ret
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
-PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas-bling.streamlit.app'
+PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas.streamlit.app'
 CLIENT_ID_DEFAULT = ''
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
@@ -102,6 +102,7 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
     params = {
         'response_type': 'code',
         'client_id': cid,
+        'redirect_uri': redirect_uri(),
         'state': state,
     }
     return f'{authorize_url()}?{urlencode(params)}'
@@ -178,7 +179,7 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
                 'bling_oauth_token_error',
                 area='BLING_OAUTH',
                 status='ERRO',
-                details={'status_code': response.status_code, 'response_preview': text, 'responsible_file': RESPONSIBLE_FILE},
+                details={'status_code': response.status_code, 'response_preview': text, 'redirect_uri': uri, 'responsible_file': RESPONSIBLE_FILE},
             )
             return False, f'Falha ao conectar ao Bling. Status {response.status_code}.'
         data = response.json()
@@ -188,7 +189,7 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
             'bling_oauth_connected',
             area='BLING_OAUTH',
             status='OK',
-            details={'expires_in': data.get('expires_in'), 'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE},
+            details={'expires_in': data.get('expires_in'), 'user_session_id': get_user_session_id(), 'redirect_uri': uri, 'responsible_file': RESPONSIBLE_FILE},
         )
         return True, 'Bling conectado com sucesso.'
     except Exception as exc:
@@ -197,7 +198,7 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
             'bling_oauth_exception',
             area='BLING_OAUTH',
             status='ERRO',
-            details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+            details={'error': str(exc), 'redirect_uri': uri, 'responsible_file': RESPONSIBLE_FILE},
         )
         return False, f'Falha ao conectar ao Bling: {exc}'
 
@@ -210,6 +211,16 @@ def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> boo
     return not expected
 
 
+def _force_download_query_params() -> None:
+    try:
+        st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        st.query_params['step'] = 'download'
+        st.query_params.pop('operation', None)
+        st.query_params.pop('flow', None)
+    except Exception:
+        pass
+
+
 def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
     session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
@@ -217,12 +228,10 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
         return
     restored = restore_download_oauth_return(session_id)
     st.session_state[RESTORED_AFTER_CALLBACK_KEY] = bool(restored)
-    if restored:
-        try:
-            st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
-            st.query_params['step'] = 'download'
-        except Exception:
-            pass
+    st.session_state['bling_wizard_step'] = 'download'
+    st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+    st.session_state['home_single_page_flow_active'] = True
+    _force_download_query_params()
 
 
 def process_oauth_callback() -> None:
@@ -254,8 +263,7 @@ def process_oauth_callback() -> None:
             st.query_params.pop('code', None)
             st.query_params.pop('state', None)
             if str(state_payload.get('return_to') or '').strip().lower() == 'download':
-                st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
-                st.query_params['step'] = 'download'
+                _force_download_query_params()
         except Exception:
             pass
     else:
