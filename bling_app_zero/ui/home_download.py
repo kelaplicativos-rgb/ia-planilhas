@@ -25,6 +25,12 @@ from bling_app_zero.core.template_download_exporter import (
     output_name_for_template,
 )
 from bling_app_zero.core.validators import validate_final_df
+from bling_app_zero.ui.flow_context import (
+    entry_context as _entry_context,
+    is_bling_api_context as _is_api_context,
+    is_bling_csv_context as _is_bling_csv_context,
+    is_universal_context as _is_universal_context,
+)
 from bling_app_zero.universal.contract_adapter import adapt_dataframe_to_model_contract, model_for_operation
 
 DESTINATION_MODEL_UPLOAD_OBJECT_KEY = 'destination_model_upload_object'
@@ -39,10 +45,6 @@ FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
-HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
-CONTEXT_BLING_API = 'bling_api'
-CONTEXT_BLING_CSV = 'bling_csv'
-CONTEXT_UNIVERSAL = 'universal'
 
 DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
@@ -50,22 +52,6 @@ DIRECT_SEND_TEXT = {
     OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
     OP_UNIVERSAL: 'Envio direto ao Bling',
 }
-
-
-def _entry_context() -> str:
-    return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-
-
-def _is_api_context() -> bool:
-    return _entry_context() == CONTEXT_BLING_API
-
-
-def _is_universal_context() -> bool:
-    return _entry_context() == CONTEXT_UNIVERSAL
-
-
-def _is_bling_csv_context() -> bool:
-    return _entry_context() == CONTEXT_BLING_CSV
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -107,7 +93,13 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     add_audit_event(
         'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
-        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context()},
+        details={
+            'operation': operation,
+            'signature': signature,
+            'rules_signature': rules_sig,
+            'download_state_preserved': True,
+            'home_entry_context': _entry_context(),
+        },
     )
 
 
@@ -265,6 +257,21 @@ def _render_api_final(df: pd.DataFrame, operation: str, key: str) -> None:
     _render_direct_bling_send(df.copy().fillna(''), operation, key, signature, rules_sig)
 
 
+def _render_validation_errors(errors: list[str], operation: str) -> None:
+    if not errors:
+        return
+    try:
+        with st.expander(f'{operation_badge(operation)} · Conferência antes do download', expanded=True):
+            for error in errors:
+                st.warning(error)
+    except StreamlitAPIException as exc:
+        if 'Expanders may not be nested' not in str(exc):
+            raise
+        st.markdown(f'##### {operation_badge(operation)} · Conferência antes do download')
+        for error in errors:
+            st.warning(error)
+
+
 def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or OP_UNIVERSAL)
     operation_title = operation_label(operation)
@@ -285,18 +292,7 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
 
-    errors = validate_final_df(download_df, operation)
-    if errors:
-        try:
-            with st.expander(f'{operation_badge(operation)} · Conferência antes do download', expanded=True):
-                for error in errors:
-                    st.warning(error)
-        except StreamlitAPIException as exc:
-            if 'Expanders may not be nested' not in str(exc):
-                raise
-            st.markdown(f'##### {operation_badge(operation)} · Conferência antes do download')
-            for error in errors:
-                st.warning(error)
+    _render_validation_errors(validate_final_df(download_df, operation), operation)
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
