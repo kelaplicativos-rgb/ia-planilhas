@@ -15,6 +15,7 @@ from bling_app_zero.ui.home_models_state import (
     df_log_summary,
     models_signature,
 )
+from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models_upload.py'
 
@@ -51,9 +52,9 @@ def auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, e
             },
         )
         return
-
     st.session_state[MODEL_UPLOAD_AUTOFORWARDED_KEY] = signature
     st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    set_scroll_target(STEP_ORIGEM)
     add_audit_event(
         'home_model_uploaded_auto_forward_to_origin',
         area='MODELO',
@@ -63,6 +64,7 @@ def auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, e
             'signature': signature,
             'previous_signature': previous_signature,
             'target_step': STEP_ORIGEM,
+            'scroll_target': STEP_ORIGEM,
             'cadastro': df_log_summary(cadastro_model),
             'estoque': df_log_summary(estoque_model),
             'responsible_file': RESPONSIBLE_FILE,
