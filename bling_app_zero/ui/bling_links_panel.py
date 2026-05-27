@@ -22,30 +22,30 @@ VALID_OPERATIONS = {'cadastro', 'estoque'}
 
 DEFAULT_POST_DOWNLOAD_LINKS: list[dict[str, str]] = [
     {
-        'label': 'Importar / atualizar produtos no Bling',
+        'label': 'Abrir importador de produtos do Bling',
         'url': 'https://www.bling.com.br/importador.produtos.php',
-        'hint': 'Use este caminho quando o CSV final for para cadastro ou atualização de produtos.',
+        'hint': 'Use somente no caminho Bling CSV, depois de baixar o CSV de cadastro/atualização de produtos.',
         'operation': 'cadastro',
-        'kind': 'bling',
+        'kind': 'bling_csv',
     },
     {
-        'label': 'Importar / atualizar estoque no Bling',
+        'label': 'Abrir importador de estoque do Bling',
         'url': 'https://www.bling.com.br/importador.saldos.estoque.php',
-        'hint': 'Use este caminho quando o CSV final for para saldo, balanço ou atualização de estoque.',
+        'hint': 'Use somente no caminho Bling CSV, depois de baixar o CSV de saldo/balanço/estoque.',
         'operation': 'estoque',
-        'kind': 'bling',
+        'kind': 'bling_csv',
     },
     {
-        'label': 'Atualizar preços / vínculos multiloja no Bling',
+        'label': 'Abrir importador de preços multiloja do Bling',
         'url': 'https://www.bling.com.br/importador.precos.produtos.multiloja.php',
-        'hint': 'Use depois do cadastro quando precisar importar preços por loja, canal ou multiloja.',
+        'hint': 'Use somente quando o arquivo final for para preços/vínculos por loja, canal ou multiloja.',
         'operation': 'cadastro',
-        'kind': 'bling',
+        'kind': 'bling_csv',
     },
     {
         'label': 'Central de ajuda do Bling',
         'url': 'https://ajuda.bling.com.br/hc/pt-br',
-        'hint': 'Consulte a documentação oficial se o Bling mudar alguma tela de importação.',
+        'hint': 'Documentação oficial. Consulte se o Bling mudar telas, importadores ou regras de CSV.',
         'operation': 'todos',
         'kind': 'help',
     },
@@ -88,6 +88,14 @@ def _current_operation() -> str:
     return 'cadastro'
 
 
+def _entry_context() -> str:
+    return str(st.session_state.get('home_entry_context') or '').strip().lower()
+
+
+def _is_api_context() -> bool:
+    return _entry_context() == 'bling_api'
+
+
 def _normalize_url(value: object) -> str:
     url = _normalize_text(value)
     if not url:
@@ -115,7 +123,7 @@ def _sanitize_link(item: object) -> dict[str, str] | None:
 
     label = _normalize_text(item.get('label'))[:90]
     url = _normalize_url(item.get('url'))
-    hint = _normalize_text(item.get('hint'))[:180]
+    hint = _normalize_text(item.get('hint'))[:220]
     operation = _normalize_text(item.get('operation')).lower() or 'todos'
     kind = _normalize_text(item.get('kind')).lower() or 'custom'
 
@@ -161,10 +169,7 @@ def _ensure_links_state() -> None:
             'post_download_links_initialized',
             area='DOWNLOAD_LINKS',
             status='OK',
-            details={
-                'links_count': len(DEFAULT_POST_DOWNLOAD_LINKS),
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'links_count': len(DEFAULT_POST_DOWNLOAD_LINKS), 'responsible_file': RESPONSIBLE_FILE},
         )
         return
 
@@ -183,10 +188,7 @@ def _save_links(links: list[dict[str, str]], event_name: str = 'post_download_li
         event_name,
         area='DOWNLOAD_LINKS',
         status='OK',
-        details={
-            'links_count': len(clean_links),
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'links_count': len(clean_links), 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -224,34 +226,27 @@ def _start_price_multistore_flow() -> None:
     except Exception:
         pass
 
-    add_audit_event(
-        'post_download_price_multistore_opened',
-        area='DOWNLOAD_LINKS',
-        status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('post_download_price_multistore_opened', area='DOWNLOAD_LINKS', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
     st.rerun()
 
 
 def _render_next_flow_card(operation: str) -> None:
     st.markdown('#### Continuar no sistema')
 
+    if _is_api_context():
+        st.success('Este resultado pertence ao caminho Bling API. O envio correto é pelo botão de envio direto, não por importador CSV.')
+        st.caption('Os links abaixo são úteis apenas se você também quiser consultar telas/importadores do Bling manualmente.')
+        return
+
     if operation == 'cadastro':
         st.info(
-            'Depois de baixar o CSV de cadastro, o próximo passo comum é atualizar preços/vínculos por loja ou importar o arquivo no Bling.',
+            'Depois de baixar o CSV de cadastro, você pode importar produtos no Bling ou seguir para preços/vínculos multiloja.',
             icon='➡️',
         )
-        if st.button(
-            'Abrir fluxo de atualizar preços multiloja',
-            use_container_width=True,
-            key='post_download_open_price_multistore',
-        ):
+        if st.button('Abrir fluxo de atualizar preços multiloja', use_container_width=True, key='post_download_open_price_multistore'):
             _start_price_multistore_flow()
     else:
-        st.info(
-            'Depois de baixar o CSV de estoque, importe o arquivo no Bling pelo importador de saldos/estoque.',
-            icon='➡️',
-        )
+        st.info('Depois de baixar o CSV de estoque, importe o arquivo pelo importador de saldos/estoque do Bling.', icon='➡️')
 
 
 def _render_link_button(item: dict[str, str], index: int) -> None:
@@ -268,11 +263,7 @@ def _render_link_button(item: dict[str, str], index: int) -> None:
         if hint:
             st.caption(hint)
 
-        add_debug(
-            f'Link pós-download exibido: index={index}; label={label}',
-            origin='DOWNLOAD_LINKS',
-            level='INFO',
-        )
+        add_debug(f'Link pós-download exibido: index={index}; label={label}', origin='DOWNLOAD_LINKS', level='INFO')
 
 
 def _add_custom_link(label: str, url: str, hint: str, operation: str) -> tuple[bool, str]:
@@ -306,11 +297,7 @@ def _delete_link(index: int) -> None:
 
     removed = links.pop(index)
     _save_links(links, event_name='post_download_link_deleted')
-    add_debug(
-        f'Link pós-download excluído: {removed.get("label", "")}',
-        origin='DOWNLOAD_LINKS',
-        level='INFO',
-    )
+    add_debug(f'Link pós-download excluído: {removed.get("label", "")}', origin='DOWNLOAD_LINKS', level='INFO')
 
 
 def _move_link(index: int, delta: int) -> None:
@@ -344,7 +331,7 @@ def _render_add_link_form(operation: str) -> None:
 
 def _render_edit_links_panel(operation: str) -> None:
     st.markdown('#### Personalizar links úteis')
-    st.caption('Mesmo sem conta de usuário, estes links ficam personalizados nesta sessão. O usuário pode adicionar, excluir ou reordenar.')
+    st.caption('Estes links ficam personalizados nesta sessão. Você pode adicionar, excluir ou reordenar.')
 
     _render_add_link_form(operation)
 
@@ -388,25 +375,17 @@ def _render_edit_links_panel(operation: str) -> None:
 
 
 def render_bling_links_panel() -> None:
-    """Mostra os próximos passos logo após o download final.
-
-    BLINGFIX:
-    - este painel não fica na sidebar;
-    - ele aparece no fim do fluxo, logo após o botão de download;
-    - dá sequência para importação/atualização no Bling;
-    - permite ao usuário final adicionar, excluir e reordenar links úteis mesmo sem contas reais;
-    - inclui entrada direta para o fluxo interno de atualização de preços multiloja.
-    """
+    """Mostra próximos passos somente no final do fluxo Bling CSV/manual."""
     operation = _current_operation()
     operation_label = 'Atualização de estoque' if operation == 'estoque' else 'Cadastro / atualização de produtos'
 
-    st.markdown('### Próximos passos depois do download')
-    st.caption(f'Fluxo detectado: {operation_label}. Baixe o CSV e continue pelo caminho correto abaixo.')
+    st.markdown('### Próximos passos do Bling CSV')
+    st.caption(f'Fluxo detectado: {operation_label}. Use estes links somente quando você baixou um CSV para importar manualmente no Bling.')
 
     with st.container(border=True):
         _render_next_flow_card(operation)
 
-    st.markdown('#### Abrir no Bling')
+    st.markdown('#### Importadores do Bling')
     recommended = _recommended_links(operation)
     if not recommended:
         st.warning('Nenhum link útil cadastrado para este fluxo.')
@@ -414,11 +393,7 @@ def render_bling_links_panel() -> None:
         for index, item in recommended:
             _render_link_button(item, index)
 
-    edit_mode = st.toggle(
-        'Editar links úteis deste final de fluxo',
-        value=bool(st.session_state.get(LINKS_EDIT_MODE_KEY, False)),
-        key=LINKS_EDIT_MODE_KEY,
-    )
+    edit_mode = st.toggle('Editar links úteis deste final de fluxo', value=bool(st.session_state.get(LINKS_EDIT_MODE_KEY, False)), key=LINKS_EDIT_MODE_KEY)
     if edit_mode:
         _render_edit_links_panel(operation)
 
@@ -426,12 +401,7 @@ def render_bling_links_panel() -> None:
         'post_download_links_rendered',
         area='DOWNLOAD_LINKS',
         status='OK',
-        details={
-            'operation': operation,
-            'links_visible': len(recommended),
-            'edit_mode': edit_mode,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'operation': operation, 'links_visible': len(recommended), 'edit_mode': edit_mode, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
