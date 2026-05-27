@@ -184,7 +184,7 @@ def _render_bling_connection_step() -> None:
             except Exception:
                 auth_url = ''
             if auth_url:
-                st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+                st.markdown(f'<a href="{auth_url}" target="_self">Conectar ao Bling</a>', unsafe_allow_html=True)
             else:
                 st.warning('Não consegui gerar o link de conexão com o Bling agora.')
         with col2:
